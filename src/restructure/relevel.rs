@@ -507,71 +507,88 @@ pub(crate) fn score_levels(
     scratch: &mut ScoreScratch,
     max_pairs: usize,
 ) -> Result<Option<usize>, OperationError> {
+    let mut score = [None];
+    score_crossings(lim, tdd, info, dir, &[crossed], scratch, max_pairs, &mut score)?;
+    Ok(score[0])
+}
+
+/// [`score_levels`] of the move in `dir` and of its crossing, in that
+/// order. They read the same two levels, and the old outer pairs are filed
+/// once for both.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a table the scores need is refused.
+pub(crate) fn score_levels_crossed_too(
+    lim: &Limits,
+    tdd: &Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    scratch: &mut ScoreScratch,
+    max_pairs: usize,
+) -> Result<[Option<usize>; 2], OperationError> {
+    let mut scores = [None; 2];
+    score_crossings(lim, tdd, info, dir, &[false, true], scratch, max_pairs, &mut scores)?;
+    Ok(scores)
+}
+
+/// [`score_levels`] of the move in `dir` crossed as each of `crossings`
+/// says, into `scores`.
+#[allow(clippy::too_many_arguments)]
+fn score_crossings(
+    lim: &Limits,
+    tdd: &Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    crossings: &[bool],
+    s: &mut ScoreScratch,
+    max_pairs: usize,
+    scores: &mut [Option<usize>],
+) -> Result<(), OperationError> {
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     let max_pairs = max_pairs.min(u32::MAX as usize);
     let left = dir == RotationKind::Left;
-    // An old outer pair's `x` and inner node; an old inner pair's `y` and
-    // `z`, the stored sides exchanged where the move is crossed.
+    // An old outer pair's `x` and inner node.
     let split_v = |vp: ChildPair| {
         let (x, j) = if left { (vp.left, vp.right) } else { (vp.right, vp.left) };
         (x.0 as usize, ChildDecoder::structural().node(j).idx())
     };
-    let split_w = |wp: ChildPair| {
-        let (wl, wr) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
-        if left { (wl.0 as usize, wr.0) } else { (wr.0 as usize, wl.0) }
-    };
-    let scored = score_with(lim, old_v, old_w, split_v, split_w, scratch, max_pairs);
-    release_or_clear(lim, &mut scratch.block_ends);
-    release_or_clear(lim, &mut scratch.blocks);
-    release_or_clear(lim, &mut scratch.by_x);
-    release_or_clear(lim, &mut scratch.x_ends);
-    release_or_clear(lim, &mut scratch.keys);
-    release_or_clear(lim, &mut scratch.table);
+    let scored = (|| {
+        if !file_outer_pairs_by_x(lim, old_v, old_w, split_v, s, max_pairs)? {
+            return Ok(());
+        }
+        for (score, &crossed) in scores.iter_mut().zip(crossings) {
+            // An old inner pair's `y` and `z`, the stored sides exchanged
+            // where the move is crossed.
+            let split_w = |wp: ChildPair| {
+                let (wl, wr) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
+                if left { (wl.0 as usize, wr.0) } else { (wr.0 as usize, wl.0) }
+            };
+            group_blocks(lim, old_w, split_w, s)?;
+            *score = score_rows(lim, s, max_pairs)?;
+        }
+        Ok(())
+    })();
+    release_or_clear(lim, &mut s.block_ends);
+    release_or_clear(lim, &mut s.blocks);
+    release_or_clear(lim, &mut s.by_x);
+    release_or_clear(lim, &mut s.x_ends);
+    release_or_clear(lim, &mut s.keys);
+    release_or_clear(lim, &mut s.table);
     scored
 }
 
-/// [`score_levels`] with the geometry of the move in `split_v` and
-/// `split_w`.
-fn score_with(
+/// The old outer pairs `(owner, inner node)` filed into `s.by_x` by their
+/// `x`, `x`'s ending at `s.x_ends[x]`; `false`, the score's `None`, where a
+/// rebuild would give up at `max_pairs` triples.
+fn file_outer_pairs_by_x(
     lim: &Limits,
     old_v: &TddLevel,
     old_w: &TddLevel,
     split_v: impl Fn(ChildPair) -> (usize, usize),
-    split_w: impl Fn(ChildPair) -> (usize, u32),
     s: &mut ScoreScratch,
     max_pairs: usize,
-) -> Result<Option<usize>, OperationError> {
-    const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
-    const CELL: u64 = 0x5851_F42D_4C95_7F2D;
-    const SIZE: u64 = 0x1405_7B7E_F767_814F;
-    // The blocks of each old inner node, grouped by `y`, and the most pairs
-    // one node holds.
-    let n_w = old_w.nodes().len();
-    s.block_ends.clear();
-    s.blocks.clear();
-    lim.reserve_exact(&mut s.block_ends, n_w)?;
-    lim.reserve(&mut s.blocks, old_w.live_pairs())?;
-    let mut widest = 0usize;
-    for j in 0..n_w {
-        let stamp = next_stamp(&mut s.stamp, &mut s.marks);
-        let mut pairs = 0usize;
-        for wp in old_w.pairs_iter_of_idx(j) {
-            let (y, z) = split_w(wp);
-            s.cover(lim, y)?;
-            let m = &mut s.marks[y];
-            if m.stamp != stamp {
-                *m = Mark { stamp, n: s.blocks.len() as u32, hash: 0 };
-                lim.try_push(&mut s.blocks, Block { y: y as u32, cells: 0, hash: 0 })?;
-            }
-            let b = &mut s.blocks[m.n as usize];
-            b.hash = b.hash.wrapping_add(mix(u64::from(z) ^ CELL));
-            b.cells += 1;
-            pairs += 1;
-        }
-        widest = widest.max(pairs);
-        s.block_ends.push(s.blocks.len() as u32);
-    }
-    // The old outer pairs counted by `x`.
+) -> Result<bool, OperationError> {
     let n_v = old_v.nodes().len();
     s.x_ends.clear();
     for p in 0..n_v {
@@ -589,9 +606,11 @@ fn score_with(
     }
     let v_pairs = s.x_ends.last().map_or(0, |&n| n as usize);
     // `collect_triples` gives up once it has pushed `max_pairs` triples, one
-    // per cell of an old inner node an old outer pair reaches: at most
-    // `widest` for each, and counted only where that could reach the bound.
+    // per pair of an old inner node an old outer pair reaches: at most the
+    // most pairs one node holds for each, and counted only where that could
+    // reach the bound.
     let bail = max_pairs.max(1);
+    let widest = (0..old_w.nodes().len()).map(|j| old_w.pair_count_at(j)).max().unwrap_or(0);
     if v_pairs.saturating_mul(widest) >= bail {
         let mut triples = 0usize;
         for p in 0..n_v {
@@ -600,10 +619,9 @@ fn score_with(
             }
         }
         if triples >= bail {
-            return Ok(None);
+            return Ok(false);
         }
     }
-    // The old outer pairs filed by `x`; `x_ends[x]` is then `x`'s end.
     s.by_x.clear();
     lim.try_resize(&mut s.by_x, v_pairs, (0, 0))?;
     for p in 0..n_v {
@@ -614,8 +632,43 @@ fn score_with(
             *at += 1;
         }
     }
-    // Each `x`'s new inner pairs: a row over `y`, summing the blocks its
-    // outer pairs reach.
+    Ok(true)
+}
+
+/// The blocks of each old inner node into `s.blocks`, grouped by `y`, node
+/// `j`'s ending at `s.block_ends[j]`.
+fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (usize, u32), s: &mut ScoreScratch) -> Result<(), OperationError> {
+    const CELL: u64 = 0x5851_F42D_4C95_7F2D;
+    let n_w = old_w.nodes().len();
+    s.block_ends.clear();
+    s.blocks.clear();
+    lim.reserve_exact(&mut s.block_ends, n_w)?;
+    lim.reserve(&mut s.blocks, old_w.live_pairs())?;
+    for j in 0..n_w {
+        let stamp = next_stamp(&mut s.stamp, &mut s.marks);
+        for wp in old_w.pairs_iter_of_idx(j) {
+            let (y, z) = split_w(wp);
+            s.cover(lim, y)?;
+            let m = &mut s.marks[y];
+            if m.stamp != stamp {
+                *m = Mark { stamp, n: s.blocks.len() as u32, hash: 0 };
+                lim.try_push(&mut s.blocks, Block { y: y as u32, cells: 0, hash: 0 })?;
+            }
+            let b = &mut s.blocks[m.n as usize];
+            b.hash = b.hash.wrapping_add(mix(u64::from(z) ^ CELL));
+            b.cells += 1;
+        }
+        s.block_ends.push(s.blocks.len() as u32);
+    }
+    Ok(())
+}
+
+/// The score from the filed outer pairs and the blocks: each `x`'s new inner
+/// pairs a row over `y`, summing the blocks its outer pairs reach, and the
+/// distinct contexts among them.
+fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize) -> Result<Option<usize>, OperationError> {
+    const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
+    const SIZE: u64 = 0x1405_7B7E_F767_814F;
     s.keys.clear();
     s.touched.clear();
     lim.reserve(&mut s.touched, s.marks.len())?;

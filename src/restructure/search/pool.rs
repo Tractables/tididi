@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Charged, Limits, OperationError, Transient};
-use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels, score_levels};
+use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -168,7 +168,7 @@ impl Engine {
         let info = pending.commit(&mut tree);
         let mut scratch = self.scratch.restructure.checkout(self);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, false, accept)?;
+        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, false, Twin::Alone, accept)?;
         if kept {
             install(members, tree);
         }
@@ -267,6 +267,10 @@ fn descend(
     // many small members. A rotation rebuilds structural levels as
     // structural levels, so the answer holds for the whole search.
     let marginal = members.iter().any(|m| m.has_marginal_level());
+    // The scores of the crossed move at the pivot and rotation under way,
+    // one per member, taken with the plain move's ([`Twin`]).
+    let mut crossed_scores = Transient::new(eng.limits(), Vec::new());
+    eng.limits().reserve_exact(&mut crossed_scores, members.len())?;
     while stats.sweeps < config.max_sweeps && !spent() {
         stats.sweeps += 1;
         let internals: Vec<VtreeIdx> = tree.internal_bottomup().map(|(v, _, _)| v).collect();
@@ -283,13 +287,26 @@ fn descend(
             let parent = tree.node(v).parent();
             let mut moved = false;
             'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
+                let mut twin_scored = false;
                 for &crossed in crossings {
                     if spent() {
                         return Ok(());
                     }
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     stats.probes += 1;
-                    if !marginal && probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch)? {
+                    // A plain move whose crossing is to be probed scores the
+                    // crossing too; refused, it leaves the levels as they
+                    // were, and the crossing reads its scores.
+                    let twin = if crossed {
+                        if twin_scored { Twin::Given(&crossed_scores) } else { Twin::Alone }
+                    } else if config.crossed {
+                        crossed_scores.clear();
+                        twin_scored = true;
+                        Twin::Fill(&mut crossed_scores)
+                    } else {
+                        Twin::Alone
+                    };
+                    if !marginal && probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, twin)? {
                         debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), marginal);
                         stats.accepts += 1;
                         kept += 1;
@@ -322,10 +339,11 @@ fn probe_in_place(
     mv: PoolMove,
     bound: usize,
     scratch: &mut RestructureScratch,
+    twin: Twin<'_>,
 ) -> Result<bool, OperationError> {
     let Some(pending) = move_in_place(tree, mv) else { return Ok(false) };
     let info = pending.info();
-    match probe(eng, members, info, mv, bound, PROBE_UNITS, scratch, true, |p| p.live_pairs_delta() < 0) {
+    match probe(eng, members, info, mv, bound, PROBE_UNITS, scratch, true, twin, |p| p.live_pairs_delta() < 0) {
         Ok(true) => {
             // The bottom-up order's repair moves the promoted node past the
             // subtree it now needs below it, and every node between.
@@ -457,7 +475,7 @@ impl Charged for PreparedMembers {
 /// member not prepared, by its rebuild once the move is kept.
 ///
 /// Where `accept` keeps exactly the moves that lower the members' total
-/// (`shrinks`), [`probe_scored`] decides instead, from scores.
+/// (`shrinks`), [`probe_scored`] decides instead, from scores, with `twin`.
 #[allow(clippy::too_many_arguments)]
 fn probe(
     eng: &Engine,
@@ -468,10 +486,11 @@ fn probe(
     extra: u64,
     scratch: &mut RestructureScratch,
     shrinks: bool,
+    twin: Twin<'_>,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
     if shrinks {
-        return probe_scored(eng, members, info, mv, bound, extra, scratch);
+        return probe_scored(eng, members, info, mv, bound, extra, scratch, twin);
     }
     let lim = eng.limits();
     // A level of one pair rebuilds into one of one pair, two pairs for the
@@ -543,6 +562,7 @@ fn probe(
 /// the total after all; if not, or if a rebuild passes `bound` or fails,
 /// every member is put back. So the scores decide, and no member's
 /// rebuild waits for the others'.
+#[allow(clippy::too_many_arguments)]
 fn probe_scored(
     eng: &Engine,
     members: &mut [&mut Tdd],
@@ -551,7 +571,13 @@ fn probe_scored(
     bound: usize,
     extra: u64,
     scratch: &mut RestructureScratch,
+    mut twin: Twin<'_>,
 ) -> Result<bool, OperationError> {
+    debug_assert!(match twin {
+        Twin::Alone => true,
+        Twin::Fill(_) => !mv.crossed,
+        Twin::Given(_) => mv.crossed,
+    });
     let lim = eng.limits();
     let defer = bound > 2;
     let mut gate = lim.gate();
@@ -564,17 +590,33 @@ fn probe_scored(
     // rebuild.
     let mut scored = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut scored, members.len())?;
-    for m in members.iter() {
+    for (i, m) in members.iter().enumerate() {
         let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
         let old = outer + inner;
         before.push(old);
         if defer && outer <= 1 && inner == outer {
+            if let Twin::Fill(slots) = &mut twin {
+                slots.push(None);
+            }
             gate.poll(old as u64 + 1)?;
             after.push(old);
             scored.push(false);
             continue;
         }
-        let Some(new) = score_levels(lim, m, &info, mv.rotation.kind, mv.crossed, &mut scratch.score, bound)? else {
+        let (kind, score) = (mv.rotation.kind, &mut scratch.score);
+        let new = match &mut twin {
+            Twin::Alone => score_levels(lim, m, &info, kind, mv.crossed, score, bound)?,
+            Twin::Fill(slots) => {
+                let [plain, crossed] = score_levels_crossed_too(lim, m, &info, kind, score, bound)?;
+                slots.push(Some(crossed));
+                plain
+            }
+            Twin::Given(slots) => match slots.get(i) {
+                Some(&Some(given)) => given,
+                _ => score_levels(lim, m, &info, kind, mv.crossed, score, bound)?,
+            },
+        };
+        let Some(new) = new else {
             return Ok(false);
         };
         gate.poll((old + new) as u64 + REBUILD_UNITS)?;
@@ -620,6 +662,21 @@ fn probe_scored(
         Ok(kept && after.iter().sum::<usize>() < before.iter().sum::<usize>())
     });
     settle(lim, members, &info, &mut saved, outcome)
+}
+
+/// What a scored probe ([`probe_scored`]) knows of the crossing of its move:
+/// the same rotation at the same pivot with the promoted node's children
+/// swapped, which reads the same two levels.
+enum Twin<'s> {
+    /// Nothing: the move scored alone.
+    Alone,
+    /// The move is plain and its crossing is still to be probed: each
+    /// member's score of the crossing taken with the move's, filed in member
+    /// order, `None` for a member not scored.
+    Fill(&'s mut Vec<Option<Option<usize>>>),
+    /// The move is the crossing of a plain move refused just before, on the
+    /// same levels, which filed these scores.
+    Given(&'s [Option<Option<usize>>]),
 }
 
 /// The end of a probe's rebuilds, `saved` holding what each member rebuilt

@@ -77,3 +77,33 @@ fn a_score_reads_implicit_levels() {
         assert!(implicit > 0, "no diagram held an implicit level");
     });
 }
+
+/// A move and its crossing scored together ([`score_levels_crossed_too`])
+/// score as each does alone, bounded or not.
+#[test]
+fn a_move_and_its_crossing_score_together_as_apart() {
+    let lim = Limits::new();
+    let mut scratch = RestructureScratch::default();
+    let mut compared = 0;
+    for tdd in random_diagrams(0xc2055, 60, 3..10) {
+        for (v, _, _) in tdd.vtree.internal_bottomup() {
+            for kind in [RotationKind::Left, RotationKind::Right] {
+                let mut tree = (*tdd.vtree).clone();
+                let rotated = match kind {
+                    RotationKind::Left => rotate_left(&mut tree, v),
+                    RotationKind::Right => rotate_right(&mut tree, v),
+                };
+                let Some(info) = rotated else { continue };
+                for bound in [usize::MAX, 13, 5] {
+                    let together = score_levels_crossed_too(&lim, &tdd, &info, kind, &mut scratch.score, bound).expect("nothing is armed");
+                    let apart = [false, true].map(|crossed| {
+                        score_levels(&lim, &tdd, &info, kind, crossed, &mut scratch.score, bound).expect("nothing is armed")
+                    });
+                    assert_eq!(together, apart, "{kind:?} at {v:?}, bound {bound}");
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert!(compared > 1000, "{compared} moves compared");
+}
