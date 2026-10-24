@@ -145,6 +145,8 @@ pub(super) struct ApplyRun<'a, 'r> {
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
+    /// The g-pair vectors of the levels whose cells are read by them.
+    pub(super) words: &'a mut super::WordScratch,
     /// The levels the identity fast paths and the relabelling route moved
     /// into the output, as `(level, from f)`, in the order they moved.
     pub(super) carried: Vec<(usize, bool)>,
@@ -528,7 +530,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     let min_grid = thresholds.min_grid;
 
     let ApplyWorkspace { f_widths, g_widths, f_identity, g_identity,
-        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks, cone } = scratch;
+        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks, words, cone } = scratch;
     if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
     if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
     let (Snapshot { total_cells, any_entry_marginal, might_use_sparse }, cone) = survey(
@@ -559,6 +561,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         f_pairs_scratch,
         g_pairs_scratch,
         prefilter_masks,
+        words,
         carried: Vec::new(),
         relabel_moved: Vec::new(),
         restoring: false,

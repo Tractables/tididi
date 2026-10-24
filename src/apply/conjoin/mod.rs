@@ -24,7 +24,8 @@ mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
+    run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, run_level_rows_words, words_pay,
+    PlainLookups, RowLoop, RowScratch, WordScratch,
 };
 
 mod sparse;
@@ -913,6 +914,32 @@ fn pair_rows_forced_off() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_pair_rows(_complete: bool) {}
+
+// A test reads the cells of every level that can be read by g-pair vectors
+// by them, or of none, as their oracle, and counts those levels.
+#[cfg(test)]
+use tests::{note_word_cells, word_cells_forced};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn word_cells_forced() -> Option<bool> {
+    None
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_word_cells(_what: WordNote) {}
+
+/// What a test counts of the levels read by g-pair vectors.
+#[derive(Clone, Copy)]
+enum WordNote {
+    /// A level of two grids.
+    Grids,
+    /// A level with a complete side.
+    Complete,
+    /// A cell walked in the grouped order.
+    Grouped,
+}
 
 // A test counts the times a level's pairs arena grew.
 #[cfg(test)]

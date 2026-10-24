@@ -768,6 +768,7 @@ fn run_row_loop(
     lookups: PlainLookups,
     single_pair: bool,
     pairs: bool,
+    words: Option<(&mut WordScratch, Sides<usize>)>,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
@@ -778,6 +779,10 @@ fn run_row_loop(
     if pairs {
         debug_assert!(route == Route::Dense, "only a masked level is read by pairs");
         return run_level_rows_pairs(eng, rows, scratch, level, lookups);
+    }
+    if let Some((words, f_rows)) = words {
+        debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain routes read cells by g-pair vectors");
+        return run_level_rows_words(eng, rows, scratch, words, level, lookups, f_rows);
     }
     if lookups != PlainLookups::Grid {
         debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain routes read a side by arithmetic");
@@ -1230,8 +1235,25 @@ pub(super) fn build_level_dense(
             );
         }
 
+        // A level of the plain routes whose candidates outnumber what the
+        // vectors of its child rows cost reads its cells by g-pair vectors
+        // (`run_level_rows_words`).
+        let f_rows = Sides { left: fw.left, right: fw.right };
+        let words = !pairs
+            && matches!(route, Route::PlainDense | Route::Dense)
+            && !(route == Route::PlainDense && single_pair)
+            && stream_state.is_none()
+            && !matches!(lookups, PlainLookups::Complete { .. })
+            && super::super::word_cells_forced().unwrap_or_else(|| {
+                let kills = Sides {
+                    left: !matches!(lookups, PlainLookups::CompleteLeft { .. }),
+                    right: !matches!(lookups, PlainLookups::CompleteRight { .. }),
+                };
+                words_pay(f.level(t), g.level(t), f_rows, kills)
+            });
         run_row_loop(
             eng, route, lookups, single_pair, pairs,
+            words.then_some((&mut *run.words, f_rows)),
             RowLoop {
                 f_level: f.level(t), g_level: g.level(t),
                 children: Sides { left: left_level, right: right_level },

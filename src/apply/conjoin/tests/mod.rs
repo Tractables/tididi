@@ -18,6 +18,7 @@ mod reach_columns;
 mod restoring;
 mod self_conjunction;
 mod single_rows;
+mod word_cells;
 
 mod target_completion;
 mod workspace;
@@ -221,6 +222,62 @@ pub(super) fn pair_rows_off<R>(f: impl FnOnce() -> R) -> R {
 /// a complete side.
 pub(super) fn pair_rows_levels() -> (u64, u64) {
     PAIR_ROWS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    /// Whether every level on this thread that can read its cells by g-pair
+    /// vectors does, or none ([`word_cells_on`], [`word_cells_off`]).
+    static WORD_CELLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// The levels on this thread read by g-pair vectors, those of two grids
+    /// and those with a complete side, and their cells walked in the
+    /// grouped order ([`word_cells_levels`]).
+    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+/// [`WORD_CELLS`], or, where it is unset, `TIDIDI_TEST_WORD_CELLS` (`1`
+/// every level that can, `0` none), which runs the whole suite either way.
+pub(super) fn word_cells_forced() -> Option<bool> {
+    static ENV: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    WORD_CELLS.with(std::cell::Cell::get).or_else(|| {
+        *ENV.get_or_init(|| std::env::var("TIDIDI_TEST_WORD_CELLS").ok().map(|v| v == "1"))
+    })
+}
+
+pub(super) fn note_word_cells(what: super::WordNote) {
+    WORD_CELLS_LEVELS.with(|n| {
+        let mut counts = n.get();
+        counts[what as usize] += 1;
+        n.set(counts);
+    });
+}
+
+fn word_cells_set<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<bool>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WORD_CELLS.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(WORD_CELLS.with(|c| c.replace(Some(on))));
+    f()
+}
+
+/// Run `f` with every level that can read its cells by g-pair vectors
+/// reading them, whether or not they pay.
+pub(super) fn word_cells_on<R>(f: impl FnOnce() -> R) -> R {
+    word_cells_set(true, f)
+}
+
+/// Run `f` with no level reading its cells by g-pair vectors: their oracle.
+pub(super) fn word_cells_off<R>(f: impl FnOnce() -> R) -> R {
+    word_cells_set(false, f)
+}
+
+/// The levels on this thread so far read by g-pair vectors, those of two
+/// grids and those with a complete side, and their cells walked in the
+/// grouped order.
+pub(super) fn word_cells_levels() -> [u64; 3] {
+    WORD_CELLS_LEVELS.with(std::cell::Cell::get)
 }
 
 thread_local! {

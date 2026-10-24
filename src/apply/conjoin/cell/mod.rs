@@ -80,6 +80,8 @@ mod rows;
 pub(super) use rows::*;
 mod pair_rows;
 pub(super) use pair_rows::run_level_rows_pairs;
+mod word_cells;
+pub(super) use word_cells::{run_level_rows_words, words_pay, WordScratch};
 
 #[cfg(test)]
 mod tests;
