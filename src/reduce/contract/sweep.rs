@@ -127,6 +127,7 @@ fn contract_child(
         return Ok(Contracted::Nothing);
     }
 
+    scratch.unnamed.clear();
     let found = match reach {
         Reach::Listed => {
             note_listed_search();
@@ -149,8 +150,24 @@ fn contract_child(
             find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, screen)?
         }
     };
+    // A whole search that read every pair also lists the nodes no pair
+    // names, two or more of them: nothing reaches them, and their pairs give
+    // their children contexts the prune would take away. The merge drops
+    // them, and their children are searched whole after. The diagram's
+    // output is named by no pair, and stays.
+    if reach == Reach::Listed || !scratch.drop_unnamed {
+        scratch.unnamed.clear();
+    } else if tdd.output.vtree == t1 {
+        let output = tdd.output.local.0;
+        scratch.unnamed.retain(|&u| u != output);
+    }
+    let drops = !scratch.unnamed.is_empty();
     if !found {
-        return Ok(Contracted::Nothing);
+        if !drops {
+            return Ok(Contracted::Nothing);
+        }
+        scratch.group_starts.clear();
+        scratch.flat_groups.clear();
     }
 
     // Where the sweep lists, the list of `t1` it keeps has its room for the
@@ -173,6 +190,9 @@ fn contract_child(
     }
     if lists || fused_but {
         note_survivors(t1, scratch);
+    }
+    if lists && drops {
+        scratch.listing.set_whole(t1.idx());
     }
     if !lists {
         scratch.listing.set_fused_but(t1.idx(), fused_but);
@@ -228,6 +248,7 @@ fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
     let ContractScratch { remap, merge, listing, .. } = scratch;
     let list = listing.listed_mut(t1.idx());
     for node in list.iter_mut() {
+        debug_assert_ne!(remap.final_remap[*node as usize].0, super::merge::DISCARDED, "a listed node is named");
         *node = survivor(&remap.final_remap, *node as usize).0;
     }
     debug_assert!(list.capacity() - list.len() >= merge.group_plans.len(), "the survivors' room was had before the merge");
@@ -296,6 +317,16 @@ pub(crate) fn contract_all_twins(
     eng: &Engine,
     tdd: &mut Tdd,
 ) -> Result<(), OperationError> {
+    sweep_twins(eng, tdd, true)
+}
+
+/// [`contract_all_twins`], dropping the nodes no pair names that a whole
+/// search lists where `drop_unnamed`.
+fn sweep_twins(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    drop_unnamed: bool,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
@@ -305,6 +336,7 @@ pub(crate) fn contract_all_twins(
     }
 
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
+    scratch.drop_unnamed = drop_unnamed;
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
@@ -413,8 +445,10 @@ pub(crate) fn contract_all_twins(
 }
 
 /// No child of a level in `parents` that the contraction worklist does not
-/// owe has a twin: contracting from those levels alone merges nothing.
-/// Debug builds check an operation that leaves such levels off the list.
+/// owe has a twin: contracting from those levels alone merges nothing. The
+/// nodes no pair names are left in place, so that only a twin changes the
+/// node count. Debug builds check an operation that leaves such levels off
+/// the list.
 #[cfg(debug_assertions)]
 pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[VtreeIdx]) {
     let mut copy = tdd.clone();
@@ -426,7 +460,7 @@ pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[Vt
     copy.dirty.restore(Pass::Contract, check.clone());
     let before = copy.levels.node_count();
     // A refusal under the caller's limits leaves nothing checked.
-    if contract_all_twins(eng, &mut copy).is_ok() {
+    if sweep_twins(eng, &mut copy, false).is_ok() {
         assert_eq!(copy.levels.node_count(), before, "a child of a level in {check:?} has a twin no worklist owes");
     }
 }

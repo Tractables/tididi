@@ -17,7 +17,7 @@ use data::{fork_down, rebuild_level, remap_and_reserve};
 use plan::{plan_groups, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
 use rewrite::rewrite_parent;
-pub(in crate::reduce::contract) use rewrite::{survivor, DROPPED};
+pub(in crate::reduce::contract) use rewrite::{survivor, DISCARDED, DROPPED};
 
 /// Merge all twin groups at level t1, then compact.
 ///
@@ -42,7 +42,11 @@ pub(in crate::reduce::contract) use rewrite::{survivor, DROPPED};
 ///    pairs into its kept node, drops the merged-away nodes and leaves the
 ///    level's arena with no garbage.
 ///
-/// Returns the number of members merged away; 0 means the level is unchanged.
+/// The nodes in `scratch.unnamed`, which no pair of the parent names, are
+/// dropped with their pairs in the same rebuild.
+///
+/// Returns the number of members merged away and nodes dropped; 0 means
+/// the level is unchanged.
 pub(super) fn contract_twins(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -65,7 +69,7 @@ pub(super) fn contract_twins(
     // the budget surfaces before the diagram changes.
     let ContractScratch {
         remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
-        diagram_marginal, ..
+        diagram_marginal, unnamed, ..
     } = scratch;
     lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
     let words = width.div_ceil(64);
@@ -93,7 +97,7 @@ pub(super) fn contract_twins(
     // member's pairs by index, twice where the overlap filter runs: a stored
     // node's pairs are read off its words, an implicit level's generated
     // from its description one node at a time.
-    if !group_starts.is_empty() {
+    if !group_starts.is_empty() || !unnamed.is_empty() {
         tdd.levels[t1.idx()].store_if_implicit(lim)?;
         tdd.levels.mark_changed(t1);
     }
@@ -101,7 +105,12 @@ pub(super) fn contract_twins(
     // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     let merged_members = mark_group_members(&policy, remap, bufs);
-    if merged_members == 0 {
+    for &u in unnamed.iter() {
+        debug_assert!(remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0, "an unnamed node is in no group");
+        remap.absorbed[(u / 64) as usize] |= 1 << (u % 64);
+        remap.final_remap[u as usize] = NodeIdx(DISCARDED);
+    }
+    if merged_members + unnamed.len() == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
         // needed. Returning 0 lets `contract_child` report no-progress.
         return Ok(0);
@@ -118,7 +127,12 @@ pub(super) fn contract_twins(
     // were merged, so its pair lists and the identity of its nodes changed.
     // The parent's fusion record stands unless a group redirects
     // ([`redirects`]).
-    tdd.invalidate(t1);
+    // A level that only lost nodes no pair names keeps its fusion record.
+    if merged_members == 0 {
+        tdd.invalidate_shrunk(t1);
+    } else {
+        tdd.invalidate(t1);
+    }
     if redirects(&bufs.group_plans) {
         tdd.invalidate(parent);
     } else {
@@ -139,8 +153,16 @@ pub(super) fn contract_twins(
         && !diagram_marginal
         && !tdd.levels[t1.idx()].any_value_ref_side();
     rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint);
+    if !unnamed.is_empty() {
+        let (left, right) = tdd.vtree.children(t1);
+        for c in [left, right] {
+            if !tdd.vtree.node(c).is_leaf() {
+                tdd.dirty.add_loose(c.0);
+            }
+        }
+    }
     fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
-    Ok(merged_members)
+    Ok(merged_members + unnamed.len())
 }
 
 /// Whether a planned group redirects content-equal members onto its

@@ -126,8 +126,9 @@ fn shares_a_sibling(keys: &[u64]) -> bool {
 /// groups of two or more there becomes a class of its own, one of which
 /// may keep the class's id where every member is named there. The nodes no
 /// pair names stay in the first class, and leave it at the end: a node of
-/// no context is a node nothing reaches, whose merge the prune makes moot,
-/// and it has no twin.
+/// no context is a node nothing reaches and has no twin. A refinement from
+/// [`Start::Whole`] lists them in `scratch.unnamed` where there are two or
+/// more, for the merge to drop.
 ///
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
@@ -154,7 +155,7 @@ pub(super) fn refine_context_groups(
     let ContractScratch {
         twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
         refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_met,
-        refine_seen, flat_groups, group_starts, ..
+        refine_seen, flat_groups, group_starts, unnamed, ..
     } = scratch;
     let mut wide = Wide {
         keys: refine_keys,
@@ -176,6 +177,7 @@ pub(super) fn refine_context_groups(
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
     // The first class: every node, or the listed ones.
+    let whole = matches!(start, Start::Whole);
     let first = match start {
         Start::Whole => {
             bits.fill([0; 2]);
@@ -233,7 +235,7 @@ pub(super) fn refine_context_groups(
             part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
         }
     }
-    part.drop_unnamed(width);
+    part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
     debug_assert_eq!(
         part.twinable,
         part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
@@ -398,8 +400,9 @@ impl Partition<'_> {
 
     /// At the end of the refinement: the nodes no pair names, all of them
     /// in the first class, leave the partition, which they would otherwise
-    /// end as one group.
-    fn drop_unnamed(&mut self, width: usize) {
+    /// end as one group; where there are two or more, they are put in
+    /// `out`, ascending. A refinement that stopped early leaves at most one.
+    fn drop_unnamed(&mut self, width: usize, out: Option<&mut Vec<u32>>, lim: &Limits) -> Result<(), OperationError> {
         let words = width.div_ceil(64);
         let mut unnamed = 0;
         for w in 0..words {
@@ -410,9 +413,22 @@ impl Partition<'_> {
             unnamed += clear.count_ones() as usize;
         }
         if unnamed < 2 {
-            return;
+            return Ok(());
         }
         debug_assert_eq!(self.classes[0].size as usize, unnamed, "the first class is the nodes no pair names");
+        if let Some(out) = out {
+            lim.reserve_exact(out, unnamed)?;
+            for (w, word) in self.bits.iter().enumerate() {
+                let mut clear = !word[0];
+                if (w + 1) * 64 > width {
+                    clear &= (1u64 << (width % 64)) - 1;
+                }
+                while clear != 0 {
+                    out.push((w * 64) as u32 + clear.trailing_zeros());
+                    clear &= clear - 1;
+                }
+            }
+        }
         for w in 0..words {
             let [moved, alone] = &mut self.bits[w];
             *alone |= !*moved;
@@ -420,6 +436,7 @@ impl Partition<'_> {
         }
         self.classes[0].size = 0;
         self.twinable -= unnamed;
+        Ok(())
     }
 
     /// A parent node of three to [`SMALL_PAIRS`] pairs, grouped on the

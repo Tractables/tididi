@@ -558,6 +558,17 @@ impl Dirty {
         self.loose = levels;
     }
 
+    /// List `level` loose where the loose levels are known: an edit dropped
+    /// nodes of its parent level, whose pairs may have named the only
+    /// reference to one of its nodes.
+    pub(crate) fn add_loose(&mut self, level: u32) {
+        if let Some(loose) = &mut self.loose
+            && !loose.contains(&level)
+        {
+            loose.push(level);
+        }
+    }
+
     /// Whether a pair fusion at `level` ran to the end and no push has named
     /// `level` since.
     #[inline]

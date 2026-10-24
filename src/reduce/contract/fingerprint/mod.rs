@@ -145,8 +145,8 @@ pub(super) fn screens(parent_level: &TddLevel) -> bool {
 const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 
 impl TwinEntries for ContextEntries<'_> {
-    /// A node no pair names has no context: nothing reaches it, the prune
-    /// removes it, and it is no node's twin.
+    /// A node no pair names has no context: nothing reaches it, and it is
+    /// no node's twin.
     const EMPTY_TWINS: bool = false;
 
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
@@ -280,7 +280,8 @@ impl TwinEntries for ContentEntries<'_> {
 /// Find nodes with identical parent-context multisets at the explicit child
 /// level `t1` of `parent`. Marginal children are handled by pair fusion
 /// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
-/// The nodes no pair names are in no group.
+/// The nodes no pair names are in no group; a search that read every pair
+/// lists them in `scratch.unnamed` where there are two or more.
 ///
 /// Without a marginal level no parent node repeats a pair, and the level is
 /// searched by refining a partition of it parent node by parent node
@@ -319,6 +320,7 @@ pub(super) fn find_twin_groups(
         t1_side,
         early_stop: screens(parent_level),
     };
+    scratch.unnamed.clear();
     // Read from the scratch: a merge's change to any level forgets the
     // diagram's own answer, which takes a pass over every level to give
     // again.
@@ -335,12 +337,18 @@ pub(super) fn find_twin_groups(
     };
     if cfg!(debug_assertions) {
         let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+        let unnamed = std::mem::take(&mut scratch.unnamed);
         let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?;
         assert_eq!(
             (found, &refined.0, &refined.1),
             (fingerprinted, &scratch.group_starts, &scratch.flat_groups),
             "the refined twin groups differ from the fingerprinted ones",
         );
+        // Each lists the nodes no pair names where it read every pair.
+        if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
+            assert_eq!(unnamed, scratch.unnamed, "the refinement and the fingerprints list different unnamed nodes");
+        }
+        scratch.unnamed = unnamed;
     }
     Ok(found)
 }
@@ -362,6 +370,7 @@ pub(super) fn group_twins_by_entries(
     let lim = eng.limits();
     scratch.flat_groups.clear();
     scratch.group_starts.clear();
+    scratch.unnamed.clear();
     if width == 0 {
         return Ok(false);
     }

@@ -178,6 +178,81 @@ fn unnamed_levels(tdd: &crate::Tdd) -> Vec<u32> {
     out
 }
 
+/// How many nodes of the internal levels below the root of `tdd` no pair of
+/// their parent level names, read as [`unnamed_levels`] reads them.
+fn unnamed_nodes(tdd: &crate::Tdd) -> usize {
+    let vtree = &tdd.vtree;
+    let mut out = 0;
+    for (p, left, right) in vtree.internal_bottomup() {
+        if !tdd.is_structural_internal(p) {
+            continue;
+        }
+        for (c, on_left) in [(left, true), (right, false)] {
+            if !tdd.is_structural_internal(c) {
+                continue;
+            }
+            let view = tdd.levels[c.idx()].child_decoder();
+            let parent = &tdd.levels[p.idx()];
+            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
+                .flat_map(|i| parent.pairs_vec(i))
+                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
+                .collect();
+            out += tdd.levels[c.idx()].slot_count() - named.len();
+        }
+    }
+    out
+}
+
+/// A contraction run alone drops the nodes no pair names that its whole
+/// searches list, two or more on a level: operands on a few variables placed
+/// on a wider vtree and conjoined, plainly and marginalizing, leave such
+/// nodes. It keeps the count, lists loose every level left holding such a
+/// node where the loose levels are known, and the full reduction after it
+/// gives the diagram the full reduction of the conjunction gives.
+#[test]
+fn a_contraction_drops_the_nodes_no_pair_names() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{assert_same_shape, vtree_shapes, Lcg};
+    use crate::vtree::VtreeIdx;
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x51d2_7a03);
+    let (mut before, mut after) = ([0usize; 2], [0usize; 2]);
+    for (shape, wide) in vtree_shapes(14) {
+        for case in 0..32 {
+            let marginal = case % 2 == 1;
+            let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
+            let conj = if marginal {
+                let targets: Vec<VtreeIdx> = wide.bottomup().filter(|_| rng.below(4) == 0).collect();
+                eng.and_marginalizing(f, g, &targets).unwrap()
+            } else {
+                eng.and(f, g).unwrap()
+            };
+            if conj.is_zero() {
+                continue;
+            }
+            let label = format!("{shape}, case {case}");
+            let count = conj.model_count().unwrap();
+            let mut contracted = conj.clone();
+            eng.reduce(&mut contracted, ReductionPlan::Contract).unwrap();
+            before[usize::from(marginal)] += unnamed_nodes(&conj);
+            after[usize::from(marginal)] += unnamed_nodes(&contracted);
+            assert_eq!(contracted.model_count().unwrap(), count, "{label}");
+            if let Some(loose) = contracted.dirty.loose() {
+                for t in unnamed_levels(&contracted) {
+                    assert!(loose.contains(&t), "{label}: level {t} holds an unnamed node and is not listed loose");
+                }
+            }
+            let mut full = conj;
+            eng.minimize(&mut full).unwrap();
+            eng.minimize(&mut contracted).unwrap();
+            assert_same_shape(&full, &contracted, &label);
+        }
+    }
+    for m in 0..2 {
+        assert!(after[m] < before[m], "marginal {m}: no contraction dropped a node no pair names ({} before, {} after)", before[m], after[m]);
+    }
+}
+
 /// A random few of the variables of `wide`, sorted, and `wide` restricted to
 /// them, which numbers them from 1 in that order.
 fn restricted(rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> (Vec<u32>, Arc<Vtree>) {

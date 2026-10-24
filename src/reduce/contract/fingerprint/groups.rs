@@ -164,6 +164,13 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch, empty_twins: boo
     let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
     let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
     let found = sig0 == sig1 && (empty_twins || !sig0.is_empty());
+    if !empty_twins {
+        for (node, sig) in [sig0, sig1].into_iter().enumerate() {
+            if sig.is_empty() {
+                lim.try_push(&mut scratch.unnamed, node as u32)?;
+            }
+        }
+    }
     if found {
         lim.try_push(&mut scratch.group_starts, 0)?;
         lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
@@ -180,7 +187,8 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch, empty_twins: boo
 /// is a group of its own and never a member: only the candidates are hashed
 /// and grouped, in ascending index order, which gives the groups and their
 /// order that grouping every node would. The nodes of empty signature are a
-/// group only with `empty_twins`.
+/// group only with `empty_twins`; without, the candidates among them are put
+/// in `scratch.unnamed`, ascending.
 fn group_by_hashed_signature(
     eng: &Engine,
     child_width: usize,
@@ -225,7 +233,7 @@ fn group_by_hashed_signature(
     // Pass 2: build contiguous groups via counting sort. O(n).
     // Repurpose fingerprints[] as per-rep member count (additive fingerprints
     // are no longer needed after hash table construction).
-    let ContractScratch { fingerprints, cursors, candidates, counts, flat_groups, group_starts, .. } = &mut *scratch;
+    let ContractScratch { fingerprints, cursors, candidates, counts, flat_groups, group_starts, unnamed, .. } = &mut *scratch;
     let empty = |k: usize| counts[candidates[k] as usize] == counts[candidates[k] as usize + 1];
     fingerprints[..n].fill(0);
     for &rep in &cursors[..n] {
@@ -244,6 +252,13 @@ fn group_by_hashed_signature(
             pos += cnt;
         } else {
             fingerprints[k] = u64::MAX;
+        }
+    }
+    if !empty_twins {
+        for &node in &candidates[..n] {
+            if counts[node as usize] == counts[node as usize + 1] {
+                lim.try_push(unnamed, node)?;
+            }
         }
     }
     // Scatter-write members into flat_groups.

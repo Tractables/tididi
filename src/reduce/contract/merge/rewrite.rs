@@ -16,6 +16,10 @@ use super::super::scratch::MergeRemap;
 /// reaches it.
 pub(in crate::reduce::contract) const DROPPED: u32 = 1 << 31;
 
+/// The `final_remap` entry of a node the merge drops with its pairs, no
+/// pair naming it: it has no survivor.
+pub(in crate::reduce::contract) const DISCARDED: u32 = u32::MAX;
+
 /// The new index of the survivor of node `old` after the merge.
 #[inline]
 pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize) -> NodeIdx {
@@ -169,6 +173,7 @@ fn move_canonical_pairs(
 fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> (ChildPair, bool) {
     let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
     let to = remap.final_remap[f.0 as usize].0;
+    debug_assert_ne!(to, DISCARDED, "a pair names a node the merge drops as unnamed");
     *f = NodeIdx(to & !DROPPED).into();
     (pair, to & DROPPED == 0)
 }

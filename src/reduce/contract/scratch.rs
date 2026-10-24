@@ -316,6 +316,12 @@ pub(crate) struct ContractScratch {
     /// One bit per node of the level a list is gathered for
     /// (`fingerprint::named_by`).
     pub(super) reach_bits: Vec<u64>,
+    /// Two or more nodes of the child level a whole search read that no
+    /// parent pair names, ascending: the search lists them where it read
+    /// every pair, and the merge drops them.
+    pub(super) unnamed: Vec<u32>,
+    /// Whether the sweep drops the nodes its searches list in `unnamed`.
+    pub(super) drop_unnamed: bool,
 
     // ── `contract_twins` buffers ──
     /// Twin survivor selection and compacted node indices.
@@ -412,6 +418,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
         visit(&mut self.reach_bits);
+        visit(&mut self.unnamed);
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);
         visit(&mut self.needs_check);
@@ -520,6 +527,14 @@ impl Listing {
     #[inline]
     pub(super) fn whole(&self, p: usize) -> bool {
         self.whole.get(p) == Some(&self.sweep)
+    }
+
+    /// Have the children of `p` searched whole when the sweep reaches it.
+    #[inline]
+    pub(super) fn set_whole(&mut self, p: usize) {
+        if let Some(whole) = self.whole.get_mut(p) {
+            *whole = self.sweep;
+        }
     }
 
     /// Whether level `t`, in a diagram with a marginal level, holds a group

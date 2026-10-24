@@ -9,7 +9,7 @@ use crate::diagram::{ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, Range
 
 use super::super::scratch::{DuplicateScratch, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
-use super::rewrite::{survivor, DROPPED};
+use super::rewrite::{survivor, DISCARDED, DROPPED};
 
 /// The arenas the merged level is rebuilt into, had before the merge
 /// changes anything ([`remap_and_reserve`]).
@@ -99,6 +99,10 @@ pub(super) fn remap_and_reserve(
     for i in 0..level.nodes().len() {
         let unioned = if absorbed(bits, i) {
             let to = final_remap[i].0;
+            if to == DISCARDED {
+                // A node no pair names: dropped with its pairs.
+                continue;
+            }
             let keep = (to & !DROPPED) as usize;
             debug_assert!(keep < i, "a group's survivor is its lowest member");
             final_remap[i] = NodeIdx(final_remap[keep].0 | (to & DROPPED));
