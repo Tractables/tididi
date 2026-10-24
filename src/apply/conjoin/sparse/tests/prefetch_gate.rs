@@ -1,18 +1,17 @@
 //! The scatter's prefetches: on a level whose inner products span more
-//! than the gate's size, each walk asks the cache for the inner runs and
-//! the parents' buckets it reads some f pairs ahead, and the emit asks for a
-//! bucket some parents ahead. Prefetches are hints, so with the gate pinned
-//! open every result must be the one the walk without them returns, and the
-//! dense grid's: on random joins, on skewed ones whose few keys carry most
-//! of the rows, and on a join with more parents than candidates, collected
-//! into buckets, flat, and in chunks of one entry, for the conjunction, the
+//! than the gate's size, a counted fold's walk and a walk writing a
+//! one-product level ask the cache for the inner runs they read some f pairs
+//! ahead. Prefetches are hints, so with the gate pinned open every result
+//! must be the one the walk without them returns, and the dense grid's: on
+//! random joins, on skewed ones whose few keys carry most of the rows, and
+//! on a join with more parents than candidates, for the conjunction, the
 //! conjunction with a block quantified and the counted conjunction, whose
 //! root either sums its candidates per inner child or, with counts past
 //! `u64`, folds them one by one.
 use std::sync::Arc;
 
 use super::inner_index::{block, pack};
-use super::{prefetches_run, random_rows, vtrees, ForcedPrefetch, ForcedThresholds, SparseThresholds, BYTES_PER_PAR_ENTRY};
+use super::{prefetches_run, random_rows, vtrees, ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
 use crate::vtree::Vtree;
 use crate::Engine;
@@ -21,12 +20,7 @@ use crate::Engine;
 fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let routes = [
-        SparseThresholds { flat_parents: usize::MAX, ..sparse },
-        SparseThresholds { flat_parents: 1, ..sparse },
-        SparseThresholds { flat_parents: 1, chunk_bytes: BYTES_PER_PAR_ENTRY, ..sparse },
-        SparseThresholds { flat_parents: usize::MAX, chunk_bytes: BYTES_PER_PAR_ENTRY, ..sparse },
-    ];
+    let routes = [sparse, SparseThresholds { collected_pairs: 1, ..sparse }];
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
     let before = prefetches_run();
@@ -122,12 +116,10 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
             }
         }
     }
-    // Every prefetching walk ran with the gate open: a listing walk
-    // collecting flat and one collecting into buckets, a counted fold's
-    // walk, a walk writing a one-product level directly, and the emit over
-    // buckets.
+    // Both prefetching walks ran with the gate open: a counted fold's walk
+    // and a walk writing a one-product level directly.
     let after = prefetches_run();
-    for site in 0..5 {
+    for site in 0..2 {
         assert!(after[site] > before[site], "prefetch site {site} never ran: {before:?} -> {after:?}");
     }
 }

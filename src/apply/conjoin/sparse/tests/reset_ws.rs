@@ -12,20 +12,20 @@ fn clearing_scratch_leaves_active_workspace_independent() {
     let eng = Engine::new();
     {
         let mut outer = eng.scratch.sparse.checkout(&eng);
-        outer.par_flat.reserve(256);
-        let allocation = outer.par_flat.as_ptr();
+        outer.node_candidates.reserve(256);
+        let allocation = outer.node_candidates.as_ptr();
         eng.clear_scratch();
         let mut inner = eng.scratch.sparse.checkout(&eng);
-        inner.par_flat.reserve(128);
-        assert_ne!(inner.par_flat.as_ptr(), allocation);
+        inner.node_candidates.reserve(128);
+        assert_ne!(inner.node_candidates.as_ptr(), allocation);
         drop(inner);
-        assert_eq!(outer.par_flat.as_ptr(), allocation);
+        assert_eq!(outer.node_candidates.as_ptr(), allocation);
     }
-    assert!(eng.scratch.sparse.checkout(&eng).par_flat.capacity() >= 256);
+    assert!(eng.scratch.sparse.checkout(&eng).node_candidates.capacity() >= 256);
     eng.clear_scratch();
     let ws = eng.scratch.sparse.checkout(&eng);
-    assert_eq!(ws.par_buckets.charged_bytes(), 0);
-    assert_eq!(ws.par_flat.capacity(), 0);
+    assert_eq!(ws.filtered.charged_bytes(), 0);
+    assert_eq!(ws.node_candidates.capacity(), 0);
     assert_eq!(ws.f_by_outer.entries.capacity(), 0);
 }
 

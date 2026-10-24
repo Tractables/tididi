@@ -39,7 +39,7 @@ fn target_sets(vtree: &Vtree, a: &[VarId]) -> Vec<Vec<VtreeIdx>> {
 fn a_counted_root_is_the_count_of_the_conjunction() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    let collected = SparseThresholds { collected_pairs: 1, ..sparse };
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let (a, b, c) = (block(1, 3), block(4, 3), block(7, 3));
     // No free variable: the grouped path. 60 beside `a`: counts near the
@@ -82,7 +82,7 @@ fn a_counted_root_is_the_count_of_the_conjunction() {
                     assert_canonical(&f);
                     assert_canonical(&g);
                     for targets in target_sets(&vtree, &a) {
-                        for thresholds in [sparse, flat, dense] {
+                        for thresholds in [sparse, collected, dense] {
                             let _forced = ForcedThresholds::install(thresholds);
                             let counted = eng.and_model_count(f.clone(), g.clone(), &targets).unwrap();
                             assert_eq!(counted, expected, "seed {seed}, targets {targets:?}, {thresholds:?}");
@@ -109,7 +109,7 @@ fn a_counted_root_is_the_count_of_the_conjunction() {
 fn a_wide_counted_root_is_the_count_of_the_built_conjunction() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    let collected = SparseThresholds { collected_pairs: 1, ..sparse };
     let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
     for (seed, n) in [(0u64, 300usize), (1, 1500), (2, 4000)] {
         let (f2, g2) = (rows(seed, n, 2, 7), rows(seed + 100, n, 2, 7));
@@ -133,7 +133,7 @@ fn a_wide_counted_root_is_the_count_of_the_built_conjunction() {
                 let built = eng.and(f.clone(), g.clone()).unwrap();
                 assert_canonical(&built);
                 let expected = eng.model_count(&built).unwrap();
-                for thresholds in [sparse, flat] {
+                for thresholds in [sparse, collected] {
                     let _forced = ForcedThresholds::install(thresholds);
                     for (l, r) in [(&f, &g), (&g, &f)] {
                         let counted = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();

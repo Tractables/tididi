@@ -27,7 +27,7 @@ fn conjoin(eng: &Engine, vtree: &Arc<Vtree>, f: (&[VarId], &[u64]), g: (&[VarId]
 fn every_emit_builds_the_dense_grids_nodes() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    let collected = SparseThresholds { collected_pairs: 1, ..sparse };
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let (a, b, c) = (block(1, 3), block(4, 3), block(7, 3));
     for seed in 0..12u64 {
@@ -44,7 +44,7 @@ fn every_emit_builds_the_dense_grids_nodes() {
         for vtree in vtrees(&a, &b, &c) {
             for ((fv, fr), (gv, gr)) in &joins {
                 let from_dense = conjoin(&eng, &vtree, (fv, fr), (gv, gr), dense);
-                for thresholds in [sparse, flat] {
+                for thresholds in [sparse, collected] {
                     let mut from_sparse = conjoin(&eng, &vtree, (fv, fr), (gv, gr), thresholds);
                     assert_eq!(
                         normalized_levels(&from_sparse),

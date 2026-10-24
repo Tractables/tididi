@@ -1,13 +1,13 @@
-//! The flat candidate list: a level with far more f parents than candidates
-//! collects them in one list and sorts it by parent, instead of touching a
-//! bucket per parent; the output must be the bucketed path's and the dense
-//! grid's.
+//! A level with an f parent per key, each holding one pair, against one g
+//! parent: each f parent hands the emit at most one candidate, and the
+//! output must be the dense grid's whether the walk writes the candidates
+//! to the level's pair arena or hands them to the emit as one list.
 use std::sync::Arc;
 
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::{ForcedThresholds, SparseThresholds, BYTES_PER_PAR_ENTRY};
+use super::{ForcedThresholds, SparseThresholds};
 
 use crate::diagram::Tdd;
 use crate::vtree::{VarId, Vtree};
@@ -33,7 +33,7 @@ fn vtree() -> Arc<Vtree> {
 /// `f` pairs each key `a` with one `b` and a `c` of its own, so at the level
 /// `(a b)` it has one parent per key, each holding one pair, while `g` holds
 /// the same `(a, b)` rows for all but two keys in one parent. The level's
-/// parents outnumber its candidates, which is the flat list's case.
+/// parents outnumber its candidates.
 fn keyed_join(eng: &Engine, vtree: &Arc<Vtree>, thresholds: SparseThresholds) -> Tdd {
     let (a, b, c) = blocks();
     let f_rows: Vec<Vec<u64>> = (0..12u64).map(|k| vec![k, (k * 5) % 8, k]).collect();
@@ -48,34 +48,19 @@ fn keyed_join(eng: &Engine, vtree: &Arc<Vtree>, thresholds: SparseThresholds) ->
 }
 
 #[test]
-fn flat_candidates_agree_with_buckets_and_the_dense_grid() {
+fn a_level_of_many_parents_agrees_with_the_dense_grid() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
-    let buckets = SparseThresholds { flat_parents: usize::MAX, ..sparse };
+    let collected = SparseThresholds { collected_pairs: 1, ..sparse };
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let vtree = vtree();
-    let from_flat = keyed_join(&eng, &vtree, flat);
-    let from_buckets = keyed_join(&eng, &vtree, buckets);
+    let from_arena = keyed_join(&eng, &vtree, sparse);
+    let from_list = keyed_join(&eng, &vtree, collected);
     let from_dense = keyed_join(&eng, &vtree, dense);
     // Twelve keys, of which two (4 and 9) have no `g` row.
-    for out in [&from_flat, &from_buckets, &from_dense] {
+    for out in [&from_arena, &from_list, &from_dense] {
         assert_eq!(out.model_count().unwrap(), BigUint::from(10u32));
     }
-    assert!(from_flat.equivalent(&from_buckets).unwrap());
-    assert!(from_flat.equivalent(&from_dense).unwrap());
-}
-
-#[test]
-fn chunked_flat_candidates_match_the_unchunked_list() {
-    let eng = Engine::new();
-    let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
-    // A one-entry budget gives every parent with a candidate a chunk of its own.
-    let chunked = SparseThresholds { chunk_bytes: BYTES_PER_PAR_ENTRY, ..flat };
-    let vtree = vtree();
-    let whole = keyed_join(&eng, &vtree, flat);
-    let in_chunks = keyed_join(&eng, &vtree, chunked);
-    assert_eq!(in_chunks.model_count().unwrap(), BigUint::from(10u32));
-    assert!(in_chunks.equivalent(&whole).unwrap());
+    assert!(from_arena.equivalent(&from_dense).unwrap());
+    assert!(from_list.equivalent(&from_dense).unwrap());
 }

@@ -1,8 +1,9 @@
 //! Regressions in the sparse product path, forced on (`min_grid=1`,
 //! `sparsity_factor=1`) so small formulas take the code paths that normally
 //! only large grids reach: the leaf-alive table's label order, duplicate
-//! output pairs from the scatter phase, chunked emission, workspace residue
-//! across compiles, and the sparse/dense seam within one apply.
+//! output pairs from the scatter phase, an f node's candidates handed to the
+//! emit as one list, workspace residue across compiles, and the
+//! sparse/dense seam within one apply.
 use crate::Engine;
 use std::sync::Arc;
 
@@ -45,9 +46,11 @@ impl Sparse {
         }
     }
 
-    /// The same thresholds with a different chunk budget, on a fresh engine.
-    fn rechunked(&self, chunk_bytes: usize) -> Sparse {
-        Sparse { eng: Engine::new(), thresholds: SparseThresholds { chunk_bytes, ..self.thresholds } }
+    /// The same thresholds with every f node of at least `collected_pairs`
+    /// pairs handing its candidates to the emit as one list, on a fresh
+    /// engine.
+    fn collecting(&self, collected_pairs: usize) -> Sparse {
+        Sparse { eng: Engine::new(), thresholds: SparseThresholds { collected_pairs, ..self.thresholds } }
     }
 
     /// `Engine::and` under these thresholds, summing out the levels in
@@ -176,36 +179,38 @@ fn all_test_cases_sparse() {
     }
 }
 
-/// A chunk budget so small that every non-trivial sparse level splits must
-/// agree with chunking disabled.
+/// Every f node handing its candidates to the emit as one list must agree
+/// with every f node writing them to the level's pair arena.
 #[test]
-fn chunked_equivalence_all_cases() {
+fn collected_equivalence_all_cases() {
     let sparse = Sparse::always();
-    let chunking = sparse.rechunked(256);
-    let whole = sparse.rechunked(usize::MAX);
+    let collected = sparse.collecting(1);
+    let arena = sparse.collecting(usize::MAX);
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
-            let chunked = chunking.compile(&vtree, &clauses);
-            let unchunked = whole.compile(&vtree, &clauses);
-            assert_eq!(chunked.model_count().unwrap(), expected, "chunked: n={num_vars} clauses={clauses:?}");
-            assert_eq!(unchunked.model_count().unwrap(), expected, "unchunked: n={num_vars} clauses={clauses:?}");
+            let listed = collected.compile(&vtree, &clauses);
+            let written = arena.compile(&vtree, &clauses);
+            assert_eq!(listed.model_count().unwrap(), expected, "collected: n={num_vars} clauses={clauses:?}");
+            assert_eq!(written.model_count().unwrap(), expected, "arena: n={num_vars} clauses={clauses:?}");
+            assert_eq!(normalized_levels(&listed), normalized_levels(&written), "n={num_vars} clauses={clauses:?}");
         }
     }
 }
 
-/// Wide enough that the chunk budget forces multi-chunk splits.
+/// The same on a formula wide enough that f nodes hold many pairs.
 #[test]
-fn chunked_wide_formula() {
+fn collected_wide_formula() {
     let sparse = Sparse::always();
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
     let vtree = Arc::new(Vtree::balanced(14));
-    let chunked = sparse.rechunked(256).compile(&vtree, &clauses);
-    let unchunked = sparse.rechunked(usize::MAX).compile(&vtree, &clauses);
-    assert_eq!(chunked.model_count().unwrap(), expected);
-    assert_eq!(unchunked.model_count().unwrap(), expected);
+    let listed = sparse.collecting(1).compile(&vtree, &clauses);
+    let written = sparse.collecting(usize::MAX).compile(&vtree, &clauses);
+    assert_eq!(listed.model_count().unwrap(), expected);
+    assert_eq!(written.model_count().unwrap(), expected);
+    assert_eq!(normalized_levels(&listed), normalized_levels(&written));
 }
 
 /// Alternating narrow and wide compiles on one thread reuse the sparse

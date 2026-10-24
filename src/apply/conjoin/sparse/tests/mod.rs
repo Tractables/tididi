@@ -138,7 +138,7 @@ thread_local! {
     static PREFETCH: Cell<Option<bool>> = const { Cell::new(None) };
     /// How many f pairs on this thread had their reads asked for ahead, per
     /// walk (see [`prefetches_run`]).
-    static PREFETCHED: Cell<[u64; 5]> = const { Cell::new([0; 5]) };
+    static PREFETCHED: Cell<[u64; 2]> = const { Cell::new([0; 2]) };
 }
 
 /// The pinned prefetch gate, if any: `Some(true)` has every scatter walk ask
@@ -175,10 +175,8 @@ pub(super) fn note_prefetch(site: usize) {
 }
 
 /// How many reads the scatter on this thread asked for ahead: per f pair of
-/// a listing walk collecting flat, one collecting into buckets, a counted
-/// fold's walk and a walk writing a one-product level directly, and per
-/// parent of an emit over buckets.
-pub(super) fn prefetches_run() -> [u64; 5] {
+/// a counted fold's walk and of a walk writing a one-product level directly.
+pub(super) fn prefetches_run() -> [u64; 2] {
     PREFETCHED.with(Cell::get)
 }
 
@@ -291,7 +289,7 @@ mod count_root;
 mod counting_sort;
 mod direction;
 mod emit;
-mod flat_candidates;
+mod many_parents;
 mod held_bits;
 mod root_gate;
 mod inner_index;

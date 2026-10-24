@@ -20,7 +20,7 @@ fn the_kept_byte_count_of_the_rows_is_the_count_a_walk_of_every_row_gives() {
             if n == 0 { break; }
             let at = rng.below(n as u64) as usize;
             if rng.below(8) == 0 {
-                // The chunked dedup takes a consumed row's allocation away.
+                // A consumer may take a row's allocation away.
                 drop(std::mem::take(&mut rows[at]));
             } else {
                 rows[at].push(rng.next_u64() as u32);

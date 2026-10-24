@@ -53,13 +53,13 @@ pub(crate) struct Complete {
 /// `complete` side, which it reads where it reads a leaf. With both
 /// children non-leaf and listed, the general arm joins the level in the
 /// direction `estimate_scatter_direction` picks. Into the level's nodes
-/// ([`Collect::Nodes`]) the leaf arm emits each f parent as its walk ends,
-/// while the general arm holds the candidates in a bucket per f parent or in
-/// the flat list, as its emit-step count decides (`flat_candidates_win`),
-/// and emits them once its scatter is done ([`emit_held`]). On a level with
-/// one product the candidates go where `collect` says instead: the level's
-/// pair arena ([`finish_direct`]), a count ([`count_sparse_level`]) or the
-/// sums of a child summed out ([`sum_sparse_level`]).
+/// ([`Collect::Nodes`]) both arms walk f's nodes and emit each f parent as
+/// its walk ends, the general arm through every outer key's filtered index
+/// ([`scatter_routed`]). On a level with one product the candidates go
+/// where `collect` says instead, from the general arm's walk by outer key
+/// ([`scatter_join`]): the level's pair arena ([`finish_direct`]), a count
+/// ([`count_sparse_level`]) or the sums of a child summed out
+/// ([`sum_sparse_level`]).
 #[expect(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
@@ -68,7 +68,6 @@ fn scatter_level(
     g: &Tdd,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
-    thresholds: SparseThresholds,
     collect: Collect<'_, '_>,
     passthrough: Option<Passthrough>,
     complete: Option<Complete>,
@@ -108,78 +107,12 @@ fn scatter_level(
     // substitute a plain grid-size proxy — it ignores selectivity and
     // mispicks on wide×wide segment conjoins.
     let choice = estimate_scatter_direction(eng, &mut ws.est_counts, f_level, g_level, pl.left, pl.right, shape)?;
-    let join = |ws: &mut SparseWorkspace, collect: Collect<'_, '_>| {
-        if !choice.swapped {
-            scatter_join::<false>(eng, ws, f_level, g_level, shape, pl, collect)
-        } else {
-            scatter_join::<true>(eng, ws, f_level, g_level, shape, pl, collect)
-        }
-    };
-    let Collect::Nodes(emit) = collect else {
-        return join(ws, collect);
-    };
-    if ROUTED {
-        return if !choice.swapped {
-            scatter_routed::<false>(eng, ws, f_level, g_level, shape, pl, Collect::Nodes(emit))
-        } else {
-            scatter_routed::<true>(eng, ws, f_level, g_level, shape, pl, Collect::Nodes(emit))
-        };
+    match (collect, choice.swapped) {
+        (Collect::Nodes(emit), false) => scatter_routed::<false>(eng, ws, f_level, g_level, shape, pl, emit),
+        (Collect::Nodes(emit), true) => scatter_routed::<true>(eng, ws, f_level, g_level, shape, pl, emit),
+        (collect, false) => scatter_join::<false>(eng, ws, f_level, g_level, shape, pl, collect),
+        (collect, true) => scatter_join::<true>(eng, ws, f_level, g_level, shape, pl, collect),
     }
-    let flat = flat_candidates_win(thresholds, shape.f.here, choice.emit_steps);
-    if flat {
-        ws.par_flat.clear();
-        join(ws, Collect::Flat)?;
-        sort_candidates(eng, ws, shape.f.here)?;
-        // Sorted, the flat list is dead; its capacity stays for the next
-        // level and the retention cap decides its fate at checkout's end.
-        ws.par_flat.clear();
-    } else {
-        ws.par_buckets.reset(lim, shape.f.here)?;
-        join(ws, Collect::Buckets)?;
-    }
-    emit_held(eng, ws, emit, shape.f.here, flat, thresholds)
-}
-
-/// Whether the general arm builds a level's nodes by walking f's nodes
-/// ([`scatter_routed`]) rather than holding its candidates for the emit.
-const ROUTED: bool = true;
-
-/// Emit the nodes of a level whose candidates the general arm holds for
-/// its `parents` f parents, in the sorted flat list with `flat` and in the
-/// buckets otherwise.
-///
-/// `plan_chunks` greedy-packs f-parent indices into emit chunks under the
-/// sparse chunk budget (`usize::MAX` disables). A level that fits in one
-/// chunk is emitted once with `drop_consumed=false`, preserving
-/// cross-apply par_buckets capacity reuse. Wider levels split into several
-/// chunks with `drop_consumed=true`, releasing each `par_buckets[p1]` once
-/// it is emitted, before the output grows further. The product list grows
-/// across chunks, so `prod_idx` stays sequential over the level.
-fn emit_held(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    emit: Emit<'_>,
-    parents: usize,
-    flat: bool,
-    thresholds: SparseThresholds,
-) -> Result<(), OperationError> {
-    let Emit { level, out, duplicates_legal, .. } = emit;
-    let boundaries = if flat {
-        plan_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), parents, thresholds.chunk_bytes)
-    } else {
-        plan_chunks(ws.par_buckets.iter().map(Vec::len), parents, thresholds.chunk_bytes)
-    };
-    let is_chunked = boundaries.len() > 2;
-    let ahead = !flat && emits_ahead(parents);
-    for window in boundaries.windows(2) {
-        let chunk = window[0] as usize..window[1] as usize;
-        if ahead {
-            emit_buckets_ahead(eng, ws, level, out, chunk, is_chunked, duplicates_legal)?;
-        } else {
-            emit_chunk(eng, ws, level, out, chunk, flat, is_chunked, duplicates_legal)?;
-        }
-    }
-    Ok(())
 }
 
 /// The join direction on a level with a leaf child, `None` when neither child
@@ -256,24 +189,20 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// With `complete`, that side is joined by arithmetic, and its product list,
 /// which the caller did not build, is not read either.
 ///
-/// Steps:
-///   join: the candidates of each f parent, by the leaf arm's walk of f's
-///         nodes or the general arm's scatter by the outer child
-///   emit: per f parent, dedup its candidates' g parents into products via
+/// Steps, per f parent in order:
+///   join: the parent's candidates, by the leaf arm's or the general arm's
+///         walk of f's nodes
+///   emit: dedup the candidates' g parents into products via
 ///         `p2_map[g_parent]` and write each product's node into the level
+///
+/// Each f parent is emitted as soon as its walk ends, so the level holds
+/// one parent's candidates at a time: a parent of fewer than
+/// `thresholds.collected_pairs` pairs writes them to the level's pair arena
+/// as it finds them, a larger one into a candidate list for the emit.
 ///
 /// A level where f and g have one node each has no emit step: its one
 /// product's pairs are the candidates, and the join writes them into the
 /// level.
-///
-/// The leaf arm emits each f parent as soon as its walk ends, so it holds
-/// one parent's candidates at a time. The general arm holds them all, and
-/// its emit is chunked by f-parent index range when the projected
-/// transient exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets`
-/// rows are then dropped as they are emitted, so the output grows in their
-/// space. A level whose candidates were collected flat holds them in one
-/// sorted list the chunks read in place, so chunking bounds only what the
-/// output grows by.
 ///
 /// # Errors
 ///
@@ -330,7 +259,7 @@ pub(crate) fn apply_sparse_level(
     if shape.f.here == 1 && shape.g.here == 1 {
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
-        scatter_level(eng, ws, f, g, shape, pl, thresholds, Collect::Direct(&mut *level), passthrough, complete)?;
+        scatter_level(eng, ws, f, g, shape, pl, Collect::Direct(&mut *level), passthrough, complete)?;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -374,7 +303,7 @@ pub(crate) fn apply_sparse_level(
     }
 
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, collected_pairs: thresholds.collected_pairs };
-    scatter_level(eng, ws, f, g, shape, pl, thresholds, Collect::Nodes(emit), passthrough, complete)?;
+    scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
 
     #[cfg(debug_assertions)]
     debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -432,14 +361,13 @@ pub(crate) fn count_sparse_level(
     g: &Tdd,
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
-    thresholds: SparseThresholds,
     passthrough: Option<Passthrough>,
     fold: &mut CandidateFold<'_>,
 ) -> Result<(), OperationError> {
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Collect::Fold(fold), passthrough, None)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, Collect::Fold(fold), passthrough, None)?;
     guard.scatter_clean();
     Ok(())
 }
@@ -459,14 +387,13 @@ pub(crate) fn sum_sparse_level(
     g: &Tdd,
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
-    thresholds: SparseThresholds,
     complete: Option<Complete>,
     sum: &mut ChildSum,
 ) -> Result<(), OperationError> {
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Collect::Sum(sum), None, complete)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, Collect::Sum(sum), None, complete)?;
     guard.scatter_clean();
     Ok(())
 }
@@ -504,10 +431,6 @@ fn assert_no_marginal_children(
 
 /// Check the invariants a flushed level leaves behind: `pl_output` grew
 /// monotonically with `prod_idx[i] == i`, and it has one entry per node.
-///
-/// `par_buckets` needs no check — single-chunk mode iterated it by reference and
-/// multi-chunk mode replaced each consumed bucket, and either way the next
-/// level's `Rows::reset` empties the rows it opens.
 #[cfg(debug_assertions)]
 fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
     for (i, e) in pl_output.iter().enumerate() {

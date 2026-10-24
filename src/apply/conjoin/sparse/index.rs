@@ -4,20 +4,13 @@ use super::*;
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use crate::limits::{Charged, Limits};
 
-/// Candidate that survived the sibling liveness filter, grouped by f-parent.
+/// A candidate of one f parent: a g parent and the two child products its
+/// pair joins.
 #[derive(Clone, Copy)]
 pub(super) struct ParEntry {
     pub(super) g_parent: u32,   // g parent index
     pub(super) left_prod: u32,  // compacted left-child product index
     pub(super) right_prod: u32, // compacted right-child product index
-}
-
-/// A candidate with the f parent it belongs to, as the flat list holds it
-/// before the sort by parent.
-#[derive(Clone, Copy)]
-pub(super) struct Candidate {
-    pub(super) parent: u32,
-    pub(super) entry: ParEntry,
 }
 
 /// Reusable workspace for sparse product construction.
@@ -85,19 +78,12 @@ pub(crate) struct SparseWorkspace {
     pub(super) routes: Routes,
 
     // ── Candidates, and their dedup into products ──
-    pub(super) par_buckets: Rows<ParEntry>,          // surviving candidates bucketed by f-parent
-    // The flat alternative a level with many more parents than candidates
-    // takes (`flat_candidates_win`): the scatter appends every candidate
-    // with its parent to `par_flat`, and `sort_candidates` groups them by
-    // parent into `par_sorted`.
-    pub(super) par_flat: Vec<Candidate>,
-    pub(super) par_sorted: Grouped<ParEntry>,
     // The candidates of one f node, for the walks that find a node's
-    // candidates all at once and emit it before the next (the leaf arm and
-    // the probe).
+    // candidates all at once and emit it before the next (the walks of f's
+    // nodes and the probe).
     pub(super) node_candidates: Vec<ParEntry>,
     // The g parents of one f node's candidates, in candidate order, for the
-    // leaf arm's walk that writes the candidates' pairs straight into the
+    // walks of f's nodes that write the candidates' pairs straight into the
     // level (`emit_walked`).
     pub(super) node_owners: Vec<u32>,
 
@@ -823,9 +809,6 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.outer_keys);
         visit(&mut self.outer_attached);
         self.routes.buffers(visit);
-        visit(&mut self.par_buckets);
-        visit(&mut self.par_flat);
-        self.par_sorted.buffers(visit);
         visit(&mut self.node_candidates);
         visit(&mut self.node_owners);
         visit(&mut self.est_counts);

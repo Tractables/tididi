@@ -9,8 +9,6 @@
 //! lookups instead of scattered (`probe`), where its price says the lookups
 //! are linear in the level's pairs.
 
-use smallvec::SmallVec;
-
 use crate::vtree::VtreeIdx;
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, finish_node, reserve_pairs_for_emit, try_push_pair_into};

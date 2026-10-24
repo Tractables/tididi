@@ -3,7 +3,8 @@
 //! whose buckets fall in either word and differ from one round to the next,
 //! the sparse route must build the dense grid's nodes: its conjunction,
 //! projection, marginal and count are the dense route's, on every vtree,
-//! both collections and both operand orders.
+//! with large f nodes or every f node collecting its candidates for the
+//! emit, and both operand orders.
 use super::inner_index::{block, pack};
 use super::{rows, vtrees, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
@@ -13,7 +14,7 @@ use crate::Engine;
 fn the_bit_per_bucket_keeps_every_candidate_of_a_wide_level() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    let collected = SparseThresholds { collected_pairs: 1, ..sparse };
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     // 7-bit blocks: up to 128 children a side, two words of bits.
     let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
@@ -48,7 +49,7 @@ fn the_bit_per_bucket_keeps_every_candidate_of_a_wide_level() {
                         (and, exists, marginal, count)
                     };
                     let (and_d, exists_d, marginal_d, count_d) = run(dense);
-                    for thresholds in [sparse, flat] {
+                    for thresholds in [sparse, collected] {
                         let (and, exists, marginal, count) = run(thresholds);
                         // The dense grid's nodes, before any reduction.
                         assert_same_shape(&and, &and_d, "and");

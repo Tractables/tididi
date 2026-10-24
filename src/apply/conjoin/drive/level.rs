@@ -203,7 +203,7 @@ pub(super) fn count_sparse_root(
     count_sparse_level(
         eng, shape, f, g, levels,
         Sides { left: lists.left, right: lists.right },
-        run.thresholds, None, &mut fold,
+        None, &mut fold,
     )?;
     Ok(fold.finish())
 }
@@ -371,7 +371,7 @@ pub(super) fn sum_sparse_root(
     sum_sparse_level(
         eng, shape, f, g, run.levels,
         Sides { left: lists.left, right: lists.right },
-        run.thresholds, complete, &mut sum,
+        complete, &mut sum,
     )?;
     if sum.is_empty() {
         run.products.finish_sparse(&mut run.levels[ti], ti);
