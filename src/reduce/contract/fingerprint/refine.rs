@@ -22,18 +22,14 @@ struct Wide<'a> {
     links: &'a mut Vec<(u32, u32)>,
     table: &'a mut Vec<u32>,
     radix: &'a mut Radix,
-    degree: &'a mut Vec<u64>,
-    column: &'a mut Vec<u64>,
+    degree: &'a mut Vec<u32>,
+    column: &'a mut Vec<u32>,
     reach: &'a mut Vec<u32>,
-    rows: &'a mut Vec<u32>,
-    stamp: &'a mut u32,
+    touched: &'a mut Vec<u32>,
     /// No parent node repeats a pair: the counts of
     /// [`Partition::split_by_degree`] are of sets.
     simple: bool,
 }
-
-/// The low half of a stamped count, the count.
-const COUNT: u64 = 0xFFFF_FFFF;
 
 /// The most pairs a parent node holds where its nodes are grouped on the
 /// stack, by comparing every two; a wider one sorts them in scratch.
@@ -78,7 +74,7 @@ pub(super) fn refine_context_groups(
 ) -> Result<bool, OperationError> {
     let ContractScratch {
         twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
-        refine_wide, refine_radix, refine_degree, refine_column, refine_reach, refine_rows, refine_stamp, flat_groups,
+        refine_wide, refine_radix, refine_degree, refine_column, refine_reach, refine_touched, flat_groups,
         group_starts, ..
     } = scratch;
     let mut wide = Wide {
@@ -90,8 +86,7 @@ pub(super) fn refine_context_groups(
         degree: refine_degree,
         column: refine_column,
         reach: refine_reach,
-        rows: refine_rows,
-        stamp: refine_stamp,
+        touched: refine_touched,
         simple,
     };
     flat_groups.clear();
@@ -490,15 +485,19 @@ impl Partition<'_> {
     /// every two nodes of the smaller degree less the sum over siblings of
     /// the pairs of nodes each is paired with, is zero; then two nodes of a
     /// degree have the same siblings, and the classes split by degree alone,
-    /// with no pair sorted. Both sums are kept as the pairs are read: a
-    /// node's degree rising past d adds the nodes already past d, and a
-    /// sibling's count rising adds that count. Where they differ, a node
+    /// with no pair sorted or sibling compared. Where Γ is not zero, a node
     /// whose degree no other node of its class has there leaves the
     /// partition, and the caller splits the rest by their siblings. Says
-    /// whether the parent node is split. Counted only over the nodes that
-    /// can have a twin, whose sibling sets are those Γ reads; the counts of
-    /// nodes and siblings live under a stamp per parent node, so neither
-    /// array is cleared.
+    /// whether the parent node is split.
+    ///
+    /// Counted only over the nodes that can have a twin, whose sibling sets
+    /// are those Γ reads. Where the pairs come in node order a node's
+    /// degree is the length of its run; else it is counted in `degree`. The
+    /// first sum is read off the degrees' histogram (the nodes of degree at
+    /// least v, for each v, taken two at a time), the second added as each
+    /// sibling's count rises. `degree`, `column` and `reach` are zero
+    /// between calls: every count written is cleared before the call
+    /// returns, and nothing fallible runs while one is held.
     fn split_by_degree(
         &mut self,
         lim: &Limits,
@@ -506,58 +505,82 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<bool, OperationError> {
-        let Wide { runs, links, table, degree, column, reach, rows, stamp, .. } = wide;
-        let stamp = &mut **stamp;
-        *stamp = match stamp.checked_add(1) {
-            Some(next) => next,
-            None => {
-                // 0 is the stamp of a count never written.
-                degree.fill(0);
-                column.fill(0);
-                1
-            }
-        };
-        let tag = u64::from(*stamp) << 32;
-        lim.try_resize(degree, self.class.len(), 0u64)?;
-        lim.try_resize(reach, pairs.len(), 0u32)?;
-        rows.clear();
-        lim.reserve_exact(rows, pairs.len())?;
-        let (mut within, mut shared, mut most) = (0u64, 0u64, 0usize);
+        let Wide { runs, links, table, degree, column, reach, touched, .. } = wide;
+        let (mut sorted, mut last, mut top) = (true, 0u32, 0u32);
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
-            if !self.can_twin(self.of(t)) {
-                continue;
-            }
-            let cell = &mut degree[t as usize];
-            let d = if *cell & !COUNT == tag {
-                (*cell & COUNT) as usize
-            } else {
-                rows.push(t);
-                0
-            };
-            *cell = tag | (d as u64 + 1);
-            // `reach[d]`: the nodes of degree past d so far.
-            within += u64::from(reach[d]);
-            reach[d] += 1;
-            most = most.max(d + 1);
-            if s as usize >= column.len() {
-                lim.try_resize(column, (s as usize + 1).next_power_of_two(), 0u64)?;
-            }
-            let cell = &mut column[s as usize];
-            let e = if *cell & !COUNT == tag { *cell & COUNT } else { 0 };
-            *cell = tag | (e + 1);
-            shared += e;
+            sorted &= t >= last;
+            last = t;
+            top |= s;
         }
-        reach[..most].fill(0);
-        if rows.is_empty() {
+        if !sorted {
+            lim.try_resize(degree, self.class.len(), 0u32)?;
+        }
+        lim.try_resize(column, top as usize + 1, 0u32)?;
+        lim.try_resize(reach, pairs.len() + 1, 0u32)?;
+        runs.clear();
+        touched.clear();
+        lim.reserve_exact(runs, pairs.len())?;
+        lim.reserve_exact(touched, pairs.len())?;
+        let (mut shared, mut most) = (0u64, 0usize);
+        let mut count = |s: u32| {
+            let e = &mut column[s as usize];
+            if *e == 0 {
+                touched.push(s);
+            }
+            shared += u64::from(*e);
+            *e += 1;
+        };
+        if sorted {
+            let mut k = 0;
+            while k < pairs.len() {
+                let t = split_pair(&pairs[k], side).0;
+                let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
+                let c = self.of(t);
+                if self.can_twin(c) {
+                    let d = end - k;
+                    runs.push(((u64::from(c) << 32) | d as u64, t, 0));
+                    reach[d] += 1;
+                    most = most.max(d);
+                    for pair in &pairs[k..end] {
+                        count(split_pair(pair, side).1);
+                    }
+                }
+                k = end;
+            }
+        } else {
+            for pair in pairs {
+                let (t, s) = split_pair(pair, side);
+                let c = self.of(t);
+                if !self.can_twin(c) {
+                    continue;
+                }
+                let d = &mut degree[t as usize];
+                if *d == 0 {
+                    runs.push((u64::from(c) << 32, t, 0));
+                }
+                *d += 1;
+                count(s);
+            }
+            for run in runs.iter_mut() {
+                let d = std::mem::take(&mut degree[run.1 as usize]) as usize;
+                run.0 |= d as u64;
+                reach[d] += 1;
+                most = most.max(d);
+            }
+        }
+        for &s in touched.iter() {
+            column[s as usize] = 0;
+        }
+        let (mut within, mut at_least) = (0u64, 0u64);
+        for v in (1..=most).rev() {
+            at_least += u64::from(std::mem::take(&mut reach[v]));
+            within += at_least * (at_least - 1) / 2;
+        }
+        if runs.is_empty() {
             return Ok(true);
         }
         debug_assert!(within >= shared, "Γ is a sum of nonnegative terms over sets");
-        runs.clear();
-        lim.reserve_exact(runs, rows.len())?;
-        for &t in rows.iter() {
-            runs.push(((u64::from(self.of(t)) << 32) | (degree[t as usize] & COUNT), t, 0));
-        }
         group_runs(lim, runs, links, table, |_, _| true)?;
         if within == shared {
             self.apply_groups(runs, links, |r| r.1);
