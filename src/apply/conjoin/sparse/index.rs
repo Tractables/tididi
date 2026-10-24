@@ -36,6 +36,11 @@ pub(crate) struct SparseWorkspace {
     // `owners_clean`.
     pub(super) owners: Vec<u32>,
     pub(super) owners_clean: bool,
+    // The outer child's live products that meet an owner, each with its
+    // slots (`gather_owned_products`), by f index through `outer_offsets`;
+    // the first `owned_len` entries are this level's.
+    pub(super) owned: Vec<OwnedProduct>,
+    pub(super) owned_len: usize,
 
     // ── The two children's product lists read by f index ──
     // A product list is emitted in ascending `f_idx` order by every
@@ -481,6 +486,55 @@ pub(super) fn build_owner_table<const BY_RIGHT: bool>(
     Ok((!repeated).then_some(ones))
 }
 
+/// A live product of the outer child, `prod`, with the slots of its g node
+/// in an owner table ([`build_owner_table`]): the g nodes holding it with
+/// the labels Pos, One, Neg.
+#[derive(Clone, Copy)]
+pub(super) struct OwnedProduct {
+    pub(super) prod: u32,
+    pub(super) slots: [u32; OWNER_SLOTS],
+}
+
+/// Fill `owned` with the products of `list`, in its order, whose g node has
+/// an owner in `owners`, each with its slots, and `offsets` with their
+/// bucket bounds over `width` f indices, as [`bucket_offsets`] gives
+/// `list`'s; return how many there are. One pass over `list`, which every
+/// producer emits in ascending f order, reading each product's slots once:
+/// a walk then reads a product and its slots together, instead of once per
+/// f pair that meets the product, each read waiting on the one before.
+pub(super) fn gather_owned_products(
+    lim: &Limits,
+    list: &[ProductEntry],
+    width: usize,
+    owners: &[u32],
+    offsets: &mut Vec<u32>,
+    owned: &mut Vec<OwnedProduct>,
+) -> Result<usize, OperationError> {
+    lim.try_resize(offsets, width + 1, 0u32)?;
+    lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
+    let (mut kept, mut pos) = (0usize, 0usize);
+    for (i, bound) in offsets.iter_mut().enumerate().take(width) {
+        *bound = kept as u32;
+        while pos < list.len() && list[pos].f_idx.idx() == i {
+            let e = list[pos];
+            let at = OWNER_SLOTS * e.g_idx.idx();
+            let slots = [owners[at], owners[at + 1], owners[at + 2]];
+            // Written whether kept or not, so that no branch waits on the
+            // slots' read: the next product overwrites one not kept.
+            owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
+            kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
+            pos += 1;
+        }
+    }
+    offsets[width] = kept as u32;
+    cheap_assert!(
+        pos == list.len(),
+        "a product list is not in ascending f order ({} of {} entries bucketed over width {width})",
+        pos, list.len()
+    );
+    Ok(kept)
+}
+
 /// Slots per node of a level below which [`clear_owner_table`] empties the
 /// table by writing it whole rather than slot by slot: a line of slots
 /// written in order costs about what one write at random does.
@@ -596,6 +650,7 @@ impl Buffers for SparseWorkspace {
         self.f_by_outer.buffers(visit);
         self.g_by_outer.buffers(visit);
         visit(&mut self.owners);
+        visit(&mut self.owned);
         visit(&mut self.inner_offsets);
         visit(&mut self.outer_offsets);
         visit(&mut self.filtered);

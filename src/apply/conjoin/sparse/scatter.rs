@@ -121,18 +121,22 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
         };
         if let Some(ones) = built {
-            bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
-            if ones {
-                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
-                    |parts| OwnerWalk::<true>::of(parts, f_outer, g_outer))?;
-            } else {
-                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
-                    |parts| OwnerWalk::<false>::of(parts, f_outer, g_outer))?;
-            }
+            // Each live product of the outer child with its slots, read once;
+            // the table is then done with.
+            let gathered = gather_owned_products(lim, pl_outer, f_outer, &ws.owners[..OWNER_SLOTS * g_outer],
+                &mut ws.outer_offsets, &mut ws.owned);
             if !SWAPPED {
                 clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
             } else {
                 clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
+            }
+            ws.owned_len = gathered?;
+            if ones {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+                    |parts| OwnerWalk::<true>::of(parts, f_outer))?;
+            } else {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+                    |parts| OwnerWalk::<false>::of(parts, f_outer))?;
             }
             return Ok(());
         }
@@ -166,11 +170,12 @@ fn plain_walk<'a, P: Fn(u32, u32) -> u32>(inner_product: P) -> impl FnOnce(WalkP
     move |parts| LeafWalk { g_by_outer: parts.g_by_outer, outer: parts.outer, inner_product }
 }
 
-/// What a leaf walk may read: g's reverse index, g's owner table and the
-/// outer child's live products by f index.
+/// What a leaf walk may read: g's reverse index, the outer child's live
+/// products by f index, and those that meet an owner with their slots
+/// ([`gather_owned_products`]), by f index through the same offsets.
 struct WalkParts<'a> {
     g_by_outer: GroupedView<'a, RevEntry>,
-    owners: &'a [u32],
+    owned: &'a [OwnedProduct],
     outer: GroupedView<'a, ProductEntry>,
 }
 
@@ -188,10 +193,10 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     walk: impl FnOnce(WalkParts<'w>) -> W,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SparseWorkspace { g_by_outer, owners, outer_offsets, node_candidates, node_owners, emit, .. } = ws;
+    let SparseWorkspace { g_by_outer, owned, owned_len, outer_offsets, node_candidates, node_owners, emit, .. } = ws;
     let walk = walk(WalkParts {
         g_by_outer: g_by_outer.view(),
-        owners,
+        owned: &owned[..*owned_len],
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
     });
     // Amortized cancellation/deadline poll; the sparse join has no other
@@ -228,9 +233,6 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
                         if let Some(ahead) = at(p1 + NODES_AHEAD[1]) {
                             walk.ahead::<SWAPPED>(ahead, 1);
                         }
-                        if let Some(ahead) = at(p1 + NODES_AHEAD[2]) {
-                            walk.ahead::<SWAPPED>(ahead, 2);
-                        }
                         each(p1, pairs)
                     })
                 }
@@ -255,7 +257,7 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
 /// How many f nodes ahead of the one it walks [`leaf_walk`] asks the cache
 /// for each stage of a node's reads ([`NodeWalk::ahead`]): each stage's
 /// addresses are read from what the stage before asked for.
-const NODES_AHEAD: [usize; 3] = [12, 8, 4];
+const NODES_AHEAD: [usize; 2] = [8, 4];
 
 /// How [`leaf_walk`] finds the candidates of one f node.
 trait NodeWalk {
@@ -335,47 +337,38 @@ impl NodeWalk for LabelWalk<'_> {
 }
 
 /// [`LeafWalk`] where the inner child is a vtree leaf and no g pair repeats:
-/// g's pairs as a table of their owners ([`build_owner_table`]), slot
-/// `OWNER_SLOTS * d + s` naming the g node that holds outer child `d` with
-/// the label of slot `s`, Pos, One, Neg. An f pair reads, under each
-/// product, the slots of the labels its own label meets. `ONES` says some g
-/// pair has the label One; without it that slot is never read.
+/// the outer child's live products that meet an owner, each with the slots
+/// of g's owner table ([`build_owner_table`]) for its g node, the g nodes
+/// holding it with the labels Pos, One, Neg ([`gather_owned_products`]). An
+/// f pair reads, under each product, the slots of the labels its own label
+/// meets. `ONES` says some g pair has the label One; without it that slot
+/// is never read.
 struct OwnerWalk<'a, const ONES: bool> {
-    owners: &'a [u32],
-    outer: GroupedView<'a, ProductEntry>,
+    outer: GroupedView<'a, OwnedProduct>,
 }
 
 impl<'a, const ONES: bool> OwnerWalk<'a, ONES> {
-    /// The walk of a level whose f and g have `f_outer` and `g_outer` outer
-    /// children: its slots and bounds of the workspace's grow-only buffers.
-    fn of(parts: WalkParts<'a>, f_outer: usize, g_outer: usize) -> Self {
-        OwnerWalk {
-            owners: &parts.owners[..OWNER_SLOTS * g_outer],
-            outer: GroupedView { offsets: &parts.outer.offsets[..=f_outer], entries: parts.outer.entries },
-        }
+    /// The walk of a level whose f has `f_outer` outer children: its bounds
+    /// of the workspace's grow-only offsets.
+    fn of(parts: WalkParts<'a>, f_outer: usize) -> Self {
+        OwnerWalk { outer: GroupedView { offsets: &parts.outer.offsets[..=f_outer], entries: parts.owned } }
     }
 }
 
 impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
     fn spans(&self) -> Option<usize> {
-        Some(std::mem::size_of_val(self.owners) + std::mem::size_of_val(self.outer.offsets)
-            + std::mem::size_of_val(self.outer.entries))
+        Some(std::mem::size_of_val(self.outer.offsets) + std::mem::size_of_val(self.outer.entries))
     }
 
-    /// The outer child's bounds, then its run of products, then each
-    /// product's slots.
+    /// The outer child's bounds, then its run of products.
     #[inline(always)]
     fn ahead<const SWAPPED: bool>(&self, pairs: &[ChildPair], stage: usize) {
         for pair in pairs {
             let outer1 = orient::<SWAPPED>(pair.left.0, pair.right.0).1 as usize;
-            match stage {
-                0 => self.outer.prefetch_bounds(outer1),
-                1 => self.outer.prefetch_run(outer1),
-                _ => {
-                    for e in self.outer.bucket(outer1) {
-                        prefetch_at(self.owners, OWNER_SLOTS * e.g_idx.idx());
-                    }
-                }
+            if stage == 0 {
+                self.outer.prefetch_bounds(outer1);
+            } else {
+                self.outer.prefetch_run(outer1);
             }
         }
     }
@@ -392,14 +385,12 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
         for pair in pairs {
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
             for e in self.outer.bucket(outer1 as usize) {
-                let at = OWNER_SLOTS * e.g_idx.idx();
-                let &[pos, one, neg] = <&[u32; OWNER_SLOTS]>::try_from(&self.owners[at..at + OWNER_SLOTS])
-                    .expect("a slot run is OWNER_SLOTS long");
+                let [pos, one, neg] = e.slots;
                 let mut meet = |g_parent: u32, label: u32| {
                     if g_parent == NO_PRODUCT {
                         return Ok(());
                     }
-                    let (left_prod, right_prod) = orient::<SWAPPED>(label, e.prod_idx.0);
+                    let (left_prod, right_prod) = orient::<SWAPPED>(label, e.prod);
                     push(ParEntry { g_parent, left_prod, right_prod })
                 };
                 // The order of the runs a reverse index by label would
