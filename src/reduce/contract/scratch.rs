@@ -278,6 +278,21 @@ pub(crate) struct ContractScratch {
     pub(super) refine_wide: Vec<u64>,
     /// The radix sort's buffers for `refine_keys`.
     pub(super) refine_radix: crate::sort::Radix,
+    /// Per node of the child level, the stamp of the wide parent node last
+    /// split by degree in the high half and the node's siblings there in
+    /// the low one; 0 is the stamp of a count never written.
+    pub(super) refine_degree: Vec<u64>,
+    /// Per sibling node, the same stamp and the nodes it is paired with
+    /// there.
+    pub(super) refine_column: Vec<u64>,
+    /// Per degree d, the nodes of degree past d read so far in one wide
+    /// parent node; zeroed after each.
+    pub(super) refine_reach: Vec<u32>,
+    /// The nodes one wide parent node names that can have a twin.
+    pub(super) refine_rows: Vec<u32>,
+    /// The stamp of `refine_degree` and `refine_column`, bumped per wide
+    /// parent node; on u32 wrap both are zeroed and it restarts at 1.
+    pub(super) refine_stamp: u32,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -367,9 +382,9 @@ pub(crate) struct ContractScratch {
 // on it would let the width-sized buffers grow unchecked over a run of wide
 // twin-free levels. Releasing has no behavioural consequence: every buffer is
 // filled or resized over the range it is read on, so a dropped one costs the
-// next call a reallocation; `pair_fusion.cells` and `twin_local` regrow
-// zeroed, which their generation stamps (always at least 1) read as never
-// stamped.
+// next call a reallocation; `pair_fusion.cells`, `twin_local`,
+// `refine_degree` and `refine_column` regrow zeroed, which their generation
+// stamps (always at least 1) read as never stamped.
 impl Buffers for ContractScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.counts);
@@ -389,6 +404,10 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_table);
         visit(&mut self.refine_wide);
         self.refine_radix.buffers(visit);
+        visit(&mut self.refine_degree);
+        visit(&mut self.refine_column);
+        visit(&mut self.refine_reach);
+        visit(&mut self.refine_rows);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);

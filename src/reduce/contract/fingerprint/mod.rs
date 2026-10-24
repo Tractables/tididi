@@ -288,7 +288,9 @@ pub(super) fn find_twin_groups(
         width <= u32::MAX as usize,
         "level width {width} exceeds the u32 node-index range",
     );
-    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width)?;
+    // Pair lists are sets unless a level of the diagram is marginal.
+    let simple = !tdd.has_marginal_level();
+    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width, simple)?;
     if cfg!(debug_assertions) {
         let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
         let entries = ContextEntries {

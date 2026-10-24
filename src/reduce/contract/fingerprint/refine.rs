@@ -22,7 +22,18 @@ struct Wide<'a> {
     links: &'a mut Vec<(u32, u32)>,
     table: &'a mut Vec<u32>,
     radix: &'a mut Radix,
+    degree: &'a mut Vec<u64>,
+    column: &'a mut Vec<u64>,
+    reach: &'a mut Vec<u32>,
+    rows: &'a mut Vec<u32>,
+    stamp: &'a mut u32,
+    /// No parent node repeats a pair: the counts of
+    /// [`Partition::split_by_degree`] are of sets.
+    simple: bool,
 }
+
+/// The low half of a stamped count, the count.
+const COUNT: u64 = 0xFFFF_FFFF;
 
 /// The most pairs a parent node holds where its nodes are grouped on the
 /// stack, by comparing every two; a wider one sorts them in scratch.
@@ -51,19 +62,24 @@ const SMALL_PAIRS: usize = 8;
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
 /// sorted in cache; a node in the first class, or without a twin, is read
-/// off two bits. No fingerprint is formed and nothing is verified after:
-/// the classes are exact. A pair repeated within a parent node counts twice,
-/// so the classes are those of context multisets.
+/// off two bits. With `simple`, no parent node repeats a pair, and a wide
+/// parent node whose nodes' sibling sets are nested is split by degree,
+/// without a sort ([`Partition::split_by_degree`]). No fingerprint is formed
+/// and nothing is verified after: the classes are exact. A pair repeated
+/// within a parent node counts twice, so the classes are those of context
+/// multisets.
 pub(super) fn refine_context_groups(
     level: &TddLevel,
     side: ChildSide,
     lim: &Limits,
     scratch: &mut ContractScratch,
     width: usize,
+    simple: bool,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
         twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
-        refine_wide, refine_radix, flat_groups, group_starts, ..
+        refine_wide, refine_radix, refine_degree, refine_column, refine_reach, refine_rows, refine_stamp, flat_groups,
+        group_starts, ..
     } = scratch;
     let mut wide = Wide {
         keys: refine_keys,
@@ -71,6 +87,12 @@ pub(super) fn refine_context_groups(
         links: refine_links,
         table: refine_table,
         radix: refine_radix,
+        degree: refine_degree,
+        column: refine_column,
+        reach: refine_reach,
+        rows: refine_rows,
+        stamp: refine_stamp,
+        simple,
     };
     flat_groups.clear();
     group_starts.clear();
@@ -397,12 +419,15 @@ impl Partition<'_> {
         }
     }
 
-    /// A parent node of more than [`SMALL_PAIRS`] pairs: its pairs sorted
-    /// in `keys`, so that each node's siblings are a run in ascending order;
-    /// each run keyed by its node's class and a hash of its siblings, and
-    /// grouped with the runs of its key in a table, by comparing their
-    /// siblings. A group of one run leaves the partition; a group that is
-    /// its whole class keeps it; any other group is a class of its own.
+    /// A parent node of more than [`SMALL_PAIRS`] pairs. Where no parent
+    /// node repeats a pair it is first split by degree
+    /// ([`Self::split_by_degree`]), which settles it where its nodes'
+    /// sibling sets are nested. Else its pairs are sorted in `keys`, so that
+    /// each node's siblings are a run in ascending order; each run keyed by
+    /// its node's class and a hash of its siblings, and grouped with the
+    /// runs of its key in a table, by comparing their siblings. A group of
+    /// one run leaves the partition; a group that is its whole class keeps
+    /// it; any other group is a class of its own.
     fn split_wide(
         &mut self,
         lim: &Limits,
@@ -410,7 +435,10 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { keys, runs, links, table, radix } = wide;
+        if wide.simple && self.split_by_degree(lim, pairs, side, wide)? {
+            return Ok(());
+        }
+        let Wide { keys, runs, links, table, radix, .. } = wide;
         keys.clear();
         lim.reserve_exact(keys, pairs.len())?;
         // Each pair a key of its sibling's bits and its node's above them,
@@ -448,34 +476,107 @@ impl Partition<'_> {
         }
         let keys = &keys[..];
         let siblings = |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e & low);
-        let node = |r: (u64, u32, u32)| (keys[r.1 as usize] >> sb) as u32;
-        // Each run joins the group of the first run of its key whose
-        // siblings it repeats, chained after that run, which counts them.
-        let cells = (2 * runs.len()).next_power_of_two();
-        table.clear();
-        lim.try_resize(table, cells, NO_RUN)?;
-        links.clear();
-        lim.reserve_exact(links, runs.len())?;
-        let shift = u64::BITS - cells.trailing_zeros();
+        group_runs(lim, runs, links, table, |first, run| {
+            first.2 - first.1 == run.2 - run.1 && siblings(first).eq(siblings(run))
+        })?;
+        self.apply_groups(runs, links, |r| (keys[r.1 as usize] >> sb) as u32);
+        Ok(())
+    }
+
+    /// A wide parent node split by how many siblings it pairs each node
+    /// with, its degree there, where no parent node repeats a pair (math
+    /// §4.24). The degrees certify that the nodes' sibling sets there are
+    /// nested, totally ordered by inclusion, exactly when Γ, the sum over
+    /// every two nodes of the smaller degree less the sum over siblings of
+    /// the pairs of nodes each is paired with, is zero; then two nodes of a
+    /// degree have the same siblings, and the classes split by degree alone,
+    /// with no pair sorted. Both sums are kept as the pairs are read: a
+    /// node's degree rising past d adds the nodes already past d, and a
+    /// sibling's count rising adds that count. Where they differ, a node
+    /// whose degree no other node of its class has there leaves the
+    /// partition, and the caller splits the rest by their siblings. Says
+    /// whether the parent node is split. Counted only over the nodes that
+    /// can have a twin, whose sibling sets are those Γ reads; the counts of
+    /// nodes and siblings live under a stamp per parent node, so neither
+    /// array is cleared.
+    fn split_by_degree(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        wide: &mut Wide<'_>,
+    ) -> Result<bool, OperationError> {
+        let Wide { runs, links, table, degree, column, reach, rows, stamp, .. } = wide;
+        let stamp = &mut **stamp;
+        *stamp = match stamp.checked_add(1) {
+            Some(next) => next,
+            None => {
+                // 0 is the stamp of a count never written.
+                degree.fill(0);
+                column.fill(0);
+                1
+            }
+        };
+        let tag = u64::from(*stamp) << 32;
+        lim.try_resize(degree, self.class.len(), 0u64)?;
+        lim.try_resize(reach, pairs.len(), 0u32)?;
+        rows.clear();
+        lim.reserve_exact(rows, pairs.len())?;
+        let (mut within, mut shared, mut most) = (0u64, 0u64, 0usize);
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            if !self.can_twin(self.of(t)) {
+                continue;
+            }
+            let cell = &mut degree[t as usize];
+            let d = if *cell & !COUNT == tag {
+                (*cell & COUNT) as usize
+            } else {
+                rows.push(t);
+                0
+            };
+            *cell = tag | (d as u64 + 1);
+            // `reach[d]`: the nodes of degree past d so far.
+            within += u64::from(reach[d]);
+            reach[d] += 1;
+            most = most.max(d + 1);
+            if s as usize >= column.len() {
+                lim.try_resize(column, (s as usize + 1).next_power_of_two(), 0u64)?;
+            }
+            let cell = &mut column[s as usize];
+            let e = if *cell & !COUNT == tag { *cell & COUNT } else { 0 };
+            *cell = tag | (e + 1);
+            shared += e;
+        }
+        reach[..most].fill(0);
+        if rows.is_empty() {
+            return Ok(true);
+        }
+        debug_assert!(within >= shared, "Γ is a sum of nonnegative terms over sets");
+        runs.clear();
+        lim.reserve_exact(runs, rows.len())?;
+        for &t in rows.iter() {
+            runs.push(((u64::from(self.of(t)) << 32) | (degree[t as usize] & COUNT), t, 0));
+        }
+        group_runs(lim, runs, links, table, |_, _| true)?;
+        if within == shared {
+            self.apply_groups(runs, links, |r| r.1);
+            return Ok(true);
+        }
         for (r, &run) in runs.iter().enumerate() {
-            links.push((NO_RUN, 1));
-            let mut cell = (run.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
-            loop {
-                let lead = table[cell];
-                if lead == NO_RUN {
-                    table[cell] = r as u32;
-                    break;
-                }
-                let first = runs[lead as usize];
-                if first.0 == run.0 && first.2 - first.1 == run.2 - run.1 && siblings(first).eq(siblings(run)) {
-                    links[r] = (links[lead as usize].0, 0);
-                    links[lead as usize].0 = r as u32;
-                    links[lead as usize].1 += 1;
-                    break;
-                }
-                cell = (cell + 1) & (cells - 1);
+            if links[r].1 == 1 {
+                self.alone(run.1, (run.0 >> 32) as u32);
             }
         }
+        Ok(false)
+    }
+
+    /// Split the classes by the groups [`group_runs`] left in `links`, of
+    /// the runs `runs`, each run naming its node through `node` and its
+    /// class in the high half of its key: a group of one leaves the
+    /// partition, a group that is all that is left of its class keeps the
+    /// class's id, and any other group of two or more is a class of its own.
+    fn apply_groups(&mut self, runs: &[(u64, u32, u32)], links: &[(u32, u32)], node: impl Fn((u64, u32, u32)) -> u32) {
         for (r, &run) in runs.iter().enumerate() {
             let (mut next, members) = links[r];
             if members == 0 {
@@ -493,6 +594,43 @@ impl Partition<'_> {
                 }
             }
         }
-        Ok(())
     }
+}
+
+/// Group `runs` through `table`: each run joins the group of the first run
+/// of its key that `same` also matches, chained after that run in `links`,
+/// whose entry counts the group's runs (0 in the entries of the others).
+fn group_runs(
+    lim: &Limits,
+    runs: &[(u64, u32, u32)],
+    links: &mut Vec<(u32, u32)>,
+    table: &mut Vec<u32>,
+    same: impl Fn((u64, u32, u32), (u64, u32, u32)) -> bool,
+) -> Result<(), OperationError> {
+    let cells = (2 * runs.len()).next_power_of_two();
+    table.clear();
+    lim.try_resize(table, cells, NO_RUN)?;
+    links.clear();
+    lim.reserve_exact(links, runs.len())?;
+    let shift = u64::BITS - cells.trailing_zeros();
+    for (r, &run) in runs.iter().enumerate() {
+        links.push((NO_RUN, 1));
+        let mut cell = (run.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
+        loop {
+            let lead = table[cell];
+            if lead == NO_RUN {
+                table[cell] = r as u32;
+                break;
+            }
+            let first = runs[lead as usize];
+            if first.0 == run.0 && same(first, run) {
+                links[r] = (links[lead as usize].0, 0);
+                links[lead as usize].0 = r as u32;
+                links[lead as usize].1 += 1;
+                break;
+            }
+            cell = (cell + 1) & (cells - 1);
+        }
+    }
+    Ok(())
 }
