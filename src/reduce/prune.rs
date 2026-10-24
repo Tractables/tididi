@@ -640,9 +640,9 @@ fn unnamed_children(
     }
     let (left, right) = tdd.vtree.children(p);
     let children = [left, right];
-    // The nodes of each side not named yet, and the byte its block starts at.
-    let (mut open, mut base, mut unread) = ([0usize; 2], [0usize; 2], [false; 2]);
-    let mut used = 0;
+    // Each side's block of marks, the left one's first: its width, nothing
+    // for a side not read.
+    let (mut width, mut unread) = ([0usize; 2], [false; 2]);
     for k in 0..2 {
         if !sides[k] {
             continue;
@@ -651,74 +651,73 @@ fn unnamed_children(
             unread[k] = true;
             continue;
         }
-        let width = tdd.levels[children[k].idx()].slot_count();
-        base[k] = used;
-        used += width;
-        if marks.len() < used {
-            lim.try_resize(marks, used, 0)?;
-        }
-        marks[base[k]..used].fill(0);
-        open[k] = width;
+        width[k] = tdd.levels[children[k].idx()].slot_count();
     }
+    let used = width[0] + width[1];
+    if marks.len() < used {
+        lim.try_resize(marks, used, 0)?;
+    }
+    marks[..used].fill(0);
     let level = &tdd.levels[p.idx()];
-    let marks = &mut marks[..used];
-    match open.map(|n| n > 0) {
-        [true, true] => mark_named::<true, true>(level, &mut open, base, marks, gate)?,
-        [true, false] => mark_named::<true, false>(level, &mut open, base, marks, gate)?,
-        [false, true] => mark_named::<false, true>(level, &mut open, base, marks, gate)?,
-        [false, false] => {}
-    }
-    Ok([unread[0] || open[0] > 0, unread[1] || open[1] > 0])
+    let (l, r) = marks[..used].split_at_mut(width[0]);
+    let named = match width.map(|n| n > 0) {
+        [true, true] => mark_named::<true, true>(level, [l, r], gate)?,
+        [true, false] => mark_named::<true, false>(level, [l, r], gate)?,
+        [false, true] => mark_named::<false, true>(level, [l, r], gate)?,
+        [false, false] => [true; 2],
+    };
+    Ok([unread[0] || !named[0], unread[1] || !named[1]])
 }
 
-/// Mark in `marks` the nodes of `level`'s children that its pairs name, on
-/// the left side with `LEFT` and on the right with `RIGHT`, each side's
-/// block at its byte of `base`, and count down `open` once for each node
-/// marked the first time; node by node, each node's pairs read as a slice,
-/// up to the first node past which no side read has a node open. Both
-/// children are structural internal, so a side is the index of the node it
-/// names. One unit of work through `gate` a pair.
+/// Mark in `blocks`, a byte a node, the nodes of `level`'s children that its
+/// pairs name, on the left side with `LEFT` and on the right with `RIGHT`;
+/// node by node, each node's pairs read as a slice, up to the first node
+/// past which every side read has each of its nodes named. Whether each side
+/// has every node named; a side not read has. Both children are structural
+/// internal, so a side is the index of the node it names. One unit of work
+/// through `gate` a pair.
 ///
-/// A mark is a byte, and marking stores a constant: the count reads the
-/// byte, but no mark depends on one read before it, so pairs that name
-/// the same node, or nodes a word apart, do not wait on each other's
-/// stores as a bit set in a shared word would. No branch tests whether a
-/// node was named already: a child of a level read to its end, as a tight
-/// one mostly is, is named by many of its pairs, and the test would decide
-/// every one.
+/// A mark stores a constant and reads nothing, so no mark waits on another:
+/// pairs that name the same node, or nodes a word apart, do not wait on each
+/// other's stores as a bit set in a shared word, or a count of the nodes
+/// named so far, would. Each side keeps the first of its nodes not seen
+/// marked, which only moves forward: the test before a node reads that
+/// node's byte, and the cursors cross each byte once over the read.
 #[inline(always)]
 fn mark_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
-    open: &mut [usize; 2],
-    base: [usize; 2],
-    marks: &mut [u8],
+    blocks: [&mut [u8]; 2],
     gate: &mut PollGate<'_>,
-) -> Result<(), OperationError> {
-    let mut mark = |k: usize, s: u32, open: &mut [usize; 2]| {
-        let m = &mut marks[base[k] + s as usize];
-        open[k] -= (*m == 0) as usize;
-        *m = 1;
-    };
+) -> Result<[bool; 2], OperationError> {
+    let [left, right] = blocks;
+    // Whether every node of `block` is marked, moving `next` past those that are.
+    fn all_named(block: &[u8], next: &mut usize) -> bool {
+        while *next < block.len() && block[*next] != 0 {
+            *next += 1;
+        }
+        *next == block.len()
+    }
+    let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
     let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
-        if (!LEFT || open[0] == 0) && (!RIGHT || open[1] == 0) {
+        if (!LEFT || all_named(left, &mut next[0])) && (!RIGHT || all_named(right, &mut next[1])) {
             return Err(None);
         }
         gate.poll(pairs.len() as u64).map_err(Some)?;
         for pair in pairs {
             if LEFT {
-                mark(0, pair.left.0, open);
+                left[pair.left.0 as usize] = 1;
             }
             if RIGHT {
-                mark(1, pair.right.0, open);
+                right[pair.right.0 as usize] = 1;
             }
         }
         Ok(())
     });
-    match read {
-        Ok(()) | Err(None) => Ok(()),
-        Err(Some(e)) => Err(e),
+    if let Err(Some(e)) = read {
+        return Err(e);
     }
+    Ok([!LEFT || all_named(left, &mut next[0]), !RIGHT || all_named(right, &mut next[1])])
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact
