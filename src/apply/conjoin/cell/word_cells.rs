@@ -17,6 +17,11 @@ const WORDS_MAX_VECTOR_WORDS: usize = 1 << 22;
 /// candidates is live; any other row walks its cells.
 const LIVE_SHARE: u64 = 4;
 
+/// A row counted by vectors writes its live candidates off the sorted
+/// list where at most one of this many candidates of its live cells is
+/// live; otherwise it walks its live cells alone.
+const CELL_SHARE: u64 = 8;
+
 /// The candidates a level's rows count before the level stops reading
 /// rows by vectors, if more than one of [`LIVE_SHARE`] of them was live.
 const PROBATION: u64 = 1 << 16;
@@ -44,8 +49,12 @@ pub(crate) struct WordScratch {
     named_start: Sides<Vec<u32>>,
     by_child: Sides<Vec<u32>>,
     child_counts: Vec<u32>,
-    /// The current row's pairs' slots on each side.
+    /// The current row's pairs' slots on each side; the OR of its pairs'
+    /// live candidates; its live cells' columns, ascending, and as bits.
     row_slots: Vec<(u32, u32)>,
+    union: Vec<u64>,
+    live_cols: Vec<u32>,
+    col_live: Vec<u64>,
     /// The current row's live candidates, `k << 32 | q` for its `k`th f pair
     /// and g pair `q`, in that order, and sorted by column.
     entries: Vec<u64>,
@@ -81,6 +90,9 @@ impl WordScratch {
         visit(&mut self.by_child.right);
         visit(&mut self.child_counts);
         visit(&mut self.row_slots);
+        visit(&mut self.union);
+        visit(&mut self.live_cols);
+        visit(&mut self.col_live);
         visit(&mut self.entries);
         visit(&mut self.sorted);
         visit(&mut self.counts);
@@ -134,11 +146,13 @@ pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, g_rows
 /// child cell at the row and the pair's child on that side holds a
 /// product. An f pair and a g pair are a live candidate iff both vectors of
 /// the f pair have the g pair's bit (a complete side's vector is every
-/// bit). A row counts its live candidates off its pairs' vectors; where few
-/// of them are live it sorts them by column and writes its live cells off
-/// the sorted list, and otherwise walks its cells as the row loop does
-/// ([`LIVE_SHARE`]). A level whose rows hold mostly live candidates walks
-/// the rest of them ([`PROBATION`]).
+/// bit). A row counts its live candidates off its pairs' vectors, and
+/// walks its cells as the row loop does where many of them are live
+/// ([`LIVE_SHARE`]). Otherwise it walks its live cells alone where many of
+/// their candidates are live ([`CELL_SHARE`]), and elsewhere sorts its live
+/// candidates by column and writes its live cells off the sorted list. A
+/// level whose rows hold mostly live candidates walks the rest of them
+/// ([`PROBATION`]).
 pub(crate) fn run_level_rows_words(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -220,17 +234,30 @@ fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
             continue;
         }
         let candidates = f_pairs.len() as u64 * gp;
-        if a.take_row(i, f_pairs, slab, left, right)? {
-            while let Some(j) = a.next_column() {
-                let (from, to) = a.take_column(j);
-                a.emit(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
+        match a.take_row(i, f_pairs, slab, left, right)? {
+            RowMode::Words => {
+                while let Some(j) = a.next_column() {
+                    let (from, to) = a.take_column(j);
+                    a.emit(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
+                }
+                poll.poll(candidates + width as u64)?;
             }
-            poll.poll(candidates + width as u64)?;
-        } else {
-            for j in 0..width {
-                process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+            RowMode::Cells => {
+                // The walks charge their cells; the row charges the rest.
+                let mut walked = 0u64;
+                for k in 0..a.w.live_cols.len() {
+                    let j = a.w.live_cols[k] as usize;
+                    walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
+                    process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                }
+                poll.poll(candidates - walked + width as u64)?;
             }
-            poll.poll(width as u64)?;
+            RowMode::Walk => {
+                for j in 0..width {
+                    process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                }
+                poll.poll(width as u64)?;
+            }
         }
     }
     poll.flush()?;
@@ -250,13 +277,23 @@ struct ByWords<'w, S> {
     seen: u64,
     live: u64,
     on: bool,
-    /// The current row, and whether it is read by vectors.
+    /// The current row, and how it is read.
     row: usize,
-    row_words: bool,
+    mode: RowMode,
     /// The next of the current row's live candidates a cell takes; the row
     /// `w.runs_of` was read for.
     cursor: usize,
     runs_row: usize,
+}
+
+/// How a row of a level read by vectors is read: by its cells' walks; by
+/// the walks of its live cells alone, the others left dead; or off its
+/// live candidates sorted by column.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowMode {
+    Walk,
+    Cells,
+    Words,
 }
 
 /// Word `word` of the live candidates of an f pair whose vectors are in
@@ -317,6 +354,11 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         w.counts.clear();
         lim.reserve_exact(&mut w.counts, width)?;
         w.counts.resize(width, 0);
+        w.col_live.clear();
+        lim.reserve_exact(&mut w.col_live, width.div_ceil(64))?;
+        w.col_live.resize(width.div_ceil(64), 0);
+        w.live_cols.clear();
+        lim.reserve_exact(&mut w.live_cols, width)?;
         // Each g pair's run in its column, where the column table grouped it.
         w.run_of.clear();
         w.run_counts.clear();
@@ -341,17 +383,27 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             w.run_counts.resize(most, 0);
         }
         let words = w.g_flat.len().div_ceil(64);
-        Ok(ByWords { sink, w, lim, words, seen: 0, live: 0, on: true, row: usize::MAX, row_words: false, cursor: 0, runs_row: usize::MAX })
+        w.union.clear();
+        lim.reserve_exact(&mut w.union, words)?;
+        w.union.resize(words, 0);
+        Ok(ByWords { sink, w, lim, words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cursor: 0, runs_row: usize::MAX })
     }
 
     /// Every live candidate of the last row read by vectors was in a cell
     /// the loop entered.
-    fn finish(&self) {
-        debug_assert!(!self.row_words || self.cursor == self.w.sorted.len(), "a live candidate in a cell the row loop did not enter");
+    fn finish(&mut self) {
+        debug_assert!(self.mode != RowMode::Words || self.cursor == self.w.sorted.len(), "a live candidate in a cell the row loop did not enter");
+        if self.mode == RowMode::Cells {
+            for &j in &self.w.live_cols {
+                self.w.col_live[j as usize / 64] = 0;
+            }
+        }
     }
 
-    /// Count row `i`, of pairs `f_pairs`, and read it by vectors where few
-    /// of its candidates are live: whether it is.
+    /// Count row `i`, of pairs `f_pairs`, and choose how to read it: by
+    /// its cells' walks where many of its candidates are live; otherwise
+    /// by the walks of its live cells where many of their candidates are
+    /// live, and off its live candidates where few are.
     #[inline(always)]
     fn take_row<L: ChildLookup, R: ChildLookup>(
         &mut self,
@@ -360,12 +412,12 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         node_idx: &[u32],
         left: &L,
         right: &R,
-    ) -> Result<bool, OperationError> {
+    ) -> Result<RowMode, OperationError> {
         self.finish();
         self.row = i;
-        self.row_words = false;
+        self.mode = RowMode::Walk;
         if !self.on {
-            return Ok(false);
+            return Ok(RowMode::Walk);
         }
         let candidates = f_pairs.len() as u64 * self.w.g_flat.len() as u64;
         let live = self.count_row(f_pairs, node_idx, left, right)?;
@@ -375,12 +427,49 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             self.on = false;
         }
         if live * LIVE_SHARE > candidates {
-            return Ok(false);
+            return Ok(RowMode::Walk);
         }
         super::super::note_word_cells(super::super::WordNote::Row);
+        let in_live_cells = self.live_cells(f_pairs.len());
+        if live * CELL_SHARE > in_live_cells {
+            super::super::note_word_cells(super::super::WordNote::Cells);
+            self.mode = RowMode::Cells;
+            return Ok(RowMode::Cells);
+        }
         self.read_row(f_pairs.len(), left.kills(), right.kills())?;
-        self.row_words = true;
-        Ok(true)
+        self.mode = RowMode::Words;
+        Ok(RowMode::Words)
+    }
+
+    /// The columns of the live cells of the row of `n1` pairs that
+    /// [`count_row`](Self::count_row) counted last, into `w.live_cols` and
+    /// `w.col_live`: the candidates of those cells.
+    #[inline(always)]
+    fn live_cells(&mut self, n1: usize) -> u64 {
+        let w = &mut *self.w;
+        w.live_cols.clear();
+        let mut candidates = 0u64;
+        let mut word = 0;
+        while word < w.union.len() {
+            let m = w.union[word];
+            if m == 0 {
+                word += 1;
+                continue;
+            }
+            let q = word * 64 + m.trailing_zeros() as usize;
+            let j = w.col_of[q] as usize;
+            // `count_row` reserved a column a live cell.
+            w.live_cols.push(j as u32);
+            w.col_live[j / 64] |= 1 << (j % 64);
+            let end = w.col_start[j + 1] as usize;
+            candidates += (end - w.col_start[j] as usize) as u64;
+            // On past the column's pairs.
+            word = end / 64;
+            if word < w.union.len() {
+                w.union[word] &= !((1u64 << (end % 64)) - 1);
+            }
+        }
+        candidates * n1 as u64
     }
 
     /// The slot of child row `r`'s vector on one side, built on first use:
@@ -436,6 +525,7 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         let w = &mut *self.w;
         w.row_slots.clear();
         lim.reserve(&mut w.row_slots, f_pairs.len())?;
+        w.union.fill(0);
         let mut live = 0u64;
         for p in f_pairs {
             let ls = if kills.0 {
@@ -450,7 +540,9 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             };
             w.row_slots.push((ls, rs));
             for word in 0..words {
-                live += u64::from(anded(w, words, kills, (ls, rs), word).count_ones());
+                let m = anded(w, words, kills, (ls, rs), word);
+                live += u64::from(m.count_ones());
+                w.union[word] |= m;
             }
         }
         Ok(live)
@@ -619,7 +711,12 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
         if a.i != self.row {
             self.take_row(a.i, a.f_pairs, a.node_idx, a.left, a.right)?;
         }
-        if !self.row_words {
+        let walk = match self.mode {
+            RowMode::Walk => true,
+            RowMode::Cells => self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0,
+            RowMode::Words => false,
+        };
+        if walk {
             return process_cell(
                 eng, a.j, a.row_base, a.f_pairs, a.ctx, a.right_level_t, a.g_pairs_scratch,
                 a.node_idx, a.left, a.right, &mut self.sink, a.gate,
@@ -632,6 +729,10 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
             return Ok(());
         }
         a.gate.poll((a.f_pairs.len() * n2) as u64)?;
+        // A dead cell of a row walking its live cells alone.
+        if self.mode == RowMode::Cells {
+            return Ok(());
+        }
         let (from, to) = self.take_column(a.j);
         if from == to {
             return Ok(());

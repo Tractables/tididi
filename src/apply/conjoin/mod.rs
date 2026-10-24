@@ -941,6 +941,8 @@ enum WordNote {
     Grouped,
     /// A row read by vectors.
     Row,
+    /// A row read by vectors that walks its live cells alone.
+    Cells,
 }
 
 // A test counts the times a level's pairs arena grew.

@@ -93,10 +93,11 @@ fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
         }
     }
     let after = word_cells_levels();
-    let [grids, complete, grouped, rows] = std::array::from_fn(|k| after[k] - before[k]);
-    eprintln!("levels read by vectors: {grids} of two grids, {complete} with a complete side, {grouped} grouped cells, {rows} rows, over {cases} cases");
+    let [grids, complete, grouped, rows, cells] = std::array::from_fn(|k| after[k] - before[k]);
+    eprintln!("levels read by vectors: {grids} of two grids, {complete} with a complete side, {grouped} grouped cells, {rows} rows ({cells} walking their live cells), over {cases} cases");
     assert!(grids > 0, "expected levels of two grids read by vectors, got none over {cases} cases");
     assert!(complete > 0, "expected levels with a complete side read by vectors, got none over {cases} cases");
     assert!(grouped > 0, "expected grouped cells read by vectors, got none over {cases} cases");
     assert!(rows > 0, "expected rows read by vectors, got none over {cases} cases");
+    assert!(cells > 0, "expected rows walking their live cells alone, got none over {cases} cases");
 }
