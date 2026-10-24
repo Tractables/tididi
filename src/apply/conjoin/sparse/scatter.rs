@@ -1655,7 +1655,7 @@ pub(super) fn emit_parent(
     // growth, as the dense walk's choke point charges per growth event.
     // The level is built here, so its arena is stored.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
-    lim.reserve(level.nodes.stored_mut(), products)?;
+    reserve_room(lim, level.nodes.stored_mut(), products)?;
     let built = if products == candidates.len() {
         candidates.iter().try_for_each(|entry| emit_single_pair(eng, level, candidate_pair(entry)))
     } else if products == 1 {
@@ -1720,7 +1720,7 @@ fn emit_walked(
     }
     if owners.iter().all(|&g| g == g_parent) {
         lim.try_push(pl_output, product)?;
-        lim.reserve(level.nodes.stored_mut(), 1)?;
+        reserve_room(lim, level.nodes.stored_mut(), 1)?;
         let node = finish_node(eng, level, base)?.expect("the walk wrote the candidates' pairs");
         // As in `emit_parent`: canonical children make a node's pairs
         // distinct unless pair lists are multisets.
@@ -1756,6 +1756,25 @@ fn emit_walked(
     }));
     arena.truncate(base);
     emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
+}
+
+/// [`Limits::reserve`](crate::limits::Limits::reserve) behind its own test
+/// for room, inline: a node's emission then pays one comparison for each
+/// buffer that has room, and the reserve's charging and growth only when
+/// one has none.
+#[inline(always)]
+fn reserve_room<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+    if additional <= v.capacity() - v.len() {
+        return Ok(());
+    }
+    reserve_cold(lim, v, additional)
+}
+
+/// The arm of [`reserve_room`] that grows.
+#[cold]
+#[inline(never)]
+fn reserve_cold<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+    lim.reserve(v, additional)
 }
 
 /// The most candidates of more than one g parent that [`emit_few`] groups
@@ -1807,7 +1826,7 @@ fn emit_few(
         };
     }
     let first = pl_output.len();
-    lim.reserve(pl_output, products)?;
+    reserve_room(lim, pl_output, products)?;
     pl_output.extend(parents[..products].iter().enumerate().map(|(k, &g_parent)| ProductEntry {
         f_idx: FNodeIdx(p1 as u32),
         g_idx: GNodeIdx(g_parent),
@@ -1816,7 +1835,7 @@ fn emit_few(
     // As in `emit_parent`: one reserve for the level's pairs, and the
     // output-pair meter charged once for whatever the arena grew by.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
-    lim.reserve(level.nodes.stored_mut(), products)?;
+    reserve_room(lim, level.nodes.stored_mut(), products)?;
     reserve_pairs_for_emit(eng, level, ranged)?;
     let first_node = level.nodes().len();
     let built = counts[..products].iter().enumerate().try_for_each(|(k, &count)| {
