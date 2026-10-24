@@ -118,6 +118,13 @@ fn scatter_level(
     let Collect::Nodes(emit) = collect else {
         return join(ws, collect);
     };
+    if ROUTED {
+        return if !choice.swapped {
+            scatter_routed::<false>(eng, ws, f_level, g_level, shape, pl, Collect::Nodes(emit))
+        } else {
+            scatter_routed::<true>(eng, ws, f_level, g_level, shape, pl, Collect::Nodes(emit))
+        };
+    }
     let flat = flat_candidates_win(thresholds, shape.f.here, choice.emit_steps);
     if flat {
         ws.par_flat.clear();
@@ -132,6 +139,10 @@ fn scatter_level(
     }
     emit_held(eng, ws, emit, shape.f.here, flat, thresholds)
 }
+
+/// Whether the general arm builds a level's nodes by walking f's nodes
+/// ([`scatter_routed`]) rather than holding its candidates for the emit.
+const ROUTED: bool = true;
 
 /// Emit the nodes of a level whose candidates the general arm holds for
 /// its `parents` f parents, in the sorted flat list with `flat` and in the

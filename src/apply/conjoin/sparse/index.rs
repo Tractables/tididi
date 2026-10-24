@@ -81,6 +81,9 @@ pub(crate) struct SparseWorkspace {
     pub(super) outer_keys_epoch: u32,
     pub(super) outer_attached: Vec<u32>,
 
+    // ── The general arm's walk of f's nodes: every outer's `filtered` kept ──
+    pub(super) routes: Routes,
+
     // ── Candidates, and their dedup into products ──
     pub(super) par_buckets: Rows<ParEntry>,          // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
@@ -132,6 +135,137 @@ impl Buffers for EmitScratch {
         visit(&mut self.p2_map);
         visit(&mut self.pair_counts);
         visit(&mut self.single_pairs);
+    }
+}
+
+/// Every outer key's `filtered` index of one level, kept for a walk of f's
+/// nodes that reads them by outer key and inner-g child at random.
+///
+/// Key `k` of outer `o` (an inner-g child) holds the `(g_parent, attached)`
+/// entries `filtered` held for it under `o`, as one run of `entries`. Each
+/// outer's keys are an open-addressed table of their own, its `segment`:
+/// `slots[base..base + 2^bits]`, probed linearly from the key's hash, a
+/// table at most half full. An outer with no key has `bits` 0 and no slot.
+#[derive(Default)]
+pub(super) struct Routes {
+    pub(super) segments: Vec<Segment>,
+    pub(super) slots: Vec<RouteSlot>,
+    pub(super) entries: Vec<(u32, u32)>,
+}
+
+/// One outer key's table in [`Routes`]: its first slot, and log2 of its
+/// slot count, 0 for an outer with no key.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Segment {
+    pub(super) base: u32,
+    pub(super) bits: u32,
+}
+
+/// One slot of a [`Routes`] table: an inner-g child and its run of
+/// entries, or [`RouteSlot::EMPTY`].
+#[derive(Clone, Copy)]
+pub(super) struct RouteSlot {
+    pub(super) key: u32,
+    pub(super) start: u32,
+    pub(super) len: u32,
+}
+
+impl RouteSlot {
+    /// No key: a child index never reaches `u32::MAX`.
+    pub(super) const EMPTY: RouteSlot = RouteSlot { key: u32::MAX, start: 0, len: 0 };
+}
+
+/// The first slot a table of `2^bits` slots, `bits >= 1`, probes for `key`:
+/// the top bits of a multiplicative hash, which spreads runs of
+/// consecutive keys.
+#[inline(always)]
+pub(super) fn route_slot(key: u32, bits: u32) -> usize {
+    (key.wrapping_mul(0x9E37_79B9) >> (32 - bits)) as usize
+}
+
+impl Routes {
+    /// Empty, for a level of `outers` outer keys, each with no key yet.
+    pub(super) fn reset(&mut self, lim: &Limits, outers: usize) -> Result<(), OperationError> {
+        self.segments.clear();
+        lim.try_resize(&mut self.segments, outers, Segment::default())?;
+        self.slots.clear();
+        self.entries.clear();
+        Ok(())
+    }
+
+    /// Give outer `outer` a table of the keys `touched` names, each with its
+    /// run `buckets[key]`.
+    pub(super) fn seal(
+        &mut self,
+        lim: &Limits,
+        outer: usize,
+        touched: &[u32],
+        buckets: &[Vec<(u32, u32)>],
+    ) -> Result<(), OperationError> {
+        if touched.is_empty() {
+            return Ok(());
+        }
+        let bits = (2 * touched.len()).next_power_of_two().trailing_zeros();
+        let base = self.slots.len();
+        let size = 1usize << bits;
+        if base + size > u32::MAX as usize {
+            return Err(OperationError::IndexOverflow);
+        }
+        lim.try_resize(&mut self.slots, base + size, RouteSlot::EMPTY)?;
+        let table = &mut self.slots[base..];
+        for &key in touched {
+            let run = &buckets[key as usize];
+            let start = self.entries.len();
+            if start + run.len() > u32::MAX as usize {
+                return Err(OperationError::IndexOverflow);
+            }
+            lim.reserve(&mut self.entries, run.len())?;
+            self.entries.extend_from_slice(run);
+            let mut at = route_slot(key, bits);
+            while table[at].key != u32::MAX {
+                at = (at + 1) & (size - 1);
+            }
+            table[at] = RouteSlot { key, start: start as u32, len: run.len() as u32 };
+        }
+        self.segments[outer] = Segment { base: base as u32, bits };
+        Ok(())
+    }
+}
+
+impl Buffers for Routes {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.segments);
+        visit(&mut self.slots);
+        visit(&mut self.entries);
+    }
+}
+
+/// [`Routes`] borrowed for reading.
+#[derive(Clone, Copy)]
+pub(super) struct RoutesView<'a> {
+    pub(super) segments: &'a [Segment],
+    pub(super) slots: &'a [RouteSlot],
+    pub(super) entries: &'a [(u32, u32)],
+}
+
+impl<'a> RoutesView<'a> {
+    /// The entries of inner-g child `key` under the outer of `segment`, empty
+    /// where it has none.
+    #[inline(always)]
+    pub(super) fn find(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
+        let size = 1usize << segment.bits;
+        let table = &self.slots[segment.base as usize..segment.base as usize + size];
+        let mut at = route_slot(key, segment.bits);
+        loop {
+            let slot = table[at];
+            if slot.key == key {
+                return &self.entries[slot.start as usize..(slot.start + slot.len) as usize];
+            }
+            if slot.key == u32::MAX {
+                return &[];
+            }
+            at = (at + 1) & (size - 1);
+        }
     }
 }
 
@@ -662,6 +796,7 @@ impl Buffers for SparseWorkspace {
         self.g_by_inner.buffers(visit);
         visit(&mut self.outer_keys);
         visit(&mut self.outer_attached);
+        self.routes.buffers(visit);
         visit(&mut self.par_buckets);
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);

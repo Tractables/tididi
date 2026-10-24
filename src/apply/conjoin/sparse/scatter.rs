@@ -192,13 +192,32 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     collect: Collect<'_, '_>,
     walk: impl FnOnce(WalkParts<'w>) -> W,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     let SparseWorkspace { g_by_outer, owned, owned_len, outer_offsets, node_candidates, node_owners, emit, .. } = ws;
     let walk = walk(WalkParts {
         g_by_outer: g_by_outer.view(),
         owned: &owned[..*owned_len],
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
     });
+    walk_nodes::<SWAPPED, W>(eng, &walk, f_level, shape, collect, node_candidates, node_owners, emit)
+}
+
+/// Walk f's nodes in order, each node's candidates found by `walk`, into
+/// `collect`: into the level's nodes, each node emitted as its walk ends
+/// ([`emit_walked`]), or, on a level with one product, its pair arena, a
+/// count or sums.
+#[inline(always)]
+#[expect(clippy::too_many_arguments)]
+fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
+    eng: &Engine,
+    walk: &W,
+    f_level: &TddLevel,
+    shape: LevelShape,
+    collect: Collect<'_, '_>,
+    node_candidates: &mut Vec<ParEntry>,
+    node_owners: &mut Vec<u32>,
+    emit: &mut EmitScratch,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
     // Amortized cancellation/deadline poll; the sparse join has no other
     // mid-level break, and the bail lands where `try_push`'s recovery
     // already covers it.
@@ -250,7 +269,7 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
         Collect::Sum(sum) => f_level.try_for_each_node(nodes, |_, pairs| {
             walk.node::<SWAPPED>(pairs, &mut ticker, |entry| sum.push(lim, candidate_pair(&entry)))
         }),
-        Collect::Buckets | Collect::Flat => unreachable!("the leaf arm hands each node's candidates on as it walks"),
+        Collect::Buckets | Collect::Flat => unreachable!("a walk of f's nodes hands each node's candidates on as it walks"),
     }
 }
 
@@ -439,6 +458,84 @@ impl<P: Fn(u32, u32) -> u32> NodeWalk for LeafWalk<'_, P> {
     }
 }
 
+/// The general arm as a walk of f's nodes: an f pair reads, for each live
+/// product of its inner child, the routes its outer child's `filtered`
+/// index holds for the product's inner-g child ([`Routes`]). The candidates
+/// and the clock's charges are the general arm's; only their order differs.
+struct RoutedWalk<'a> {
+    inner: GroupedView<'a, ProductEntry>,
+    routes: RoutesView<'a>,
+}
+
+impl NodeWalk for RoutedWalk<'_> {
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        for pair in pairs {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            let segment = self.routes.segments[outer1 as usize];
+            if segment.bits == 0 {
+                continue;
+            }
+            for e in self.inner.bucket(inner1 as usize) {
+                let under = self.routes.find(segment, e.g_idx.0);
+                if under.is_empty() {
+                    continue;
+                }
+                let inner_prod = e.prod_idx.0;
+                for &(g_parent, attached) in under {
+                    let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
+                    push(ParEntry { g_parent, left_prod, right_prod })?;
+                }
+                ticker.poll(under.len() as u64)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The general arm by f node: every outer key's `filtered` index is built
+/// as [`scatter_general_arm`] builds it and kept in [`Routes`], and f's
+/// nodes are then walked in order ([`RoutedWalk`]), each emitted as its
+/// walk ends. No candidate is held past its node.
+#[inline(never)]
+pub(super) fn scatter_routed<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    f_level: &TddLevel,
+    g_level: &TddLevel,
+    shape: LevelShape,
+    pl: Sides<&[ProductEntry]>,
+    collect: Collect<'_, '_>,
+) -> Result<(), OperationError> {
+    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape)?;
+    build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
+    let lim = eng.limits();
+    let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
+    {
+        let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
+        s.routes.reset(lim, s.outer_k)?;
+        for outer in 0..s.outer_k {
+            if s.outer.bucket(outer).is_empty() || s.f_pairs_under(outer) == 0 {
+                continue;
+            }
+            s.build_for_outer(lim, outer)?;
+            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets)?;
+            s.filtered.clear_touched();
+        }
+    }
+    let SparseWorkspace { routes, inner_offsets, node_candidates, node_owners, emit, .. } = ws;
+    let walk = RoutedWalk {
+        inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
+        routes: RoutesView { segments: &routes.segments, slots: &routes.slots, entries: &routes.entries },
+    };
+    walk_nodes::<SWAPPED, _>(eng, &walk, f_level, shape, collect, node_candidates, node_owners, emit)
+}
+
 /// The general arm of the scatter, on a level whose children are both
 /// internal and joined through their product lists: the four-way join of
 /// f/g parent and child/sibling product lists. `SWAPPED = false`
@@ -597,6 +694,8 @@ struct ScatterSides<'w> {
     /// collects them flat, appended with their parent for the sort.
     par_buckets: &'w mut [Vec<ParEntry>],
     par_flat: &'w mut Vec<Candidate>,
+    /// Every outer's `filtered`, kept for [`scatter_routed`]'s walk.
+    routes: &'w mut Routes,
     /// How many outer keys the emit loop walks.
     outer_k: usize,
 }
@@ -770,7 +869,7 @@ fn sides<'w, const SWAPPED: bool>(
         inner_offsets, outer_offsets,
         filtered, filtered_touched, filtered_held, par_buckets, par_flat,
         wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
-        outer_keys, outer_keys_epoch, outer_attached,
+        outer_keys, outer_keys_epoch, outer_attached, routes,
         ..
     } = ws;
     bucket_offsets(eng.limits(), pl_inner, inner_k, inner_offsets)?;
@@ -800,6 +899,7 @@ fn sides<'w, const SWAPPED: bool>(
         outer_attached,
         par_buckets,
         par_flat,
+        routes,
         outer_k,
     })
 }
@@ -899,6 +999,27 @@ impl ScatterSides<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Fill `filtered` for one outer key, from whichever g index is the
+    /// cheaper to walk, and only for the children the emit will read when
+    /// finding those costs less than it saves.
+    fn build_for_outer(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        let by_key = self.build_cost_by_key(outer);
+        if by_key <= self.f_pairs_under(outer) {
+            // The walk by the outer's g keys costs no more than the emit's
+            // own walk of the f pairs under it, and the marking costs at
+            // least that walk: neither it nor the filter it feeds can pay
+            // for itself here.
+            self.build_filtered_for_outer::<false>(lim, outer)
+        } else {
+            self.mark_wanted_for_outer(outer);
+            if self.build_cost_by_inner() < by_key {
+                self.build_filtered_by_inner(lim, outer)
+            } else {
+                self.build_filtered_for_outer::<true>(lim, outer)
+            }
+        }
     }
 
     /// The g index entries building this outer's `filtered` by the outer's
@@ -1139,21 +1260,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
         if s.outer.bucket(outer).is_empty() { continue; }
-        let by_key = s.build_cost_by_key(outer);
-        if by_key <= s.f_pairs_under(outer) {
-            // The walk by the outer's g keys costs no more than the emit's
-            // own walk of the f pairs under it, and the marking costs at
-            // least that walk: neither it nor the filter it feeds can pay
-            // for itself here.
-            s.build_filtered_for_outer::<false>(lim, outer)?;
-        } else {
-            s.mark_wanted_for_outer(outer);
-            if s.build_cost_by_inner() < by_key {
-                s.build_filtered_by_inner(lim, outer)?;
-            } else {
-                s.build_filtered_for_outer::<true>(lim, outer)?;
-            }
-        }
+        s.build_for_outer(lim, outer)?;
         match &mut collect {
             Collect::Flat => s.emit_for_outer::<SWAPPED, true, FAR>(lim, outer, &mut ticker)?,
             Collect::Buckets => s.emit_for_outer::<SWAPPED, false, FAR>(lim, outer, &mut ticker)?,
