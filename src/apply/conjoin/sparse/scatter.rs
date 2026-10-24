@@ -124,10 +124,10 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
             if ones {
                 leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
-                    |parts| OwnerWalk::<true> { owners: parts.owners, outer: parts.outer })?;
+                    |parts| OwnerWalk::<true>::of(parts, f_outer, g_outer))?;
             } else {
                 leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
-                    |parts| OwnerWalk::<false> { owners: parts.owners, outer: parts.outer })?;
+                    |parts| OwnerWalk::<false>::of(parts, f_outer, g_outer))?;
             }
             if !SWAPPED {
                 clear_owner_table::<true>(g_level, &mut ws.owners, &mut ws.owners_clean);
@@ -200,14 +200,38 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let nodes = 0..shape.f.here;
     match collect {
-        Collect::Nodes(Emit { level, out, duplicates_legal }) => f_level.try_for_each_node(nodes, |p1, pairs| {
-            node_candidates.clear();
-            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
-            if node_candidates.is_empty() {
-                return Ok(());
+        Collect::Nodes(Emit { level, out, duplicates_legal }) => {
+            // A walk whose reads span more than the cache asks for them some
+            // nodes ahead, when f's nodes can be read ahead by index.
+            let stored = f_level.stored().filter(|_| walk.spans().is_some_and(leaf_prefetching));
+            let mut each = |p1: usize, pairs: &[ChildPair]| {
+                node_candidates.clear();
+                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
+                if node_candidates.is_empty() {
+                    return Ok(());
+                }
+                emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal)
+            };
+            match stored {
+                None => f_level.try_for_each_node(nodes, each),
+                Some(stored) => {
+                    note_prefetch(5);
+                    let at = |p1: usize| stored.nodes().get(p1).map(|node| stored.of(node));
+                    f_level.try_for_each_node(nodes, |p1, pairs| {
+                        if let Some(ahead) = at(p1 + NODES_AHEAD[0]) {
+                            walk.ahead::<SWAPPED>(ahead, 0);
+                        }
+                        if let Some(ahead) = at(p1 + NODES_AHEAD[1]) {
+                            walk.ahead::<SWAPPED>(ahead, 1);
+                        }
+                        if let Some(ahead) = at(p1 + NODES_AHEAD[2]) {
+                            walk.ahead::<SWAPPED>(ahead, 2);
+                        }
+                        each(p1, pairs)
+                    })
+                }
             }
-            emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal)
-        }),
+        }
         Collect::Direct(level) => f_level.try_for_each_node(nodes, |_, pairs| {
             walk.node::<SWAPPED>(pairs, &mut ticker, |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))
         }),
@@ -224,6 +248,11 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     }
 }
 
+/// How many f nodes ahead of the one it walks [`leaf_walk`] asks the cache
+/// for each stage of a node's reads ([`NodeWalk::ahead`]): each stage's
+/// addresses are read from what the stage before asked for.
+const NODES_AHEAD: [usize; 3] = [12, 8, 4];
+
 /// How [`leaf_walk`] finds the candidates of one f node.
 trait NodeWalk {
     /// Hand every candidate of the f node holding `pairs` to `push`, in the
@@ -234,6 +263,18 @@ trait NodeWalk {
         ticker: &mut crate::limits::PollGate,
         push: impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError>;
+
+    /// The bytes the walk reads at random, where it can ask for them ahead
+    /// ([`Self::ahead`]); `None` where it does not.
+    fn spans(&self) -> Option<usize> {
+        None
+    }
+
+    /// Ask the cache for stage `stage` of what the walk of the f node holding
+    /// `pairs` reads, [`NODES_AHEAD`]`[stage]` nodes before it walks it. A
+    /// hint only.
+    #[inline(always)]
+    fn ahead<const SWAPPED: bool>(&self, _pairs: &[ChildPair], _stage: usize) {}
 }
 
 /// What [`leaf_walk`] reads for each f pair: the outer child's live
@@ -300,7 +341,41 @@ struct OwnerWalk<'a, const ONES: bool> {
     outer: GroupedView<'a, ProductEntry>,
 }
 
+impl<'a, const ONES: bool> OwnerWalk<'a, ONES> {
+    /// The walk of a level whose f and g have `f_outer` and `g_outer` outer
+    /// children: its slots and bounds of the workspace's grow-only buffers.
+    fn of(parts: WalkParts<'a>, f_outer: usize, g_outer: usize) -> Self {
+        OwnerWalk {
+            owners: &parts.owners[..OWNER_SLOTS * g_outer],
+            outer: GroupedView { offsets: &parts.outer.offsets[..=f_outer], entries: parts.outer.entries },
+        }
+    }
+}
+
 impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
+    fn spans(&self) -> Option<usize> {
+        Some(std::mem::size_of_val(self.owners) + std::mem::size_of_val(self.outer.offsets)
+            + std::mem::size_of_val(self.outer.entries))
+    }
+
+    /// The outer child's bounds, then its run of products, then each
+    /// product's slots.
+    #[inline(always)]
+    fn ahead<const SWAPPED: bool>(&self, pairs: &[ChildPair], stage: usize) {
+        for pair in pairs {
+            let outer1 = orient::<SWAPPED>(pair.left.0, pair.right.0).1 as usize;
+            match stage {
+                0 => self.outer.prefetch_bounds(outer1),
+                1 => self.outer.prefetch_run(outer1),
+                _ => {
+                    for e in self.outer.bucket(outer1) {
+                        prefetch_at(self.owners, OWNER_SLOTS * e.g_idx.idx());
+                    }
+                }
+            }
+        }
+    }
+
     #[inline(always)]
     fn node<const SWAPPED: bool>(
         &self,
@@ -542,6 +617,17 @@ const PREFETCH_BYTES: usize = 32 << 20;
 #[inline(always)]
 fn prefetching(bytes: usize) -> bool {
     forced_prefetch().unwrap_or(bytes >= PREFETCH_BYTES)
+}
+
+/// How many bytes a leaf walk's random reads span before it asks the cache
+/// for them ahead ([`NodeWalk::ahead`]).
+const LEAF_PREFETCH_BYTES: usize = 4 << 20;
+
+/// Whether a leaf walk whose random reads span `bytes` bytes asks the cache
+/// for them ahead: past [`LEAF_PREFETCH_BYTES`], or as a test pins it.
+#[inline(always)]
+fn leaf_prefetching(bytes: usize) -> bool {
+    forced_prefetch().unwrap_or(bytes >= LEAF_PREFETCH_BYTES)
 }
 
 /// Whether a level of `parents` f parents that collected its candidates

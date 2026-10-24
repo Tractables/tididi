@@ -1,12 +1,12 @@
 //! The sparse route's walks against the grid: random operands over random
 //! subsets of the variables, so that leaves hold One as well as literals, on
-//! every vtree shape, conjoined with every level forced onto the sparse route
-//! and with none. Both give the same levels, the same minimized diagram and
-//! the same count.
+//! every vtree shape, conjoined with every level forced onto the sparse route,
+//! its walks asking the cache ahead or not, and with none. All give the same
+//! levels, the same minimized diagram and the same count.
 
 use std::sync::Arc;
 
-use super::{ForcedThresholds, SparseThresholds};
+use super::{prefetches_run, ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin::{conjoin_checked, VtreeMask};
 use crate::diagram::Tdd;
 use crate::test_helpers::{assert_canonical, normalized_levels, rand_conj_over, vtree_shapes, Lcg};
@@ -49,19 +49,24 @@ fn operand(vtree: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
     t
 }
 
-/// Conjoin both ways round under both thresholds and require the same
-/// diagram, level by level and minimized, and the same count.
+/// Conjoin both ways round under both thresholds, the sparse walks asking
+/// the cache ahead or not, and require the same diagram, level by level and
+/// minimized, and the same count.
 fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
     for (a, b) in [(f, g), (g, f)] {
-        let sparse = and_under(eng, ALWAYS, a, b);
         let dense = and_under(eng, NEVER, a, b);
-        assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}: levels");
-        let (mut sparse, mut dense) = (sparse, dense);
-        eng.minimize(&mut sparse).unwrap();
-        eng.minimize(&mut dense).unwrap();
-        assert_canonical(&sparse);
-        assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}: minimized");
-        assert_eq!(count_under(eng, ALWAYS, a, b), count_under(eng, NEVER, a, b), "{what}: count");
+        let mut minimized = dense.clone();
+        eng.minimize(&mut minimized).unwrap();
+        for gate in [Some(false), Some(true)] {
+            let _pinned = ForcedPrefetch::install(gate);
+            let sparse = and_under(eng, ALWAYS, a, b);
+            assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}, gate {gate:?}: levels");
+            let mut sparse = sparse;
+            eng.minimize(&mut sparse).unwrap();
+            assert_canonical(&sparse);
+            assert_eq!(normalized_levels(&sparse), normalized_levels(&minimized), "{what}, gate {gate:?}: minimized");
+            assert_eq!(count_under(eng, ALWAYS, a, b), count_under(eng, NEVER, a, b), "{what}, gate {gate:?}: count");
+        }
     }
 }
 
@@ -69,6 +74,7 @@ fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
 fn sparse_walks_build_the_grids_levels() {
     let mut rng = Lcg::new(0x1eaf_1abe);
     let eng = Engine::new();
+    let before = prefetches_run();
     for n in [6, 9] {
         for (shape, vtree) in vtree_shapes(n) {
             for round in 0..10 {
@@ -78,4 +84,6 @@ fn sparse_walks_build_the_grids_levels() {
             }
         }
     }
+    let after = prefetches_run();
+    assert!(after[5] > before[5], "no leaf walk read its f nodes ahead");
 }
