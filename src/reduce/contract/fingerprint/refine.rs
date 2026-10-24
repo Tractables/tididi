@@ -4,7 +4,7 @@
 use crate::diagram::{ChildPair, ChildSide, TddLevel};
 use crate::limits::{Limits, OperationError};
 
-use super::super::scratch::ContractScratch;
+use super::super::scratch::{ClassInfo, ContractScratch};
 use crate::sort::Radix;
 use super::{mix64, pack, split_pair};
 
@@ -26,8 +26,6 @@ struct Wide<'a> {
     reach: &'a mut Vec<u32>,
     touched: &'a mut Vec<u32>,
     bucket: &'a mut Vec<u32>,
-    hits: &'a mut Vec<u32>,
-    dest: &'a mut Vec<u32>,
     met: &'a mut Vec<u32>,
     seen: &'a mut Vec<u32>,
     /// No parent node repeats a pair: the counts of
@@ -86,9 +84,9 @@ pub(super) fn refine_context_groups(
     listed: Option<&[u32]>,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
-        twin_class, twin_bits, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
-        refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_hits,
-        refine_dest, refine_met, refine_seen, flat_groups, group_starts, ..
+        twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
+        refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_met,
+        refine_seen, flat_groups, group_starts, ..
     } = scratch;
     let mut wide = Wide {
         keys: refine_keys,
@@ -100,8 +98,6 @@ pub(super) fn refine_context_groups(
         reach: refine_reach,
         touched: refine_touched,
         bucket: refine_bucket,
-        hits: refine_hits,
-        dest: refine_dest,
         met: refine_met,
         seen: refine_seen,
         simple,
@@ -130,11 +126,11 @@ pub(super) fn refine_context_groups(
     };
     // The classes made are nested sets of two or more nodes each, so there
     // are fewer than `width` besides the first.
-    class_size.clear();
-    lim.reserve_exact(class_size, width + 1)?;
-    class_size.push(first as u32);
+    classes.clear();
+    lim.reserve_exact(classes, width + 1)?;
+    classes.push(ClassInfo::new(first as u32));
     let twinable = if first >= 2 { first } else { 0 };
-    let mut part = Partition { class: &mut twin_class[..width], bits, size: class_size, twinable };
+    let mut part = Partition { class: &mut twin_class[..width], bits, classes, twinable };
     // A stored level's wide parent nodes are refined after the narrow ones,
     // narrowest first: by then most nodes have left the partition, and a
     // wide node sorts only the pairs of the nodes still in it. The
@@ -171,19 +167,16 @@ pub(super) fn refine_context_groups(
     part.drop_unnamed(width);
     debug_assert_eq!(
         part.twinable,
-        part.size.iter().filter(|&&members| members >= 2).map(|&members| members as usize).sum::<usize>(),
+        part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
         "the count of nodes that can have a twin"
     );
     if part.twinable == 0 {
         return Ok(false);
     }
-    let Partition { class, bits, size, twinable } = part;
+    let Partition { class, bits, classes, twinable } = part;
     // The classes of two or more, in the order of their lowest members,
     // each listed ascending: one pass over the nodes not alone, a word of
     // bits at a time, so the nodes without a twin are skipped 64 at once.
-    lim.try_resize(class_pos, size.len(), 0u32)?;
-    let pos = &mut class_pos[..size.len()];
-    pos.fill(u32::MAX);
     lim.try_resize(flat_groups, twinable, 0u32)?;
     lim.reserve_exact(group_starts, twinable / 2)?;
     let mut next = 0u32;
@@ -197,16 +190,17 @@ pub(super) fn refine_context_groups(
             live &= live - 1;
             let t = w * 64 + b;
             let c = if (moved >> b) & 1 == 0 { 0 } else { class[t] as usize };
-            if size[c] < 2 {
+            let k = &mut classes[c];
+            if k.size < 2 {
                 continue;
             }
-            if pos[c] == u32::MAX {
-                pos[c] = next;
+            if k.pos == u32::MAX {
+                k.pos = next;
                 group_starts.push(next);
-                next += size[c];
+                next += k.size;
             }
-            flat_groups[pos[c] as usize] = t as u32;
-            pos[c] += 1;
+            flat_groups[k.pos as usize] = t as u32;
+            k.pos += 1;
         }
     }
     debug_assert_eq!(next as usize, twinable, "every node that can have a twin is listed");
@@ -226,7 +220,7 @@ struct Partition<'a> {
     class: &'a mut [u32],
     /// Per 64 nodes, their moved bits and their alone bits.
     bits: &'a mut [[u64; 2]],
-    size: &'a mut Vec<u32>,
+    classes: &'a mut Vec<ClassInfo>,
     /// The nodes in classes of two or more: those that can still have a
     /// twin.
     twinable: usize,
@@ -249,7 +243,7 @@ impl Partition<'_> {
     /// Whether a node of class `c` can still have a twin.
     #[inline]
     fn can_twin(&self, c: u32) -> bool {
-        c != ALONE && self.size[c as usize] >= 2
+        c != ALONE && self.classes[c as usize].size >= 2
     }
 
     /// Take node `t` out of its class `c`: it has no twin, nor has the last
@@ -257,13 +251,13 @@ impl Partition<'_> {
     #[inline]
     fn alone(&mut self, t: u32, c: u32) {
         let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
-        let members = self.size[c as usize];
+        let members = self.classes[c as usize].size;
         self.twinable -= match members {
             1 => 0,
             2 => 2,
             _ => 1,
         };
-        self.size[c as usize] = members - 1;
+        self.classes[c as usize].size = members - 1;
         let word = &mut self.bits[w];
         word[0] |= b;
         word[1] |= b;
@@ -289,13 +283,13 @@ impl Partition<'_> {
     /// caller puts there.
     #[inline]
     fn fresh(&mut self, c: u32, members: u32) -> u32 {
-        self.size[c as usize] -= members;
-        if self.size[c as usize] == 1 {
+        self.classes[c as usize].size -= members;
+        if self.classes[c as usize].size == 1 {
             self.twinable -= 1;
         }
-        let id = self.size.len() as u32;
+        let id = self.classes.len() as u32;
         // Within the reserve made for every class there can be.
-        self.size.push(members);
+        self.classes.push(ClassInfo::new(members));
         id
     }
 
@@ -321,7 +315,7 @@ impl Partition<'_> {
             }
             return;
         }
-        let id = if self.size[c0 as usize] > 2 { self.fresh(c0, 2) } else { c0 };
+        let id = if self.classes[c0 as usize].size > 2 { self.fresh(c0, 2) } else { c0 };
         self.put(t0, id);
         self.put(t1, id);
     }
@@ -342,13 +336,13 @@ impl Partition<'_> {
         if unnamed < 2 {
             return;
         }
-        debug_assert_eq!(self.size[0] as usize, unnamed, "the first class is the nodes no pair names");
+        debug_assert_eq!(self.classes[0].size as usize, unnamed, "the first class is the nodes no pair names");
         for w in 0..words {
             let [moved, alone] = &mut self.bits[w];
             *alone |= !*moved;
             *moved = u64::MAX;
         }
-        self.size[0] = 0;
+        self.classes[0].size = 0;
         self.twinable -= unnamed;
     }
 
@@ -418,7 +412,7 @@ impl Partition<'_> {
         let mut keep = [false; SMALL_PAIRS];
         for r in 0..runs {
             if first[r] as usize == r {
-                keep[r] = u32::from(named[r]) == self.size[of[r] as usize];
+                keep[r] = u32::from(named[r]) == self.classes[of[r] as usize].size;
             }
         }
         for g in 0..runs {
@@ -632,10 +626,8 @@ impl Partition<'_> {
         top: u32,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { column, touched, bucket, hits, dest, met, seen, .. } = wide;
+        let Wide { column, touched, bucket, met, seen, .. } = wide;
         // Every class there can be, as `refine_context_groups` reserves.
-        lim.try_resize(hits, self.class.len() + 1, 0u32)?;
-        lim.try_resize(dest, self.class.len() + 1, 0u32)?;
         lim.try_resize(seen, pairs.len(), 0u32)?;
         met.clear();
         lim.reserve_exact(met, pairs.len())?;
@@ -645,7 +637,7 @@ impl Partition<'_> {
                 let s = split_pair(&pairs[k], side).1;
                 let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).1 == s).count();
                 let nodes = pairs[k..end].iter().map(move |pair| split_pair(pair, side).0);
-                self.split_sibling(nodes, hits, dest, met, seen);
+                self.split_sibling(nodes, met, seen);
                 k = end;
             }
             return Ok(());
@@ -677,7 +669,7 @@ impl Partition<'_> {
         let mut from = 0;
         for &s in touched.iter() {
             let to = std::mem::take(&mut column[s as usize]) as usize;
-            self.split_sibling(bucket[from..to].iter().copied(), hits, dest, met, seen);
+            self.split_sibling(bucket[from..to].iter().copied(), met, seen);
             from = to;
         }
         Ok(())
@@ -687,48 +679,45 @@ impl Partition<'_> {
     /// they all are is left whole; one member of a larger class leaves the
     /// partition alone; two or more members of a larger class become a class
     /// of their own, so the classes made still nest and hold two or more
-    /// nodes each. `hits` is zero on entry and on return; `seen` keeps
-    /// each node's class as the count read it, [`ALONE`] for a node that
-    /// cannot have a twin, so the second pass reads no class.
+    /// nodes each. Each class's `hits` is zero on entry and on return;
+    /// `seen` keeps each node's class as the count read it, [`ALONE`] for a
+    /// node that cannot have a twin, so the second pass reads no class.
     #[inline]
-    fn split_sibling(
-        &mut self,
-        nodes: impl Iterator<Item = u32> + Clone,
-        hits: &mut [u32],
-        dest: &mut [u32],
-        met: &mut Vec<u32>,
-        seen: &mut [u32],
-    ) {
+    fn split_sibling(&mut self, nodes: impl Iterator<Item = u32> + Clone, met: &mut Vec<u32>, seen: &mut [u32]) {
         met.clear();
         for (t, seen) in nodes.clone().zip(seen.iter_mut()) {
             let c = self.of(t);
-            *seen = if self.can_twin(c) {
-                let h = &mut hits[c as usize];
-                if *h == 0 {
-                    // Within the reserve of one class a pair.
-                    met.push(c);
-                }
-                *h += 1;
-                c
-            } else {
-                ALONE
-            };
+            *seen = ALONE;
+            if c == ALONE {
+                continue;
+            }
+            let k = &mut self.classes[c as usize];
+            if k.size < 2 {
+                continue;
+            }
+            if k.hits == 0 {
+                // Within the reserve of one class a pair.
+                met.push(c);
+            }
+            k.hits += 1;
+            *seen = c;
         }
         for &c in met.iter() {
-            let h = hits[c as usize];
-            dest[c as usize] = if h == self.size[c as usize] {
+            let k = self.classes[c as usize];
+            let dest = if k.hits == k.size {
                 c
-            } else if h == 1 {
+            } else if k.hits == 1 {
                 ALONE
             } else {
-                self.fresh(c, h)
+                self.fresh(c, k.hits)
             };
+            self.classes[c as usize].dest = dest;
         }
         for (t, &c) in nodes.zip(seen.iter()) {
             if c == ALONE {
                 continue;
             }
-            match dest[c as usize] {
+            match self.classes[c as usize].dest {
                 ALONE => self.alone(t, c),
                 // A node of the first class it names is moved there anyway,
                 // so that it reads as named.
@@ -737,7 +726,7 @@ impl Partition<'_> {
             }
         }
         for &c in met.iter() {
-            hits[c as usize] = 0;
+            self.classes[c as usize].hits = 0;
         }
     }
 
@@ -755,8 +744,8 @@ impl Partition<'_> {
             let c = (run.0 >> 32) as u32;
             if members == 1 {
                 self.alone(node(run), c);
-            } else if members < self.size[c as usize] || c == 0 {
-                let id = if members < self.size[c as usize] { self.fresh(c, members) } else { c };
+            } else if members < self.classes[c as usize].size || c == 0 {
+                let id = if members < self.classes[c as usize].size { self.fresh(c, members) } else { c };
                 self.put(node(run), id);
                 while next != NO_RUN {
                     self.put(node(runs[next as usize]), id);

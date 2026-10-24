@@ -257,11 +257,8 @@ pub(crate) struct ContractScratch {
     /// word of bits set once each node has left the first class, and a
     /// word of bits set once each is known to have no twin.
     pub(super) twin_bits: Vec<[u64; 2]>,
-    /// Per class of that partition, its members.
-    pub(super) class_size: Vec<u32>,
-    /// Per class of that partition, where its group's next member goes in
-    /// `flat_groups`.
-    pub(super) class_pos: Vec<u32>,
+    /// The classes of that partition.
+    pub(super) classes: Vec<ClassInfo>,
     /// One wide parent node's pairs, each `(node, sibling)`, sorted, for
     /// the partition refinement.
     pub(super) refine_keys: Vec<u64>,
@@ -284,11 +281,6 @@ pub(crate) struct ContractScratch {
     pub(super) refine_column: Vec<u32>,
     /// One wide parent node's nodes, bucketed by the sibling each pair names.
     pub(super) refine_bucket: Vec<u32>,
-    /// Per class of the partition, its members one sibling meets; zero
-    /// between siblings.
-    pub(super) refine_hits: Vec<u32>,
-    /// Per class one sibling meets, the class those members move to.
-    pub(super) refine_dest: Vec<u32>,
     /// The classes one sibling meets.
     pub(super) refine_met: Vec<u32>,
     /// Per node one sibling is paired with, its class as counted there.
@@ -396,8 +388,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.twin_named);
         visit(&mut self.twin_class);
         visit(&mut self.twin_bits);
-        visit(&mut self.class_size);
-        visit(&mut self.class_pos);
+        visit(&mut self.classes);
         visit(&mut self.refine_keys);
         visit(&mut self.refine_runs);
         visit(&mut self.refine_links);
@@ -406,8 +397,6 @@ impl Buffers for ContractScratch {
         self.refine_radix.buffers(visit);
         visit(&mut self.refine_column);
         visit(&mut self.refine_bucket);
-        visit(&mut self.refine_hits);
-        visit(&mut self.refine_dest);
         visit(&mut self.refine_met);
         visit(&mut self.refine_seen);
         visit(&mut self.refine_reach);
@@ -429,6 +418,30 @@ impl Buffers for ContractScratch {
         visit(&mut self.boundaries);
         self.merge.buffers(visit);
         self.duplicate.buffers(visit);
+    }
+}
+
+/// One class of the partition `fingerprint::refine` refines: what a split
+/// reads and writes of it side by side, in one cache line.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ClassInfo {
+    /// Its members.
+    pub(super) size: u32,
+    /// Its members one sibling of a wide parent node meets; zero between
+    /// siblings.
+    pub(super) hits: u32,
+    /// The class those members move to.
+    pub(super) dest: u32,
+    /// Where its group's next member goes in `flat_groups` once the groups
+    /// are listed; `u32::MAX` before.
+    pub(super) pos: u32,
+}
+
+impl ClassInfo {
+    /// A class of `size` members.
+    #[inline]
+    pub(super) fn new(size: u32) -> Self {
+        Self { size, hits: 0, dest: 0, pos: u32::MAX }
     }
 }
 
