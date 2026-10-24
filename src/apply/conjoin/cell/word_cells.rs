@@ -26,6 +26,30 @@ const CELL_SHARE: u64 = 8;
 /// rows by vectors, if more than one of [`LIVE_SHARE`] of them was live.
 const PROBATION: u64 = 1 << 16;
 
+/// The f nodes, and the g nodes, a level's sample takes at most, spread
+/// over the level ([`sample_cells`]).
+const SAMPLE_NODES: usize = 32;
+
+/// The candidates of a sampled cell read at most, and the fewest of its
+/// f pairs and of its g pairs they take where it holds more
+/// ([`sample_cells`]); a level's sample reads at most one in
+/// `SAMPLE_SHARE` of its candidates.
+const SAMPLE_CELL: usize = 64;
+const SAMPLE_SIDE: usize = 8;
+const SAMPLE_SHARE: usize = 8;
+
+/// A level with masks is read by vectors where at most one of this many
+/// of its sampled candidates is live ([`words_pay`]).
+const MASKED_LIVE_SHARE: u128 = 10;
+
+/// The row loop's cost of a level without masks, in about a cycle a unit:
+/// a cell, a candidate and a live candidate; and the vectors': a child
+/// cell read or a vector word built, an f pair's vector word read, a live
+/// cell, a live candidate and a cell ([`words_pay`]). Fitted to levels run
+/// both ways.
+const WALK_COST: [u128; 3] = [18, 2, 9];
+const WORDS_COST: [u128; 5] = [5, 10, 31, 6, 2];
+
 /// Scratch of the levels whose cells are read by g-pair vectors
 /// ([`run_level_rows_words`]), kept with the conjunction's workspace.
 #[derive(Default)]
@@ -75,6 +99,10 @@ pub(crate) struct WordScratch {
     run_of: Vec<u32>,
     grouped: Vec<u64>,
     run_counts: Vec<u32>,
+    /// A level's sampled g pairs ([`sample_cells`]), node after node, and
+    /// its sampled g nodes.
+    sample: Vec<ChildPair>,
+    sample_cols: Vec<SampledColumn>,
 }
 
 impl WordScratch {
@@ -108,16 +136,38 @@ impl WordScratch {
         visit(&mut self.run_of);
         visit(&mut self.grouped);
         visit(&mut self.run_counts);
+        visit(&mut self.sample);
+        visit(&mut self.sample_cols);
     }
 }
 
-/// Whether a level's cells are read by g-pair vectors: `f` and `g` hold
-/// candidates enough, each f pair against each g pair, that building the
-/// vectors of the child rows the f pairs name on each side that kills,
-/// `f_rows` rows a side at most, each reading the children g's pairs name
-/// there, `g_rows` at most, and ANDing a pair's two, costs under a quarter
-/// of them.
-pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, g_rows: Sides<usize>, kills: Sides<bool>) -> bool {
+/// Whether a level's cells are read by g-pair vectors. Its candidates,
+/// each f pair against each g pair, are enough, and the vectors of the
+/// child rows its f pairs name on each side that kills, `f_rows` rows a
+/// side at most, fit [`WORDS_MAX_VECTOR_WORDS`]. Then a sample of its cells
+/// ([`sample_cells`]) estimates its live candidates and live cells. A
+/// level whose sampled candidates are mostly in grouped cells is walked:
+/// the grouped walk reads a left cell once a run of f pairs against a run
+/// of g pairs. A level with masks is read by vectors where g's nodes are
+/// not all one pair (the masks cull most of the f pairs of a column of
+/// one), at most one in [`MASKED_LIVE_SHARE`] of its candidates is live,
+/// and building and ANDing its vectors costs under a quarter of them; a
+/// level without, where the vectors cost less than the row loop by
+/// [`WORDS_COST`] and [`WALK_COST`].
+pub(crate) fn words_pay(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    w: &mut WordScratch,
+    lookups: PlainLookups,
+    f_rows: Sides<usize>,
+    node_idx: &[u32],
+) -> bool {
+    let (f, g) = (rows.f_level, rows.g_level);
+    let sides = rows.ctx.sides;
+    let kills = Sides {
+        left: !matches!(lookups, PlainLookups::CompleteLeft { .. }),
+        right: !matches!(lookups, PlainLookups::CompleteRight { .. }),
+    };
     let bound = |l: &TddLevel| l.pairs.len() + l.node_count();
     if bound(f).saturating_mul(bound(g)) < WORDS_MIN_CANDIDATES {
         return false;
@@ -128,17 +178,141 @@ pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, g_rows
         return false;
     }
     let words = gp.div_ceil(64);
-    let rows = |n: usize, k: bool| if k { n.min(fp) } else { 0 };
-    let (rows_l, rows_r) = (rows(f_rows.left, kills.left), rows(f_rows.right, kills.right));
-    if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS {
+    let rows_of = |n: usize, k: bool| if k { n.min(fp) } else { 0 };
+    let (rows_l, rows_r) = (rows_of(f_rows.left, kills.left), rows_of(f_rows.right, kills.right));
+    if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS || (rows.ctx.masked && !g.has_multi_pair()) {
+        return false;
+    }
+    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
+    let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.right_width.min(SAMPLE_NODES);
+    let budget = (candidates / SAMPLE_SHARE / sampled.max(1)).clamp(1, SAMPLE_CELL);
+    let sample = match lookups {
+        PlainLookups::Grid => sample_cells(eng, rows, w, &grid(&sides.left), &grid(&sides.right), node_idx, budget),
+        PlainLookups::CompleteLeft { .. } => sample_cells(eng, rows, w, &complete(&sides.left), &grid(&sides.right), node_idx, budget),
+        PlainLookups::CompleteRight { .. } => sample_cells(eng, rows, w, &grid(&sides.left), &complete(&sides.right), node_idx, budget),
+        PlainLookups::Complete { .. } => return false,
+    };
+    let Ok(s) = sample else { return false };
+    if s.candidates == 0 || (!rows.ctx.masked && s.grouped * 2 > s.candidates) {
         return false;
     }
     let side = |rows: usize, named: usize, k: bool| {
         if k { rows.saturating_mul(named.min(gp) + words).saturating_add(gp + named) } else { 0 }
     };
-    let build = side(rows_l, g_rows.left, kills.left) + side(rows_r, g_rows.right, kills.right) + f_rows.left + f_rows.right;
-    let reads = fp.saturating_mul(words).saturating_mul(2) + fp;
-    build.saturating_add(reads).saturating_mul(4) < candidates
+    let (named_l, named_r) = (sides.left.stride as usize, sides.right.stride as usize);
+    let build = (side(rows_l, named_l, kills.left) + side(rows_r, named_r, kills.right) + f_rows.left + f_rows.right) as u128;
+    let reads = fp as u128 * words as u128;
+    let (candidates, cells) = (candidates as u128, rows.f_width as u128 * rows.ctx.right_width as u128);
+    let live = s.live as u128 * candidates / s.candidates as u128;
+    if rows.ctx.masked {
+        return live * MASKED_LIVE_SHARE < candidates && (build + 2 * reads + fp as u128) * 4 < candidates;
+    }
+    let live_cells = s.live_cells as u128 * cells / s.cells.max(1) as u128;
+    let walk = [cells, candidates, live].iter().zip(WALK_COST).map(|(x, c)| x * c).sum::<u128>();
+    let vectors = [build, reads, live_cells, live, cells].iter().zip(WORDS_COST).map(|(x, c)| x * c).sum::<u128>();
+    vectors < walk
+}
+
+/// A level's sampled cells ([`sample_cells`]): the candidates they hold,
+/// the live ones (estimated in a cell whose candidates were sampled) and
+/// those in grouped cells; the cells, and the live ones among them.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CellSample {
+    pub(crate) candidates: u64,
+    pub(crate) live: u64,
+    pub(crate) grouped: u64,
+    pub(crate) cells: u64,
+    pub(crate) live_cells: u64,
+}
+
+/// A sampled g node: where its sampled pairs start in
+/// [`WordScratch::sample`], its pairs, and whether its column is grouped.
+#[derive(Clone, Copy)]
+struct SampledColumn {
+    start: u32,
+    pairs: u32,
+    grouped: bool,
+}
+
+/// `m` of `n` indices spread evenly, all of them where `n <= m`.
+fn spread(n: usize, m: usize) -> impl Iterator<Item = usize> {
+    let m = m.min(n);
+    (0..m).map(move |k| k * n / m)
+}
+
+/// The cells of up to [`SAMPLE_NODES`] f nodes against up to as many g
+/// nodes, spread over each level, read off the child grids: in each, its
+/// candidates where they are at most `budget` ([`SAMPLE_CELL`] at most),
+/// and otherwise as many, f pairs against g pairs spread over each
+/// node's, at least [`SAMPLE_SIDE`] of a side that has them. A cell is
+/// live where a sampled candidate is, and grouped where the walk groups it
+/// (an f row of [`GROUPED_MIN_PAIRS`] pairs against a grouped column).
+fn sample_cells<L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    w: &mut WordScratch,
+    left: &L,
+    right: &R,
+    node_idx: &[u32],
+    budget: usize,
+) -> Result<CellSample, OperationError> {
+    let lim = eng.limits();
+    let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
+    let (lv, rv) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+    w.sample.clear();
+    w.sample_cols.clear();
+    lim.reserve(&mut w.sample, SAMPLE_NODES * SAMPLE_CELL)?;
+    lim.reserve(&mut w.sample_cols, SAMPLE_NODES)?;
+    for j in spread(ctx.right_width, SAMPLE_NODES) {
+        let pairs = column_pairs(ctx, g_level, j, &mut w.g_flat);
+        let grouped = ctx.right_cols.is_some_and(|c| c.runs(j).is_some());
+        w.sample_cols.push(SampledColumn { start: w.sample.len() as u32, pairs: pairs.len() as u32, grouped });
+        w.sample.extend(spread(pairs.len(), SAMPLE_CELL).map(|k| pairs[k]));
+    }
+    let mut s = CellSample::default();
+    let mut picks = [0usize; SAMPLE_CELL];
+    for i in spread(f_width, SAMPLE_NODES) {
+        let pairs = f_level.pairs_view_decoded(i, &mut w.g_flat, lv, rv);
+        let n1 = pairs.len() as u64;
+        let mut f_picked = 0;
+        for k in spread(pairs.len(), SAMPLE_CELL) {
+            picks[f_picked] = k;
+            f_picked += 1;
+        }
+        for (b, col) in w.sample_cols.iter().enumerate() {
+            let end = w.sample_cols.get(b + 1).map_or(w.sample.len(), |c| c.start as usize);
+            let g_picked = &w.sample[col.start as usize..end];
+            let held = n1 * u64::from(col.pairs);
+            s.cells += 1;
+            s.candidates += held;
+            if held == 0 {
+                continue;
+            }
+            if n1 as usize >= GROUPED_MIN_PAIRS && col.grouped {
+                s.grouped += held;
+            }
+            // As many f pairs as leave a pair to each, at least
+            // `SAMPLE_SIDE` of g's, and as many g pairs as leave a pair
+            // to each of those.
+            let s1 = f_picked.min((budget / g_picked.len()).max(SAMPLE_SIDE.min(budget)));
+            let s2 = g_picked.len().min(budget / s1);
+            let mut found = 0u64;
+            for a in spread(f_picked, s1) {
+                let p = pairs[picks[a]];
+                let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                for b in spread(g_picked.len(), s2) {
+                    let q = g_picked[b];
+                    let live = (!left.kills() || left.get_in_row(node_idx, lrow, q.left.0) != NO_PRODUCT)
+                        && (!right.kills() || right.get_in_row(node_idx, rrow, q.right.0) != NO_PRODUCT);
+                    found += u64::from(live);
+                }
+            }
+            s.live += found * held / (s1 * s2) as u64;
+            s.live_cells += u64::from(found > 0);
+        }
+    }
+    Ok(s)
 }
 
 /// The row loop of a plain level whose cells are read by g-pair vectors

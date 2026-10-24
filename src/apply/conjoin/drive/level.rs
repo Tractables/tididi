@@ -1245,11 +1245,12 @@ pub(super) fn build_level_dense(
             && stream_state.is_none()
             && !matches!(lookups, PlainLookups::Complete { .. })
             && super::super::word_cells_forced().unwrap_or_else(|| {
-                let kills = Sides {
-                    left: !matches!(lookups, PlainLookups::CompleteLeft { .. }),
-                    right: !matches!(lookups, PlainLookups::CompleteRight { .. }),
+                let rows = RowLoop {
+                    f_level: f.level(t), g_level: g.level(t),
+                    children: Sides { left: left_level, right: right_level },
+                    ctx: &cell_ctx, f_width: fw.here,
                 };
-                words_pay(f.level(t), g.level(t), f_rows, Sides { left: gw.left, right: gw.right }, kills)
+                words_pay(eng, rows, &mut *run.words, lookups, f_rows, run.products.arena.slab())
             });
         run_row_loop(
             eng, route, lookups, single_pair, pairs,
