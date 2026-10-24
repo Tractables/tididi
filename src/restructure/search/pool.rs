@@ -185,10 +185,12 @@ impl Engine {
     /// The members keep their functions and end up sharing one vtree
     /// allocation, a new one if any move was kept. Stops are polled once per
     /// pivot and within each probe; an error keeps the moves kept so far and
-    /// returns without the closing reduction. A probe charges what
+    /// returns without the closing reduction. A probe scores the move on
+    /// each member, charging the pairs of the member's two levels that the
+    /// score reads; a move the scores keep then charges what
     /// [`rotate_pool_if`](Self::rotate_pool_if) does, less the copy of the
-    /// tree: the descent moves one copy in place, and a kept move charges
-    /// the nodes whose place in the bottom-up order it changes.
+    /// tree, and the nodes whose place in the bottom-up order it changes:
+    /// the descent moves one copy in place.
     ///
     /// # Errors
     ///
@@ -595,13 +597,14 @@ fn probe(
 /// [`probe`] for a move kept exactly when it lowers the members' total.
 ///
 /// Each member is scored ([`score_levels`]), which is never above the pairs
-/// its rebuild holds and almost always equal to them, and charged as if
-/// prepared. A move whose scores do not lower the total is refused, the
-/// members only read. Otherwise every member is rebuilt in turn, charged
-/// what its pairs exceed its score, and the move kept if their pairs lower
-/// the total after all; if not, or if a rebuild passes `bound` or fails,
-/// every member is put back. So the scores decide, and no member's
-/// rebuild waits for the others'.
+/// its rebuild holds and almost always equal to them. A score reads the
+/// member's two levels and builds nothing, so it charges their pairs and
+/// [`REBUILD_UNITS`]. A move whose scores do not lower the total is refused,
+/// the members only read. Otherwise every member is rebuilt in turn, charged
+/// what preparing it costs, and the move kept if their pairs lower the total
+/// after all; if not, or if a rebuild passes `bound` or fails, every member
+/// is put back. So the scores decide, and no member's rebuild waits for the
+/// others'.
 #[allow(clippy::too_many_arguments)]
 fn probe_scored(
     eng: &Engine,
@@ -626,8 +629,8 @@ fn probe_scored(
     lim.reserve_exact(&mut before, members.len())?;
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
-    // Whether each member was scored; one that was not is charged by its
-    // rebuild.
+    // Whether each member was scored, for the check that a score is at most
+    // the pairs.
     let mut scored = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut scored, members.len())?;
     for (i, m) in members.iter().enumerate() {
@@ -659,7 +662,7 @@ fn probe_scored(
         let Some(new) = new else {
             return Ok(false);
         };
-        gate.poll((old + new) as u64 + REBUILD_UNITS)?;
+        gate.poll(old as u64 + REBUILD_UNITS)?;
         after.push(new);
         scored.push(true);
     }
@@ -679,14 +682,9 @@ fn probe_scored(
         let rebuilt = rebuild_member(lim, i, m, &info, mv, bound, None, &mut saved, scratch);
         outcome = match rebuilt {
             Ok(Some(pairs)) => {
-                let charge = if scored[i] {
-                    debug_assert!(pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
-                    pairs.saturating_sub(after[i]) as u64
-                } else {
-                    (before[i] + pairs) as u64 + REBUILD_UNITS
-                };
+                debug_assert!(!scored[i] || pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
                 after[i] = pairs;
-                gate.poll(charge).map(|()| true)
+                gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS).map(|()| true)
             }
             other => other.map(|_| false),
         };
