@@ -247,16 +247,16 @@ pub(crate) struct ContractScratch {
     /// and it restarts at 1 (0 is the stamp of a cell never written, so it
     /// must never equal a live one).
     pub(super) twin_generation: u32,
-    /// One bit per node: set if some pair names it, or, in the partition
-    /// refinement, once the node has left the first class.
+    /// One bit per node: set if some pair names it.
     pub(super) twin_named: Vec<u64>,
     /// Per node of the child level, its class in the partition
     /// `fingerprint::refine` refines, where the node has left the first
-    /// class (its bit in `twin_named`) and has a twin still possible.
+    /// class (its moved bit in `twin_bits`) and has a twin still possible.
     pub(super) twin_class: Vec<u32>,
-    /// One bit per node, for the partition refinement: set once the node is
-    /// known to have no twin.
-    pub(super) twin_alone: Vec<u64>,
+    /// Per 64 nodes of the child level, for the partition refinement: a
+    /// word of bits set once each node has left the first class, and a
+    /// word of bits set once each is known to have no twin.
+    pub(super) twin_bits: Vec<[u64; 2]>,
     /// Per class of that partition, its members.
     pub(super) class_size: Vec<u32>,
     /// Per class of that partition, where its group's next member goes in
@@ -402,7 +402,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
         visit(&mut self.twin_class);
-        visit(&mut self.twin_alone);
+        visit(&mut self.twin_bits);
         visit(&mut self.class_size);
         visit(&mut self.class_pos);
         visit(&mut self.refine_keys);

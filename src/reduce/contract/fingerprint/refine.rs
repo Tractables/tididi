@@ -80,7 +80,7 @@ pub(super) fn refine_context_groups(
     simple: bool,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
-        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
+        twin_class, twin_bits, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
         refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_hits,
         refine_dest, refine_met, refine_seen, flat_groups, group_starts, ..
     } = scratch;
@@ -104,18 +104,16 @@ pub(super) fn refine_context_groups(
     group_starts.clear();
     let words = width.div_ceil(64);
     lim.try_resize(twin_class, width, 0u32)?;
-    lim.try_resize(twin_named, words, 0u64)?;
-    lim.try_resize(twin_alone, words, 0u64)?;
-    let (moved, alone) = (&mut twin_named[..words], &mut twin_alone[..words]);
-    moved.fill(0);
-    alone.fill(0);
+    lim.try_resize(twin_bits, words, [0u64; 2])?;
+    let bits = &mut twin_bits[..words];
+    bits.fill([0; 2]);
     // The classes made are nested sets of two or more nodes each, so there
     // are fewer than `width` besides the first.
     class_size.clear();
     lim.reserve_exact(class_size, width + 1)?;
     class_size.push(width as u32);
     let twinable = if width >= 2 { width } else { 0 };
-    let mut part = Partition { class: &mut twin_class[..width], moved, alone, size: class_size, twinable };
+    let mut part = Partition { class: &mut twin_class[..width], bits, size: class_size, twinable };
     // A stored level's wide parent nodes are refined after the narrow ones,
     // narrowest first: by then most nodes have left the partition, and a
     // wide node sorts only the pairs of the nodes still in it. The
@@ -158,7 +156,7 @@ pub(super) fn refine_context_groups(
     if part.twinable == 0 {
         return Ok(false);
     }
-    let Partition { class, moved, alone, size, twinable } = part;
+    let Partition { class, bits, size, twinable } = part;
     // The classes of two or more, in the order of their lowest members,
     // each listed ascending: one pass over the nodes not alone, a word of
     // bits at a time, so the nodes without a twin are skipped 64 at once.
@@ -168,7 +166,7 @@ pub(super) fn refine_context_groups(
     lim.try_resize(flat_groups, twinable, 0u32)?;
     lim.reserve_exact(group_starts, twinable / 2)?;
     let mut next = 0u32;
-    for (w, (&moved, &alone)) in moved.iter().zip(alone.iter()).enumerate() {
+    for (w, &[moved, alone]) in bits.iter().enumerate() {
         let mut live = !alone;
         if (w + 1) * 64 > width {
             live &= (1u64 << (width % 64)) - 1;
@@ -195,16 +193,18 @@ pub(super) fn refine_context_groups(
 }
 
 /// The partition of the child level's nodes. A node is in the first class
-/// until its bit in `moved` is set; then it has no twin if its bit in
-/// `alone` is set, and is in class `class[t]` if not. The bits stay in
-/// cache where the classes would not, so a node that leaves the first class
-/// alone, as most do on a level without twins, costs two bits. A node a
-/// parent node names has its bit set even where it stays in the first
-/// class, so the nodes whose bit is clear are the nodes no pair names.
+/// until its moved bit is set; then it has no twin if its alone bit is set,
+/// and is in class `class[t]` if not. The bits stay in cache where the
+/// classes would not, so a node that leaves the first class alone, as most
+/// do on a level without twins, costs two bits; each word of moved bits
+/// sits beside the word of alone bits for the same nodes, in one cache
+/// line. A node a parent node names has its moved bit set even where it
+/// stays in the first class, so the nodes whose bit is clear are the nodes
+/// no pair names.
 struct Partition<'a> {
     class: &'a mut [u32],
-    moved: &'a mut [u64],
-    alone: &'a mut [u64],
+    /// Per 64 nodes, their moved bits and their alone bits.
+    bits: &'a mut [[u64; 2]],
     size: &'a mut Vec<u32>,
     /// The nodes in classes of two or more: those that can still have a
     /// twin.
@@ -215,10 +215,10 @@ impl Partition<'_> {
     /// Node `t`'s class, or [`ALONE`].
     #[inline]
     fn of(&self, t: u32) -> u32 {
-        let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
-        if self.moved[w] & b == 0 {
+        let ([moved, alone], b) = (self.bits[(t / 64) as usize], 1u64 << (t % 64));
+        if moved & b == 0 {
             0
-        } else if self.alone[w] & b != 0 {
+        } else if alone & b != 0 {
             ALONE
         } else {
             self.class[t as usize]
@@ -243,8 +243,9 @@ impl Partition<'_> {
             _ => 1,
         };
         self.size[c as usize] = members - 1;
-        self.moved[w] |= b;
-        self.alone[w] |= b;
+        let word = &mut self.bits[w];
+        word[0] |= b;
+        word[1] |= b;
     }
 
     /// Take node `t` out of its class, if it has one.
@@ -260,7 +261,7 @@ impl Partition<'_> {
     #[inline]
     fn put(&mut self, t: u32, id: u32) {
         self.class[t as usize] = id;
-        self.moved[(t / 64) as usize] |= 1 << (t % 64);
+        self.bits[(t / 64) as usize][0] |= 1 << (t % 64);
     }
 
     /// A new class for `members` nodes taken out of class `c`, which the
@@ -311,7 +312,7 @@ impl Partition<'_> {
         let words = width.div_ceil(64);
         let mut unnamed = 0;
         for w in 0..words {
-            let mut clear = !self.moved[w];
+            let mut clear = !self.bits[w][0];
             if (w + 1) * 64 > width {
                 clear &= (1u64 << (width % 64)) - 1;
             }
@@ -322,8 +323,9 @@ impl Partition<'_> {
         }
         debug_assert_eq!(self.size[0] as usize, unnamed, "the first class is the nodes no pair names");
         for w in 0..words {
-            self.alone[w] |= !self.moved[w];
-            self.moved[w] = u64::MAX;
+            let [moved, alone] = &mut self.bits[w];
+            *alone |= !*moved;
+            *moved = u64::MAX;
         }
         self.size[0] = 0;
         self.twinable -= unnamed;
