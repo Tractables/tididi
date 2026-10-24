@@ -243,18 +243,24 @@ pub(crate) struct ContractScratch {
     /// and it restarts at 1 (0 is the stamp of a cell never written, so it
     /// must never equal a live one).
     pub(super) twin_generation: u32,
-    /// One bit per node: set if some pair names it, or, in the private
-    /// context scatter, if the node holds a private context.
+    /// One bit per node: set if some pair names it, or, in the owner class
+    /// scatter, if the node has no twin.
     pub(super) twin_named: Vec<u64>,
-    /// The per-parent-node sibling table of `TwinEntries::scatter_shared`:
+    /// One bit per node, for the owner class scatter: set once a parent
+    /// node has named it.
+    pub(super) twin_seen: Vec<u64>,
+    /// The owner classes of the owner class scatter, each its size and then
+    /// its members.
+    pub(super) owner_classes: Vec<u32>,
+    /// The per-parent-node sibling table of `TwinEntries::scatter_owner_classes`:
     /// each cell a stamp in the high 31 bits, a repeat bit, and a sibling in
     /// the low 32. Its length is a power of two, at least twice the most
     /// pairs one node has filed so far.
     pub(super) shared_local: Vec<u64>,
     /// The stamp of the node `shared_local` files now, from 1, below 2^31.
     pub(super) shared_generation: u32,
-    /// The parent nodes in which `TwinEntries::scatter_shared` added a
-    /// context to a fingerprint, ascending.
+    /// The parent nodes in which `TwinEntries::scatter_owner_classes` added
+    /// a context to a fingerprint, ascending.
     pub(super) shared_parents: Vec<u32>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
@@ -363,6 +369,8 @@ impl Buffers for ContractScratch {
         visit(&mut self.fingerprints);
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
+        visit(&mut self.twin_seen);
+        visit(&mut self.owner_classes);
         visit(&mut self.shared_local);
         visit(&mut self.shared_parents);
         visit(&mut self.flat_groups);
