@@ -204,6 +204,15 @@ enum Walked<'a> {
     Marked { bits: &'a [u64], nodes: usize },
 }
 
+impl Walked<'_> {
+    /// The nodes the walk runs over: one past the last it may visit.
+    fn end(self) -> usize {
+        match self {
+            Walked::All(nodes) | Walked::Marked { nodes, .. } => nodes,
+        }
+    }
+}
+
 /// Hand `f` each node `walked` names, in order, with its pairs.
 #[inline(always)]
 fn try_for_each_walked<E>(
@@ -240,15 +249,18 @@ fn try_for_each_walked<E>(
     Ok(())
 }
 
-/// The growth of a level's pair arena as f's pairs are walked: once the
-/// walk has passed one in [`PROJECT_AFTER`] of the pairs it walks, an
-/// arena too full for the next stretch's share of candidates is grown to
-/// the level's projected candidates, the candidates so far scaled by the
-/// pairs left, and an eighth more, in one step where doubling would copy
-/// it once per doubling. The projection is at most [`PROJECT_AFTER`] times
-/// the candidates so far. The walk of a level's nodes projects before each
-/// node; a level of one product has one f node, and its walk projects
-/// before each stretch of its pairs or each outer key's.
+/// The growth of a level's pair arena as f is walked: once the walk has
+/// passed one in [`PROJECT_AFTER`] of what it walks, an arena too full for
+/// what follows is grown to the level's projected candidates, the
+/// candidates so far scaled by the rest of the walk, and an eighth more,
+/// in one step where doubling would copy it once per doubling. The
+/// projection is at most [`PROJECT_AFTER`] times the candidates so far.
+///
+/// A walk of a level's nodes projects where a candidate finds the arena
+/// full, by the nodes walked ([`grow_by_nodes`]), so that a node costs
+/// nothing more. A level of one product has one f node, and its walk
+/// projects before each stretch of its pairs or each outer key's, by the
+/// pairs walked.
 struct Projection {
     /// The arena's length when the walk began.
     start: usize,
@@ -258,8 +270,8 @@ struct Projection {
     total: Option<usize>,
 }
 
-/// The share of its f pairs a walk passes before it projects its level's
-/// candidates: one in this many.
+/// The share of its f pairs or nodes a walk passes before it projects its
+/// level's candidates: one in this many.
 const PROJECT_AFTER: usize = 64;
 
 impl Projection {
@@ -269,9 +281,7 @@ impl Projection {
 
     /// Before the walk of the next `pairs` f pairs: grow the arena to the
     /// projection when their expected candidates, twice the level's rate so
-    /// far, would not fit. `total` counts the f pairs the walk visits. A
-    /// growth the memory left could not take three times over is left to
-    /// the ordinary doubling.
+    /// far, would not fit. `total` counts the f pairs the walk visits.
     #[inline(always)]
     fn before(&mut self, eng: &Engine, level: &mut TddLevel, pairs: usize, total: impl FnOnce() -> usize) {
         let done = self.done;
@@ -282,34 +292,44 @@ impl Projection {
         if done == 0 || (spare as u128) * (done as u128) >= 2 * (made as u128) * (pairs as u128) {
             return;
         }
-        self.grow(eng, level, done, made, pairs, total);
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn grow(&mut self, eng: &Engine, level: &mut TddLevel, done: usize, made: usize, pairs: usize, total: impl FnOnce() -> usize) {
         let total = *self.total.get_or_insert_with(total);
-        if done.saturating_mul(PROJECT_AFTER) < total {
-            return;
-        }
-        let lim = eng.limits();
-        if lim.bounded_growth() {
-            return;
-        }
-        let projected = (made as u128 * total as u128 / done as u128) as usize;
-        let next = (2 * made as u128 * pairs as u128 / done as u128) as usize;
-        let v = level.pairs.stored_mut();
-        let want = projected.saturating_add(projected / 8).saturating_sub(made).max(next);
-        let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
-        if want <= v.capacity() - v.len() || bytes >= lim.headroom() {
-            return;
-        }
-        let before = v.capacity();
-        if lim.reserve_exact(v, want).is_ok() {
-            crate::apply::conjoin::note_pairs_grown();
-            lim.charge_output_pairs(v.capacity().saturating_sub(before));
-        }
+        let expected = (2 * made as u128 * pairs as u128 / done as u128) as usize;
+        grow_to_projection(eng, v, made, done, total, expected);
     }
+}
+
+/// Grow `v`, holding `made` candidates of a walk `done` of whose `total`
+/// units are walked, to the projection of [`Projection`], or to `least`
+/// more where that is more. Nothing before the walk has passed one in
+/// [`PROJECT_AFTER`] of its units, on a level of bounded growth, where the
+/// room is there already, or where the memory left could not take the
+/// growth three times over: the ordinary doubling then grows the arena.
+#[cold]
+#[inline(never)]
+fn grow_to_projection(eng: &Engine, v: &mut Vec<ChildPair>, made: usize, done: usize, total: usize, least: usize) {
+    let lim = eng.limits();
+    if done == 0 || done.saturating_mul(PROJECT_AFTER) < total || lim.bounded_growth() {
+        return;
+    }
+    let projected = (made as u128 * total as u128 / done as u128) as usize;
+    let want = projected.saturating_add(projected / 8).saturating_sub(made).max(least);
+    let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
+    if want <= v.capacity() - v.len() || bytes >= lim.headroom() {
+        return;
+    }
+    let before = v.capacity();
+    if lim.reserve_exact(v, want).is_ok() {
+        crate::apply::conjoin::note_pairs_grown();
+        lim.charge_output_pairs(v.capacity().saturating_sub(before));
+    }
+}
+
+/// [`grow_to_projection`] for a walk of a level's nodes whose arena held
+/// `start` pairs when the walk began, at a candidate of node `p1` of the
+/// walk's `nodes`, which finds the arena full.
+#[inline(always)]
+fn grow_by_nodes(eng: &Engine, v: &mut Vec<ChildPair>, start: usize, p1: usize, nodes: usize) {
+    grow_to_projection(eng, v, v.len().saturating_sub(start), p1, nodes, 1);
 }
 
 /// The pairs of the f nodes `walked` names.
@@ -346,13 +366,13 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // its g parent beside it; `emit_walked` makes the node's products of
         // them.
         Collect::Nodes(Emit { level, out, duplicates_legal, .. }) => {
-            let mut projection = Projection::new(level);
+            let start = level.pairs.stored_len();
+            let walked_nodes = nodes.end();
             try_for_each_walked(f_level, nodes, |p1, pairs| {
-                projection.before(eng, level, pairs.len(), || walked_pairs(f_level, nodes));
                 let base = level.pairs.stored_len();
                 node_owners.clear();
                 walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
-                    try_push_pair_into(eng, level, candidate_pair(&entry))?;
+                    try_push_pair_growing(eng, level, candidate_pair(&entry), move |v| grow_by_nodes(eng, v, start, p1, walked_nodes))?;
                     lim.try_push(node_owners, entry.g_parent)
                 })?;
                 emit_walked(eng, emit, level, out, p1, base, node_owners, duplicates_legal)

@@ -11,7 +11,7 @@
 
 use crate::vtree::VtreeIdx;
 use crate::Engine;
-use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, finish_node, reserve_pairs_for_emit, try_push_pair_into};
+use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, finish_node, reserve_pairs_for_emit, try_push_pair_growing, try_push_pair_into};
 use super::cell::emit_single_pair;
 use super::products::{FNodeIdx, ProductEntry, ProductLists, ProductNodeIdx, GNodeIdx};
 
