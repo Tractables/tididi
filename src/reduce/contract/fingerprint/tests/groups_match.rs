@@ -42,6 +42,14 @@ fn reorder(pairs: &mut [(u32, u32)], order: usize, rng: &mut Lcg) {
     }
 }
 
+/// The rounds a randomized test runs: `full` natively and `few` under Miri,
+/// which interprets each round far slower. The few rounds still take every
+/// path a test reaches through the pair views; the counts of what the
+/// fixtures hold are asserted on full runs only.
+fn rounds(full: u32, few: u32) -> u32 {
+    if cfg!(miri) { few } else { full }
+}
+
 /// The twin search finds the groups a listing of every node's contexts
 /// gives, on either side. Parent nodes that draw from few siblings repeat
 /// contexts, and twins occur; parent nodes that draw from many seldom
@@ -58,7 +66,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     let mut stopped_early = 0;
-    for round in 0..300 {
+    for round in 0..rounds(300, 24) {
         // Every third round draws siblings from a wide level, so most
         // parent nodes repeat none and the levels often have no twin.
         let widths = [1 + rng.below(40) as u32, 1 + rng.below(if round % 3 == 0 { 400 } else { 6 }) as u32];
@@ -109,8 +117,8 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
             seen_groups += want.len();
         }
     }
-    assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
-    assert!(stopped_early > 20, "the search stops early on some fixtures: {stopped_early}");
+    assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || stopped_early > 20, "the search stops early on some fixtures: {stopped_early}");
 }
 
 /// The sibling table's stamp wraps to 1 only after every cell is zeroed, so
@@ -206,7 +214,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
     let mut rng = Lcg::new(23);
     let mut scratch = ContractScratch::default();
     let (mut grouped, mut with_groups, mut declined) = (0, 0, 0);
-    for round in 0..80u32 {
+    for round in 0..rounds(80, 7) {
         let wide = round == 78;
         let width = if wide { groups::SINGLE_ENTRY_MIN_WIDTH as u32 + 4321 } else { 1 + rng.below(3000) as u32 };
         let siblings = 1 + rng.below(if round % 2 == 0 { 8 } else { 3000 }) as u32;
@@ -282,7 +290,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
             with_groups += usize::from(found);
         }
     }
-    assert!(grouped > 50 && with_groups > 20 && declined > 20,
+    assert!(cfg!(miri) || (grouped > 50 && with_groups > 20 && declined > 20),
         "grouped {grouped}, with groups {with_groups}, declined {declined}");
 }
 
@@ -299,7 +307,7 @@ fn wide_levels_with_planted_twins_find_every_twin() {
     let mut rng = Lcg::new(31);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
-    for round in 0..12u32 {
+    for round in 0..rounds(12, 1) {
         let width = 4096 + rng.below(2000) as u32;
         let siblings = if round % 3 == 0 { 8 } else { 1 + rng.below(4000) as u32 };
         // Twin classes of one to four nodes, in a shuffled order.
@@ -359,7 +367,7 @@ fn wide_levels_with_planted_twins_find_every_twin() {
             seen_groups += want.len();
         }
     }
-    assert!(seen_groups > 1000, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || seen_groups > 1000, "the fixtures hold twins: {seen_groups}");
 }
 
 /// Nodes first named together with one sibling set and told apart only by
@@ -380,7 +388,7 @@ fn classes_are_split_by_later_contexts() {
     let mut shuffle = Lcg::new(48);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
-    for round in 0..40u32 {
+    for round in 0..rounds(40, 4) {
         let width = 256 + rng.below(600) as u32;
         let siblings = 2 + rng.below(if round % 2 == 0 { 3 } else { 40 }) as u32;
         let mut order: Vec<u32> = (0..width).collect();
@@ -454,7 +462,7 @@ fn classes_are_split_by_later_contexts() {
             seen_groups += want.len();
         }
     }
-    assert!(seen_groups > 200, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || seen_groups > 200, "the fixtures hold twins: {seen_groups}");
 }
 
 /// Wide parent nodes whose nodes' sibling sets are nested, each a prefix of
@@ -476,7 +484,7 @@ fn nested_wide_nodes_are_split_by_degree() {
     let mut shuffle = Lcg::new(60);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
-    for round in 0..40u32 {
+    for round in 0..rounds(40, 2) {
         let width = 64 + rng.below(400) as u32;
         let siblings = 4 + rng.below(if round % 2 == 0 { 8 } else { 60 }) as u32;
         let mut order: Vec<u32> = (0..width).collect();
@@ -554,7 +562,7 @@ fn nested_wide_nodes_are_split_by_degree() {
             seen_groups += want.len();
         }
     }
-    assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
 }
 
 /// Wide parent nodes most of whose pairs name nodes a parent node of one
@@ -574,7 +582,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
     let mut shuffle = Lcg::new(72);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
-    for round in 0..40u32 {
+    for round in 0..rounds(40, 2) {
         let width = 200 + rng.below(300) as u32;
         let siblings = 2 + rng.below(if round % 2 == 0 { 4 } else { 50 }) as u32;
         let mut order: Vec<u32> = (0..width).collect();
@@ -650,5 +658,5 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
             seen_groups += want.len();
         }
     }
-    assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
 }

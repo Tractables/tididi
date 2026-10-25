@@ -34,6 +34,7 @@ fn listed_groups(entries: &Listed, width: usize) -> Vec<Vec<u32>> {
 /// listing of its nodes' entries does: planted groups found whole, every
 /// other node alone, and a level with no twin reported as such.
 #[test]
+#[cfg_attr(miri, ignore = "reaches no unsafe code, at a width Miri takes over an hour to interpret")]
 fn a_partitioned_wide_level_groups_as_its_entries_do() {
     let eng = Engine::new();
     let mut scratch = ContractScratch::default();
