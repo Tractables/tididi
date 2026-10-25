@@ -282,9 +282,10 @@ impl EncodedNode {
 
     /// Decode the two words into the case they encode.
     ///
-    /// This, [`held_count`](Self::held_count) and
-    /// [`inline_or`](Self::inline_or) are the only readers of the bit
-    /// layout; everything else matches on what comes back, so a new case
+    /// This, [`held_count`](Self::held_count),
+    /// [`inline_or`](Self::inline_or) and
+    /// [`renumber_past`](Self::renumber_past) are the only readers of the
+    /// bit layout; everything else matches on what comes back, so a new case
     /// has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
         if self.a & MULTI_BIT == 0 {
@@ -327,6 +328,18 @@ impl EncodedNode {
             EncodedChildRef::from_raw(std::hint::select_unpredictable(multi, or.right.0, self.b)),
         );
         (pair, std::hint::select_unpredictable(multi, self.b, 0))
+    }
+
+    /// Move the child slot the left side (`left`) or the right side of an
+    /// inline node names one down where it is past `k`, for a child level
+    /// that dropped slot `k`; a node whose pairs are in the arena keeps its
+    /// words. Without a branch on the node's kind, so a loop over a level's
+    /// nodes vectorizes.
+    #[inline(always)]
+    pub(crate) fn renumber_past(&mut self, left: bool, k: u32) {
+        let inline = self.a & MULTI_BIT == 0;
+        let side = if left { &mut self.a } else { &mut self.b };
+        *side -= u32::from(inline & (*side > k));
     }
 }
 

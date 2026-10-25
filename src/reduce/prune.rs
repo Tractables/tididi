@@ -1685,9 +1685,14 @@ fn compact_visited(
 /// dying node's pairs, where [`prune_below_root`] reads every pair of every
 /// level that loses a node.
 ///
-/// The dying nodes are dropped by that walk's compaction, given the marks
-/// the walk would set: on each level that loses a node, every slot but the
-/// dying node's. The diagram, the order of each level's nodes and how each
+/// The dying nodes are dropped as that walk's compaction drops them. A
+/// level held as a description goes through the compaction itself, given
+/// the marks the walk would set: every slot of the level but the dying
+/// node's. A stored level drops its node in place, the nodes after it one
+/// slot down, and in a stored parent the references past it move one slot
+/// down in a pass over the parent's node words and arena
+/// ([`renumber_past`]), where the compaction reads each reference through
+/// a table. The diagram, the order of each level's nodes and how each
 /// level is held come out as the walk leaves them, and the work clock is
 /// charged what the walk is charged.
 ///
@@ -1733,38 +1738,103 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
         }
         i += 1;
     }
-    // The walk's marks and visits: a block per level of the chain, every
-    // slot marked but the dying node's, in the walk's order, which is the
-    // chain's.
-    visits.clear();
-    lim.reserve(visits, chain.len())?;
-    let mut used = 0usize;
-    for (i, &[t, k, _]) in chain.iter().enumerate() {
-        let t = VtreeIdx(t);
-        let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
-        let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
-        mark_all(&mut marks[base..base + words(width)], width);
-        marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
-        visits.push(Visit::new(t, base));
-        let (left, right) = vtree.children(t);
-        identity_upto(eng, identity, tdd.reference_slot_count(left).max(tdd.reference_slot_count(right)))?;
-    }
-    let mut remap_need = 0usize;
-    for (j, &[c, _, up]) in chain.iter().enumerate().skip(1) {
-        let c = VtreeIdx(c);
-        let child = Child::at(visits[j].base, tdd.reference_slot_count(c), true);
-        let parent = &mut visits[up as usize];
-        if vtree.children(parent.level).0 == c {
-            parent.left = child;
-        } else {
-            parent.right = child;
+    // A level held as a description is compacted as the walk compacts it,
+    // which needs the walk's marks and visits: a block per level of the
+    // chain, every slot marked but the dying node's, in the walk's order,
+    // which is the chain's. What happens to such a level is decided before
+    // any level changes.
+    let described = chain.iter().any(|&[t, _, _]| tdd.levels[t as usize].pairs.implicit().is_some());
+    let mut plans = None;
+    if described {
+        visits.clear();
+        lim.reserve(visits, chain.len())?;
+        let mut used = 0usize;
+        for (i, &[t, k, _]) in chain.iter().enumerate() {
+            let t = VtreeIdx(t);
+            let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
+            let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
+            mark_all(&mut marks[base..base + words(width)], width);
+            marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
+            visits.push(Visit::new(t, base));
+            let (left, right) = vtree.children(t);
+            identity_upto(eng, identity, tdd.reference_slot_count(left).max(tdd.reference_slot_count(right)))?;
         }
-        remap_need = remap_need.max(parent.left.span + parent.right.span);
+        let mut remap_need = 0usize;
+        for (j, &[c, _, up]) in chain.iter().enumerate().skip(1) {
+            let c = VtreeIdx(c);
+            let child = Child::at(visits[j].base, tdd.reference_slot_count(c), true);
+            let parent = &mut visits[up as usize];
+            if vtree.children(parent.level).0 == c {
+                parent.left = child;
+            } else {
+                parent.right = child;
+            }
+            remap_need = remap_need.max(parent.left.span + parent.right.span);
+        }
+        lim.try_resize(remap, remap_need, UNREACHED)?;
+        let order = visits.iter().rev().map(|v| (v.level, v.base, v.left, v.right));
+        plans = Some(plan_levels(lim, tdd, order, marks, remap)?);
     }
-    compact_visited(eng, tdd, marks, remap, identity, visits, remap_need)?;
-    tdd.output.local = NodeIdx(rank(&marks[visits[0].base..], tdd.output.local.idx()));
     lim.charge_work(2 * slots as u64);
+    // From the bottom of the chain up, as the compaction goes: a described
+    // level as the compaction leaves it, a stored one in place, its node
+    // dropped and the nodes after it one slot down, and in a stored parent
+    // the references past it one slot down.
+    tdd.dirty.reserve_all(chain.len());
+    for j in (0..chain.len()).rev() {
+        let [c, k, up] = chain[j];
+        let c = VtreeIdx(c);
+        let last = tdd.levels[c.idx()].slot_count() - 1;
+        match plans.as_mut().and_then(|plans| plans.take(c)) {
+            Some(plan) => {
+                let v = visits[j];
+                compact_one_level(tdd, c, &marks[v.base..], marks, remap, identity, v.left, v.right, Some(plan));
+            }
+            None => {
+                tdd.levels.mark_changed(c);
+                retire(&mut tdd.levels[c.idx()], k as usize);
+            }
+        }
+        tdd.invalidate_shrunk(c);
+        let t = VtreeIdx(chain[up as usize][0]);
+        if j > 0 && k as usize != last && tdd.levels[t.idx()].pairs.implicit().is_none() {
+            let on_left = vtree.children(t).0 == c;
+            renumber_past(&mut tdd.levels[t.idx()], on_left, k);
+        }
+    }
+    let local = tdd.output.local.0;
+    tdd.output.local = NodeIdx(local - u32::from(local > old.0));
     Ok(())
+}
+
+/// Drop node `k` of a stored `level`, the nodes after it each one slot
+/// down.
+fn retire(level: &mut TddLevel, k: usize) {
+    debug_assert!(level.pairs.implicit().is_none() && level.nodes.stored().len() == level.slot_count());
+    let dead = level.arena_pairs_at(k);
+    level.nodes.stored_mut().remove(k);
+    level.note_dead_pairs(dead);
+    level.compact_pairs_if_stale();
+}
+
+/// Move every reference of the stored `level` on its left side when
+/// `on_left`, else its right, past child slot `k` one slot down: the child
+/// dropped slot `k`. The child is structural, so a side is the slot it
+/// names. The node words and the arena are each read whole, without a
+/// branch on a node's kind ([`EncodedNode::renumber_past`]); the arena's
+/// dead pairs move too, which nothing reads.
+fn renumber_past(level: &mut TddLevel, on_left: bool, k: u32) {
+    debug_assert!(level.pairs.implicit().is_none());
+    for node in level.nodes.stored_mut() {
+        node.renumber_past(on_left, k);
+    }
+    let past = |side: EncodedChildRef| EncodedChildRef::from_raw(side.0 - u32::from(side.0 > k));
+    let arena = level.pairs.stored_mut();
+    if on_left {
+        arena.iter_mut().for_each(|pair| pair.left = past(pair.left));
+    } else {
+        arena.iter_mut().for_each(|pair| pair.right = past(pair.right));
+    }
 }
 
 /// The nodes of the children of `t`, left and right, each where `sides`
