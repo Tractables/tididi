@@ -650,16 +650,27 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
             g_idx: GNodeIdx(owner),
             prod_idx: ProductNodeIdx(out.len() as u32),
         };
-        lim.try_push(out, product)?;
+        // Each push tests for room once: `Vec::push` after the test cannot
+        // grow, and the charged growth is out of the way.
+        if out.len() < out.capacity() {
+            out.push(product);
+        } else {
+            lim.try_push(out, product)?;
+        }
         if count == 1 {
             let pair = level.pop_pair().expect("the walk wrote the candidate's pair");
-            emit_single_pair(eng, level, pair)?;
+            let nodes = level.nodes.stored_mut();
+            if nodes.len() < nodes.capacity() {
+                nodes.push(crate::diagram::EncodedNode::inline(pair));
+            } else {
+                emit_single_pair(eng, level, pair)?;
+            }
         } else {
             let nodes = level.nodes.stored_mut();
-            reserve_room(lim, nodes, 1)?;
-            if base < 1 << 31 && count < 1 << 31 {
+            if nodes.len() < nodes.capacity() && (base | count) < 1 << 31 {
                 nodes.push(crate::diagram::EncodedNode::multi_pair(base as u32, count as u32));
             } else {
+                reserve_room(lim, nodes, 1)?;
                 level.try_push_multi_by_range(base, count).map_err(|_| OperationError::OverBudget)?;
             }
             // As in `emit_parent`: canonical children make a node's pairs
@@ -700,6 +711,11 @@ fn emit_mixed_apart(
 #[inline(never)]
 fn spill_owners(lim: &crate::limits::Limits, owners: &mut Vec<u32>, owner: u32, before: usize, g_parent: u32) -> Result<(), OperationError> {
     owners.clear();
+    if before < owners.capacity() {
+        owners.resize(before, owner);
+        owners.push(g_parent);
+        return Ok(());
+    }
     lim.try_resize(owners, before, owner)?;
     lim.try_push(owners, g_parent)
 }
