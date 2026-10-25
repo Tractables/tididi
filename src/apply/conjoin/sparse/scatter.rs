@@ -828,8 +828,9 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             held += code >> 32;
         }
         let (base, count) = (arena.len(), pairs.len());
-        // A node too far into the arena for its words is the walk's to make.
-        if !copies || (count > 1 && (base | count) >= 1 << 31) {
+        // A node too far into the arena for its words is the walk's to make;
+        // their sum bounds both.
+        if !copies || base + count >= 1 << 31 {
             return Ok(p1);
         }
         ticker.poll(held)?;
@@ -844,14 +845,18 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             lim.try_push(out, product)?;
         }
         // The walk's pushes of the candidates: a node of one pair takes its
-        // pair back out of the arena, its push having grown it if full.
-        for &pair in pairs {
-            try_push_pair_growing(eng, arena, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
-        }
+        // pair back out of the arena, its push having grown it if full, and
+        // left it as it was if not.
         let node = if count == 1 {
-            arena.pop();
+            if arena.len() == arena.capacity() {
+                try_push_pair_growing(eng, arena, *first, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+                arena.pop();
+            }
             *node
         } else {
+            for &pair in pairs {
+                try_push_pair_growing(eng, arena, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+            }
             crate::diagram::EncodedNode::multi_pair(base as u32, count as u32)
         };
         if nodes.len() < nodes.capacity() {
