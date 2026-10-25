@@ -357,11 +357,14 @@ pub(super) fn build_row_columns(
         }
     }
     let any = reach.iter().fold(0u128, |any, &r| any | r);
+    // Where the reach masks have no more bits in all than there are g nodes,
+    // no row has more, and no row's bits are counted.
+    let few_bits = any.count_ones() as usize <= width;
     eng.limits().reserve_exact(row_cols, live_cols.len())?;
     let word_of = |live: u128| {
         let flag = if live != 0 { ROW_LIVE } else { 0 };
         let mut m = live & any;
-        if m.count_ones() as usize <= width {
+        if few_bits || m.count_ones() as usize <= width {
             let mut word = 0;
             while m != 0 {
                 word |= by_bit[m.trailing_zeros() as usize];
