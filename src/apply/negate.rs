@@ -498,6 +498,62 @@ impl LeafForm {
     const LITERAL: LeafForm = LeafForm { left_one: false, right_one: false };
 }
 
+/// A walk's marking of a [`Cover`] ([`Cover::marks`]).
+struct Marks<'b> {
+    bits: &'b mut [u64],
+    lefts: ChildBasis,
+    rights: ChildBasis,
+    stride: usize,
+    #[cfg(debug_assertions)]
+    leaf: LeafForm,
+    /// The leaf sides seen named `One`.
+    seen: LeafForm,
+}
+
+impl Marks<'_> {
+    /// Mark the cells `pair` covers, a leaf side's `One` standing for both
+    /// cells of that leaf's `{Pos, Neg}` couple; `LEFT_LEAF` and
+    /// `RIGHT_LEAF` say which sides are leaves, as the cover's `leaf` does.
+    /// Fixed per walk, they leave a pair of two internal children a single
+    /// cell's mark. Inlined into the walk over a level's pairs, which calls
+    /// it once a pair: out of line, the call cost as much as the marking.
+    #[inline(always)]
+    fn pair<const LEFT_LEAF: bool, const RIGHT_LEAF: bool>(&mut self, pair: ChildPair) {
+        #[cfg(debug_assertions)]
+        debug_assert!(LEFT_LEAF == self.leaf.left_one && RIGHT_LEAF == self.leaf.right_one);
+        let (l, r) = (pair.left.0, pair.right.0);
+        let l_one = LEFT_LEAF && l == ONE_LEAF_IDX.0;
+        let r_one = RIGHT_LEAF && r == ONE_LEAF_IDX.0;
+        self.seen.left_one |= l_one;
+        self.seen.right_one |= r_one;
+        let (la, lb) = if l_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (l, l) };
+        let (ra, rb) = if r_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (r, r) };
+        self.cell(la, ra);
+        if r_one {
+            self.cell(la, rb);
+        }
+        if l_one {
+            self.cell(lb, ra);
+            if r_one {
+                self.cell(lb, rb);
+            }
+        }
+    }
+
+    /// Mark cell `(l, r)`, a cell of the basis, an internal child's pairs
+    /// naming its slots and a leaf's `Pos` or `Neg` once its `One` is split,
+    /// or the cell past it, `(lefts.end, rights.start)`.
+    #[inline(always)]
+    fn cell(&mut self, l: u32, r: u32) {
+        debug_assert!(
+            (self.lefts.contains(l) && self.rights.contains(r)) || (l == self.lefts.end && r == self.rights.start),
+            "negate: a pair names a cell outside its basis"
+        );
+        let cell = (l - self.lefts.start) as usize * self.stride + (r - self.rights.start) as usize;
+        self.bits[cell >> 6] |= 1u64 << (cell & 63);
+    }
+}
+
 /// A bitmap over one level's `lefts x rights` basis: cell `(l, r)` is bit
 /// `(l - lefts.start) * rights.len() + (r - rights.start)`.
 ///
@@ -567,10 +623,12 @@ impl<'a> Cover<'a> {
         if let Some(stored) = level.stored() {
             let past = ChildPair::new(EncodedChildRef::from_raw(self.lefts.end), EncodedChildRef::from_raw(self.rights.start));
             let mut pairs = 0u64;
+            let mut marks = self.marks();
             let whole = stored.for_each_pair_whole(past, |pair| {
-                self.mark_pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
+                marks.pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
                 pairs += u64::from(pair.left != past.left);
             });
+            self.one_seen = marks.seen;
             if whole {
                 poll.poll_each(pairs)?;
                 return poll.flush();
@@ -603,45 +661,29 @@ impl<'a> Cover<'a> {
         }
     }
 
-    /// Mark the cells `pair` covers, a leaf side's `One` standing for both
-    /// cells of that leaf's `{Pos, Neg}` couple; `LEFT_LEAF` and
-    /// `RIGHT_LEAF` say which sides are leaves, as `leaf` does. Fixed per
-    /// walk, they leave a pair of two internal children a single cell's
-    /// mark. Inlined into the walk over a level's pairs, which calls it once
-    /// a pair: out of line, the call cost as much as the marking.
+    /// Mark the cells `pair` covers ([`Marks::pair`]).
     #[inline(always)]
     fn mark_pair<const LEFT_LEAF: bool, const RIGHT_LEAF: bool>(&mut self, pair: ChildPair) {
-        debug_assert!(LEFT_LEAF == self.leaf.left_one && RIGHT_LEAF == self.leaf.right_one);
-        let (l, r) = (pair.left.0, pair.right.0);
-        let l_one = LEFT_LEAF && l == ONE_LEAF_IDX.0;
-        let r_one = RIGHT_LEAF && r == ONE_LEAF_IDX.0;
-        self.one_seen.left_one |= l_one;
-        self.one_seen.right_one |= r_one;
-        let (la, lb) = if l_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (l, l) };
-        let (ra, rb) = if r_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (r, r) };
-        self.mark(la, ra);
-        if r_one {
-            self.mark(la, rb);
-        }
-        if l_one {
-            self.mark(lb, ra);
-            if r_one {
-                self.mark(lb, rb);
-            }
-        }
+        let mut marks = self.marks();
+        marks.pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
+        self.one_seen = marks.seen;
     }
 
-    /// Mark cell `(l, r)`, a cell of the basis, an internal child's pairs
-    /// naming its slots and a leaf's `Pos` or `Neg` once its `One` is split,
-    /// or the cell past it, `(lefts.end, rights.start)`.
+    /// The cover's bitmap and basis for a walk to mark, held apart from it
+    /// so that the walk keeps them in registers; the leaves seen named `One`
+    /// are read back from it after the walk.
     #[inline(always)]
-    fn mark(&mut self, l: u32, r: u32) {
-        debug_assert!(
-            (self.lefts.contains(l) && self.rights.contains(r)) || (l == self.lefts.end && r == self.rights.start),
-            "negate: a pair names a cell outside its basis"
-        );
-        let cell = (l - self.lefts.start) as usize * self.stride + (r - self.rights.start) as usize;
-        self.bits[cell >> 6] |= 1u64 << (cell & 63);
+    fn marks(&mut self) -> Marks<'_> {
+        debug_assert!(self.bits.len() * 64 > self.len, "the cover has the cell past its basis");
+        Marks {
+            bits: &mut self.bits[..],
+            lefts: self.lefts,
+            rights: self.rights,
+            stride: self.stride,
+            #[cfg(debug_assertions)]
+            leaf: self.leaf,
+            seen: self.one_seen,
+        }
     }
 
     /// Whether cell `(l, r)` is unmarked. Out-of-basis indices are not cells
