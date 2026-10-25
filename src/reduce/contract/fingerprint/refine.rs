@@ -1,7 +1,7 @@
 //! Twin groups by refining one partition of the child level, parent node by
 //! parent node.
 
-use crate::diagram::{ChildPair, ChildSide, TddLevel};
+use crate::diagram::{ChildPair, ChildSide, StoredPairs, TddLevel};
 use crate::limits::{Limits, OperationError};
 
 use super::super::scratch::{ClassInfo, ContractScratch};
@@ -153,23 +153,25 @@ pub(super) fn refine_context_groups(
     // a twin.
     let stored = level.stored();
     refine_wide.clear();
-    let (mut buf, mut cursor) = (Vec::new(), None);
-    for i in 0..level.node_count() {
-        if part.twinable == 0 {
-            break;
-        }
-        let pairs = match stored {
-            Some(stored) => stored.of_idx(i),
-            None => level.described_read_next(&mut cursor, i, &mut buf),
-        };
-        match pairs.len() {
-            0 => {}
-            1 => part.leave(split_pair(&pairs[0], side).0),
-            2 => part.split_two(pairs, side),
-            3 | 4 if part.split_few(pairs, side) => {}
-            n if n <= SMALL_PAIRS => part.split_small(pairs, side),
-            n if stored.is_some() => lim.try_push(refine_wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
-            _ => part.split_wide(lim, pairs, side, &mut wide)?,
+    match (stored, side) {
+        (Some(stored), ChildSide::Left) => part.split_narrow::<true>(stored, lim, refine_wide)?,
+        (Some(stored), ChildSide::Right) => part.split_narrow::<false>(stored, lim, refine_wide)?,
+        (None, _) => {
+            let (mut buf, mut cursor) = (Vec::new(), None);
+            for i in 0..level.node_count() {
+                if part.twinable == 0 {
+                    break;
+                }
+                let pairs = level.described_read_next(&mut cursor, i, &mut buf);
+                match pairs.len() {
+                    0 => {}
+                    1 => part.leave(split_pair(&pairs[0], side).0),
+                    2 => part.split_two(pairs, side),
+                    3 | 4 if part.split_few(pairs, side) => {}
+                    n if n <= SMALL_PAIRS => part.split_small(pairs, side),
+                    _ => part.split_wide(lim, pairs, side, &mut wide)?,
+                }
+            }
         }
     }
     if let Some(stored) = stored {
@@ -244,6 +246,36 @@ struct Partition<'a> {
 }
 
 impl Partition<'_> {
+    /// The parent nodes of a stored level of [`SMALL_PAIRS`] pairs or
+    /// fewer, split in node order, and the wider ones put in `wide`, each
+    /// as the power of two of its width above its index, for the caller to
+    /// split after. `LEFT` says whether the nodes split are the left
+    /// children, so the side is a constant of the loop. Stops once no node
+    /// can have a twin.
+    fn split_narrow<const LEFT: bool>(
+        &mut self,
+        stored: StoredPairs<'_>,
+        lim: &Limits,
+        wide: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+        for (i, node) in stored.nodes().iter().enumerate() {
+            if self.twinable == 0 {
+                break;
+            }
+            let pairs = stored.of(node);
+            match pairs.len() {
+                0 => {}
+                1 => self.leave(split_pair(&pairs[0], side).0),
+                2 => self.split_two(pairs, side),
+                3 | 4 if self.split_few(pairs, side) => {}
+                n if n <= SMALL_PAIRS => self.split_small(pairs, side),
+                n => lim.try_push(wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
+            }
+        }
+        Ok(())
+    }
+
     /// Node `t`'s class, or [`ALONE`].
     #[inline(always)]
     fn of(&self, t: u32) -> u32 {
