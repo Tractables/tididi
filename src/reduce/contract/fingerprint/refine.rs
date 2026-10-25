@@ -688,7 +688,7 @@ impl Partition<'_> {
         // The end of each run of a sibling that keeps a node is pushed to
         // `touched`; a sibling below the one before ends the pass, with
         // nothing split.
-        let (mut kept, mut from) = (0usize, 0usize);
+        let (mut kept, mut from, mut siblings) = (0usize, 0usize, 1usize);
         let mut sibling = split_pair(&pairs[0], side).1;
         let mut ordered = true;
         for pair in pairs {
@@ -703,6 +703,7 @@ impl Partition<'_> {
                     from = kept;
                 }
                 sibling = s;
+                siblings += 1;
             }
             if (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 == 0 {
                 bucket[kept] = t;
@@ -712,6 +713,13 @@ impl Partition<'_> {
         if ordered {
             if kept > from {
                 touched.push(kept as u32);
+            }
+            // Two or more siblings of few that keep a node: their nodes'
+            // classes are read once, by code.
+            if siblings <= FEW_SIBLINGS && touched.len() >= 2 {
+                let split = self.split_by_codes(lim, pairs, side, bucket, seen, met, code, rows)?;
+                debug_assert!(split, "a parent node of few siblings is split by codes");
+                return Ok(());
             }
             let mut from = 0;
             for &to in touched.iter() {
