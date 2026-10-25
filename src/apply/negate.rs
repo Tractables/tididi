@@ -154,18 +154,14 @@ fn complement_full_at_root(
             #[cfg(debug_assertions)]
             {
                 let mut cover = Cover::reset(eng, &mut bits, lefts, rights, leaf)?;
-                for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
-                    cover.mark_pair(pair);
-                }
+                cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
                 let mut by_cover = Vec::new();
                 cover.missing_into(eng, form, &mut by_cover)?;
                 debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
             }
         } else {
             let mut cover = Cover::reset(eng, &mut bits, lefts, rights, leaf)?;
-            for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
-                cover.mark_pair(pair);
-            }
+            cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
             cover.missing_into(eng, form, &mut neg_pairs)?;
         }
 
@@ -273,24 +269,15 @@ fn expand_full_with(
             }
         }
 
-        // Mark the cells the pairs cover and read the fill off the rest. A
-        // stored level's nodes are read as slices of its arena, an implicit
-        // level's generated into a buffer a node at a time, in one loop.
+        // Mark the cells the pairs cover and read the fill off the rest, the
+        // walk compiled for the level's leaf sides.
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
-        let mut poll = eng.limits().gate();
-        let stored = level.stored();
-        let (mut buf, mut cursor) = (Vec::new(), None);
-        for i in 0..level.node_count() {
-            let pairs = match stored {
-                Some(stored) => stored.of_idx(i),
-                None => level.described_read_next(&mut cursor, i, &mut buf),
-            };
-            for &pair in pairs {
-                cover.mark_pair(pair);
-                poll.poll(1)?;
-            }
+        match (leaf.left_one, leaf.right_one) {
+            (false, false) => cover.mark_level::<false, false>(eng, level)?,
+            (false, true) => cover.mark_level::<false, true>(eng, level)?,
+            (true, false) => cover.mark_level::<true, false>(eng, level)?,
+            (true, true) => cover.mark_level::<true, true>(eng, level)?,
         }
-        poll.flush()?;
         // The walk has seen every reference, so this is the level's form.
         let form = cover.one_seen;
         cells.clear();
@@ -368,11 +355,7 @@ fn missing_by_cover(
     leaf: LeafForm,
 ) -> Result<Vec<ChildPair>, OperationError> {
     let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
-    for i in 0..level.node_count() {
-        for pair in level.pairs_iter_of_idx(i) {
-            cover.mark_pair(pair);
-        }
-    }
+    cover.mark_pairs((0..level.node_count()).flat_map(|i| level.pairs_iter_of_idx(i)));
     let mut out = Vec::new();
     cover.missing_into(eng, cover.one_seen, &mut out)?;
     Ok(out)
@@ -548,7 +531,9 @@ impl<'a> Cover<'a> {
     ) -> Result<Cover<'a>, OperationError> {
         let len = lefts.len().checked_mul(rights.len()).ok_or(OperationError::IndexOverflow)?;
         bits.clear();
-        eng.limits().try_resize(bits, len.div_ceil(64), 0u64)?;
+        // And the cell past the basis, which a walk marks for a node it
+        // reads no pair of ([`mark_level`](Self::mark_level)).
+        eng.limits().try_resize(bits, (len + 1).div_ceil(64), 0u64)?;
         Ok(Cover {
             bits,
             lefts,
@@ -560,15 +545,76 @@ impl<'a> Cover<'a> {
         })
     }
 
+    /// Mark the cells of every pair of `level`'s nodes, charging the work
+    /// clock a unit a pair.
+    ///
+    /// A stored level whose nodes' ranges cover its arena is read node by
+    /// node and then the arena whole, with no branch on a node's kind
+    /// ([`StoredPairs::for_each_pair_whole`]): a node whose pairs are in the
+    /// arena marks the cell past the basis, which the cover keeps for it and
+    /// [`missing_into`](Self::missing_into) never reads, and the pairs are
+    /// charged after the walk as a poll each would charge them. Otherwise a
+    /// stored level's nodes are read as slices of its arena, and an implicit
+    /// level's generated into a buffer a node at a time.
+    ///
+    /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
+    fn mark_level<const LEFT_LEAF: bool, const RIGHT_LEAF: bool>(
+        &mut self,
+        eng: &Engine,
+        level: &TddLevel,
+    ) -> Result<(), OperationError> {
+        let mut poll = eng.limits().gate();
+        if let Some(stored) = level.stored() {
+            let past = ChildPair::new(EncodedChildRef::from_raw(self.lefts.end), EncodedChildRef::from_raw(self.rights.start));
+            let mut pairs = 0u64;
+            let whole = stored.for_each_pair_whole(past, |pair| {
+                self.mark_pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
+                pairs += u64::from(pair.left != past.left);
+            });
+            if whole {
+                poll.poll_each(pairs)?;
+                return poll.flush();
+            }
+            for node in stored.nodes() {
+                for &pair in stored.of(node) {
+                    self.mark_pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
+                    poll.poll(1)?;
+                }
+            }
+            return poll.flush();
+        }
+        let (mut buf, mut cursor) = (Vec::new(), None);
+        for i in 0..level.node_count() {
+            for &pair in level.described_read_next(&mut cursor, i, &mut buf) {
+                self.mark_pair::<LEFT_LEAF, RIGHT_LEAF>(pair);
+                poll.poll(1)?;
+            }
+        }
+        poll.flush()
+    }
+
+    /// Mark the cells of `pairs`, a walk outside the levels' loop.
+    fn mark_pairs(&mut self, pairs: impl Iterator<Item = ChildPair>) {
+        match (self.leaf.left_one, self.leaf.right_one) {
+            (false, false) => pairs.for_each(|pair| self.mark_pair::<false, false>(pair)),
+            (false, true) => pairs.for_each(|pair| self.mark_pair::<false, true>(pair)),
+            (true, false) => pairs.for_each(|pair| self.mark_pair::<true, false>(pair)),
+            (true, true) => pairs.for_each(|pair| self.mark_pair::<true, true>(pair)),
+        }
+    }
+
     /// Mark the cells `pair` covers, a leaf side's `One` standing for both
-    /// cells of that leaf's `{Pos, Neg}` couple. Inlined into the walk over
-    /// a level's pairs, which calls it once a pair: out of line, the call
-    /// cost as much as the marking.
+    /// cells of that leaf's `{Pos, Neg}` couple; `LEFT_LEAF` and
+    /// `RIGHT_LEAF` say which sides are leaves, as `leaf` does. Fixed per
+    /// walk, they leave a pair of two internal children a single cell's
+    /// mark. Inlined into the walk over a level's pairs, which calls it once
+    /// a pair: out of line, the call cost as much as the marking.
     #[inline(always)]
-    fn mark_pair(&mut self, pair: ChildPair) {
+    fn mark_pair<const LEFT_LEAF: bool, const RIGHT_LEAF: bool>(&mut self, pair: ChildPair) {
+        debug_assert!(LEFT_LEAF == self.leaf.left_one && RIGHT_LEAF == self.leaf.right_one);
         let (l, r) = (pair.left.0, pair.right.0);
-        let l_one = self.leaf.left_one && l == ONE_LEAF_IDX.0;
-        let r_one = self.leaf.right_one && r == ONE_LEAF_IDX.0;
+        let l_one = LEFT_LEAF && l == ONE_LEAF_IDX.0;
+        let r_one = RIGHT_LEAF && r == ONE_LEAF_IDX.0;
         self.one_seen.left_one |= l_one;
         self.one_seen.right_one |= r_one;
         let (la, lb) = if l_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (l, l) };
@@ -585,12 +631,15 @@ impl<'a> Cover<'a> {
         }
     }
 
-    /// Mark cell `(l, r)`; a cell outside the basis is not one to cover.
+    /// Mark cell `(l, r)`, a cell of the basis, an internal child's pairs
+    /// naming its slots and a leaf's `Pos` or `Neg` once its `One` is split,
+    /// or the cell past it, `(lefts.end, rights.start)`.
     #[inline(always)]
     fn mark(&mut self, l: u32, r: u32) {
-        if !self.lefts.contains(l) || !self.rights.contains(r) {
-            return;
-        }
+        debug_assert!(
+            (self.lefts.contains(l) && self.rights.contains(r)) || (l == self.lefts.end && r == self.rights.start),
+            "negate: a pair names a cell outside its basis"
+        );
         let cell = (l - self.lefts.start) as usize * self.stride + (r - self.rights.start) as usize;
         self.bits[cell >> 6] |= 1u64 << (cell & 63);
     }
@@ -624,7 +673,7 @@ impl<'a> Cover<'a> {
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
         let mut poll = lim.gate();
-        for (w, &word) in self.bits.iter().enumerate() {
+        for (w, &word) in self.bits[..self.len.div_ceil(64)].iter().enumerate() {
             let base = w * 64;
             let mut missing = !word;
             // The last word runs past the basis; those bits are not cells.
