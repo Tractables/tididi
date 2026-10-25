@@ -871,17 +871,138 @@ pub(crate) fn run_level_rows_complete(
                 &mut Emit { sink: ReservedEmitSink { level, charged } },
             ),
         },
-        PlainLookups::CompleteLeft { charged } => run_level_rows::<false, _, _, _>(
-            eng, rows, scratch,
-            &complete(&sides.left), &grid(&sides.right),
-            &mut Emit { sink: ReservedEmitSink { level, charged } },
-        ),
-        PlainLookups::CompleteRight { charged } => run_level_rows::<false, _, _, _>(
-            eng, rows, scratch,
-            &grid(&sides.left), &complete(&sides.right),
-            &mut Emit { sink: ReservedEmitSink { level, charged } },
-        ),
+        PlainLookups::CompleteLeft { charged } => {
+            let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
+            let (left, right) = (complete(&sides.left), grid(&sides.right));
+            match &lone {
+                Some(lone) => run_level_rows::<false, _, _, _>(
+                    eng, rows, scratch, &left, &right,
+                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged }, lone },
+                ),
+                None => run_level_rows::<false, _, _, _>(
+                    eng, rows, scratch, &left, &right,
+                    &mut Emit { sink: ReservedEmitSink { level, charged } },
+                ),
+            }
+        }
+        PlainLookups::CompleteRight { charged } => {
+            let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
+            let (left, right) = (grid(&sides.left), complete(&sides.right));
+            match &lone {
+                Some(lone) => run_level_rows::<false, _, _, _>(
+                    eng, rows, scratch, &left, &right,
+                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged }, lone },
+                ),
+                None => run_level_rows::<false, _, _, _>(
+                    eng, rows, scratch, &left, &right,
+                    &mut Emit { sink: ReservedEmitSink { level, charged } },
+                ),
+            }
+        }
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
+    }
+}
+
+/// Each column's g pair, where every column of the level holds one: the
+/// pair [`EmitLoneColumns`] reads a cell of the column against.
+fn lone_columns(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: &mut Vec<ChildPair>,
+) -> Result<Option<Vec<ChildPair>>, OperationError> {
+    if super::super::lone_columns_forced_off() {
+        return Ok(None);
+    }
+    let width = rows.ctx.right_width;
+    let mut lone = Vec::new();
+    eng.limits().reserve_exact(&mut lone, width)?;
+    for j in 0..width {
+        match column_pairs(rows.ctx, rows.g_level, j, scratch) {
+            &[pair] => lone.push(pair),
+            _ => return Ok(None),
+        }
+    }
+    super::super::note_lone_columns();
+    Ok(Some(lone))
+}
+
+/// [`Emit`] on a level with a complete side whose every column holds one g
+/// pair, `lone[j]` column `j`'s: a cell walks its row's f pairs against that
+/// pair as [`cell_pairs`] walks a cell of one g pair, with no column read
+/// and no test of the cell's shape. A cell whose pairs fit the arena's room
+/// writes them there and closes its node as [`finish_node`] does; the
+/// others go through the sink.
+struct EmitLoneColumns<'a, 'l> {
+    sink: ReservedEmitSink<'l>,
+    lone: &'a [ChildPair],
+}
+
+impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_> {
+    const DENSE_SLAB: bool = true;
+
+    #[inline(always)]
+    fn grid_row(&self, i: usize) -> usize {
+        i
+    }
+
+    #[inline(always)]
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
+        let CellArgs { j, row_base, f_pairs, node_idx, left, right, gate, .. } = a;
+        let q = self.lone[j];
+        let (c, d) = (q.left.0, q.right.0);
+        let grid_pos = row_base + j;
+        let kills = left.kills() || right.kills();
+        gate.poll(f_pairs.len() as u64)?;
+        let grid = &*node_idx;
+        // An f pair against the column's pair: `NO_PRODUCT` on both sides
+        // where the left one dies.
+        let cand = |p: &ChildPair| {
+            let lc = left.get(grid, p.left.0, c);
+            if left.kills() && lc == NO_PRODUCT {
+                return (lc, lc);
+            }
+            (lc, right.get(grid, p.right.0, d))
+        };
+        if let [p] = f_pairs {
+            let (lc, rc) = cand(p);
+            if kills && rc == NO_PRODUCT {
+                return Ok(());
+            }
+            return self.sink.single(eng, node_idx, grid_pos, lc, rc);
+        }
+        let level = &mut *self.sink.level;
+        let pairs = level.pairs.stored_mut();
+        let start = pairs.len();
+        if self.sink.charged.min(pairs.capacity()) - start < f_pairs.len() {
+            let start = self.sink.begin();
+            push_kept(eng, &mut self.sink, f_pairs, kills, cand)?;
+            return self.sink.end(eng, node_idx, grid_pos, start);
+        }
+        let out = pairs.as_mut_ptr();
+        let mut len = start;
+        for p in f_pairs {
+            let (lc, rc) = cand(p);
+            if !kills || rc != NO_PRODUCT {
+                // Safety: the room checked above holds every f pair of the
+                // cell past `start`, and `len` steps once a pair at most.
+                unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+                len += 1;
+            }
+        }
+        // Safety: the slots below `len` hold the old pairs and one written
+        // pair a survivor.
+        unsafe { pairs.set_len(len) };
+        let node = level.nodes.stored().len() as u32;
+        match len - start {
+            0 => return Ok(()),
+            1 => {
+                let pair = level.pop_pair().expect("the cell wrote one pair");
+                emit_single_pair(eng, level, pair)?;
+            }
+            n => level.try_push_multi_by_range(start, n).map_err(|_| OperationError::OverBudget)?,
+        }
+        node_idx[grid_pos] = node;
+        Ok(())
     }
 }
 

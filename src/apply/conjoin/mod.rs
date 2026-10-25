@@ -822,10 +822,11 @@ fn note_summed() {}
 
 // A test reads every child side from the grid, as the oracle for the
 // arithmetic lookups on complete children, and counts the levels that read a
-// side by arithmetic, the meter charges of their reserved arenas, and the
-// levels that read a lone g pair in every cell.
+// side by arithmetic, the meter charges of their reserved arenas, the levels
+// that read a lone g pair in every cell, and those that read one pair a
+// column; and reads each cell's column, as the oracle for the last.
 #[cfg(test)]
-use tests::{grid_lookups_forced, note_lone_pair, note_lookups, note_scheduled_charge};
+use tests::{grid_lookups_forced, lone_columns_forced_off, note_lone_columns, note_lone_pair, note_lookups, note_scheduled_charge};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -844,6 +845,16 @@ fn note_scheduled_charge() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_lone_pair() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_lone_columns() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn lone_columns_forced_off() -> bool {
+    false
+}
 
 // A test builds no dead-pair masks with one multi-pair operand, as the oracle
 // for those masks, and counts the levels that build them.

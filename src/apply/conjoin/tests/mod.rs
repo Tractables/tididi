@@ -65,10 +65,31 @@ thread_local! {
     static GRID_LOOKUPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The levels on this thread that read a complete child side by
     /// arithmetic: both sides, the left alone, the right alone; the times a
-    /// reserved arena charged the meter for a growth it did not make; and
-    /// the levels of two complete sides that read a lone g pair in every
-    /// cell ([`complete_census`]).
-    static COMPLETE: std::cell::Cell<[u64; 5]> = const { std::cell::Cell::new([0; 5]) };
+    /// reserved arena charged the meter for a growth it did not make; the
+    /// levels of two complete sides that read a lone g pair in every cell;
+    /// and the levels of one complete side whose every column holds one g
+    /// pair ([`complete_census`]).
+    static COMPLETE: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
+    /// Whether every cell on this thread reads its column's pairs
+    /// ([`column_reads`]).
+    static COLUMN_READS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn lone_columns_forced_off() -> bool {
+    COLUMN_READS.with(std::cell::Cell::get)
+}
+
+/// Run `f` with every cell reading its column's pairs, as if no level held
+/// one pair a column: the oracle the levels that do are checked against.
+pub(super) fn column_reads<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            COLUMN_READS.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(COLUMN_READS.with(|c| c.replace(true)));
+    f()
 }
 
 pub(super) fn grid_lookups_forced() -> bool {
@@ -91,6 +112,10 @@ pub(super) fn note_scheduled_charge() {
 
 pub(super) fn note_lone_pair() {
     count_complete(4);
+}
+
+pub(super) fn note_lone_columns() {
+    count_complete(5);
 }
 
 fn count_complete(kind: usize) {
@@ -448,9 +473,10 @@ pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
 /// The levels on this thread so far that read a complete child side by
 /// arithmetic: with both sides complete, the left alone, the right alone;
 /// the times a reserved arena charged the meter for a growth it did not
-/// make; and the levels of two complete sides that read a lone g pair in
-/// every cell.
-pub(super) fn complete_census() -> [u64; 5] {
+/// make; the levels of two complete sides that read a lone g pair in every
+/// cell; and the levels of one complete side whose every column holds one g
+/// pair.
+pub(super) fn complete_census() -> [u64; 6] {
     COMPLETE.with(std::cell::Cell::get)
 }
 

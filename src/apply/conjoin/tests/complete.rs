@@ -176,6 +176,7 @@ fn shared_variables_leave_one_side_on_the_grid() {
     let census = complete_census();
     assert!(census[1] > before[1], "no level read only its left side by arithmetic");
     assert!(census[2] > before[2], "no level read only its right side by arithmetic");
+    assert!(census[5] > before[5], "no level of one complete side read one g pair a column");
 }
 
 /// `g` over the leftmost quarter of the variables is one node of one pair
@@ -198,6 +199,59 @@ fn a_lone_g_pair_is_read_in_every_cell() {
     });
     let census = complete_census();
     assert!(census[4] > before[4], "no level read a lone g pair in every cell");
+}
+
+/// Conjoin `f` and `g` on a fresh engine, every cell reading its column
+/// when `columns` holds, reading every child side from the grid when `grid`
+/// does, under a stop at `floor` output pairs when given: the result and the
+/// work units it took.
+fn conjoin_by_columns(f: &Tdd, g: &Tdd, columns: bool, grid: bool, floor: Option<u64>) -> (Result<Tdd, OperationError>, u64) {
+    match columns {
+        true => column_reads(|| conjoin(f, g, grid, floor)),
+        false => conjoin(f, g, grid, floor),
+    }
+}
+
+/// A level whose every column holds one g pair reads each cell against that
+/// pair without reading the column: the same diagram and the same work as
+/// the cells that read their column, under a stop at each output-pair floor
+/// up to the result's size, on the grid route and with a complete side.
+#[test]
+fn one_pair_columns_read_as_their_columns() {
+    let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
+    let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
+    let few: Vec<u32> = vec![1, 2, 3, 4, 9, 10];
+    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+        let mut rng = Lcg::new(0x5eed_a906);
+        let before = complete_census();
+        for round in 0..8 {
+            let (fvars, gvars) = match round % 2 {
+                0 => (&fv, &gv),
+                _ => (&fv, &few),
+            };
+            let f = function_of(&vtree, fvars, &mut rng);
+            let g = function_of(&vtree, gvars, &mut rng);
+            for grid in [false, true] {
+                let (oracle, oracle_work) = conjoin_by_columns(&f, &g, true, grid, None);
+                let (out, work) = conjoin_by_columns(&f, &g, false, grid, None);
+                let (oracle, out) = (oracle.unwrap(), out.unwrap());
+                assert_canonical(&out);
+                assert!(is_self_conjunction(&out, &oracle), "{shape}: reading one pair a column built another diagram");
+                assert_eq!(work, oracle_work, "{shape}: reading one pair a column did other work");
+                let total: usize = out.levels.iter().map(|l| l.pairs.len()).sum();
+                let mut floor = 1u64;
+                while floor <= 4 * total as u64 {
+                    let (oracle, oracle_work) = conjoin_by_columns(&f, &g, true, grid, Some(floor));
+                    let (stopped, work) = conjoin_by_columns(&f, &g, false, grid, Some(floor));
+                    assert_eq!(stopped.is_ok(), oracle.is_ok(), "{shape}: a stop at {floor} pairs fell differently");
+                    assert_eq!(work, oracle_work, "{shape}: a stop at {floor} pairs fell at other work");
+                    floor = floor * 3 / 2 + 1;
+                }
+            }
+        }
+        let census = complete_census();
+        assert!(census[5] > before[5], "{shape}: no level read one g pair a column");
+    }
 }
 
 /// The grid route stands in for the arithmetic one only in tests: the
