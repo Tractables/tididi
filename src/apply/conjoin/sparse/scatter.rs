@@ -2177,7 +2177,8 @@ fn emit_walked(
     emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
 }
 
-/// [`emit_walked`] on candidates of more than one g parent: a few grouped by
+/// [`emit_walked`] on candidates of more than one g parent: two g parents
+/// taking turns in place ([`emit_alternating`]), a few others grouped by
 /// comparison ([`emit_few`]), more through the map ([`emit_owned`]).
 #[expect(clippy::too_many_arguments)]
 #[inline(always)]
@@ -2191,6 +2192,12 @@ fn emit_mixed(
     owners: &mut [u32],
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let n = owners.len();
+    if let [a, b, ..] = *owners {
+        if matches!(n, 2 | 4 | 6 | 8) && owners.chunks_exact(2).all(|c| c[0] == a && c[1] == b) {
+            return emit_alternating(eng, level, pl_output, p1, base, a, b, n, duplicates_legal);
+        }
+    }
     if owners.len() <= FEW_CANDIDATES {
         // The pairs leave the arena, so the products' ranges take no more of
         // it than the walk gave them.
@@ -2205,6 +2212,78 @@ fn emit_mixed(
         return Err(OperationError::IndexOverflow);
     }
     emit_owned(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// [`emit_mixed`] where the `n` candidates at `base`, an even number up to
+/// [`FEW_CANDIDATES`], alternate between g parents `a` and `b`, the usual
+/// node of f pairs whose leaf label meets both of g's: the products of `a`
+/// and `b`, and their nodes as [`emit_few`] makes them, the pairs of each
+/// moved into its half of the candidates' place.
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn emit_alternating(
+    eng: &Engine,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    a: u32,
+    b: u32,
+    n: usize,
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    use crate::diagram::EncodedNode;
+    debug_assert!(a != b && matches!(n, 2 | 4 | 6 | 8), "two g parents taking turns");
+    let lim = eng.limits();
+    let first = pl_output.len();
+    reserve_room(lim, pl_output, 2)?;
+    for (k, g_parent) in [a, b].into_iter().enumerate() {
+        pl_output.push(ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(g_parent),
+            prod_idx: ProductNodeIdx((first + k) as u32),
+        });
+    }
+    reserve_room(lim, level.nodes.stored_mut(), 2)?;
+    let arena = level.pairs.stored_mut();
+    let half = n / 2;
+    if half == 1 {
+        let (pa, pb) = (arena[base], arena[base + 1]);
+        arena.truncate(base);
+        let nodes = level.nodes.stored_mut();
+        nodes.push(EncodedNode::inline(pa));
+        nodes.push(EncodedNode::inline(pb));
+        return Ok(());
+    }
+    /// The even places' pairs, then the odd places', of `N` pairs.
+    #[inline(always)]
+    fn split<const N: usize>(pairs: &mut [ChildPair]) {
+        let read: [ChildPair; N] = pairs[..N].try_into().expect("the candidates' place");
+        for i in 0..N / 2 {
+            pairs[i] = read[2 * i];
+            pairs[N / 2 + i] = read[2 * i + 1];
+        }
+    }
+    let place = &mut arena[base..base + n];
+    match n {
+        4 => split::<4>(place),
+        6 => split::<6>(place),
+        _ => split::<8>(place),
+    }
+    for start in [base, base + half] {
+        level.try_push_multi_by_range(start, half).map_err(|_| OperationError::OverBudget)?;
+    }
+    debug_assert!(
+        duplicates_legal || {
+            let nodes = level.nodes().len();
+            (nodes - 2..nodes).all(|i| {
+                let mut seen = std::collections::HashSet::new();
+                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+            })
+        },
+        "sparse apply: duplicate pair emitted — canonicity violated"
+    );
+    Ok(())
 }
 
 /// [`emit_walked`] on more than [`FEW_CANDIDATES`] candidates of more than
