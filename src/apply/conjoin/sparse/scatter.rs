@@ -390,7 +390,7 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
                 let base = level.pairs.stored_len();
                 node_owners.clear();
                 walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
-                    try_push_pair_growing(eng, level, candidate_pair(&entry), move |v| grow_by_nodes(eng, v, start, p1, walked_nodes))?;
+                    try_push_pair_growing(eng, level.pairs.stored_mut(), candidate_pair(&entry), move |v| grow_by_nodes(eng, v, start, p1, walked_nodes))?;
                     lim.try_push(node_owners, entry.g_parent)
                 })?;
                 emit_walked(eng, emit, level, out, p1, base, node_owners, duplicates_legal)
@@ -572,7 +572,12 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     let stored = f_level.stored().expect("the walk reads f's stored nodes");
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
-    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate() {
+    let copied = if DENSE {
+        copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, outer.entries, level, start, out, &mut ticker)?
+    } else {
+        0
+    };
+    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate().skip(copied) {
         let base = level.pairs.stored_len();
         // The node's one g parent while it has one. Once it has two, `mixed`
         // is set, `node_owners` holds every candidate's, and `owner` is
@@ -590,7 +595,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
                     if g_parent != NO_PRODUCT {
                         let (left_prod, right_prod) = orient::<SWAPPED>($label, $prod);
                         let pair = ChildPair::new(EncodedChildRef::from_raw(left_prod), EncodedChildRef::from_raw(right_prod));
-                        try_push_pair_growing(eng, level, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+                        try_push_pair_growing(eng, level.pairs.stored_mut(), pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
                         if g_parent != owner {
                             if owner != NO_PRODUCT {
                                 let before = level.pairs.stored_len() - base - 1;
@@ -685,6 +690,115 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
         }
     }
     Ok(())
+}
+
+/// The g parent of the one candidate of two g pairs' parents `a` and `b`,
+/// or `NO_PRODUCT` where both or neither is there.
+#[inline(always)]
+fn sole(a: u32, b: u32) -> u32 {
+    if a != NO_PRODUCT && b != NO_PRODUCT { NO_PRODUCT } else { a.min(b) }
+}
+
+/// What f pair `pair` meets on a level of [`copy_nodes`]: the g parent of
+/// the one g pair it meets with its own leaf label, under the product
+/// numbered as its outer child (`NO_PRODUCT` where it meets another or
+/// none), and above it the clock units the walk charges for its visit.
+#[inline(always)]
+fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: &[OwnedProduct]) -> u64 {
+    const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
+    const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
+    let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+    let e = &entries[outer1 as usize];
+    let [pos, one, neg] = e.slots;
+    let mut held = u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
+    if ONES {
+        held += u64::from(one < NO_PRODUCT);
+    }
+    // The walk's meets of the pair's label: Pos meets Pos and One, Neg
+    // meets One and Neg, both under their own label; One meets all three,
+    // under its own only in One's.
+    let one = if ONES { one } else { NO_PRODUCT };
+    let g = match inner1 {
+        POS => sole(pos, one),
+        NEG => sole(one, neg),
+        _ if pos == NO_PRODUCT && neg == NO_PRODUCT => one,
+        _ => NO_PRODUCT,
+    };
+    let g = if e.prod == outer1 { g } else { NO_PRODUCT };
+    held << 32 | u64::from(g)
+}
+
+/// The first of [`owner_walk_nodes`] on a level where each outer child of f
+/// has one owned product (`DENSE`), its arena holding `start` pairs before
+/// the walk: f's nodes from the first for as long as each is its own
+/// product's node. That holds of a node each of whose pairs meets one g
+/// pair, of the pair's own leaf label and under the product numbered as
+/// the pair's outer child, all of one g parent ([`copy_code`]): its
+/// candidates are its pairs, in order. Each such node's product, node and
+/// pairs are made, and the clock charged and the arena grown, as the walk
+/// makes, charges and grows them. Return how many nodes it made.
+#[expect(clippy::too_many_arguments)]
+#[inline(never)]
+fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
+    eng: &Engine,
+    stored: crate::diagram::StoredPairs<'_>,
+    f_nodes: usize,
+    entries: &[OwnedProduct],
+    level: &mut TddLevel,
+    start: usize,
+    out: &mut Vec<ProductEntry>,
+    ticker: &mut crate::limits::PollGate<'_>,
+) -> Result<usize, OperationError> {
+    let lim = eng.limits();
+    let (arena, nodes) = (level.pairs.stored_mut(), level.nodes.stored_mut());
+    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate() {
+        let pairs = stored.of(node);
+        let Some((first, rest)) = pairs.split_first() else {
+            return Ok(p1);
+        };
+        let code = copy_code::<SWAPPED, ONES>(*first, entries);
+        let (owner, mut held) = (code as u32, code >> 32);
+        let mut copies = owner != NO_PRODUCT;
+        for &pair in rest {
+            let code = copy_code::<SWAPPED, ONES>(pair, entries);
+            copies &= code as u32 == owner;
+            held += code >> 32;
+        }
+        let (base, count) = (arena.len(), pairs.len());
+        // A node too far into the arena for its words is the walk's to make.
+        if !copies || (count > 1 && (base | count) >= 1 << 31) {
+            return Ok(p1);
+        }
+        ticker.poll(held)?;
+        let product = ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(owner),
+            prod_idx: ProductNodeIdx(out.len() as u32),
+        };
+        if out.len() < out.capacity() {
+            out.push(product);
+        } else {
+            lim.try_push(out, product)?;
+        }
+        // The walk's pushes of the candidates: a node of one pair takes its
+        // pair back out of the arena, its push having grown it if full.
+        for &pair in pairs {
+            try_push_pair_growing(eng, arena, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+        }
+        let node = if count == 1 {
+            arena.pop();
+            *node
+        } else {
+            crate::diagram::EncodedNode::multi_pair(base as u32, count as u32)
+        };
+        if nodes.len() < nodes.capacity() {
+            nodes.push(node);
+        } else {
+            reserve_room(lim, nodes, 1)?;
+            nodes.push(node);
+        }
+    }
+    Ok(f_nodes)
 }
 
 /// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps
@@ -2193,10 +2307,11 @@ fn emit_mixed(
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let n = owners.len();
-    if let [a, b, ..] = *owners {
-        if matches!(n, 2 | 4 | 6 | 8) && owners.chunks_exact(2).all(|c| c[0] == a && c[1] == b) {
-            return emit_alternating(eng, level, pl_output, p1, base, a, b, n, duplicates_legal);
-        }
+    if let [a, b, ..] = *owners
+        && matches!(n, 2 | 4 | 6 | 8)
+        && owners.chunks_exact(2).all(|c| c[0] == a && c[1] == b)
+    {
+        return emit_alternating(eng, level, pl_output, p1, base, a, b, n, duplicates_legal);
     }
     if owners.len() <= FEW_CANDIDATES {
         // The pairs leave the arena, so the products' ranges take no more of

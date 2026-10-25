@@ -55,17 +55,17 @@ pub(super) fn try_push_pair_into(
     push_pair_grow(eng, v, pair)
 }
 
-/// [`try_push_pair_into`] where a full arena is handed to `grow` first, which
-/// may reserve room in it; the ordinary growth runs where it is still full.
-/// `grow` runs once per growth event, out of line with the rest of it.
+/// [`try_push_pair_into`] into a level's arena `v`, where a full arena is
+/// handed to `grow` first, which may reserve room in it; the ordinary growth
+/// runs where it is still full. `grow` runs once per growth event, out of
+/// line with the rest of it.
 #[inline(always)]
 pub(super) fn try_push_pair_growing<G: FnOnce(&mut Vec<crate::diagram::ChildPair>)>(
     eng: &Engine,
-    level: &mut crate::diagram::TddLevel,
+    v: &mut Vec<crate::diagram::ChildPair>,
     pair: crate::diagram::ChildPair,
     grow: G,
 ) -> Result<(), OperationError> {
-    let v = level.pairs.stored_mut();
     if v.len() < v.capacity() {
         v.push(pair);
         return Ok(());
