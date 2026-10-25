@@ -315,6 +315,14 @@ impl TwinEntries for ContentEntries<'_> {
     }
 }
 
+/// The width below which a screened search of a level without a marginal
+/// level goes by fingerprints. Such a search most often finds no twin; on a
+/// narrow level the fingerprints and their probe table stay in the
+/// first-level cache, and summing an entry costs less than the refinement's
+/// sort of each parent node's pairs. On a wider one the fingerprints'
+/// scattered writes miss it, where the refinement reads a bit per node.
+const NARROW_SCREENED_WIDTH: usize = 1 << 12;
+
 /// Find nodes with identical parent-context multisets at the explicit child
 /// level `t1` of `parent`. Marginal children are handled by pair fusion
 /// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
@@ -328,7 +336,9 @@ impl TwinEntries for ContentEntries<'_> {
 /// the parent level is first tested for a parent node that pairs two nodes
 /// with one sibling ([`repeats_a_sibling`]), without which no node has a
 /// twin: worth it where few nodes are expected to have one, as under a
-/// parent level no merge has changed.
+/// parent level no merge has changed. Such a search of a level narrower
+/// than [`NARROW_SCREENED_WIDTH`] goes by fingerprints instead, and debug
+/// builds check it against the refinement.
 ///
 /// With a marginal level the contexts are multisets, which the
 /// refinement's sibling and degree splits do not count, and the level is
@@ -366,7 +376,10 @@ pub(super) fn find_twin_groups(
         return group_twins_by_entries(eng, &entries, width, scratch);
     }
     let lim = eng.limits();
-    let found = if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
+    let by_fingerprints = screen && width < NARROW_SCREENED_WIDTH;
+    let found = if by_fingerprints {
+        group_twins_by_entries(eng, &entries, width, scratch)?
+    } else if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
         refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
     } else {
         scratch.flat_groups.clear();
@@ -374,12 +387,16 @@ pub(super) fn find_twin_groups(
         false
     };
     if cfg!(debug_assertions) {
-        let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+        let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
         let unnamed = std::mem::take(&mut scratch.unnamed);
-        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?;
+        let other = if by_fingerprints {
+            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
+        } else {
+            group_twins_by_entries(eng, &entries, width, scratch)?
+        };
         assert_eq!(
-            (found, &refined.0, &refined.1),
-            (fingerprinted, &scratch.group_starts, &scratch.flat_groups),
+            (found, &kept.0, &kept.1),
+            (other, &scratch.group_starts, &scratch.flat_groups),
             "the refined twin groups differ from the fingerprinted ones",
         );
         // Each lists the nodes no pair names where it read every pair.
