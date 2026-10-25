@@ -287,6 +287,12 @@ pub(crate) struct ContractScratch {
     pub(super) refine_met: Vec<u32>,
     /// Per node one sibling is paired with, its class as counted there.
     pub(super) refine_seen: Vec<u32>,
+    /// Per child node, the siblings of few a wide parent node pairs it with,
+    /// one bit each; zero between parent nodes.
+    pub(super) refine_code: Vec<u8>,
+    /// Per class a wide parent node of few siblings meets, its members
+    /// counted by code, then each code's class.
+    pub(super) refine_rows: Vec<u32>,
     /// Per degree, the nodes of that degree there; zero between parent
     /// nodes.
     pub(super) refine_reach: Vec<u32>,
@@ -408,6 +414,8 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_bucket);
         visit(&mut self.refine_met);
         visit(&mut self.refine_seen);
+        visit(&mut self.refine_code);
+        visit(&mut self.refine_rows);
         visit(&mut self.refine_reach);
         visit(&mut self.refine_touched);
         visit(&mut self.flat_groups);

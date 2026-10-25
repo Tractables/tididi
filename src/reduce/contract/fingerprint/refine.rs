@@ -28,6 +28,8 @@ struct Wide<'a> {
     bucket: &'a mut Vec<u32>,
     met: &'a mut Vec<u32>,
     seen: &'a mut Vec<u32>,
+    code: &'a mut [u8],
+    rows: &'a mut Vec<u32>,
 }
 
 /// The most pairs a parent node holds where its nodes are grouped on the
@@ -90,8 +92,10 @@ pub(super) fn refine_context_groups(
     let ContractScratch {
         twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
         refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_met,
-        refine_seen, flat_groups, group_starts, unnamed, ..
+        refine_seen, refine_code, refine_rows, flat_groups, group_starts, unnamed, ..
     } = scratch;
+    // Zero between parent nodes, so it only grows.
+    lim.try_resize(refine_code, width, 0u8)?;
     let mut wide = Wide {
         keys: refine_keys,
         runs: refine_runs,
@@ -104,6 +108,8 @@ pub(super) fn refine_context_groups(
         bucket: refine_bucket,
         met: refine_met,
         seen: refine_seen,
+        code: &mut refine_code[..width],
+        rows: refine_rows,
     };
     flat_groups.clear();
     group_starts.clear();
@@ -656,8 +662,10 @@ impl Partition<'_> {
     /// bucketed by sibling in `bucket`: where the pairs come in sibling
     /// order, each run's as it is read, in one pass that also finds the
     /// order; else in two passes over the pairs that read only siblings,
-    /// after that one stops. `column` is zero between calls, as
-    /// [`Self::split_by_degree`] reads it.
+    /// after that one stops, unless the pairs name at most
+    /// [`FEW_SIBLINGS`] siblings and the nodes are split by their codes
+    /// instead ([`Self::split_by_codes`]). `column` is zero between calls,
+    /// as [`Self::split_by_degree`] reads it.
     fn split_by_siblings(
         &mut self,
         lim: &Limits,
@@ -665,7 +673,7 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { column, touched, bucket, met, seen, .. } = wide;
+        let Wide { column, touched, bucket, met, seen, code, rows, .. } = wide;
         // Every class there can be, as `refine_context_groups` reserves.
         lim.try_resize(seen, pairs.len(), 0u32)?;
         met.clear();
@@ -712,6 +720,9 @@ impl Partition<'_> {
             }
             return Ok(());
         }
+        if self.split_by_codes(lim, pairs, side, bucket, seen, met, code, rows)? {
+            return Ok(());
+        }
         touched.clear();
         // `column` grows to the siblings as they are counted; on a refusal
         // the counts made are cleared first.
@@ -751,6 +762,135 @@ impl Partition<'_> {
             from = to;
         }
         Ok(())
+    }
+
+    /// A wide parent node whose pairs name at most [`FEW_SIBLINGS`]
+    /// siblings, split in one step by each node's code there: the set of
+    /// those siblings it is paired with, one bit each in `code`. Every class
+    /// splits into its members of each code and its members the node does
+    /// not name, as one split per sibling leaves it, with each named node's
+    /// class read once rather than once per sibling. Returns `false`, with
+    /// nothing changed, where a fifth sibling shows up.
+    ///
+    /// The first pass reads each pair's sibling against the siblings met so
+    /// far, held in registers, ORs its bit into the node's code and lists
+    /// the node at its first pair, in `bucket`. The second reads each
+    /// listed node's class, numbering the classes met that can have a twin
+    /// in their `hits`, the third counts each class's members by code in a
+    /// row of `rows`, and the counts then become each code's class: a code
+    /// of one member leaves the partition, the first code of two or more of
+    /// a class whose members are all named keeps the class, and every other
+    /// code of two or more is a class of its own. The last pass moves the
+    /// nodes and clears their codes and the classes' `hits`.
+    #[allow(clippy::too_many_arguments)]
+    fn split_by_codes(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        bucket: &mut [u32],
+        seen: &mut [u32],
+        met: &mut Vec<u32>,
+        code: &mut [u8],
+        rows: &mut Vec<u32>,
+    ) -> Result<bool, OperationError> {
+        let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
+        // The slots in use, one bit each.
+        let (mut d, mut used) = (1usize, 1u8);
+        let mut listed = 0;
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            let hit = u8::from(s == sib[0])
+                | u8::from(s == sib[1]) << 1
+                | u8::from(s == sib[2]) << 2
+                | u8::from(s == sib[3]) << 3;
+            let mut bit = hit & used;
+            if bit == 0 {
+                if d == FEW_SIBLINGS {
+                    for &t in &bucket[..listed] {
+                        code[t as usize] = 0;
+                    }
+                    return Ok(false);
+                }
+                sib[d] = s;
+                bit = 1 << d;
+                used |= bit;
+                d += 1;
+            }
+            let e = &mut code[t as usize];
+            bucket[listed] = t;
+            listed += usize::from(*e == 0);
+            *e |= bit;
+        }
+        let nodes = &bucket[..listed];
+        met.clear();
+        for (&t, seen) in nodes.iter().zip(seen.iter_mut()) {
+            let c = self.of(t);
+            *seen = ALONE;
+            if !self.can_twin(c) {
+                continue;
+            }
+            *seen = c;
+            let k = &mut self.classes[c as usize];
+            if k.hits == 0 {
+                // Within the reserve of one class a pair.
+                met.push(c);
+                k.hits = met.len() as u32;
+            }
+        }
+        let stride = 1usize << d;
+        rows.clear();
+        if let Err(e) = lim.try_resize(rows, met.len() * stride, 0u32) {
+            for &t in nodes {
+                code[t as usize] = 0;
+            }
+            for &c in met.iter() {
+                self.classes[c as usize].hits = 0;
+            }
+            return Err(e);
+        }
+        for (&t, &c) in nodes.iter().zip(seen.iter()) {
+            if c != ALONE {
+                let row = (self.classes[c as usize].hits as usize - 1) * stride;
+                rows[row + code[t as usize] as usize] += 1;
+            }
+        }
+        for (r, &c) in met.iter().enumerate() {
+            let row = &mut rows[r * stride..(r + 1) * stride];
+            let mut keep = row.iter().sum::<u32>() == self.classes[c as usize].size;
+            for cell in row.iter_mut().skip(1) {
+                let members = *cell;
+                if members == 0 {
+                    continue;
+                }
+                *cell = if members == 1 {
+                    ALONE
+                } else if keep {
+                    keep = false;
+                    c
+                } else {
+                    self.fresh(c, members)
+                };
+            }
+        }
+        for (&t, &c) in nodes.iter().zip(seen.iter()) {
+            let e = std::mem::take(&mut code[t as usize]);
+            if c == ALONE {
+                continue;
+            }
+            let row = (self.classes[c as usize].hits as usize - 1) * stride;
+            match rows[row + e as usize] {
+                ALONE => self.alone(t, c),
+                // A node of the first class it names is moved there
+                // anyway, so that it reads as named.
+                dest if dest != c || c == 0 => self.put(t, dest),
+                _ => {}
+            }
+        }
+        for &c in met.iter() {
+            self.classes[c as usize].hits = 0;
+        }
+        Ok(true)
     }
 
     /// Split every class by the `nodes` one sibling is paired with: a class
@@ -856,6 +996,10 @@ enum Degrees {
     /// Its pairs do not come in node order, and nothing is changed.
     Unordered,
 }
+
+/// The most siblings a wide parent node's pairs name for its nodes to be
+/// split by their codes ([`Partition::split_by_codes`]).
+const FEW_SIBLINGS: usize = 4;
 
 /// Group `runs` through `table`: each run joins the group of the first run
 /// of its key that `same` also matches, chained after that run in `links`,
