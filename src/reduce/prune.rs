@@ -245,8 +245,9 @@ pub(crate) struct PruneScratch {
     identity: Vec<u32>,
     /// The levels the seeded walk descended into.
     visits: Vec<Visit>,
-    /// Per level, whether a walk from the output would enter it, and those
-    /// levels in the order it would ([`slots_from_output`]).
+    /// Per level, whether a walk from the output would enter it, clear
+    /// between prunes, and those levels in the order it would
+    /// ([`slots_from_output`]).
     entered: Vec<bool>,
     from_output: Vec<VtreeIdx>,
     /// [`settle_loose`]'s flags per level and the parents it reads.
@@ -374,7 +375,7 @@ pub(crate) fn prune_unreachable(
         prune_below_root(eng, tdd, None, Start::Output)?;
     } else if let Some(seeds) = &seeded {
         let start = match seeds.root_clean {
-            true => Start::Seeds(&seeds.seeds[..], &seeds.state[..]),
+            true => Start::Seeds(&seeds.seeds[..], &seeds.state[..], &seeds.top[..]),
             false => Start::Output,
         };
         prune_below_root(eng, tdd, Some(&seeds.state[..]), start)?;
@@ -424,11 +425,15 @@ const CLEAN: u8 = 2;
 /// clean levels, which lose no node and whose references into a clean
 /// child need no rewrite.
 struct Seeds<'l> {
-    /// Per level, [`FORCED`] and [`CLEAN`].
+    /// Per level, [`FORCED`], and [`CLEAN`] on the clean levels that are
+    /// forced or a seed's children: the walk reads it on a seed's children.
     state: Transient<'l, Vec<u8>>,
     /// The structural internal clean levels with a structural internal
     /// child that is not clean, top-down.
     seeds: Transient<'l, Vec<VtreeIdx>>,
+    /// The structural internal clean levels above a loose one, which a walk
+    /// from the output enters ([`slots_from_output`]).
+    top: Transient<'l, Vec<VtreeIdx>>,
     /// Whether the root is clean: otherwise nothing is, and the walk starts
     /// at the output.
     root_clean: bool,
@@ -443,8 +448,12 @@ impl<'l> Seeds<'l> {
         let vtree = &tdd.vtree;
         let mut state: Transient<'_, Vec<u8>> = Transient::new(lim, Vec::new());
         lim.try_resize(&mut state, vtree.num_nodes(), 0)?;
-        // The loose levels, and every level above one forced.
+        // The loose levels, and every level above one forced, listed.
         const LOOSE: u8 = 4;
+        // Whether the level is clean is settled.
+        const SETTLED: u8 = 8;
+        const SEED: u8 = 16;
+        let mut forced: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         for &level in loose {
             state[level as usize] |= LOOSE;
             let mut up = vtree.node(VtreeIdx(level)).parent();
@@ -453,35 +462,66 @@ impl<'l> Seeds<'l> {
                     break;
                 }
                 state[p.idx()] |= FORCED;
+                lim.try_push(&mut forced, p)?;
                 up = vtree.node(p).parent();
             }
         }
         let root = vtree.root();
         let root_clean = tdd.levels[root.idx()].slot_count() == 1;
         let mut seeds: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
+        let mut top: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         if root_clean {
-            // Top-down: a level's parent is settled before it.
-            for &t in vtree.bottomup_slice().iter().rev() {
-                let clean = match vtree.node(t).parent() {
-                    None => true,
-                    Some(p) => state[p.idx()] & CLEAN != 0 && state[t.idx()] & LOOSE == 0,
+            // Whether each forced level is clean, settled from the root down
+            // its path: the root is, and a level is when its parent is and
+            // it is not loose. A level that is not forced has no loose level
+            // under it, so the clean levels with a child that is not are
+            // forced, and the walk reads whether a level is clean only on a
+            // seed's children, below.
+            let mut path = Vec::new();
+            for &f in forced.iter() {
+                path.clear();
+                let mut t = f;
+                let mut clean = loop {
+                    if state[t.idx()] & SETTLED != 0 {
+                        break state[t.idx()] & CLEAN != 0;
+                    }
+                    lim.try_push(&mut path, t)?;
+                    match vtree.node(t).parent() {
+                        Some(p) => t = p,
+                        None => break true,
+                    }
                 };
-                if clean {
-                    state[t.idx()] |= CLEAN;
+                for &t in path.iter().rev() {
+                    clean = t == root || (clean && state[t.idx()] & LOOSE == 0);
+                    state[t.idx()] |= SETTLED | if clean { CLEAN } else { 0 };
                 }
             }
-            for &t in vtree.bottomup_slice().iter().rev() {
-                if state[t.idx()] & CLEAN == 0 || !tdd.is_structural_internal(t) {
-                    continue;
+            // A seed is a clean level with a child that is not: a loose
+            // one.
+            for &level in loose {
+                let level = VtreeIdx(level);
+                let Some(p) = vtree.node(level).parent() else { continue };
+                if state[p.idx()] & (CLEAN | SEED) == CLEAN && tdd.is_structural_internal(p) && tdd.is_structural_internal(level) {
+                    state[p.idx()] |= SEED;
+                    lim.try_push(&mut seeds, p)?;
                 }
+            }
+            seeds.sort_unstable_by_key(|&t| std::cmp::Reverse(vtree.topo_pos(t)));
+            for &t in seeds.iter() {
                 let (left, right) = vtree.children(t);
-                let open = |c: VtreeIdx| tdd.is_structural_internal(c) && state[c.idx()] & CLEAN == 0;
-                if open(left) || open(right) {
-                    lim.try_push(&mut seeds, t)?;
+                for c in [left, right] {
+                    if state[c.idx()] & LOOSE == 0 {
+                        state[c.idx()] |= CLEAN;
+                    }
+                }
+            }
+            for &t in forced.iter() {
+                if state[t.idx()] & CLEAN != 0 && tdd.is_structural_internal(t) {
+                    lim.try_push(&mut top, t)?;
                 }
             }
         }
-        Ok(Seeds { state, seeds, root_clean })
+        Ok(Seeds { state, seeds, top, root_clean })
     }
 }
 
@@ -1459,8 +1499,9 @@ enum Start<'a> {
     /// the root level holds is what a change at the root dropped.
     Output,
     /// At these levels, every node of each reached, with per level its
-    /// [`Seeds`] state: the walk enters no [`CLEAN`] child.
-    Seeds(&'a [VtreeIdx], &'a [u8]),
+    /// [`Seeds`] state, and the clean levels above a loose one: the walk
+    /// enters no [`CLEAN`] child.
+    Seeds(&'a [VtreeIdx], &'a [u8], &'a [VtreeIdx]),
 }
 
 /// [`prune_unreachable`] under [`PruneScope::BelowRoot`]: walk down from
@@ -1488,7 +1529,7 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: S
             eng.limits().try_push(visits, Visit::new(root, base))?;
             None
         }
-        Start::Seeds(seeds, state) => {
+        Start::Seeds(seeds, state, _) => {
             eng.limits().reserve(visits, seeds.len())?;
             for &t in seeds {
                 let width = tdd.levels[t.idx()].slot_count();
@@ -1549,8 +1590,8 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: S
         i += 1;
     }
     // A walk from the seeds is charged as one from the output would be.
-    if let Start::Seeds(_, state) = start {
-        slots = slots_from_output(eng.limits(), tdd, state, visits, entered, from_output)?;
+    if let Start::Seeds(_, _, top) = start {
+        slots = slots_from_output(eng.limits(), tdd, top, visits, entered, from_output)?;
     }
     compact_visited(eng, tdd, marks, remap, identity, visits, remap_need)?;
 
@@ -1565,14 +1606,14 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: S
 }
 
 /// The slots a walk from the output would be charged for where one from
-/// the seeds walked `visits`, the levels under [`Seeds`] `state`. That walk
-/// enters the levels the seeded one did and, above them, the clean levels
-/// it must, which lose no node: the root and the [`FORCED`] ones. It takes
-/// them in its queue's order, and is charged the root's block and, on each
-/// level, its structural children's slots and, for another child, its
-/// slots where it is wider than every one met before it. `entered` and
-/// `from_output` hold the levels it enters. Read before the walked levels
-/// are compacted.
+/// the seeds walked `visits`. That walk enters the levels the seeded one
+/// did and, above them, the clean levels it must, which lose no node: the
+/// root and `top`, the clean ones above a loose level. It takes them in its
+/// queue's order, and is charged the root's block and, on each level, its
+/// structural children's slots and, for another child, its slots where it
+/// is wider than every one met before it. `entered` flags the levels it
+/// enters, all clear again on return, and `from_output` holds them in its
+/// order. Read before the walked levels are compacted.
 ///
 /// # Errors
 ///
@@ -1581,31 +1622,24 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: S
 fn slots_from_output(
     lim: &Limits,
     tdd: &Tdd,
-    state: &[u8],
+    top: &[VtreeIdx],
     visits: &[Visit],
     entered: &mut Vec<bool>,
     from_output: &mut Vec<VtreeIdx>,
 ) -> Result<usize, OperationError> {
     let vtree = &tdd.vtree;
     let root = vtree.root();
-    entered.clear();
-    lim.try_resize(entered, vtree.num_nodes(), false)?;
-    entered[root.idx()] = true;
-    let mut count = 1;
-    for &t in vtree.bottomup_slice() {
-        if !entered[t.idx()] && state[t.idx()] & (CLEAN | FORCED) == CLEAN | FORCED && tdd.is_structural_internal(t) {
-            entered[t.idx()] = true;
-            count += 1;
-        }
-    }
-    for v in visits {
-        if !entered[v.level.idx()] {
-            entered[v.level.idx()] = true;
-            count += 1;
-        }
+    if entered.len() < vtree.num_nodes() {
+        lim.try_resize(entered, vtree.num_nodes(), false)?;
     }
     from_output.clear();
-    lim.reserve(from_output, count)?;
+    lim.reserve(from_output, 1 + top.len() + visits.len())?;
+    let levels = || std::iter::once(root).chain(top.iter().copied()).chain(visits.iter().map(|v| v.level));
+    let mut count = 0;
+    for t in levels() {
+        count += usize::from(!entered[t.idx()]);
+        entered[t.idx()] = true;
+    }
     from_output.push(root);
     let mut slots = tdd.levels[root.idx()].slot_count();
     let mut unmarked = 0usize;
@@ -1627,6 +1661,9 @@ fn slots_from_output(
             }
         }
         i += 1;
+    }
+    for t in levels() {
+        entered[t.idx()] = false;
     }
     debug_assert_eq!(from_output.len(), count, "a level the seeded walk entered is not under one a walk from the output enters");
     Ok(slots)

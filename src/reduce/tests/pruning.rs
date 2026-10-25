@@ -350,7 +350,7 @@ fn entered(tdd: &crate::Tdd, levels: &[u32]) -> std::collections::BTreeSet<u32> 
 /// has it enter the levels a list of exactly those would; and the prune
 /// leaves the diagram the prune over the whole diagram leaves, node for
 /// node, charging the work clock what a walk from the output does where it
-/// starts at the seeds.
+/// starts at the seeds, a loose level under another among them.
 #[test]
 fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     use crate::test_helpers::{Lcg, vtree_shapes};
@@ -358,7 +358,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x9e1f_2d47);
     let (mut cases, mut loose, mut cleared, mut settled_away) = (0usize, 0usize, 0usize, 0usize);
-    let mut seeded = 0usize;
+    let (mut seeded, mut nested) = (0usize, 0usize);
     let mut check = |conj: crate::Tdd, operands: [&[u32]; 2], what: &str| {
         if conj.is_zero() {
             return;
@@ -389,7 +389,21 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
             prune_loose_from_output(eng, &mut from_output).unwrap();
             assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the seeded walk charged other work than one from the output");
             assert_eq!(layout(&from_output), layout(&walked), "{what}: the walk from the output left another diagram");
-            seeded += usize::from(conj.levels[conj.vtree.root().idx()].slot_count() == 1);
+            let root_clean = conj.levels[conj.vtree.root().idx()].slot_count() == 1;
+            seeded += usize::from(root_clean);
+            // A loose level under another: the levels between them, and
+            // the upper one, are forced and not clean.
+            let under_loose = |b: u32| {
+                let mut up = conj.vtree.node(crate::vtree::VtreeIdx(b)).parent();
+                while let Some(p) = up {
+                    if settled.contains(&p.0) {
+                        return true;
+                    }
+                    up = conj.vtree.node(p).parent();
+                }
+                false
+            };
+            nested += usize::from(root_clean && settled.iter().any(|&b| under_loose(b)));
         }
         let mut whole = conj;
         whole.dirty.set_loose(None);
@@ -424,6 +438,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
+    assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
 }
 
 /// The complement of a canonical diagram, completed and complemented at
