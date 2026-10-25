@@ -119,7 +119,8 @@ jobs:
 
   miri:
     runs-on: ubuntu-latest
-    # Miri takes about an hour; a newer push to the same branch replaces it.
+    # Miri takes about 40 minutes; a newer push to the same branch replaces it.
+    timeout-minutes: 90
     concurrency:
       group: miri-${{ github.ref }}
       cancel-in-progress: true
