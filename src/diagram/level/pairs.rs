@@ -165,6 +165,40 @@ impl<'a> StoredPairs<'a> {
         self.of(&self.nodes()[idx])
     }
 
+    /// Call `f` on every pair of the level once, in no node's order, and
+    /// return `true`, if the nodes' ranges cover the whole arena; otherwise
+    /// return `false` with `f` called on the nodes' own pairs only.
+    ///
+    /// `f` takes, node by node, the pair a node holds in its words, or
+    /// `none` for a node whose pairs are in the arena, with no branch on a
+    /// node's kind ([`EncodedNode::inline_or`]); then the arena, read whole,
+    /// when the arena pairs the nodes name add up to its length. No two
+    /// nodes' ranges overlap, so they then cover every arena pair, and no
+    /// pair a node gave up is left in it.
+    #[inline(always)]
+    pub(crate) fn for_each_pair_whole(self, none: ChildPair, mut f: impl FnMut(ChildPair)) -> bool {
+        let mut named = 0u64;
+        for node in self.nodes() {
+            let (pair, held) = node.inline_or(none);
+            f(pair);
+            named += u64::from(held);
+        }
+        if !self.level.ranges.is_empty() {
+            for node in self.nodes() {
+                if let NodeKind::MultiRanged(e) = node.kind() {
+                    named = named - 1 + self.level.ranges[e as usize].len;
+                }
+            }
+        }
+        if named != self.arena.len() as u64 {
+            return false;
+        }
+        for &pair in self.arena {
+            f(pair);
+        }
+        true
+    }
+
     /// The level's nodes, in index order: a level that stores its pairs
     /// stores its nodes, and a reader of its pairs as slices reads them
     /// here.

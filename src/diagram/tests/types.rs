@@ -334,6 +334,42 @@
     }
 
     #[test]
+    fn the_whole_read_gives_every_pair_once_or_the_nodes_own() {
+        // Inline, multi-pair, ranged and empty nodes whose ranges cover the
+        // arena: the nodes' own pairs, `none` for each other node, then the
+        // arena. With a pair no node names left in the arena, the nodes'
+        // own pairs and `none`s only.
+        let pair = |l: u32, r: u32| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
+        let none = pair(99, 98);
+        let read = |level: &TddLevel| {
+            let mut seen = Vec::new();
+            let whole = level.stored().expect("a stored level").for_each_pair_whole(none, |p| seen.push(p));
+            (whole, seen)
+        };
+        let arena = [pair(1, 7), pair(2, 7), pair(3, 8), pair(1, 8), pair(0, 0), pair(5, 5)];
+        let mut level = TddLevel::new();
+        level.pairs.stored_mut().extend(arena);
+        level.ranges.push(PairRange { start: 2, len: 2 });
+        level.nodes.stored_mut().extend([
+            EncodedNode::inline(pair(4, 5)),
+            EncodedNode::multi_pair(4, 2),
+            EncodedNode::multi_ranged(0),
+            EncodedNode::multi_pair(3, 0),
+            EncodedNode::inline(pair(6, 0)),
+            EncodedNode::multi_pair(0, 2),
+        ]);
+        let own = vec![pair(4, 5), none, none, none, pair(6, 0), none];
+        let mut all = own.clone();
+        all.extend(arena);
+        assert_eq!(read(&level), (true, all));
+        level.pairs.stored_mut().push(pair(9, 9));
+        assert_eq!(read(&level), (false, own));
+        let mut level = TddLevel::new();
+        level.nodes.stored_mut().extend([EncodedNode::inline(pair(4, 5)), EncodedNode::inline(pair(0, 1))]);
+        assert_eq!(read(&level), (true, vec![pair(4, 5), pair(0, 1)]));
+    }
+
+    #[test]
     fn test_encode_multi_promotes_to_ranged_on_huge_start() {
         // A pair_start at 2^31 triggers the ranged encoding even though
         // pair_len is small. Verifies the side-table round-trips the stored values.

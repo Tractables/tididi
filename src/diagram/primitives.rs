@@ -282,8 +282,9 @@ impl EncodedNode {
 
     /// Decode the two words into the case they encode.
     ///
-    /// This and [`held_count`](Self::held_count) are the only readers of the
-    /// bit layout; everything else matches on what comes back, so a new case
+    /// This, [`held_count`](Self::held_count) and
+    /// [`inline_or`](Self::inline_or) are the only readers of the bit
+    /// layout; everything else matches on what comes back, so a new case
     /// has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
         if self.a & MULTI_BIT == 0 {
@@ -310,6 +311,22 @@ impl EncodedNode {
     pub(crate) fn held_count(&self) -> u32 {
         let multi = ((self.a as i32) >> 31) as u32;
         (self.b.wrapping_sub(1) & multi).wrapping_add(1)
+    }
+
+    /// The node's pair if its words hold it, `or` if its pairs are in the
+    /// arena, with the count of arena pairs its words hold: zero for an
+    /// inline node, and a ranged node's sentinel, one, for a ranged one.
+    /// Read without a branch: each word is a conditional move on the multi
+    /// bit, where the masks [`held_count`](Self::held_count) spreads took
+    /// three instructions a word.
+    #[inline(always)]
+    pub(crate) fn inline_or(&self, or: ChildPair) -> (ChildPair, u32) {
+        let multi = (self.a as i32) < 0;
+        let pair = ChildPair::new(
+            EncodedChildRef::from_raw(std::hint::select_unpredictable(multi, or.left.0, self.a)),
+            EncodedChildRef::from_raw(std::hint::select_unpredictable(multi, or.right.0, self.b)),
+        );
+        (pair, std::hint::select_unpredictable(multi, self.b, 0))
     }
 }
 
