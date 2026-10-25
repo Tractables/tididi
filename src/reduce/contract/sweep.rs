@@ -12,20 +12,22 @@
 //! joint fixed point (the only place we iterate, and only with a marginal
 //! level: without one, the sibling's contexts move but its twins stay as
 //! they were, see [`joint_contract_fixpoint`]); then descend. Once a parent is
-//! finalized nothing processed later can reopen a twin above it. The max-heap is
-//! keyed by `topo_pos` (postorder position, root largest) so the "parents first"
-//! invariant holds even after a rotation has scrambled raw node indices, and even
-//! when a parent is activated dynamically by an ancestor firing.
+//! finalized nothing processed later can reopen a twin above it. The pending
+//! parents are kept by `topo_pos` (postorder position, root largest) so the
+//! "parents first" invariant holds even after a rotation has scrambled raw node
+//! indices, and even when a parent is activated dynamically by an ancestor
+//! firing: a parent activated that way is a child of the one being processed,
+//! below it in that order, so the walk visits the positions from the root
+//! down once ([`Pending`]).
 
 use crate::diagram::{ChildSide, Pass, Tdd};
 use crate::Engine;
-use std::collections::BinaryHeap;
 
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
 
-use super::scratch::ContractScratch;
+use super::scratch::{ContractScratch, Pending};
 use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass};
 use super::merge::{contract_twins, merged_redirects, merged_whole, survivor};
 
@@ -260,45 +262,32 @@ fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
     list.dedup();
 }
 
-/// Enqueue vtree node `p` as a parent to process, if eligible and not already
-/// queued. Keyed by `topo_pos` (postorder position, root largest), so the
-/// max-heap pops the root-most pending parent first. Leaves and levels without
-/// a multi-pair node have no contractable children and are skipped.
+/// Enqueue vtree node `p` as a parent to process, if eligible; a parent
+/// already pending stays pending once. Leaves and levels without a
+/// multi-pair node have no contractable children and are skipped.
 #[inline]
-pub(super) fn push_parent(
-    tdd: &Tdd,
-    scratch: &mut ContractScratch,
-    heap: &mut BinaryHeap<(u32, u32)>,
-    num_nodes: usize,
-    p: usize,
-) {
+pub(super) fn push_parent(tdd: &Tdd, pending: &mut Pending, num_nodes: usize, p: usize) {
     if p < num_nodes
         && !tdd.vtree.node(VtreeIdx(p as u32)).is_leaf()
         && tdd.levels[p].has_multi_pair()
-        && !scratch.needs_check[p]
     {
-        scratch.needs_check[p] = true;
-        heap.push((tdd.vtree.topo_pos(VtreeIdx(p as u32)), p as u32));
+        pending.insert(tdd.vtree.topo_pos(VtreeIdx(p as u32)));
     }
 }
 
 /// Re-queue the parent that was mid-process (`current`) and every parent still
-/// in `heap` on an error exit from a sweep, clearing their `needs_check` so
-/// the pooled scratch is all-false again for the next sweep.
+/// pending on an error exit from a sweep, leaving `pending` empty for the
+/// next sweep.
 ///
-/// The sweep drained the worklist into the heap, and the worklist is
+/// The sweep drained the worklist into `pending`, and the worklist is
 /// maintained incrementally, never rebuilt, so a parent dropped here would
 /// keep its stale contexts until something else re-dirties it: a size leak,
 /// not a soundness fault. Already-processed parents are clean and stay out.
 #[inline]
-fn restore_pending_dirty(
-    tdd: &mut Tdd,
-    scratch: &mut ContractScratch,
-    current: Option<u32>,
-    heap: &BinaryHeap<(u32, u32)>,
-) {
-    let pending = current.into_iter().chain(heap.iter().map(|&(_, p)| p));
-    tdd.dirty.requeue(Pass::Contract, pending.inspect(|&p| scratch.needs_check[p as usize] = false));
+fn restore_pending_dirty(tdd: &mut Tdd, pending: &mut Pending, current: Option<u32>) {
+    let order = tdd.vtree.bottomup_slice();
+    let rest = std::iter::from_fn(|| pending.pop()).map(|pos| order[pos as usize].0);
+    tdd.dirty.requeue(Pass::Contract, current.into_iter().chain(rest));
 }
 
 /// Contract every twin in the diagram in one top-down pass over the parents
@@ -337,9 +326,9 @@ fn sweep_twins(
 
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     scratch.drop_unnamed = drop_unnamed;
-    // On OOM here the heap is not yet built, so restore the intact taken worklist
+    // On OOM here nothing is pending yet, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
-    if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
+    if let Err(e) = scratch.pending.start(lim, num_nodes) {
         tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
     }
@@ -347,8 +336,9 @@ fn sweep_twins(
     // contraction above it has its children searched at the nodes that
     // contraction changed (`fingerprint::listed`); a parent on the worklist
     // has them searched whole. Whether the diagram has a marginal level is
-    // read only once a contraction fired, which is what puts a parent off
-    // the worklist on the heap: a sweep that merges nothing never reads it.
+    // read only once a contraction fired, which is what makes a parent
+    // pending that was not on the worklist: a sweep that merges nothing
+    // never reads it.
     if let Err(e) = start_listing(eng, &mut scratch, num_nodes, &dirty_parents) {
         tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
@@ -356,9 +346,8 @@ fn sweep_twins(
     // The unit of work is the parent: a level whose pairs were mutated is a
     // parent whose children's contexts may have moved. Every dirty parent
     // may go in at once.
-    let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::with_capacity(dirty_parents.len());
     for &dp in &dirty_parents {
-        push_parent(tdd, &mut scratch, &mut heap, num_nodes, dp as usize);
+        push_parent(tdd, &mut scratch.pending, num_nodes, dp as usize);
     }
 
     // The walk's one preemption point, amortized. With no stop axis installed the
@@ -370,16 +359,16 @@ fn sweep_twins(
     // is a strict ancestor (larger `topo_pos`), hence already popped and
     // finalized before it. The only iteration is the inner sibling-pair
     // fixed point.
-    while let Some((_topo_pos, p_raw)) = heap.pop() {
+    while let Some(pos) = scratch.pending.pop() {
+        let p_raw = tdd.vtree.bottomup_slice()[pos as usize].0;
         let p_idx = p_raw as usize;
         // Preemption point, metered in nodes of the parent's level, the unit
         // `contract_child`'s work scales with. On `Err` the popped parent and
-        // the rest of the heap go back to the worklist.
+        // the rest pending go back to the worklist.
         if let Err(e) = poll.poll(tdd.levels[p_idx].slot_count() as u64 + 1) {
-            restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
+            restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
             return Err(e);
         }
-        scratch.needs_check[p_idx] = false;
 
         // Guard against stale state (a prior contraction may have flipped
         // `has_multi_pair` or the node is a leaf after a structural change).
@@ -397,7 +386,7 @@ fn sweep_twins(
             match list_changed_children(eng, tdd, parent, &mut scratch) {
                 Ok(reach) => reach,
                 Err(e) => {
-                    restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
+                    restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
                     return Err(e);
                 }
             }
@@ -408,34 +397,34 @@ fn sweep_twins(
         ) {
             Ok(v) => v,
             Err(e) => {
-                restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
+                restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
                 return Err(e);
             }
         };
 
         // A child that fired had its own pairs unioned, moving its children's
         // contexts — so enqueue it as a (deeper) parent. Strictly downward, so
-        // the heap only ever grows toward the leaves and the single-pass
-        // invariant holds.
+        // the pending set only ever grows toward the leaves and the
+        // single-pass invariant holds.
         if left_fired {
-            push_parent(tdd, &mut scratch, &mut heap, num_nodes, left.idx());
+            push_parent(tdd, &mut scratch.pending, num_nodes, left.idx());
         }
         if right_fired {
-            push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
+            push_parent(tdd, &mut scratch.pending, num_nodes, right.idx());
         }
         // The children's searches read their nodes, which the poll above,
         // metered by the parent, does not see. Charged once the fired
-        // children are on the heap, so a stop here hands every pending
-        // parent back.
+        // children are pending, so a stop here hands every pending parent
+        // back.
         if let Err(e) = poll.poll(std::mem::take(&mut scratch.searched)) {
-            restore_pending_dirty(tdd, &mut scratch, None, &heap);
+            restore_pending_dirty(tdd, &mut scratch.pending, None);
             return Err(e);
         }
     }
 
     // What the list holds now is what the merges above pushed: each the
     // parent it rewrote, whose children its joint fixpoint left without
-    // twins, and the level it merged, which the heap took as a parent after
+    // twins, and the level it merged, which was pending as a parent after
     // its last change. Both are at their fixpoint. Left on the list, every
     // merge of a contraction run alone, between operations, would have its
     // two levels searched again by the next reduction, for nothing. The

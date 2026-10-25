@@ -707,7 +707,7 @@ impl Tdd {
     /// level it changed leaves the diagram non-canonical.
     ///
     /// Re-recording a level already on a worklist is fine: `contract_all_twins`
-    /// dedups through `needs_check`, and leaf contraction re-checks anyway.
+    /// holds each pending parent once, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx) {
         self.invalidate_with(level, None).expect("an untracked push cannot be refused");

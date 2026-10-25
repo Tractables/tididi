@@ -345,11 +345,9 @@ pub(crate) struct ContractScratch {
     /// the work clock: `contract_child` adds, `contract_all_twins` charges.
     pub(super) searched: u64,
 
-    // ── `contract_all_twins` top-down heap ──
-    /// Per-parent dedup flag: true if this parent is currently queued in the
-    /// top-down heap (`contract_all_twins`). Reset when the parent is
-    /// popped so the all-false invariant holds on entry/exit.
-    pub(super) needs_check: Vec<bool>,
+    // ── `contract_all_twins` top-down walk ──
+    /// The parents the sweep has yet to visit; empty between sweeps.
+    pub(super) pending: Pending,
     /// The listed searches' state over one sweep: which parents were on the
     /// worklist when it began, and the nodes a contraction changed at each
     /// level. Read only where the diagram has no marginal level (see
@@ -421,7 +419,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.unnamed);
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);
-        visit(&mut self.needs_check);
+        self.pending.buffers(visit);
         self.listing.buffers(visit);
         for reach in &mut self.reach {
             visit(reach);
@@ -635,6 +633,76 @@ impl Buffers for Listing {
         visit(&mut self.at);
         visit(&mut self.fused_but);
         visit(&mut Nested(&mut self.lists));
+    }
+}
+
+/// The parents a sweep has yet to visit (`contract_all_twins`), as a set of
+/// their topological positions, root highest, which it pops highest first:
+/// a bit per vtree node, and a summary bit per word of them that holds one.
+///
+/// A parent inserted while the sweep runs is a child of the one it popped
+/// last, so below it: a sweep reads the summary words once, from the top
+/// down, a word per 4096 vtree nodes, and leaves the set empty.
+#[derive(Default)]
+pub(super) struct Pending {
+    words: Vec<u64>,
+    summary: Vec<u64>,
+    /// The summary words at and above this one are zero.
+    top: usize,
+}
+
+impl Pending {
+    /// Start a sweep over a diagram of `num_nodes` vtree nodes, none
+    /// pending.
+    pub(super) fn start(
+        &mut self,
+        lim: &crate::limits::Limits,
+        num_nodes: usize,
+    ) -> Result<(), crate::limits::OperationError> {
+        debug_assert!(self.summary.iter().all(|&s| s == 0), "a sweep left a parent pending");
+        let words = num_nodes.div_ceil(64);
+        lim.try_resize(&mut self.words, words, 0)?;
+        lim.try_resize(&mut self.summary, words.div_ceil(64), 0)?;
+        self.top = words.div_ceil(64);
+        Ok(())
+    }
+
+    /// Make position `pos` pending; one already pending stays so once.
+    #[inline]
+    pub(super) fn insert(&mut self, pos: u32) {
+        let w = (pos / 64) as usize;
+        debug_assert!(w / 64 < self.top, "a parent made pending is below the last one popped");
+        self.words[w] |= 1 << (pos % 64);
+        self.summary[w / 64] |= 1 << (w % 64);
+    }
+
+    /// Take the highest pending position.
+    #[inline]
+    pub(super) fn pop(&mut self) -> Option<u32> {
+        while self.top > 0 {
+            let s = self.top - 1;
+            let summary = self.summary[s];
+            if summary == 0 {
+                self.top = s;
+                continue;
+            }
+            let w = s * 64 + (63 - summary.leading_zeros() as usize);
+            let word = self.words[w];
+            let b = 63 - word.leading_zeros();
+            self.words[w] = word & !(1 << b);
+            if self.words[w] == 0 {
+                self.summary[s] = summary & !(1 << (w % 64));
+            }
+            return Some((w * 64) as u32 + b);
+        }
+        None
+    }
+}
+
+impl Buffers for Pending {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.words);
+        visit(&mut self.summary);
     }
 }
 
