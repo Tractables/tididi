@@ -12,7 +12,7 @@ use super::plan::{GroupAction, GroupPlan};
 use super::rewrite::{survivor, DISCARDED, DROPPED};
 
 /// The arenas the merged level is rebuilt into, had before the merge
-/// changes anything ([`remap_and_reserve`]).
+/// changes anything ([`reserve_rebuilt`]).
 pub(super) struct RebuiltArenas {
     pairs: Vec<ChildPair>,
     ranges: RangeTable,
@@ -66,63 +66,60 @@ fn absorbed(bits: &[u64], i: usize) -> bool {
     (bits[i / 64] >> (i % 64)) & 1 != 0
 }
 
-/// In one pass in node order: number the survivors in `remap.final_remap`
-/// and point each absorbed member's entry at its survivor's new number,
-/// keeping its [`DROPPED`] bit; and reserve the arenas of the level `t1`
-/// will be after the committed merge: exactly its pairs, every survivor's
-/// own and each concat group's members' at its survivor, and a range entry
-/// for each node whose range does not fit the packed encoding. Room past
-/// the old arena's capacity is charged, as growth of that arena would be;
-/// the old arena is freed when the rebuild swaps the new one in.
+/// Reserve the arenas of the level `t1` will be after the committed merge:
+/// exactly its pairs, every survivor's own and each concat group's
+/// members' at its survivor, and a range entry for each node whose range
+/// does not fit the packed encoding. Room past the old arena's capacity is
+/// charged, as growth of that arena would be; the old arena is freed when
+/// the rebuild swaps the new one in.
+///
+/// The count is the level's arena pairs, less those of the nodes the
+/// rebuild drops with their pairs (the unnamed ones and the content-equal
+/// redirects), plus one for each inline node a concat group unions: a node
+/// of one pair is inline, so the level's arena pairs are its pairs less its
+/// nodes of one pair, read off the node words in one branch-free pass. The
+/// rest reads only the groups' members and the unnamed nodes. A level with
+/// ranged nodes is counted node by node.
 ///
 /// `remap` is as [`mark_group_members`](super::mark_group_members) leaves
-/// it, and `bufs.group_plans` are sorted by survivor
-/// ([`plan_groups`](super::plan::plan_groups)). A member follows its
-/// survivor, the lowest of its group, so the survivor is numbered first.
+/// it, with the unnamed nodes marked [`DISCARDED`]; the survivors are
+/// numbered by [`rebuild_level`].
 ///
 /// # Errors
 ///
 /// `Err(OperationError::OverBudget)` when a reservation is refused; only
 /// the scratch has changed at that point.
-pub(super) fn remap_and_reserve(
+pub(super) fn reserve_rebuilt(
     lim: &Limits,
     level: &TddLevel,
-    remap: &mut MergeRemap,
+    remap: &MergeRemap,
     bufs: &MergeBuffers,
+    unnamed: &[u32],
 ) -> Result<RebuiltArenas, OperationError> {
-    // A survivor keeps its own range, an absorbed concat member's range
-    // moves to its survivor, and an inline node takes an arena slot only
-    // when a concat group unions it.
-    let MergeRemap { final_remap, absorbed: bits, .. } = remap;
-    let mut plans = concat_plans(bufs);
-    let (mut total, mut next) = (0usize, 0u32);
-    for i in 0..level.nodes().len() {
-        let unioned = if absorbed(bits, i) {
-            let to = final_remap[i].0;
-            if to == DISCARDED {
-                // A node no pair names: dropped with its pairs.
-                continue;
+    let total = if level.ranges.is_empty() {
+        let (pairs, _, single) = level.pair_census();
+        let mut total = (pairs - single) as usize;
+        for &u in unnamed {
+            total -= level.arena_pairs_at(u as usize);
+        }
+        for p in &bufs.group_plans {
+            let members = &bufs.sel[p.start as usize..p.end as usize];
+            match p.action {
+                GroupAction::DupRedirect => {
+                    for &m in &members[1..] {
+                        total -= level.arena_pairs_at(m as usize);
+                    }
+                }
+                GroupAction::Concat => {
+                    total += members.iter().filter(|&&m| !level.node(m as usize).kind().pairs_in_arena()).count();
+                }
             }
-            let keep = (to & !DROPPED) as usize;
-            debug_assert!(keep < i, "a group's survivor is its lowest member");
-            final_remap[i] = NodeIdx(final_remap[keep].0 | (to & DROPPED));
-            if to & DROPPED == 0 {
-                // A content-equal redirect: its pairs are dropped.
-                continue;
-            }
-            true
-        } else {
-            final_remap[i] = NodeIdx(next);
-            next += 1;
-            plans.next_if(|p| bufs.sel[p.start as usize] == i as u32).is_some()
-        };
-        let node = level.node(i);
-        total += match level.arena_range(node.kind()) {
-            Some(range) => range.len(),
-            None => usize::from(unioned),
-        };
-    }
-    let ranged = if total < PACKED_LIMIT { 0 } else { ranged_nodes(level, bits, bufs) };
+        }
+        total
+    } else {
+        rebuilt_pairs(level, remap, bufs)
+    };
+    let ranged = if total < PACKED_LIMIT { 0 } else { ranged_nodes(level, &remap.absorbed, bufs) };
     let mut pairs = Vec::new();
     lim.reserve_counted_exact(&mut pairs, total)?;
     let grown = total.saturating_sub(level.pairs.capacity()) as u64;
@@ -132,6 +129,34 @@ pub(super) fn remap_and_reserve(
         ranges.reserve_exact(lim, ranged)?;
     }
     Ok(RebuiltArenas { pairs, ranges })
+}
+
+/// The pairs of the level `t1` will be after the merge, node by node: a
+/// survivor keeps its own range, an absorbed concat member's range moves
+/// to its survivor, and an inline node takes an arena slot only when a
+/// concat group unions it. For a level with ranged nodes.
+#[cold]
+fn rebuilt_pairs(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> usize {
+    let MergeRemap { final_remap, absorbed: bits, .. } = remap;
+    let mut plans = concat_plans(bufs);
+    let mut total = 0usize;
+    for (i, (node, to)) in level.nodes().iter().zip(final_remap).enumerate() {
+        let unioned = if absorbed(bits, i) {
+            // A node no pair names, or a content-equal redirect: dropped
+            // with its pairs.
+            if to.0 == DISCARDED || to.0 & DROPPED == 0 {
+                continue;
+            }
+            true
+        } else {
+            plans.next_if(|p| bufs.sel[p.start as usize] == i as u32).is_some()
+        };
+        total += match level.arena_range(node.kind()) {
+            Some(range) => range.len(),
+            None => usize::from(unioned),
+        };
+    }
+    total
 }
 
 /// The concat plans, in survivor order.
@@ -173,6 +198,12 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
 /// its survivor, copy every other survivor's pairs, and compact the nodes in
 /// place. The level is left with no dead arena, its pairs in node order.
 ///
+/// The same pass numbers the survivors in `remap.final_remap`, in node
+/// order, and points each absorbed member's entry at its survivor's new
+/// number, keeping its [`DROPPED`] bit: a member follows its survivor, the
+/// lowest of its group, so the survivor is numbered first. A node no pair
+/// names keeps its [`DISCARDED`] entry.
+///
 /// Members of a group ascend from its survivor, so the in-place node
 /// compaction, which writes at or below the node it reads, has not yet
 /// overwritten any member when its survivor is rebuilt.
@@ -186,7 +217,7 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
 pub(super) fn rebuild_level(
     level: &mut TddLevel,
     arenas: RebuiltArenas,
-    remap: &MergeRemap,
+    remap: &mut MergeRemap,
     bufs: &MergeBuffers,
     check_disjoint: bool,
 ) {
@@ -223,10 +254,18 @@ pub(super) fn rebuild_level(
     // are one run, copied whole when the next range does not continue it,
     // each node placed at its offset in the run.
     let mut run = 0..0usize;
+    let MergeRemap { final_remap, absorbed: bits, .. } = remap;
     for read in 0..nodes.len() {
-        if absorbed(&remap.absorbed, read) {
+        if absorbed(bits, read) {
+            let to = final_remap[read].0;
+            if to != DISCARDED {
+                let keep = (to & !DROPPED) as usize;
+                debug_assert!(keep < read, "a group's survivor is its lowest member");
+                final_remap[read] = NodeIdx(final_remap[keep].0 | (to & DROPPED));
+            }
             continue;
         }
+        final_remap[read] = NodeIdx(write as u32);
         let node = nodes[read];
         let rebuilt = match plans.next_if(|p| bufs.sel[p.start as usize] == read as u32) {
             Some(p) => {

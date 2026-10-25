@@ -376,13 +376,13 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
     assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
     let lim = Limits::new();
-    let arenas = remap_and_reserve(&lim, &level, &mut remap, &bufs).unwrap();
+    let arenas = reserve_rebuilt(&lim, &level, &remap, &bufs, &[]).unwrap();
+    rebuild_level(&mut level, arenas, &mut remap, &bufs, true);
     assert_eq!(
         remap.final_remap,
         remap_of(&[0, 1, 2, 0, 1, 2, 0], &[5]).final_remap,
         "the survivors numbered in node order, each member at its survivor",
     );
-    rebuild_level(&mut level, arenas, &remap, &bufs, true);
 
     let cat = |nodes: &[usize]| -> Vec<ChildPair> { nodes.iter().flat_map(|&i| before[i].clone()).collect() };
     assert_eq!(content(&level), vec![cat(&[0, 3, 6]), cat(&[1, 4]), cat(&[2])]);
@@ -393,6 +393,59 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     assert_eq!(level.ranges.len(), 0, "every rebuilt range fits the packed encoding");
     let starts: Vec<usize> = (0..3).map(|i| level.pair_range_at(i).start).collect();
     assert_eq!(starts, vec![0, 6, 8], "the arena is in node order");
+}
+
+/// On a level without ranged nodes the reservation is counted from the
+/// level's pair census and the groups: it stays exact with inline concat
+/// members, a content-equal redirect and a node no pair names.
+#[test]
+fn the_reservation_off_the_census_is_exact() {
+    let p = |l: u32, r: u32| ChildPair::new(NodeIdx(l), NodeIdx(r));
+    let mut level = TddLevel::new();
+    level.pairs = vec![
+        p(9, 9), p(1, 0), p(1, 1), p(9, 9), p(3, 0), p(3, 1), p(3, 2),
+        p(2, 0), p(2, 1), p(9, 9), p(5, 0), p(5, 1), p(8, 0), p(8, 1),
+    ]
+    .into();
+    level.nodes = vec![
+        EncodedNode::multi_pair(1, 2),
+        EncodedNode::inline(p(4, 0)),
+        EncodedNode::multi_pair(7, 2),
+        EncodedNode::multi_pair(4, 3),
+        EncodedNode::inline(p(6, 0)),
+        EncodedNode::multi_pair(10, 2),
+        EncodedNode::inline(p(7, 0)),
+        EncodedNode::multi_pair(12, 2),
+    ]
+    .into();
+    level.note_dead_pairs(3);
+    let before: Vec<Vec<ChildPair>> = content(&level);
+    let mut bufs = MergeBuffers {
+        sel: vec![0, 3, 6, 1, 4, 2, 5],
+        group_plans: vec![
+            GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
+            GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
+            GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
+        ],
+        ..Default::default()
+    };
+    let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 8], absorbed: vec![0], ..Default::default() };
+    let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
+    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
+    // Node 7 is named by no pair of the parent.
+    remap.absorbed[0] |= 1 << 7;
+    remap.final_remap[7] = NodeIdx(DISCARDED);
+    let lim = Limits::new();
+    let arenas = reserve_rebuilt(&lim, &level, &remap, &bufs, &[7]).unwrap();
+    rebuild_level(&mut level, arenas, &mut remap, &bufs, true);
+
+    let cat = |nodes: &[usize]| -> Vec<ChildPair> { nodes.iter().flat_map(|&i| before[i].clone()).collect() };
+    assert_eq!(content(&level), vec![cat(&[0, 3, 6]), cat(&[1, 4]), cat(&[2])]);
+    assert_eq!(level.pairs.len(), 10);
+    assert_eq!(level.pairs.capacity(), 10, "the arena is reserved at its exact size");
+    let mut expected = remap_of(&[0, 1, 2, 0, 1, 2, 0, 7], &[5]).final_remap;
+    expected[7] = NodeIdx(DISCARDED);
+    assert_eq!(remap.final_remap, expected, "the survivors numbered in node order, the unnamed node discarded");
 }
 
 /// The survivors outside every group keep their pairs, copied a run of
@@ -424,13 +477,14 @@ fn the_rebuild_copies_untouched_ranges_in_runs() {
     let policy = MergePolicy { plain_level: true, parent_marginal: false, t1_scalable: false, disjoint_supports: true };
     assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 1);
     let lim = Limits::new();
-    let arenas = remap_and_reserve(&lim, &level, &mut remap, &bufs).unwrap();
-    rebuild_level(&mut level, arenas, &remap, &bufs, true);
+    let arenas = reserve_rebuilt(&lim, &level, &remap, &bufs, &[]).unwrap();
+    rebuild_level(&mut level, arenas, &mut remap, &bufs, true);
 
     let union: Vec<ChildPair> = [1, 5].iter().flat_map(|&i| before[i].clone()).collect();
     let expected = vec![before[0].clone(), union, before[2].clone(), before[3].clone(), before[4].clone(), before[6].clone()];
     assert_eq!(content(&level), expected);
     assert_eq!(level.pairs.len(), 14);
+    assert_eq!(level.pairs.capacity(), 14, "the arena is reserved at its exact size");
     let starts: Vec<usize> = [0, 1, 3, 4, 5].iter().map(|&i| level.pair_range_at(i).start).collect();
     assert_eq!(starts, vec![0, 2, 8, 10, 12], "the arena is in node order");
 }

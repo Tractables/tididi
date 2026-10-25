@@ -13,7 +13,7 @@ mod data;
 mod plan;
 mod rewrite;
 
-use data::{fork_down, rebuild_level, remap_and_reserve};
+use data::{fork_down, rebuild_level, reserve_rebuilt};
 use plan::{plan_groups, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
 use rewrite::rewrite_parent;
@@ -30,17 +30,17 @@ pub(in crate::reduce::contract) use rewrite::{survivor, DISCARDED, DROPPED};
 ///
 /// ## Steps
 ///
-/// 1. **Plan**: decide each group's action and mark its absorbed members;
-///    in one pass over the level, number the survivors, point each member at
-///    its survivor's new index and size the rebuilt level's arena.
+/// 1. **Plan**: decide each group's action, mark its absorbed members and
+///    size the rebuilt level's arena from its pair count and the groups.
 ///
-/// 2. **Rewrite the parent**: drop the pairs that reference merged-away twins
+/// 2. **Rebuild**: one pass over the level in node order unions each group's
+///    pairs into its kept node, drops the merged-away nodes, leaves the
+///    level's arena with no garbage, and numbers the survivors, pointing
+///    each member at its survivor's new index.
+///
+/// 3. **Rewrite the parent**: drop the pairs that reference merged-away twins
 ///    and remap the rest through that map, then sweep the parent's arena
 ///    once its garbage dominates (`TddLevel::compact_pairs_if_stale`).
-///
-/// 3. **Rebuild**: one pass over the level in node order unions each group's
-///    pairs into its kept node, drops the merged-away nodes and leaves the
-///    level's arena with no garbage.
 ///
 /// The nodes in `scratch.unnamed`, which no pair of the parent names, are
 /// dropped with their pairs in the same rebuild.
@@ -118,7 +118,7 @@ pub(super) fn contract_twins(
     // Everything the merge allocates is had before it changes anything: the
     // rebuilt level's arenas, and the room an implicit parent is rewritten
     // into where a pair changes.
-    let arenas = remap_and_reserve(lim, &tdd.levels[t1.idx()], remap, bufs)?;
+    let arenas = reserve_rebuilt(lim, &tdd.levels[t1.idx()], remap, bufs, unnamed)?;
     let parent_room = match tdd.levels[parent.idx()].pairs.implicit() {
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
@@ -140,11 +140,6 @@ pub(super) fn contract_twins(
     }
     tdd.levels.mark_changed(parent);
 
-    rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
-    // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
-    // is done and no pair-arena offset is held across the call (the caller
-    // obligation on `compact_pairs_if_stale`).
-    tdd.levels[parent.idx()].compact_pairs_if_stale();
     // A repeated pair is legal where a level of the diagram is marginal, and
     // where fork-down resolves it right after the rebuild; elsewhere debug
     // builds check the unions for one.
@@ -153,6 +148,11 @@ pub(super) fn contract_twins(
         && !diagram_marginal
         && !tdd.levels[t1.idx()].any_value_ref_side();
     rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint);
+    rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
+    // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
+    // is done and no pair-arena offset is held across the call (the caller
+    // obligation on `compact_pairs_if_stale`).
+    tdd.levels[parent.idx()].compact_pairs_if_stale();
     if !unnamed.is_empty() {
         let (left, right) = tdd.vtree.children(t1);
         for c in [left, right] {
@@ -197,7 +197,7 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// Mark each planned group's absorbed members, and list the concat
 /// survivors fork-down resolves. A member's `final_remap` entry holds its
 /// survivor's old index, with [`DROPPED`] set unless the member is a
-/// content-equal redirect, until [`remap_and_reserve`] numbers the
+/// content-equal redirect, until [`rebuild_level`] numbers the
 /// survivors. Returns the number of members merged away — 0 means the level
 /// is unchanged. Touches only the scratch: the rebuild unions the pairs.
 fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {

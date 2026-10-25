@@ -1,5 +1,5 @@
 use super::*;
-use super::data::{rebuild_level, remap_and_reserve};
+use super::data::{rebuild_level, reserve_rebuilt};
 
 /// The remap a merge rewrites the parent through, where node `i` merges
 /// into `targets[i]` (itself for a survivor) and the members in
