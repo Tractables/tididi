@@ -133,13 +133,12 @@ fn targets(vtree: &Vtree, f: &Tdd, g: &Tdd) -> Vec<VtreeIdx> {
 }
 
 /// The thresholds every comparison runs under: every level sparse, with
-/// large f nodes or every f node collecting its candidates for the emit,
-/// and the engine's own.
+/// the routed walk's lookups pipelined or not, and the engine's own.
 fn threshold_sets() -> [SparseThresholds; 3] {
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
     [
         sparse,
-        SparseThresholds { collected_pairs: 1, ..sparse },
+        SparseThresholds { pipelined_bytes: 0, ..sparse },
         SparseThresholds::PRODUCTION,
     ]
 }
@@ -298,7 +297,7 @@ fn a_wide_summed_root_is_the_fused_root() {
         assert_canonical(&g);
         for (forced, thresholds) in [
             (true, sparse),
-            (true, SparseThresholds { collected_pairs: 1, ..sparse }),
+            (true, SparseThresholds { pipelined_bytes: 0, ..sparse }),
             (false, SparseThresholds::PRODUCTION),
         ] {
             let _forced = ForcedThresholds::install(thresholds);

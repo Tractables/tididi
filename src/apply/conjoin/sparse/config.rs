@@ -11,11 +11,6 @@ pub(crate) struct SparseThresholds {
     pub(crate) min_grid: usize,
     /// How much sparser than its grid a level must be to take the sparse route.
     pub(crate) sparsity_factor: u128,
-    /// Pairs at or above which an f node walked in order hands its
-    /// candidates to [`emit_parent`] as one list, rather than writing them
-    /// to the level's pair arena first: such a node has many candidates of
-    /// several g parents, which the emit would copy back off the arena.
-    pub(crate) collected_pairs: usize,
     /// Bytes of route tables at or above which the routed walk asks the
     /// cache for a group of lookups' slots before it probes any, and for
     /// the hits' runs before it reads any.
@@ -27,7 +22,6 @@ impl SparseThresholds {
     pub(crate) const PRODUCTION: SparseThresholds = SparseThresholds {
         min_grid: SparseRoute::DEFAULT.min_grid,
         sparsity_factor: SparseRoute::DEFAULT.sparsity as u128,
-        collected_pairs: 64,
         pipelined_bytes: 16 << 20,
     };
 }

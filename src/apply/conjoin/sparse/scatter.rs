@@ -39,8 +39,7 @@ pub(super) enum Collect<'a, 'c> {
 
 /// The level the emit writes: its nodes, its product list, whether its
 /// pair lists may repeat a pair (see [`emit_parent`]), and the thresholds
-/// the walk of f's nodes reads (from [`SparseThresholds::collected_pairs`]
-/// on).
+/// the routed walk reads ([`SparseThresholds::pipelined_bytes`]).
 pub(super) struct Emit<'a> {
     pub(super) level: &'a mut TddLevel,
     pub(super) out: &'a mut Vec<ProductEntry>,
@@ -188,13 +187,13 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     collect: Collect<'_, '_>,
     walk: impl FnOnce(WalkParts<'w>) -> W,
 ) -> Result<(), OperationError> {
-    let SparseWorkspace { g_by_outer, owned, owned_len, outer_offsets, node_candidates, node_owners, emit, .. } = ws;
+    let SparseWorkspace { g_by_outer, owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
     let walk = walk(WalkParts {
         g_by_outer: g_by_outer.view(),
         owned: &owned[..*owned_len],
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
     });
-    walk_nodes::<SWAPPED, W>(eng, &walk, f_level, Walked::All(shape.f.here), collect, node_candidates, node_owners, emit)
+    walk_nodes::<SWAPPED, W>(eng, &walk, f_level, Walked::All(shape.f.here), collect, node_owners, emit)
 }
 
 /// The f nodes a walk of f's nodes visits: all of the level's, or those
@@ -328,14 +327,12 @@ fn walked_pairs(f_level: &TddLevel, walked: Walked<'_>) -> usize {
 /// ([`emit_walked`]), or, on a level with one product, its pair arena, a
 /// count or sums.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     eng: &Engine,
     walk: &W,
     f_level: &TddLevel,
     nodes: Walked<'_>,
     collect: Collect<'_, '_>,
-    node_candidates: &mut Vec<ParEntry>,
     node_owners: &mut Vec<u32>,
     emit: &mut EmitScratch,
 ) -> Result<(), OperationError> {
@@ -347,21 +344,11 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     match collect {
         // Each candidate's pair goes straight to the level's pair arena and
         // its g parent beside it; `emit_walked` makes the node's products of
-        // them. A node of many pairs collects its candidates for
-        // `emit_parent` instead, which would otherwise read them back off
-        // the arena.
-        Collect::Nodes(Emit { level, out, duplicates_legal, thresholds }) => {
+        // them.
+        Collect::Nodes(Emit { level, out, duplicates_legal, .. }) => {
             let mut projection = Projection::new(level);
             try_for_each_walked(f_level, nodes, |p1, pairs| {
                 projection.before(eng, level, pairs.len(), || walked_pairs(f_level, nodes));
-                if pairs.len() >= thresholds.collected_pairs {
-                    node_candidates.clear();
-                    walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
-                    if node_candidates.is_empty() {
-                        return Ok(());
-                    }
-                    return emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal);
-                }
                 let base = level.pairs.stored_len();
                 node_owners.clear();
                 walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
@@ -709,7 +696,7 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     build_kept_index::<SWAPPED>(eng, ws, f_level, shape, pl_outer)?;
     let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, true)?;
     let marked = route_level::<SWAPPED>(lim, &mut s, f_level, shape.f.here, f_pairs)?;
-    let SparseWorkspace { routes, inner_offsets, node_candidates, node_owners, emit: scratch, .. } = ws;
+    let SparseWorkspace { routes, inner_offsets, node_owners, emit: scratch, .. } = ws;
     let walk = RoutedWalk {
         inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
         routes: routes.view(),
@@ -721,7 +708,7 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     } else {
         Walked::All(shape.f.here)
     };
-    walk_nodes::<SWAPPED, _>(eng, &walk, f_level, nodes, Collect::Nodes(emit), node_candidates, node_owners, scratch)
+    walk_nodes::<SWAPPED, _>(eng, &walk, f_level, nodes, Collect::Nodes(emit), node_owners, scratch)
 }
 
 /// Build every outer key's route. Whether the walk of f's nodes visits

@@ -46,13 +46,6 @@ impl Sparse {
         }
     }
 
-    /// The same thresholds with every f node of at least `collected_pairs`
-    /// pairs handing its candidates to the emit as one list, on a fresh
-    /// engine.
-    fn collecting(&self, collected_pairs: usize) -> Sparse {
-        Sparse { eng: Engine::new(), thresholds: SparseThresholds { collected_pairs, ..self.thresholds } }
-    }
-
     /// The same thresholds with every routed lookup pipelined, on a fresh
     /// engine.
     fn pipelined(&self) -> Sparse {
@@ -188,25 +181,19 @@ fn all_test_cases_sparse() {
     }
 }
 
-/// Every f node handing its candidates to the emit as one list, and every
-/// routed lookup pipelined, must agree with every f node writing them to
-/// the level's pair arena.
+/// Every routed lookup pipelined must agree with every lookup made on its
+/// own.
 #[test]
-fn collected_equivalence_all_cases() {
+fn pipelined_equivalence_all_cases() {
     let sparse = Sparse::always();
-    let collected = sparse.collecting(1);
-    let arena = sparse.collecting(usize::MAX);
-    let pipelined = arena.pipelined();
+    let pipelined = sparse.pipelined();
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
-            let listed = collected.compile(&vtree, &clauses);
-            let written = arena.compile(&vtree, &clauses);
-            assert_eq!(listed.model_count().unwrap(), expected, "collected: n={num_vars} clauses={clauses:?}");
-            assert_eq!(written.model_count().unwrap(), expected, "arena: n={num_vars} clauses={clauses:?}");
-            assert_eq!(normalized_levels(&listed), normalized_levels(&written), "n={num_vars} clauses={clauses:?}");
+            let written = sparse.compile(&vtree, &clauses);
             let walked = pipelined.compile(&vtree, &clauses);
+            assert_eq!(written.model_count().unwrap(), expected, "n={num_vars} clauses={clauses:?}");
             assert_eq!(normalized_levels(&walked), normalized_levels(&written), "pipelined: n={num_vars} clauses={clauses:?}");
         }
     }
@@ -214,17 +201,14 @@ fn collected_equivalence_all_cases() {
 
 /// The same on a formula wide enough that f nodes hold many pairs.
 #[test]
-fn collected_wide_formula() {
+fn pipelined_wide_formula() {
     let sparse = Sparse::always();
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
     let vtree = Arc::new(Vtree::balanced(14));
-    let listed = sparse.collecting(1).compile(&vtree, &clauses);
-    let written = sparse.collecting(usize::MAX).compile(&vtree, &clauses);
+    let written = sparse.compile(&vtree, &clauses);
     let walked = sparse.pipelined().compile(&vtree, &clauses);
-    assert_eq!(listed.model_count().unwrap(), expected);
     assert_eq!(written.model_count().unwrap(), expected);
-    assert_eq!(normalized_levels(&listed), normalized_levels(&written));
     assert_eq!(normalized_levels(&walked), normalized_levels(&written));
 }
 

@@ -20,7 +20,7 @@ use crate::Engine;
 fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
     let eng = Engine::new();
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
-    let routes = [sparse, SparseThresholds { collected_pairs: 1, ..sparse }];
+    let routes = [sparse, SparseThresholds { pipelined_bytes: 0, ..sparse }];
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
     let before = prefetches_run();

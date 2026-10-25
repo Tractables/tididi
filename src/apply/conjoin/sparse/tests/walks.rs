@@ -1,10 +1,9 @@
 //! The sparse route's walks against the grid: random operands over random
 //! subsets of the variables, so that leaves hold One as well as literals, on
 //! every vtree shape, conjoined with every level forced onto the sparse route
-//! (its walks asking the cache ahead or not, its walks of f's nodes handing
-//! every node's candidates to the emit as a list or only those of large
-//! nodes, and its routed lookups pipelined or not) and with none. All give
-//! the same levels, the same minimized diagram and the same count.
+//! (its walks asking the cache ahead or not, and its routed lookups
+//! pipelined or not) and with none. All give the same levels, the same
+//! minimized diagram and the same count.
 
 use std::sync::Arc;
 
@@ -18,15 +17,8 @@ use crate::Engine;
 /// Every level of every conjunction takes the sparse route.
 const ALWAYS: SparseThresholds = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
 
-/// [`ALWAYS`], with every f node a walk of f's nodes visits handing its
-/// candidates to the emit as a list.
-const ALWAYS_COLLECTED: SparseThresholds = SparseThresholds { collected_pairs: 1, ..ALWAYS };
-
 /// [`ALWAYS`], with every routed lookup pipelined.
 const ALWAYS_PIPELINED: SparseThresholds = SparseThresholds { pipelined_bytes: 0, ..ALWAYS };
-
-/// [`ALWAYS_COLLECTED`], with every routed lookup pipelined.
-const ALWAYS_COLLECTED_PIPELINED: SparseThresholds = SparseThresholds { pipelined_bytes: 0, ..ALWAYS_COLLECTED };
 
 /// No level takes it.
 const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
@@ -72,16 +64,11 @@ fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
         let thresholds = [
             (Some(false), ALWAYS),
             (Some(true), ALWAYS),
-            (Some(false), ALWAYS_COLLECTED),
             (Some(false), ALWAYS_PIPELINED),
-            (Some(false), ALWAYS_COLLECTED_PIPELINED),
         ];
         for (gate, always) in thresholds {
             let _pinned = ForcedPrefetch::install(gate);
-            let how = format!(
-                "gate {gate:?}, collected from {} pairs, pipelined from {} bytes",
-                always.collected_pairs, always.pipelined_bytes,
-            );
+            let how = format!("gate {gate:?}, pipelined from {} bytes", always.pipelined_bytes);
             let sparse = and_under(eng, always, a, b);
             assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}, {how}: levels");
             let mut sparse = sparse;

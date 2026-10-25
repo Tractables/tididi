@@ -196,9 +196,8 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///         `p2_map[g_parent]` and write each product's node into the level
 ///
 /// Each f parent is emitted as soon as its walk ends, so the level holds
-/// one parent's candidates at a time: a parent of fewer than
-/// `thresholds.collected_pairs` pairs writes them to the level's pair arena
-/// as it finds them, a larger one into a candidate list for the emit.
+/// one parent's candidates at a time, written to the level's pair arena as
+/// the walk finds them.
 ///
 /// A level where f and g have one node each has no emit step: its one
 /// product's pairs are the candidates, and the join writes them into the

@@ -83,9 +83,8 @@ pub(crate) struct SparseWorkspace {
     pub(super) f_kept: Vec<u32>,
 
     // ── Candidates, and their dedup into products ──
-    // The candidates of one f node, for the walks that find a node's
-    // candidates all at once and emit it before the next (the walks of f's
-    // nodes and the probe).
+    // The candidates of one f node, for the probe, which finds a node's
+    // candidates all at once and emits it before the next.
     pub(super) node_candidates: Vec<ParEntry>,
     // The g parents of one f node's candidates, in candidate order, for the
     // walks of f's nodes that write the candidates' pairs straight into the
