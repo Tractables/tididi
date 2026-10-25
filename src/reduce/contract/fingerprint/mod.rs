@@ -1,4 +1,4 @@
-use crate::diagram::{ChildPair, ChildSide, Tdd, TddLevel};
+use crate::diagram::{ChildPair, ChildSide, StoredPairs, Tdd, TddLevel};
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
@@ -184,9 +184,55 @@ impl TwinEntries for ContextEntries<'_> {
 /// §2.8), so without one no node has a twin.
 ///
 /// Each parent node is tested alone, in cache, and the test stops at the
-/// first such sibling. A node of up to [`refine::SMALL_PAIRS`] pairs sorts
-/// them on the stack by sibling and compares neighbours. A wider one files
-/// its siblings in a generation-stamped table, the first cells of
+/// first such sibling ([`node_repeats_a_sibling`]). A stored level's nodes
+/// are read as slices of its arena, in a loop of their own with the side a
+/// constant; an implicit level's are generated into a buffer a node at a
+/// time.
+pub(super) fn repeats_a_sibling(
+    level: &TddLevel,
+    side: ChildSide,
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
+    let ContractScratch { twin_local, twin_generation, .. } = scratch;
+    match (level.stored(), side) {
+        (Some(stored), ChildSide::Left) => stored_repeats_a_sibling::<true>(stored, lim, twin_local, twin_generation),
+        (Some(stored), ChildSide::Right) => stored_repeats_a_sibling::<false>(stored, lim, twin_local, twin_generation),
+        (None, _) => {
+            let (mut buf, mut cursor) = (Vec::new(), None);
+            for i in 0..level.node_count() {
+                let pairs = level.described_read_next(&mut cursor, i, &mut buf);
+                if node_repeats_a_sibling(pairs, side, lim, twin_local, twin_generation)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+    }
+}
+
+/// [`repeats_a_sibling`] of a stored level, `LEFT` saying whether the
+/// child level is the left one.
+fn stored_repeats_a_sibling<const LEFT: bool>(
+    stored: StoredPairs<'_>,
+    lim: &Limits,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
+) -> Result<bool, OperationError> {
+    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    for node in stored.nodes() {
+        if node_repeats_a_sibling(stored.of(node), side, lim, twin_local, twin_generation)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the parent node of `pairs` pairs two nodes of the child level
+/// on `side` with one sibling. A node of up to four pairs compares every
+/// two of them, and one of up to [`refine::SMALL_PAIRS`] sorts them on the
+/// stack by sibling and compares neighbours. A wider one files its
+/// siblings in a generation-stamped table, the first cells of
 /// `twin_local`, a power of two at least twice the siblings filed, so a
 /// probe always ends at a cell this node has not stamped; a cell holds its
 /// stamp in the high half and the sibling in the low one, and finding the
@@ -197,65 +243,58 @@ impl TwinEntries for ContextEntries<'_> {
 /// with, so its size follows the pairs read, not the node's width. A wide
 /// node that repeats a pair, which only a marginal level allows, counts as
 /// one that pairs two nodes with its sibling.
-pub(super) fn repeats_a_sibling(
-    level: &TddLevel,
+#[inline(always)]
+fn node_repeats_a_sibling(
+    pairs: &[ChildPair],
     side: ChildSide,
     lim: &Limits,
-    scratch: &mut ContractScratch,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
 ) -> Result<bool, OperationError> {
-    let ContractScratch { twin_local, twin_generation, .. } = scratch;
-    // A stored level's nodes are read as slices of its arena, an implicit
-    // level's generated into a buffer a node at a time, in one loop.
-    let stored = level.stored();
-    let (mut buf, mut cursor) = (Vec::new(), None);
-    for i in 0..level.node_count() {
-        let pairs = match stored {
-            Some(stored) => stored.of_idx(i),
-            None => level.described_read_next(&mut cursor, i, &mut buf),
-        };
-        match pairs.len() {
-            0 | 1 => continue,
-            2 => {
-                let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-                if s0 == s1 && t0 != t1 {
-                    return Ok(true);
-                }
-                continue;
-            }
-            n if n <= refine::SMALL_PAIRS => {
-                let mut key = [0u64; refine::SMALL_PAIRS];
-                for (k, pair) in pairs.iter().enumerate() {
-                    let (t, s) = split_pair(pair, side);
-                    key[k] = pack(s, t);
-                }
-                let key = &mut key[..n];
-                key.sort_unstable();
-                if key.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]) {
-                    return Ok(true);
-                }
-                continue;
-            }
-            _ => {}
+    // Two pairs with one sibling and two nodes.
+    let repeat = |a: (u32, u32), b: (u32, u32)| a.1 == b.1 && a.0 != b.0;
+    match *pairs {
+        [] | [_] => return Ok(false),
+        [p, q] => return Ok(repeat(split_pair(&p, side), split_pair(&q, side))),
+        [p, q, r] => {
+            let (p, q, r) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side));
+            return Ok(repeat(p, q) | repeat(p, r) | repeat(q, r));
         }
-        let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
-        let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-        for (read, pair) in pairs.iter().enumerate() {
-            let s = split_pair(pair, side).1;
-            if 2 * (read + 1) > cells {
-                // Half full: double under a fresh stamp and file the
-                // siblings read so far again. They are distinct, or the
-                // test would have stopped.
-                cells *= 2;
-                stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                for pair in &pairs[..read] {
-                    file_sibling(&mut twin_local[..cells], stamp, split_pair(pair, side).1);
-                }
+        [p, q, r, u] => {
+            let (p, q, r, u) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side), split_pair(&u, side));
+            return Ok(repeat(p, q) | repeat(p, r) | repeat(p, u) | repeat(q, r) | repeat(q, u) | repeat(r, u));
+        }
+        _ if pairs.len() <= refine::SMALL_PAIRS => {
+            let n = pairs.len();
+            let mut key = [0u64; refine::SMALL_PAIRS];
+            for (k, pair) in pairs.iter().enumerate() {
+                let (t, s) = split_pair(pair, side);
+                key[k] = pack(s, t);
             }
-            // The node's window of the table: a narrow node after a wide
-            // one stays in cache. Cells past it keep older stamps unread.
-            if file_sibling(&mut twin_local[..cells], stamp, s) {
-                return Ok(true);
+            let key = &mut key[..n];
+            key.sort_unstable();
+            return Ok(key.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]));
+        }
+        _ => {}
+    }
+    let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+    let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+    for (read, pair) in pairs.iter().enumerate() {
+        let s = split_pair(pair, side).1;
+        if 2 * (read + 1) > cells {
+            // Half full: double under a fresh stamp and file the
+            // siblings read so far again. They are distinct, or the
+            // test would have stopped.
+            cells *= 2;
+            stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+            for pair in &pairs[..read] {
+                file_sibling(&mut twin_local[..cells], stamp, split_pair(pair, side).1);
             }
+        }
+        // The node's window of the table: a narrow node after a wide
+        // one stays in cache. Cells past it keep older stamps unread.
+        if file_sibling(&mut twin_local[..cells], stamp, s) {
+            return Ok(true);
         }
     }
     Ok(false)
