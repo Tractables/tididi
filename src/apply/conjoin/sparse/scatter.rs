@@ -130,10 +130,16 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             // one loop over them ([`owner_walk_nodes`]).
             let collect = match collect {
                 Collect::Nodes(to) if f_level.stored().is_some() => {
-                    return if ones {
-                        owner_walk_nodes::<SWAPPED, true>(eng, ws, f_level, shape.f.here, f_outer, to)
-                    } else {
-                        owner_walk_nodes::<SWAPPED, false>(eng, ws, f_level, shape.f.here, f_outer, to)
+                    // Where each outer child has one live product that meets
+                    // an owner, the products are read by outer child.
+                    let dense = ws.owned_len == f_outer
+                        && ws.outer_offsets[..f_outer].iter().enumerate().all(|(i, &b)| b as usize == i);
+                    let (eng, f, w) = (eng, shape.f.here, f_outer);
+                    return match (ones, dense) {
+                        (true, true) => owner_walk_nodes::<SWAPPED, true, true>(eng, ws, f_level, f, w, to),
+                        (true, false) => owner_walk_nodes::<SWAPPED, true, false>(eng, ws, f_level, f, w, to),
+                        (false, true) => owner_walk_nodes::<SWAPPED, false, true>(eng, ws, f_level, f, w, to),
+                        (false, false) => owner_walk_nodes::<SWAPPED, false, false>(eng, ws, f_level, f, w, to),
                     };
                 }
                 collect => collect,
@@ -546,9 +552,10 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
 /// clock is charged once a node, and a node's g parent is held as its walk
 /// goes while every candidate so far has the same one: the owners are
 /// written out only once a second g parent appears, and a node of one g
-/// parent is made where its walk ends.
+/// parent is made where its walk ends. `DENSE` says each outer child has
+/// one entry, its own index's, read without the offsets.
 #[inline(never)]
-fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool>(
+fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     f_level: &TddLevel,
@@ -575,47 +582,57 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool>(
         let mut held = 0u64;
         for pair in stored.of(node) {
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
-            for e in outer.bucket(outer1 as usize) {
-                let [pos, one, neg] = e.slots;
-                // A macro, not a closure: a closure holding the node's state
-                // is called out of line, its state kept in memory.
-                macro_rules! meet {
-                    ($g_parent:expr, $label:expr) => {{
-                        let g_parent: u32 = $g_parent;
-                        if g_parent != NO_PRODUCT {
-                            let (left_prod, right_prod) = orient::<SWAPPED>($label, e.prod);
-                            let pair = ChildPair::new(EncodedChildRef::from_raw(left_prod), EncodedChildRef::from_raw(right_prod));
-                            try_push_pair_growing(eng, level, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
-                            if g_parent != owner {
-                                if owner != NO_PRODUCT {
-                                    let before = level.pairs.stored_len() - base - 1;
-                                    spill_owners(lim, node_owners, owner, before, g_parent)?;
-                                    (owner, mixed) = (NO_PRODUCT, true);
-                                } else if mixed {
-                                    lim.try_push(node_owners, g_parent)?;
-                                } else {
-                                    owner = g_parent;
-                                }
+            // Macros, not closures: a closure holding the node's state is
+            // called out of line, its state kept in memory.
+            macro_rules! meet {
+                ($g_parent:expr, $label:expr, $prod:expr) => {{
+                    let g_parent: u32 = $g_parent;
+                    if g_parent != NO_PRODUCT {
+                        let (left_prod, right_prod) = orient::<SWAPPED>($label, $prod);
+                        let pair = ChildPair::new(EncodedChildRef::from_raw(left_prod), EncodedChildRef::from_raw(right_prod));
+                        try_push_pair_growing(eng, level, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+                        if g_parent != owner {
+                            if owner != NO_PRODUCT {
+                                let before = level.pairs.stored_len() - base - 1;
+                                spill_owners(lim, node_owners, owner, before, g_parent)?;
+                                (owner, mixed) = (NO_PRODUCT, true);
+                            } else if mixed {
+                                lim.try_push(node_owners, g_parent)?;
+                            } else {
+                                owner = g_parent;
                             }
                         }
-                    }};
-                }
-                // [`OwnerWalk`]'s order: Pos, One, Neg.
-                if inner1 != NEG {
-                    meet!(pos, POS);
-                }
-                if ONES {
-                    meet!(one, inner1);
-                }
-                if inner1 != POS {
-                    meet!(neg, NEG);
-                }
-                // Charged as the walk of every g pair under the product was;
-                // a held slot is below `NO_PRODUCT`, a test the count takes
-                // as a carry.
-                held += u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
-                if ONES {
-                    held += u64::from(one < NO_PRODUCT);
+                    }
+                }};
+            }
+            macro_rules! visit {
+                ($e:expr) => {{
+                    let e: &OwnedProduct = $e;
+                    let [pos, one, neg] = e.slots;
+                    // [`OwnerWalk`]'s order: Pos, One, Neg.
+                    if inner1 != NEG {
+                        meet!(pos, POS, e.prod);
+                    }
+                    if ONES {
+                        meet!(one, inner1, e.prod);
+                    }
+                    if inner1 != POS {
+                        meet!(neg, NEG, e.prod);
+                    }
+                    // Charged as the walk of every g pair under the product
+                    // was; a held slot is below `NO_PRODUCT`, a test the
+                    // count takes as a carry.
+                    held += u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
+                    if ONES {
+                        held += u64::from(one < NO_PRODUCT);
+                    }
+                }};
+            }
+            if DENSE {
+                visit!(&outer.entries[outer1 as usize]);
+            } else {
+                for e in outer.bucket(outer1 as usize) {
+                    visit!(e);
                 }
             }
         }
