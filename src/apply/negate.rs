@@ -270,6 +270,7 @@ fn expand_full_with(
                     fill_lines_into(eng, lefts, rights, fill, form, cells)?;
                     #[cfg(debug_assertions)]
                     debug_assert_eq!(*cells, missing_by_cover(eng, marked, level, lefts, rights, form)?, "negate: the lines of the added nodes are not the cells no pair covers");
+                    reserve_fill(eng, level, cells.len())?;
                     level.push_node(eng.limits(), cells)?;
                     filled[t.idx()] = true;
                 }
@@ -281,18 +282,40 @@ fn expand_full_with(
         // Mark the cells the pairs cover and read the fill off the rest, in
         // the level's form.
         let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
+        // On a canonical diagram the fill holds the cells the pairs leave,
+        // so its room is known before the cover is read. Reserved first, a
+        // level whose arena moves for it is read from its new place, which
+        // the move has just written.
+        if canonical {
+            let missing = cover.len.saturating_sub(pairs as usize);
+            if missing > 0 {
+                reserve_fill(eng, level, missing)?;
+            }
+        }
         cover.mark_level(eng, level, pairs)?;
         cells.clear();
         cover.missing_into(eng, cells)?;
         debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
+        debug_assert!(!canonical || cells.len() + pairs as usize == cover.len, "negate: the fill is not the cells the pairs leave");
         if !cells.is_empty() {
             charge_scan(eng, lefts, rights)?;
+            // Reserved before the cover already where the diagram is canonical.
+            reserve_fill(eng, level, cells.len())?;
             level.push_node(eng.limits(), cells)?;
             filled[t.idx()] = true;
         }
         eng.limits().check_stop()?;
     }
     Ok(())
+}
+
+/// Room on `level` for a fill node of `len` pairs, exactly: the arena grows
+/// by the fill rather than doubling, which a negated diagram would carry
+/// until it is dropped. A described level is stored first, as the push
+/// would store it, so that it ends with the capacities a stored one does.
+fn reserve_fill(eng: &Engine, level: &mut TddLevel, len: usize) -> Result<(), OperationError> {
+    level.store_if_implicit(eng.limits())?;
+    level.reserve_on(eng.limits(), 1, if len > 1 { len } else { 0 })
 }
 
 /// The leaf form `level` uses, read off its first pair: a level names a
