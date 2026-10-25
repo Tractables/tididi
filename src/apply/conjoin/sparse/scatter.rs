@@ -602,11 +602,14 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     };
     for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate().skip(copied) {
         let base = level.pairs.stored_len();
-        // The node's one g parent while it has one. Once it has two, `mixed`
-        // is set, `node_owners` holds every candidate's, and `owner` is
-        // `NO_PRODUCT`, which no candidate's equals: a candidate of the g
-        // parent held costs one comparison.
-        let (mut owner, mut mixed) = (NO_PRODUCT, false);
+        // The g parent the node's next candidate has while its candidates
+        // so far have one, or two taking turns from the first: then `turn`
+        // is the two's exclusive or, which turns `owner` from one to the
+        // other at each candidate, and otherwise 0. Once they are any other
+        // way, `mixed` is set, `node_owners` holds every candidate's, and
+        // `owner` is `NO_PRODUCT`, which no candidate's equals: a candidate
+        // of the g parent expected costs one comparison.
+        let (mut owner, mut turn, mut mixed) = (NO_PRODUCT, 0u32, false);
         let mut held = 0u64;
         for pair in stored.of(node) {
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
@@ -619,16 +622,22 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
                         let (left_prod, right_prod) = orient::<SWAPPED>($label, $prod);
                         let pair = ChildPair::new(EncodedChildRef::from_raw(left_prod), EncodedChildRef::from_raw(right_prod));
                         try_push_pair_growing(eng, level.pairs.stored_mut(), pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
-                        if g_parent != owner {
-                            if owner != NO_PRODUCT {
-                                let before = level.pairs.stored_len() - base - 1;
-                                spill_owners(lim, node_owners, owner, before, g_parent)?;
-                                (owner, mixed) = (NO_PRODUCT, true);
-                            } else if mixed {
-                                lim.try_push(node_owners, g_parent)?;
+                        if g_parent == owner {
+                            owner ^= turn;
+                        } else if owner != NO_PRODUCT {
+                            let before = level.pairs.stored_len() - base - 1;
+                            if before == 1 && turn == 0 {
+                                // The second g parent second: the next
+                                // candidate's is the first's.
+                                turn = owner ^ g_parent;
                             } else {
-                                owner = g_parent;
+                                spill_owners(lim, node_owners, owner, turn, before, g_parent)?;
+                                (owner, turn, mixed) = (NO_PRODUCT, 0, true);
                             }
+                        } else if mixed {
+                            lim.try_push(node_owners, g_parent)?;
+                        } else {
+                            owner = g_parent;
                         }
                     }
                 }};
@@ -671,6 +680,14 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
         }
         if mixed {
             emit_mixed_apart(eng, emit, level, out, p1, base, node_owners, duplicates_legal)?;
+            continue;
+        }
+        if turn != 0 {
+            if matches!(count, 2 | 4 | 6 | 8) {
+                emit_alternating(eng, level, out, p1, base, owner, owner ^ turn, count, duplicates_legal)?;
+            } else {
+                emit_turns(eng, emit, level, out, p1, base, owner, turn, node_owners, duplicates_legal)?;
+            }
             continue;
         }
         let product = ProductEntry {
@@ -864,20 +881,53 @@ fn emit_mixed_apart(
     emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
 }
 
-/// Write out the owners of a node's candidates once its walk meets a second
-/// g parent: the `before` candidates so far, all of `owner`, and then
+/// [`emit_mixed`] out of line on the candidates at `base` of a node of
+/// [`owner_walk_nodes`] whose g parents take turns, `owner` the next one's
+/// and `turn` the two's exclusive or, where [`emit_alternating`] cannot
+/// take them: the owners written out.
+#[expect(clippy::too_many_arguments)]
+#[cold]
+#[inline(never)]
+fn emit_turns(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owner: u32,
+    turn: u32,
+    owners: &mut Vec<u32>,
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    let n = level.pairs.stored_len() - base;
+    // As if a candidate out of turn followed, taken back.
+    spill_owners(eng.limits(), owners, owner, turn, n, owner)?;
+    owners.pop();
+    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// Write out the owners of a node's candidates once its walk meets a g
+/// parent out of turn: the `before` candidates so far, of `owner` and
+/// `owner ^ turn` taking turns with `owner` the next one's, and then
 /// `g_parent`'s.
 #[cold]
 #[inline(never)]
-fn spill_owners(lim: &crate::limits::Limits, owners: &mut Vec<u32>, owner: u32, before: usize, g_parent: u32) -> Result<(), OperationError> {
+fn spill_owners(
+    lim: &crate::limits::Limits,
+    owners: &mut Vec<u32>,
+    owner: u32,
+    turn: u32,
+    before: usize,
+    g_parent: u32,
+) -> Result<(), OperationError> {
     owners.clear();
-    if before < owners.capacity() {
-        owners.resize(before, owner);
-        owners.push(g_parent);
-        return Ok(());
-    }
-    lim.try_resize(owners, before, owner)?;
-    lim.try_push(owners, g_parent)
+    reserve_room(lim, owners, before + 1)?;
+    // Candidate `before` would have had `owner`, so one an even number of
+    // places before it too.
+    owners.extend((0..before).map(|i| if (before - i).is_multiple_of(2) { owner } else { owner ^ turn }));
+    owners.push(g_parent);
+    Ok(())
 }
 
 impl<P: Fn(u32, u32) -> u32> NodeWalk for LeafWalk<'_, P> {
