@@ -896,7 +896,12 @@ impl Partition<'_> {
             listed += usize::from(*e == 0);
             *e |= bit;
         }
-        self.split_listed_codes(lim, &bucket[..listed], d, seen, met, code, codes, rows)?;
+        // Within the reserve of one entry a pair.
+        codes.clear();
+        for &t in &bucket[..listed] {
+            codes.push(u32::from(std::mem::take(&mut code[t as usize])));
+        }
+        self.split_listed_codes(lim, &bucket[..listed], codes, d, seen, met, rows)?;
         Ok(true)
     }
 
@@ -905,8 +910,11 @@ impl Partition<'_> {
     /// one, with each run's code formed as it is read: one pass over the
     /// pairs finds where each run ends and the siblings' bits it ORs, holds
     /// the siblings met in registers, and lists each node whose alone bit
-    /// is clear with its run's code, so that no node's code is formed in
-    /// memory a pair at a time. Returns [`Degrees::Unordered`] where a node
+    /// is clear with its run's code beside it, so that no node's code is
+    /// formed in memory a pair at a time. Where every node listed is in the
+    /// first class and unnamed before, as a parent node's private nodes
+    /// are, the split reads no class ([`Self::split_first_codes`]).
+    /// Returns [`Degrees::Unordered`] where a node
     /// comes below the one before, and [`Degrees::Many`] where a fifth
     /// sibling shows up or the parent node holds 2^27 pairs or more, in
     /// both cases with nothing changed.
@@ -917,7 +925,7 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<Degrees, OperationError> {
-        let Wide { bucket, seen, met, code, touched: codes, rows, .. } = wide;
+        let Wide { bucket, seen, met, touched: codes, rows, .. } = wide;
         if pairs.len() >= 1 << 27 {
             return Ok(Degrees::Many);
         }
@@ -930,16 +938,13 @@ impl Partition<'_> {
         let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
         let (mut d, mut used) = (1usize, 1u8);
         let (mut listed, mut last) = (0usize, None);
+        // Whether every node listed is in the first class with no pair
+        // read before naming it.
+        let mut first = true;
         let mut k = 0;
-        let refuse = |code: &mut [u8], nodes: &[u32]| {
-            for &t in nodes {
-                code[t as usize] = 0;
-            }
-        };
         while k < pairs.len() {
             let t = split_pair(&pairs[k], side).0;
             if last.is_some_and(|last| t < last) {
-                refuse(code, &bucket[..listed]);
                 return Ok(Degrees::Unordered);
             }
             last = Some(t);
@@ -956,7 +961,6 @@ impl Partition<'_> {
                 let mut bit = hit & used;
                 if bit == 0 {
                     if d == FEW_SIBLINGS {
-                        refuse(code, &bucket[..listed]);
                         return Ok(Degrees::Many);
                     }
                     sib[d] = s;
@@ -967,48 +971,73 @@ impl Partition<'_> {
                 e |= bit;
                 k += 1;
             }
-            if (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 == 0 {
-                code[t as usize] = e;
+            let [moved, alone] = self.bits[(t / 64) as usize];
+            if (alone >> (t % 64)) & 1 == 0 {
+                first &= (moved >> (t % 64)) & 1 == 0;
+                codes.push(u32::from(e));
                 bucket[listed] = t;
                 listed += 1;
             }
         }
-        self.split_listed_codes(lim, &bucket[..listed], d, seen, met, code, codes, rows)?;
+        if first && self.can_twin(0) {
+            self.split_first_codes(&bucket[..listed], codes, d);
+        } else {
+            self.split_listed_codes(lim, &bucket[..listed], codes, d, seen, met, rows)?;
+        }
         Ok(Degrees::Split)
     }
 
+    /// [`split_listed_codes`](Self::split_listed_codes) where every node is
+    /// in the first class and no pair named it before, as the nodes of a
+    /// wide parent node that is the only one to name them are, with no
+    /// class read: the nodes of each code that are all of the first class
+    /// stay in it, those of another code of two or more make a class of
+    /// their own, and the rest leave alone, the classes made in code order
+    /// as the general split makes them. The first class holds two nodes or
+    /// more.
+    #[inline(always)]
+    fn split_first_codes(&mut self, nodes: &[u32], node_codes: &[u32], d: usize) {
+        let mut count = [0u32; 1 << FEW_SIBLINGS];
+        for &e in node_codes {
+            count[e as usize] += 1;
+        }
+        let mut keep = nodes.len() == self.classes[0].size as usize;
+        let mut dest = [ALONE; 1 << FEW_SIBLINGS];
+        for e in 0..1usize << d {
+            if count[e] >= 2 {
+                dest[e] = if std::mem::take(&mut keep) { 0 } else { self.fresh(0, count[e]) };
+            }
+        }
+        for (&t, &e) in nodes.iter().zip(node_codes) {
+            match dest[e as usize] {
+                ALONE => self.alone(t, 0),
+                id => self.put(t, id),
+            }
+        }
+    }
+
     /// The nodes `nodes` of a wide parent node of `d` siblings at most
-    /// [`FEW_SIBLINGS`], each listed once with its code in `code`, split by
-    /// their codes and the codes cleared ([`Self::split_by_codes`]).
+    /// [`FEW_SIBLINGS`], each listed once with its code in `node_codes`,
+    /// split by their codes ([`Self::split_by_codes`]).
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn split_listed_codes(
         &mut self,
         lim: &Limits,
         nodes: &[u32],
+        node_codes: &[u32],
         d: usize,
         seen: &mut [u32],
         met: &mut Vec<u32>,
-        code: &mut [u8],
-        codes: &mut Vec<u32>,
         rows: &mut Vec<u32>,
     ) -> Result<(), OperationError> {
         let listed = nodes.len();
         // A class that meets two codes has two members or more here.
         let stride = 1usize << d;
         rows.clear();
-        if let Err(e) = lim.reserve_exact(rows, listed / 2 * stride) {
-            for &t in nodes {
-                code[t as usize] = 0;
-            }
-            return Err(e);
-        }
-        // Within the reserve of one entry a pair.
-        codes.clear();
+        lim.reserve_exact(rows, listed / 2 * stride)?;
         met.clear();
-        for (&t, seen) in nodes.iter().zip(seen.iter_mut()) {
-            let e = u32::from(std::mem::take(&mut code[t as usize]));
-            codes.push(e);
+        for ((&t, &e), seen) in nodes.iter().zip(node_codes).zip(seen.iter_mut()) {
             let c = self.of(t);
             *seen = ALONE;
             if !self.can_twin(c) {
@@ -1069,7 +1098,7 @@ impl Partition<'_> {
             moves = true;
         }
         if moves {
-            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(codes.iter()) {
+            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(node_codes) {
                 if c == ALONE {
                     continue;
                 }
