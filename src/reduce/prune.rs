@@ -257,9 +257,6 @@ pub(crate) struct PruneScratch {
     /// [`prune_complement`]'s levels that lose a node, top-down: the level,
     /// the slot of the node it loses, and the entry of its parent level.
     chain: Vec<[u32; 3]>,
-    /// [`prune_complement`]'s slot, by entry of `chain`, of the node of a
-    /// level that names its children's new true classes.
-    holder: Vec<u32>,
     /// [`prune_complement`]'s stamped count of the pairs the dying node of a
     /// level gives each node of its children ([`true_children`]).
     row: Vec<u64>,
@@ -278,7 +275,6 @@ impl Buffers for PruneScratch {
         visit(&mut self.settle_parents);
         visit(&mut self.settle_marks);
         visit(&mut self.chain);
-        visit(&mut self.holder);
         visit(&mut self.row);
     }
 }
@@ -296,7 +292,6 @@ impl PooledScratch for PruneScratch {
         self.settle_parents.clear();
         self.settle_marks.clear();
         self.chain.clear();
-        self.holder.clear();
         self.row.clear();
     }
 }
@@ -1674,19 +1669,9 @@ fn compact_visited(
 
 // ── The complement of a canonical diagram ────────────────────────────────────
 
-/// What a negation of a canonical diagram leaves for the prune after it:
-/// the old output's slot at the root, and per level whether the completion
-/// added a node there, as the level's last slot, for its false class.
-pub(crate) struct Completion {
-    /// The old output's slot at the root.
-    pub(crate) old: NodeIdx,
-    /// Per level, whether the completion added a node.
-    pub(crate) filled: Vec<bool>,
-}
-
 /// Prune the negation of a canonical diagram: `tdd` is its completion with
-/// the complement at the root, as the negation leaves it, and `done` what
-/// the completion added.
+/// the complement beside the old output at the root, as the negation leaves
+/// it, and `old` the old output's slot.
 ///
 /// Complement maps the residual classes of a level one to one, except that
 /// the class whose residual was true dies, its residual now false: all the
@@ -1700,33 +1685,30 @@ pub(crate) struct Completion {
 /// dying node's pairs, where [`prune_below_root`] reads every pair of every
 /// level that loses a node.
 ///
-/// Each dying node is dropped by moving its level's last node into its
-/// slot, and only the references to the moved node change. The last node
-/// of a level the completion added a node to is that node, the level's new
-/// true class, and the only node that names it is its parent's: the
-/// complement at the root, or the node the completion added to the parent
-/// level. On a level the completion added nothing to, the last node is an
-/// old class, which any node of the parent may name, and every node of the
-/// parent is read. A level held as a description is stored first.
+/// The dying nodes are dropped by that walk's compaction, given the marks
+/// the walk would set: on each level that loses a node, every slot but the
+/// dying node's. The diagram, the order of each level's nodes and how each
+/// level is held come out as the walk leaves them, and the work clock is
+/// charged what the walk is charged.
 ///
 /// # Errors
 ///
 /// As [`prune_unreachable`]: a refused reservation leaves `tdd` untouched.
-pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, done: &Completion) -> Result<(), OperationError> {
+pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Result<(), OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
-    debug_assert_ne!(done.old, tdd.output.local);
+    debug_assert_ne!(old, tdd.output.local);
     let lim = eng.limits();
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { chain, holder, row, .. } = &mut *scratch;
+    let PruneScratch { marks, remap, identity, visits, chain, row, .. } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let root = tdd.output.vtree;
     debug_assert_eq!(tdd.levels[root.idx()].slot_count(), 2, "the root holds the old output and its complement");
     chain.clear();
-    lim.try_push(chain, [root.0, done.old.0, 0])?;
-    // The slots a walk below the root would be charged for: the root's,
-    // and on each level of the chain, the levels it walks in the order it
-    // walks them, the slots of its structural children and of another
-    // child wider than every one met before it ([`prune_below_root`]).
+    lim.try_push(chain, [root.0, old.0, 0])?;
+    // The slots the walk below the root is charged for: the root's, and on
+    // each level of the chain, the levels it walks in the order it walks
+    // them, the slots of its structural children and of another child wider
+    // than every one met before it ([`prune_below_root`]).
     let mut slots = tdd.levels[root.idx()].slot_count();
     let mut unmarked = 0usize;
     row.clear();
@@ -1751,94 +1733,38 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, done: &Completion) -
         }
         i += 1;
     }
-    // Every room a described level is stored in is had before any level
-    // changes.
-    let mut rooms = Vec::new();
-    for &[t, _, _] in chain.iter() {
-        let level = &tdd.levels[t as usize];
-        if level.pairs.implicit().is_some() {
-            lim.try_push(&mut rooms, (t, level.store_room(lim)?))?;
-        }
+    // The walk's marks and visits: a block per level of the chain, every
+    // slot marked but the dying node's, in the walk's order, which is the
+    // chain's.
+    visits.clear();
+    lim.reserve(visits, chain.len())?;
+    let mut used = 0usize;
+    for (i, &[t, k, _]) in chain.iter().enumerate() {
+        let t = VtreeIdx(t);
+        let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
+        let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
+        mark_all(&mut marks[base..base + words(width)], width);
+        marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
+        visits.push(Visit::new(t, base));
+        let (left, right) = vtree.children(t);
+        identity_upto(eng, identity, tdd.reference_slot_count(left).max(tdd.reference_slot_count(right)))?;
     }
-    lim.try_resize(holder, chain.len(), NO_HOLDER)?;
+    let mut remap_need = 0usize;
+    for (j, &[c, _, up]) in chain.iter().enumerate().skip(1) {
+        let c = VtreeIdx(c);
+        let child = Child::at(visits[j].base, tdd.reference_slot_count(c), true);
+        let parent = &mut visits[up as usize];
+        if vtree.children(parent.level).0 == c {
+            parent.left = child;
+        } else {
+            parent.right = child;
+        }
+        remap_need = remap_need.max(parent.left.span + parent.right.span);
+    }
+    compact_visited(eng, tdd, marks, remap, identity, visits, remap_need)?;
+    tdd.output.local = NodeIdx(rank(&marks[visits[0].base..], tdd.output.local.idx()));
     lim.charge_work(2 * slots as u64);
-    for (t, room) in rooms {
-        tdd.levels.mark_changed(VtreeIdx(t));
-        tdd.levels[t as usize].store_moved(room, |_| true, |l| l, |r| r);
-    }
-    retire_in_place(tdd, chain, &done.filled, holder);
     Ok(())
-}
-
-/// No node of the level names its children's new true classes.
-const NO_HOLDER: u32 = u32::MAX;
-
-/// Drop the dying node of each level of `chain`, stored, by moving the
-/// level's last node into its slot, and point the references to the moved
-/// node at it: in the node of the parent that names the level's new true
-/// class, `holder`, where the moved node is that class (`filled`), else in
-/// every node of the parent.
-fn retire_in_place(tdd: &mut Tdd, chain: &[[u32; 3]], filled: &[bool], holder: &mut [u32]) {
-    let [root, old, _] = chain[0];
-    debug_assert_eq!(tdd.output.local.idx() + 1, tdd.levels[root as usize].slot_count());
-    let out = retire(tdd, VtreeIdx(root), old as usize);
-    tdd.output.local = NodeIdx(out as u32);
-    holder[0] = out as u32;
-    for (i, &[c, k, up]) in chain.iter().enumerate().skip(1) {
-        let (c, t) = (VtreeIdx(c), VtreeIdx(chain[up as usize][0]));
-        let last = tdd.levels[c.idx()].slot_count() - 1;
-        let on_left = tdd.vtree.children(t).0 == c;
-        let k = retire(tdd, c, k as usize);
-        let filled = filled[c.idx()];
-        holder[i] = if filled { k as u32 } else { NO_HOLDER };
-        if k == last {
-            continue;
-        }
-        tdd.levels.mark_changed(t);
-        let level = &mut tdd.levels[t.idx()];
-        match holder[up as usize] {
-            h if filled && h != NO_HOLDER => retarget(level, h as usize, on_left, last as u32, k as u32),
-            _ => (0..level.slot_count()).for_each(|n| retarget(level, n, on_left, last as u32, k as u32)),
-        }
-    }
-}
-
-/// Drop node `k` of the stored level `t`, moving its last node into the
-/// slot; returns the slot.
-fn retire(tdd: &mut Tdd, t: VtreeIdx, k: usize) -> usize {
-    tdd.levels.mark_changed(t);
-    let level = &mut tdd.levels[t.idx()];
-    debug_assert!(level.pairs.implicit().is_none() && level.nodes.stored().len() == level.slot_count());
-    let dead = level.arena_pairs_at(k);
-    level.nodes.stored_mut().swap_remove(k);
-    level.note_dead_pairs(dead);
-    level.compact_pairs_if_stale();
-    tdd.invalidate(t);
-    k
-}
-
-/// Point the references of node `n` of `level` on its left side when
-/// `on_left`, else its right, at child slot `to` where they name `from`.
-/// The child is structural, so a side is the slot it names.
-fn retarget(level: &mut TddLevel, n: usize, on_left: bool, from: u32, to: u32) {
-    match level.node(n).kind() {
-        NodeKind::Inline(_) => {
-            let node = &mut level.nodes.stored_mut()[n];
-            let side = if on_left { &mut node.a } else { &mut node.b };
-            if *side == from {
-                *side = to;
-            }
-        }
-        kind if kind.pairs_in_arena() => {
-            for pair in level.pairs_mut(n) {
-                let side = if on_left { &mut pair.left } else { &mut pair.right };
-                if side.0 == from {
-                    *side = EncodedChildRef::from_raw(to);
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 /// The nodes of the children of `t`, left and right, each where `sides`

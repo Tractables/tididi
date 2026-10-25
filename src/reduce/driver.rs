@@ -1,10 +1,10 @@
 //! Reduction order and the follow-up work required by each rewrite.
 
 use crate::{Engine, Tdd, OperationError};
-use crate::diagram::{Pass, WeightStore};
+use crate::diagram::{NodeIdx, Pass, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
-use super::prune::{Completion, PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
+use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
 use super::contract::pair_fusion::fuse_pairs_at_parents;
@@ -107,16 +107,16 @@ impl<'a> Reduction<'a> {
     /// one to one: two nodes with equal residuals after it had equal
     /// residuals before, which a canonical operand rules out, inner and leaf
     /// twins alike. The one class per level whose residual was true dies at
-    /// the root and is all the prune removes: with `done`, what the
-    /// completion added, the prune reads and drops only those nodes
-    /// ([`prune_complement`]). `shrink` trims the level arrays as a full
-    /// reduction does.
-    pub(super) fn certify_complement(&mut self, shrink: bool, done: Option<&Completion>) -> Result<(), OperationError> {
+    /// the root and is all the prune removes: with `old`, the old output's
+    /// slot beside its complement, the prune reads and drops only those
+    /// nodes ([`prune_complement`]). `shrink` trims the level arrays as a
+    /// full reduction does.
+    pub(super) fn certify_complement(&mut self, shrink: bool, old: Option<NodeIdx>) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let closed = self.tdd.levels.is_closed();
-        match done {
-            Some(done) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && done.old != self.tdd.output.local => {
-                prune_complement(self.eng, self.tdd, done)?;
+        match old {
+            Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
+                prune_complement(self.eng, self.tdd, old)?;
             }
             _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
         }

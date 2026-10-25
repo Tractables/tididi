@@ -429,40 +429,61 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
 /// The complement of a canonical diagram, completed and complemented at
 /// the root, loses the old output and, below it, only the nodes whose
 /// residual was true: the prune that drops just those leaves the diagram the
-/// walk below the root leaves, up to the order of the nodes of a level, on
-/// corpora where nodes below the root die, charging the work clock what the
-/// walk does; and it is minimal.
+/// walk below the root leaves, node for node and each level held as the
+/// walk holds it, on corpora where nodes below the root die and, with the
+/// floor of a description lowered, where levels are described, charging
+/// the work clock what the walk does; and it is minimal.
 #[test]
 fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
-    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
+    use crate::test_helpers::{Lcg, with_floor};
 
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x3c6e_f372);
-    let (mut cases, mut filled, mut bare) = (0usize, 0usize, 0usize);
+    let [cases, filled, bare, _] = complement_prunes(eng, &mut rng);
+    assert!(cases > 200, "expected a corpus, got {cases} cases");
+    assert!(filled > 100, "expected levels below the root that lose a node beside an added one, got {filled}");
+    assert!(bare > 20, "expected levels below the root that lose a node and gained none, got {bare}");
+    let [cases, _, _, described] = with_floor(4, || complement_prunes(eng, &mut rng));
+    assert!(cases > 200, "expected a corpus, got {cases} cases");
+    assert!(described > 50, "expected described levels that lose a node, got {described}");
+}
+
+/// [`the_complement_prune_drops_what_the_walk_below_the_root_drops`] on a
+/// corpus: the cases, and the levels below the root that lost a node beside
+/// one the completion added, that lost one and gained none, and that lost
+/// one while held as a description.
+fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) -> [usize; 4] {
+    use crate::test_helpers::{CnfShape, compile_clauses_on, rand_cnf, vtree_shapes};
+
+    let (mut cases, mut filled, mut bare, mut described) = (0usize, 0usize, 0usize, 0usize);
+    let held = |tdd: &crate::Tdd| tdd.levels.iter().map(|l| l.pairs.implicit().is_some()).collect::<Vec<_>>();
     for shape in [CnfShape { clauses: 6, width: 3 }, CnfShape { clauses: 24, width: 5 }, CnfShape { clauses: 10, width: 2 }] {
         for (name, vtree) in vtree_shapes(16) {
             for case in 0..30 {
-                let mut f = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, 16, shape));
+                let mut f = compile_clauses_on(eng, &vtree, &rand_cnf(rng, 16, shape));
                 eng.minimize(&mut f).unwrap();
                 if f.is_zero() || !f.levels.is_canonical(f.output) || !below_root_walk_applies(&f) {
                     continue;
                 }
                 let what = format!("{name}, case {case}");
-                let (complement, done) = crate::apply::negate::complement_on(eng, f).unwrap();
-                let Some(done) = done else { continue };
+                let before: Vec<usize> = f.levels.iter().map(|l| l.slot_count()).collect();
+                let (complement, old) = crate::apply::negate::complement_on(eng, f).unwrap();
+                let Some(old) = old else { continue };
                 if !below_root_walk_applies(&complement) {
                     continue;
                 }
                 let widths: Vec<usize> = complement.levels.iter().map(|l| l.slot_count()).collect();
+                let was_held = held(&complement);
                 let mut walked = complement.clone();
                 let start = eng.limits().work_units();
                 prune_unreachable(eng, &mut walked, PruneScope::BelowRoot).unwrap();
                 let walk_work = eng.limits().work_units() - start;
                 let mut moved = complement;
                 let start = eng.limits().work_units();
-                prune_complement(eng, &mut moved, &done).unwrap();
+                prune_complement(eng, &mut moved, old).unwrap();
                 assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the two prunes charged different work");
-                assert_eq!(sorted_layout(&moved), sorted_layout(&walked), "{what}: the two prunes left different diagrams");
+                assert_eq!(layout(&moved), layout(&walked), "{what}: the two prunes left different diagrams");
+                assert_eq!(held(&moved), held(&walked), "{what}: the two prunes hold the levels otherwise");
                 let reached = reached_by_level(&moved);
                 for &t in moved.vtree.bottomup_slice() {
                     if moved.is_structural_internal(t) {
@@ -474,16 +495,15 @@ fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
                 assert_eq!(sorted_layout(&moved), sorted_layout(&minimized), "{what}: the complement is not minimal");
                 for &t in moved.vtree.bottomup_slice() {
                     if t != moved.vtree.root() && moved.is_structural_internal(t) && moved.levels[t.idx()].slot_count() < widths[t.idx()] {
-                        if done.filled[t.idx()] { filled += 1 } else { bare += 1 }
+                        if widths[t.idx()] > before[t.idx()] { filled += 1 } else { bare += 1 }
+                        described += usize::from(was_held[t.idx()]);
                     }
                 }
                 cases += 1;
             }
         }
     }
-    assert!(cases > 200, "expected a corpus, got {cases} cases");
-    assert!(filled > 100, "expected levels below the root that lose a node beside an added one, got {filled}");
-    assert!(bare > 20, "expected levels below the root that lose a node and gained none, got {bare}");
+    [cases, filled, bare, described]
 }
 
 /// [`layout`] with each level's nodes in a canonical order, renumbered from

@@ -120,10 +120,10 @@ impl Engine {
 
     /// End a negation of a canonical operand: prune below the root and
     /// certify the result canonical, with no contraction. `shrink` trims the
-    /// level arrays as a full reduction does. `done` is what the completion
-    /// added where the complement was built beside the old output.
-    pub(crate) fn certify_complement(&self, f: &mut Tdd, shrink: bool, done: Option<&prune::Completion>) -> Result<(), OperationError> {
-        driver::Reduction::new(self, f).certify_complement(shrink, done)
+    /// level arrays as a full reduction does. `old` is the old output's slot
+    /// where the complement was built beside it.
+    pub(crate) fn certify_complement(&self, f: &mut Tdd, shrink: bool, old: Option<crate::diagram::NodeIdx>) -> Result<(), OperationError> {
+        driver::Reduction::new(self, f).certify_complement(shrink, old)
     }
 }
 
