@@ -126,6 +126,18 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                 clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
             }
             ws.owned_len = gathered?;
+            // Into the level's nodes from f's stored nodes, the walk runs as
+            // one loop over them ([`owner_walk_nodes`]).
+            let collect = match collect {
+                Collect::Nodes(to) if f_level.stored().is_some() => {
+                    return if ones {
+                        owner_walk_nodes::<SWAPPED, true>(eng, ws, f_level, shape.f.here, f_outer, to)
+                    } else {
+                        owner_walk_nodes::<SWAPPED, false>(eng, ws, f_level, shape.f.here, f_outer, to)
+                    };
+                }
+                collect => collect,
+            };
             if ones {
                 leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
                     |parts| OwnerWalk::<true>::of(parts, f_outer))?;
@@ -525,6 +537,154 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
         }
         Ok(())
     }
+}
+
+/// [`walk_nodes`] of an [`OwnerWalk`] into the level's nodes, f's first
+/// `f_nodes` nodes stored, its outer child `f_outer` wide: the candidates,
+/// products, nodes and clock charges of that walk, in the same order. f's
+/// nodes are walked in this loop, not handed one by one to a closure, the
+/// clock is charged once a node, and a node's g parent is held as its walk
+/// goes while every candidate so far has the same one: the owners are
+/// written out only once a second g parent appears, and a node of one g
+/// parent is made where its walk ends.
+#[inline(never)]
+fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    f_level: &TddLevel,
+    f_nodes: usize,
+    f_outer: usize,
+    to: Emit<'_>,
+) -> Result<(), OperationError> {
+    const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
+    const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
+    let lim = eng.limits();
+    let Emit { level, out, duplicates_legal, .. } = to;
+    let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
+    let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
+    let stored = f_level.stored().expect("the walk reads f's stored nodes");
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    let start = level.pairs.stored_len();
+    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate() {
+        let base = level.pairs.stored_len();
+        // The node's one g parent while it has one. Once it has two, `mixed`
+        // is set, `node_owners` holds every candidate's, and `owner` is
+        // `NO_PRODUCT`, which no candidate's equals: a candidate of the g
+        // parent held costs one comparison.
+        let (mut owner, mut mixed) = (NO_PRODUCT, false);
+        let mut held = 0u64;
+        for pair in stored.of(node) {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            for e in outer.bucket(outer1 as usize) {
+                let [pos, one, neg] = e.slots;
+                // A macro, not a closure: a closure holding the node's state
+                // is called out of line, its state kept in memory.
+                macro_rules! meet {
+                    ($g_parent:expr, $label:expr) => {{
+                        let g_parent: u32 = $g_parent;
+                        if g_parent != NO_PRODUCT {
+                            let (left_prod, right_prod) = orient::<SWAPPED>($label, e.prod);
+                            let pair = ChildPair::new(EncodedChildRef::from_raw(left_prod), EncodedChildRef::from_raw(right_prod));
+                            try_push_pair_growing(eng, level, pair, |v| grow_by_nodes(eng, v, start, p1, f_nodes))?;
+                            if g_parent != owner {
+                                if owner != NO_PRODUCT {
+                                    let before = level.pairs.stored_len() - base - 1;
+                                    spill_owners(lim, node_owners, owner, before, g_parent)?;
+                                    (owner, mixed) = (NO_PRODUCT, true);
+                                } else if mixed {
+                                    lim.try_push(node_owners, g_parent)?;
+                                } else {
+                                    owner = g_parent;
+                                }
+                            }
+                        }
+                    }};
+                }
+                // [`OwnerWalk`]'s order: Pos, One, Neg.
+                if inner1 != NEG {
+                    meet!(pos, POS);
+                }
+                if ONES {
+                    meet!(one, inner1);
+                }
+                if inner1 != POS {
+                    meet!(neg, NEG);
+                }
+                // Charged as the walk of every g pair under the product was;
+                // a held slot is below `NO_PRODUCT`, a test the count takes
+                // as a carry.
+                held += u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
+                if ONES {
+                    held += u64::from(one < NO_PRODUCT);
+                }
+            }
+        }
+        ticker.poll(held)?;
+        let count = level.pairs.stored_len() - base;
+        if count == 0 {
+            continue;
+        }
+        if mixed {
+            emit_mixed_apart(eng, emit, level, out, p1, base, node_owners, duplicates_legal)?;
+            continue;
+        }
+        let product = ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(owner),
+            prod_idx: ProductNodeIdx(out.len() as u32),
+        };
+        lim.try_push(out, product)?;
+        if count == 1 {
+            let pair = level.pop_pair().expect("the walk wrote the candidate's pair");
+            emit_single_pair(eng, level, pair)?;
+        } else {
+            let nodes = level.nodes.stored_mut();
+            reserve_room(lim, nodes, 1)?;
+            if base < 1 << 31 && count < 1 << 31 {
+                nodes.push(crate::diagram::EncodedNode::multi_pair(base as u32, count as u32));
+            } else {
+                level.try_push_multi_by_range(base, count).map_err(|_| OperationError::OverBudget)?;
+            }
+            // As in `emit_parent`: canonical children make a node's pairs
+            // distinct unless pair lists are multisets.
+            debug_assert!(
+                duplicates_legal || {
+                    let mut seen = std::collections::HashSet::new();
+                    level.pairs_iter_of_idx(level.nodes().len() - 1).all(|p| seen.insert(p))
+                },
+                "sparse apply: duplicate pair emitted — canonicity violated"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps
+/// the node of one g parent's path to itself.
+#[expect(clippy::too_many_arguments)]
+#[inline(never)]
+fn emit_mixed_apart(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &mut [u32],
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// Write out the owners of a node's candidates once its walk meets a second
+/// g parent: the `before` candidates so far, all of `owner`, and then
+/// `g_parent`'s.
+#[cold]
+#[inline(never)]
+fn spill_owners(lim: &crate::limits::Limits, owners: &mut Vec<u32>, owner: u32, before: usize, g_parent: u32) -> Result<(), OperationError> {
+    owners.clear();
+    lim.try_resize(owners, before, owner)?;
+    lim.try_push(owners, g_parent)
 }
 
 impl<P: Fn(u32, u32) -> u32> NodeWalk for LeafWalk<'_, P> {
@@ -1981,6 +2141,23 @@ fn emit_walked(
         );
         return Ok(());
     }
+    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// [`emit_walked`] on candidates of more than one g parent: a few grouped by
+/// comparison ([`emit_few`]), more through the map ([`emit_owned`]).
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn emit_mixed(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &mut [u32],
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
     if owners.len() <= FEW_CANDIDATES {
         // The pairs leave the arena, so the products' ranges take no more of
         // it than the walk gave them.
