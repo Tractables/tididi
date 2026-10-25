@@ -370,7 +370,7 @@ fn entered(tdd: &crate::Tdd, levels: &[u32]) -> std::collections::BTreeSet<u32> 
 /// starts at the seeds, a loose level under another among them.
 #[test]
 fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
-    use crate::test_helpers::{Lcg, vtree_shapes};
+    use crate::test_helpers::{with_floor, Lcg, LOW_FLOOR, vtree_shapes};
 
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x9e1f_2d47);
@@ -438,37 +438,45 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         assert_eq!(layout(&walked), layout(&whole), "{what}: the two prunes left different diagrams");
         assert_eq!(walked.model_count().unwrap(), count, "{what}");
     };
-    for (name, wide) in vtree_shapes(14) {
-        for case in 0..40 {
-            let (f, g, h) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
-            if f.is_zero() || g.is_zero() || h.is_zero() {
-                continue;
-            }
-            let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").to_vec());
-            let what = format!("{name}, case {case}");
-            for (d, listed) in [(&f, &lf), (&g, &lg), (&h, &lh)] {
-                for t in unnamed_levels(d) {
-                    assert!(listed.contains(&t), "{what}: the embedding leaves level {t} with an unnamed node unlisted");
+    // At the floor, and at a floor where the small levels are implicit.
+    for floor in [crate::diagram::FLOOR, LOW_FLOOR] {
+        for (name, wide) in vtree_shapes(14) {
+            with_floor(floor, || {
+                for case in 0..40 {
+                    let (f, g, h) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
+                    if f.is_zero() || g.is_zero() || h.is_zero() {
+                        continue;
+                    }
+                    let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").to_vec());
+                    let what = format!("{name}, case {case}, floor {floor}");
+                    for (d, listed) in [(&f, &lf), (&g, &lg), (&h, &lh)] {
+                        for t in unnamed_levels(d) {
+                            assert!(listed.contains(&t), "{what}: the embedding leaves level {t} with an unnamed node unlisted");
+                        }
+                    }
+                    let both = eng.and(f.clone(), g.clone()).unwrap();
+                    let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
+                    assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
+                    let lb = both.dirty.loose().unwrap().to_vec();
+                    check(kept, [&lf, &lg], &format!("{what}, f and g"));
+                    check(eng.and(both, h).unwrap(), [&lb, &lh], &format!("{what}, then h"));
+                    cases += 1;
                 }
-            }
-            let both = eng.and(f.clone(), g.clone()).unwrap();
-            let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
-            assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
-            let lb = both.dirty.loose().unwrap().to_vec();
-            check(kept, [&lf, &lg], &format!("{what}, f and g"));
-            check(eng.and(both, h).unwrap(), [&lb, &lh], &format!("{what}, then h"));
-            cases += 1;
+            });
         }
     }
-    assert!(cases > 180, "expected a corpus, got {cases} cases");
+    assert!(cases > 360, "expected a corpus, got {cases} cases");
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
     assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
     assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
     let reads = crate::reduce::prune::SETTLE_READS.with(std::cell::Cell::get);
-    let [whole, by_node] = [reads[0] - reads_before[0], reads[1] - reads_before[1]];
-    assert!(whole > 400 && by_node > 400, "expected levels read whole and node by node, got {whole} and {by_node}");
+    let [whole, by_node, digits] = [0, 1, 2].map(|k| reads[k] - reads_before[k]);
+    assert!(
+        whole > 400 && by_node > 400 && digits > 100,
+        "expected levels read whole, node by node and off the digits, got {whole}, {by_node} and {digits}",
+    );
 }
 
 /// The complement of a canonical diagram, completed and complemented at

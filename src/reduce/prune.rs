@@ -681,9 +681,11 @@ fn unnamed_children(
 /// A stored level is read whole, with no branch a node
 /// ([`StoredPairs::for_each_pair_whole`]): the nodes' own pairs and then its
 /// arena, each node that names the arena marking the bytes past the nodes.
-/// One whose arena holds pairs no node names, and an implicit one, is read
-/// node by node, up to the first node past which every side read has each
-/// of its nodes named.
+/// One whose arena holds pairs no node names is read node by node, up to
+/// the first node past which every side read has each of its nodes named.
+/// An implicit one marks each side's slots off the digits that move it
+/// ([`ImplicitLevel::each_slot_on`]), about the side's distinct slots and
+/// not the level's pairs.
 ///
 /// A mark stores a constant and reads nothing, so no mark waits on another:
 /// pairs that name the same node, or nodes a word apart, do not wait on each
@@ -721,12 +723,24 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
                 right[pair.right.0 as usize] = 1;
             }
         });
-        note_settle_read(whole);
+        note_settle_read(usize::from(!whole));
         if whole {
             return Ok([!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)]);
         }
     }
     let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
+    if let Some(d) = level.implicit() {
+        note_settle_read(2);
+        if LEFT {
+            gate.poll(d.slots_on(ChildSide::Left) as u64)?;
+            d.each_slot_on(ChildSide::Left, |s| left[s as usize] = 1);
+        }
+        if RIGHT {
+            gate.poll(d.slots_on(ChildSide::Right) as u64)?;
+            d.each_slot_on(ChildSide::Right, |s| right[s as usize] = 1);
+        }
+        return Ok([!LEFT || !left.contains(&0), !RIGHT || !right.contains(&0)]);
+    }
     let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
     let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
@@ -1434,21 +1448,23 @@ thread_local! {
     pub(super) static SIDES_MARKED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
 }
 
-// A test counts the stored levels a settle read whole and node by node.
+// A test counts the stored levels a settle read whole and node by node,
+// and the implicit levels it read off their digits.
 #[cfg(test)]
 thread_local! {
-    pub(super) static SETTLE_READS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    pub(super) static SETTLE_READS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
 }
 
+/// How a settle read a level: whole (0), node by node (1), off the digits (2).
 #[inline(always)]
-fn note_settle_read(whole: bool) {
+fn note_settle_read(how: usize) {
     #[cfg(test)]
     SETTLE_READS.with(|c| {
         let mut n = c.get();
-        n[usize::from(!whole)] += 1;
+        n[how] += 1;
         c.set(n);
     });
-    let _ = whole;
+    let _ = how;
 }
 
 #[inline(always)]
