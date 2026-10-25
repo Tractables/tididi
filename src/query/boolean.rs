@@ -223,8 +223,13 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
                         };
                         side[t.idx()].push(id);
                     }
-                    side[left.idx()] = Vec::new();
-                    side[right.idx()] = Vec::new();
+                    // The output's level, which can sit below the root,
+                    // keeps its keys for the comparison.
+                    for child in [left, right] {
+                        if child != diagram.output().vtree {
+                            side[child.idx()] = Vec::new();
+                        }
+                    }
                 }
             }
         }
