@@ -213,9 +213,10 @@ fn conjoin_by_columns(f: &Tdd, g: &Tdd, columns: bool, grid: bool, floor: Option
 }
 
 /// A level whose every column holds one g pair reads each cell against that
-/// pair without reading the column: the same diagram and the same work as
-/// the cells that read their column, under a stop at each output-pair floor
-/// up to the result's size, on the grid route and with a complete side.
+/// pair without reading the column, and writes a row whose cells fit the
+/// arenas in one loop: the same diagram and the same work as the cells that
+/// read their column, under a stop at each output-pair floor up to the
+/// result's size, on the grid route and with a complete side.
 #[test]
 fn one_pair_columns_read_as_their_columns() {
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
@@ -251,6 +252,7 @@ fn one_pair_columns_read_as_their_columns() {
         }
         let census = complete_census();
         assert!(census[5] > before[5], "{shape}: no level read one g pair a column");
+        assert!(census[6] > before[6], "{shape}: no row of one pair a column was written whole");
     }
 }
 

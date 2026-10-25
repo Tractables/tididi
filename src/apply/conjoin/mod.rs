@@ -826,7 +826,7 @@ fn note_summed() {}
 // that read a lone g pair in every cell, and those that read one pair a
 // column; and reads each cell's column, as the oracle for the last.
 #[cfg(test)]
-use tests::{grid_lookups_forced, lone_columns_forced_off, note_lone_columns, note_lone_pair, note_lookups, note_scheduled_charge};
+use tests::{grid_lookups_forced, lone_columns_forced_off, note_lone_columns, note_lone_pair, note_lookups, note_scheduled_charge, note_whole_row};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -849,6 +849,10 @@ fn note_lone_pair() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_lone_columns() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_whole_row() {}
 
 #[cfg(not(test))]
 #[inline(always)]

@@ -67,9 +67,9 @@ thread_local! {
     /// arithmetic: both sides, the left alone, the right alone; the times a
     /// reserved arena charged the meter for a growth it did not make; the
     /// levels of two complete sides that read a lone g pair in every cell;
-    /// and the levels of one complete side whose every column holds one g
-    /// pair ([`complete_census`]).
-    static COMPLETE: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
+    /// the levels of one complete side whose every column holds one g pair;
+    /// and the rows of those written whole ([`complete_census`]).
+    static COMPLETE: std::cell::Cell<[u64; 7]> = const { std::cell::Cell::new([0; 7]) };
     /// Whether every cell on this thread reads its column's pairs
     /// ([`column_reads`]).
     static COLUMN_READS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -116,6 +116,10 @@ pub(super) fn note_lone_pair() {
 
 pub(super) fn note_lone_columns() {
     count_complete(5);
+}
+
+pub(super) fn note_whole_row() {
+    count_complete(6);
 }
 
 fn count_complete(kind: usize) {
@@ -476,7 +480,7 @@ pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
 /// make; the levels of two complete sides that read a lone g pair in every
 /// cell; and the levels of one complete side whose every column holds one g
 /// pair.
-pub(super) fn complete_census() -> [u64; 6] {
+pub(super) fn complete_census() -> [u64; 7] {
     COMPLETE.with(std::cell::Cell::get)
 }
 

@@ -94,6 +94,22 @@ impl PollGate<'_> {
         self.lim.poll_now(done)
     }
 
+    /// How many units the gate takes before a [`poll`](Self::poll) comes
+    /// due: a poll of at least this many charges the clock.
+    #[inline(always)]
+    pub(crate) fn due_in(&self) -> u64 {
+        self.stride.saturating_sub(self.work)
+    }
+
+    /// Add `work` units, fewer than [`due_in`](Self::due_in), as polls that
+    /// add up to them would: none comes due. For a loop that counts its
+    /// polls down from `due_in` and polls the one that comes due.
+    #[inline(always)]
+    pub(crate) fn add_short(&mut self, work: u64) {
+        debug_assert!(work == 0 || work < self.due_in(), "the units added bring the gate due");
+        self.work += work;
+    }
+
     /// Add `units` units as that many polls of one unit would: the clock is
     /// charged and cancellation tested at the same points, each time the gate
     /// comes due. For a loop that charges one unit an item and whose items

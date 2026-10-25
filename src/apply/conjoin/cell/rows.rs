@@ -104,6 +104,29 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 
     /// One cell of the row.
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError>;
+
+    /// Whether the row loop offers the action [`whole_row`](Self::whole_row).
+    const WHOLE_ROWS: bool = false;
+
+    /// Every cell of a row whose columns all hold one, in column order, as
+    /// [`cell`](Self::cell) a column would write them, for an action with a
+    /// loop of its own for them; `false`, having written nothing, leaves
+    /// them to [`cell`](Self::cell).
+    #[inline(always)]
+    fn whole_row(&mut self, _eng: &Engine, _row: WholeRow<'_, '_, L, R>) -> Result<bool, OperationError> {
+        Ok(false)
+    }
+}
+
+/// What [`CellAction::whole_row`] reads of a row: [`CellArgs`] without the
+/// column.
+pub(super) struct WholeRow<'a, 'c, L, R> {
+    pub(super) row_base: usize,
+    pub(super) f_pairs: &'a [ChildPair],
+    pub(super) node_idx: &'a mut [u32],
+    pub(super) left: &'a L,
+    pub(super) right: &'a R,
+    pub(super) gate: &'a mut crate::limits::PollGate<'c>,
 }
 
 /// Fill small product grids once before traversal; reset larger grids row by
@@ -327,6 +350,18 @@ where
             continue;
         }
 
+        if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
+            // The row's every column is a cell, as the loop below would
+            // find once the masks' fold kept the row.
+            if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
+                continue;
+            }
+            let row = WholeRow { row_base, f_pairs, node_idx: &mut *node_idx, left, right, gate: &mut poll };
+            if action.whole_row(eng, row)? {
+                poll.poll(right_width as u64)?;
+                continue;
+            }
+        }
         let mut cell = |j: usize| {
             action.cell(
                 eng,
@@ -938,6 +973,18 @@ struct EmitLoneColumns<'a, 'l> {
 
 impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_> {
     const DENSE_SLAB: bool = true;
+    const WHOLE_ROWS: bool = true;
+
+    /// A row of one or two f pairs whose cells all fit the arenas' room is
+    /// written there in one loop ([`lone_row`]).
+    #[inline(always)]
+    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<bool, OperationError> {
+        match row.f_pairs.len() {
+            1 => lone_row::<1, L, R>(&mut self.sink, self.lone, row),
+            2 => lone_row::<2, L, R>(&mut self.sink, self.lone, row),
+            _ => Ok(false),
+        }
+    }
 
     #[inline(always)]
     fn grid_row(&self, i: usize) -> usize {
@@ -983,6 +1030,52 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
         push_kept(eng, &mut self.sink, f_pairs, kills, cand)?;
         self.sink.end(eng, node_idx, grid_pos, start)
     }
+}
+
+/// [`EmitLoneColumns`] on a row of `K` f pairs whose every cell the
+/// arenas have room for ([`ArenaRow`]): each f pair's child rows read once
+/// for the row, each cell's survivors written straight into the arena and
+/// closed into its node, and the gate counted down a cell at a time and
+/// polled at the cell that brings it due, as a poll a cell would charge it.
+#[inline(always)]
+fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
+    sink: &mut ReservedEmitSink<'_>,
+    lone: &[ChildPair],
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<bool, OperationError> {
+    let WholeRow { row_base, f_pairs, node_idx, left, right, gate } = row;
+    let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(false) };
+    let Some(mut out) = sink.open_row(lone.len() * K, lone.len()) else { return Ok(false) };
+    super::super::note_whole_row();
+    let rows: [(L::Row, R::Row); K] = std::array::from_fn(|t| (left.row(f[t].left.0), right.row(f[t].right.0)));
+    let units = K as u64;
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    for (j, q) in lone.iter().enumerate() {
+        if units >= due {
+            gate.add_short(due_at - due);
+            gate.poll(units)?;
+            (due_at, due) = (gate.due_in(), gate.due_in());
+        } else {
+            due -= units;
+        }
+        let (c, d) = (q.left.0, q.right.0);
+        for &(l, r) in &rows {
+            let lc = left.get_in_row(node_idx, l, c);
+            if left.kills() && lc == NO_PRODUCT {
+                continue;
+            }
+            let rc = right.get_in_row(node_idx, r, d);
+            if right.kills() && rc == NO_PRODUCT {
+                continue;
+            }
+            // Safety: the row was opened for `K` pairs a column.
+            unsafe { out.push(lc, rc) };
+        }
+        // Safety: the row was opened for a node a column.
+        unsafe { out.close(node_idx, row_base + j) };
+    }
+    gate.add_short(due_at - due);
+    Ok(true)
 }
 
 /// The one pair of a level's g side, where it has one node and that node

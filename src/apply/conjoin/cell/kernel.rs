@@ -139,6 +139,114 @@ impl<'a> ArenaCell<'a> {
     }
 }
 
+/// A run of cells written straight into the level being built, opened
+/// ([`PairSink::open_row`]) where the pair arena has room for every pair the
+/// cells can write and the node arena for a node a cell: each survivor is
+/// stored, and each cell closed into the level's next node, with no capacity
+/// test, the lengths held here and stored in the arenas when the row is
+/// dropped. Each cell closes as [`ArenaCell::close`] closes one, so the
+/// nodes, and the capacities and meters charged from them, are as one
+/// [`ArenaCell`] a cell would leave them.
+pub(crate) struct ArenaRow<'a> {
+    pairs: &'a mut Vec<ChildPair>,
+    nodes: &'a mut Vec<EncodedNode>,
+    out: *mut ChildPair,
+    node_out: *mut EncodedNode,
+    /// The arena's length past the closed cells, the open cell's survivors,
+    /// and the node arena's length.
+    len: usize,
+    cell: usize,
+    node_len: usize,
+    /// One past the last pair and node slot the row may write.
+    #[cfg(debug_assertions)]
+    ends: [usize; 2],
+}
+
+impl<'a> ArenaRow<'a> {
+    /// A row of at most `pairs` pairs and `nodes` cells at the end of
+    /// `level`'s arenas, `room` pairs past the pair arena's length being at
+    /// most its spare capacity; `None` where either arena is short, or where
+    /// a node's range could pass the 31 bits a node holds it in.
+    #[inline(always)]
+    fn open(level: &'a mut TddLevel, room: usize, pairs: usize, nodes: usize) -> Option<Self> {
+        let (pair_arena, node_arena) = (level.pairs.stored_mut(), level.nodes.stored_mut());
+        if room < pairs || node_arena.capacity() - node_arena.len() < nodes || pair_arena.len() + pairs >= 1 << 31 {
+            return None;
+        }
+        debug_assert!(room <= pair_arena.capacity() - pair_arena.len(), "a sink's room is within its arena's capacity");
+        let (len, node_len) = (pair_arena.len(), node_arena.len());
+        Some(ArenaRow {
+            out: pair_arena.as_mut_ptr(),
+            node_out: node_arena.as_mut_ptr(),
+            pairs: pair_arena,
+            nodes: node_arena,
+            len,
+            cell: 0,
+            node_len,
+            #[cfg(debug_assertions)]
+            ends: [len + pairs, node_len + nodes],
+        })
+    }
+
+    /// Store a survivor of the open cell.
+    ///
+    /// # Safety
+    ///
+    /// The row's cells take at most the pairs it was opened for.
+    #[inline(always)]
+    pub(crate) unsafe fn push(&mut self, lc: u32, rc: u32) {
+        #[cfg(debug_assertions)]
+        debug_assert!(self.len + self.cell < self.ends[0], "a row wrote past the pairs it was opened for");
+        // Safety: `open` found the arena's spare capacity to hold every pair
+        // the row was opened for, and the caller writes no more.
+        let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
+        unsafe { self.out.add(self.len + self.cell).write(pair) };
+        self.cell += 1;
+    }
+
+    /// Turn the open cell's survivors into the level's next node and record
+    /// it at `grid_pos`, as [`ArenaCell::close`] does, and open the next.
+    ///
+    /// # Safety
+    ///
+    /// The row closes at most the cells it was opened for.
+    #[inline(always)]
+    pub(crate) unsafe fn close(&mut self, node_idx: &mut [u32], grid_pos: usize) {
+        let node = match self.cell {
+            0 => return,
+            // Safety: the slot at `len` holds the cell's one survivor.
+            1 => EncodedNode::inline(unsafe { self.out.add(self.len).read() }),
+            n => {
+                let node = EncodedNode::multi_pair(self.len as u32, n as u32);
+                self.len += n;
+                node
+            }
+        };
+        self.cell = 0;
+        #[cfg(debug_assertions)]
+        debug_assert!(self.node_len < self.ends[1], "a row closed more cells than it was opened for");
+        // Safety: `open` found the node arena's spare capacity to hold a node
+        // for every cell the row was opened for, and the caller closes no more.
+        unsafe { self.node_out.add(self.node_len).write(node) };
+        node_idx[grid_pos] = self.node_len as u32;
+        self.node_len += 1;
+    }
+}
+
+impl Drop for ArenaRow<'_> {
+    /// Store the lengths of the closed cells' pairs and nodes in the arenas;
+    /// an open cell's survivors are left past them.
+    #[inline(always)]
+    fn drop(&mut self) {
+        // Safety: the slots below each length hold the arena's old entries
+        // and those the closed cells wrote.
+        unsafe {
+            self.pairs.set_len(self.len);
+            self.nodes.set_len(self.node_len);
+        }
+    }
+}
+
 // ============================== Pair sinks ==============================
 //
 // The per-cell product walk (`process_cell`) is one kernel generic over the
@@ -204,6 +312,15 @@ pub(crate) trait PairSink {
     fn open_cell(&mut self, _bound: usize) -> Option<ArenaCell<'_>> {
         None
     }
+
+    /// A row of cells of at most `pairs` pairs and `nodes` cells written
+    /// straight into the level the sink builds, where the sink builds one
+    /// and both its arenas have room for them all; `None` sends each cell
+    /// through [`open_cell`](Self::open_cell) or [`begin`](Self::begin).
+    #[inline(always)]
+    fn open_row(&mut self, _pairs: usize, _nodes: usize) -> Option<ArenaRow<'_>> {
+        None
+    }
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
@@ -257,6 +374,12 @@ impl PairSink for EmitSink<'_> {
     fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
         let room = self.room();
         ArenaCell::open(self.level, room, bound)
+    }
+
+    #[inline(always)]
+    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+        let room = self.room();
+        ArenaRow::open(self.level, room, pairs, nodes)
     }
 }
 
@@ -341,6 +464,14 @@ impl PairSink for ReservedEmitSink<'_> {
     fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
         let room = self.room();
         ArenaCell::open(self.level, room, bound)
+    }
+
+    /// A row the meter's schedule leaves room for, as
+    /// [`open_cell`](PairSink::open_cell).
+    #[inline(always)]
+    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+        let room = self.room();
+        ArenaRow::open(self.level, room, pairs, nodes)
     }
 }
 
