@@ -20,8 +20,8 @@ use std::sync::Arc;
 /// vtree does not pay a `Vec` for each of its levels.
 #[derive(Default)]
 pub(crate) struct NegateScratch {
-    /// One level's `lefts x rights` cover, one bit per cell.
-    cover: Pool<Vec<u64>>,
+    /// One level's `lefts x rights` cover, one byte per cell.
+    cover: Pool<Vec<u8>>,
     /// The cells of a basis that no node covers: a level's fill pairs, then
     /// the root's complement pairs.
     cells: Pool<Vec<ChildPair>>,
@@ -134,7 +134,7 @@ fn complement_full_at_root(
         let right_is_leaf = vtree.node(right).is_leaf();
 
         let scratch = &eng.scratch.negate;
-        let mut bits = scratch.cover.checkout_preserving(eng);
+        let mut marked = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
         let lefts = ChildBasis::of(&vtree, levels, left);
         let rights = ChildBasis::of(&vtree, levels, right);
@@ -154,14 +154,14 @@ fn complement_full_at_root(
             fill_lines_into(eng, lefts, rights, fill, form, &mut neg_pairs)?;
             #[cfg(debug_assertions)]
             {
-                let mut cover = Cover::reset(eng, &mut bits, lefts, rights, form)?;
+                let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
                 cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
                 let mut by_cover = Vec::new();
                 cover.missing_into(eng, &mut by_cover)?;
                 debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
             }
         } else {
-            let mut cover = Cover::reset(eng, &mut bits, lefts, rights, form)?;
+            let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
             cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
             cover.missing_into(eng, &mut neg_pairs)?;
         }
@@ -194,24 +194,24 @@ fn complement_full_at_root(
 /// output node alone.
 ///
 /// One bottom-up pass per level marks the cells of `lefts x rights` that the
-/// level's nodes cover, in a bitmap held in engine scratch, and the fill node
-/// is read off the zero bits. The walk also records, per leaf child, whether
-/// the level refers to it as `One` or as `Pos`/`Neg`, and the fill is emitted
-/// in that same form. `filled[t]` is set for each level `t` it adds a node
-/// to, as the level's last.
+/// level's nodes cover, a byte per cell held in engine scratch, and the fill
+/// node is read off the cells left unmarked. The walk also records, per leaf
+/// child, whether the level refers to it as `One` or as `Pos`/`Neg`, and the
+/// fill is emitted in that same form. `filled[t]` is set for each level `t`
+/// it adds a node to, as the level's last.
 pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd, filled: &mut [bool]) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
-    let mut bits = scratch.cover.checkout_preserving(eng);
+    let mut marked = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
 
-    expand_full_with(eng, tdd, &mut bits, &mut cells, filled)
+    expand_full_with(eng, tdd, &mut marked, &mut cells, filled)
 }
 
 /// [`expand_full`] with the scratch checked out.
 fn expand_full_with(
     eng: &Engine,
     tdd: &mut Tdd,
-    bits: &mut Vec<u64>,
+    marked: &mut Vec<u8>,
     cells: &mut Vec<ChildPair>,
     filled: &mut [bool],
 ) -> Result<(), OperationError> {
@@ -257,7 +257,7 @@ fn expand_full_with(
             // missing.
             if covered == (lefts.len() * rights.len()) as u64 {
                 #[cfg(debug_assertions)]
-                debug_assert!(missing_by_cover(eng, bits, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
+                debug_assert!(missing_by_cover(eng, marked, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
                 charge_pairs(eng, pairs)?;
                 eng.limits().check_stop()?;
                 continue;
@@ -269,7 +269,7 @@ fn expand_full_with(
                     cells.clear();
                     fill_lines_into(eng, lefts, rights, fill, form, cells)?;
                     #[cfg(debug_assertions)]
-                    debug_assert_eq!(*cells, missing_by_cover(eng, bits, level, lefts, rights, form)?, "negate: the lines of the added nodes are not the cells no pair covers");
+                    debug_assert_eq!(*cells, missing_by_cover(eng, marked, level, lefts, rights, form)?, "negate: the lines of the added nodes are not the cells no pair covers");
                     level.push_node(eng.limits(), cells)?;
                     filled[t.idx()] = true;
                 }
@@ -280,7 +280,7 @@ fn expand_full_with(
 
         // Mark the cells the pairs cover and read the fill off the rest, in
         // the level's form.
-        let mut cover = Cover::reset(eng, bits, lefts, rights, form)?;
+        let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
         cover.mark_level(eng, level, pairs)?;
         cells.clear();
         cover.missing_into(eng, cells)?;
@@ -370,13 +370,13 @@ fn old_cells(lefts: ChildBasis, rights: ChildBasis, fill: [Option<u32>; 2]) -> u
 #[cfg(debug_assertions)]
 fn missing_by_cover(
     eng: &Engine,
-    bits: &mut Vec<u64>,
+    marked: &mut Vec<u8>,
     level: &TddLevel,
     lefts: ChildBasis,
     rights: ChildBasis,
     form: LeafForm,
 ) -> Result<Vec<ChildPair>, OperationError> {
-    let mut cover = Cover::reset(eng, bits, lefts, rights, form)?;
+    let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
     cover.mark_pairs((0..level.node_count()).flat_map(|i| level.pairs_iter_of_idx(i)));
     let mut out = Vec::new();
     cover.missing_into(eng, &mut out)?;
@@ -523,11 +523,11 @@ impl LeafForm {
 
 /// A walk's marking of a [`Cover`] ([`Cover::marks`]).
 struct Marks<'b> {
-    bits: &'b mut [u64],
+    marked: &'b mut [u8],
     lefts: ChildBasis,
     rights: ChildBasis,
     stride: usize,
-    /// `lefts.start * stride + rights.start`: cell `(l, r)` is bit
+    /// `lefts.start * stride + rights.start`: cell `(l, r)` is byte
     /// `l * stride + r - origin`.
     origin: usize,
 }
@@ -550,20 +550,22 @@ impl Marks<'_> {
             "negate: a pair names a cell outside its basis"
         );
         let cell = (l as usize * self.stride + r as usize).wrapping_sub(self.origin);
-        self.bits[cell >> 6] |= 1u64 << (cell & 63);
+        self.marked[cell] = 1;
     }
 }
 
-/// A bitmap over one level's `lefts x rights` basis in the level's leaf
-/// form: cell `(l, r)` is bit `(l - lefts.start) * rights.len() + (r -
-/// rights.start)`, where a leaf side named `One` has the one index `One`,
-/// standing for the `{Pos, Neg}` couple its every pair covers.
+/// A byte per cell of one level's `lefts x rights` basis in the level's
+/// leaf form, 1 where a pair covers the cell: cell `(l, r)` is byte `(l -
+/// lefts.start) * rights.len() + (r - rights.start)`, where a leaf side
+/// named `One` has the one index `One`, standing for the `{Pos, Neg}`
+/// couple its every pair covers.
 ///
-/// The basis is what a fill node or a complement enumerates, and it is
-/// quadratic in the child widths, so the cover is kept at a bit per cell
-/// rather than an entry per cell.
+/// A cell is marked by one store, where a bit would be read, set and
+/// written back, and the levels a negation covers are nearly full, their
+/// pairs most of their cells. The completion of the level holds a pair of
+/// eight bytes for every cell, so the cover is at most an eighth of it.
 struct Cover<'a> {
-    bits: &'a mut Vec<u64>,
+    marked: &'a mut Vec<u8>,
     lefts: ChildBasis,
     rights: ChildBasis,
     /// `rights.len()`, the row stride.
@@ -573,11 +575,11 @@ struct Cover<'a> {
 }
 
 impl<'a> Cover<'a> {
-    /// Clear `bits` and size it for the `lefts x rights` basis, a leaf side
+    /// Clear `marked` and size it for the `lefts x rights` basis, a leaf side
     /// the level names `One` (`form`) as that one index.
     fn reset(
         eng: &Engine,
-        bits: &'a mut Vec<u64>,
+        marked: &'a mut Vec<u8>,
         lefts: ChildBasis,
         rights: ChildBasis,
         form: LeafForm,
@@ -586,11 +588,11 @@ impl<'a> Cover<'a> {
         let one = ChildBasis { start: ONE_LEAF_IDX.0, end: ONE_LEAF_IDX.0 + 1 };
         let (lefts, rights) = (if form.left_one { one } else { lefts }, if form.right_one { one } else { rights });
         let len = lefts.len() * rights.len();
-        bits.clear();
+        marked.clear();
         // And the cell past the basis, which a walk marks for a node it
         // reads no pair of ([`mark_level`](Self::mark_level)).
-        eng.limits().try_resize(bits, (len + 1).div_ceil(64), 0u64)?;
-        Ok(Cover { bits, lefts, rights, stride: rights.len(), len })
+        eng.limits().try_resize(marked, len + 1, 0u8)?;
+        Ok(Cover { marked, lefts, rights, stride: rights.len(), len })
     }
 
     /// Mark the cells of every pair of `level`'s nodes, `pairs` of them,
@@ -630,13 +632,13 @@ impl<'a> Cover<'a> {
         pairs.for_each(|pair| marks.pair(pair));
     }
 
-    /// The cover's bitmap and basis for a walk to mark, held apart from it
+    /// The cover's bytes and basis for a walk to mark, held apart from it
     /// so that the walk keeps them in registers.
     #[inline(always)]
     fn marks(&mut self) -> Marks<'_> {
-        debug_assert!(self.bits.len() * 64 > self.len, "the cover has the cell past its basis");
+        debug_assert!(self.marked.len() > self.len, "the cover has the cell past its basis");
         let origin = self.lefts.start as usize * self.stride + self.rights.start as usize;
-        Marks { bits: &mut self.bits[..], lefts: self.lefts, rights: self.rights, stride: self.stride, origin }
+        Marks { marked: &mut self.marked[..], lefts: self.lefts, rights: self.rights, stride: self.stride, origin }
     }
 
     /// Append the unmarked cells to `out`, in ascending `(l, r)` order, a
@@ -649,21 +651,25 @@ impl<'a> Cover<'a> {
     /// the scan ([`charge_scan`]).
     fn missing_into(&self, eng: &Engine, out: &mut Vec<ChildPair>) -> Result<(), OperationError> {
         let lim = eng.limits();
-        let words = self.len.div_ceil(64);
-        for (w, &word) in self.bits[..words].iter().enumerate() {
-            let base = w * 64;
-            let mut missing = !word;
-            // The last word runs past the basis; those bits are not cells.
-            let width = (self.len - base).min(64);
-            if width < 64 {
-                missing &= (1u64 << width) - 1;
-            }
+        let mut push = |cell: usize| {
+            let l = self.lefts.start + (cell / self.stride) as u32;
+            let r = self.rights.start + (cell % self.stride) as u32;
+            lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))
+        };
+        // Eight cells a word: a marked cell's byte is 1, so the low bit of
+        // each byte of the word's complement is set where a cell is missing.
+        let (body, tail) = self.marked[..self.len].split_at(self.len & !7);
+        for (w, chunk) in body.chunks_exact(8).enumerate() {
+            let word = u64::from_le_bytes(chunk.try_into().expect("a chunk of eight"));
+            let mut missing = !word & 0x0101_0101_0101_0101;
             while missing != 0 {
-                let cell = base + missing.trailing_zeros() as usize;
+                push(w * 8 + (missing.trailing_zeros() >> 3) as usize)?;
                 missing &= missing - 1;
-                let l = self.lefts.start + (cell / self.stride) as u32;
-                let r = self.rights.start + (cell % self.stride) as u32;
-                lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
+            }
+        }
+        for (i, &byte) in tail.iter().enumerate() {
+            if byte == 0 {
+                push(body.len() + i)?;
             }
         }
         Ok(())
