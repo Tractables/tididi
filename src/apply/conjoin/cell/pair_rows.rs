@@ -87,46 +87,106 @@ where
     let lim = eng.limits();
     let right_width = ctx.right_width;
     debug_assert!(right_width <= ROW_COLUMNS_MAX_WIDTH);
-    let low = |n: usize| (1u64 << n) - 1;
 
     // g's pairs in column order; each column's as a mask of their bits, and
     // each pair's column. The f rows' buffer decodes a column the table
     // does not hold.
     g_flat.clear();
     lim.reserve_exact(g_flat, ROW_COLUMNS_MAX_WIDTH)?;
-    let mut cols = [0u64; ROW_COLUMNS_MAX_WIDTH];
-    let mut col_of = [0u8; ROW_COLUMNS_MAX_WIDTH];
-    for (j, col) in cols.iter_mut().enumerate().take(right_width) {
+    let mut columns = Columns {
+        g_flat: &[],
+        cols: [0; ROW_COLUMNS_MAX_WIDTH],
+        col_of: [0; ROW_COLUMNS_MAX_WIDTH],
+        col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
+        charge_of: [0; 1 << CHARGE_TABLE_COLUMNS],
+        tabled: false,
+    };
+    for (j, col) in columns.cols.iter_mut().enumerate().take(right_width) {
         let start = g_flat.len();
         g_flat.extend_from_slice(column_pairs(ctx, g_level, j, f_scratch));
         debug_assert!(g_flat.len() <= ROW_COLUMNS_MAX_WIDTH, "a level read by pairs fits");
         *col = low(g_flat.len()) & !low(start);
-        col_of[start..g_flat.len()].fill(j as u8);
+        columns.col_of[start..g_flat.len()].fill(j as u8);
     }
-    let g_flat = &g_flat[..];
+    columns.g_flat = &g_flat[..];
     // Where every column holds one pair, pair `q` is column `q`'s, and a
     // word of pairs is a word of their columns.
-    let one_pair = g_flat.len() == right_width && cols[..right_width].iter().all(|c| c.count_ones() == 1);
+    let one_pair = g_flat.len() == right_width && columns.cols[..right_width].iter().all(|c| c.count_ones() == 1);
     // The number of g pairs of a set of columns, which a row's charge
     // counts: off a table of every set where the level has few columns and
     // rows enough to pay for it, else column by column.
-    let mut col_pairs = [0u8; ROW_COLUMNS_MAX_WIDTH];
-    for (n, col) in col_pairs.iter_mut().zip(&cols[..right_width]) {
+    for (n, col) in columns.col_pairs.iter_mut().zip(&columns.cols[..right_width]) {
         *n = col.count_ones() as u8;
     }
-    let tabled = right_width <= CHARGE_TABLE_COLUMNS
+    columns.tabled = right_width <= CHARGE_TABLE_COLUMNS
         && (1 << right_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
-    let mut charge_of = [0u8; 1 << CHARGE_TABLE_COLUMNS];
-    if tabled {
+    if columns.tabled {
         for set in 1..1usize << right_width {
-            charge_of[set] = charge_of[set & (set - 1)] + col_pairs[set.trailing_zeros() as usize];
+            columns.charge_of[set] = columns.charge_of[set & (set - 1)] + columns.col_pairs[set.trailing_zeros() as usize];
         }
     }
+    super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
+    let rows = PairRows { f_level, ctx, f_width, columns: &columns };
+    match one_pair {
+        true => pair_rows_of::<true, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
+        false => pair_rows_of::<false, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
+    }
+}
+
+/// The low `n` bits.
+#[inline(always)]
+fn low(n: usize) -> u64 {
+    (1u64 << n) - 1
+}
+
+/// A level's g pairs in column order, and what the row loop reads off them.
+struct Columns<'a> {
+    g_flat: &'a [ChildPair],
+    /// Each column's pairs, as a mask of their bits.
+    cols: [u64; ROW_COLUMNS_MAX_WIDTH],
+    /// Each pair's column.
+    col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
+    /// Each column's number of pairs.
+    col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
+    /// The number of pairs of each set of columns, where `tabled`.
+    charge_of: [u8; 1 << CHARGE_TABLE_COLUMNS],
+    tabled: bool,
+}
+
+/// What the row loop of a level read by pairs reads.
+#[derive(Clone, Copy)]
+struct PairRows<'a> {
+    f_level: &'a TddLevel,
+    ctx: &'a CellCtx<'a>,
+    f_width: usize,
+    columns: &'a Columns<'a>,
+}
+
+/// The row loop of [`pair_rows`], `ONE` where every column holds one pair.
+fn pair_rows_of<const ONE: bool, L, R, S>(
+    eng: &Engine,
+    rows: PairRows<'_>,
+    f_scratch: &mut Vec<ChildPair>,
+    slab: &mut Vec<u32>,
+    left: &L,
+    right: &R,
+    sink: &mut S,
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
+    let PairRows { f_level, ctx, f_width, columns } = rows;
+    let Columns { g_flat, cols, col_of, col_pairs, charge_of, tabled } = columns;
+    let (g_flat, tabled) = (*g_flat, *tabled);
+    let lim = eng.limits();
+    let right_width = ctx.right_width;
     let pairs_in = |s: u64| -> u64 {
         if tabled {
             return u64::from(charge_of[s as usize]);
         }
-        if one_pair {
+        if ONE {
             return u64::from(s.count_ones());
         }
         let (mut s, mut n) = (s, 0u64);
@@ -136,7 +196,6 @@ where
         }
         n
     };
-    super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let all = ROW_LIVE | low(g_flat.len());
     let (left_words, right_words) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
     debug_assert!(!left.kills() || ctx.sides.left.reach.iter().zip(g_flat).all(|(&r, q)| r == 1u128 << q.left.0));
@@ -145,7 +204,7 @@ where
     let word_right = |p: &ChildPair| if right.kills() { right_words[p.right.raw() as usize] } else { all };
     // The columns with a pair among the bits of `s`.
     let reached = |s: u64| {
-        if one_pair {
+        if ONE {
             return s & !ROW_LIVE;
         }
         let (mut s, mut out) = (s & !ROW_LIVE, 0u64);
@@ -212,11 +271,11 @@ where
         // The cells the masks enter, charged with the row's width; the
         // live ones among them.
         let entered = reached(l) & reached(r);
-        let n1 = f_pairs.len() as u64;
+        let n1 = f_pairs.len();
         debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
-        poll.poll(n1 * pairs_in(entered) + right_width as u64)?;
+        poll.poll(n1 as u64 * pairs_in(entered) + right_width as u64)?;
         let live = live & !ROW_LIVE;
-        let ands = if few { &ands[..f_pairs.len()] } else { &many[..] };
+        let ands = if few { &ands[..n1] } else { &many[..] };
         let mut cells = reached(live);
         debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
         while cells != 0 {
@@ -224,11 +283,36 @@ where
             cells &= cells - 1;
             let col = cols[j];
             let grid_pos = row_base + j;
-            if n1 == 1 && col & (col - 1) == 0 {
+            if n1 == 1 && (ONE || col & (col - 1) == 0) {
                 let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
                 let lc = left.get(node_idx, p.left.0, q.left.0);
                 let rc = right.get(node_idx, p.right.0, q.right.0);
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
+                continue;
+            }
+            // Every candidate of the cell an AND keeps survives.
+            let bound = if ONE { n1 } else { n1 * usize::from(col_pairs[j]) };
+            if let Some(mut cell) = sink.open_cell(bound) {
+                for (p, &and) in f_pairs.iter().zip(ands) {
+                    let mut m = and & col;
+                    if ONE {
+                        if m != 0 {
+                            let q = &g_flat[j];
+                            // Safety: the cell was opened for a pair an f pair.
+                            unsafe { cell.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
+                        }
+                        continue;
+                    }
+                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                    while m != 0 {
+                        let q = &g_flat[m.trailing_zeros() as usize];
+                        m &= m - 1;
+                        // Safety: the cell was opened for each f pair
+                        // against each of the column's pairs.
+                        unsafe { cell.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
+                    }
+                }
+                cell.close(eng, node_idx, grid_pos)?;
                 continue;
             }
             let start = sink.begin();
@@ -237,7 +321,7 @@ where
                 if m == 0 {
                     continue;
                 }
-                if one_pair {
+                if ONE {
                     let q = &g_flat[j];
                     sink.pair(eng, left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
                     continue;
