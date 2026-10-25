@@ -1,8 +1,8 @@
 //! Levels whose candidates outnumber their operands' pairs several times
 //! over: a level of many f nodes of a few pairs each, and a root of one
 //! node a side walked by outer key. The walk grows the level's pair arena
-//! to its projected candidates instead of doubling it at each fill, and
-//! the level is the dense grid's.
+//! once, to its projected candidates, instead of doubling it at each fill,
+//! and the level is the dense grid's.
 use std::sync::Arc;
 
 use super::inner_index::{block, pack};
@@ -68,9 +68,9 @@ fn a_level_of_many_more_candidates_than_pairs_grows_its_arena_once() {
     let (from_dense, _) = crossed_join(&Engine::new(), &vtree, dense);
     assert!(from_sparse.equivalent(&from_dense).unwrap());
     // Eight pairs a node against a seed of f's 512 pairs: doubling would
-    // grow the arena three times.
+    // grow the arena three times, the projection grows it once.
     assert_eq!(from_sparse.levels[ab.idx()].live_pairs(), 64 * 63);
-    assert!(levels.contains(&(ab, Route::Sparse, 0)), "the level's arena outgrew its projection: {levels:?}");
+    assert!(levels.contains(&(ab, Route::Sparse, 1)), "the level's arena grew more than once: {levels:?}");
 }
 
 /// `f = c ≠ a` and `g = c ≠ b` on `((a b) c)`, with each level's route
@@ -107,7 +107,7 @@ fn root_join(eng: &Engine, vtree: &Arc<Vtree>, thresholds: SparseThresholds) -> 
 }
 
 #[test]
-fn a_root_of_many_more_candidates_than_pairs_grows_only_by_projection() {
+fn a_root_of_many_more_candidates_than_pairs_grows_its_arena_once() {
     let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
     let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
     let vtree = vtree();
@@ -116,7 +116,8 @@ fn a_root_of_many_more_candidates_than_pairs_grows_only_by_projection() {
     let (from_dense, _) = root_join(&Engine::new(), &vtree, dense);
     assert!(from_sparse.equivalent(&from_dense).unwrap());
     // About 63 candidates an f pair against a seed of 4,032 pairs: doubling
-    // would grow the arena six times.
+    // would grow the arena six times, a projection held to eight times the
+    // arena's capacity twice.
     assert_eq!(from_sparse.levels[root.idx()].live_pairs(), 254_016);
-    assert!(levels.contains(&(root, Route::Sparse, 0)), "the root's arena outgrew its projection: {levels:?}");
+    assert!(levels.contains(&(root, Route::Sparse, 1)), "the root's arena grew more than once: {levels:?}");
 }

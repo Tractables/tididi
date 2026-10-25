@@ -98,8 +98,8 @@ fn count_complete(kind: usize) {
 }
 
 thread_local! {
-    /// The times a level's pairs arena outgrew its capacity on this thread
-    /// ([`pairs_grown`]).
+    /// The times a level's pairs arena grew on this thread, filled or ahead
+    /// of a projection ([`pairs_grown`]).
     static GROWN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -107,8 +107,7 @@ pub(super) fn note_pairs_grown() {
     GROWN.with(|n| n.set(n.get() + 1));
 }
 
-/// The times a level's pairs arena outgrew its capacity on this thread so
-/// far.
+/// The times a level's pairs arena grew on this thread so far.
 pub(super) fn pairs_grown() -> u64 {
     GROWN.with(std::cell::Cell::get)
 }
@@ -129,7 +128,7 @@ pub(super) fn note_route(t: VtreeIdx, route: Route) {
 }
 
 /// Run `f` and list each level it built, in build order, with its route and
-/// the times its pairs arena outgrew its capacity.
+/// the times its pairs arena grew.
 pub(super) fn levels_built<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route, u64)>) {
     struct Reset(Option<Vec<(VtreeIdx, Route, u64)>>);
     impl Drop for Reset {

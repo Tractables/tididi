@@ -245,11 +245,11 @@ fn try_for_each_walked<E>(
 /// walk has passed one in [`PROJECT_AFTER`] of the pairs it walks, an
 /// arena too full for the next stretch's share of candidates is grown to
 /// the level's projected candidates, the candidates so far scaled by the
-/// pairs left, and an eighth more, at most eight times its capacity at
-/// once, where doubling would copy it once per doubling. The walk of a
-/// level's nodes projects before each node; a level of one product has one
-/// f node, and its walk projects before each stretch of its pairs or each
-/// outer key's.
+/// pairs left, and an eighth more, in one step where doubling would copy
+/// it once per doubling. The projection is at most [`PROJECT_AFTER`] times
+/// the candidates so far. The walk of a level's nodes projects before each
+/// node; a level of one product has one f node, and its walk projects
+/// before each stretch of its pairs or each outer key's.
 struct Projection {
     /// The arena's length when the walk began.
     start: usize,
@@ -300,13 +300,14 @@ impl Projection {
         let projected = (made as u128 * total as u128 / done as u128) as usize;
         let next = (2 * made as u128 * pairs as u128 / done as u128) as usize;
         let v = level.pairs.stored_mut();
-        let want = projected.saturating_add(projected / 8).saturating_sub(made).max(next).min(v.capacity().saturating_mul(8));
+        let want = projected.saturating_add(projected / 8).saturating_sub(made).max(next);
         let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
         if want <= v.capacity() - v.len() || bytes >= lim.headroom() {
             return;
         }
         let before = v.capacity();
         if lim.reserve_exact(v, want).is_ok() {
+            crate::apply::conjoin::note_pairs_grown();
             lim.charge_output_pairs(v.capacity().saturating_sub(before));
         }
     }

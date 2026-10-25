@@ -858,7 +858,7 @@ fn one_sided_masks_forced_off() -> bool {
 #[inline(always)]
 fn note_one_sided_masks() {}
 
-// A test counts the times a level's pairs arena outgrew its capacity.
+// A test counts the times a level's pairs arena grew.
 #[cfg(test)]
 use tests::note_pairs_grown;
 
