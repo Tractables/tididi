@@ -11,6 +11,10 @@ use super::{mix64, pack, split_pair};
 /// The class of a node known to have no twin.
 const ALONE: u32 = u32::MAX;
 
+/// The bit of a class's `dest` that marks it, in a split by codes, as
+/// meeting two codes or more, above where its row starts.
+const MIXED: u32 = 1 << 31;
+
 /// An empty cell of the table a wide parent node's runs are grouped in,
 /// and the end of a group's chain of runs.
 const NO_RUN: u32 = u32::MAX;
@@ -715,10 +719,12 @@ impl Partition<'_> {
                 touched.push(kept as u32);
             }
             // Two or more siblings of few that keep a node: their nodes'
-            // classes are read once, by code.
-            if siblings <= FEW_SIBLINGS && touched.len() >= 2 {
-                let split = self.split_by_codes(lim, pairs, side, bucket, seen, met, code, rows)?;
-                debug_assert!(split, "a parent node of few siblings is split by codes");
+            // classes are read once, by code. With no fifth sibling, the
+            // split by codes refuses only before it reads a pair.
+            if siblings <= FEW_SIBLINGS
+                && touched.len() >= 2
+                && self.split_by_codes(lim, pairs, side, bucket, seen, met, code, touched, rows)?
+            {
                 return Ok(());
             }
             let mut from = 0;
@@ -728,7 +734,7 @@ impl Partition<'_> {
             }
             return Ok(());
         }
-        if self.split_by_codes(lim, pairs, side, bucket, seen, met, code, rows)? {
+        if self.split_by_codes(lim, pairs, side, bucket, seen, met, code, touched, rows)? {
             return Ok(());
         }
         touched.clear();
@@ -778,18 +784,18 @@ impl Partition<'_> {
     /// splits into its members of each code and its members the node does
     /// not name, as one split per sibling leaves it, with each named node's
     /// class read once rather than once per sibling. Returns `false`, with
-    /// nothing changed, where a fifth sibling shows up.
+    /// nothing changed, where a fifth sibling shows up or the parent node
+    /// holds 2^27 pairs or more.
     ///
     /// The first pass reads each pair's sibling against the siblings met so
     /// far, held in registers, ORs its bit into the node's code and lists
-    /// the node at its first pair, in `bucket`. The second reads each
-    /// listed node's class, numbering the classes met that can have a twin
-    /// in their `hits`, the third counts each class's members by code in a
-    /// row of `rows`, and the counts then become each code's class: a code
-    /// of one member leaves the partition, the first code of two or more of
-    /// a class whose members are all named keeps the class, and every other
-    /// code of two or more is a class of its own. The last pass moves the
-    /// nodes and clears their codes and the classes' `hits`.
+    /// the node at its first pair, in `bucket`. The second takes each listed
+    /// node's code, into `codes`, and reads its class: a class met keeps the
+    /// first code it meets in `dest` and counts its members in `hits`, and
+    /// only a class that meets a second code counts its members by code, in
+    /// a row of `rows`. Each class met then gets the class its members of
+    /// each code move to, as [`Partition::split_sibling`] gives them, and
+    /// where some node moves the last pass moves the nodes.
     #[allow(clippy::too_many_arguments)]
     fn split_by_codes(
         &mut self,
@@ -800,8 +806,13 @@ impl Partition<'_> {
         seen: &mut [u32],
         met: &mut Vec<u32>,
         code: &mut [u8],
+        codes: &mut Vec<u32>,
         rows: &mut Vec<u32>,
     ) -> Result<bool, OperationError> {
+        // Where every row starts is below `MIXED`.
+        if pairs.len() >= 1 << 27 {
+            return Ok(false);
+        }
         let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
         // The slots in use, one bit each.
         let (mut d, mut used) = (1usize, 1u8);
@@ -831,8 +842,21 @@ impl Partition<'_> {
             *e |= bit;
         }
         let nodes = &bucket[..listed];
+        // A class that meets two codes has two members or more here.
+        let stride = 1usize << d;
+        rows.clear();
+        if let Err(e) = lim.reserve_exact(rows, listed / 2 * stride) {
+            for &t in nodes {
+                code[t as usize] = 0;
+            }
+            return Err(e);
+        }
+        // Within the reserve of one entry a pair.
+        codes.clear();
         met.clear();
         for (&t, seen) in nodes.iter().zip(seen.iter_mut()) {
+            let e = u32::from(std::mem::take(&mut code[t as usize]));
+            codes.push(e);
             let c = self.of(t);
             *seen = ALONE;
             if !self.can_twin(c) {
@@ -841,32 +865,42 @@ impl Partition<'_> {
             *seen = c;
             let k = &mut self.classes[c as usize];
             if k.hits == 0 {
-                // Within the reserve of one class a pair.
                 met.push(c);
-                k.hits = met.len() as u32;
+                k.dest = e;
+            } else if k.dest != e {
+                if k.dest & MIXED == 0 {
+                    let row = rows.len();
+                    rows.resize(row + stride, 0);
+                    rows[row + k.dest as usize] = k.hits;
+                    k.dest = MIXED | row as u32;
+                }
+                rows[(k.dest ^ MIXED) as usize + e as usize] += 1;
             }
+            k.hits += 1;
         }
-        let stride = 1usize << d;
-        rows.clear();
-        if let Err(e) = lim.try_resize(rows, met.len() * stride, 0u32) {
-            for &t in nodes {
-                code[t as usize] = 0;
+        // A class of one code is split as by one sibling, and keeps its
+        // `hits` no more; one of two codes or more moves some member, and
+        // keeps in `hits` one past where its row starts.
+        let mut moves = false;
+        for &c in met.iter() {
+            let k = self.classes[c as usize];
+            if k.dest & MIXED == 0 {
+                let dest = if k.hits == k.size {
+                    c
+                } else if k.hits == 1 {
+                    ALONE
+                } else {
+                    self.fresh(c, k.hits)
+                };
+                let k = &mut self.classes[c as usize];
+                (k.dest, k.hits) = (dest, 0);
+                moves |= dest != c || c == 0;
+                continue;
             }
-            for &c in met.iter() {
-                self.classes[c as usize].hits = 0;
-            }
-            return Err(e);
-        }
-        for (&t, &c) in nodes.iter().zip(seen.iter()) {
-            if c != ALONE {
-                let row = (self.classes[c as usize].hits as usize - 1) * stride;
-                rows[row + code[t as usize] as usize] += 1;
-            }
-        }
-        for (r, &c) in met.iter().enumerate() {
-            let row = &mut rows[r * stride..(r + 1) * stride];
-            let mut keep = row.iter().sum::<u32>() == self.classes[c as usize].size;
-            for cell in row.iter_mut().skip(1) {
+            let row = (k.dest ^ MIXED) as usize;
+            self.classes[c as usize].hits = row as u32 + 1;
+            let mut keep = k.hits == k.size;
+            for cell in &mut rows[row..row + stride] {
                 let members = *cell;
                 if members == 0 {
                     continue;
@@ -880,19 +914,22 @@ impl Partition<'_> {
                     self.fresh(c, members)
                 };
             }
+            moves = true;
         }
-        for (&t, &c) in nodes.iter().zip(seen.iter()) {
-            let e = std::mem::take(&mut code[t as usize]);
-            if c == ALONE {
-                continue;
-            }
-            let row = (self.classes[c as usize].hits as usize - 1) * stride;
-            match rows[row + e as usize] {
-                ALONE => self.alone(t, c),
-                // A node of the first class it names is moved there
-                // anyway, so that it reads as named.
-                dest if dest != c || c == 0 => self.put(t, dest),
-                _ => {}
+        if moves {
+            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(codes.iter()) {
+                if c == ALONE {
+                    continue;
+                }
+                let k = self.classes[c as usize];
+                let dest = if k.hits == 0 { k.dest } else { rows[(k.hits - 1) as usize + e as usize] };
+                match dest {
+                    ALONE => self.alone(t, c),
+                    // A node of the first class it names is moved there
+                    // anyway, so that it reads as named.
+                    dest if dest != c || c == 0 => self.put(t, dest),
+                    _ => {}
+                }
             }
         }
         for &c in met.iter() {

@@ -290,8 +290,8 @@ pub(crate) struct ContractScratch {
     /// Per child node, the siblings of few a wide parent node pairs it with,
     /// one bit each; zero between parent nodes.
     pub(super) refine_code: Vec<u8>,
-    /// Per class a wide parent node of few siblings meets, its members
-    /// counted by code, then each code's class.
+    /// Per class a wide parent node of few siblings meets with two codes or
+    /// more, its members counted by code, then each code's class.
     pub(super) refine_rows: Vec<u32>,
     /// Per degree, the nodes of that degree there; zero between parent
     /// nodes.
@@ -445,10 +445,12 @@ impl Buffers for ContractScratch {
 pub(super) struct ClassInfo {
     /// Its members.
     pub(super) size: u32,
-    /// Its members one sibling of a wide parent node meets; zero between
-    /// siblings.
+    /// Its members one split of a wide parent node meets, and after the
+    /// count in a split by codes where its row starts, plus one, if it has
+    /// a row; zero between splits.
     pub(super) hits: u32,
-    /// The class those members move to.
+    /// The class those members move to; while a split by codes counts, the
+    /// first code it meets, or where its row starts.
     pub(super) dest: u32,
     /// Where its group's next member goes in `flat_groups` once the groups
     /// are listed; `u32::MAX` before.
