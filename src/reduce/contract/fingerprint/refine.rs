@@ -245,7 +245,7 @@ struct Partition<'a> {
 
 impl Partition<'_> {
     /// Node `t`'s class, or [`ALONE`].
-    #[inline]
+    #[inline(always)]
     fn of(&self, t: u32) -> u32 {
         let ([moved, alone], b) = (self.bits[(t / 64) as usize], 1u64 << (t % 64));
         if moved & b == 0 {
@@ -265,7 +265,7 @@ impl Partition<'_> {
 
     /// Take node `t` out of its class `c`: it has no twin, nor has the last
     /// node left in `c`.
-    #[inline]
+    #[inline(always)]
     fn alone(&mut self, t: u32, c: u32) {
         let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
         let members = self.classes[c as usize].size;
@@ -281,7 +281,7 @@ impl Partition<'_> {
     }
 
     /// Take node `t` out of its class, if it has one.
-    #[inline]
+    #[inline(always)]
     fn leave(&mut self, t: u32) {
         let c = self.of(t);
         if c != ALONE {
@@ -290,7 +290,7 @@ impl Partition<'_> {
     }
 
     /// Put node `t` in class `id`.
-    #[inline]
+    #[inline(always)]
     fn put(&mut self, t: u32, id: u32) {
         self.class[t as usize] = id;
         self.bits[(t / 64) as usize][0] |= 1 << (t % 64);
@@ -298,7 +298,7 @@ impl Partition<'_> {
 
     /// A new class for `members` nodes taken out of class `c`, which the
     /// caller puts there.
-    #[inline]
+    #[inline(always)]
     fn fresh(&mut self, c: u32, members: u32) -> u32 {
         self.classes[c as usize].size -= members;
         if self.classes[c as usize].size == 1 {
@@ -312,7 +312,7 @@ impl Partition<'_> {
 
     /// A parent node of two pairs: two nodes of one class with one sibling
     /// each, the same, are a group; every other node is alone in its group.
-    #[inline]
+    #[inline(always)]
     fn split_two(&mut self, pairs: &[ChildPair], side: ChildSide) {
         let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
         if t0 == t1 {
@@ -328,7 +328,7 @@ impl Partition<'_> {
     /// nodes of two siblings each are split as [`split_two`](Self::split_two)
     /// splits two of one. Returns false, having changed nothing, where the
     /// pairs name three nodes or more.
-    #[inline]
+    #[inline(always)]
     fn split_few(&mut self, pairs: &[ChildPair], side: ChildSide) -> bool {
         let (a, s) = split_pair(&pairs[0], side);
         let mut b = a;
@@ -366,7 +366,7 @@ impl Partition<'_> {
     /// Two distinct nodes of one parent node, `same` where their siblings
     /// there are the same: they are a group if they are of one class, and
     /// each is alone in its group otherwise.
-    #[inline]
+    #[inline(always)]
     fn split_nodes(&mut self, t0: u32, t1: u32, same: bool) {
         let (c0, c1) = (self.of(t0), self.of(t1));
         if !same || c0 != c1 || c0 == ALONE {
