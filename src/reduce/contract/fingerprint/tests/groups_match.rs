@@ -472,7 +472,8 @@ fn classes_are_split_by_later_contexts() {
 /// degrees, and some wide parent nodes name every member but one of a
 /// class. The search finds the groups a listing of every node's contexts
 /// gives, on either side. Their pairs come in node order, where the
-/// degree split reads them, in sibling order or shuffled.
+/// degree split reads those of more than four siblings, in sibling order or
+/// shuffled.
 #[test]
 fn nested_wide_nodes_are_split_by_degree() {
     let eng = Engine::new();
@@ -519,7 +520,7 @@ fn nested_wide_nodes_are_split_by_degree() {
                     }
                     for _ in 0..2 + rng.below(8) {
                         let class = classes[rng.below(classes.len() as u64) as usize];
-                        let d = 1 + rng.below(u64::from(siblings.min(4))) as usize;
+                        let d = 1 + rng.below(u64::from(siblings.min(8))) as usize;
                         let skip = if class.len() > 2 && rng.below(4) == 0 { rng.below(class.len() as u64) as usize } else { usize::MAX };
                         for (j, &t) in class.iter().enumerate() {
                             if j != skip {
@@ -661,12 +662,13 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
     assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
 }
 
-/// Wide parent nodes whose pairs come shuffled, neither by node nor by
-/// sibling, over one to six siblings, on planted twin classes: each class a
-/// parent node names gets a set of siblings, given to all its members, to
-/// all but one, to one, or split between two codes, so that the classes
-/// split into their members of each code and the rest. Parent nodes of up
-/// to four siblings are split by codes, wider ones by the sibling buckets.
+/// Wide parent nodes over one to six siblings, on planted twin classes:
+/// each class a parent node names gets a set of siblings, given to all its
+/// members, to all but one, to one, or split between two codes, so that
+/// the classes split into their members of each code and the rest. Their
+/// pairs come in node order, in sibling order, or shuffled. Parent nodes of
+/// up to four siblings are split by codes, by their runs' where their pairs
+/// come in node order, and wider ones by degree or by the sibling buckets.
 /// The search finds the groups a listing of every node's contexts gives,
 /// on either side.
 #[test]
@@ -743,9 +745,7 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
                 }
                 pairs.sort_unstable();
                 pairs.dedup();
-                for i in (1..pairs.len()).rev() {
-                    pairs.swap(i, rng.below(i as u64 + 1) as usize);
-                }
+                reorder(&mut pairs, p / 4, &mut rng);
                 if pairs.len() > refine::SMALL_PAIRS {
                     let named: HashSet<u32> = pairs.iter().map(|&(_, s)| s).collect();
                     if named.len() <= 4 {

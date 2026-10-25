@@ -529,10 +529,12 @@ impl Partition<'_> {
     }
 
     /// A parent node of more than [`SMALL_PAIRS`] pairs. One whose pairs
-    /// come in node order is first split by degree
-    /// ([`Self::split_by_degree`]), which settles it where its nodes'
-    /// sibling sets are nested, and one whose pairs do not is split sibling
-    /// by sibling ([`Self::split_by_siblings`]). Else the pairs
+    /// come in node order is split by its runs' codes where it names at
+    /// most [`FEW_SIBLINGS`] siblings ([`Self::split_by_run_codes`]), and
+    /// else first split by degree ([`Self::split_by_degree`]), which settles
+    /// it where its nodes' sibling sets are nested; one whose pairs do not
+    /// come in node order is split sibling by sibling
+    /// ([`Self::split_by_siblings`]). Else the pairs
     /// of its nodes not alone are sorted in `keys`, so that each node's
     /// siblings are a run in ascending order; each run of a node that can
     /// have a twin keyed by its node's class and a hash of its siblings,
@@ -547,10 +549,15 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
+        match self.split_by_run_codes(lim, pairs, side, wide)? {
+            Degrees::Split => return Ok(()),
+            Degrees::Unordered => return self.split_by_siblings(lim, pairs, side, wide),
+            Degrees::Unsettled | Degrees::Many => {}
+        }
         match self.split_by_degree(lim, pairs, side, wide)? {
             Degrees::Split => return Ok(()),
             Degrees::Unordered => return self.split_by_siblings(lim, pairs, side, wide),
-            Degrees::Unsettled => {}
+            Degrees::Unsettled | Degrees::Many => {}
         }
         let Wide { keys, runs, links, table, radix, .. } = wide;
         // Each pair of a node not alone a key of its sibling's bits and its
@@ -889,7 +896,104 @@ impl Partition<'_> {
             listed += usize::from(*e == 0);
             *e |= bit;
         }
-        let nodes = &bucket[..listed];
+        self.split_listed_codes(lim, &bucket[..listed], d, seen, met, code, codes, rows)?;
+        Ok(true)
+    }
+
+    /// A wide parent node whose pairs come in node order and name at most
+    /// [`FEW_SIBLINGS`] siblings, split as [`Self::split_by_codes`] splits
+    /// one, with each run's code formed as it is read: one pass over the
+    /// pairs finds where each run ends and the siblings' bits it ORs, holds
+    /// the siblings met in registers, and lists each node whose alone bit
+    /// is clear with its run's code, so that no node's code is formed in
+    /// memory a pair at a time. Returns [`Degrees::Unordered`] where a node
+    /// comes below the one before, and [`Degrees::Many`] where a fifth
+    /// sibling shows up or the parent node holds 2^27 pairs or more, in
+    /// both cases with nothing changed.
+    fn split_by_run_codes(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        wide: &mut Wide<'_>,
+    ) -> Result<Degrees, OperationError> {
+        let Wide { bucket, seen, met, code, touched: codes, rows, .. } = wide;
+        if pairs.len() >= 1 << 27 {
+            return Ok(Degrees::Many);
+        }
+        lim.try_resize(seen, pairs.len(), 0u32)?;
+        lim.try_resize(bucket, pairs.len(), 0u32)?;
+        met.clear();
+        lim.reserve_exact(met, pairs.len())?;
+        codes.clear();
+        lim.reserve_exact(codes, pairs.len())?;
+        let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
+        let (mut d, mut used) = (1usize, 1u8);
+        let (mut listed, mut last) = (0usize, None);
+        let mut k = 0;
+        let refuse = |code: &mut [u8], nodes: &[u32]| {
+            for &t in nodes {
+                code[t as usize] = 0;
+            }
+        };
+        while k < pairs.len() {
+            let t = split_pair(&pairs[k], side).0;
+            if last.is_some_and(|last| t < last) {
+                refuse(code, &bucket[..listed]);
+                return Ok(Degrees::Unordered);
+            }
+            last = Some(t);
+            let mut e = 0u8;
+            while k < pairs.len() {
+                let (u, s) = split_pair(&pairs[k], side);
+                if u != t {
+                    break;
+                }
+                let hit = u8::from(s == sib[0])
+                    | u8::from(s == sib[1]) << 1
+                    | u8::from(s == sib[2]) << 2
+                    | u8::from(s == sib[3]) << 3;
+                let mut bit = hit & used;
+                if bit == 0 {
+                    if d == FEW_SIBLINGS {
+                        refuse(code, &bucket[..listed]);
+                        return Ok(Degrees::Many);
+                    }
+                    sib[d] = s;
+                    bit = 1 << d;
+                    used |= bit;
+                    d += 1;
+                }
+                e |= bit;
+                k += 1;
+            }
+            if (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 == 0 {
+                code[t as usize] = e;
+                bucket[listed] = t;
+                listed += 1;
+            }
+        }
+        self.split_listed_codes(lim, &bucket[..listed], d, seen, met, code, codes, rows)?;
+        Ok(Degrees::Split)
+    }
+
+    /// The nodes `nodes` of a wide parent node of `d` siblings at most
+    /// [`FEW_SIBLINGS`], each listed once with its code in `code`, split by
+    /// their codes and the codes cleared ([`Self::split_by_codes`]).
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn split_listed_codes(
+        &mut self,
+        lim: &Limits,
+        nodes: &[u32],
+        d: usize,
+        seen: &mut [u32],
+        met: &mut Vec<u32>,
+        code: &mut [u8],
+        codes: &mut Vec<u32>,
+        rows: &mut Vec<u32>,
+    ) -> Result<(), OperationError> {
+        let listed = nodes.len();
         // A class that meets two codes has two members or more here.
         let stride = 1usize << d;
         rows.clear();
@@ -983,7 +1087,7 @@ impl Partition<'_> {
         for &c in met.iter() {
             self.classes[c as usize].hits = 0;
         }
-        Ok(true)
+        Ok(())
     }
 
     /// Split every class by the `nodes` one sibling is paired with: a class
@@ -1077,8 +1181,8 @@ impl Partition<'_> {
     }
 }
 
-/// What a degree split of a wide parent node did
-/// ([`Partition::split_by_degree`]).
+/// What a split of a wide parent node by its runs' codes or degrees did
+/// ([`Partition::split_by_run_codes`], [`Partition::split_by_degree`]).
 enum Degrees {
     /// The parent node is split.
     Split,
@@ -1088,6 +1192,9 @@ enum Degrees {
     Unsettled,
     /// Its pairs do not come in node order, and nothing is changed.
     Unordered,
+    /// Its pairs name more than [`FEW_SIBLINGS`] siblings, or it holds too
+    /// many pairs, for a split by codes, and nothing is changed.
+    Many,
 }
 
 /// The most siblings a wide parent node's pairs name for its nodes to be
