@@ -184,8 +184,9 @@ impl DuplicateScratch {
 #[derive(Default)]
 pub(super) struct MergeRemap {
     /// Maps old node index → the new index of its survivor (its own, for a
-    /// survivor), with [`super::merge::DROPPED`] set on the members
-    /// whose parent pairs the rewrite drops.
+    /// survivor); a member whose parent pairs the rewrite drops holds its
+    /// survivor's old index under [`super::merge::DROPPED`] instead, which
+    /// [`super::merge::survivor`] follows.
     pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
     /// One bit per node, set on the members merged away into a survivor.
     /// A member without [`super::merge::DROPPED`] is a content-equal

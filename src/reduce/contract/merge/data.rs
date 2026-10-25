@@ -214,10 +214,12 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
 /// place. The level is left with no dead arena, its pairs in node order.
 ///
 /// The same pass numbers the survivors in `remap.final_remap`, in node
-/// order, and points each absorbed member's entry at its survivor's new
-/// number, keeping its [`DROPPED`] bit: a member follows its survivor, the
-/// lowest of its group, so the survivor is numbered first. A node no pair
-/// names keeps its [`DISCARDED`] entry.
+/// order, reading only the survivors: the absorbed nodes are skipped a word
+/// of bits at a time. A member whose pairs the parent rewrite drops keeps
+/// its entry, its survivor's old index under [`DROPPED`], from which
+/// [`survivor`] reads the new one; a content-equal redirect's entry is set
+/// to its survivor's new number after the pass, and a node no pair names
+/// keeps its [`DISCARDED`] entry.
 ///
 /// Members of a group ascend from its survivor, so the in-place node
 /// compaction, which writes at or below the node it reads, has not yet
@@ -276,66 +278,76 @@ pub(super) fn rebuild_level(
     let survivor_of = |plan: Option<&GroupPlan>| plan.map_or(usize::MAX, |p| bufs.sel[p.start as usize] as usize);
     let mut plan = plans.next();
     let mut next = survivor_of(plan);
-    for read in 0..nodes.len() {
-        if absorbed(bits, read) {
-            let to = final_remap[read].0;
-            if to != DISCARDED {
-                let keep = (to & !DROPPED) as usize;
-                debug_assert!(keep < read, "a group's survivor is its lowest member");
-                final_remap[read] = NodeIdx(final_remap[keep].0 | (to & DROPPED));
-            }
-            continue;
+    let len = nodes.len();
+    for (w, &word) in bits[..len.div_ceil(64)].iter().enumerate() {
+        let base = w * 64;
+        let mut live = !word;
+        if len - base < 64 {
+            live &= (1u64 << (len - base)) - 1;
         }
-        final_remap[read] = NodeIdx(write as u32);
-        let node = nodes[read];
-        let rebuilt = if read == next {
-            let p = plan.expect("a concat group's survivor");
-            plan = plans.next();
-            next = survivor_of(plan);
-            append(&mut fresh, &old[run.clone()]);
-            run = run.end..run.end;
-            let start = fresh.len();
-            for k in p.start as usize..p.end as usize {
-                prefetch_members(&bufs.sel, k, nodes, old);
-                let m = bufs.sel[k];
-                debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
-                match nodes[m as usize].kind() {
-                    NodeKind::Inline(pair) => fresh.push(pair),
-                    kind => append(&mut fresh, &old[source(kind)]),
-                }
-            }
-            if cfg!(debug_assertions) && check_disjoint {
-                let mut chk = fresh[start..].to_vec();
-                chk.sort_unstable();
-                assert!(
-                    chk.windows(2).all(|w| w[0] != w[1]),
-                    "twin contraction: duplicate pair across twin supports — invariant 1 violation"
-                );
-            }
-            match fresh.len() - start {
-                1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
-                len => place(start, len),
-            }
-        } else {
-            match node.kind() {
-                NodeKind::Inline(_) => node,
-                kind => {
-                    let src = source(kind);
-                    if src.start != run.end {
-                        append(&mut fresh, &old[run.clone()]);
-                        run = src.start..src.start;
+        while live != 0 {
+            let read = base + live.trailing_zeros() as usize;
+            live &= live - 1;
+            final_remap[read] = NodeIdx(write as u32);
+            let node = nodes[read];
+            let rebuilt = if read == next {
+                let p = plan.expect("a concat group's survivor");
+                plan = plans.next();
+                next = survivor_of(plan);
+                append(&mut fresh, &old[run.clone()]);
+                run = run.end..run.end;
+                let start = fresh.len();
+                for k in p.start as usize..p.end as usize {
+                    prefetch_members(&bufs.sel, k, nodes, old);
+                    let m = bufs.sel[k];
+                    debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
+                    match nodes[m as usize].kind() {
+                        NodeKind::Inline(pair) => fresh.push(pair),
+                        kind => append(&mut fresh, &old[source(kind)]),
                     }
-                    let start = fresh.len() + (src.start - run.start);
-                    run.end = src.end;
-                    place(start, src.len())
                 }
-            }
-        };
-        nodes[write] = rebuilt;
-        write += 1;
+                if cfg!(debug_assertions) && check_disjoint {
+                    let mut chk = fresh[start..].to_vec();
+                    chk.sort_unstable();
+                    assert!(
+                        chk.windows(2).all(|w| w[0] != w[1]),
+                        "twin contraction: duplicate pair across twin supports — invariant 1 violation"
+                    );
+                }
+                match fresh.len() - start {
+                    1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
+                    len => place(start, len),
+                }
+            } else {
+                match node.kind() {
+                    NodeKind::Inline(_) => node,
+                    kind => {
+                        let src = source(kind);
+                        if src.start != run.end {
+                            append(&mut fresh, &old[run.clone()]);
+                            run = src.start..src.start;
+                        }
+                        let start = fresh.len() + (src.start - run.start);
+                        run.end = src.end;
+                        place(start, src.len())
+                    }
+                }
+            };
+            nodes[write] = rebuilt;
+            write += 1;
+        }
     }
     fresh.extend_from_slice(&old[run]);
     debug_assert!(plan.is_none(), "every concat group met its survivor");
+    // A content-equal redirect keeps its parent pairs, renamed onto its
+    // survivor's new number.
+    for p in bufs.group_plans.iter().filter(|p| p.action == GroupAction::DupRedirect) {
+        let members = &bufs.sel[p.start as usize..p.end as usize];
+        let to = final_remap[members[0] as usize];
+        for &m in &members[1..] {
+            final_remap[m as usize] = to;
+        }
+    }
     debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
     nodes.truncate(write);
     *pairs.stored_mut() = fresh;

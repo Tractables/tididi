@@ -33,10 +33,9 @@ pub(in crate::reduce::contract) use rewrite::{survivor, DISCARDED, DROPPED};
 /// 1. **Plan**: decide each group's action, mark its absorbed members and
 ///    size the rebuilt level's arena from its pair count and the groups.
 ///
-/// 2. **Rebuild**: one pass over the level in node order unions each group's
-///    pairs into its kept node, drops the merged-away nodes, leaves the
-///    level's arena with no garbage, and numbers the survivors, pointing
-///    each member at its survivor's new index.
+/// 2. **Rebuild**: one pass over the level's survivors in node order unions
+///    each group's pairs into its kept node, drops the merged-away nodes,
+///    leaves the level's arena with no garbage, and numbers the survivors.
 ///
 /// 3. **Rewrite the parent**: drop the pairs that reference merged-away twins
 ///    and remap the rest through that map, then sweep the parent's arena
@@ -197,9 +196,10 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// Mark each planned group's absorbed members, and list the concat
 /// survivors fork-down resolves. A member's `final_remap` entry holds its
 /// survivor's old index, with [`DROPPED`] set unless the member is a
-/// content-equal redirect, until [`rebuild_level`] numbers the
-/// survivors. Returns the number of members merged away — 0 means the level
-/// is unchanged. Touches only the scratch: the rebuild unions the pairs.
+/// content-equal redirect, whose entry [`rebuild_level`] sets to the
+/// survivor's new number. Returns the number of members merged away — 0
+/// means the level is unchanged. Touches only the scratch: the rebuild
+/// unions the pairs.
 fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.

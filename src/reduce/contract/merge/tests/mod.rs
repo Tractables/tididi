@@ -3,7 +3,9 @@ use super::data::{rebuild_level, reserve_rebuilt};
 
 /// The remap a merge rewrites the parent through, where node `i` merges
 /// into `targets[i]` (itself for a survivor) and the members in
-/// `redirected` are content-equal redirects, which keep their parent pairs.
+/// `redirected` are content-equal redirects, which keep their parent pairs
+/// and are renamed onto their survivor's new number; every other member
+/// keeps its survivor's old index under [`DROPPED`].
 fn remap_of(targets: &[u32], redirected: &[usize]) -> MergeRemap {
     let mut remap = MergeRemap {
         final_remap: vec![NodeIdx(0); targets.len()],
@@ -17,8 +19,7 @@ fn remap_of(targets: &[u32], redirected: &[usize]) -> MergeRemap {
             next += 1;
         } else {
             remap.absorbed[i / 64] |= 1 << (i % 64);
-            let dropped = if redirected.contains(&i) { 0 } else { DROPPED };
-            remap.final_remap[i] = NodeIdx(remap.final_remap[t as usize].0 | dropped);
+            remap.final_remap[i] = if redirected.contains(&i) { remap.final_remap[t as usize] } else { NodeIdx(t | DROPPED) };
         }
     }
     remap

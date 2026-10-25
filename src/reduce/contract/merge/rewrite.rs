@@ -9,21 +9,25 @@ use crate::limits::Limits;
 use super::super::scratch::MergeRemap;
 
 /// Set in a merged-away node's `final_remap` entry, above its survivor's
-/// new index, where the parent rewrite drops the pairs naming it: every
-/// member but a content-equal one redirected onto its survivor. The parent
-/// rewrite reads one entry per pair; readers that want the survivor mask it
-/// off ([`survivor`]). A stored side never has bit 31 set, so no node index
-/// reaches it.
+/// index before the merge, where the parent rewrite drops the pairs naming
+/// it: every member but a content-equal one redirected onto its survivor.
+/// The parent rewrite reads one entry per pair and needs only the bit;
+/// readers that want the survivor's new index read it off the survivor's
+/// entry ([`survivor`]). A stored side never has bit 31 set, so no node
+/// index reaches it.
 pub(in crate::reduce::contract) const DROPPED: u32 = 1 << 31;
 
 /// The `final_remap` entry of a node the merge drops with its pairs, no
 /// pair naming it: it has no survivor.
 pub(in crate::reduce::contract) const DISCARDED: u32 = u32::MAX;
 
-/// The new index of the survivor of node `old` after the merge.
+/// The new index of the survivor of node `old` after the merge: its own
+/// entry, or, for a member whose pairs were dropped, its survivor's.
 #[inline]
 pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize) -> NodeIdx {
-    NodeIdx(final_remap[old].0 & !DROPPED)
+    let to = final_remap[old].0;
+    debug_assert_ne!(to, DISCARDED, "a node the merge drops as unnamed has no survivor");
+    if to & DROPPED == 0 { NodeIdx(to) } else { final_remap[(to & !DROPPED) as usize] }
 }
 
 /// Filter out parent pairs referencing non-canonical twins and apply the
