@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_complement, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_complement, prune_loose_from_output, prune_unreachable, settle_loose, UNREACHED};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
@@ -349,7 +349,8 @@ fn entered(tdd: &crate::Tdd, levels: &[u32]) -> std::collections::BTreeSet<u32> 
 /// pair of its parent level names; the prune settles the list to one that
 /// has it enter the levels a list of exactly those would; and the prune
 /// leaves the diagram the prune over the whole diagram leaves, node for
-/// node.
+/// node, charging the work clock what a walk from the output does where it
+/// starts at the seeds.
 #[test]
 fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     use crate::test_helpers::{Lcg, vtree_shapes};
@@ -357,6 +358,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x9e1f_2d47);
     let (mut cases, mut loose, mut cleared, mut settled_away) = (0usize, 0usize, 0usize, 0usize);
+    let mut seeded = 0usize;
     let mut check = |conj: crate::Tdd, operands: [&[u32]; 2], what: &str| {
         if conj.is_zero() {
             return;
@@ -378,7 +380,17 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         }).count();
         let count = conj.model_count().unwrap();
         let mut walked = conj.clone();
+        let start = eng.limits().work_units();
         prune_unreachable(eng, &mut walked, PruneScope::Whole).unwrap();
+        let walk_work = eng.limits().work_units() - start;
+        if below_root_walk_applies(&conj) && !conj.has_marginal_level() {
+            let mut from_output = conj.clone();
+            let start = eng.limits().work_units();
+            prune_loose_from_output(eng, &mut from_output).unwrap();
+            assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the seeded walk charged other work than one from the output");
+            assert_eq!(layout(&from_output), layout(&walked), "{what}: the walk from the output left another diagram");
+            seeded += usize::from(conj.levels[conj.vtree.root().idx()].slot_count() == 1);
+        }
         let mut whole = conj;
         whole.dirty.set_loose(None);
         prune_unreachable(eng, &mut whole, PruneScope::Whole).unwrap();
@@ -411,13 +423,15 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
     assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
+    assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
 }
 
 /// The complement of a canonical diagram, completed and complemented at
 /// the root, loses the old output and, below it, only the nodes whose
 /// residual was true: the prune that drops just those leaves the diagram the
 /// walk below the root leaves, up to the order of the nodes of a level, on
-/// corpora where nodes below the root die; and it is minimal.
+/// corpora where nodes below the root die, charging the work clock what the
+/// walk does; and it is minimal.
 #[test]
 fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
     use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
@@ -441,9 +455,13 @@ fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
                 }
                 let widths: Vec<usize> = complement.levels.iter().map(|l| l.slot_count()).collect();
                 let mut walked = complement.clone();
+                let start = eng.limits().work_units();
                 prune_unreachable(eng, &mut walked, PruneScope::BelowRoot).unwrap();
+                let walk_work = eng.limits().work_units() - start;
                 let mut moved = complement;
+                let start = eng.limits().work_units();
                 prune_complement(eng, &mut moved, &done).unwrap();
+                assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the two prunes charged different work");
                 assert_eq!(sorted_layout(&moved), sorted_layout(&walked), "{what}: the two prunes left different diagrams");
                 let reached = reached_by_level(&moved);
                 for &t in moved.vtree.bottomup_slice() {

@@ -77,3 +77,39 @@ fn a_leaf_root_complement_is_certified() {
     assert_certified_minimal(eng, &negated, "leaf root");
     assert!(negated.equivalent(&crate::literal(&vtree, -1).unwrap()).unwrap());
 }
+
+/// The completion and root complement of a certified operand, which read
+/// most levels off their pair counts, charge the work clock what they
+/// charge a copy without its certificate, whose every level is marked in a
+/// cover: a unit a pair, and a scan of the basis on a level short of a
+/// cell and at the root. And the two build the same diagram.
+#[test]
+fn a_certified_complement_charges_what_a_cover_of_every_level_does() {
+    let eng = &Engine::new();
+    let mut rng = Lcg::new(0x5be0_cd19);
+    let mut cases = 0usize;
+    for num_vars in [3u32, 5, 8, 12] {
+        for (name, vtree) in vtree_shapes(num_vars) {
+            for round in 0..24 {
+                let shape = CnfShape { clauses: 1 + round % 9, width: 1 + round % 4 };
+                let f = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, num_vars, shape));
+                if f.is_zero() {
+                    continue;
+                }
+                let what = format!("{name}, {num_vars} variables, round {round}");
+                assert!(f.levels.is_canonical(f.output), "{what}: the operand is not certified");
+                let mut bare = f.clone();
+                bare.levels.forget();
+                let start = eng.limits().work_units();
+                let (certified, _) = crate::apply::negate::complement_on(eng, f).unwrap();
+                let read = eng.limits().work_units() - start;
+                let start = eng.limits().work_units();
+                let (covered, _) = crate::apply::negate::complement_on(eng, bare).unwrap();
+                assert_eq!(eng.limits().work_units() - start, read, "{what}: the two completions charged different work");
+                assert_same_shape(&certified, &covered, &what);
+                cases += 1;
+            }
+        }
+    }
+    assert!(cases > 300, "expected a corpus, got {cases} cases");
+}

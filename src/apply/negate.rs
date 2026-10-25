@@ -147,6 +147,9 @@ fn complement_full_at_root(
         let mut form = LeafForm::LITERAL;
         let covered = areas(levels[root_idx].pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
         neg_pairs.clear();
+        // The work clock is charged a scan of the root's basis, by either
+        // route.
+        charge_scan(eng, lefts, rights)?;
         if covered == old_cells(lefts, rights, fill) {
             // The output covers every cell of the children's old nodes: its
             // complement is the lines of their added nodes.
@@ -240,7 +243,8 @@ fn expand_full_with(
         // hold two that cover one cell, which only the cover sees.
         let form = level_form(level, leaf);
         if canonical {
-            let covered = covered_cells(level, form, closed);
+            let pairs = level_pairs(level, closed);
+            let covered = pairs << (u32::from(form.left_one) + u32::from(form.right_one));
             #[cfg(debug_assertions)]
             {
                 let (by_pairs, form_by_pairs) = covered_cells_by_pairs(level, leaf);
@@ -250,13 +254,19 @@ fn expand_full_with(
                     "negate: the level's first pair does not name its leaves in the level's form",
                 );
             }
+            // Both routes charge the work clock what the cover below does:
+            // a unit a pair, and a scan of the basis where a cell is
+            // missing.
             if covered == (lefts.len() * rights.len()) as u64 {
                 #[cfg(debug_assertions)]
                 debug_assert!(missing_by_cover(eng, bits, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
+                charge_pairs(eng, pairs)?;
                 eng.limits().check_stop()?;
                 continue;
             }
             if covered == old_cells(lefts, rights, fill) {
+                charge_pairs(eng, pairs)?;
+                charge_scan(eng, lefts, rights)?;
                 if fill != [None, None] {
                     cells.clear();
                     fill_lines_into(eng, lefts, rights, fill, form, cells)?;
@@ -278,6 +288,7 @@ fn expand_full_with(
         cover.missing_into(eng, cells)?;
         debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
         if !cells.is_empty() {
+            charge_scan(eng, lefts, rights)?;
             level.push_node(eng.limits(), cells)?;
             filled[t.idx()] = true;
         }
@@ -299,20 +310,33 @@ fn level_form(level: &TddLevel, leaf: LeafForm) -> LeafForm {
     form
 }
 
-/// The cells of `lefts x rights` the pairs of `level` cover, without
-/// reading the pairs. The pairs of a level cover disjoint cells,
-/// determinism's rule, one cell a pair and two for each side that is a
-/// leaf named `One`, which the level's `form` says. So the count is the
-/// level's pairs, doubled for each such side. The pairs are counted off
-/// the level's nodes, or read off the count a level of a `closed` diagram
-/// keeps.
-fn covered_cells(level: &TddLevel, form: LeafForm, closed: bool) -> u64 {
-    let pairs = if closed { level.live_pairs_closed() } else { level.live_pairs() } as u64;
-    pairs << (u32::from(form.left_one) + u32::from(form.right_one))
+/// The pairs of `level`, counted off its nodes, or read off the count a
+/// level of a `closed` diagram keeps. On a canonical operand they cover
+/// disjoint cells, determinism's rule, one cell a pair and two for each
+/// side that is a leaf named `One`, which the level's form says, so the
+/// cells they cover are the pairs doubled for each such side, without
+/// reading the pairs.
+fn level_pairs(level: &TddLevel, closed: bool) -> u64 {
+    (if closed { level.live_pairs_closed() } else { level.live_pairs() }) as u64
 }
 
-/// [`covered_cells`] off every pair's area, for a debug build to check it
-/// against.
+/// Charge the work clock `pairs` units, a unit a pair, as a cover's walk
+/// over them would.
+fn charge_pairs(eng: &Engine, pairs: u64) -> Result<(), OperationError> {
+    let mut poll = eng.limits().gate();
+    poll.poll_each(pairs)?;
+    poll.flush()
+}
+
+/// Charge the work clock a scan of the `lefts x rights` basis's cover: 64
+/// units a word of 64 cells, each leaf side's `{Pos, Neg}` couple apart.
+fn charge_scan(eng: &Engine, lefts: ChildBasis, rights: ChildBasis) -> Result<(), OperationError> {
+    let words = (lefts.len() as u64 * rights.len() as u64).div_ceil(64);
+    charge_pairs(eng, 64 * words)
+}
+
+/// The cells `level`'s pairs cover off every pair's area, with the level's
+/// form, for a debug build to check the pair count against.
 #[cfg(debug_assertions)]
 fn covered_cells_by_pairs(level: &TddLevel, leaf: LeafForm) -> (u64, LeafForm) {
     let mut form = LeafForm::LITERAL;
@@ -545,9 +569,6 @@ struct Cover<'a> {
     stride: usize,
     /// `lefts.len() * rights.len()`, the cell count.
     len: usize,
-    /// The words of the basis with each `One` side's couple apart, which
-    /// [`missing_into`](Self::missing_into) charges the work clock for.
-    words_charged: usize,
 }
 
 impl<'a> Cover<'a> {
@@ -560,7 +581,7 @@ impl<'a> Cover<'a> {
         rights: ChildBasis,
         form: LeafForm,
     ) -> Result<Cover<'a>, OperationError> {
-        let couples = lefts.len().checked_mul(rights.len()).ok_or(OperationError::IndexOverflow)?;
+        lefts.len().checked_mul(rights.len()).ok_or(OperationError::IndexOverflow)?;
         let one = ChildBasis { start: ONE_LEAF_IDX.0, end: ONE_LEAF_IDX.0 + 1 };
         let (lefts, rights) = (if form.left_one { one } else { lefts }, if form.right_one { one } else { rights });
         let len = lefts.len() * rights.len();
@@ -568,7 +589,7 @@ impl<'a> Cover<'a> {
         // And the cell past the basis, which a walk marks for a node it
         // reads no pair of ([`mark_level`](Self::mark_level)).
         eng.limits().try_resize(bits, (len + 1).div_ceil(64), 0u64)?;
-        Ok(Cover { bits, lefts, rights, stride: rights.len(), len, words_charged: couples.div_ceil(64) })
+        Ok(Cover { bits, lefts, rights, stride: rights.len(), len })
     }
 
     /// Mark the cells of every pair of `level`'s nodes, charging the work
@@ -636,11 +657,10 @@ impl<'a> Cover<'a> {
     /// which is what lets the fill join a level whose other labels are
     /// `One` without splitting them. Mixing the two at one leaf would break
     /// determinism's label rule and, downstream, block leaf-twin
-    /// contraction, which is all-or-nothing per level. The work clock is
-    /// charged a word of the basis with each couple apart, 64 cells.
+    /// contraction, which is all-or-nothing per level. The caller charges
+    /// the scan ([`charge_scan`]).
     fn missing_into(&self, eng: &Engine, out: &mut Vec<ChildPair>) -> Result<(), OperationError> {
         let lim = eng.limits();
-        let mut poll = lim.gate();
         let words = self.len.div_ceil(64);
         for (w, &word) in self.bits[..words].iter().enumerate() {
             let base = w * 64;
@@ -657,10 +677,8 @@ impl<'a> Cover<'a> {
                 let r = self.rights.start + (cell % self.stride) as u32;
                 lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
             }
-            poll.poll(64)?;
         }
-        poll.poll(64 * (self.words_charged - words) as u64)?;
-        poll.flush()
+        Ok(())
     }
 }
 
