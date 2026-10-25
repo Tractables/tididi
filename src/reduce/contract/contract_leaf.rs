@@ -91,10 +91,10 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
 
     // Singleton-pair witness pre-pass: a length-1 pair list whose label on
     // `side` is a literal cannot hold the opposite-polarity partner, so the
-    // level is not contractible. O(1) per node, against `classify`'s
-    // collect-and-sort per pair list.
-    for i in 0..level.nodes().len() {
-        if let [pair] = stored.of_idx(i) {
+    // level is not contractible. O(1) per node, read off the node words,
+    // against `classify`'s collect-and-sort per pair list.
+    for node in stored.nodes() {
+        if let [pair] = *stored.of(node) {
             let label = if side == ChildSide::Left { pair.left } else { pair.right };
             if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
                 return Ok(false);
@@ -104,13 +104,18 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
 
     // The two partner lists `classify` compares, reused across the level's
     // nodes so the sort buffers are allocated once per level, not per node,
-    // and charged only while the level is classified.
+    // and charged only while the level is classified. A node of two pairs
+    // is classified by its labels alone ([`classify_two`]).
     let lim = eng.limits();
     let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
-    for i in 0..level.nodes().len() {
-        match classify(lim, stored.of_idx(i).iter().copied(), side, &mut pos, &mut neg)? {
+    for node in stored.nodes() {
+        let class = match *stored.of(node) {
+            [p, q] => classify_two(p, q, side),
+            ref pairs => classify(lim, pairs.iter().copied(), side, &mut pos, &mut neg)?,
+        };
+        match class {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }
@@ -159,6 +164,23 @@ enum Class {
     /// At least one Pos has no matching Neg (or vice versa) within this pair
     /// list. Contracting would change the function; bail.
     NotContractible,
+}
+
+/// [`classify`] of a pair list of two pairs, read off their labels with
+/// nothing collected: both `One`, or `Pos` and `Neg` with one partner.
+#[inline]
+fn classify_two(p: ChildPair, q: ChildPair, side: ChildSide) -> Class {
+    let split = |p: ChildPair| if side == ChildSide::Left { (p.left, p.right) } else { (p.right, p.left) };
+    let ((a, x), (b, y)) = (split(p), split(q));
+    let (one, pos, neg): (EncodedChildRef, EncodedChildRef, EncodedChildRef) =
+        (ONE_LEAF_IDX.into(), POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
+    if a == one && b == one {
+        Class::AllContractible { has_literal: false }
+    } else if x == y && (a == pos && b == neg || a == neg && b == pos) {
+        Class::AllContractible { has_literal: true }
+    } else {
+        Class::NotContractible
+    }
 }
 
 /// `pos` and `neg` are the caller's buffers for the partners of the `Pos` and
