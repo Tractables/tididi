@@ -7,6 +7,11 @@ use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 /// them in a buffer of the level's.
 const FEW_PAIRS: usize = 16;
 
+/// The most columns a level reads its rows' charges off a table of every
+/// set of its columns, and the fewest table entries a row pays for.
+const CHARGE_TABLE_COLUMNS: usize = 8;
+const CHARGE_TABLE_ENTRIES_A_ROW: usize = 8;
+
 /// The row loop of a masked level whose g level has at most
 /// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all (`liveness::pairs_fit`), read by
 /// pairs.
@@ -102,6 +107,35 @@ where
     // Where every column holds one pair, pair `q` is column `q`'s, and a
     // word of pairs is a word of their columns.
     let one_pair = g_flat.len() == right_width && cols[..right_width].iter().all(|c| c.count_ones() == 1);
+    // The number of g pairs of a set of columns, which a row's charge
+    // counts: off a table of every set where the level has few columns and
+    // rows enough to pay for it, else column by column.
+    let mut col_pairs = [0u8; ROW_COLUMNS_MAX_WIDTH];
+    for (n, col) in col_pairs.iter_mut().zip(&cols[..right_width]) {
+        *n = col.count_ones() as u8;
+    }
+    let tabled = right_width <= CHARGE_TABLE_COLUMNS
+        && (1 << right_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
+    let mut charge_of = [0u8; 1 << CHARGE_TABLE_COLUMNS];
+    if tabled {
+        for set in 1..1usize << right_width {
+            charge_of[set] = charge_of[set & (set - 1)] + col_pairs[set.trailing_zeros() as usize];
+        }
+    }
+    let pairs_in = |s: u64| -> u64 {
+        if tabled {
+            return u64::from(charge_of[s as usize]);
+        }
+        if one_pair {
+            return u64::from(s.count_ones());
+        }
+        let (mut s, mut n) = (s, 0u64);
+        while s != 0 {
+            n += u64::from(col_pairs[s.trailing_zeros() as usize]);
+            s &= s - 1;
+        }
+        n
+    };
     super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let all = ROW_LIVE | low(g_flat.len());
     let (left_words, right_words) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
@@ -119,19 +153,6 @@ where
             let j = col_of[s.trailing_zeros() as usize] as usize;
             out |= 1 << j;
             s &= !cols[j];
-        }
-        out
-    };
-    // The g pairs of the columns of `s`.
-    let pairs_of = |s: u64| {
-        if one_pair {
-            return s;
-        }
-        let (mut s, mut out) = (s, 0u64);
-        while s != 0 {
-            let j = s.trailing_zeros() as usize;
-            s &= s - 1;
-            out |= cols[j];
         }
         out
     };
@@ -192,7 +213,8 @@ where
         // live ones among them.
         let entered = reached(l) & reached(r);
         let n1 = f_pairs.len() as u64;
-        poll.poll(n1 * u64::from(pairs_of(entered).count_ones()) + right_width as u64)?;
+        debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
+        poll.poll(n1 * pairs_in(entered) + right_width as u64)?;
         let live = live & !ROW_LIVE;
         let ands = if few { &ands[..f_pairs.len()] } else { &many[..] };
         let mut cells = reached(live);
@@ -202,7 +224,7 @@ where
             cells &= cells - 1;
             let col = cols[j];
             let grid_pos = row_base + j;
-            if n1 == 1 && col.count_ones() == 1 {
+            if n1 == 1 && col & (col - 1) == 0 {
                 let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
                 let lc = left.get(node_idx, p.left.0, q.left.0);
                 let rc = right.get(node_idx, p.right.0, q.right.0);
