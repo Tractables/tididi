@@ -470,11 +470,11 @@ impl Partition<'_> {
         }
     }
 
-    /// A parent node of more than [`SMALL_PAIRS`] pairs. One whose pairs do
-    /// not come in node order is split sibling by sibling
-    /// ([`Self::split_by_siblings`]), and one whose pairs do is first split
-    /// by degree ([`Self::split_by_degree`]), which settles it where its
-    /// nodes' sibling sets are nested. Else the pairs
+    /// A parent node of more than [`SMALL_PAIRS`] pairs. One whose pairs
+    /// come in node order is first split by degree
+    /// ([`Self::split_by_degree`]), which settles it where its nodes'
+    /// sibling sets are nested, and one whose pairs do not is split sibling
+    /// by sibling ([`Self::split_by_siblings`]). Else the pairs
     /// of its nodes not alone are sorted in `keys`, so that each node's
     /// siblings are a run in ascending order; each run of a node that can
     /// have a twin keyed by its node's class and a hash of its siblings,
@@ -489,20 +489,10 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let (mut by_node, mut by_sibling) = (true, true);
-        let (mut last, mut top) = (split_pair(&pairs[0], side), 0u32);
-        for pair in pairs {
-            let (t, s) = split_pair(pair, side);
-            by_node &= t >= last.0;
-            by_sibling &= s >= last.1;
-            last = (t, s);
-            top |= s;
-        }
-        if !by_node {
-            return self.split_by_siblings(lim, pairs, side, by_sibling, top, wide);
-        }
-        if self.split_by_degree(lim, pairs, side, top, wide)? {
-            return Ok(());
+        match self.split_by_degree(lim, pairs, side, wide)? {
+            Degrees::Split => return Ok(()),
+            Degrees::Unordered => return self.split_by_siblings(lim, pairs, side, wide),
+            Degrees::Unsettled => {}
         }
         let Wide { keys, runs, links, table, radix, .. } = wide;
         // Each pair of a node not alone a key of its sibling's bits and its
@@ -569,56 +559,70 @@ impl Partition<'_> {
     /// degree have the same siblings, and the classes split by degree alone,
     /// with no pair sorted or sibling compared. Where Γ is not zero, a node
     /// whose degree no other node of its class has there leaves the
-    /// partition, and the caller splits the rest by their siblings. Says
-    /// whether the parent node is split.
+    /// partition, and the caller splits the rest by their siblings.
     ///
-    /// The pairs come in node order, so a node's degree is the length of
-    /// its run. Counted only over the nodes that can have a twin, whose
-    /// sibling sets are those Γ reads. The first sum is read off the
-    /// degrees' histogram (the nodes of degree at least v, for each v, taken
-    /// two at a time), the second added as each sibling's count rises, its
-    /// siblings at most `top`. `column` and `reach` are zero between calls:
-    /// every count written is cleared before the call returns, and nothing
-    /// fallible runs while one is held.
+    /// Where the pairs come in node order a node's degree is the length of
+    /// its run. A first pass reads only where each run ends, and keeps the
+    /// runs of the nodes that can have a twin, whose sibling sets are those
+    /// Γ reads: the run of a node already alone costs a compare a pair, and
+    /// a node below the one before ends the pass with nothing changed, the
+    /// parent node left [`Degrees::Unordered`]. The kept runs' siblings are
+    /// then counted. The first sum is read off the degrees' histogram (the
+    /// nodes of degree at least v, for each v, taken two at a time), the
+    /// second added as each sibling's count rises. `column` and `reach` are
+    /// zero between calls: every count written is cleared before the call
+    /// returns, and nothing fallible runs while one is held. A parent node
+    /// holds fewer than 2^32 pairs, as a run's degree in the low half of its
+    /// key needs.
     fn split_by_degree(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
-        top: u32,
         wide: &mut Wide<'_>,
-    ) -> Result<bool, OperationError> {
+    ) -> Result<Degrees, OperationError> {
         let Wide { runs, links, table, column, reach, touched, .. } = wide;
-        lim.try_resize(column, top as usize + 1, 0u32)?;
-        lim.try_resize(reach, pairs.len() + 1, 0u32)?;
         runs.clear();
-        touched.clear();
         lim.reserve_exact(runs, pairs.len())?;
-        lim.reserve_exact(touched, pairs.len())?;
-        let (mut shared, mut most) = (0u64, 0usize);
-        let mut count = |s: u32| {
-            let e = &mut column[s as usize];
-            if *e == 0 {
-                touched.push(s);
-            }
-            shared += u64::from(*e);
-            *e += 1;
-        };
+        let (mut last, mut top) = (None, 0u32);
         let mut k = 0;
         while k < pairs.len() {
             let t = split_pair(&pairs[k], side).0;
-            let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
+            if last.is_some_and(|last| t < last) {
+                return Ok(Degrees::Unordered);
+            }
+            last = Some(t);
+            let end = k + 1 + pairs[k + 1..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
             let c = self.of(t);
             if self.can_twin(c) {
-                let d = end - k;
-                runs.push(((u64::from(c) << 32) | d as u64, t, 0));
-                reach[d] += 1;
-                most = most.max(d);
-                for pair in &pairs[k..end] {
-                    count(split_pair(pair, side).1);
-                }
+                // The run's start in the third field, which the grouping
+                // does not read.
+                runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
+                top = pairs[k..end].iter().fold(top, |top, pair| top | split_pair(pair, side).1);
             }
             k = end;
+        }
+        if runs.is_empty() {
+            return Ok(Degrees::Split);
+        }
+        lim.try_resize(column, top as usize + 1, 0u32)?;
+        lim.try_resize(reach, pairs.len() + 1, 0u32)?;
+        touched.clear();
+        lim.reserve_exact(touched, pairs.len())?;
+        let (mut shared, mut most) = (0u64, 0usize);
+        for run in runs.iter() {
+            let (k, d) = (run.2 as usize, run.0 as u32 as usize);
+            reach[d] += 1;
+            most = most.max(d);
+            for pair in &pairs[k..k + d] {
+                let s = split_pair(pair, side).1;
+                let e = &mut column[s as usize];
+                if *e == 0 {
+                    touched.push(s);
+                }
+                shared += u64::from(*e);
+                *e += 1;
+            }
         }
         for &s in touched.iter() {
             column[s as usize] = 0;
@@ -628,21 +632,18 @@ impl Partition<'_> {
             at_least += u64::from(std::mem::take(&mut reach[v]));
             within += at_least * (at_least - 1) / 2;
         }
-        if runs.is_empty() {
-            return Ok(true);
-        }
         debug_assert!(within >= shared, "Γ is a sum of nonnegative terms over sets");
         group_runs(lim, runs, links, table, |_, _| true)?;
         if within == shared {
             self.apply_groups(runs, links, |r| r.1);
-            return Ok(true);
+            return Ok(Degrees::Split);
         }
         for (r, &run) in runs.iter().enumerate() {
             if links[r].1 == 1 {
                 self.alone(run.1, (run.0 >> 32) as u32);
             }
         }
-        Ok(false)
+        Ok(Degrees::Unsettled)
     }
 
     /// A wide parent node split sibling by sibling, where no parent node
@@ -651,18 +652,17 @@ impl Partition<'_> {
     /// rest ([`Self::split_sibling`]). After the last sibling two nodes share
     /// a class exactly when they shared one before and the parent node pairs
     /// them with the same siblings, as a split by sibling sets leaves them,
-    /// with no sort, hash or compare. The nodes are first bucketed by
-    /// sibling in `bucket`: where the pairs come `by_sibling`, each run's
-    /// nodes as it is read; else in two passes over the pairs that read only
-    /// siblings, at most `top`. `column` is zero between calls, as
+    /// with no sort, hash or compare. The nodes not alone are first
+    /// bucketed by sibling in `bucket`: where the pairs come in sibling
+    /// order, each run's as it is read, in one pass that also finds the
+    /// order; else in two passes over the pairs that read only siblings,
+    /// after that one stops. `column` is zero between calls, as
     /// [`Self::split_by_degree`] reads it.
     fn split_by_siblings(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
-        by_sibling: bool,
-        top: u32,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
         let Wide { column, touched, bucket, met, seen, .. } = wide;
@@ -671,33 +671,63 @@ impl Partition<'_> {
         met.clear();
         lim.reserve_exact(met, pairs.len())?;
         lim.try_resize(bucket, pairs.len(), 0u32)?;
-        if by_sibling {
-            // Each sibling's nodes copied out of its run of pairs once, for
-            // the two passes of the split to read.
-            let mut k = 0;
-            while k < pairs.len() {
-                let s = split_pair(&pairs[k], side).1;
-                let mut n = 0;
-                while let Some(pair) = pairs.get(k) {
-                    let (t, next) = split_pair(pair, side);
-                    if next != s {
-                        break;
-                    }
-                    bucket[n] = t;
-                    n += 1;
-                    k += 1;
+        touched.clear();
+        lim.reserve_exact(touched, pairs.len())?;
+        // A pair's node is kept in the bucket where its alone bit is clear:
+        // a node already alone is in no split. On a level whose wide parent
+        // nodes each set one node apart most pairs name one; on others most
+        // name a node not alone, and the branch is as seldom mispredicted.
+        // The end of each run of a sibling that keeps a node is pushed to
+        // `touched`; a sibling below the one before ends the pass, with
+        // nothing split.
+        let (mut kept, mut from) = (0usize, 0usize);
+        let mut sibling = split_pair(&pairs[0], side).1;
+        let mut ordered = true;
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            if s != sibling {
+                if s < sibling {
+                    ordered = false;
+                    break;
                 }
-                self.split_sibling(bucket[..n].iter().copied(), met, seen);
+                if kept > from {
+                    touched.push(kept as u32);
+                    from = kept;
+                }
+                sibling = s;
+            }
+            if (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 == 0 {
+                bucket[kept] = t;
+                kept += 1;
+            }
+        }
+        if ordered {
+            if kept > from {
+                touched.push(kept as u32);
+            }
+            let mut from = 0;
+            for &to in touched.iter() {
+                self.split_sibling(bucket[from..to as usize].iter().copied(), met, seen);
+                from = to as usize;
             }
             return Ok(());
         }
-        lim.try_resize(column, top as usize + 1, 0u32)?;
         touched.clear();
-        lim.reserve_exact(touched, pairs.len())?;
+        // `column` grows to the siblings as they are counted; on a refusal
+        // the counts made are cleared first.
         for pair in pairs {
-            let e = &mut column[split_pair(pair, side).1 as usize];
+            let s = split_pair(pair, side).1;
+            if s as usize >= column.len()
+                && let Err(e) = lim.try_resize(column, (s as usize + 1).next_power_of_two(), 0u32)
+            {
+                for &s in touched.iter() {
+                    column[s as usize] = 0;
+                }
+                return Err(e);
+            }
+            let e = &mut column[s as usize];
             if *e == 0 {
-                touched.push(split_pair(pair, side).1);
+                touched.push(s);
             }
             *e += 1;
         }
@@ -812,6 +842,19 @@ impl Partition<'_> {
             }
         }
     }
+}
+
+/// What a degree split of a wide parent node did
+/// ([`Partition::split_by_degree`]).
+enum Degrees {
+    /// The parent node is split.
+    Split,
+    /// Its pairs come in node order, but its nodes' sibling sets are not
+    /// nested: the nodes of a degree no other node of their class has there
+    /// are out of the partition, and the rest are to be split by siblings.
+    Unsettled,
+    /// Its pairs do not come in node order, and nothing is changed.
+    Unordered,
 }
 
 /// Group `runs` through `table`: each run joins the group of the first run

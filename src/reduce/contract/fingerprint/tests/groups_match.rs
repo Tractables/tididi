@@ -556,3 +556,99 @@ fn nested_wide_nodes_are_split_by_degree() {
     }
     assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
 }
+
+/// Wide parent nodes most of whose pairs name nodes a parent node of one
+/// pair, refined first, has left without a twin, beside none, one, two, a
+/// few or many pairs of nodes still in a class: whole planted classes with
+/// one sibling, or single members, which split their class. Their pairs
+/// come in node order, in sibling order or shuffled. The search finds the
+/// groups a listing of every node's contexts gives, on either side.
+#[test]
+fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(71);
+    let mut shuffle = Lcg::new(72);
+    let mut scratch = ContractScratch::default();
+    let mut seen_groups = 0;
+    for round in 0..40u32 {
+        let width = 200 + rng.below(300) as u32;
+        let siblings = 2 + rng.below(if round % 2 == 0 { 4 } else { 50 }) as u32;
+        let mut order: Vec<u32> = (0..width).collect();
+        for i in (1..order.len()).rev() {
+            order.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        // Classes of one to four nodes; the nodes of the first three
+        // quarters of them each have a parent node of their own.
+        let mut classes: Vec<&[u32]> = Vec::new();
+        let mut rest = &order[..];
+        while !rest.is_empty() {
+            let k = (1 + rng.below(4) as usize).min(rest.len());
+            classes.push(&rest[..k]);
+            rest = &rest[k..];
+        }
+        let lone: Vec<u32> = classes[..classes.len() * 3 / 4].iter().flat_map(|c| c.iter().copied()).collect();
+        let kept = &classes[classes.len() * 3 / 4..];
+        for side in [ChildSide::Left, ChildSide::Right] {
+            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+            for (v, w) in [(target, width), (other, siblings)] {
+                for _ in 0..w {
+                    levels[v.idx()].push_internal_node(&[filler]);
+                }
+            }
+            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            for &t in &lone {
+                levels[root.idx()].push_internal_node(&[pair(t, rng.below(u64::from(siblings)) as u32)]);
+            }
+            for class in kept {
+                let s = rng.below(u64::from(siblings)) as u32;
+                let node: Vec<ChildPair> = class.iter().map(|&t| pair(t, s)).collect();
+                levels[root.idx()].push_internal_node(&node[..]);
+            }
+            let mut pairs: Vec<(u32, u32)> = Vec::new();
+            for p in 0..width as usize / 8 {
+                pairs.clear();
+                for _ in 0..refine::SMALL_PAIRS + 1 + rng.below(60) as usize {
+                    pairs.push((lone[rng.below(lone.len() as u64) as usize], rng.below(u64::from(siblings)) as u32));
+                }
+                let want = [0, 1, 2, 5, 20][rng.below(5) as usize];
+                let mut live = 0;
+                while live < want {
+                    let class = kept[rng.below(kept.len() as u64) as usize];
+                    let s = rng.below(u64::from(siblings)) as u32;
+                    if want - live < class.len() || rng.below(3) == 0 {
+                        pairs.push((class[rng.below(class.len() as u64) as usize], s));
+                        live += 1;
+                    } else {
+                        pairs.extend(class.iter().map(|&t| (t, s)));
+                        live += class.len();
+                    }
+                }
+                pairs.sort_unstable();
+                pairs.dedup();
+                reorder(&mut pairs, p, &mut shuffle);
+                let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                levels[root.idx()].push_internal_node(&node[..]);
+            }
+            let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+            let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            // A new diagram: the scratch is checked out afresh, as a
+            // contraction checks it out.
+            scratch.prepare();
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let mut got: Vec<Vec<u32>> = Vec::new();
+            for (g, &start) in scratch.group_starts.iter().enumerate() {
+                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+                got.push(scratch.flat_groups[start as usize..end].to_vec());
+            }
+            assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
+            assert_eq!(got, want, "round {round}, {side:?}");
+            seen_groups += want.len();
+        }
+    }
+    assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
+}
