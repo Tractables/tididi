@@ -715,14 +715,7 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         gate.poll(stored.nodes().len() as u64)?;
         gate.poll(stored.arena().len() as u64)?;
         let none = ChildPair::new(EncodedChildRef::from_raw(past[0] as u32), EncodedChildRef::from_raw(past[1] as u32));
-        let whole = stored.for_each_pair_whole(none, |pair| {
-            if LEFT {
-                left[pair.left.0 as usize] = 1;
-            }
-            if RIGHT {
-                right[pair.right.0 as usize] = 1;
-            }
-        });
+        let whole = mark_whole::<LEFT, RIGHT>(stored, none, left, right);
         note_settle_read(usize::from(!whole));
         if whole {
             return Ok([!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)]);
@@ -762,6 +755,29 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         return Err(e);
     }
     Ok([!LEFT || all_named(left, &mut next[0]), !RIGHT || all_named(right, &mut next[1])])
+}
+
+/// [`mark_named`]'s read of a stored level whole
+/// ([`StoredPairs::for_each_pair_whole`]), `none` naming the bytes past each
+/// side's nodes. Out of line, so that its loops keep the level and both
+/// blocks in registers.
+///
+/// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
+#[inline(never)]
+fn mark_whole<const LEFT: bool, const RIGHT: bool>(
+    stored: crate::diagram::StoredPairs<'_>,
+    none: ChildPair,
+    left: &mut [u8],
+    right: &mut [u8],
+) -> bool {
+    stored.for_each_pair_whole(none, |pair| {
+        if LEFT {
+            left[pair.left.0 as usize] = 1;
+        }
+        if RIGHT {
+            right[pair.right.0 as usize] = 1;
+        }
+    })
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact
