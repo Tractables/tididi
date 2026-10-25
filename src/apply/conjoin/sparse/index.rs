@@ -119,6 +119,9 @@ pub(crate) struct EmitScratch {
     pub(super) pair_counts: Vec<u32>,
     /// The pair of each one-pair product, stored inline.
     pub(super) single_pairs: Vec<ChildPair>,
+    /// A walked parent's pairs, moved out of the level's arena while the
+    /// emit writes them back by product.
+    pub(super) moved_pairs: Vec<ChildPair>,
 }
 
 impl Buffers for EmitScratch {
@@ -126,6 +129,7 @@ impl Buffers for EmitScratch {
         visit(&mut self.p2_map);
         visit(&mut self.pair_counts);
         visit(&mut self.single_pairs);
+        visit(&mut self.moved_pairs);
     }
 }
 

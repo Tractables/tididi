@@ -368,7 +368,7 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
                     try_push_pair_into(eng, level, candidate_pair(&entry))?;
                     lim.try_push(node_owners, entry.g_parent)
                 })?;
-                emit_walked(eng, emit, level, out, p1, base, node_owners, node_candidates, duplicates_legal)
+                emit_walked(eng, emit, level, out, p1, base, node_owners, duplicates_legal)
             })
         }
         // The level's one f node is walked in stretches of a
@@ -1841,7 +1841,7 @@ pub(super) fn emit_parent(
     if candidates.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
-    let EmitScratch { p2_map, pair_counts, single_pairs } = emit;
+    let EmitScratch { p2_map, pair_counts, single_pairs, .. } = emit;
     let first = pl_output.len();
     if let [entry] = candidates {
         // One candidate is one product of one pair: no `g` parent to group
@@ -1930,9 +1930,9 @@ pub(super) fn emit_parent(
 /// `level`'s pair arena from `base` on, the g parent of each in `owners`:
 /// the nodes and product list [`emit_parent`] makes of the same candidates.
 /// One candidate is its product's inline node, and candidates of one g
-/// parent are one node whose pairs stay where they were written; otherwise
-/// the candidates are read back off the arena for [`emit_parent`], into
-/// `candidates`.
+/// parent are one node whose pairs stay where they were written; a few are
+/// grouped by comparison ([`emit_few`]), more through the map
+/// ([`emit_owned`]).
 #[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_walked(
@@ -1942,8 +1942,7 @@ fn emit_walked(
     pl_output: &mut Vec<ProductEntry>,
     p1: usize,
     base: usize,
-    owners: &[u32],
-    candidates: &mut Vec<ParEntry>,
+    owners: &mut [u32],
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
@@ -1988,16 +1987,92 @@ fn emit_walked(
     if owners.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
-    candidates.clear();
-    lim.reserve(candidates, owners.len())?;
-    let arena = level.pairs.stored_mut();
-    candidates.extend(owners.iter().zip(&arena[base..]).map(|(&g_parent, pair)| ParEntry {
-        g_parent,
-        left_prod: pair.left.raw(),
-        right_prod: pair.right.raw(),
-    }));
-    arena.truncate(base);
-    emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
+    emit_owned(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// [`emit_walked`] on more than [`FEW_CANDIDATES`] candidates of more than
+/// one g parent: the products, nodes and pair ranges [`emit_parent`] makes.
+/// Each owner is replaced in place by its product's place among the
+/// parent's products, the pairs are moved out of the arena once, and each
+/// is written back into its product's range; the ranges take no more of
+/// the arena than the walk gave the pairs.
+#[expect(clippy::too_many_arguments)]
+fn emit_owned(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &mut [u32],
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let EmitScratch { p2_map, pair_counts, single_pairs, moved_pairs } = emit;
+    let first = pl_output.len();
+    pair_counts.clear();
+    let keyed = owners.iter_mut().try_for_each(|owner| {
+        let g_parent = *owner;
+        let slot = p2_map[g_parent as usize];
+        *owner = if slot == NO_PRODUCT {
+            let idx = pl_output.len() as u32;
+            p2_map[g_parent as usize] = idx;
+            lim.try_push(pl_output, ProductEntry {
+                f_idx: FNodeIdx(p1 as u32),
+                g_idx: GNodeIdx(g_parent),
+                prod_idx: ProductNodeIdx(idx),
+            })?;
+            lim.try_push(pair_counts, 1)?;
+            idx - first as u32
+        } else {
+            let k = slot - first as u32;
+            pair_counts[k as usize] += 1;
+            k
+        };
+        Ok(())
+    });
+    let first_node = level.nodes().len();
+    let built = keyed.and_then(|()| {
+        let products = pl_output.len() - first;
+        reserve_room(lim, level.nodes.stored_mut(), products)?;
+        let n = owners.len();
+        moved_pairs.clear();
+        lim.reserve(moved_pairs, n)?;
+        let arena = level.pairs.stored_mut();
+        moved_pairs.extend_from_slice(&arena[base..base + n]);
+        if products == n {
+            arena.truncate(base);
+            return moved_pairs.iter().try_for_each(|&pair| emit_single_pair(eng, level, pair));
+        }
+        let total = prefix_offsets(pair_counts, true)? as usize;
+        arena.truncate(base + total);
+        single_pairs.clear();
+        lim.try_resize(single_pairs, products, moved_pairs[0])?;
+        for (&k, &pair) in owners.iter().zip(moved_pairs.iter()) {
+            let cursor = pair_counts[k as usize];
+            if cursor == INLINE {
+                single_pairs[k as usize] = pair;
+            } else {
+                arena[base + cursor as usize] = pair;
+                pair_counts[k as usize] = cursor + 1;
+            }
+        }
+        push_ranged_nodes(eng, level, base, pair_counts, single_pairs)
+    });
+    for e in &pl_output[first..] {
+        p2_map[e.g_idx.idx()] = NO_PRODUCT;
+    }
+    built?;
+    // As in `emit_parent`: canonical children make a node's pairs distinct
+    // unless pair lists are multisets.
+    debug_assert!(
+        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
+            let mut seen = std::collections::HashSet::new();
+            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+        }),
+        "sparse apply: duplicate pair emitted — canonicity violated"
+    );
+    Ok(())
 }
 
 /// The most candidates of more than one g parent that [`emit_few`] groups
@@ -2115,8 +2190,6 @@ fn push_nodes_sorted(
     p2_map: &[u32],
     first: usize,
 ) -> Result<(), OperationError> {
-    // A product with one pair has no range; any cursor is below the total.
-    const SINGLE: u32 = u32::MAX;
     let zero = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
     let base = level.pairs.stored_len();
     let total = prefix_offsets(cursors, true)?;
@@ -2128,18 +2201,34 @@ fn push_nodes_sorted(
     for entry in candidates {
         let k = p2_map[entry.g_parent as usize] as usize - first;
         let cursor = cursors[k];
-        if cursor == SINGLE {
+        if cursor == INLINE {
             singles[k] = candidate_pair(entry);
         } else {
             arena[base + cursor as usize] = candidate_pair(entry);
             cursors[k] = cursor + 1;
         }
     }
-    // Each range now ends where its cursor stopped, and the ranges were laid
-    // out in product order, so each one starts where the one before ended.
+    push_ranged_nodes(eng, level, base, cursors, singles)
+}
+
+/// The cursor of a product of one pair ([`prefix_offsets`]'s mark): it has
+/// no range, and any other cursor is below the total.
+const INLINE: u32 = u32::MAX;
+
+/// Push the nodes of a parent's products in product order, once each
+/// product's pairs are in its range of the arena from `base` on: product
+/// `k`'s range ends at `cursors[k]` and starts where the one before ended,
+/// and a product marked [`INLINE`] is its one pair `singles[k]`.
+fn push_ranged_nodes(
+    eng: &Engine,
+    level: &mut TddLevel,
+    base: usize,
+    cursors: &[u32],
+    singles: &[ChildPair],
+) -> Result<(), OperationError> {
     let mut start = 0u32;
     for (k, &end) in cursors.iter().enumerate() {
-        if end == SINGLE {
+        if end == INLINE {
             emit_single_pair(eng, level, singles[k])?;
         } else {
             level.try_push_multi_by_range(base + start as usize, (end - start) as usize)
