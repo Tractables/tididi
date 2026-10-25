@@ -1,7 +1,8 @@
-//! A level whose candidates outnumber its operands' pairs several times
-//! over, walked over many f nodes of a few pairs each: the walk grows the
-//! level's pair arena to its projected candidates instead of doubling it at
-//! each fill, and the level is the dense grid's.
+//! Levels whose candidates outnumber their operands' pairs several times
+//! over: a level of many f nodes of a few pairs each, and a root of one
+//! node a side walked by outer key. The walk grows the level's pair arena
+//! to its projected candidates instead of doubling it at each fill, and
+//! the level is the dense grid's.
 use std::sync::Arc;
 
 use super::inner_index::{block, pack};
@@ -70,4 +71,52 @@ fn a_level_of_many_more_candidates_than_pairs_grows_its_arena_once() {
     // grow the arena three times.
     assert_eq!(from_sparse.levels[ab.idx()].live_pairs(), 64 * 63);
     assert!(levels.contains(&(ab, Route::Sparse, 0)), "the level's arena outgrew its projection: {levels:?}");
+}
+
+/// `f = c ≠ a` and `g = c ≠ b` on `((a b) c)`, with each level's route
+/// and arena growths. At the root each has one node of 4,032 pairs, one
+/// for each value of `c` and of the other block that differ, and each pair
+/// of f meets the 62 or 63 pairs of g at its value of `c`: the one product
+/// has 254,016 pairs.
+fn root_join(eng: &Engine, vtree: &Arc<Vtree>, thresholds: SparseThresholds) -> (Tdd, Vec<(VtreeIdx, Route, u64)>) {
+    let (a, b, c) = blocks();
+    let mut f_rows = Vec::new();
+    let mut g_rows = Vec::new();
+    for x in 0..64u64 {
+        for y in 0..64u64 {
+            for z in 0..64u64 {
+                if z != x {
+                    f_rows.push(vec![x, y, z]);
+                }
+                if z != y {
+                    g_rows.push(vec![x, y, z]);
+                }
+            }
+        }
+    }
+    let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
+    let (gv, gr) = pack(&[&a, &b, &c], &g_rows);
+    let f = eng.from_models(vtree, &fv, &fr).unwrap();
+    let g = eng.from_models(vtree, &gv, &gr).unwrap();
+    let root = vtree.root().idx();
+    assert_eq!((f.levels[root].pairs.len(), g.levels[root].pairs.len()), (4032, 4032));
+
+    eng.clear_scratch();
+    let _forced = ForcedThresholds::install(thresholds);
+    levels_built(|| eng.and(f.clone(), g.clone()).expect("an unarmed engine refuses nothing"))
+}
+
+#[test]
+fn a_root_of_many_more_candidates_than_pairs_grows_only_by_projection() {
+    let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
+    let dense = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
+    let vtree = vtree();
+    let root = vtree.root();
+    let (from_sparse, levels) = root_join(&Engine::new(), &vtree, sparse);
+    let (from_dense, _) = root_join(&Engine::new(), &vtree, dense);
+    assert!(from_sparse.equivalent(&from_dense).unwrap());
+    // About 63 candidates an f pair against a seed of 4,032 pairs: doubling
+    // would grow the arena six times.
+    assert_eq!(from_sparse.levels[root.idx()].live_pairs(), 254_016);
+    assert!(levels.contains(&(root, Route::Sparse, 0)), "the root's arena outgrew its projection: {levels:?}");
 }
