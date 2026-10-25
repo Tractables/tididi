@@ -388,20 +388,6 @@ pub(crate) fn prune_unreachable(
     Ok(())
 }
 
-/// [`prune_unreachable`] of a diagram that knows its loose levels, walked
-/// from the output whether or not the root is clean: what a test charges
-/// the seeded walk against.
-#[cfg(test)]
-pub(crate) fn prune_loose_from_output(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
-    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
-    let loose = settle_loose(eng, tdd, &loose)?;
-    let seeds = Seeds::of(eng, tdd, &loose)?;
-    prune_below_root(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
-    tdd.dirty.set_loose(Some(Vec::new()));
-    Ok(())
-}
-
 /// A level the walk must enter whatever it finds: a parent of a loose
 /// level, as [`settle_loose`] leaves them, or a level above one.
 const FORCED: u8 = 1;
@@ -424,10 +410,10 @@ const CLEAN: u8 = 2;
 /// marks what one from the output would below them, and leaves alone the
 /// clean levels, which lose no node and whose references into a clean
 /// child need no rewrite.
-struct Seeds<'l> {
+pub(crate) struct Seeds<'l> {
     /// Per level, [`FORCED`], and [`CLEAN`] on the clean levels that are
     /// forced or a seed's children: the walk reads it on a seed's children.
-    state: Transient<'l, Vec<u8>>,
+    pub(crate) state: Transient<'l, Vec<u8>>,
     /// The structural internal clean levels with a structural internal
     /// child that is not clean, top-down.
     seeds: Transient<'l, Vec<VtreeIdx>>,
@@ -443,7 +429,7 @@ impl<'l> Seeds<'l> {
     /// The seeds of `tdd`, whose loose levels are `loose`, as [`settle_loose`]
     /// leaves them. The output is the root, as the walk below the root
     /// needs ([`below_root_walk_applies`]).
-    fn of(eng: &'l Engine, tdd: &Tdd, loose: &[u32]) -> Result<Seeds<'l>, OperationError> {
+    pub(crate) fn of(eng: &'l Engine, tdd: &Tdd, loose: &[u32]) -> Result<Seeds<'l>, OperationError> {
         let lim = eng.limits();
         let vtree = &tdd.vtree;
         let mut state: Transient<'_, Vec<u8>> = Transient::new(lim, Vec::new());
@@ -1494,7 +1480,7 @@ impl Visit {
 
 /// Where [`prune_below_root`] starts.
 #[derive(Clone, Copy)]
-enum Start<'a> {
+pub(crate) enum Start<'a> {
     /// At the root, the output node its only slot reached: whatever else
     /// the root level holds is what a change at the root dropped.
     Output,
@@ -1508,7 +1494,7 @@ enum Start<'a> {
 /// `start`, stopping at every level that loses no node. With `forced`, also
 /// entering every level it marks whose entry has [`FORCED`] set, whether or
 /// not it lost one.
-fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: Start<'_>) -> Result<(), OperationError> {
+pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: Start<'_>) -> Result<(), OperationError> {
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch { marks, remap, identity, visits, entered, from_output, .. } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);

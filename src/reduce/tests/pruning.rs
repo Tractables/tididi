@@ -4,11 +4,23 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_complement, prune_loose_from_output, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, keep_marked, new_indices, prune_below_root, prune_complement, prune_unreachable, settle_loose, UNREACHED};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
 
+/// `prune_unreachable` of a diagram that knows its loose levels, walked
+/// from the output whether or not the root is clean: what the seeded walk's
+/// charges are held to.
+fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
+    debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
+    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
+    let loose = settle_loose(eng, tdd, &loose)?;
+    let seeds = Seeds::of(eng, tdd, &loose)?;
+    prune_below_root(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
+    tdd.dirty.set_loose(Some(Vec::new()));
+    Ok(())
+}
 
 /// The prune's one diagram-proportional scratch buffer is reserved through the
 /// engine, so both halves of the tracked reserve reach it: the allocation-
