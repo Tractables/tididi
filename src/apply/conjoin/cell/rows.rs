@@ -930,8 +930,7 @@ fn lone_columns(
 /// pair, `lone[j]` column `j`'s: a cell walks its row's f pairs against that
 /// pair as [`cell_pairs`] walks a cell of one g pair, with no column read
 /// and no test of the cell's shape. A cell whose pairs fit the arena's room
-/// writes them there and closes its node as [`finish_node`] does; the
-/// others go through the sink.
+/// is written there ([`ArenaCell`]); the others go through the sink.
 struct EmitLoneColumns<'a, 'l> {
     sink: ReservedEmitSink<'l>,
     lone: &'a [ChildPair],
@@ -970,39 +969,19 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
             }
             return self.sink.single(eng, node_idx, grid_pos, lc, rc);
         }
-        let level = &mut *self.sink.level;
-        let pairs = level.pairs.stored_mut();
-        let start = pairs.len();
-        if self.sink.charged.min(pairs.capacity()) - start < f_pairs.len() {
-            let start = self.sink.begin();
-            push_kept(eng, &mut self.sink, f_pairs, kills, cand)?;
-            return self.sink.end(eng, node_idx, grid_pos, start);
-        }
-        let out = pairs.as_mut_ptr();
-        let mut len = start;
-        for p in f_pairs {
-            let (lc, rc) = cand(p);
-            if !kills || rc != NO_PRODUCT {
-                // Safety: the room checked above holds every f pair of the
-                // cell past `start`, and `len` steps once a pair at most.
-                unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
-                len += 1;
+        if let Some(mut cell) = self.sink.open_cell(f_pairs.len()) {
+            for p in f_pairs {
+                let (lc, rc) = cand(p);
+                if !kills || rc != NO_PRODUCT {
+                    // Safety: the cell was opened for every f pair of the row.
+                    unsafe { cell.push(lc, rc) };
+                }
             }
+            return cell.close(eng, node_idx, grid_pos);
         }
-        // Safety: the slots below `len` hold the old pairs and one written
-        // pair a survivor.
-        unsafe { pairs.set_len(len) };
-        let node = level.nodes.stored().len() as u32;
-        match len - start {
-            0 => return Ok(()),
-            1 => {
-                let pair = level.pop_pair().expect("the cell wrote one pair");
-                emit_single_pair(eng, level, pair)?;
-            }
-            n => level.try_push_multi_by_range(start, n).map_err(|_| OperationError::OverBudget)?,
-        }
-        node_idx[grid_pos] = node;
-        Ok(())
+        let start = self.sink.begin();
+        push_kept(eng, &mut self.sink, f_pairs, kills, cand)?;
+        self.sink.end(eng, node_idx, grid_pos, start)
     }
 }
 

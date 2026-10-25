@@ -63,6 +63,82 @@ pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddL
     eng.limits().try_push(level.nodes.stored_mut(), EncodedNode::inline(pair))
 }
 
+/// A cell written straight into the pair arena of the level being built,
+/// opened ([`PairSink::open_cell`]) where the arena has room for every pair
+/// the cell can write, so each survivor is stored without a capacity test,
+/// and closed into the level's next node as [`finish_node`] closes one.
+/// Pushing the survivors one by one would not have grown the arena either,
+/// so its capacity and the meters charged from it are as they would be.
+pub(crate) struct ArenaCell<'a> {
+    level: &'a mut TddLevel,
+    out: *mut ChildPair,
+    start: usize,
+    len: usize,
+    /// One past the last slot the cell may write.
+    #[cfg(debug_assertions)]
+    end: usize,
+}
+
+impl<'a> ArenaCell<'a> {
+    /// A cell of at most `bound` pairs at the end of `level`'s arena, which
+    /// `room`, at most the arena's spare capacity, says it has room for;
+    /// `None` where it has not.
+    #[inline(always)]
+    fn open(level: &'a mut TddLevel, room: usize, bound: usize) -> Option<Self> {
+        if room < bound {
+            return None;
+        }
+        let pairs = level.pairs.stored_mut();
+        debug_assert!(room <= pairs.capacity() - pairs.len(), "a sink's room is within its arena's capacity");
+        let (start, out) = (pairs.len(), pairs.as_mut_ptr());
+        Some(ArenaCell {
+            level,
+            out,
+            start,
+            len: start,
+            #[cfg(debug_assertions)]
+            end: start + bound,
+        })
+    }
+
+    /// Store a survivor of the cell.
+    ///
+    /// # Safety
+    ///
+    /// A cell takes at most the `bound` pairs it was opened for.
+    #[inline(always)]
+    pub(crate) unsafe fn push(&mut self, lc: u32, rc: u32) {
+        #[cfg(debug_assertions)]
+        debug_assert!(self.len < self.end, "a cell wrote past the pairs it was opened for");
+        // Safety: `open` found the arena's spare capacity to hold `end -
+        // start` pairs past `start`, and the caller writes no more.
+        unsafe { self.out.add(self.len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+        self.len += 1;
+    }
+
+    /// Turn the cell's survivors into the level's next node and record it
+    /// at `grid_pos`: no node for none, one pair stored inline, more as the
+    /// node's range of the arena.
+    #[inline(always)]
+    pub(crate) fn close(self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize) -> Result<(), OperationError> {
+        let ArenaCell { level, start, len, .. } = self;
+        // Safety: the slots below `len` hold the old pairs and one written
+        // pair a push.
+        unsafe { level.pairs.stored_mut().set_len(len) };
+        let node = level.nodes.stored().len() as u32;
+        match len - start {
+            0 => return Ok(()),
+            1 => {
+                let pair = level.pop_pair().expect("the cell wrote one pair");
+                emit_single_pair(eng, level, pair)?;
+            }
+            n => level.try_push_multi_by_range(start, n).map_err(|_| OperationError::OverBudget)?,
+        }
+        node_idx[grid_pos] = node;
+        Ok(())
+    }
+}
+
 // ============================== Pair sinks ==============================
 //
 // The per-cell product walk (`process_cell`) is one kernel generic over the
@@ -119,6 +195,15 @@ pub(crate) trait PairSink {
     /// where each cell it finishes sits.
     #[inline(always)]
     fn row(&mut self, _i: usize) {}
+
+    /// A cell of at most `bound` pairs written straight into the level the
+    /// sink builds, where the sink builds one and has [room](Self::room)
+    /// for them all; `None` sends the cell through [`begin`](Self::begin),
+    /// [`pair`](Self::pair) and [`end`](Self::end).
+    #[inline(always)]
+    fn open_cell(&mut self, _bound: usize) -> Option<ArenaCell<'_>> {
+        None
+    }
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
@@ -166,6 +251,12 @@ impl PairSink for EmitSink<'_> {
         start: usize,
     ) -> Result<(), OperationError> {
         emit_product_node(eng, self.level, node_idx, grid_pos, start)
+    }
+
+    #[inline(always)]
+    fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
+        let room = self.room();
+        ArenaCell::open(self.level, room, bound)
     }
 }
 
@@ -242,6 +333,14 @@ impl PairSink for ReservedEmitSink<'_> {
         start: usize,
     ) -> Result<(), OperationError> {
         emit_product_node(eng, self.level, node_idx, grid_pos, start)
+    }
+
+    /// A cell the meter's schedule leaves room for: one that would reach
+    /// `charged` goes through [`pair`](PairSink::pair), which charges it.
+    #[inline(always)]
+    fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
+        let room = self.room();
+        ArenaCell::open(self.level, room, bound)
     }
 }
 
