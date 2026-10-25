@@ -166,6 +166,7 @@ pub(super) fn refine_context_groups(
             0 => {}
             1 => part.leave(split_pair(&pairs[0], side).0),
             2 => part.split_two(pairs, side),
+            3 | 4 if part.split_few(pairs, side) => {}
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
             n if stored.is_some() => lim.try_push(refine_wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
             _ => part.split_wide(lim, pairs, side, &mut wide)?,
@@ -314,15 +315,61 @@ impl Partition<'_> {
     #[inline]
     fn split_two(&mut self, pairs: &[ChildPair], side: ChildSide) {
         let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-        let c0 = self.of(t0);
         if t0 == t1 {
-            if c0 != ALONE {
-                self.alone(t0, c0);
-            }
-            return;
+            self.leave(t0);
+        } else {
+            self.split_nodes(t0, t1, s0 == s1);
         }
-        let c1 = self.of(t1);
-        if s0 != s1 || c0 != c1 || c0 == ALONE {
+    }
+
+    /// A parent node of three or four pairs naming one or two nodes, split
+    /// as its pairs are read, with no sort: a node it names alone has no
+    /// twin, nor have two nodes of different numbers of siblings there; two
+    /// nodes of two siblings each are split as [`split_two`](Self::split_two)
+    /// splits two of one. Returns false, having changed nothing, where the
+    /// pairs name three nodes or more.
+    #[inline]
+    fn split_few(&mut self, pairs: &[ChildPair], side: ChildSide) -> bool {
+        let (a, s) = split_pair(&pairs[0], side);
+        let mut b = a;
+        // The counts of the two nodes' pairs, and their first two siblings.
+        let (mut na, mut nb) = (1usize, 0usize);
+        let (mut sa, mut sb) = ([s, 0], [0u32; 2]);
+        for pair in &pairs[1..] {
+            let (t, s) = split_pair(pair, side);
+            if t == a {
+                if na < 2 {
+                    sa[na] = s;
+                }
+                na += 1;
+            } else if nb == 0 || t == b {
+                b = t;
+                if nb < 2 {
+                    sb[nb] = s;
+                }
+                nb += 1;
+            } else {
+                return false;
+            }
+        }
+        if nb == 0 {
+            self.leave(a);
+        } else {
+            // Two multisets of two siblings are equal where their least and
+            // greatest are.
+            let same = na == 2 && nb == 2 && sa[0].min(sa[1]) == sb[0].min(sb[1]) && sa[0].max(sa[1]) == sb[0].max(sb[1]);
+            self.split_nodes(a, b, same);
+        }
+        true
+    }
+
+    /// Two distinct nodes of one parent node, `same` where their siblings
+    /// there are the same: they are a group if they are of one class, and
+    /// each is alone in its group otherwise.
+    #[inline]
+    fn split_nodes(&mut self, t0: u32, t1: u32, same: bool) {
+        let (c0, c1) = (self.of(t0), self.of(t1));
+        if !same || c0 != c1 || c0 == ALONE {
             if c0 != ALONE {
                 self.alone(t0, c0);
             }
@@ -384,9 +431,10 @@ impl Partition<'_> {
         Ok(())
     }
 
-    /// A parent node of three to [`SMALL_PAIRS`] pairs, grouped on the
-    /// stack: its pairs sorted, so that each node's siblings are a run in
-    /// ascending order, and each run compared with the runs before it.
+    /// A parent node of three to [`SMALL_PAIRS`] pairs that
+    /// [`split_few`](Self::split_few) leaves, grouped on the stack: its
+    /// pairs sorted, so that each node's siblings are a run in ascending
+    /// order, and each run compared with the runs before it.
     #[inline]
     fn split_small(&mut self, pairs: &[ChildPair], side: ChildSide) {
         let n = pairs.len();

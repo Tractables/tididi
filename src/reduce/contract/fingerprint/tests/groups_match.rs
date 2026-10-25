@@ -776,3 +776,95 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
     assert!(cfg!(miri) || seen_groups > 200, "the fixtures hold twins: {seen_groups}");
     assert!(cfg!(miri) || (few > 1000 && many > 200), "wide parent nodes of few and of more siblings: {few}, {many}");
 }
+
+/// Parent nodes of three and four pairs naming one or two nodes, the shapes
+/// read without a sort, mixed with ones naming three nodes or more: the
+/// twin groups are the nodes with equal contexts, on either side and in
+/// any pair order.
+#[test]
+fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(83);
+    let mut scratch = ContractScratch::default();
+    let (mut seen_groups, mut two_two) = (0, 0);
+    for round in 0..rounds(200, 6) {
+        let width = 2 + rng.below(12) as u32;
+        let siblings = 1 + rng.below(3) as u32;
+        for side in [ChildSide::Left, ChildSide::Right] {
+            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+            for (v, w) in [(target, width), (other, siblings)] {
+                for _ in 0..w {
+                    levels[v.idx()].push_internal_node(&[filler]);
+                }
+            }
+            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            // Nodes 2k and 2k + 1 are twins unless a parent node of the
+            // last kind below names one without the other.
+            let mut pairs: Vec<(u32, u32)> = Vec::new();
+            for _ in 0..2 + rng.below(3 * width as u64) {
+                pairs.clear();
+                let any = |rng: &mut Lcg| rng.below(width as u64) as u32;
+                let sibling = |rng: &mut Lcg| rng.below(siblings as u64) as u32;
+                match rng.below(10) {
+                    // Both nodes of a would-be twin pair, with the same one
+                    // or two siblings each.
+                    0..=7 => {
+                        let a = any(&mut rng) & !1;
+                        let (s0, s1) = (sibling(&mut rng), sibling(&mut rng));
+                        for t in [a, a + 1] {
+                            if t < width {
+                                pairs.extend([(t, s0), (t, s1)]);
+                            }
+                        }
+                    }
+                    // Two nodes, or the same node twice, of up to two
+                    // siblings each, or three nodes of one sibling each.
+                    _ => {
+                        let a = any(&mut rng);
+                        let b = if rng.below(4) == 0 { a } else { any(&mut rng) };
+                        for t in [a, b] {
+                            for _ in 0..1 + rng.below(2) {
+                                pairs.push((t, sibling(&mut rng)));
+                            }
+                        }
+                        if rng.below(5) == 0 {
+                            pairs.push((any(&mut rng), sibling(&mut rng)));
+                        }
+                    }
+                }
+                pairs.sort_unstable();
+                pairs.dedup();
+                for i in (1..pairs.len()).rev() {
+                    pairs.swap(i, rng.below(i as u64 + 1) as usize);
+                }
+                let nodes: HashSet<u32> = pairs.iter().map(|&(t, _)| t).collect();
+                if pairs.len() == 4 && nodes.len() == 2 {
+                    two_two += 1;
+                }
+                if !pairs.is_empty() {
+                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                    levels[root.idx()].push_internal_node(&node[..]);
+                }
+            }
+            let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+            let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            scratch.prepare();
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, false).expect("find_twin_groups");
+            let mut got: Vec<Vec<u32>> = Vec::new();
+            for (g, &start) in scratch.group_starts.iter().enumerate() {
+                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+                got.push(scratch.flat_groups[start as usize..end].to_vec());
+            }
+            assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
+            assert_eq!(got, want, "round {round}, {side:?}");
+            seen_groups += want.len();
+        }
+    }
+    assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
+    assert!(cfg!(miri) || two_two > 300, "parent nodes of two nodes of two siblings each: {two_two}");
+}
