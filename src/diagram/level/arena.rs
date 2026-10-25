@@ -159,37 +159,73 @@ impl TddLevel {
         }
     }
 
-    /// Re-encode a multi-pair node after an in-place pass in node order
-    /// moved its kept pairs to `[start, start + len)`, `start` at most its
-    /// old start ([`ranges_in_node_order`](Self::ranges_in_node_order)):
-    /// the moved range (`len >= 2`), the sole survivor inline (`len == 1`),
-    /// or the empty placeholder (`len == 0`), as
-    /// [`reencode_shrunk`](Self::reencode_shrunk) leaves them. Allocates
-    /// nothing; a node in the ranged encoding keeps its `ranges` entry.
+    /// Rewrite every pair of a stored level whose ranges are in node order
+    /// ([`ranges_in_node_order`](Self::ranges_in_node_order)) through `f`,
+    /// which returns the pair to write and whether it is kept, in one pass
+    /// in node order: each node's kept pairs move down to a write cursor,
+    /// which never overtakes a range not yet read, and the node is
+    /// re-encoded as the moved range (two pairs or more), its sole kept pair
+    /// inline, or the empty placeholder, as
+    /// [`reencode_shrunk`](Self::reencode_shrunk) leaves them. An inline
+    /// node's pair is rewritten in its word and must be kept. The arena is
+    /// left with the kept pairs only and no dead pairs; a node in the ranged
+    /// encoding keeps its `ranges` entry. Allocates nothing.
     #[inline]
-    pub(crate) fn reencode_moved(&mut self, node_idx: usize, start: usize, len: usize) {
-        match len {
-            0 => self.nodes.stored_mut()[node_idx] = self.encode_multi(0, 0),
-            1 => {
-                let stored = self.pairs.stored().expect("an in-place rewrite works on stored pairs");
-                self.nodes.stored_mut()[node_idx] = EncodedNode::inline(stored[start]);
+    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(ChildPair) -> (ChildPair, bool)) {
+        debug_assert!(self.ranges_in_node_order(), "a slide reads the ranges in node order");
+        let TddLevel { nodes, pairs, ranges, dead_pairs, .. } = self;
+        let pairs = pairs.stored_mut();
+        let mut cursor = 0usize;
+        for node in nodes.stored_mut().iter_mut() {
+            let (start, len, ranged) = match node.kind() {
+                NodeKind::Inline(pair) => {
+                    let (pair, kept) = f(pair);
+                    debug_assert!(kept, "an inline node's pair is never dropped");
+                    *node = EncodedNode::inline(pair);
+                    continue;
+                }
+                NodeKind::Multi { start, len } => (start as usize, len as usize, None),
+                NodeKind::MultiRanged(idx) => {
+                    let e = &ranges[idx as usize];
+                    (e.start as usize, e.len as usize, Some(idx as usize))
+                }
+            };
+            debug_assert!(cursor <= start, "the write cursor stays behind the reads");
+            let mut write = cursor;
+            for read in start..start + len {
+                let (pair, kept) = f(pairs[read]);
+                pairs[write] = pair;
+                write += usize::from(kept);
             }
-            _ => {
-                self.set_multi_start(node_idx, start);
-                self.set_pair_len(node_idx, len as u32);
-            }
+            *node = match write - cursor {
+                0 => EncodedNode::multi_pair(0, 0),
+                1 => EncodedNode::inline(pairs[cursor]),
+                kept => {
+                    let at = std::mem::replace(&mut cursor, write);
+                    match ranged {
+                        Some(idx) => {
+                            ranges[idx] = PairRange { start: at as u64, len: kept as u64 };
+                            *node
+                        }
+                        // At most the old start, which fit the packed form.
+                        None => EncodedNode::multi_pair(at as u32, kept as u32),
+                    }
+                }
+            };
         }
+        pairs.truncate(cursor);
+        *dead_pairs = 0;
     }
 
     /// Whether every nonempty pair range of the level starts at or past the
     /// end of the one before it in node order. A pass that rewrites the
     /// nodes in order can then move each node's kept pairs down to a write
     /// cursor, which never overtakes a range not yet read, and leave the
-    /// arena with no dead pairs ([`reencode_moved`](Self::reencode_moved)).
+    /// arena with no dead pairs ([`slide_pairs`](Self::slide_pairs)).
     pub(crate) fn ranges_in_node_order(&self) -> bool {
         let mut end = 0usize;
-        for i in 0..self.nodes().len() {
-            if let Some(range) = self.arena_range(self.node(i).kind())
+        for node in self.nodes() {
+            if let Some(range) = self.arena_range(node.kind())
                 && !range.is_empty()
             {
                 if range.start < end {

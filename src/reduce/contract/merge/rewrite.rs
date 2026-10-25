@@ -57,7 +57,7 @@ pub(super) fn rewrite_parent(
         debug_assert!(room.is_some(), "an implicit parent's room is reserved");
         parent_level
             .rewrite_described_in(lim, room, false, |_, _, _, pair| {
-                let (pair, kept) = canonical_pair(pair, t1_side, remap);
+                let (pair, kept) = canonical_pair_on(pair, t1_side, &remap.final_remap);
                 kept.then_some(pair)
             })
             .expect("an implicit parent is rewritten in its room");
@@ -69,34 +69,28 @@ pub(super) fn rewrite_parent(
     // Where the arena holds the ranges in node order, each node's kept pairs
     // move down to a write cursor as they are rewritten, which leaves the
     // arena with no dead pairs and the parent no sweep to run; otherwise
-    // each node shrinks in place and its tail is left dead.
-    let slide = parent_level.ranges_in_node_order();
-    let mut cursor = 0usize;
+    // each node shrinks in place and its tail is left dead. The side is a
+    // constant of each slide's loop.
+    if parent_level.ranges_in_node_order() {
+        let final_remap = &remap.final_remap;
+        match t1_side {
+            ChildSide::Left => parent_level.slide_pairs(|pair| canonical_pair::<true>(pair, final_remap)),
+            ChildSide::Right => parent_level.slide_pairs(|pair| canonical_pair::<false>(pair, final_remap)),
+        }
+        return;
+    }
     for node_idx in 0..parent_level.nodes().len() {
         let kind = parent_level.node(node_idx).kind();
         let Some(range) = parent_level.arena_range(kind) else {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
             continue;
         };
-        if slide {
-            let new_len = move_canonical_pairs(parent_level, range, cursor, t1_side, remap);
-            parent_level.reencode_moved(node_idx, cursor, new_len);
-            if new_len >= 2 {
-                cursor += new_len;
-            }
-        } else {
-            let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
-            if new_len < range.len() {
-                dead_acc += parent_level.reencode_shrunk(node_idx, range.start, range.len(), new_len);
-            }
+        let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
+        if new_len < range.len() {
+            dead_acc += parent_level.reencode_shrunk(node_idx, range.start, range.len(), new_len);
         }
     }
-    if slide {
-        parent_level.pairs.stored_mut().truncate(cursor);
-        parent_level.dead_pairs = 0;
-    } else {
-        parent_level.note_dead_pairs(dead_acc);
-    }
+    parent_level.note_dead_pairs(dead_acc);
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
@@ -135,32 +129,11 @@ fn keep_canonical_pairs(
     let pairs = level.pairs_mut(node_idx);
     let mut write = 0;
     for read in 0..pairs.len() {
-        let (pair, kept) = canonical_pair(pairs[read], t1_side, remap);
+        let (pair, kept) = canonical_pair_on(pairs[read], t1_side, &remap.final_remap);
         pairs[write] = pair;
         write += usize::from(kept);
     }
     write
-}
-
-/// [`keep_canonical_pairs`] for a node whose pairs `range` are moved down to
-/// `to`, at most `range.start`: its kept pairs are written from `to` on.
-/// Returns how many pairs are left.
-fn move_canonical_pairs(
-    level: &mut TddLevel,
-    range: std::ops::Range<usize>,
-    to: usize,
-    t1_side: ChildSide,
-    remap: &MergeRemap,
-) -> usize {
-    debug_assert!(to <= range.start, "the write cursor stays behind the reads");
-    let pairs = level.pairs.stored_mut();
-    let mut write = to;
-    for read in range {
-        let (pair, kept) = canonical_pair(pairs[read], t1_side, remap);
-        pairs[write] = pair;
-        write += usize::from(kept);
-    }
-    write - to
 }
 
 /// A parent pair after the merge, remapped onto its T1-side ref's survivor,
@@ -168,12 +141,22 @@ fn move_canonical_pairs(
 /// redirected as a content-equal duplicate. A pair not kept duplicates one
 /// naming the survivor. The callers write every pair at their write cursor
 /// and advance it by the flag, with no branch on it: which pairs are kept
-/// follows no pattern a branch predictor learns.
-#[inline]
-fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> (ChildPair, bool) {
-    let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-    let to = remap.final_remap[f.0 as usize].0;
+/// follows no pattern a branch predictor learns. `LEFT` says whether T1 is
+/// the left child.
+#[inline(always)]
+fn canonical_pair<const LEFT: bool>(mut pair: ChildPair, final_remap: &[NodeIdx]) -> (ChildPair, bool) {
+    let f = if LEFT { &mut pair.left } else { &mut pair.right };
+    let to = final_remap[f.0 as usize].0;
     debug_assert_ne!(to, DISCARDED, "a pair names a node the merge drops as unnamed");
     *f = NodeIdx(to & !DROPPED).into();
     (pair, to & DROPPED == 0)
+}
+
+/// [`canonical_pair`] with T1's side read at run time.
+#[inline]
+fn canonical_pair_on(pair: ChildPair, t1_side: ChildSide, final_remap: &[NodeIdx]) -> (ChildPair, bool) {
+    match t1_side {
+        ChildSide::Left => canonical_pair::<true>(pair, final_remap),
+        ChildSide::Right => canonical_pair::<false>(pair, final_remap),
+    }
 }

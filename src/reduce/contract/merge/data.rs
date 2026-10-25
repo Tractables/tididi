@@ -60,6 +60,21 @@ fn prefetch_members(sel: &[u32], k: usize, nodes: &[EncodedNode], old: &[ChildPa
     }
 }
 
+/// Append `src` to `fresh`, within its reserved room: four pairs or fewer,
+/// as a node or a run the merge copies mostly is, by a copy of that many,
+/// written out in place rather than through a call to copy them.
+#[inline(always)]
+fn append(fresh: &mut Vec<ChildPair>, src: &[ChildPair]) {
+    match *src {
+        [] => {}
+        [a] => fresh.push(a),
+        [a, b] => fresh.extend_from_slice(&[a, b]),
+        [a, b, c] => fresh.extend_from_slice(&[a, b, c]),
+        [a, b, c, d] => fresh.extend_from_slice(&[a, b, c, d]),
+        _ => fresh.extend_from_slice(src),
+    }
+}
+
 /// Whether node `i` is merged away into a survivor.
 #[inline]
 fn absorbed(bits: &[u64], i: usize) -> bool {
@@ -223,12 +238,12 @@ pub(super) fn rebuild_level(
 ) {
     let RebuiltArenas { pairs: mut fresh, ranges: mut fresh_ranges } = arenas;
     let reserved = fresh.capacity();
-    let mut plans = concat_plans(bufs);
     let TddLevel { nodes, pairs, ranges, .. } = &mut *level;
     let old = pairs.stored().expect("a merged level is stored");
     let old_ranges: &RangeTable = ranges;
-    let source = |node: EncodedNode| -> std::ops::Range<usize> {
-        match node.kind() {
+    // A node's range in the old arena, read off its word once.
+    let source = |kind: NodeKind| -> std::ops::Range<usize> {
+        match kind {
             NodeKind::Multi { start, len } => start as usize..(start + len) as usize,
             NodeKind::MultiRanged(idx) => {
                 let e = &old_ranges[idx as usize];
@@ -255,6 +270,12 @@ pub(super) fn rebuild_level(
     // each node placed at its offset in the run.
     let mut run = 0..0usize;
     let MergeRemap { final_remap, absorbed: bits, .. } = remap;
+    // The next concat group, in survivor order, and its survivor (its
+    // lowest member), or past every node once none is left.
+    let mut plans = bufs.group_plans.iter().filter(|p| p.action == GroupAction::Concat);
+    let survivor_of = |plan: Option<&GroupPlan>| plan.map_or(usize::MAX, |p| bufs.sel[p.start as usize] as usize);
+    let mut plan = plans.next();
+    let mut next = survivor_of(plan);
     for read in 0..nodes.len() {
         if absorbed(bits, read) {
             let to = final_remap[read].0;
@@ -267,53 +288,54 @@ pub(super) fn rebuild_level(
         }
         final_remap[read] = NodeIdx(write as u32);
         let node = nodes[read];
-        let rebuilt = match plans.next_if(|p| bufs.sel[p.start as usize] == read as u32) {
-            Some(p) => {
-                fresh.extend_from_slice(&old[run.clone()]);
-                run = run.end..run.end;
-                let start = fresh.len();
-                for k in p.start as usize..p.end as usize {
-                    prefetch_members(&bufs.sel, k, nodes, old);
-                    let m = bufs.sel[k];
-                    debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
-                    let member = nodes[m as usize];
-                    match member.kind() {
-                        NodeKind::Inline(pair) => fresh.push(pair),
-                        _ => fresh.extend_from_slice(&old[source(member)]),
-                    }
-                }
-                if cfg!(debug_assertions) && check_disjoint {
-                    let mut chk = fresh[start..].to_vec();
-                    chk.sort_unstable();
-                    assert!(
-                        chk.windows(2).all(|w| w[0] != w[1]),
-                        "twin contraction: duplicate pair across twin supports — invariant 1 violation"
-                    );
-                }
-                match fresh.len() - start {
-                    1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
-                    len => place(start, len),
+        let rebuilt = if read == next {
+            let p = plan.expect("a concat group's survivor");
+            plan = plans.next();
+            next = survivor_of(plan);
+            append(&mut fresh, &old[run.clone()]);
+            run = run.end..run.end;
+            let start = fresh.len();
+            for k in p.start as usize..p.end as usize {
+                prefetch_members(&bufs.sel, k, nodes, old);
+                let m = bufs.sel[k];
+                debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
+                match nodes[m as usize].kind() {
+                    NodeKind::Inline(pair) => fresh.push(pair),
+                    kind => append(&mut fresh, &old[source(kind)]),
                 }
             }
-            None => match node.kind() {
+            if cfg!(debug_assertions) && check_disjoint {
+                let mut chk = fresh[start..].to_vec();
+                chk.sort_unstable();
+                assert!(
+                    chk.windows(2).all(|w| w[0] != w[1]),
+                    "twin contraction: duplicate pair across twin supports — invariant 1 violation"
+                );
+            }
+            match fresh.len() - start {
+                1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
+                len => place(start, len),
+            }
+        } else {
+            match node.kind() {
                 NodeKind::Inline(_) => node,
-                _ => {
-                    let src = source(node);
+                kind => {
+                    let src = source(kind);
                     if src.start != run.end {
-                        fresh.extend_from_slice(&old[run.clone()]);
+                        append(&mut fresh, &old[run.clone()]);
                         run = src.start..src.start;
                     }
                     let start = fresh.len() + (src.start - run.start);
                     run.end = src.end;
                     place(start, src.len())
                 }
-            },
+            }
         };
         nodes[write] = rebuilt;
         write += 1;
     }
     fresh.extend_from_slice(&old[run]);
-    debug_assert!(plans.next().is_none(), "every concat group met its survivor");
+    debug_assert!(plan.is_none(), "every concat group met its survivor");
     debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
     nodes.truncate(write);
     *pairs.stored_mut() = fresh;
