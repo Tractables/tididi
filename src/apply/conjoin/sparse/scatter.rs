@@ -2043,14 +2043,18 @@ fn emit_owned(
         let products = pl_output.len() - first;
         reserve_room(lim, level.nodes.stored_mut(), products)?;
         let n = owners.len();
+        let arena = level.pairs.stored_mut();
+        if products == n {
+            // Each pair is its own product's inline node, read where the
+            // walk wrote it; the nodes have their room.
+            let pairs = &arena[base..base + n];
+            level.nodes.stored_mut().extend(pairs.iter().map(|&pair| crate::diagram::EncodedNode::inline(pair)));
+            arena.truncate(base);
+            return Ok(());
+        }
         moved_pairs.clear();
         lim.reserve(moved_pairs, n)?;
-        let arena = level.pairs.stored_mut();
         moved_pairs.extend_from_slice(&arena[base..base + n]);
-        if products == n {
-            arena.truncate(base);
-            return moved_pairs.iter().try_for_each(|&pair| emit_single_pair(eng, level, pair));
-        }
         let total = prefix_offsets(pair_counts, true)? as usize;
         arena.truncate(base + total);
         single_pairs.clear();
