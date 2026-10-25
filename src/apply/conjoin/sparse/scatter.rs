@@ -116,6 +116,29 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
         };
         if let Some(ones) = built {
+            // Into the level's nodes from f's stored nodes where each f index
+            // has one live product, in order: the walk reads each product and
+            // its slots from the list and the table themselves, nothing
+            // gathered, and the table is cleared after it.
+            let collect = match collect {
+                Collect::Nodes(to) if f_level.stored().is_some() && one_each(pl_outer, f_outer) => {
+                    let SparseWorkspace { owners, node_owners, emit, .. } = &mut *ws;
+                    let listed = Listed { list: pl_outer, owners: owners[..OWNER_SLOTS * g_outer].as_chunks().0 };
+                    let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
+                    let walked = if ones {
+                        owner_walk_nodes::<SWAPPED, true, true>(eng, node_owners, emit, f_level, f, none, listed, to)
+                    } else {
+                        owner_walk_nodes::<SWAPPED, false, true>(eng, node_owners, emit, f_level, f, none, listed, to)
+                    };
+                    if !SWAPPED {
+                        clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
+                    } else {
+                        clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
+                    }
+                    return walked;
+                }
+                collect => collect,
+            };
             // Each live product of the outer child with its slots, read once;
             // the table is then done with.
             let gathered = gather_owned_products(lim, pl_outer, f_outer, &ws.owners[..OWNER_SLOTS * g_outer],
@@ -127,19 +150,17 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             }
             ws.owned_len = gathered?;
             // Into the level's nodes from f's stored nodes, the walk runs as
-            // one loop over them ([`owner_walk_nodes`]).
+            // one loop over them ([`owner_walk_nodes`]), each pair's products
+            // read from its outer child's bucket.
             let collect = match collect {
                 Collect::Nodes(to) if f_level.stored().is_some() => {
-                    // Where each outer child has one live product that meets
-                    // an owner, the products are read by outer child.
-                    let dense = ws.owned_len == f_outer
-                        && ws.outer_offsets[..f_outer].iter().enumerate().all(|(i, &b)| b as usize == i);
-                    let (eng, f, w) = (eng, shape.f.here, f_outer);
-                    return match (ones, dense) {
-                        (true, true) => owner_walk_nodes::<SWAPPED, true, true>(eng, ws, f_level, f, w, to),
-                        (true, false) => owner_walk_nodes::<SWAPPED, true, false>(eng, ws, f_level, f, w, to),
-                        (false, true) => owner_walk_nodes::<SWAPPED, false, true>(eng, ws, f_level, f, w, to),
-                        (false, false) => owner_walk_nodes::<SWAPPED, false, false>(eng, ws, f_level, f, w, to),
+                    let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
+                    let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
+                    let (f, none) = (shape.f.here, Listed { list: &[], owners: &[] });
+                    return if ones {
+                        owner_walk_nodes::<SWAPPED, true, false>(eng, node_owners, emit, f_level, f, outer, none, to)
+                    } else {
+                        owner_walk_nodes::<SWAPPED, false, false>(eng, node_owners, emit, f_level, f, outer, none, to)
                     };
                 }
                 collect => collect,
@@ -552,28 +573,30 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
 /// clock is charged once a node, and a node's g parent is held as its walk
 /// goes while every candidate so far has the same one: the owners are
 /// written out only once a second g parent appears, and a node of one g
-/// parent is made where its walk ends. `DENSE` says each outer child has
-/// one entry, its own index's, read without the offsets.
+/// parent is made where its walk ends. The products are `outer`'s by f
+/// index; `DENSE` says each outer child has one, read from `dense` by its
+/// index instead ([`one_each`]).
+#[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     eng: &Engine,
-    ws: &mut SparseWorkspace,
+    node_owners: &mut Vec<u32>,
+    emit: &mut EmitScratch,
     f_level: &TddLevel,
     f_nodes: usize,
-    f_outer: usize,
+    outer: GroupedView<'_, OwnedProduct>,
+    dense: Listed<'_>,
     to: Emit<'_>,
 ) -> Result<(), OperationError> {
     const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
     const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let lim = eng.limits();
     let Emit { level, out, duplicates_legal, .. } = to;
-    let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
-    let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
     let stored = f_level.stored().expect("the walk reads f's stored nodes");
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let copied = if DENSE {
-        copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, outer.entries, level, start, out, &mut ticker)?
+        copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, dense, level, start, out, &mut ticker)?
     } else {
         0
     };
@@ -612,7 +635,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
             }
             macro_rules! visit {
                 ($e:expr) => {{
-                    let e: &OwnedProduct = $e;
+                    let e: OwnedProduct = $e;
                     let [pos, one, neg] = e.slots;
                     // [`OwnerWalk`]'s order: Pos, One, Neg.
                     if inner1 != NEG {
@@ -634,10 +657,10 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
                 }};
             }
             if DENSE {
-                visit!(&outer.entries[outer1 as usize]);
+                visit!(dense.entry(outer1));
             } else {
                 for e in outer.bucket(outer1 as usize) {
-                    visit!(e);
+                    visit!(*e);
                 }
             }
         }
@@ -692,6 +715,29 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     Ok(())
 }
 
+/// Whether `list` holds one product for each of `width` f indices, in
+/// order.
+fn one_each(list: &[ProductEntry], width: usize) -> bool {
+    list.len() == width && list.iter().enumerate().all(|(i, e)| e.f_idx.idx() == i)
+}
+
+/// A product list with one product per f index, in order ([`one_each`]),
+/// each product's slots read from the owner table as the walk meets it.
+#[derive(Clone, Copy)]
+struct Listed<'a> {
+    list: &'a [ProductEntry],
+    owners: &'a [[u32; OWNER_SLOTS]],
+}
+
+impl Listed<'_> {
+    /// Outer child `outer`'s one product with its slots.
+    #[inline(always)]
+    fn entry(self, outer: u32) -> OwnedProduct {
+        let e = self.list[outer as usize];
+        OwnedProduct { prod: e.prod_idx.0, slots: self.owners[e.g_idx.idx()] }
+    }
+}
+
 /// The g parent of the one candidate of two g pairs' parents `a` and `b`,
 /// or `NO_PRODUCT` where both or neither is there.
 #[inline(always)]
@@ -704,11 +750,11 @@ fn sole(a: u32, b: u32) -> u32 {
 /// numbered as its outer child (`NO_PRODUCT` where it meets another or
 /// none), and above it the clock units the walk charges for its visit.
 #[inline(always)]
-fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: &[OwnedProduct]) -> u64 {
+fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: Listed<'_>) -> u64 {
     const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
     const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
-    let e = &entries[outer1 as usize];
+    let e = entries.entry(outer1);
     let [pos, one, neg] = e.slots;
     let mut held = u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
     if ONES {
@@ -729,8 +775,8 @@ fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: &[
 }
 
 /// The first of [`owner_walk_nodes`] on a level where each outer child of f
-/// has one owned product (`DENSE`), its arena holding `start` pairs before
-/// the walk: f's nodes from the first for as long as each is its own
+/// has one product (`DENSE`), its arena holding `start` pairs before the
+/// walk: f's nodes from the first for as long as each is its own
 /// product's node. That holds of a node each of whose pairs meets one g
 /// pair, of the pair's own leaf label and under the product numbered as
 /// the pair's outer child, all of one g parent ([`copy_code`]): its
@@ -743,7 +789,7 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
     eng: &Engine,
     stored: crate::diagram::StoredPairs<'_>,
     f_nodes: usize,
-    entries: &[OwnedProduct],
+    entries: Listed<'_>,
     level: &mut TddLevel,
     start: usize,
     out: &mut Vec<ProductEntry>,
