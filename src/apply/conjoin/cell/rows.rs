@@ -108,21 +108,24 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether the row loop offers the action [`whole_row`](Self::whole_row).
     const WHOLE_ROWS: bool = false;
 
-    /// Every cell of a row whose columns all hold one, in column order, as
+    /// The cells of a row whose every column holds one, in column order, as
     /// [`cell`](Self::cell) a column would write them, for an action with a
-    /// loop of its own for them; `false`, having written nothing, leaves
-    /// them to [`cell`](Self::cell).
+    /// loop of its own for them: how many columns it wrote, leaving the
+    /// cells from there to [`cell`](Self::cell).
     #[inline(always)]
-    fn whole_row(&mut self, _eng: &Engine, _row: WholeRow<'_, '_, L, R>) -> Result<bool, OperationError> {
-        Ok(false)
+    fn whole_row(&mut self, _eng: &Engine, _row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+        Ok(0)
     }
 }
 
 /// What [`CellAction::whole_row`] reads of a row: [`CellArgs`] without the
-/// column.
+/// column and the f row's index.
 pub(super) struct WholeRow<'a, 'c, L, R> {
     pub(super) row_base: usize,
     pub(super) f_pairs: &'a [ChildPair],
+    pub(super) ctx: &'a CellCtx<'c>,
+    pub(super) right_level_t: &'a TddLevel,
+    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
     pub(super) right: &'a R,
@@ -350,14 +353,20 @@ where
             continue;
         }
 
+        // The first column the cells below start at.
+        let mut first = 0;
         if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
             // The row's every column is a cell, as the loop below would
             // find once the masks' fold kept the row.
             if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
                 continue;
             }
-            let row = WholeRow { row_base, f_pairs, node_idx: &mut *node_idx, left, right, gate: &mut poll };
-            if action.whole_row(eng, row)? {
+            let row = WholeRow {
+                row_base, f_pairs, ctx, right_level_t,
+                g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, left, right, gate: &mut poll,
+            };
+            first = action.whole_row(eng, row)?;
+            if first == right_width {
                 poll.poll(right_width as u64)?;
                 continue;
             }
@@ -472,7 +481,7 @@ where
                 j0 += n;
             }
         } else {
-            for j in 0..right_width {
+            for j in first..right_width {
                 cell(j)?;
             }
         }
@@ -500,6 +509,12 @@ pub(super) struct Emit<S> {
 
 impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
     const DENSE_SLAB: bool = true;
+    const WHOLE_ROWS: bool = true;
+
+    #[inline(always)]
+    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+        emit_row(&mut self.sink, row)
+    }
 
     /// Dense slab: one grid row per f row.
     #[inline(always)]
@@ -978,11 +993,11 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
     /// A row of one or two f pairs whose cells all fit the arenas' room is
     /// written there in one loop ([`lone_row`]).
     #[inline(always)]
-    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<bool, OperationError> {
+    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
         match row.f_pairs.len() {
             1 => lone_row::<1, L, R>(&mut self.sink, self.lone, row),
             2 => lone_row::<2, L, R>(&mut self.sink, self.lone, row),
-            _ => Ok(false),
+            _ => Ok(0),
         }
     }
 
@@ -1042,10 +1057,10 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     sink: &mut ReservedEmitSink<'_>,
     lone: &[ChildPair],
     row: WholeRow<'_, '_, L, R>,
-) -> Result<bool, OperationError> {
-    let WholeRow { row_base, f_pairs, node_idx, left, right, gate } = row;
-    let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(false) };
-    let Some(mut out) = sink.open_row(lone.len() * K, lone.len()) else { return Ok(false) };
+) -> Result<usize, OperationError> {
+    let WholeRow { row_base, f_pairs, node_idx, left, right, gate, .. } = row;
+    let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(0) };
+    let Some(mut out) = sink.open_row(lone.len() * K, lone.len()) else { return Ok(0) };
     super::super::note_whole_row();
     let rows: [(L::Row, R::Row); K] = std::array::from_fn(|t| (left.row(f[t].left.0), right.row(f[t].right.0)));
     let units = K as u64;
@@ -1075,7 +1090,81 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
         unsafe { out.close(node_idx, row_base + j) };
     }
     gate.add_short(due_at - due);
-    Ok(true)
+    Ok(lone.len())
+}
+
+/// The most f pairs a row [`emit_row`] writes holds.
+const ROW_PAIRS: usize = 8;
+
+/// [`Emit`] on a row of at most [`ROW_PAIRS`] f pairs: its cells in one
+/// loop ([`ArenaRow`]), each f pair's child rows read once for the row, up
+/// to the first cell of more than one pair on both sides, or the first that
+/// does not fit the arena's room, which go through [`process_cell`]. A cell
+/// of one pair on a side is walked against the other side's pairs as
+/// [`cell_pairs`] walks it, and the gate counted down by the cell's pairs
+/// and polled at the cell that brings it due, as that walk's one poll a
+/// cell charges it.
+#[inline(always)]
+fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
+    sink: &mut S,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let (k, width) = (f_pairs.len(), ctx.right_width);
+    if k > ROW_PAIRS {
+        return Ok(0);
+    }
+    let Some(mut out) = sink.open_row(0, width) else { return Ok(0) };
+    let child_rows = |p: &ChildPair| (left.row(p.left.0), right.row(p.right.0));
+    let mut rows = [child_rows(&f_pairs[0]); ROW_PAIRS];
+    for (t, p) in f_pairs.iter().enumerate().skip(1) {
+        rows[t] = child_rows(p);
+    }
+    let rows = &rows[..k];
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    let mut j = 0;
+    while j < width {
+        let g_pairs = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        let m = g_pairs.len();
+        if m == 0 {
+            // A dead column's cell, as `process_cell` leaves it.
+            node_idx[row_base + j] = NO_PRODUCT;
+            j += 1;
+            continue;
+        }
+        if (k > 1 && m > 1) || !out.fits(k * m) {
+            break;
+        }
+        let units = (k * m) as u64;
+        if units >= due {
+            gate.add_short(due_at - due);
+            gate.poll(units)?;
+            (due_at, due) = (gate.due_in(), gate.due_in());
+        } else {
+            due -= units;
+        }
+        let mut cand = |(l, r): (L::Row, R::Row), q: &ChildPair| {
+            let lc = left.get_in_row(node_idx, l, q.left.0);
+            if left.kills() && lc == NO_PRODUCT {
+                return;
+            }
+            let rc = right.get_in_row(node_idx, r, q.right.0);
+            if right.kills() && rc == NO_PRODUCT {
+                return;
+            }
+            // Safety: the cell fits its `k * m` candidates.
+            unsafe { out.push(lc, rc) };
+        };
+        match g_pairs {
+            [q] => rows.iter().for_each(|&f_rows| cand(f_rows, q)),
+            _ => g_pairs.iter().for_each(|q| cand(rows[0], q)),
+        }
+        // Safety: the row was opened for a node a column.
+        unsafe { out.close(node_idx, row_base + j) };
+        j += 1;
+    }
+    gate.add_short(due_at - due);
+    Ok(j)
 }
 
 /// The one pair of a level's g side, where it has one node and that node
