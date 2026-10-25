@@ -2320,22 +2320,18 @@ fn emit_few(
     let lim = eng.limits();
     let n = owners.len();
     debug_assert!((2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n, "a few candidates");
-    // Each candidate's product and each product's g parent and pair count,
-    // and the pairs of the products of more than one, which take a range of
-    // the arena. That sum is kept as the counts are: summed from them after
-    // the loop, it read several counts in one load while their last writes
-    // were still in flight, and such a load waits for the writes to retire.
-    let mut product_of = [0u32; FEW_CANDIDATES];
+    // Each product's g parent, its candidates as a bit each, and its pair
+    // count; and the pairs of the products of more than one, which take a
+    // range of the arena.
     let mut parents = [0u32; FEW_CANDIDATES];
+    let mut members = [0u8; FEW_CANDIDATES];
     let mut counts = [0u32; FEW_CANDIDATES];
     let (mut products, mut ranged) = (0, 0);
     for (i, &g_parent) in owners.iter().enumerate() {
         let k = parents[..products].iter().position(|&p| p == g_parent).unwrap_or(products);
-        if k == products {
-            parents[k] = g_parent;
-            products += 1;
-        }
-        product_of[i] = k as u32;
+        parents[k] = g_parent;
+        products += usize::from(k == products);
+        members[k] |= 1 << i;
         let count = counts[k] + 1;
         counts[k] = count;
         ranged += match count {
@@ -2357,16 +2353,26 @@ fn emit_few(
     reserve_room(lim, level.nodes.stored_mut(), products)?;
     reserve_pairs_for_emit(eng, level, ranged)?;
     let first_node = level.nodes().len();
-    let built = counts[..products].iter().enumerate().try_for_each(|(k, &count)| {
-        let mut mine = (0..n).filter(|&i| product_of[i] as usize == k).map(|i| pairs[i]);
-        if count == 1 {
-            emit_single_pair(eng, level, mine.next().expect("the product holds a candidate"))
+    // Each product's node in product order: one pair inline, more as the
+    // next range of the arena, its candidates read off their bits in order.
+    let mut built = Ok(());
+    for k in 0..products {
+        let mut bits = members[k];
+        if counts[k] == 1 {
+            built = emit_single_pair(eng, level, pairs[bits.trailing_zeros() as usize]);
         } else {
             let start = level.pairs.stored_len();
-            level.pairs.stored_mut().extend(mine);
-            level.try_push_multi_by_range(start, count as usize).map_err(|_| OperationError::OverBudget)
+            let arena = level.pairs.stored_mut();
+            while bits != 0 {
+                arena.push(pairs[bits.trailing_zeros() as usize]);
+                bits &= bits - 1;
+            }
+            built = level.try_push_multi_by_range(start, counts[k] as usize).map_err(|_| OperationError::OverBudget);
         }
-    });
+        if built.is_err() {
+            break;
+        }
+    }
     lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
     built?;
     debug_assert!(
