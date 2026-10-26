@@ -47,10 +47,17 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
     // The list may name a level more than once ([`Dirty::dedup_above`]).
     dirty.sort_unstable();
     dirty.dedup();
+    // Hints only: a level is refused off its hinted node where that node
+    // refuses, whatever level the hint was taken at, and is classified in
+    // full otherwise. Without room for them there are none.
+    let mut refused = eng.scratch.reduce.leaf_refused.checkout_preserving(eng);
+    if refused.len() < 2 * n && eng.limits().try_resize(&mut refused, 2 * n, NO_HINT).is_err() {
+        refused.clear();
+    }
     let mut changed = false;
     for (k, &vi_raw) in dirty.iter().enumerate() {
         if vi_raw as usize >= n { continue; }
-        match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw)) {
+        match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw), &mut refused) {
             Ok(fired) => changed |= fired,
             Err(e) => {
                 tdd.dirty.requeue(Pass::LeafContract, dirty[k..].iter().copied());
@@ -61,64 +68,82 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
     Ok(changed)
 }
 
+/// An entry of the refusal hints that names no node.
+const NO_HINT: u32 = u32::MAX;
+
 /// Contract each leaf child of `vi`, left side then right. A duplicate dirty
 /// entry is reprocessed; re-classifying an already-contracted level finds no
-/// literal pair and does nothing.
-fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx) -> Result<bool, OperationError> {
+/// literal pair and does nothing. `refused` holds the hints
+/// [`try_contract_leaf_twins`] reads and writes.
+fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx, refused: &mut [u32]) -> Result<bool, OperationError> {
     let (left, right) = match *vtree.node(vi) {
         VtreeNode::Internal { left, right, .. } => (left, right),
         VtreeNode::Leaf { .. } => return Ok(false),
     };
     let mut changed = false;
     if vtree.node(left).is_leaf() {
-        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Left)?;
+        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Left, refused)?;
     }
     if vtree.node(right).is_leaf() {
-        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Right)?;
+        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Right, refused)?;
     }
     Ok(changed)
 }
 
 /// Attempt to contract literal pairs on one side of `parent_vi`'s level.
 /// `side = ChildSide::Left` means the leaf is the left child (we contract `pair.left`).
-fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
+///
+/// One node that refuses the rewrite refuses it for the level, so a stored
+/// level is first tested at the node that refused the last classification
+/// on the same vtree node and side, its entry in `refused` (any diagram's
+/// level there, so a hint only): a level a conjunction rebuilt or a merge
+/// changed mostly refuses where it refused before. A level refused is
+/// noted there with its first refusing node.
+fn try_contract_leaf_twins(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    parent_vi: VtreeIdx,
+    side: ChildSide,
+    refused: &mut [u32],
+) -> Result<bool, OperationError> {
     let level = &tdd.levels[parent_vi.idx()];
     if level.slot_count() == 0 { return Ok(false); }
     // A stored level's nodes are read as slices of its arena.
     let Some(stored) = level.stored() else {
         return try_contract_described(eng, tdd, parent_vi, side);
     };
+    let hint = refused.get_mut(2 * parent_vi.idx() + side as usize);
+    if let Some(&at) = hint.as_deref()
+        && let Some(node) = stored.nodes().get(at as usize)
+        && matches!(classify_narrow(stored.of(node), side), Some(Class::NotContractible))
+    {
+        return Ok(false);
+    }
 
     // One pass in node order, stopping at the first node that refuses the
     // rewrite: most levels that refuse it refuse it near the start. A node
-    // of one pair admits it only where its label on `side` is `One` (a lone
-    // literal has no opposite-polarity partner), and a node of two by its
-    // labels alone ([`classify_two`]); a wider one is classified by its
-    // partners sorted, on the stack up to [`SMALL_PAIRS`] pairs
-    // ([`classify_small`]), and past that in two lists reused across the
+    // of up to [`SMALL_PAIRS`] pairs is classified on the stack
+    // ([`classify_narrow`]), a wider one in two lists reused across the
     // level's nodes so the sort buffers are allocated once per level, not
     // per node, and charged only while the level is classified.
     let lim = eng.limits();
-    let one: EncodedChildRef = ONE_LEAF_IDX.into();
     let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
-    for node in stored.nodes() {
-        let class = match *stored.of(node) {
-            [pair] => {
-                let label = if side == ChildSide::Left { pair.left } else { pair.right };
-                if label == one {
-                    continue;
-                }
-                Class::NotContractible
-            }
-            [p, q] => classify_two(p, q, side),
-            ref pairs if pairs.len() <= SMALL_PAIRS => classify_small(pairs, side),
-            ref pairs => classify(lim, pairs.iter().copied(), side, &mut pos, &mut neg)?,
+    for (i, node) in stored.nodes().iter().enumerate() {
+        let pairs = stored.of(node);
+        let class = match classify_narrow(pairs, side) {
+            Some(class) => class,
+            None => classify(lim, pairs.iter().copied(), side, &mut pos, &mut neg)?,
         };
         match class {
             Class::AllContractible { has_literal } => any_literal |= has_literal,
-            Class::NotContractible => return Ok(false),
+            Class::NotContractible => {
+                if let Some(hint) = hint {
+                    *hint = i as u32;
+                }
+                return Ok(false);
+            }
         }
     }
     if !any_literal { return Ok(false); }
@@ -163,6 +188,27 @@ enum Class {
     /// At least one Pos has no matching Neg (or vice versa) within this pair
     /// list. Contracting would change the function; bail.
     NotContractible,
+}
+
+/// [`classify`] of a stored node's pair list of at most [`SMALL_PAIRS`]
+/// pairs, collecting nothing in memory, or `None` for a wider one. A node of
+/// one pair admits the rewrite only where its label on `side` is `One`: a
+/// lone literal has no opposite-polarity partner.
+#[inline(always)]
+fn classify_narrow(pairs: &[ChildPair], side: ChildSide) -> Option<Class> {
+    Some(match *pairs {
+        [pair] => {
+            let label = if side == ChildSide::Left { pair.left } else { pair.right };
+            if label == ONE_LEAF_IDX.into() {
+                Class::AllContractible { has_literal: false }
+            } else {
+                Class::NotContractible
+            }
+        }
+        [p, q] => classify_two(p, q, side),
+        ref pairs if pairs.len() <= SMALL_PAIRS => classify_small(pairs, side),
+        _ => return None,
+    })
 }
 
 /// [`classify`] of a pair list of two pairs, read off their labels with

@@ -27,6 +27,9 @@ pub(crate) struct ReduceScratch {
     slot_prune_remap: Pool<Vec<u32>>,
     /// Twin contraction's working set, shared with the content-twin merge.
     contract: Pool<ContractScratch>,
+    /// Per vtree node and side, the node that refused the last leaf
+    /// contraction there (`contract::contract_leaf`).
+    leaf_refused: Pool<Vec<u32>>,
 }
 
 impl Pools for ReduceScratch {
@@ -35,6 +38,7 @@ impl Pools for ReduceScratch {
         visit(&self.slot_prune_slots);
         visit(&self.slot_prune_remap);
         visit(&self.contract);
+        visit(&self.leaf_refused);
     }
 }
 
