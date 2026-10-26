@@ -1,4 +1,4 @@
-use super::{build_live_cols_bitmask, build_reach_columns, build_reach_masks, build_row_columns, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
+use super::{build_live_cols_bitmask, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use crate::apply::conjoin::NO_PRODUCT;
 use crate::test_helpers::{with_stored_copy, x_decision_diagram};
 use crate::vtree::rng::Lcg;
@@ -114,6 +114,40 @@ fn the_row_columns_are_the_reach_masks_read_through_each_row() {
                 assert_eq!(word >> j & 1 == 1, live & r != 0, "width {width}, row {a}, node {j}");
             }
             assert_eq!(word & !ROW_LIVE, word & ((1u64 << width) - 1) & !ROW_LIVE, "width {width}, row {a}: no bit past the g nodes");
+        }
+    }
+}
+
+/// The row columns of a level read by pairs, read off its child grid's
+/// bits, are the row columns of the rows' live column masks: over child
+/// widths up to a word and none, levels of no pair to past the pairs read
+/// one at a time, pairs sharing a child, rows from all dead to all alive,
+/// and a grid that does not start the slab.
+#[test]
+fn the_pair_row_columns_are_the_row_columns_of_the_live_masks() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x6b1f_2d93);
+    let (mut out, mut want_cols) = (PrefilterSideMasks::default(), Vec::new());
+    for width in 0..=64 {
+        for pairs in [0usize, 1, 2, 3, 4, 5, 9, 40] {
+            if width == 0 && pairs > 0 {
+                continue;
+            }
+            for rows in [0, 1, 3, 64, 65] {
+                let alive = rng.below(5);
+                let base = rng.below(7) as usize;
+                let slab: Vec<u32> = (0..base + rows * width)
+                    .map(|c| if c >= base && rng.below(4) < alive { c as u32 } else { NO_PRODUCT })
+                    .collect();
+                let reach: Vec<u128> = (0..pairs).map(|_| 1u128 << rng.below(width as u64)).collect();
+                build_live_cols_bitmask(&eng, rows, width, base, &slab, &mut out, 0).unwrap();
+                let live_cols = out.live_cols.clone();
+                build_row_columns(&eng, &live_cols, &reach, &mut want_cols).unwrap();
+                out.reach.clone_from(&reach);
+                build_pair_row_columns(&eng, rows, width, base, &slab, &mut out).unwrap();
+                assert_eq!(out.row_cols, want_cols, "width {width}, pairs {pairs}, rows {rows}");
+                assert!(out.live_cols.is_empty(), "width {width}, pairs {pairs}, rows {rows}");
+            }
         }
     }
 }

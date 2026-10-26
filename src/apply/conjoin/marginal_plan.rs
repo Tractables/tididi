@@ -6,7 +6,7 @@
 use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_reach, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_reach, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -292,8 +292,9 @@ pub(super) struct ChildGrid {
 /// row loop's fold to skip every row as before.
 ///
 /// On a level read by `pairs` ([`super::liveness::pairs_fit`]) the reach
-/// masks are a pair's and the row columns are over g's pairs; a complete
-/// side builds none.
+/// masks are a pair's and the row columns are over g's pairs, read off the
+/// child grid's cells without its live column masks where it has at most
+/// 64 columns (`build_pair_row_columns`); a complete side builds none.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
@@ -322,14 +323,18 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
         return Ok(());
     }
     let shift = bucket_shift(g_child_width);
-    build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
     let view = plan.view;
     let side = |p: &crate::diagram::ChildPair| view.coord(if RIGHT { p.right } else { p.left }) as usize;
     if pairs {
         debug_assert_eq!(shift, 0, "a level read by pairs has bit-exact masks");
         build_pair_reach(eng, right_level, right_width, &mut out.reach, side)?;
+        if g_child_width <= 64 {
+            return build_pair_row_columns(eng, f_child_width, g_child_width, base, node_idx, out);
+        }
+        build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }
+    build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
     build_reach_masks(eng, right_level, right_width, &mut out.reach, side, shift)?;
     if out.rows {
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);

@@ -67,8 +67,9 @@ pub(crate) struct PrefilterSideMasks {
     /// `row_cols` where its lookups can kill, nothing on a complete or
     /// carried side, which every row reads whole.
     pub(super) rows: bool,
-    /// The child grid's cells as bits, which [`build_live_cols_bitmask`]
-    /// cuts the rows' masks out of ([`alive_bits`]).
+    /// The child grid's cells as bits ([`alive_bits`]), which
+    /// [`build_live_cols_bitmask`] cuts the rows' masks out of, and
+    /// [`build_pair_row_columns`] their words.
     bits: Vec<u64>,
 }
 
@@ -385,6 +386,91 @@ pub(super) fn build_row_columns(
         last.1
     }));
     Ok(())
+}
+
+/// The most pairs a level read by pairs reads off each child row a pair at
+/// a time ([`build_pair_row_columns`]).
+const ROW_GATHER_MAX_PAIRS: usize = 4;
+
+/// The [row columns](build_row_columns) of a level read by pairs
+/// ([`pairs_fit`]) whose child grid has at most 64 columns, read off the
+/// grid's bits ([`alive_bits`]) in one pass: a child row's cells are one
+/// word of them, its flag whether that word has a bit, and its bit `j` the
+/// word's bit at pair `j`'s child, the one bit of `out.reach[j]` (the
+/// [pair reach](build_pair_reach)). The level builds no live column masks
+/// (`out.live_cols` is left empty), which only these words read. A level
+/// of at most [`ROW_GATHER_MAX_PAIRS`] pairs reads each pair's bit off the
+/// row; one of more ORs the pairs of each of the row's live columns.
+pub(super) fn build_pair_row_columns(
+    eng: &Engine,
+    k1_side: usize,
+    side_width: usize,
+    base: usize,
+    node_idx: &[u32],
+    out: &mut PrefilterSideMasks,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    debug_assert!(side_width <= 64);
+    let PrefilterSideMasks { live_cols, reach, row_cols, bits, .. } = out;
+    debug_assert!(reach.len() <= ROW_COLUMNS_MAX_WIDTH && reach.iter().all(|&r| r.count_ones() == 1 && r >> side_width == 0));
+    live_cols.clear();
+    row_cols.clear();
+    lim.reserve_exact(row_cols, k1_side)?;
+    if side_width == 0 {
+        row_cols.extend(std::iter::repeat_n(0, k1_side));
+        return Ok(());
+    }
+    alive_bits(lim, &node_idx[base..base + k1_side * side_width], bits)?;
+    let bits = &bits[..];
+    let keep = u64::MAX >> (64 - side_width);
+    let rows = (0..k1_side).map(|a| bits_from(bits, a * side_width) & keep);
+    match reach.len() {
+        0 => gather_rows::<0>(rows, reach, row_cols),
+        1 => gather_rows::<1>(rows, reach, row_cols),
+        2 => gather_rows::<2>(rows, reach, row_cols),
+        3 => gather_rows::<3>(rows, reach, row_cols),
+        4 => gather_rows::<4>(rows, reach, row_cols),
+        n => {
+            debug_assert!(n > ROW_GATHER_MAX_PAIRS);
+            // The pairs of each child column, and the columns some pair has.
+            let (mut by_bit, mut any) = ([0u64; 64], 0u64);
+            for (j, &r) in reach.iter().enumerate() {
+                let c = r.trailing_zeros();
+                by_bit[c as usize] |= 1 << j;
+                any |= 1 << c;
+            }
+            let word_of = |row: u64| {
+                let (mut m, mut word) = (row & any, row_flag(row));
+                while m != 0 {
+                    word |= by_bit[m.trailing_zeros() as usize];
+                    m &= m - 1;
+                }
+                word
+            };
+            let mut last = (0u64, word_of(0));
+            row_cols.extend(rows.map(|row| {
+                if row != last.0 {
+                    last = (row, word_of(row));
+                }
+                last.1
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// [`ROW_LIVE`] where a child row's cells have a bit.
+#[inline(always)]
+fn row_flag(row: u64) -> u64 {
+    if row != 0 { ROW_LIVE } else { 0 }
+}
+
+/// The words of [`build_pair_row_columns`] for a level of `P` pairs, each
+/// pair's bit read off each row.
+#[inline(always)]
+fn gather_rows<const P: usize>(rows: impl Iterator<Item = u64>, reach: &[u128], row_cols: &mut Vec<u64>) {
+    let child: [u32; P] = std::array::from_fn(|j| reach[j].trailing_zeros());
+    row_cols.extend(rows.map(|row| child.iter().enumerate().fold(row_flag(row), |word, (j, &c)| word | (row >> c & 1) << j)));
 }
 
 #[cfg(test)]
