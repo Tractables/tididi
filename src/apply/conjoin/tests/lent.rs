@@ -10,7 +10,7 @@ use super::*;
 use crate::Engine;
 use crate::diagram::Pass;
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
-use crate::test_helpers::{compile_clauses_on, rand_cnf, same_storage, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{compile_clauses_on, rand_cnf, same_storage, unnamed_levels, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::Vtree;
 
 /// Every level the sparse route can take, takes it.
@@ -250,4 +250,37 @@ fn a_level_under_one_built_as_an_operand_is_tight_where_the_operand_s_is() {
     }
     eprintln!("levels under levels built as an operand, not listed loose: {unlisted}");
     assert!(unlisted > 0, "expected levels under levels built as an operand left off the loose levels");
+}
+
+/// A level whose sibling is a vtree leaf is left off the loose levels where
+/// f's level there is tight and the leaf arm found g's level holding each of
+/// its live products for every label: every level the result does not list
+/// is tight, and the leaf arm's held products leave some off.
+#[test]
+fn a_level_whose_products_the_leaf_arm_finds_held_for_every_label_is_tight() {
+    let before = held_tight_levels();
+    for nvars in [10, 14] {
+        for (what, _, f, g) in cases(nvars, 0x4e1d_7a11 + u64::from(nvars)) {
+            let eng = Engine::new();
+            let (mut f, mut g) = (f, g);
+            eng.minimize(&mut f).unwrap();
+            eng.minimize(&mut g).unwrap();
+            // A minimized diagram has no loose level.
+            f.dirty.set_loose(Some(Vec::new()));
+            g.dirty.set_loose(Some(Vec::new()));
+            for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
+                let (out, _) = conjoin(a, b);
+                if out.is_zero() {
+                    continue;
+                }
+                let loose = out.dirty.loose().expect("both operands' loose levels are known");
+                for t in unnamed_levels(&out) {
+                    assert!(loose.contains(&t), "{what}, {order}: level {t} is not listed loose but holds a node its parent does not name");
+                }
+            }
+        }
+    }
+    let held = held_tight_levels() - before;
+    eprintln!("levels left off the loose levels for the leaf arm's held products: {held}");
+    assert!(held > 0, "expected levels left off the loose levels for the leaf arm's held products");
 }

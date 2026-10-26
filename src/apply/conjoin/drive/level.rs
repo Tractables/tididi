@@ -64,7 +64,7 @@ pub(super) fn run_sparse_level(
         right: Operands { f: run.f_identity[ri], g: run.g_identity[ri] },
     };
     let (lists, cells) = run.products.lists_with_cells(li, ri, ti, Sides { left: gw.left, right: gw.right }, identity, filtered);
-    let made = apply_sparse_level(
+    let (made, held) = apply_sparse_level(
         eng,
         shape, f, g,
         run.levels,
@@ -74,6 +74,9 @@ pub(super) fn run_sparse_level(
         passthrough,
         complete,
     )?;
+    if held {
+        run.outer_held.push(ti);
+    }
     // A sweep that gives its operands back when refused gives f the nodes
     // and arena the level took from it.
     if made == Made::F && run.restoring {

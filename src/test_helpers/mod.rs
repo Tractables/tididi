@@ -15,8 +15,9 @@
 //!   and `marginalize_subtree`.
 //! - `diagrams` — the hand-built `chain`, `inline_marginal` and
 //!   `marginal_boundary` with the side constructors they use, seeded diagrams
-//!   with unreachable nodes or summed-out levels, and `node_value`, which
-//!   evaluates one node of them.
+//!   with unreachable nodes or summed-out levels, `node_value`, which
+//!   evaluates one node of them, and `unnamed_levels`, the levels holding a
+//!   node no pair of their parent level names.
 //! - `access` — the infallible `CountVecExt` fixture builders,
 //!   `stopping_engine`, the whole-tree `rotate_left` / `rotate_right`,
 //!   `reroot_to_child`, and `restrict_paths`, the ways the care

@@ -34,6 +34,10 @@ pub(crate) struct SparseWorkspace {
     // the first `owned_len` entries are this level's.
     pub(super) owned: Vec<OwnedProduct>,
     pub(super) owned_len: usize,
+    // Whether the leaf arm found each of the outer child's live products
+    // held for every label (`holds_every_label`): set by the arm for the
+    // level being joined, false otherwise.
+    pub(super) outer_held: bool,
 
     // ── The two children's product lists read by f index ──
     // A product list is emitted in ascending `f_idx` order by every
@@ -689,6 +693,17 @@ pub(super) fn build_owner_table<const BY_RIGHT: bool>(
     Ok((!repeated).then_some(ones))
 }
 
+/// Whether g's pairs hold a keyed child for every label an f pair can have,
+/// from its slots in an owner table ([`build_owner_table`]): a g node holds
+/// it with One, which meets every label, or g nodes hold it with both
+/// literals, one of which meets each. A node index is below 2^31, so the
+/// or of the two literals' slots is all ones only where one is missing,
+/// and its and with the One slot only where that is missing too.
+#[inline(always)]
+pub(super) fn holds_every_label(slots: [u32; OWNER_SLOTS]) -> bool {
+    (slots[0] | slots[2]) & slots[1] != NO_PRODUCT
+}
+
 /// A live product of the outer child, `prod`, with the slots of its g node
 /// in an owner table ([`build_owner_table`]): the g nodes holding it with
 /// the labels Pos, One, Neg.
@@ -701,11 +716,12 @@ pub(super) struct OwnedProduct {
 /// Fill `owned` with the products of `list`, in its order, whose g node has
 /// an owner in `owners`, each with its slots, and `offsets` with their
 /// bucket bounds over `width` f indices, as [`bucket_offsets`] gives
-/// `list`'s; return how many there are, and whether each of them has both
-/// literals' slots. One pass over `list`, which every producer emits in
-/// ascending f order, reading each product's slots once: a walk then reads
-/// a product and its slots together, instead of once per f pair that meets
-/// the product, each read waiting on the one before.
+/// `list`'s; return how many there are, and whether each of them is held
+/// for every label ([`holds_every_label`]), on a level with no g pair
+/// labeled One by both literals. One pass over `list`, which every producer
+/// emits in ascending f order, reading each product's slots once: a walk
+/// then reads a product and its slots together, instead of once per f pair
+/// that meets the product, each read waiting on the one before.
 pub(super) fn gather_owned_products(
     lim: &Limits,
     list: &[ProductEntry],
@@ -722,7 +738,7 @@ pub(super) fn gather_owned_products(
     // Each product writes its f index's end, so the last of the index
     // leaves it; no branch waits on where one f index's products stop,
     // nor on the slots' read.
-    let (mut kept, mut both, mut last_f, mut descents) = (0usize, 0usize, 0usize, 0usize);
+    let (mut kept, mut held, mut last_f, mut descents) = (0usize, 0usize, 0usize, 0usize);
     for e in list {
         let f = e.f_idx.idx();
         let slots = owners[e.g_idx.idx()];
@@ -730,9 +746,7 @@ pub(super) fn gather_owned_products(
         // kept.
         owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
         kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
-        // A node index is below 2^31: only a missing slot makes the or
-        // all ones.
-        both += usize::from(slots[0] | slots[2] != NO_PRODUCT);
+        held += usize::from(holds_every_label(slots));
         bounds[f + 1] = kept as u32;
         descents += usize::from(f < last_f);
         last_f = f;
@@ -744,32 +758,33 @@ pub(super) fn gather_owned_products(
         end = end.max(*bound);
         *bound = end;
     }
-    Ok((kept, both == kept))
+    Ok((kept, held == kept))
 }
 
 /// Fill `owned` with each product of `list`, which holds one per f index in
 /// order, with its slots in `owners`, at its f index: one pass over `list`,
 /// each slots' read independent of the others. Return whether each product
-/// is numbered as its f index and has both literals' slots.
+/// is numbered as its f index and held for every label, and whether each is
+/// held for every label ([`holds_every_label`]).
 pub(super) fn gather_listed_products(
     lim: &Limits,
     list: &[ProductEntry],
     owners: &[u32],
     owned: &mut Vec<OwnedProduct>,
-) -> Result<bool, OperationError> {
+) -> Result<(bool, bool), OperationError> {
     if owned.len() < list.len() {
         lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
     }
     let (owners, _) = owners.as_chunks::<OWNER_SLOTS>();
-    let mut plain = 0usize;
+    let (mut plain, mut held) = (0usize, 0usize);
     for (i, (to, e)) in owned.iter_mut().zip(list).enumerate() {
         let slots = owners[e.g_idx.idx()];
         *to = OwnedProduct { prod: e.prod_idx.0, slots };
-        // A node index is below 2^31: only a missing slot makes the or all
-        // ones.
-        plain += usize::from((e.prod_idx.0 as usize == i) & (slots[0] | slots[2] != NO_PRODUCT));
+        let holds = usize::from(holds_every_label(slots));
+        held += holds;
+        plain += holds & usize::from(e.prod_idx.0 as usize == i);
     }
-    Ok(plain == list.len())
+    Ok((plain == list.len(), held == list.len()))
 }
 
 /// Slots per node of a level below which [`clear_owner_table`] empties the

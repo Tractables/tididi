@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, keep_marked, new_indices, prune_below_root, prune_complement, prune_unreachable, settle_loose, UNREACHED};
 
-use crate::test_helpers::compile_clauses;
+use crate::test_helpers::{compile_clauses, unnamed_levels};
 use crate::vtree::Vtree;
 
 /// `prune_unreachable` of a diagram that knows its loose levels, walked
@@ -169,37 +169,8 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     assert!(bytes > 100 && bits > 100, "expected sides marked both ways, got {bytes} as bytes and {bits} as bits");
 }
 
-/// The internal levels below the root of `tdd` that hold a node no pair of
-/// their parent level names, in order, by a read of every level that shares
-/// nothing with the conjunction.
-fn unnamed_levels(tdd: &crate::Tdd) -> Vec<u32> {
-    let vtree = &tdd.vtree;
-    let mut out = Vec::new();
-    for (p, left, right) in vtree.internal_bottomup() {
-        if !tdd.is_structural_internal(p) {
-            continue;
-        }
-        for (c, on_left) in [(left, true), (right, false)] {
-            if !tdd.is_structural_internal(c) {
-                continue;
-            }
-            let view = tdd.levels[c.idx()].child_decoder();
-            let parent = &tdd.levels[p.idx()];
-            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
-                .flat_map(|i| parent.pairs_vec(i))
-                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
-                .collect();
-            if named.len() < tdd.levels[c.idx()].slot_count() {
-                out.push(c.0);
-            }
-        }
-    }
-    out.sort_unstable();
-    out
-}
-
 /// How many nodes of the internal levels below the root of `tdd` no pair of
-/// their parent level names, read as [`unnamed_levels`] reads them.
+/// their parent level names, read as `unnamed_levels` reads them.
 fn unnamed_nodes(tdd: &crate::Tdd) -> usize {
     let vtree = &tdd.vtree;
     let mut out = 0;

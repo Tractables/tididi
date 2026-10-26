@@ -641,6 +641,22 @@ pub(super) fn lent_levels() -> u64 {
 }
 
 thread_local! {
+    /// The levels on this thread a plain conjunction left off its loose
+    /// levels only for the leaf arm's held products ([`held_tight_levels`]).
+    static HELD_TIGHT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn note_held_tight() {
+    HELD_TIGHT.with(|c| c.set(c.get() + 1));
+}
+
+/// The levels on this thread so far a plain conjunction left off its loose
+/// levels only for the leaf arm's held products.
+pub(super) fn held_tight_levels() -> u64 {
+    HELD_TIGHT.with(std::cell::Cell::get)
+}
+
+thread_local! {
     /// The levels conjunctions built as an operand holds them on this
     /// thread since [`take_as_operand`] last took them, each with whether
     /// the operand is f.

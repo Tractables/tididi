@@ -97,6 +97,11 @@ pub(super) enum Inner {
 /// `collect` is the level's nodes ([`Collect::Nodes`]), each f parent
 /// emitted as its walk ends, or, on a level with one product, its pair
 /// arena, a count or sums.
+///
+/// Under a vtree leaf, with g's pairs read as a table of owners, sets
+/// [`SparseWorkspace::outer_held`] where every live product of the outer
+/// child is held for every label ([`holds_every_label`]): each f pair of
+/// its outer child then meets a g pair under each of them.
 // The level's steps are kept out of line from one another. Each runs once per
 // level, so the call costs nothing
 // against what it then does, and holding them apart means a change inside one
@@ -144,7 +149,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     } else {
                         clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
                     }
-                    let plain = gathered? && !ones;
+                    let (plain, held) = gathered?;
+                    ws.outer_held = held;
+                    let plain = plain && !ones;
                     let SparseWorkspace { owned, node_owners, emit, .. } = &mut *ws;
                     let listed = Listed { owned: &owned[..f_outer], plain };
                     let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
@@ -165,8 +172,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             } else {
                 clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
             }
-            let both;
-            (ws.owned_len, both) = gathered?;
+            let held;
+            (ws.owned_len, held) = gathered?;
+            ws.outer_held = held && ws.owned_len == pl_outer.len();
             // Into the level's nodes from f's stored nodes, the walk runs as
             // one loop over them ([`owner_walk_nodes`]), each pair's products
             // read from its outer child's bucket.
@@ -175,7 +183,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
                     let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
                     let (f, none) = (shape.f.here, Listed { owned: &[], plain: false });
-                    return match (ones, both) {
+                    // Without One, a product held for every label is held
+                    // with both literals.
+                    return match (ones, held) {
                         (true, _) => owner_walk_nodes::<SWAPPED, true, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
                         (false, false) => owner_walk_nodes::<SWAPPED, false, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
                         (false, true) => owner_walk_nodes::<SWAPPED, false, false, true>(eng, node_owners, emit, f_level, f, outer, none, to),

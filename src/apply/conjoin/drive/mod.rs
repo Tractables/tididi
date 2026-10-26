@@ -579,6 +579,7 @@ pub(crate) fn apply_and_core(
         // In level order, for the lookups of the loose levels and the
         // contraction's worklists.
         run.as_operand.sort_unstable();
+        run.outer_held.sort_unstable();
         let loose = operand_loose
             .map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
         // The levels it built are also all it changed, and so all the seat

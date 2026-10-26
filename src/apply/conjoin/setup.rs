@@ -167,6 +167,12 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// the contexts the operand's nodes have, and are named where the
     /// operand's are.
     pub(super) as_operand: Vec<(usize, u8)>,
+    /// The levels the sparse leaf arm joined under a vtree leaf where g's
+    /// level held each live product of the other child for every label an
+    /// f pair can have ([`apply_sparse_level`](super::sparse::apply_sparse_level)):
+    /// each node of that child is named there wherever f's nodes of it are
+    /// named in f, which the result's loose levels read (`loose_levels`).
+    pub(super) outer_held: Vec<usize>,
     /// Whether the sweep must give its operands back when refused: it drops
     /// no operand level, and `carried` and `lent` go back to the operands.
     pub(super) restoring: bool,
@@ -583,6 +589,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         relabel_moved: Vec::new(),
         lent: Vec::new(),
         as_operand: Vec::new(),
+        outer_held: Vec::new(),
         restoring: false,
         plain: false,
         cone,

@@ -46,6 +46,18 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// index, so the nodes of `c` they name are those the operand's level `p`
 /// names of its level `c`: all of its nodes, which are as many as `c`'s.
 ///
+/// A level `c` whose sibling `s` is a vtree leaf is also tight when `f`'s
+/// level `c` is tight in `f`, as in (1), and the sparse leaf arm built `p`
+/// with `g`'s level `p` holding each live product of `c` for every label
+/// ([`ApplyRun::outer_held`]). Proof. A node of `c` is a live product
+/// `(a, b)`, and `f`'s level `p` has a pair `(a, x)` in a node `i`, as
+/// above. `g`'s level `p` holds `b` with the label One, or with both
+/// literals; one of those pairs, `(b, y)` in a node `j`, has a label that
+/// meets `x`: One meets every label, and a literal meets itself. The leaf
+/// arm joins `(a, x)` and `(b, y)` under the product `(a, b)`, and `x ∧ y`
+/// is a leaf node, so `p`'s product `(i, j)` is a node, and it names
+/// `(a, b)`.
+///
 /// Every other level under a built one is listed, for the prune to read
 /// what it needs of it.
 ///
@@ -114,6 +126,7 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
         };
         // The operand the conjunction built `p` as, if any.
         let as_operand = run.as_operand.binary_search_by_key(&p.idx(), |e| e.0).ok().map(|i| run.as_operand[i].1);
+        let held = run.outer_held.binary_search(&p.idx()).is_ok();
         let named_as_operand = |c: VtreeIdx| {
             as_operand.is_some_and(|by| {
                 let widths = if by == 1 { &run.f_widths[..] } else { &run.g_widths[..] };
@@ -121,12 +134,18 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
             })
         };
         for (c, s) in [(left, right), (right, left)] {
-            if internal(c)
-                && !(tight_in(c, 1, run.f_widths) && tight_in(c, 2, run.g_widths) && kills_none(s))
-                && !named_as_operand(c)
-            {
-                loose.push(c.0);
+            if !internal(c) || named_as_operand(c) {
+                continue;
             }
+            let tight_f = tight_in(c, 1, run.f_widths);
+            if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
+                continue;
+            }
+            if tight_f && held && !internal(s) {
+                super::super::note_held_tight();
+                continue;
+            }
+            loose.push(c.0);
         }
     }
     // In the order of the levels' parents bottom-up, the left child first,

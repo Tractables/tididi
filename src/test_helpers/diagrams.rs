@@ -1,6 +1,7 @@
 //! Hand-built diagrams with unreachable nodes or summed-out children, seeded
 //! diagrams with the storage that only unreduced or summed-out diagrams have,
-//! and a direct evaluation of their nodes.
+//! a direct evaluation of their nodes, and the levels holding a node no pair
+//! of their parent level names.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -186,6 +187,35 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
             out.push((f, summed));
         }
     }
+    out
+}
+
+/// The internal levels below the root of `tdd` that hold a node no pair of
+/// their parent level names, in order, by a read of every level that shares
+/// nothing with the conjunction.
+pub fn unnamed_levels(tdd: &Tdd) -> Vec<u32> {
+    let vtree = &tdd.vtree;
+    let mut out = Vec::new();
+    for (p, left, right) in vtree.internal_bottomup() {
+        if !tdd.is_structural_internal(p) {
+            continue;
+        }
+        for (c, on_left) in [(left, true), (right, false)] {
+            if !tdd.is_structural_internal(c) {
+                continue;
+            }
+            let view = tdd.levels[c.idx()].child_decoder();
+            let parent = &tdd.levels[p.idx()];
+            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
+                .flat_map(|i| parent.pairs_vec(i))
+                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
+                .collect();
+            if named.len() < tdd.levels[c.idx()].slot_count() {
+                out.push(c.0);
+            }
+        }
+    }
+    out.sort_unstable();
     out
 }
 

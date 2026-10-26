@@ -1053,6 +1053,14 @@ use tests::note_as_operand;
 #[inline(always)]
 fn note_as_operand(_t: usize, _of_f: bool) {}
 
+// A test counts the levels only the leaf arm's held products show tight.
+#[cfg(test)]
+use tests::note_held_tight;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_held_tight() {}
+
 // A test lists the route each level took.
 #[cfg(test)]
 use tests::note_route;

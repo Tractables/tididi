@@ -207,6 +207,11 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a workspace or output reservation is refused.
+///
+/// Returns what was made, and whether the leaf arm joined the level under a
+/// vtree leaf with each live product of the other child held for every
+/// label ([`SparseWorkspace::outer_held`]): each f pair of that child meets
+/// a g pair under each of its products.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
@@ -219,7 +224,7 @@ pub(crate) fn apply_sparse_level(
     thresholds: SparseThresholds,
     passthrough: Option<Passthrough>,
     complete: Option<Complete>,
-) -> Result<Made, OperationError> {
+) -> Result<(Made, bool), OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
     let pl = Sides { left, right };
@@ -229,6 +234,7 @@ pub(crate) fn apply_sparse_level(
     seed_output(eng, &f.levels[t_idx], &g.levels[t_idx], &mut levels[t_idx], pl_output)?;
     let mut guard = WsGuard::new(eng);
     let ws = &mut *guard;
+    ws.outer_held = false;
 
     // Duplicate pairs in one node's list are legal once any level of the
     // diagram is marginal — pair lists are then multisets feeding a sum.
@@ -260,11 +266,12 @@ pub(crate) fn apply_sparse_level(
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
         scatter_level(eng, ws, f, g, shape, pl, Collect::Direct(&mut *level), passthrough, complete)?;
+        let held = ws.outer_held;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
-        return Ok(Made::Written);
+        return Ok((Made::Written, held));
     }
 
     // A level of many products, each found by a lookup or two, is walked by
@@ -298,12 +305,13 @@ pub(crate) fn apply_sparse_level(
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();
-            return Ok(Made::Written);
+            return Ok((Made::Written, false));
         }
     }
 
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds };
     let made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    let held = ws.outer_held;
     if made == Made::F {
         // The level's nodes and arena are f's, kept within the room the
         // level's own had, which the copy would have filled; f's level holds
@@ -320,7 +328,7 @@ pub(crate) fn apply_sparse_level(
     debug_check_flushed_level(pl_output, &levels[t_idx]);
 
     guard.scatter_clean();
-    Ok(made)
+    Ok((made, held))
 }
 
 
