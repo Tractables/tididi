@@ -892,12 +892,74 @@ fn single_rows<const W: usize>(
             mark_dead(&mut slab[ctx.output_grid_base..end]);
         }
     }
+    // With `W` columns and the f nodes stored, the grid extended over the
+    // level's rows ahead of them, each row's cells written in place.
+    let extended = W > 0 && f_nodes.is_some() && {
+        let end = ctx.output_grid_base + f_width * width;
+        if slab.len() < end && slab.capacity() >= end {
+            slab.resize(end, NO_PRODUCT);
+        }
+        slab.len() >= end
+    };
     let mut next = 0;
     'rows: while next < f_width {
         // The rows' nodes are written straight into the node arena, open
         // across rows, while it has room for a node a column; a row it has
         // no room for goes through the sink, which grows it.
         let mut out = sink.open_row(0, 0);
+        // The rows the node arena has room for, read with no test of the
+        // room, the grid's length or the gate a row: the gate's units
+        // counted down here, and polled as below at the row it comes due.
+        if extended
+            && let (Some(nodes), Some(o)) = (f_nodes, out.as_mut())
+            && o.node_room() >= width
+        {
+            let end = f_width.min(next + o.node_room() / width);
+            let (mut due_at, mut due) = (poll.due_in(), poll.due_in());
+            while next < end {
+                let i = next;
+                next += 1;
+                let row_base = ctx.output_grid_base + i * width;
+                let p = match nodes[i].kind() {
+                    NodeKind::Inline(p) => Some(p),
+                    _ => f_level.pairs_read(i, f_scratch).first().copied(),
+                };
+                let mut cells = [NO_PRODUCT; W];
+                if let Some(p) = p {
+                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                    for (cell, q) in cells.iter_mut().zip(&g) {
+                        if q.left.0 == NO_PRODUCT {
+                            continue;
+                        }
+                        let lc = left.get_in_row(slab, lrow, q.left.0);
+                        if lc == NO_PRODUCT {
+                            continue;
+                        }
+                        let rc = right.get_in_row(slab, rrow, q.right.0);
+                        if rc != NO_PRODUCT {
+                            // Safety: the arena has room for a node a column
+                            // of the rows up to `end`.
+                            *cell = unsafe { o.single_node(lc, rc) };
+                        }
+                    }
+                }
+                debug_assert!(row_base + W <= slab.len(), "the grid is extended over the level");
+                // Safety: the grid was extended over every row of the level.
+                unsafe { slab.get_unchecked_mut(row_base..row_base + W) }.copy_from_slice(&cells);
+                if p.is_none() {
+                    continue;
+                }
+                if row_units < due {
+                    due -= row_units;
+                } else {
+                    poll.add_short(due_at - due);
+                    poll = poll_each_then_due(poll, live_cols, width as u64)?;
+                    (due_at, due) = (poll.due_in(), poll.due_in());
+                }
+            }
+            poll.add_short(due_at - due);
+            continue 'rows;
+        }
         while next < f_width {
             let i = next;
             next += 1;

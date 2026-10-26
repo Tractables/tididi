@@ -200,6 +200,12 @@ impl<'a> ArenaRow<'a> {
         self.len + pairs <= self.pair_end && self.node_len + nodes <= self.node_cap
     }
 
+    /// How many more cells the node arena has room for.
+    #[inline(always)]
+    pub(crate) fn node_room(&self) -> usize {
+        self.node_cap - self.node_len
+    }
+
     /// Whether a cell of at most `pairs` pairs fits the room past the closed
     /// cells.
     #[inline(always)]
