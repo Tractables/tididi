@@ -5,7 +5,7 @@ use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::{NodeIdx, Tdd};
+use crate::diagram::{EncodedNode, NodeIdx, Tdd};
 
 use super::scratch::{ContractScratch, MergeBuffers, MergeRemap};
 
@@ -103,7 +103,7 @@ pub(super) fn contract_twins(
     plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
     // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
-    let merged_members = mark_group_members(&policy, remap, bufs);
+    let merged_members = mark_group_members(&policy, remap, bufs, tdd.levels[t1.idx()].nodes.stored());
     for &u in unnamed.iter() {
         debug_assert!(remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0, "an unnamed node is in no group");
         remap.absorbed[(u / 64) as usize] |= 1 << (u % 64);
@@ -210,11 +210,17 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// survivor's new number. Returns the number of members merged away — 0
 /// means the level is unchanged. Touches only the scratch: the rebuild
 /// unions the pairs.
-fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {
+///
+/// The same pass copies each member's word out of `nodes`, the level's, into
+/// `bufs.words` beside `sel`: the members are scattered over the level, and
+/// the reservation and the rebuild then read their words in order.
+fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers, nodes: &[EncodedNode]) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.
     let mut merged_members = 0usize;
-    let MergeBuffers { sel, group_plans, resolve_keeps, .. } = bufs;
+    let MergeBuffers { sel, group_plans, resolve_keeps, words, .. } = bufs;
+    words.clear();
+    words.extend(sel.iter().map(|&m| nodes[m as usize]));
     for p in &*group_plans {
         let members = &sel[p.start as usize..p.end as usize];
         let keep = members[0];

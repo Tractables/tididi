@@ -93,7 +93,7 @@ pub(super) fn plan_groups(
     bufs: &mut MergeBuffers,
 ) -> Result<(), OperationError> {
     let MergeBuffers {
-        filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, ..
+        filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, words, ..
     } = bufs;
     let plain_level = policy.plain_level;
     // Without a marginal level no pair can repeat, and every group takes
@@ -109,6 +109,7 @@ pub(super) fn plan_groups(
         (start, end)
     };
     lim.reserve_exact(sel, flat_groups.len())?;
+    lim.reserve_exact(words, flat_groups.len())?;
     lim.reserve_exact(group_plans, group_starts.len())?;
     if plain_level && !t1_scalable {
         // The overlap filter below holds one group's members and pairs at a

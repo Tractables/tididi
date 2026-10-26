@@ -23,12 +23,10 @@ pub(super) struct RebuiltArenas {
 const PACKED_LIMIT: usize = 1 << 31;
 
 /// How many members ahead of the one the rebuild copies it asks the cache
-/// for a member's node word, and how many for the member's pairs: the
-/// members of a level's groups are scattered over it, and the pairs'
-/// address is read from the word, so each copy would wait on two misses in
-/// turn.
-const NODE_AHEAD: usize = 16;
-const PAIRS_AHEAD: usize = 8;
+/// for the member's pairs: the members of a level's groups are scattered
+/// over it, and each copy would wait on a miss. Their words are read in
+/// order ([`MergeBuffers::words`]).
+const PAIRS_AHEAD: usize = 16;
 
 /// Ask the cache for the line holding `at`. A hint only: a prefetch reads
 /// nothing the program sees and never faults, so any address is sound. A
@@ -45,17 +43,11 @@ fn prefetch_line<T>(at: *const T) {
     let _ = at;
 }
 
-/// Ask the cache for the node word of the member [`NODE_AHEAD`] places
-/// after `sel[k]`, and for the first pairs of the one [`PAIRS_AHEAD`]
-/// after it, whose word an earlier call asked for.
+/// Ask the cache for the first pairs of the member [`PAIRS_AHEAD`] places
+/// after the `k`th, off its word in `words`.
 #[inline(always)]
-fn prefetch_members(sel: &[u32], k: usize, nodes: &[EncodedNode], old: &[ChildPair]) {
-    if let Some(&m) = sel.get(k + NODE_AHEAD) {
-        prefetch_line(nodes.as_ptr().wrapping_add(m as usize));
-    }
-    if let Some(&m) = sel.get(k + PAIRS_AHEAD)
-        && let Some(NodeKind::Multi { start, .. }) = nodes.get(m as usize).map(|n| n.kind())
-    {
+fn prefetch_members(words: &[EncodedNode], k: usize, old: &[ChildPair]) {
+    if let Some(NodeKind::Multi { start, .. }) = words.get(k + PAIRS_AHEAD).map(|n| n.kind()) {
         prefetch_line(old.as_ptr().wrapping_add(start as usize));
     }
 }
@@ -126,7 +118,8 @@ pub(super) fn reserve_rebuilt(
                     }
                 }
                 GroupAction::Concat => {
-                    total += members.iter().filter(|&&m| !level.node(m as usize).kind().pairs_in_arena()).count();
+                    let words = &bufs.words[p.start as usize..p.end as usize];
+                    total += words.iter().filter(|w| !w.kind().pairs_in_arena()).count();
                 }
             }
         }
@@ -221,7 +214,8 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
 /// to its survivor's new number after the pass, and a node no pair names
 /// keeps its [`DISCARDED`] entry.
 ///
-/// Members of a group ascend from its survivor, so the in-place node
+/// A group's members are read off their words in `bufs.words`, copied
+/// where they were marked, and ascend from its survivor: the in-place node
 /// compaction, which writes at or below the node it reads, has not yet
 /// overwritten any member when its survivor is rebuilt.
 ///
@@ -298,10 +292,10 @@ pub(super) fn rebuild_level(
                 run = run.end..run.end;
                 let start = fresh.len();
                 for k in p.start as usize..p.end as usize {
-                    prefetch_members(&bufs.sel, k, nodes, old);
-                    let m = bufs.sel[k];
-                    debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
-                    match nodes[m as usize].kind() {
+                    prefetch_members(&bufs.words, k, old);
+                    debug_assert!(bufs.sel[k] as usize >= read, "a group's survivor is its lowest member");
+                    debug_assert!(bufs.words[k] == nodes[bufs.sel[k] as usize], "a member's word is its node's");
+                    match bufs.words[k].kind() {
                         NodeKind::Inline(pair) => fresh.push(pair),
                         kind => append(&mut fresh, &old[source(kind)]),
                     }

@@ -2,6 +2,7 @@ use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 use crate::limits::Limits;
 
 use super::merge::GroupPlan;
+use crate::diagram::EncodedNode;
 
 // Arena growth here goes through `limits`' `try_push` / `try_resize`, the one
 // budget-charged implementation; a raw `try_reserve_exact(1)` would bypass the
@@ -117,6 +118,10 @@ pub(super) struct MergeBuffers {
     /// Pass A's decided per-group actions, each naming its `start..end` range in
     /// `sel`.
     pub(super) group_plans: Vec<GroupPlan>,
+    /// The node word of each member in `sel`, at the same index, read once
+    /// where the members are marked: the rebuild then reads the members'
+    /// ranges in order rather than their scattered words.
+    pub(super) words: Vec<EncodedNode>,
 }
 
 impl Buffers for MergeBuffers {
@@ -129,6 +134,7 @@ impl Buffers for MergeBuffers {
         visit(&mut self.seen_pairs);
         visit(&mut self.sel);
         visit(&mut self.group_plans);
+        visit(&mut self.words);
     }
 }
 
@@ -143,6 +149,7 @@ impl MergeBuffers {
         self.seen_pairs.clear();
         self.sel.clear();
         self.group_plans.clear();
+        self.words.clear();
     }
 }
 

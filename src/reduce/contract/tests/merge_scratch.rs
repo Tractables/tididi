@@ -128,6 +128,10 @@ fn merge_buffers_clear_retains_allocations() {
         seen_pairs,
         sel: vec![7, 8],
         group_plans: vec![GroupPlan { action: GroupAction::Concat, start: 0, end: 2 }],
+        words: vec![crate::diagram::EncodedNode::inline(crate::diagram::ChildPair::new(
+            crate::diagram::NodeIdx(0),
+            crate::diagram::NodeIdx(1),
+        ))],
     };
 
     let allocation = b.sel.as_ptr();
@@ -141,6 +145,7 @@ fn merge_buffers_clear_retains_allocations() {
     assert!(b.seen_pairs.is_empty(), "seen_pairs must be cleared");
     assert!(b.sel.is_empty(), "sel must be cleared");
     assert!(b.group_plans.is_empty(), "group_plans must be cleared");
+    assert!(b.words.is_empty(), "words must be cleared");
 }
 
 // ── Budget: the contract-merge scratch buffers are charged ─────────────────
