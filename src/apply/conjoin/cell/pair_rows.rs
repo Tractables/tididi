@@ -13,6 +13,10 @@ const FEW_PAIRS: usize = 16;
 const CHARGE_TABLE_COLUMNS: usize = 8;
 const CHARGE_TABLE_ENTRIES_A_ROW: usize = 8;
 
+/// The fewest rows a byte of a level's pairs pays for a table of the
+/// columns each set of that byte's pairs reaches.
+const REACH_TABLE_ROWS_A_BYTE: usize = 64;
+
 /// The row loop of a masked level whose g level has at most
 /// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all (`liveness::pairs_fit`), read by
 /// pairs.
@@ -246,12 +250,40 @@ where
     debug_assert!(!right.kills() || ctx.sides.right.reach.iter().zip(g_flat).all(|(&r, q)| r == 1u128 << q.right.0));
     let word_left = |p: &ChildPair| if left.kills() { left_words[p.left.raw() as usize] } else { all };
     let word_right = |p: &ChildPair| if right.kills() { right_words[p.right.raw() as usize] } else { all };
+    // On a level of many rows, the columns each set of pairs of each byte
+    // of a word reaches: a word's columns are then a lookup a byte, where
+    // the walk of its columns is a dependent load a column.
+    let bytes = g_flat.len().div_ceil(8);
+    let mut reach_of = [const { std::mem::MaybeUninit::<[u64; 256]>::uninit() }; 8];
+    let reach_of: &[[u64; 256]] = if !ONE && (f_width >= REACH_TABLE_ROWS_A_BYTE * bytes || super::super::reach_tables_forced()) {
+        super::super::note_reach_tables();
+        for (k, table) in reach_of.iter_mut().enumerate().take(bytes) {
+            let table = table.write([0; 256]);
+            for b in 1..256usize {
+                let q = 8 * k + b.trailing_zeros() as usize;
+                let reach = if q < g_flat.len() { 1u64 << col_of[q] } else { 0 };
+                table[b] = table[b & (b - 1)] | reach;
+            }
+        }
+        // Safety: the first `bytes` tables were written above.
+        unsafe { std::slice::from_raw_parts(reach_of.as_ptr().cast::<[u64; 256]>(), bytes) }
+    } else {
+        &[]
+    };
     // The columns with a pair among the bits of `s`.
     let reached = |s: u64| {
         if ONE {
             return s & !ROW_LIVE;
         }
-        let (mut s, mut out) = (s & !ROW_LIVE, 0u64);
+        let mut s = s & !ROW_LIVE;
+        if !reach_of.is_empty() {
+            return reach_of.iter().fold(0, |out, table| {
+                let byte = s as u8;
+                s >>= 8;
+                out | table[usize::from(byte)]
+            });
+        }
+        let mut out = 0u64;
         while s != 0 {
             let j = col_of[s.trailing_zeros() as usize] as usize;
             out |= 1 << j;

@@ -258,6 +258,42 @@ pub(super) fn pair_rows_levels() -> [u64; 3] {
     PAIR_ROWS.with(std::cell::Cell::get)
 }
 
+thread_local! {
+    /// Whether every level read by pairs of many-pair columns reads the
+    /// columns of a word off tables ([`reach_tables_on`]).
+    static REACH_TABLES_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread that did ([`reach_tables_levels`]).
+    static REACH_TABLES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn reach_tables_forced() -> bool {
+    REACH_TABLES_ON.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_reach_tables() {
+    REACH_TABLES.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with every level read by pairs of many-pair columns reading the
+/// columns of a word off the tables of its bytes' columns, whatever its
+/// rows.
+pub(super) fn reach_tables_on<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            REACH_TABLES_ON.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(REACH_TABLES_ON.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far that read the columns of a word off
+/// tables.
+pub(super) fn reach_tables_levels() -> u64 {
+    REACH_TABLES.with(std::cell::Cell::get)
+}
+
 pub(super) fn note_pair_row_unrolled() {
     PAIR_ROWS_UNROLLED.with(|n| n.set(n.get() + 1));
 }

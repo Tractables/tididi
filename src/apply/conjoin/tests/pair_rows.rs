@@ -17,8 +17,9 @@ fn conjoin(f: &Tdd, g: &Tdd) -> (Tdd, u64) {
     (out, eng.limits().work_since(mark))
 }
 
-/// Conjoined with levels read by pairs and without: the same levels, each
-/// node's pairs in the same order, and the same work. Returns the levels
+/// Conjoined with levels read by pairs and without, and with every level
+/// of many-pair columns reading a word's columns off tables: the same
+/// levels, each node's pairs in the same order, and the same work. Returns the levels
 /// read by pairs, those of them with a complete side, and those of one
 /// pair a column.
 fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
@@ -29,6 +30,9 @@ fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
     assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the levels read by pairs built another function");
     assert!(is_self_conjunction(&out, &oracle), "{what}: the levels read by pairs built other levels");
     assert_eq!(out_work, work, "{what}: the levels read by pairs took other work");
+    let (tabled, tabled_work) = reach_tables_on(|| conjoin(f, g));
+    assert!(is_self_conjunction(&tabled, &oracle), "{what}: the levels reading columns off tables built other levels");
+    assert_eq!(tabled_work, work, "{what}: the levels reading columns off tables took other work");
     let after = pair_rows_levels();
     std::array::from_fn(|k| after[k] - before[k])
 }
@@ -43,7 +47,7 @@ fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
 #[test]
 fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
     let mut rng = Lcg::new(0x5a1d_93e7);
-    let unrolled = pair_rows_unrolled();
+    let (unrolled, tabled) = (pair_rows_unrolled(), reach_tables_levels());
     let (mut levels, mut cases) = ([0u64; 3], 0usize);
     let mut add = |n: [u64; 3]| (0..3).for_each(|k| levels[k] += n[k]);
     for shape in [CnfShape { clauses: 30, width: 3 }, CnfShape { clauses: 60, width: 4 }] {
@@ -133,8 +137,9 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
         }
     }
     let [all, whole, one] = levels;
-    let unrolled = pair_rows_unrolled() - unrolled;
-    eprintln!("levels read by pairs {all} ({whole} with a complete side, {one} of one pair a column, {unrolled} rows unrolled), over {cases} cases");
+    let (unrolled, tabled) = (pair_rows_unrolled() - unrolled, reach_tables_levels() - tabled);
+    eprintln!("levels read by pairs {all} ({whole} with a complete side, {one} of one pair a column, {unrolled} rows unrolled, {tabled} reading columns off tables), over {cases} cases");
+    assert!(tabled > 0, "expected levels reading columns off tables, got none over {cases} cases");
     assert!(unrolled > 0, "expected rows of two f pairs on two one-pair columns, got none over {cases} cases");
     assert!(all > 0, "expected levels read by pairs, got none over {cases} cases");
     assert!(whole > 0, "expected levels read by pairs with a complete side, got none over {cases} cases");

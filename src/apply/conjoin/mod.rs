@@ -912,6 +912,21 @@ fn single_rows_forced_off() -> bool {
 #[inline(always)]
 fn note_single_rows() {}
 
+// A test reads the columns of every level read by pairs of many-pair
+// columns off the tables of their bytes' columns, and counts those levels.
+#[cfg(test)]
+use tests::{note_reach_tables, reach_tables_forced};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn reach_tables_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_reach_tables() {}
+
 // A test builds every level of one-pair cells on their row loop, as the
 // oracle for the levels written as a description of relayed right
 // children, and counts those levels.
