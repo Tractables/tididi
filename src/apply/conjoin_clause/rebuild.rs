@@ -43,6 +43,7 @@ pub(super) struct SpineCtx {
 
 /// Conjoin one accumulator node with the clause's virtual `c_t` (and `d_t`
 /// where the level needs it), writing the emitted node indices into `slot`.
+/// Return how many pairs the two nodes hold.
 ///
 /// The caller has already put the level's growth mode in place.
 pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, const DT: bool>(
@@ -52,7 +53,7 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     level: &mut TddLevel,
     slot: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     // The cube pair of a disjunction, if this is the node that carries it.
     let cube_pair = tables.output_cube_pair.and_then(|(s, p)| (s == slot).then_some(p));
     // Reserve this node's whole worst case before emitting any of it, so
@@ -78,6 +79,7 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         pairs.push(pair);
         sort_pairs(&mut pairs[ct_start..]);
     }
+    let written = level.pairs.stored_len() - ct_start + if DT { tables.dt_pairs.len() } else { 0 };
     let ct = emit_from(eng, level, ct_start)?;
     // The parent's both-relevant pass requires the c_t index below d_t. The
     // d_t pairs fit the reservation above: at most one per input pair, which
@@ -90,7 +92,7 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         NO_PRODUCT
     };
     tables.cd_map[slot] = [ct, dt];
-    Ok(())
+    Ok(written)
 }
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
@@ -195,7 +197,8 @@ pub(super) fn rebuild_spine_level(
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
 /// `nodes` are the words of `old`'s `ctx.nodes` nodes where they are at
-/// hand, none where `old` implies them.
+/// hand, none where `old` implies them. Each node charges the work clock a
+/// unit for each pair it reads and each pair it writes.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine, old: &TddLevel, nodes: &[EncodedNode], ctx: SpineCtx, level: &mut TddLevel,
@@ -207,6 +210,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     // call site keeps `conjoin_node_with_clause` inlined here.
     let stored = old.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
+    let mut gate = eng.limits().gate();
     for i in 0..ctx.nodes {
         let inputs: &[ChildPair] = match (nodes.get(i), stored) {
             (Some(node), Some(s)) => s.of(node),
@@ -224,9 +228,10 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
             continue;
         }
-        conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
+        let written = conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
+        gate.poll((inputs.len() + written) as u64)?;
     }
-    Ok(())
+    gate.flush()
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
