@@ -749,21 +749,27 @@ pub(super) fn gather_owned_products(
 
 /// Fill `owned` with each product of `list`, which holds one per f index in
 /// order, with its slots in `owners`, at its f index: one pass over `list`,
-/// each slots' read independent of the others.
+/// each slots' read independent of the others. Return whether each product
+/// is numbered as its f index and has both literals' slots.
 pub(super) fn gather_listed_products(
     lim: &Limits,
     list: &[ProductEntry],
     owners: &[u32],
     owned: &mut Vec<OwnedProduct>,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     if owned.len() < list.len() {
         lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
     }
     let (owners, _) = owners.as_chunks::<OWNER_SLOTS>();
-    for (to, e) in owned.iter_mut().zip(list) {
-        *to = OwnedProduct { prod: e.prod_idx.0, slots: owners[e.g_idx.idx()] };
+    let mut plain = 0usize;
+    for (i, (to, e)) in owned.iter_mut().zip(list).enumerate() {
+        let slots = owners[e.g_idx.idx()];
+        *to = OwnedProduct { prod: e.prod_idx.0, slots };
+        // A node index is below 2^31: only a missing slot makes the or all
+        // ones.
+        plain += usize::from((e.prod_idx.0 as usize == i) & (slots[0] | slots[2] != NO_PRODUCT));
     }
-    Ok(())
+    Ok(plain == list.len())
 }
 
 /// Slots per node of a level below which [`clear_owner_table`] empties the
