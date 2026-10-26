@@ -2,7 +2,7 @@
 
 use super::*;
 use super::super::liveness::ROW_LIVE;
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{EncodedChildRef, NodeKind};
 use std::mem::MaybeUninit;
 
 // ============================= Row-loop driver =============================
@@ -826,24 +826,70 @@ pub(crate) fn run_level_rows_single(
         debug_assert!(pairs.len() <= 1, "a g node of one pair at most");
         g_cols.push(pairs.first().copied().unwrap_or(dead));
     }
-    let g_cols = &g_cols[..];
+    let rows = SingleRows { f_level, ctx, f_width, g_cols: &g_cols[..] };
+    let mut sink = EmitSink { level };
+    // A level of a few columns keeps them in registers, and writes each
+    // row's cells once.
+    match right_width {
+        1 => single_rows::<1>(eng, rows, f_scratch, slab, &mut sink),
+        2 => single_rows::<2>(eng, rows, f_scratch, slab, &mut sink),
+        3 => single_rows::<3>(eng, rows, f_scratch, slab, &mut sink),
+        4 => single_rows::<4>(eng, rows, f_scratch, slab, &mut sink),
+        _ => single_rows::<0>(eng, rows, f_scratch, slab, &mut sink),
+    }
+}
+
+/// What the row loop of [`run_level_rows_single`] reads.
+#[derive(Clone, Copy)]
+struct SingleRows<'a> {
+    f_level: &'a TddLevel,
+    ctx: &'a CellCtx<'a>,
+    f_width: usize,
+    g_cols: &'a [ChildPair],
+}
+
+/// The row loop of [`run_level_rows_single`] on a level of `W` columns, or
+/// of any number for `W = 0`.
+///
+/// With `W` columns a row's cells are found and then written once, a node
+/// index or `NO_PRODUCT` each, in place of the reset and the writes of its
+/// live cells; the row's single f pair is read off its node where the f
+/// level stores its nodes and neither side is marginal.
+#[inline(never)]
+fn single_rows<const W: usize>(
+    eng: &Engine,
+    rows: SingleRows<'_>,
+    f_scratch: &mut Vec<ChildPair>,
+    slab: &mut Vec<u32>,
+    sink: &mut EmitSink<'_>,
+) -> Result<(), OperationError> {
+    let SingleRows { f_level, ctx, f_width, g_cols } = rows;
+    let lim = eng.limits();
+    let right_width = ctx.right_width;
+    debug_assert!(W == 0 || W == right_width);
+    let width = if W == 0 { right_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
     let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
-    let mut sink = EmitSink { level };
     let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+    let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
+    // The f nodes, where a row's pair is its node's.
+    let f_nodes = match f_level.stored() {
+        Some(stored) if f_described.is_none() && !left_view.is_marginal() && !right_view.is_marginal() => Some(stored.nodes()),
+        _ => None,
+    };
+    let g: [ChildPair; W] = std::array::from_fn(|j| g_cols[j]);
 
-    // The resets of `run_level_rows`: one fill of a small grid, a row at a
-    // time on a larger one.
+    // The resets of `run_level_rows`, where the rows' cells are not written
+    // once: one fill of a small grid, a row at a time on a larger one.
     let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if slab_fill {
+    if W == 0 && slab_fill {
         let end = ctx.output_grid_base + f_width * right_width;
         if !extend_slab(slab, ctx.output_grid_base, end) {
             mark_dead(&mut slab[ctx.output_grid_base..end]);
         }
     }
-    let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
-    let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
     let mut next = 0;
     'rows: while next < f_width {
         // The rows' nodes are written straight into the node arena, open
@@ -853,19 +899,29 @@ pub(crate) fn run_level_rows_single(
         while next < f_width {
             let i = next;
             next += 1;
-            let row_base = ctx.output_grid_base + i * right_width;
-            let fresh = extend_slab(slab, row_base, row_base + right_width);
-            let node_idx = &mut slab[..];
-            if !slab_fill && !fresh {
-                mark_dead(&mut node_idx[row_base..row_base + right_width]);
-            }
-            let f_pairs = match f_described {
-                Some(k) => &f_scratch[i * k..(i + 1) * k],
-                None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
+            let row_base = ctx.output_grid_base + i * width;
+            let p = match (f_nodes, f_described) {
+                (Some(nodes), _) => match nodes[i].kind() {
+                    NodeKind::Inline(p) => Some(p),
+                    _ => f_level.pairs_read(i, f_scratch).first().copied(),
+                },
+                (None, Some(k)) => f_scratch[i * k..(i + 1) * k].first().copied(),
+                (None, None) => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view).first().copied(),
             };
+            debug_assert!(f_level.pairs_view_decoded(i, &mut Vec::new(), left_view, right_view).len() <= 1, "an f node of one pair at most");
+            if W == 0 {
+                let fresh = extend_slab(slab, row_base, row_base + width);
+                if !slab_fill && !fresh {
+                    mark_dead(&mut slab[row_base..row_base + width]);
+                }
+            }
             // A dead f node's row stays dead.
-            let Some(p) = f_pairs.first() else { continue };
-            debug_assert!(f_pairs.len() == 1, "an f node of one pair at most");
+            let Some(p) = p else {
+                if W > 0 {
+                    write_cells(slab, row_base, [NO_PRODUCT; W]);
+                }
+                continue;
+            };
             let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
             // A cell's product: `NO_PRODUCT` where a side has none.
             let product = |node_idx: &[u32], q: &ChildPair| {
@@ -879,28 +935,66 @@ pub(crate) fn run_level_rows_single(
                 let rc = right.get_in_row(node_idx, rrow, q.right.0);
                 (rc != NO_PRODUCT).then_some((lc, rc))
             };
-            if let Some(o) = out.as_mut().filter(|o| o.has_room(0, right_width)) {
-                for (j, q) in g_cols.iter().enumerate() {
-                    if let Some((lc, rc)) = product(node_idx, q) {
-                        // Safety: the arena has room for a node a column.
-                        unsafe { o.single(node_idx, row_base + j, lc, rc) };
+            if let Some(o) = out.as_mut().filter(|o| o.has_room(0, width)) {
+                if W > 0 {
+                    let mut cells = [NO_PRODUCT; W];
+                    for (cell, q) in cells.iter_mut().zip(&g) {
+                        if let Some((lc, rc)) = product(slab, q) {
+                            // Safety: the arena has room for a node a column.
+                            *cell = unsafe { o.single_node(lc, rc) };
+                        }
+                    }
+                    write_cells(slab, row_base, cells);
+                } else {
+                    for (j, q) in g_cols.iter().enumerate() {
+                        if let Some((lc, rc)) = product(slab, q) {
+                            // Safety: as above.
+                            unsafe { o.single(slab, row_base + j, lc, rc) };
+                        }
                     }
                 }
-                poll.poll(live_cols + right_width as u64)?;
+                poll.poll(live_cols + width as u64)?;
                 continue;
             }
             drop(out);
+            if W > 0 {
+                write_cells(slab, row_base, [NO_PRODUCT; W]);
+            }
             for (j, q) in g_cols.iter().enumerate() {
-                if let Some((lc, rc)) = product(node_idx, q) {
-                    sink.single(eng, node_idx, row_base + j, lc, rc)?;
+                if let Some((lc, rc)) = product(slab, q) {
+                    sink.single(eng, slab, row_base + j, lc, rc)?;
                 }
             }
-            poll.poll(live_cols + right_width as u64)?;
+            poll.poll(live_cols + width as u64)?;
             continue 'rows;
         }
     }
     poll.flush()?;
     Ok(())
+}
+
+/// Write `cells` at `start` of `slab`, extending it into the capacity a
+/// grid's claim reserved where they reach past its end, any gap before them
+/// `NO_PRODUCT`.
+#[inline(always)]
+fn write_cells<const W: usize>(slab: &mut Vec<u32>, start: usize, cells: [u32; W]) {
+    let end = start + W;
+    let len = slab.len();
+    if len >= end {
+        slab[start..end].copy_from_slice(&cells);
+        return;
+    }
+    debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
+    if len < start {
+        slab.resize(start, NO_PRODUCT);
+    }
+    let have = slab.len() - start;
+    slab[start..].copy_from_slice(&cells[..have]);
+    for (slot, &cell) in slab.spare_capacity_mut()[..W - have].iter_mut().zip(&cells[have..]) {
+        slot.write(cell);
+    }
+    // Safety: the slots up to `end` were written above.
+    unsafe { slab.set_len(end) };
 }
 
 /// Which plain-route child sides are [complete](super::super::products::Products::is_complete)

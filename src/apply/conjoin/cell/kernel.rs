@@ -260,13 +260,25 @@ impl<'a> ArenaRow<'a> {
     /// [`has_room`](Self::has_room) admitted.
     #[inline(always)]
     pub(crate) unsafe fn single(&mut self, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) {
+        // Safety: as the caller's.
+        node_idx[grid_pos] = unsafe { self.single_node(lc, rc) };
+    }
+
+    /// [`single`](Self::single), the node's index returned for the caller
+    /// to record.
+    ///
+    /// # Safety
+    ///
+    /// As [`single`](Self::single)'s.
+    #[inline(always)]
+    pub(crate) unsafe fn single_node(&mut self, lc: u32, rc: u32) -> u32 {
         debug_assert_eq!(self.cell, 0, "a cell is open");
         debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
         let node = EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)));
         // Safety: as in `close`.
         unsafe { self.node_out.add(self.node_len).write(node) };
-        node_idx[grid_pos] = self.node_len as u32;
         self.node_len += 1;
+        (self.node_len - 1) as u32
     }
 }
 
