@@ -701,10 +701,11 @@ pub(super) struct OwnedProduct {
 /// Fill `owned` with the products of `list`, in its order, whose g node has
 /// an owner in `owners`, each with its slots, and `offsets` with their
 /// bucket bounds over `width` f indices, as [`bucket_offsets`] gives
-/// `list`'s; return how many there are. One pass over `list`, which every
-/// producer emits in ascending f order, reading each product's slots once:
-/// a walk then reads a product and its slots together, instead of once per
-/// f pair that meets the product, each read waiting on the one before.
+/// `list`'s; return how many there are, and whether each of them has both
+/// literals' slots. One pass over `list`, which every producer emits in
+/// ascending f order, reading each product's slots once: a walk then reads
+/// a product and its slots together, instead of once per f pair that meets
+/// the product, each read waiting on the one before.
 pub(super) fn gather_owned_products(
     lim: &Limits,
     list: &[ProductEntry],
@@ -712,7 +713,7 @@ pub(super) fn gather_owned_products(
     owners: &[u32],
     offsets: &mut Vec<u32>,
     owned: &mut Vec<OwnedProduct>,
-) -> Result<usize, OperationError> {
+) -> Result<(usize, bool), OperationError> {
     lim.try_resize(offsets, width + 1, 0u32)?;
     lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
     let (owners, _) = owners.as_chunks::<OWNER_SLOTS>();
@@ -721,7 +722,7 @@ pub(super) fn gather_owned_products(
     // Each product writes its f index's end, so the last of the index
     // leaves it; no branch waits on where one f index's products stop,
     // nor on the slots' read.
-    let (mut kept, mut last_f, mut descents) = (0usize, 0usize, 0usize);
+    let (mut kept, mut both, mut last_f, mut descents) = (0usize, 0usize, 0usize, 0usize);
     for e in list {
         let f = e.f_idx.idx();
         let slots = owners[e.g_idx.idx()];
@@ -729,6 +730,9 @@ pub(super) fn gather_owned_products(
         // kept.
         owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
         kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
+        // A node index is below 2^31: only a missing slot makes the or
+        // all ones.
+        both += usize::from(slots[0] | slots[2] != NO_PRODUCT);
         bounds[f + 1] = kept as u32;
         descents += usize::from(f < last_f);
         last_f = f;
@@ -740,7 +744,7 @@ pub(super) fn gather_owned_products(
         end = end.max(*bound);
         *bound = end;
     }
-    Ok(kept)
+    Ok((kept, both == kept))
 }
 
 /// Fill `owned` with each product of `list`, which holds one per f index in
