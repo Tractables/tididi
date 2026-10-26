@@ -216,7 +216,9 @@ where
         out
     };
     let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
-    // The ANDs of a row of more than `FEW_PAIRS` pairs.
+    // The ANDs of a row's f pairs: of `FEW_PAIRS` pairs or fewer on the
+    // stack, of more in a buffer.
+    let mut few_ands = [0u64; FEW_PAIRS];
     let mut many: Vec<u64> = Vec::new();
 
     // The resets of `run_level_rows`: one fill of a small grid, a row at a
@@ -230,112 +232,152 @@ where
     }
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
-    for i in 0..f_width {
-        let row_base = ctx.output_grid_base + i * right_width;
-        let fresh = extend_slab(slab, row_base, row_base + right_width);
-        let node_idx = &mut slab[..];
-        if !slab_fill && !fresh {
-            mark_dead(&mut node_idx[row_base..row_base + right_width]);
-        }
-        let f_pairs = match f_described {
-            Some(k) => &f_scratch[i * k..(i + 1) * k],
-            None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
-        };
-        // A dead f node's row stays dead, as does a row with a side
-        // without a live child row.
-        if f_pairs.is_empty() {
-            continue;
-        }
-        // Each side's fold, the g pairs some candidate of the row survives
-        // against, and each f pair's AND.
-        let mut ands = [0u64; FEW_PAIRS];
-        let few = f_pairs.len() <= FEW_PAIRS;
-        if !few {
-            many.clear();
-            lim.reserve(&mut many, f_pairs.len())?;
-        }
-        let (mut l, mut r, mut live) = (0, 0, 0);
-        for (k, p) in f_pairs.iter().enumerate() {
-            let (wl, wr) = (word_left(p), word_right(p));
-            let and = wl & wr;
-            (l, r, live) = (l | wl, r | wr, live | and);
-            if few {
-                ands[k] = and;
-            } else {
-                many.push(and);
+    let mut next = 0;
+    'rows: while next < f_width {
+        // A row is written straight into the arenas, open across rows, where
+        // its live cells' every candidate fits their room: each cell holds
+        // at most an f pair's candidates against each of g's pairs. A row
+        // without room goes through the sink, which grows them.
+        let mut out = sink.open_row(0, 0);
+        while next < f_width {
+            let i = next;
+            next += 1;
+            let row_base = ctx.output_grid_base + i * right_width;
+            let fresh = extend_slab(slab, row_base, row_base + right_width);
+            let node_idx = &mut slab[..];
+            if !slab_fill && !fresh {
+                mark_dead(&mut node_idx[row_base..row_base + right_width]);
             }
-        }
-        if l & r & ROW_LIVE == 0 {
-            continue;
-        }
-        // The cells the masks enter, charged with the row's width; the
-        // live ones among them.
-        let entered = reached(l) & reached(r);
-        let n1 = f_pairs.len();
-        debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
-        poll.poll(n1 as u64 * pairs_in(entered) + right_width as u64)?;
-        let live = live & !ROW_LIVE;
-        let ands = if few { &ands[..n1] } else { &many[..] };
-        let mut cells = reached(live);
-        debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
-        while cells != 0 {
-            let j = cells.trailing_zeros() as usize;
-            cells &= cells - 1;
-            let col = cols[j];
-            let grid_pos = row_base + j;
-            if n1 == 1 && (ONE || col & (col - 1) == 0) {
-                let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
-                let lc = left.get(node_idx, p.left.0, q.left.0);
-                let rc = right.get(node_idx, p.right.0, q.right.0);
-                sink.single(eng, node_idx, grid_pos, lc, rc)?;
+            let f_pairs = match f_described {
+                Some(k) => &f_scratch[i * k..(i + 1) * k],
+                None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
+            };
+            // A dead f node's row stays dead, as does a row with a side
+            // without a live child row.
+            if f_pairs.is_empty() {
                 continue;
             }
-            // Every candidate of the cell an AND keeps survives.
-            let bound = if ONE { n1 } else { n1 * usize::from(col_pairs[j]) };
-            if let Some(mut cell) = sink.open_cell(bound) {
+            // Each side's fold, the g pairs some candidate of the row survives
+            // against, and each f pair's AND.
+            let few = f_pairs.len() <= FEW_PAIRS;
+            if !few {
+                many.clear();
+                lim.reserve(&mut many, f_pairs.len())?;
+            }
+            let (mut l, mut r, mut live) = (0, 0, 0);
+            for (k, p) in f_pairs.iter().enumerate() {
+                let (wl, wr) = (word_left(p), word_right(p));
+                let and = wl & wr;
+                (l, r, live) = (l | wl, r | wr, live | and);
+                if few {
+                    few_ands[k] = and;
+                } else {
+                    many.push(and);
+                }
+            }
+            if l & r & ROW_LIVE == 0 {
+                continue;
+            }
+            // The cells the masks enter, charged with the row's width; the
+            // live ones among them.
+            let entered = reached(l) & reached(r);
+            let n1 = f_pairs.len();
+            debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
+            poll.poll(n1 as u64 * pairs_in(entered) + right_width as u64)?;
+            let live = live & !ROW_LIVE;
+            let ands = if few { &few_ands[..n1] } else { &many[..] };
+            let mut cells = reached(live);
+            debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
+            if let Some(o) = out.as_mut().filter(|o| o.has_room(n1 * g_flat.len(), right_width)) {
+                while cells != 0 {
+                    let j = cells.trailing_zeros() as usize;
+                    cells &= cells - 1;
+                    let col = cols[j];
+                    for (p, &and) in f_pairs.iter().zip(ands) {
+                        let mut m = and & col;
+                        if ONE {
+                            if m != 0 {
+                                let q = &g_flat[j];
+                                // Safety: the arenas have room for a pair an
+                                // f pair and a g pair.
+                                unsafe { o.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
+                            }
+                            continue;
+                        }
+                        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                        while m != 0 {
+                            let q = &g_flat[m.trailing_zeros() as usize];
+                            m &= m - 1;
+                            // Safety: as above.
+                            unsafe { o.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
+                        }
+                    }
+                    // Safety: the arenas have room for a node a column.
+                    unsafe { o.close(node_idx, row_base + j) };
+                }
+                continue;
+            }
+            drop(out);
+            while cells != 0 {
+                let j = cells.trailing_zeros() as usize;
+                cells &= cells - 1;
+                let col = cols[j];
+                let grid_pos = row_base + j;
+                if n1 == 1 && (ONE || col & (col - 1) == 0) {
+                    let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
+                    let lc = left.get(node_idx, p.left.0, q.left.0);
+                    let rc = right.get(node_idx, p.right.0, q.right.0);
+                    sink.single(eng, node_idx, grid_pos, lc, rc)?;
+                    continue;
+                }
+                // Every candidate of the cell an AND keeps survives.
+                let bound = if ONE { n1 } else { n1 * usize::from(col_pairs[j]) };
+                if let Some(mut cell) = sink.open_cell(bound) {
+                    for (p, &and) in f_pairs.iter().zip(ands) {
+                        let mut m = and & col;
+                        if ONE {
+                            if m != 0 {
+                                let q = &g_flat[j];
+                                // Safety: the cell was opened for a pair an f pair.
+                                unsafe { cell.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
+                            }
+                            continue;
+                        }
+                        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                        while m != 0 {
+                            let q = &g_flat[m.trailing_zeros() as usize];
+                            m &= m - 1;
+                            // Safety: the cell was opened for each f pair
+                            // against each of the column's pairs.
+                            unsafe { cell.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
+                        }
+                    }
+                    cell.close(eng, node_idx, grid_pos)?;
+                    continue;
+                }
+                let start = sink.begin();
                 for (p, &and) in f_pairs.iter().zip(ands) {
                     let mut m = and & col;
+                    if m == 0 {
+                        continue;
+                    }
                     if ONE {
-                        if m != 0 {
-                            let q = &g_flat[j];
-                            // Safety: the cell was opened for a pair an f pair.
-                            unsafe { cell.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
-                        }
+                        let q = &g_flat[j];
+                        sink.pair(eng, left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
                         continue;
                     }
                     let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
                     while m != 0 {
                         let q = &g_flat[m.trailing_zeros() as usize];
                         m &= m - 1;
-                        // Safety: the cell was opened for each f pair
-                        // against each of the column's pairs.
-                        unsafe { cell.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
+                        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+                        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+                        sink.pair(eng, lc, rc)?;
                     }
                 }
-                cell.close(eng, node_idx, grid_pos)?;
-                continue;
+                sink.end(eng, node_idx, grid_pos, start)?;
             }
-            let start = sink.begin();
-            for (p, &and) in f_pairs.iter().zip(ands) {
-                let mut m = and & col;
-                if m == 0 {
-                    continue;
-                }
-                if ONE {
-                    let q = &g_flat[j];
-                    sink.pair(eng, left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
-                    continue;
-                }
-                let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                while m != 0 {
-                    let q = &g_flat[m.trailing_zeros() as usize];
-                    m &= m - 1;
-                    let lc = left.get_in_row(node_idx, lrow, q.left.0);
-                    let rc = right.get_in_row(node_idx, rrow, q.right.0);
-                    sink.pair(eng, lc, rc)?;
-                }
-            }
-            sink.end(eng, node_idx, grid_pos, start)?;
+            continue 'rows;
         }
     }
     poll.flush()?;

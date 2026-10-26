@@ -3,6 +3,7 @@
 use super::*;
 use super::super::liveness::ROW_LIVE;
 use crate::diagram::EncodedChildRef;
+use std::mem::MaybeUninit;
 
 // ============================= Row-loop driver =============================
 //
@@ -148,7 +149,23 @@ pub(super) fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool
         return false;
     }
     debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
-    slab.resize(end, NO_PRODUCT);
+    // A row of up to eight cells is written as `mark_dead` writes one, into
+    // the spare capacity; a longer one is a `resize`.
+    let n = end - len;
+    if n <= 8 {
+        const DEAD: [MaybeUninit<u32>; 4] = [MaybeUninit::new(NO_PRODUCT); 4];
+        let cells = &mut slab.spare_capacity_mut()[..n];
+        if n < 4 {
+            (cells[0], cells[n / 2], cells[n - 1]) = (DEAD[0], DEAD[0], DEAD[0]);
+        } else {
+            cells[..4].copy_from_slice(&DEAD);
+            cells[n - 4..].copy_from_slice(&DEAD);
+        }
+        // Safety: the `n` slots past the length were written above.
+        unsafe { slab.set_len(end) };
+    } else {
+        slab.resize(end, NO_PRODUCT);
+    }
     len <= start
 }
 
@@ -827,36 +844,60 @@ pub(crate) fn run_level_rows_single(
     }
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
-    for i in 0..f_width {
-        let row_base = ctx.output_grid_base + i * right_width;
-        let fresh = extend_slab(slab, row_base, row_base + right_width);
-        let node_idx = &mut slab[..];
-        if !slab_fill && !fresh {
-            mark_dead(&mut node_idx[row_base..row_base + right_width]);
+    let mut next = 0;
+    'rows: while next < f_width {
+        // The rows' nodes are written straight into the node arena, open
+        // across rows, while it has room for a node a column; a row it has
+        // no room for goes through the sink, which grows it.
+        let mut out = sink.open_row(0, 0);
+        while next < f_width {
+            let i = next;
+            next += 1;
+            let row_base = ctx.output_grid_base + i * right_width;
+            let fresh = extend_slab(slab, row_base, row_base + right_width);
+            let node_idx = &mut slab[..];
+            if !slab_fill && !fresh {
+                mark_dead(&mut node_idx[row_base..row_base + right_width]);
+            }
+            let f_pairs = match f_described {
+                Some(k) => &f_scratch[i * k..(i + 1) * k],
+                None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
+            };
+            // A dead f node's row stays dead.
+            let Some(p) = f_pairs.first() else { continue };
+            debug_assert!(f_pairs.len() == 1, "an f node of one pair at most");
+            let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+            // A cell's product: `NO_PRODUCT` where a side has none.
+            let product = |node_idx: &[u32], q: &ChildPair| {
+                if q.left.0 == NO_PRODUCT {
+                    return None;
+                }
+                let lc = left.get_in_row(node_idx, lrow, q.left.0);
+                if lc == NO_PRODUCT {
+                    return None;
+                }
+                let rc = right.get_in_row(node_idx, rrow, q.right.0);
+                (rc != NO_PRODUCT).then_some((lc, rc))
+            };
+            if let Some(o) = out.as_mut().filter(|o| o.has_room(0, right_width)) {
+                for (j, q) in g_cols.iter().enumerate() {
+                    if let Some((lc, rc)) = product(node_idx, q) {
+                        // Safety: the arena has room for a node a column.
+                        unsafe { o.single(node_idx, row_base + j, lc, rc) };
+                    }
+                }
+                poll.poll(live_cols + right_width as u64)?;
+                continue;
+            }
+            drop(out);
+            for (j, q) in g_cols.iter().enumerate() {
+                if let Some((lc, rc)) = product(node_idx, q) {
+                    sink.single(eng, node_idx, row_base + j, lc, rc)?;
+                }
+            }
+            poll.poll(live_cols + right_width as u64)?;
+            continue 'rows;
         }
-        let f_pairs = match f_described {
-            Some(k) => &f_scratch[i * k..(i + 1) * k],
-            None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
-        };
-        // A dead f node's row stays dead.
-        let Some(p) = f_pairs.first() else { continue };
-        debug_assert!(f_pairs.len() == 1, "an f node of one pair at most");
-        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-        for (j, q) in g_cols.iter().enumerate() {
-            if q.left.0 == NO_PRODUCT {
-                continue;
-            }
-            let lc = left.get_in_row(node_idx, lrow, q.left.0);
-            if lc == NO_PRODUCT {
-                continue;
-            }
-            let rc = right.get_in_row(node_idx, rrow, q.right.0);
-            if rc == NO_PRODUCT {
-                continue;
-            }
-            sink.single(eng, node_idx, row_base + j, lc, rc)?;
-        }
-        poll.poll(live_cols + right_width as u64)?;
     }
     poll.flush()?;
     Ok(())

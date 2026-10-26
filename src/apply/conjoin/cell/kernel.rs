@@ -144,10 +144,11 @@ impl<'a> ArenaCell<'a> {
 /// each survivor is stored, and each cell closed into the level's next node,
 /// with no capacity test, the lengths held here and stored in the arenas
 /// when the row is dropped. A cell is written only where it
-/// [fits](Self::fits) the pair arena's room. Each cell closes as
-/// [`ArenaCell::close`] closes one, so the nodes, and the capacities and
-/// meters charged from them, are as one [`ArenaCell`] a cell would leave
-/// them.
+/// [fits](Self::fits) the pair arena's room. A row may stay open across
+/// several of the row loop's rows, each written where it
+/// [has room](Self::has_room). Each cell closes as [`ArenaCell::close`]
+/// closes one, so the nodes, and the capacities and meters charged from
+/// them, are as one [`ArenaCell`] a cell would leave them.
 pub(crate) struct ArenaRow<'a> {
     pairs: &'a mut Vec<ChildPair>,
     nodes: &'a mut Vec<EncodedNode>,
@@ -161,9 +162,8 @@ pub(crate) struct ArenaRow<'a> {
     /// The length the pair arena may reach: the sink's room, within the 31
     /// bits a node holds its range's start in.
     pair_end: usize,
-    /// One past the last node slot the row may write.
-    #[cfg(debug_assertions)]
-    node_end: usize,
+    /// The node arena's capacity.
+    node_cap: usize,
 }
 
 impl<'a> ArenaRow<'a> {
@@ -179,6 +179,7 @@ impl<'a> ArenaRow<'a> {
             return None;
         }
         debug_assert!(room <= pair_arena.capacity() - len, "a sink's room is within its arena's capacity");
+        let node_cap = node_arena.capacity();
         Some(ArenaRow {
             out: pair_arena.as_mut_ptr(),
             node_out: node_arena.as_mut_ptr(),
@@ -188,9 +189,15 @@ impl<'a> ArenaRow<'a> {
             cell: 0,
             node_len,
             pair_end,
-            #[cfg(debug_assertions)]
-            node_end: node_len + nodes,
+            node_cap,
         })
+    }
+
+    /// Whether `nodes` more cells, the first `pairs` pairs of them, fit the
+    /// room past the closed cells.
+    #[inline(always)]
+    pub(crate) fn has_room(&self, pairs: usize, nodes: usize) -> bool {
+        self.len + pairs <= self.pair_end && self.node_len + nodes <= self.node_cap
     }
 
     /// Whether a cell of at most `pairs` pairs fits the room past the closed
@@ -220,7 +227,8 @@ impl<'a> ArenaRow<'a> {
     ///
     /// # Safety
     ///
-    /// The row closes at most the cells it was opened for.
+    /// The row closes at most the cells its open or a
+    /// [`has_room`](Self::has_room) admitted.
     #[inline(always)]
     pub(crate) unsafe fn close(&mut self, node_idx: &mut [u32], grid_pos: usize) {
         let node = match self.cell {
@@ -234,10 +242,28 @@ impl<'a> ArenaRow<'a> {
             }
         };
         self.cell = 0;
-        #[cfg(debug_assertions)]
-        debug_assert!(self.node_len < self.node_end, "a row closed more cells than it was opened for");
-        // Safety: `open` found the node arena's spare capacity to hold a node
-        // for every cell the row was opened for, and the caller closes no more.
+        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
+        // Safety: the node arena's capacity holds a node for every cell the
+        // row was opened or found room for, and the caller closes no more.
+        unsafe { self.node_out.add(self.node_len).write(node) };
+        node_idx[grid_pos] = self.node_len as u32;
+        self.node_len += 1;
+    }
+
+    /// A cell of the one survivor `(lc, rc)`, closed into the level's next
+    /// node and recorded at `grid_pos` as [`push`](Self::push) and
+    /// [`close`](Self::close) would, without the pair arena.
+    ///
+    /// # Safety
+    ///
+    /// No cell is open, and the row closes at most the cells its open or a
+    /// [`has_room`](Self::has_room) admitted.
+    #[inline(always)]
+    pub(crate) unsafe fn single(&mut self, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) {
+        debug_assert_eq!(self.cell, 0, "a cell is open");
+        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
+        let node = EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)));
+        // Safety: as in `close`.
         unsafe { self.node_out.add(self.node_len).write(node) };
         node_idx[grid_pos] = self.node_len as u32;
         self.node_len += 1;
