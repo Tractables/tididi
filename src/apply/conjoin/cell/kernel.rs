@@ -633,6 +633,38 @@ where
 {
     let n = if ITER_F { f_pairs.len() } else { g_pairs.len() };
     gate.poll(n as u64)?;
+    // A cell the arena has room for is written straight into it.
+    if let Some(mut cell) = sink.open_cell(n) {
+        if ITER_F {
+            let (c, d) = (g_pairs[0].left.0, g_pairs[0].right.0);
+            for p1 in f_pairs {
+                let lc = left.get(node_idx, p1.left.0, c);
+                if left.kills() && lc == NO_PRODUCT {
+                    continue;
+                }
+                let rc = right.get(node_idx, p1.right.0, d);
+                if !right.kills() || rc != NO_PRODUCT {
+                    // Safety: the cell was opened for a pair a candidate.
+                    unsafe { cell.push(lc, rc) };
+                }
+            }
+        } else {
+            let p1 = &f_pairs[0];
+            let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
+            for p2 in g_pairs {
+                let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+                if left.kills() && lc == NO_PRODUCT {
+                    continue;
+                }
+                let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+                if !right.kills() || rc != NO_PRODUCT {
+                    // Safety: as above.
+                    unsafe { cell.push(lc, rc) };
+                }
+            }
+        }
+        return cell.close(eng, node_idx, grid_pos);
+    }
     let cell_start = sink.begin();
     let kills = left.kills() || right.kills();
     if ITER_F {
