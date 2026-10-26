@@ -247,10 +247,59 @@ fn build_level(
     if let Some(filter) = sweep.filter.as_deref_mut() {
         run.products.filter_level(eng, shape, filter)?;
     }
+    if run.plain && !taken {
+        note_operand_level(run, f, g, vtree, t);
+    }
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.
     run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
     Ok(())
+}
+
+/// Note in [`ApplyRun::as_operand`] the level `t` just built when it holds
+/// an operand's level at `t`, node for node and pair for pair: each node of
+/// its children then has there the contexts the operand's node of its
+/// index has. Not compared where the level adds no twins anyway or the
+/// leaf arm noted it already. The operands' levels at `t` are dropped only
+/// when its parent is built.
+fn note_operand_level(run: &mut ApplyRun, f: &Tdd, g: &Tdd, vtree: &crate::vtree::Vtree, t: VtreeIdx) {
+    let ti = t.idx();
+    if run.as_operand.last() == Some(&ti) || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t) {
+        return;
+    }
+    let level = &run.levels[ti];
+    let of_f = same_pairs(level, f.level(t));
+    if of_f || same_pairs(level, g.level(t)) {
+        run.as_operand.push(ti);
+        super::note_as_operand(ti, of_f);
+    }
+}
+
+/// Whether `a` stores `b`'s nodes and pairs as `b` stores them: the same
+/// node words, ranges and pair arena, or the same description. Never on a
+/// marginal level or one without nodes. The lengths and the last node and
+/// pair are compared first, then the rest as memory, so that a level that
+/// differs costs a read of its first difference; a level that holds `b`'s
+/// pairs laid out otherwise in its arena, or in another order within a
+/// node, is not found.
+fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
+    let n = a.node_count();
+    if n == 0 || n != b.node_count() || a.is_marginal() || b.is_marginal() {
+        return false;
+    }
+    match (a.stored(), b.stored()) {
+        (Some(x), Some(y)) => {
+            let (xa, ya) = (x.arena(), y.arena());
+            xa.len() == ya.len()
+                && xa.last() == ya.last()
+                && x.nodes().last() == y.nodes().last()
+                && a.ranges == b.ranges
+                && x.nodes() == y.nodes()
+                && xa == ya
+        }
+        (None, None) => a.pairs == b.pairs && a.nodes == b.nodes,
+        _ => false,
+    }
 }
 
 /// Keep with `out` the operands' kept counts ([`Sweep::kept`]) of the levels
@@ -421,6 +470,7 @@ pub(crate) fn apply_and_core(
     let mut run = apply_and_setup(eng, &vtree, f, g, targets, free, ws.is_some(), levels, &mut scratch)?;
     run.restoring = keep;
     let plain = unmarked && !run.entry_marginality.any();
+    run.plain = plain;
     debug_assert!(
         free.f.is_empty() && free.g.is_empty() || plain,
         "only a plain conjunction reads free levels",
@@ -529,11 +579,14 @@ pub(crate) fn apply_and_core(
         // The contraction is owed the built levels under which the
         // conjunction can have given two nodes equal contexts
         // ([`adds_no_twins`]); the leaf contraction every built level. A
-        // level made f's as f holds it gives the nodes of its children f's
-        // contexts there, which f, not owing the contraction the level, holds
-        // once each; where f owes it, so does the result.
+        // level built as an operand holds it gives the nodes of its children
+        // the operand's contexts there, which the operand, not owing the
+        // contraction the level, holds once each; where it owes it, so does
+        // the result.
+        run.as_operand.sort_unstable();
         let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
-            !run.as_f.contains(&t.idx()) && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
+            run.as_operand.binary_search(&t.idx()).is_err()
+                && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
         });
         let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));

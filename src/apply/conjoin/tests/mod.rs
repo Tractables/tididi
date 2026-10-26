@@ -641,19 +641,20 @@ pub(super) fn lent_levels() -> u64 {
 }
 
 thread_local! {
-    /// The levels the sparse leaf arm made f's as f holds them on this
-    /// thread since [`take_as_f`] last took them.
-    static AS_F: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The levels conjunctions built as an operand holds them on this
+    /// thread since [`take_as_operand`] last took them, each with whether
+    /// the operand is f.
+    static AS_OPERAND: std::cell::RefCell<Vec<(u32, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-pub(super) fn note_as_f(t: usize) {
-    AS_F.with(|c| c.borrow_mut().push(t as u32));
+pub(super) fn note_as_operand(t: usize, of_f: bool) {
+    AS_OPERAND.with(|c| c.borrow_mut().push((t as u32, of_f)));
 }
 
-/// The levels the sparse leaf arm made f's as f holds them on this thread
-/// since the last call.
-pub(super) fn take_as_f() -> Vec<u32> {
-    AS_F.with(|c| std::mem::take(&mut *c.borrow_mut()))
+/// The levels conjunctions built as an operand holds them on this thread
+/// since the last call, each with whether the operand is f.
+pub(super) fn take_as_operand() -> Vec<(u32, bool)> {
+    AS_OPERAND.with(|c| std::mem::take(&mut *c.borrow_mut()))
 }
 
 thread_local! {

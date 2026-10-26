@@ -1045,13 +1045,13 @@ fn lend_forced_off() -> bool {
 #[inline(always)]
 fn note_lent() {}
 
-// A test lists the levels the sparse leaf arm made f's as f holds them.
+// A test lists the levels a conjunction built as an operand holds them.
 #[cfg(test)]
-use tests::note_as_f;
+use tests::note_as_operand;
 
 #[cfg(not(test))]
 #[inline(always)]
-fn note_as_f(_t: usize) {}
+fn note_as_operand(_t: usize, _of_f: bool) {}
 
 // A test lists the route each level took.
 #[cfg(test)]

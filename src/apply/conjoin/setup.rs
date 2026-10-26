@@ -159,14 +159,19 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// when refused: f's level holds the output level's empty ones until
     /// then.
     pub(super) lent: Vec<usize>,
-    /// The levels the sparse leaf arm made f's level as f holds it, node
-    /// for node and pair for pair ([`Made::F`](super::Made::F),
-    /// [`Made::CopiedF`](super::Made::CopiedF)): the nodes of their children
-    /// have the contexts f's have there.
-    pub(super) as_f: Vec<usize>,
+    /// The levels a plain conjunction built as an operand holds its level,
+    /// node for node and pair for pair: those the sparse leaf arm made f's
+    /// ([`Made::F`](super::Made::F), [`Made::CopiedF`](super::Made::CopiedF)),
+    /// and those found equal to an operand's once built. The nodes of their
+    /// children have there the contexts the operand's nodes have.
+    pub(super) as_operand: Vec<usize>,
     /// Whether the sweep must give its operands back when refused: it drops
     /// no operand level, and `carried` and `lent` go back to the operands.
     pub(super) restoring: bool,
+    /// Whether nothing but pairs changes hands: no weights, no summed-out,
+    /// quantified, filtered or marginal level. Only such a conjunction
+    /// reads `as_operand`.
+    pub(super) plain: bool,
     /// Each operand's free levels: internal nodes no variable it was placed
     /// with is under, whose levels are left empty and read as the constant
     /// true level, one node true on both sides, they stand for. The result
@@ -575,8 +580,9 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         carried: Vec::new(),
         relabel_moved: Vec::new(),
         lent: Vec::new(),
-        as_f: Vec::new(),
+        as_operand: Vec::new(),
         restoring: false,
+        plain: false,
         cone,
     })
 }
