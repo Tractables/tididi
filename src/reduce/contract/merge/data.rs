@@ -7,7 +7,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::{Limits, OperationError};
 use crate::diagram::{ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, RangeTable, Tdd, TddLevel};
 
-use super::super::scratch::{DuplicateScratch, MergeBuffers, MergeRemap};
+use super::super::scratch::{ClassInfo, DuplicateScratch, Marks, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
 use super::rewrite::{survivor, DISCARDED, DROPPED};
 
@@ -67,6 +67,21 @@ fn append(fresh: &mut Vec<ChildPair>, src: &[ChildPair]) {
     }
 }
 
+/// Write `src` into `room` from its start: four pairs or fewer, as a member
+/// the merge copies mostly is, written out in place rather than through a
+/// call to copy them. Returns how many it wrote.
+#[inline(always)]
+fn put(room: &mut [ChildPair], src: &[ChildPair]) -> usize {
+    match *src {
+        [a] => room[0] = a,
+        [a, b] => room[..2].copy_from_slice(&[a, b]),
+        [a, b, c] => room[..3].copy_from_slice(&[a, b, c]),
+        [a, b, c, d] => room[..4].copy_from_slice(&[a, b, c, d]),
+        _ => room[..src.len()].copy_from_slice(src),
+    }
+    src.len()
+}
+
 /// Whether node `i` is merged away into a survivor.
 #[inline]
 fn absorbed(bits: &[u64], i: usize) -> bool {
@@ -90,7 +105,8 @@ fn absorbed(bits: &[u64], i: usize) -> bool {
 ///
 /// `remap` is as [`mark_group_members`](super::mark_group_members) leaves
 /// it, with the unnamed nodes marked [`DISCARDED`]; the survivors are
-/// numbered by [`rebuild_level`].
+/// numbered by [`rebuild_level`]. Where the level is rebuilt in node order,
+/// `in_order` holds the count, from [`in_order_pairs`].
 ///
 /// # Errors
 ///
@@ -102,8 +118,11 @@ pub(super) fn reserve_rebuilt(
     remap: &MergeRemap,
     bufs: &MergeBuffers,
     unnamed: &[u32],
+    in_order: Option<usize>,
 ) -> Result<RebuiltArenas, OperationError> {
-    let total = if level.ranges.is_empty() {
+    let total = if let Some(total) = in_order {
+        total
+    } else if level.ranges.is_empty() {
         let (pairs, _, single) = level.pair_census();
         let mut total = (pairs - single) as usize;
         for &u in unnamed {
@@ -137,6 +156,25 @@ pub(super) fn reserve_rebuilt(
         ranges.reserve_exact(lim, ranged)?;
     }
     Ok(RebuiltArenas { pairs, ranges })
+}
+
+/// The pairs of the level `t1` will be after a merge whose search marked
+/// the members ([`Marks`]), where [`rebuild_in_order`] can rebuild it: the
+/// level has no ranged node, the marks say every group holds two pairs or
+/// more, and the rebuilt level fits the packed encoding, so that it has no
+/// ranged node either. The count is the one [`reserve_rebuilt`] makes, the
+/// marks having counted the groups' inline members.
+pub(super) fn in_order_pairs(level: &TddLevel, marks: Marks, unnamed: &[u32]) -> Option<usize> {
+    if !marks.in_order || !level.ranges.is_empty() {
+        return None;
+    }
+    let (pairs, _, single) = level.pair_census();
+    let mut total = (pairs - single) as usize;
+    for &u in unnamed {
+        total -= level.arena_pairs_at(u as usize);
+    }
+    total += marks.inline;
+    (total < PACKED_LIMIT).then_some(total)
 }
 
 /// The pairs of the level `t1` will be after the merge, node by node: a
@@ -346,6 +384,177 @@ pub(super) fn rebuild_level(
     nodes.truncate(write);
     *pairs.stored_mut() = fresh;
     *ranges = fresh_ranges;
+    level.dead_pairs = 0;
+    level.shrink_arrays();
+}
+
+/// What a search that marked the members leaves for [`rebuild_in_order`]:
+/// each node's class; the classes, with each group's pairs at its class's
+/// [`ClassInfo::hits`]; the groups as listed; each member's group, in node
+/// order; room for one place a group; and whether the merge drops a node
+/// no pair names.
+pub(super) struct InOrder<'a> {
+    pub(super) class: &'a [u32],
+    pub(super) classes: &'a [ClassInfo],
+    pub(super) group_starts: &'a [u32],
+    pub(super) flat_groups: &'a [u32],
+    pub(super) member_groups: &'a [u32],
+    pub(super) rooms: &'a mut [u32],
+    pub(super) unnamed: bool,
+}
+
+/// [`rebuild_level`] for a merge whose search marked the members
+/// ([`in_order_pairs`] says when): one pass over every node in node order.
+/// A group's survivor, its lowest member, takes the room of the group's
+/// pairs where it is met, its own first, and each member after it puts
+/// its pairs at the group's next place in that room, where it is met. So
+/// the old arena is read in order, where [`rebuild_level`] reads each
+/// group's members scattered over it; the writes into the groups' rooms
+/// are scattered instead. The rebuilt level is the one [`rebuild_level`]
+/// builds, its nodes, pairs and order included: a group's members put their
+/// pairs in ascending order, the order its listing holds them in.
+///
+/// A member reads its group off `member_groups`, in order, and the group's
+/// next place off `rooms`. The members of 64 nodes are read before the
+/// survivors among them are compacted, which writes at or below the node it
+/// reads, and put after; the class of the first group's survivor among
+/// them, and each member's place in its room, are asked of the cache
+/// first.
+pub(super) fn rebuild_in_order(
+    level: &mut TddLevel,
+    arenas: RebuiltArenas,
+    remap: &mut MergeRemap,
+    groups: InOrder<'_>,
+    check_disjoint: bool,
+) {
+    let RebuiltArenas { pairs: mut fresh, ranges: fresh_ranges } = arenas;
+    debug_assert!(fresh_ranges.is_empty() && level.ranges.is_empty(), "a level rebuilt in node order has no ranged node");
+    let reserved = fresh.capacity();
+    let TddLevel { nodes, pairs, .. } = &mut *level;
+    let old = pairs.stored().expect("a merged level is stored");
+    let nodes = nodes.stored_mut();
+    let InOrder { class, classes, group_starts, flat_groups, member_groups, rooms, unnamed } = groups;
+    let mut write = 0usize;
+    // As in `rebuild_level`: a run of survivors outside every group whose
+    // ranges follow one another in the old arena is copied whole.
+    let mut run = 0..0usize;
+    let MergeRemap { final_remap, absorbed: bits, .. } = remap;
+    // The groups' survivors, ascending, and the next, or past every node.
+    let mut keeps = group_starts.iter().map(|&s| flat_groups[s as usize] as usize);
+    let mut next = keeps.next().unwrap_or(usize::MAX);
+    // The group of the next survivor met, and where the next member's
+    // group is listed, as the members are put and as they are read.
+    let (mut group, mut member, mut ahead) = (0usize, 0usize, 0usize);
+    let mut held = [EncodedNode::multi_pair(0, 0); 64];
+    let len = nodes.len();
+    for (w, &word) in bits[..len.div_ceil(64)].iter().enumerate() {
+        let base = w * 64;
+        let valid = if len - base < 64 { (1u64 << (len - base)) - 1 } else { u64::MAX };
+        let merged = word & valid;
+        if next < base + 64 {
+            prefetch_line(classes.as_ptr().wrapping_add(class[next] as usize));
+        }
+        // Each member's place in its room is asked of the cache as the
+        // member is read, to have arrived when the member is put there.
+        let mut m = merged;
+        let mut h = 0;
+        while m != 0 {
+            let t = base + m.trailing_zeros() as usize;
+            held[h] = nodes[t];
+            m &= m - 1;
+            h += 1;
+            if !(unnamed && final_remap[t].0 == DISCARDED) {
+                prefetch_line(fresh.as_ptr().wrapping_add(rooms[member_groups[ahead] as usize] as usize));
+                ahead += 1;
+            }
+        }
+        let mut live = !word & valid;
+        while live != 0 {
+            let read = base + live.trailing_zeros() as usize;
+            live &= live - 1;
+            final_remap[read] = NodeIdx(write as u32);
+            let node = nodes[read];
+            let rebuilt = if read == next {
+                next = keeps.next().unwrap_or(usize::MAX);
+                append(&mut fresh, &old[run.clone()]);
+                run = run.end..run.end;
+                let start = fresh.len();
+                match node.kind() {
+                    NodeKind::Inline(pair) => fresh.push(pair),
+                    NodeKind::Multi { start, len } => append(&mut fresh, &old[start as usize..(start + len) as usize]),
+                    NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+                }
+                let total = classes[class[read] as usize].hits as usize;
+                debug_assert!(total >= 2 && fresh.len() <= start + total, "a group holds two pairs or more");
+                rooms[group] = fresh.len() as u32;
+                group += 1;
+                let filler = fresh[start];
+                fresh.resize(start + total, filler);
+                EncodedNode::multi_pair(start as u32, total as u32)
+            } else {
+                match node.kind() {
+                    NodeKind::Inline(_) => node,
+                    NodeKind::Multi { start, len } => {
+                        let src = start as usize..(start + len) as usize;
+                        if src.start != run.end {
+                            append(&mut fresh, &old[run.clone()]);
+                            run = src.start..src.start;
+                        }
+                        let at = fresh.len() + (src.start - run.start);
+                        run.end = src.end;
+                        EncodedNode::multi_pair(at as u32, len)
+                    }
+                    NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+                }
+            };
+            nodes[write] = rebuilt;
+            write += 1;
+        }
+        let mut m = merged;
+        for &node in &held[..h] {
+            let t = base + m.trailing_zeros() as usize;
+            m &= m - 1;
+            // A node no pair names is dropped with its pairs.
+            if unnamed && final_remap[t].0 == DISCARDED {
+                continue;
+            }
+            let room = &mut rooms[member_groups[member] as usize];
+            member += 1;
+            let at = *room as usize;
+            *room += match node.kind() {
+                NodeKind::Inline(pair) => {
+                    fresh[at] = pair;
+                    1
+                }
+                NodeKind::Multi { start, len } => put(&mut fresh[at..], &old[start as usize..(start + len) as usize]) as u32,
+                NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+            };
+        }
+    }
+    fresh.extend_from_slice(&old[run]);
+    debug_assert_eq!(next, usize::MAX, "every group met its survivor");
+    if cfg!(debug_assertions) {
+        debug_assert_eq!(member, member_groups.len(), "every member met");
+        for (g, &s) in group_starts.iter().enumerate() {
+            let keep = flat_groups[s as usize];
+            let NodeKind::Multi { start, len } = nodes[final_remap[keep as usize].idx()].kind() else {
+                unreachable!("a group holds two pairs or more");
+            };
+            let room = start as usize..(start + len) as usize;
+            assert_eq!(rooms[g] as usize, room.end, "every member put its pairs");
+            if check_disjoint {
+                let mut chk = fresh[room].to_vec();
+                chk.sort_unstable();
+                assert!(
+                    chk.windows(2).all(|w| w[0] != w[1]),
+                    "twin contraction: duplicate pair across twin supports — invariant 1 violation"
+                );
+            }
+        }
+    }
+    debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
+    nodes.truncate(write);
+    *pairs.stored_mut() = fresh;
     level.dead_pairs = 0;
     level.shrink_arrays();
 }

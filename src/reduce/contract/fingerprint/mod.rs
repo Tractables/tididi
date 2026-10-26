@@ -102,6 +102,7 @@ mod refine;
 use refine::Start;
 
 pub(super) use listed::{find_listed_twin_groups, named_by, pair_mass};
+pub(super) use refine::list_members;
 
 #[cfg(test)]
 mod tests;
@@ -408,6 +409,7 @@ pub(super) fn find_twin_groups(
         early_stop: screens(parent_level),
     };
     scratch.unnamed.clear();
+    scratch.marked = None;
     // Read from the scratch: a merge's change to any level forgets the
     // diagram's own answer, which takes a pass over every level to give
     // again.
@@ -415,24 +417,29 @@ pub(super) fn find_twin_groups(
         return group_twins_by_entries(eng, &entries, width, scratch);
     }
     let lim = eng.limits();
+    // A stored child's node words, for the refinement to mark the members
+    // of the groups it lists as the merge would.
+    let child = level.stored().map(|stored| stored.nodes());
     let by_fingerprints = screen && width < NARROW_SCREENED_WIDTH;
     let found = if by_fingerprints {
         group_twins_by_entries(eng, &entries, width, scratch)?
     } else if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
-        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
+        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole, child)?
     } else {
         scratch.flat_groups.clear();
         scratch.group_starts.clear();
         false
     };
     if cfg!(debug_assertions) {
+        list_members(lim, scratch)?;
         let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
         let unnamed = std::mem::take(&mut scratch.unnamed);
         let other = if by_fingerprints {
-            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
+            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole, child)?
         } else {
             group_twins_by_entries(eng, &entries, width, scratch)?
         };
+        list_members(lim, scratch)?;
         assert_eq!(
             (found, &kept.0, &kept.1),
             (other, &scratch.group_starts, &scratch.flat_groups),

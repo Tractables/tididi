@@ -7,6 +7,8 @@ use crate::vtree::Vtree;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::reduce::contract::scratch::Marks;
+
 /// The twin groups of a child level, found by listing every node's sorted
 /// contexts: members ascending, groups by their lowest member. A node no
 /// pair names has no twin.
@@ -66,6 +68,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     let mut stopped_early = 0;
+    let mut marked = 0;
     for round in 0..rounds(300, 24) {
         // Every third round draws siblings from a wide level, so most
         // parent nodes repeat none and the levels often have no twin.
@@ -104,7 +107,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
                 assert!(want.is_empty(), "round {round}, {side:?}: a level with twins passed the early stop");
                 stopped_early += 1;
             }
-            let found = find_twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1);
             let mut got: Vec<Vec<u32>> = Vec::new();
             if found {
                 for (g, &start) in scratch.group_starts.iter().enumerate() {
@@ -114,11 +117,71 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
             }
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
+            if let (true, Some(marks)) = (found, scratch.marked) {
+                check_marks(&tdd.levels[child.idx()], &scratch, marks);
+                marked += 1;
+            }
             seen_groups += want.len();
         }
     }
     assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
     assert!(cfg!(miri) || stopped_early > 20, "the search stops early on some fixtures: {stopped_early}");
+    assert!(cfg!(miri) || marked > 20, "the refinement marks the members it lists: {marked}");
+}
+
+/// [`find_twin_groups`] with every group listed whole: a search that marks
+/// the members lists each group's lowest member alone ([`list_members`]).
+fn twin_groups(
+    eng: &Engine,
+    tdd: &Tdd,
+    child: VtreeIdx,
+    parent: VtreeIdx,
+    side: ChildSide,
+    scratch: &mut ContractScratch,
+    screen: bool,
+) -> bool {
+    let found = find_twin_groups(eng, tdd, child, parent, side, scratch, screen).expect("find_twin_groups");
+    list_members(eng.limits(), scratch).expect("list_members");
+    found
+}
+
+/// The marks a search left with its groups are the merge's: every member
+/// but a group's lowest absorbed into the lowest, no other node absorbed,
+/// and each group's pairs counted at its class.
+fn check_marks(child: &TddLevel, scratch: &ContractScratch, marks: Marks) {
+    let dropped = crate::reduce::contract::merge::DROPPED;
+    let (groups, starts) = (&scratch.flat_groups, &scratch.group_starts);
+    let absorbed = |t: u32| scratch.remap.absorbed[(t / 64) as usize] >> (t % 64) & 1 == 1;
+    for (g, &start) in starts.iter().enumerate() {
+        let end = starts.get(g + 1).map_or(groups.len(), |&e| e as usize);
+        let keep = groups[start as usize];
+        assert!(!absorbed(keep), "a group's lowest member survives");
+        for &t in &groups[start as usize + 1..end] {
+            assert!(absorbed(t), "member {t} is absorbed");
+            assert_eq!(scratch.remap.final_remap[t as usize].0, keep | dropped, "member {t} merges into {keep}");
+        }
+    }
+    let mut inline = 0;
+    for (g, &start) in starts.iter().enumerate() {
+        let end = starts.get(g + 1).map_or(groups.len(), |&e| e as usize);
+        let members = &groups[start as usize..end];
+        let pairs: usize = members.iter().map(|&t| child.pair_count_at(t as usize)).sum();
+        let keep = members[0] as usize;
+        assert_eq!(scratch.classes[scratch.twin_class[keep] as usize].hits as usize, pairs, "group {g}'s pairs");
+        inline += members.iter().filter(|&&t| !child.node(t as usize).kind().pairs_in_arena()).count();
+    }
+    assert_eq!(marks.inline, inline, "the members of one pair");
+    let mut members: Vec<(u32, u32)> = Vec::new();
+    for (g, &start) in starts.iter().enumerate() {
+        let end = starts.get(g + 1).map_or(groups.len(), |&e| e as usize);
+        members.extend(groups[start as usize + 1..end].iter().map(|&t| (t, g as u32)));
+    }
+    members.sort_unstable();
+    let by_node: Vec<u32> = members.iter().map(|&(_, g)| g).collect();
+    assert_eq!(scratch.member_groups, by_node, "each member's group, in node order");
+    let words = child.slot_count().div_ceil(64);
+    let count: usize = scratch.remap.absorbed[..words].iter().map(|w| w.count_ones() as usize).sum();
+    assert_eq!(count, groups.len() - starts.len(), "only the members are absorbed");
 }
 
 /// The sibling table's stamp wraps to 1 only after every cell is zeroed, so
@@ -263,7 +326,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
             scratch.flat_groups.clear();
             scratch.group_starts.clear();
             let found = if wide {
-                Some(find_twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups"))
+                Some(twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1))
             } else {
                 groups::group_single_entries(&eng, &entries, width, &mut scratch).expect("group_single_entries")
             };
@@ -356,7 +419,7 @@ fn wide_levels_with_planted_twins_find_every_twin() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -451,7 +514,7 @@ fn classes_are_split_by_later_contexts() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -552,7 +615,7 @@ fn nested_wide_nodes_are_split_by_degree() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -648,7 +711,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -762,7 +825,7 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, false).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -854,7 +917,7 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, false).expect("find_twin_groups");
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);

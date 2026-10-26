@@ -340,6 +340,23 @@ pub(crate) struct ContractScratch {
     // ── `contract_twins` buffers ──
     /// Twin survivor selection and compacted node indices.
     pub(super) remap: MergeRemap,
+    /// Where the last search marked its groups' members as the merge marks
+    /// them, as it listed the groups, what it counted: `remap` then holds
+    /// what the merge's marking pass would write, and `classes`, at each
+    /// group's class, the group's pairs, and `member_groups` each member's
+    /// group (`fingerprint::refine`). Such a search writes only each
+    /// group's lowest member to `flat_groups`, at the group's start;
+    /// `fingerprint::list_members` writes the rest.
+    /// Cleared where a search starts, and taken by the merge.
+    pub(super) marked: Option<Marks>,
+    /// Where the last search marked the members, the group of each member
+    /// but the groups' lowest, as its index in `group_starts`, in node
+    /// order.
+    pub(super) member_groups: Vec<u32>,
+    /// Per group, where its next member goes: in `flat_groups` while
+    /// `fingerprint::list_members` lists the members, in the rebuilt arena
+    /// while the merge rebuilds a level in node order.
+    pub(super) rooms: Vec<u32>,
     /// `has_marginal_below[v]` for every vtree node — computed at most once per
     /// scratch checkout (see `duplicate_pair::compute_has_marginal_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
@@ -428,6 +445,8 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_touched);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
+        visit(&mut self.member_groups);
+        visit(&mut self.rooms);
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
@@ -455,14 +474,33 @@ pub(super) struct ClassInfo {
     pub(super) size: u32,
     /// Its members one split of a wide parent node meets, and after the
     /// count in a split by codes where its row starts, plus one, if it has
-    /// a row; zero between splits.
+    /// a row; zero between splits. Once its group is listed by a search
+    /// that marks the members, the group's pairs.
     pub(super) hits: u32,
     /// The class those members move to; while a split by codes counts, the
-    /// first code it meets, or where its row starts.
+    /// first code it meets, or where its row starts; once its group is
+    /// listed by a search that marks the members, the group's lowest member.
     pub(super) dest: u32,
     /// Where its group's next member goes in `flat_groups` once the groups
-    /// are listed; `u32::MAX` before.
+    /// are listed, or, by a search that marks the members, its group's
+    /// index in `group_starts`; `u32::MAX` before.
     pub(super) pos: u32,
+}
+
+/// What a search that marks its groups' members counts as it lists them
+/// ([`ContractScratch::marked`]): each group's pairs, at its class's
+/// `hits`, and these.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Marks {
+    /// The groups' members of one pair, inline in their words, which the
+    /// rebuilt level holds in its arena.
+    pub(super) inline: usize,
+    /// Whether every member's pairs are in its word or in the arena at
+    /// a packed offset, and none is empty, so that each group holds two
+    /// pairs or more: the merge then rebuilds the level in node order.
+    pub(super) in_order: bool,
+    /// The nodes of the child level.
+    pub(super) width: usize,
 }
 
 impl ClassInfo {
@@ -755,6 +793,7 @@ impl PooledScratch for ContractScratch {
         self.has_marginal_below_valid = false;
         self.diagram_marginal = None;
         self.searched = 0;
+        self.marked = None;
     }
 
     /// Shed the inner lists the last call left unused before the walk that

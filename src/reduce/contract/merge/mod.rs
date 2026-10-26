@@ -13,7 +13,7 @@ mod data;
 mod plan;
 mod rewrite;
 
-use data::{fork_down, rebuild_level, reserve_rebuilt};
+use data::{fork_down, in_order_pairs, rebuild_in_order, rebuild_level, reserve_rebuilt, InOrder};
 use plan::{plan_groups, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
 use rewrite::rewrite_parent;
@@ -65,16 +65,30 @@ pub(super) fn contract_twins(
     // `remap.absorbed` marks the members merged away; every other node
     // survives. `final_remap` takes each node to its survivor's new index.
     // Both are grown fallibly and before any mutation, so a grow that trips
-    // the budget surfaces before the diagram changes.
+    // the budget surfaces before the diagram changes. Where the search
+    // marked the members as it listed them, both hold its marks. Such a
+    // level is rebuilt in node order where its marks allow, reading only
+    // each group's lowest member of the lists; any other reads the members'
+    // words, in the groups' order, and the members are listed first.
+    let in_order = scratch.marked.and_then(|marks| in_order_pairs(&tdd.levels[t1.idx()], marks, &scratch.unnamed));
+    if in_order.is_none() {
+        super::fingerprint::list_members(lim, scratch)?;
+    } else {
+        lim.try_resize(&mut scratch.rooms, scratch.group_starts.len(), 0u32)?;
+    }
+    let marked = scratch.marked.take().is_some();
     let ContractScratch {
         remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
-        diagram_marginal, unnamed, listing, ..
+        diagram_marginal, unnamed, listing, twin_class, classes, member_groups, rooms, ..
     } = scratch;
-    lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
-    let words = width.div_ceil(64);
-    lim.try_resize(&mut remap.absorbed, words, 0u64)?;
-    remap.absorbed[..words].fill(0);
+    if !marked {
+        lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
+        let words = width.div_ceil(64);
+        lim.try_resize(&mut remap.absorbed, words, 0u64)?;
+        remap.absorbed[..words].fill(0);
+    }
     let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
+    debug_assert!(!marked || !diagram_marginal, "a search marks the members only where every group merges whole");
     let mut policy = MergePolicy::decide(tdd, t1, parent, diagram_marginal);
     bufs.clear();
 
@@ -103,7 +117,12 @@ pub(super) fn contract_twins(
     plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
     // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
-    let merged_members = mark_group_members(&policy, remap, bufs, tdd.levels[t1.idx()].nodes.stored());
+    let merged_members = if marked {
+        debug_assert!(!policy.t1_scalable, "no fork-down without a marginal level");
+        flat_groups.len() - group_starts.len()
+    } else {
+        mark_group_members(&policy, remap, bufs)
+    };
     for &u in unnamed.iter() {
         debug_assert!(remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0, "an unnamed node is in no group");
         remap.absorbed[(u / 64) as usize] |= 1 << (u % 64);
@@ -117,7 +136,10 @@ pub(super) fn contract_twins(
     // Everything the merge allocates is had before it changes anything: the
     // rebuilt level's arenas, and the room an implicit parent is rewritten
     // into where a pair changes.
-    let arenas = reserve_rebuilt(lim, &tdd.levels[t1.idx()], remap, bufs, unnamed)?;
+    if in_order.is_none() {
+        gather_words(bufs, tdd.levels[t1.idx()].nodes.stored());
+    }
+    let arenas = reserve_rebuilt(lim, &tdd.levels[t1.idx()], remap, bufs, unnamed, in_order)?;
     let parent_room = match tdd.levels[parent.idx()].pairs.implicit() {
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
@@ -146,7 +168,21 @@ pub(super) fn contract_twins(
         && !policy.t1_scalable
         && !diagram_marginal
         && !tdd.levels[t1.idx()].any_value_ref_side();
-    rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint);
+    match in_order {
+        Some(_) => {
+            let groups = InOrder {
+                class: twin_class,
+                classes,
+                group_starts,
+                flat_groups,
+                member_groups,
+                rooms,
+                unnamed: !unnamed.is_empty(),
+            };
+            rebuild_in_order(&mut tdd.levels[t1.idx()], arenas, remap, groups, check_disjoint);
+        }
+        None => rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint),
+    }
     // Without a marginal level a rebuilt level, and a parent the rewrite
     // leaves in node order, stay so for the rest of the sweep
     // (`Listing::ordered`), and a later rewrite of either reads no order.
@@ -211,16 +247,11 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// means the level is unchanged. Touches only the scratch: the rebuild
 /// unions the pairs.
 ///
-/// The same pass copies each member's word out of `nodes`, the level's, into
-/// `bufs.words` beside `sel`: the members are scattered over the level, and
-/// the reservation and the rebuild then read their words in order.
-fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers, nodes: &[EncodedNode]) -> usize {
+fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.
     let mut merged_members = 0usize;
-    let MergeBuffers { sel, group_plans, resolve_keeps, words, .. } = bufs;
-    words.clear();
-    words.extend(sel.iter().map(|&m| nodes[m as usize]));
+    let MergeBuffers { sel, group_plans, resolve_keeps, .. } = bufs;
     for p in &*group_plans {
         let members = &sel[p.start as usize..p.end as usize];
         let keep = members[0];
@@ -239,6 +270,15 @@ fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut M
         }
     }
     merged_members
+}
+
+/// Copy each selected member's word out of `nodes`, the level's, into
+/// `bufs.words` beside `sel`: the members are scattered over the level, and
+/// the reservation and [`rebuild_level`] then read their words in order.
+fn gather_words(bufs: &mut MergeBuffers, nodes: &[EncodedNode]) {
+    let MergeBuffers { sel, words, .. } = bufs;
+    words.clear();
+    words.extend(sel.iter().map(|&m| nodes[m as usize]));
 }
 
 #[cfg(test)]

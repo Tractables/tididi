@@ -111,6 +111,19 @@ pub(super) fn plan_groups(
     lim.reserve_exact(sel, flat_groups.len())?;
     lim.reserve_exact(words, flat_groups.len())?;
     lim.reserve_exact(group_plans, group_starts.len())?;
+    if !plain_level || t1_scalable {
+        // Every group concatenates whole, as the searches list it: `sel`
+        // is `flat_groups`.
+        sel.extend_from_slice(flat_groups);
+        group_plans.extend((0..group_starts.len()).map(|g| {
+            let (start, end) = group_bounds(g);
+            GroupPlan { action: GroupAction::Concat, start: start as u32, end: end as u32 }
+        }));
+        if !group_plans.is_sorted_by_key(|p| sel[p.start as usize]) {
+            group_plans.sort_unstable_by_key(|p| sel[p.start as usize]);
+        }
+        return Ok(());
+    }
     if plain_level && !t1_scalable {
         // The overlap filter below holds one group's members and pairs at a
         // time: `filtered` and `duplicate_members` up to the widest group,

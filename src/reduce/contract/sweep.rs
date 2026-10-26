@@ -28,7 +28,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
 
 use super::scratch::{ContractScratch, Pending};
-use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass};
+use super::fingerprint::{find_listed_twin_groups, find_twin_groups, list_members, named_by, pair_mass};
 use super::merge::{contract_twins, merged_redirects, merged_whole, survivor};
 
 /// Which nodes of a child level a twin search reads.
@@ -219,8 +219,10 @@ fn check_listed_search(
     found: bool,
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
+    list_members(eng.limits(), scratch)?;
     let listed = (found, scratch.group_starts.clone(), scratch.flat_groups.clone());
     let whole = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, false)?;
+    list_members(eng.limits(), scratch)?;
     assert_eq!(
         (whole, &scratch.group_starts, &scratch.flat_groups),
         (listed.0, &listed.1, &listed.2),
