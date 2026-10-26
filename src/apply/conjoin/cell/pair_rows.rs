@@ -2,6 +2,7 @@
 
 use super::*;
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
+use crate::limits::PollGate;
 
 /// The f pairs a row's ANDs are kept for on the stack; a longer row keeps
 /// them in a buffer of the level's.
@@ -135,6 +136,33 @@ where
         (true, _) => pair_rows_of::<true, 0, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
         (false, _) => pair_rows_of::<false, 0, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
     }
+}
+
+/// Poll `gate` for a row whose cells entered are the columns of the bits
+/// of `entered`, of `col_pairs` pairs each or one each where `None`, then
+/// its `width`, `units` in all, as the row loop polls them, where the gate
+/// comes due inside the row ([`poll_row_in_cells`]). Takes and gives back
+/// the gate by value, out of line, so that the row loop keeps its gate in
+/// registers.
+#[cold]
+#[inline(never)]
+fn poll_entered_due<'a>(
+    mut gate: PollGate<'a>,
+    ctx: &CellCtx<'_>,
+    f_pairs: &[ChildPair],
+    units: u64,
+    width: usize,
+    entered: u64,
+    col_pairs: Option<&[u8; ROW_COLUMNS_MAX_WIDTH]>,
+) -> Result<PollGate<'a>, OperationError> {
+    let mut s = entered;
+    let cells = std::iter::from_fn(|| {
+        let j = (s != 0).then(|| s.trailing_zeros() as usize)?;
+        s &= s - 1;
+        Some((j, col_pairs.map_or(1, |n| usize::from(n[j]))))
+    });
+    poll_row_in_cells(&mut gate, ctx, f_pairs, units, width, cells)?;
+    Ok(gate)
 }
 
 /// The low `n` bits.
@@ -292,13 +320,14 @@ where
                     continue;
                 }
                 let entered = l & r & !ROW_LIVE;
-                let mut s = entered;
-                let cells = std::iter::from_fn(|| {
-                    let j = (s != 0).then(|| s.trailing_zeros() as usize)?;
-                    s &= s - 1;
-                    Some((j, 1))
-                });
-                poll_row_as_walked(&mut poll, ctx, f_pairs, 2 * u64::from(entered.count_ones()) + 2, 2, cells)?;
+                // Two f pairs a column entered, of bits 0 and 1 (a count
+                // of ones without the popcount instruction is a dozen).
+                let units = 2 * ((entered & 1) + (entered >> 1)) + 2;
+                if units < poll.due_in() {
+                    poll.add_short(units);
+                } else {
+                    poll = poll_entered_due(poll, ctx, f_pairs, units, 2, entered, None)?;
+                }
                 let (a0, a1) = (wl0 & wr0, wl1 & wr1);
                 let mut row = [NO_PRODUCT; W];
                 for (j, cell) in row.iter_mut().enumerate() {
@@ -350,15 +379,14 @@ where
             let entered = reached(l) & reached(r);
             let n1 = f_pairs.len();
             debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
-            // In one poll where the gate does not come due inside the row,
+            // In one add where the gate does not come due inside the row,
             // and otherwise as the row loop polls the cells it enters.
-            let mut s = entered;
-            let cells = std::iter::from_fn(|| {
-                let j = (s != 0).then(|| s.trailing_zeros() as usize)?;
-                s &= s - 1;
-                Some((j, if ONE { 1 } else { col_pairs[j] as usize }))
-            });
-            poll_row_as_walked(&mut poll, ctx, f_pairs, n1 as u64 * pairs_in(entered) + width as u64, width, cells)?;
+            let units = n1 as u64 * pairs_in(entered) + width as u64;
+            if units < poll.due_in() {
+                poll.add_short(units);
+            } else {
+                poll = poll_entered_due(poll, ctx, f_pairs, units, width, entered, (!ONE).then_some(col_pairs))?;
+            }
             let live = live & !ROW_LIVE;
             let ands = if few { &few_ands[..n1] } else { &many[..] };
             let mut cells = reached(live);

@@ -998,10 +998,12 @@ pub(crate) fn poll_row_as_walked(
     poll_row_in_cells(gate, ctx, f_pairs, units, width, cells)
 }
 
-/// [`poll_row_as_walked`] for a row the gate comes due inside.
+/// [`poll_row_as_walked`] for a row the gate comes due inside: the
+/// cells `cells` gives polled as the row loop polls them, then the row's
+/// `width`.
 #[cold]
 #[inline(never)]
-fn poll_row_in_cells(
+pub(crate) fn poll_row_in_cells(
     gate: &mut PollGate,
     ctx: &CellCtx<'_>,
     f_pairs: &[ChildPair],
@@ -1022,23 +1024,15 @@ fn poll_row_in_cells(
 
 /// Poll `gate` for `each` units polled one at a time and then `then` in
 /// one poll, as the row loop polls a row of `each` one-pair cells and its
-/// width: in one add unless the gate comes due inside them.
-#[inline(always)]
-pub(crate) fn poll_each_then(gate: &mut PollGate, each: u64, then: u64) -> Result<(), OperationError> {
-    let units = each + then;
-    if units < gate.due_in() {
-        gate.add_short(units);
-        return Ok(());
-    }
-    poll_each_then_due(gate, each, then)
-}
-
-/// [`poll_each_then`] for a row the gate comes due inside.
+/// width, where the gate comes due inside them. Takes and gives back the
+/// gate by value, out of line, so that a row loop that polls nothing else
+/// out of line keeps its gate in registers.
 #[cold]
 #[inline(never)]
-fn poll_each_then_due(gate: &mut PollGate, each: u64, then: u64) -> Result<(), OperationError> {
+pub(crate) fn poll_each_then_due(mut gate: PollGate<'_>, each: u64, then: u64) -> Result<PollGate<'_>, OperationError> {
     gate.poll_each(each)?;
-    gate.poll(then)
+    gate.poll(then)?;
+    Ok(gate)
 }
 
 /// The product walk of one live cell, `f_pairs` against `g_pairs`, both

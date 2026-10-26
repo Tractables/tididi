@@ -869,6 +869,8 @@ fn single_rows<const W: usize>(
     debug_assert!(W == 0 || W == right_width);
     let width = if W == 0 { right_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
+    // A row's charge: a unit a live cell and the row's width.
+    let row_units = live_cols + width as u64;
     let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
     let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
@@ -953,8 +955,13 @@ fn single_rows<const W: usize>(
                         }
                     }
                 }
-                // A unit a live cell, polled as the row loop polls them.
-                poll_each_then(&mut poll, live_cols, width as u64)?;
+                // A unit a live cell, polled as the row loop polls them,
+                // in one add where the gate does not come due inside.
+                if row_units < poll.due_in() {
+                    poll.add_short(row_units);
+                } else {
+                    poll = poll_each_then_due(poll, live_cols, width as u64)?;
+                }
                 continue;
             }
             drop(out);
@@ -966,7 +973,11 @@ fn single_rows<const W: usize>(
                     sink.single(eng, slab, row_base + j, lc, rc)?;
                 }
             }
-            poll_each_then(&mut poll, live_cols, width as u64)?;
+            if row_units < poll.due_in() {
+                poll.add_short(row_units);
+            } else {
+                poll = poll_each_then_due(poll, live_cols, width as u64)?;
+            }
             continue 'rows;
         }
     }
