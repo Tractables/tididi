@@ -685,7 +685,8 @@ fn unnamed_children(
 /// nodes hold, in node order, up to the first node past which every side
 /// read has each of its nodes named.
 ///
-/// A stored level whose nodes' ranges cover its arena is read whole, with
+/// A stored level whose nodes' ranges cover its arena, of fewer than
+/// [`WHOLE_READ_PAIRS_A_SLOT`] pairs a node read for, is read whole, with
 /// no branch a node ([`StoredPairs::for_each_pair_whole`]): the nodes' own
 /// pairs, each node whose pairs are in the arena counted past the child's
 /// nodes, and then the arena. Where every node read for is named, the work
@@ -721,7 +722,14 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         }
         *next == block.len()
     }
-    if let Some(stored) = level.stored().filter(|_| !settle_by_node()) {
+    // A level of many pairs a node read for names them all early: a read
+    // node by node stops there, where the read whole reads every pair and
+    // then back to the last node that names one first.
+    let slots = if LEFT { past[0] } else { 0 } + if RIGHT { past[1] } else { 0 };
+    let whole = |stored: &crate::diagram::StoredPairs<'_>| {
+        !settle_by_node() && stored.nodes().len() + stored.arena().len() < WHOLE_READ_PAIRS_A_SLOT * slots
+    };
+    if let Some(stored) = level.stored().filter(whole) {
         let none = ChildPair::new(EncodedChildRef::from_raw(past[0] as u32), EncodedChildRef::from_raw(past[1] as u32));
         if mark_whole::<LEFT, RIGHT>(stored, none, left, right) {
             note_settle_read(0);
@@ -791,6 +799,10 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
     }
     Ok([!LEFT || all_named(left, &mut next[0]), !RIGHT || all_named(right, &mut next[1])])
 }
+
+/// The pairs a node read for below which [`mark_named`] reads a stored
+/// level whole: past them a read node by node stops early.
+const WHOLE_READ_PAIRS_A_SLOT: usize = 16;
 
 /// [`mark_named`]'s read of a stored level whole
 /// ([`StoredPairs::for_each_pair_whole`]), `none` naming the counts past
