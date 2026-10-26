@@ -58,9 +58,39 @@ impl ImplicitLevel {
     /// their order: the first `nodes · k` pairs the description generates.
     pub(crate) fn pairs_of_first(&self, nodes: usize, buf: &mut Vec<ChildPair>) {
         debug_assert!(nodes <= self.nodes);
-        buf.reserve(nodes * self.per_node);
-        let mut cursor = self.cursor();
-        for i in 0..nodes {
+        self.write_pairs_of(&mut self.cursor(), 0..nodes, buf);
+    }
+
+    /// Append the pairs of the nodes `nodes` to `buf`, node by node in their
+    /// order, each node's first pair read off `cursor`. A node of one pair
+    /// is its first; where a node's pairs are one run, they are its first
+    /// pair stepped by the run's offsets, written into room made for every
+    /// node at once; otherwise each node's runs are written in turn
+    /// ([`Places::write_into`]).
+    #[inline]
+    fn write_pairs_of(&self, cursor: &mut NodeCursor<'_>, nodes: std::ops::Range<usize>, buf: &mut Vec<ChildPair>) {
+        let k = self.per_node;
+        if k == 1 {
+            buf.extend(nodes.map(|i| {
+                let (l, r) = cursor.first_of(i);
+                pair_at((l as u32, r as u32), (0, 0))
+            }));
+            return;
+        }
+        if self.run.len() == k {
+            let from = buf.len();
+            buf.resize(from + nodes.len() * k, pair_at((0, 0), (0, 0)));
+            for (i, out) in nodes.zip(buf[from..].chunks_exact_mut(k)) {
+                let (l, r) = cursor.first_of(i);
+                let at = (l as u32, r as u32);
+                for (pair, &offset) in out.iter_mut().zip(&self.run) {
+                    *pair = pair_at(at, offset);
+                }
+            }
+            return;
+        }
+        buf.reserve(nodes.len() * k);
+        for i in nodes {
             self.places_from(cursor.first_of(i)).write_into(buf);
         }
     }
@@ -243,17 +273,7 @@ impl<'a> NodeChunks<'a> {
         let end = self.end.min(start + (CHUNK_PAIRS / k).max(1));
         let cursor = self.cursor.get_or_insert_with(|| Box::new(level.cursor()));
         buf.clear();
-        if k == 1 {
-            buf.extend((start..end).map(|i| {
-                let (l, r) = cursor.first_of(i);
-                pair_at((l as u32, r as u32), (0, 0))
-            }));
-        } else {
-            buf.reserve((end - start) * k);
-            for i in start..end {
-                level.places_from(cursor.first_of(i)).write_into(buf);
-            }
-        }
+        level.write_pairs_of(cursor, start..end, buf);
         self.next = end;
         Some(start)
     }
