@@ -912,6 +912,22 @@ fn single_rows_forced_off() -> bool {
 #[inline(always)]
 fn note_single_rows() {}
 
+// A test builds every level of one-pair cells on their row loop, as the
+// oracle for the levels written as a description of relayed right
+// children, and counts those levels.
+#[cfg(test)]
+use tests::{note_relayed, relay_forced_off};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn relay_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_relayed() {}
+
 #[cfg(not(test))]
 #[inline(always)]
 fn note_row_columns_row(_whole: bool) {}

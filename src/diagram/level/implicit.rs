@@ -385,11 +385,7 @@ impl ImplicitLevel {
             _ => return None,
         };
         let step = (second.0 - first.0, second.1 - first.1);
-        let last = |s: i64, d: i64| i128::from(s) + (n as i128 - 1) * i128::from(d);
-        let fits = |s: i64, d: i64| (0..1i128 << 31).contains(&last(s, d));
-        if !fits(first.0, step.0) || !fits(first.1, step.1) {
-            return None;
-        }
+        let fitted = Self::one_step(n, first, step)?;
         // Every slot from node 0's to the last node's fits a side, so the
         // wrapping sums are the slots and an inline word matches only its
         // own pair.
@@ -402,7 +398,27 @@ impl ImplicitLevel {
                 same & hit
             })
         });
-        same.then(|| ImplicitLevel::assemble(n, 1, first, &[], &[(n, step)]))
+        same.then_some(fitted)
+    }
+
+    /// The description of `nodes` nodes, two or more, each of one pair,
+    /// node `i`'s at the slots `first` stepped `i` times by `step`, when
+    /// every slot from node 0's to the last node's is in reach of a stored
+    /// side: one node digit, of radix the nodes.
+    pub(crate) fn one_step(
+        nodes: usize,
+        first: (i64, i64),
+        step: (i64, i64),
+    ) -> Option<ImplicitLevel> {
+        if nodes < 2 {
+            return None;
+        }
+        let last = |s: i64, d: i64| i128::from(s) + (nodes as i128 - 1) * i128::from(d);
+        let fits = |s: i64, d: i64| {
+            (0..1i128 << 31).contains(&i128::from(s)) && (0..1i128 << 31).contains(&last(s, d))
+        };
+        (fits(first.0, step.0) && fits(first.1, step.1))
+            .then(|| ImplicitLevel::assemble(nodes, 1, first, &[], &[(nodes, step)]))
     }
 
     /// Whether `f` gives distinct slots for the distinct child slots the

@@ -413,6 +413,42 @@ pub(super) fn single_rows_levels() -> u64 {
     SINGLE_ROWS.with(std::cell::Cell::get)
 }
 
+thread_local! {
+    /// Whether no level on this thread is written as the description of
+    /// relayed right children ([`relay_off`]).
+    static RELAY_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread so written ([`relayed_levels`]).
+    static RELAYED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn relay_forced_off() -> bool {
+    RELAY_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_relayed() {
+    RELAYED.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with every level of one-pair cells built by their row loop:
+/// the oracle the levels written as a description of relayed right
+/// children are checked against.
+pub(super) fn relay_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RELAY_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(RELAY_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far written as the description of
+/// relayed right children.
+pub(super) fn relayed_levels() -> u64 {
+    RELAYED.with(std::cell::Cell::get)
+}
+
 pub(super) fn row_columns_forced_off() -> bool {
     ROW_COLUMNS_OFF.with(std::cell::Cell::get)
 }

@@ -804,12 +804,14 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
 /// cell is then two grid reads and an emit. Same nodes
 /// in the same order, and the work clock is charged per row what that
 /// loop's cells and row charge it: a unit a cell of a live column, and the
-/// row's width.
+/// row's width. `relay` says the level may be built as a description
+/// ([`relay_rows`]): nothing filters its nodes.
 pub(crate) fn run_level_rows_single(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
+    relay: bool,
 ) -> Result<(), OperationError> {
     let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
     let RowScratch { f_pairs: f_scratch, g_pairs: g_cols, node_idx: slab } = scratch;
@@ -827,6 +829,10 @@ pub(crate) fn run_level_rows_single(
         g_cols.push(pairs.first().copied().unwrap_or(dead));
     }
     let rows = SingleRows { f_level, ctx, f_width, g_cols: &g_cols[..] };
+    if relay && !super::super::relay_forced_off() && relay_rows(eng, rows, slab, level)? {
+        super::super::note_relayed();
+        return Ok(());
+    }
     let mut sink = EmitSink { level };
     // A level of a few columns keeps them in registers, and writes each
     // row's cells once.
@@ -846,6 +852,128 @@ struct SingleRows<'a> {
     ctx: &'a CellCtx<'a>,
     f_width: usize,
     g_cols: &'a [ChildPair],
+}
+
+/// Build a level of one-pair cells whose two operand levels relay their
+/// right children, where it can, and answer whether it did.
+///
+/// Where f's node `i` is `(a, b + i)`, an implicit level of one node digit,
+/// and g's column `j` is `(c, e + j)` for every column, cell `(i, j)` is
+/// the product of the left child's product `P = (a, c)` with the right
+/// child's product `(b + i, e + j)`: live where that one is. Where the
+/// right child's products in the window of the grid the level reads are
+/// numbered in row-major order from some `v`, the level's node `n` is
+/// `(P, v + n)`: the level is written as that description, of one node
+/// digit, its cells as the window's renumbered from 0, the work clock
+/// polled as the row loop polls it and the node arena's growth charged as
+/// the row loop's pushes would charge it. The description stands for the
+/// arenas the row loop would leave, whose scratch it does not use, so it
+/// is written only where nothing bounds memory.
+///
+/// A level of fewer nodes than the floor, or whose window is not so
+/// numbered, is left to the row loop, its cells perhaps written, which the
+/// row loop writes again, and the level and the limits as they were.
+fn relay_rows(
+    eng: &Engine,
+    rows: SingleRows<'_>,
+    slab: &mut Vec<u32>,
+    level: &mut TddLevel,
+) -> Result<bool, OperationError> {
+    let SingleRows { f_level, ctx, f_width, g_cols } = rows;
+    let lim = eng.limits();
+    let width = ctx.right_width;
+    let (left, right) = (&ctx.sides.left, &ctx.sides.right);
+    if !lim.memory_unbounded()
+        || crate::diagram::stored_levels_forced()
+        || left.plan.view.is_marginal()
+        || right.plan.view.is_marginal()
+        || width == 0
+    {
+        return Ok(false);
+    }
+    let Some(d) = f_level.implicit() else { return Ok(false) };
+    let digit = crate::diagram::Digit { radix: f_width, left: 0, right: 1, node: 1 };
+    if d.pairs_per_node() != 1 || d.nodes() != f_width || d.within() != 0 || d.digits() != [digit] {
+        return Ok(false);
+    }
+    // A description's slots are below 2^31.
+    let (a, b) = (d.first().0 as usize, d.first().1 as usize);
+    let (c, e) = (g_cols[0].left.0, g_cols[0].right.0);
+    if c == NO_PRODUCT
+        || !g_cols.iter().enumerate().all(|(j, q)| q.left.0 == c && u64::from(q.right.0) == u64::from(e) + j as u64)
+    {
+        return Ok(false);
+    }
+    let p = match slab.get(left.base + a * left.stride as usize + c as usize) {
+        Some(&p) if p != NO_PRODUCT => p,
+        _ => return Ok(false),
+    };
+    let stride = right.stride as usize;
+    let src = |i: usize| right.base + (b + i) * stride + e as usize;
+    let (dst, cells) = (ctx.output_grid_base, f_width * width);
+    let end = dst + cells;
+    if src(f_width - 1) + width > slab.len() || (slab.len() < end && slab.capacity() < end) {
+        return Ok(false);
+    }
+    if slab.len() < end {
+        slab.resize(end, NO_PRODUCT);
+    }
+    debug_assert!(src(f_width - 1) + width <= dst || end <= src(0), "the child's grid and the level's are apart");
+    if stride == width {
+        slab.copy_within(src(0)..src(0) + cells, dst);
+    } else {
+        for i in 0..f_width {
+            slab.copy_within(src(i)..src(i) + width, dst + i * width);
+        }
+    }
+    let out = &mut slab[dst..end];
+    let Some(&v) = out.iter().find(|&&x| x != NO_PRODUCT) else { return Ok(false) };
+    let mut next = v;
+    for run in out.chunks(1 << 12) {
+        let ordered = run.iter().fold(true, |ordered, &x| {
+            let live = x != NO_PRODUCT;
+            let at = x == next;
+            next += u32::from(live);
+            ordered & (!live | at)
+        });
+        if !ordered {
+            return Ok(false);
+        }
+    }
+    let nodes = (next - v) as usize;
+    if nodes < crate::diagram::floor().max(2) {
+        return Ok(false);
+    }
+    let Some(described) = crate::diagram::ImplicitLevel::one_step(nodes, (i64::from(p), i64::from(v)), (0, 1)) else {
+        return Ok(false);
+    };
+    if v != 0 {
+        for x in out.iter_mut().filter(|x| **x != NO_PRODUCT) {
+            *x -= v;
+        }
+    }
+    // The row loop's polls: a row's units, a unit a live cell and its
+    // width, added while the gate does not come due inside the row, and the
+    // row's cells polled one at a time and then its width where it does.
+    let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
+    let row_units = 2 * width as u64;
+    let mut rows_left = f_width as u64;
+    while rows_left > 0 {
+        let short = (poll.due_in().saturating_sub(1) / row_units).min(rows_left);
+        poll.add_short(short * row_units);
+        rows_left -= short;
+        if rows_left > 0 {
+            poll = poll_each_then_due(poll, width as u64, width as u64)?;
+            rows_left -= 1;
+        }
+    }
+    poll.flush()?;
+    debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
+    let held = level.nodes.imply();
+    let node_capacity = lim.charge_as_pushed::<EncodedNode>(held, nodes)?;
+    let capacity = level.pairs.capacity();
+    level.pairs.describe(described, capacity, node_capacity);
+    Ok(true)
 }
 
 /// The row loop of [`run_level_rows_single`] on a level of `W` columns, or

@@ -760,7 +760,8 @@ pub(super) fn open_level_arenas(
 /// materializing product nodes; [`Route::MarginalChild`] runs the shared cell
 /// kernel with `MarginalLookup` sides; [`Route::Dense`] and
 /// [`Route::PlainDense`] assume no marginal child and read both child grids
-/// positionally.
+/// positionally. `relay` says a level of one-pair cells may be written as
+/// a description ([`run_level_rows_single`]).
 #[expect(clippy::too_many_arguments)]
 fn run_row_loop(
     eng: &Engine,
@@ -774,6 +775,7 @@ fn run_row_loop(
     level: &mut TddLevel,
     env: StreamEnv<'_>,
     stream_state: &mut Option<StreamLevelState>,
+    relay: bool,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
     if pairs {
@@ -841,7 +843,7 @@ fn run_row_loop(
         // runs: no streaming, no dead-pair masks, no pass-through side. Where
         // every cell is one pair against one, its loop reads g's pairs once.
         Route::PlainDense if single_pair && !super::super::single_rows_forced_off() => {
-            run_level_rows_single(eng, rows, scratch, level)?
+            run_level_rows_single(eng, rows, scratch, level, relay)?
         }
         Route::PlainDense => plain_rows!(true),
         // Dead-pair masks only: the positional lookups carry nothing through.
@@ -1274,6 +1276,8 @@ pub(super) fn build_level_dense(
                     _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
                 }
             });
+        // Nothing filters the level's nodes or folds them into counts.
+        let relay = sweep.filter.is_none() && stream_state.is_none();
         run_row_loop(
             eng, route, lookups, single_pair, pairs,
             words.then_some((&mut *run.words, f_rows)),
@@ -1296,6 +1300,7 @@ pub(super) fn build_level_dense(
                 ws: sweep.ws.as_deref(),
             },
             &mut stream_state,
+            relay,
         )?;
     }
 
