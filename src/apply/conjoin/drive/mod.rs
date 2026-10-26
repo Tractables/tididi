@@ -275,13 +275,14 @@ fn note_operand_level(run: &mut ApplyRun, f: &Tdd, g: &Tdd, vtree: &crate::vtree
     }
 }
 
-/// Whether `a` stores `b`'s nodes and pairs as `b` stores them: the same
-/// node words, ranges and pair arena, or the same description. Never on a
-/// marginal level or one without nodes. The lengths and the last node and
-/// pair are compared first, then the rest as memory, so that a level that
-/// differs costs a read of its first difference; a level that holds `b`'s
-/// pairs laid out otherwise in its arena, or in another order within a
-/// node, is not found.
+/// Whether `a` holds `b`'s nodes and pairs, node for node and each node's
+/// pairs in order: stored as `b` stores them (the same node words, ranges
+/// and pair arena, or the same description), or laid out otherwise in its
+/// arena. Never on a marginal level or one without nodes. The lengths and
+/// the last node and pair are compared first, then the rest as memory, so
+/// that a level that differs costs a read of its first difference; where
+/// the memory differs, the first and last nodes' pairs, then each node's.
+/// A level that holds a node's pairs in another order is not found.
 fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
     let n = a.node_count();
     if n == 0 || n != b.node_count() || a.is_marginal() || b.is_marginal() {
@@ -290,12 +291,18 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
     match (a.stored(), b.stored()) {
         (Some(x), Some(y)) => {
             let (xa, ya) = (x.arena(), y.arena());
-            xa.len() == ya.len()
+            let (xn, yn) = (x.nodes(), y.nodes());
+            if xa.len() == ya.len()
                 && xa.last() == ya.last()
-                && x.nodes().last() == y.nodes().last()
+                && xn.last() == yn.last()
                 && a.ranges == b.ranges
-                && x.nodes() == y.nodes()
+                && xn == yn
                 && xa == ya
+            {
+                return true;
+            }
+            let same = |k: usize| x.of(&xn[k]) == y.of(&yn[k]);
+            same(0) && same(n - 1) && (1..n - 1).all(same)
         }
         (None, None) => a.pairs == b.pairs && a.nodes == b.nodes,
         _ => false,
