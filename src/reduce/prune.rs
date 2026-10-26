@@ -253,9 +253,11 @@ pub(crate) struct PruneScratch {
     /// [`settle_loose`]'s flags per level and the parents it reads.
     settle_flags: Vec<[bool; 2]>,
     settle_parents: Vec<VtreeIdx>,
-    /// Marks a byte per slot: those a [`settle_loose`] read sets, and those
-    /// a walk sets in a level's children before it packs them into bits
-    /// ([`mark_sides`]).
+    /// [`settle_loose`]'s count of the pairs that name each slot of the
+    /// children it reads ([`mark_named`]).
+    settle_counts: Vec<u32>,
+    /// Marks a byte per slot, those a walk sets in a level's children
+    /// before it packs them into bits ([`mark_sides`]).
     bytes: Vec<u8>,
     /// [`prune_complement`]'s levels that lose a node, top-down: the level,
     /// the slot of the node it loses, and the entry of its parent level.
@@ -276,6 +278,7 @@ impl Buffers for PruneScratch {
         visit(&mut self.from_output);
         visit(&mut self.settle_flags);
         visit(&mut self.settle_parents);
+        visit(&mut self.settle_counts);
         visit(&mut self.bytes);
         visit(&mut self.chain);
         visit(&mut self.row);
@@ -293,6 +296,7 @@ impl PooledScratch for PruneScratch {
         self.from_output.clear();
         self.settle_flags.clear();
         self.settle_parents.clear();
+        self.settle_counts.clear();
         self.bytes.clear();
         self.chain.clear();
         self.row.clear();
@@ -589,7 +593,7 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     // The prune's scratch, which a prune checks out after this returns: a
     // read clears the block of marks it takes.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { bytes: marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
+    let PruneScratch { settle_counts: counts, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
     flags.clear();
     lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
@@ -607,7 +611,7 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, tdd, p, sides, marks, &mut gate)?;
+            let stays = unnamed_children(lim, tdd, p, sides, counts, &mut gate)?;
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
@@ -624,16 +628,17 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
 }
 
 /// Which of the children of level `p` that `sides` asks for, left and right,
-/// hold a node no pair of `p` names, reading `p`'s pairs in one pass, one
-/// unit of work through `gate` a pair read. A level with no node holds none,
-/// and a level that cannot be read counts as holding one: one that is not
-/// structural internal, and each child of a `p` that is not.
+/// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
+/// they have named every node of each, one unit of work through `gate` a
+/// pair ([`mark_named`]). A level with no node holds none, and a level that
+/// cannot be read counts as holding one: one that is not structural
+/// internal, and each child of a `p` that is not.
 fn unnamed_children(
     lim: &Limits,
     tdd: &Tdd,
     p: VtreeIdx,
     sides: [bool; 2],
-    marks: &mut Vec<u8>,
+    counts: &mut Vec<u32>,
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
     if sides == [false; 2] || !tdd.is_structural_internal(p) {
@@ -641,8 +646,8 @@ fn unnamed_children(
     }
     let (left, right) = tdd.vtree.children(p);
     let children = [left, right];
-    // Each side's block of marks, the left one's first: a byte a slot and
-    // one past them ([`mark_named`]), nothing for a side not read.
+    // Each side's block of counts, the left one's first: one a slot and one
+    // past them ([`mark_named`]), nothing for a side not read.
     let (mut width, mut unread) = ([0usize; 2], [false; 2]);
     for k in 0..2 {
         if !sides[k] {
@@ -656,12 +661,12 @@ fn unnamed_children(
         width[k] = if slots > 0 { slots + 1 } else { 0 };
     }
     let used = width[0] + width[1];
-    if marks.len() < used {
-        lim.try_resize(marks, used, 0)?;
+    if counts.len() < used {
+        lim.try_resize(counts, used, 0)?;
     }
-    marks[..used].fill(0);
+    counts[..used].fill(0);
     let level = &tdd.levels[p.idx()];
-    let (l, r) = marks[..used].split_at_mut(width[0]);
+    let (l, r) = counts[..used].split_at_mut(width[0]);
     let named = match width.map(|n| n > 0) {
         [true, true] => mark_named::<true, true>(level, [l, r], gate)?,
         [true, false] => mark_named::<true, false>(level, [l, r], gate)?,
@@ -671,69 +676,99 @@ fn unnamed_children(
     Ok([unread[0] || !named[0], unread[1] || !named[1]])
 }
 
-/// Mark in `blocks`, a byte a node, the nodes of `level`'s children that its
-/// pairs name, on the left side with `LEFT` and on the right with `RIGHT`.
-/// Whether each side has every node named; a side not read has. Both
-/// children are structural internal, so a side is the index of the node it
-/// names. Each block read holds a byte past the child's nodes, which takes
-/// the marks of no pair. One unit of work through `gate` a pair read.
+/// Count in `blocks`, a count a node, the pairs of `level` that name each
+/// node of its children, on the left side with `LEFT` and on the right with
+/// `RIGHT`, and say whether each side has every node named; a side not read
+/// has. Both children are structural internal, so a side is the index of
+/// the node it names. Each block read holds a count past the child's nodes,
+/// which no pair takes. One unit of work through `gate` a pair the level's
+/// nodes hold, in node order, up to the first node past which every side
+/// read has each of its nodes named.
 ///
-/// A stored level is read whole, with no branch a node
-/// ([`StoredPairs::for_each_pair_whole`]): the nodes' own pairs and then its
-/// arena, each node that names the arena marking the bytes past the nodes.
-/// One whose arena holds pairs no node names is read node by node, up to
-/// the first node past which every side read has each of its nodes named.
-/// An implicit one marks each side's slots off the digits that move it
-/// ([`ImplicitLevel::each_slot_on`]), about the side's distinct slots and
-/// not the level's pairs.
+/// A stored level whose nodes' ranges cover its arena is read whole, with
+/// no branch a node ([`StoredPairs::for_each_pair_whole`]): the nodes' own
+/// pairs, each node whose pairs are in the arena counted past the child's
+/// nodes, and then the arena. Where every node read for is named, the work
+/// is the level's pairs less those of the nodes after the last one to name
+/// a node first: read back from the last node, each pair counted down, they
+/// end at the first node that takes a count to zero. Any other level is
+/// read node by node, each side keeping the first of its nodes not seen
+/// counted, which only moves forward: the test before a node reads that
+/// node's count, and the cursors cross each count once over the read. An
+/// implicit level is read off its digits instead
+/// ([`ImplicitLevel::each_slot_on`]), each count one past the first node
+/// that names its slot, and charged the pairs of the nodes up to the last
+/// of those, as the read node by node would be.
 ///
-/// A mark stores a constant and reads nothing, so no mark waits on another:
-/// pairs that name the same node, or nodes a word apart, do not wait on each
-/// other's stores as a bit set in a shared word, or a count of the nodes
-/// named so far, would. Read node by node, each side keeps the first of its
-/// nodes not seen marked, which only moves forward: the test before a node
-/// reads that node's byte, and the cursors cross each byte once over the
-/// read.
+/// A count is added to in place and read only after the read, so no pair
+/// waits on another: pairs that name the same node, or nodes a word apart,
+/// do not wait on each other as a bit set in a shared word, or a count of
+/// the nodes named so far, would.
 ///
 /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
 #[inline(always)]
 fn mark_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
-    blocks: [&mut [u8]; 2],
+    blocks: [&mut [u32]; 2],
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
     let [left, right] = blocks;
     let past = [left.len().saturating_sub(1), right.len().saturating_sub(1)];
-    // Whether every node of `block` is marked, moving `next` past those that are.
-    fn all_named(block: &[u8], next: &mut usize) -> bool {
+    // Whether every node of `block` is counted, moving `next` past those that are.
+    fn all_named(block: &[u32], next: &mut usize) -> bool {
         while *next < block.len() && block[*next] != 0 {
             *next += 1;
         }
         *next == block.len()
     }
-    if let Some(stored) = level.stored() {
-        gate.poll(stored.nodes().len() as u64)?;
-        gate.poll(stored.arena().len() as u64)?;
+    if let Some(stored) = level.stored().filter(|_| !settle_by_node()) {
         let none = ChildPair::new(EncodedChildRef::from_raw(past[0] as u32), EncodedChildRef::from_raw(past[1] as u32));
-        let whole = mark_whole::<LEFT, RIGHT>(stored, none, left, right);
-        note_settle_read(usize::from(!whole));
-        if whole {
-            return Ok([!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)]);
+        if mark_whole::<LEFT, RIGHT>(stored, none, left, right) {
+            note_settle_read(0);
+            let named = [!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)];
+            // Each node whose pairs are in the arena counted once past the nodes.
+            let ranged = if LEFT { left[past[0]] } else { right[past[1]] } as usize;
+            let pairs = stored.nodes().len() - ranged + stored.arena().len();
+            let after = match named {
+                [true, true] => pairs_after_last_first::<LEFT, RIGHT>(stored, left, right),
+                _ => 0,
+            };
+            gate.poll((pairs - after) as u64)?;
+            return Ok(named);
         }
+        // The nodes' own pairs were counted before the arena was found
+        // holding others.
+        left.fill(0);
+        right.fill(0);
     }
-    let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
-    if let Some(d) = level.implicit() {
+    if let Some(d) = level.implicit().filter(|_| !settle_by_node()) {
         note_settle_read(2);
+        // Each slot's count is one past the first node that names it.
+        let first = |block: &mut [u32], side| {
+            d.each_slot_on(side, |s, node| {
+                let count = &mut block[s as usize];
+                *count = count.wrapping_sub(1).min(node as u32).wrapping_add(1);
+            });
+        };
         if LEFT {
-            gate.poll(d.slots_on(ChildSide::Left) as u64)?;
-            d.each_slot_on(ChildSide::Left, |s| left[s as usize] = 1);
+            first(&mut left[..], ChildSide::Left);
         }
         if RIGHT {
-            gate.poll(d.slots_on(ChildSide::Right) as u64)?;
-            d.each_slot_on(ChildSide::Right, |s| right[s as usize] = 1);
+            first(&mut right[..], ChildSide::Right);
         }
-        return Ok([!LEFT || !left.contains(&0), !RIGHT || !right.contains(&0)]);
+        let (left, right) = (&left[..past[0]], &right[..past[1]]);
+        let named = [!LEFT || !left.contains(&0), !RIGHT || !right.contains(&0)];
+        // Read node by node, the read takes every node up to the last one
+        // to name a node first, or every node where one is left unnamed.
+        let nodes = match named {
+            [true, true] => left.iter().chain(right).copied().max().unwrap_or(0) as usize,
+            _ => d.nodes(),
+        };
+        gate.poll((nodes * d.pairs_per_node()) as u64)?;
+        return Ok(named);
     }
+    note_settle_read(1);
+    let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
     let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
     let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
@@ -758,26 +793,61 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
 }
 
 /// [`mark_named`]'s read of a stored level whole
-/// ([`StoredPairs::for_each_pair_whole`]), `none` naming the bytes past each
-/// side's nodes. Out of line, so that its loops keep the level and both
-/// blocks in registers.
+/// ([`StoredPairs::for_each_pair_whole`]), `none` naming the counts past
+/// each side's nodes. Out of line, so that its loops keep the level and
+/// both blocks in registers.
 ///
 /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
 #[inline(never)]
 fn mark_whole<const LEFT: bool, const RIGHT: bool>(
     stored: crate::diagram::StoredPairs<'_>,
     none: ChildPair,
-    left: &mut [u8],
-    right: &mut [u8],
+    left: &mut [u32],
+    right: &mut [u32],
 ) -> bool {
     stored.for_each_pair_whole(none, |pair| {
         if LEFT {
-            left[pair.left.0 as usize] = 1;
+            left[pair.left.0 as usize] += 1;
         }
         if RIGHT {
-            right[pair.right.0 as usize] = 1;
+            right[pair.right.0 as usize] += 1;
         }
     })
+}
+
+/// The pairs of the nodes of `stored` after the last one that names a node
+/// of a side read first, `left` and `right` holding how many pairs name each
+/// node: read back from the last node, each pair counted down, up to the
+/// first node that takes a count to zero, which names that node first. The
+/// counts are spent.
+#[inline(never)]
+fn pairs_after_last_first<const LEFT: bool, const RIGHT: bool>(
+    stored: crate::diagram::StoredPairs<'_>,
+    left: &mut [u32],
+    right: &mut [u32],
+) -> usize {
+    let mut after = 0;
+    for node in stored.nodes().iter().rev() {
+        let pairs = stored.of(node);
+        let mut first = false;
+        for pair in pairs {
+            if LEFT {
+                let c = &mut left[pair.left.0 as usize];
+                *c -= 1;
+                first |= *c == 0;
+            }
+            if RIGHT {
+                let c = &mut right[pair.right.0 as usize];
+                *c -= 1;
+                first |= *c == 0;
+            }
+        }
+        if first {
+            break;
+        }
+        after += pairs.len();
+    }
+    after
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact
@@ -1471,7 +1541,26 @@ thread_local! {
     pub(super) static SETTLE_READS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
 }
 
-/// How a settle read a level: whole (0), node by node (1), off the digits (2).
+// A test has a settle read every level node by node, to compare the work
+// the other reads charge with it.
+#[cfg(test)]
+thread_local! {
+    pub(super) static SETTLE_BY_NODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a settle reads every level node by node: never, outside a test.
+#[cfg(not(test))]
+#[inline(always)]
+const fn settle_by_node() -> bool {
+    false
+}
+
+#[cfg(test)]
+fn settle_by_node() -> bool {
+    SETTLE_BY_NODE.with(std::cell::Cell::get)
+}
+
+/// How a settle read a level: whole (0), node by node (1) or off its digits (2).
 #[inline(always)]
 fn note_settle_read(how: usize) {
     #[cfg(test)]

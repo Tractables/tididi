@@ -398,7 +398,22 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
                 junk.levels[t].pairs.stored_mut().push(crate::diagram::ChildPair::new(crate::diagram::EncodedChildRef::from_raw(0), crate::diagram::EncodedChildRef::from_raw(0)));
             }
         }
-        assert_eq!(settle_loose(eng, &junk, &listed).unwrap(), settled, "{what}: a pair no node names settled a level");
+        let start = eng.limits().work_units();
+        let settled_junk = settle_loose(eng, &junk, &listed).unwrap();
+        let junk_work = eng.limits().work_units() - start;
+        assert_eq!(settled_junk, settled, "{what}: a pair no node names settled a level");
+        // The whole read, and the read of an implicit level off its digits,
+        // charge what the read node by node does.
+        let by_node_before = crate::reduce::prune::SETTLE_BY_NODE.with(|c| c.replace(true));
+        let start = eng.limits().work_units();
+        let settled_by_node = settle_loose(eng, &conj, &listed);
+        let by_node = eng.limits().work_units() - start;
+        crate::reduce::prune::SETTLE_BY_NODE.with(|c| c.set(by_node_before));
+        assert_eq!(settled_by_node.unwrap(), settled, "{what}: the read node by node settled another list");
+        let start = eng.limits().work_units();
+        settle_loose(eng, &conj, &listed).unwrap();
+        assert_eq!(eng.limits().work_units() - start, by_node, "{what}: the settle charged other work than the read node by node");
+        assert_eq!(junk_work, by_node, "{what}: the read past a pair no node names charged other work than the read node by node");
         loose += unnamed.len();
         settled_away += listed.len() - settled.len();
         cleared += operands.concat().iter().filter(|&&t| {
@@ -475,7 +490,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     let [whole, by_node, digits] = [0, 1, 2].map(|k| reads[k] - reads_before[k]);
     assert!(
         whole > 400 && by_node > 400 && digits > 100,
-        "expected levels read whole, node by node and off the digits, got {whole}, {by_node} and {digits}",
+        "expected levels read whole, node by node and off their digits, got {whole}, {by_node} and {digits}",
     );
 }
 

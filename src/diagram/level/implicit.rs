@@ -452,23 +452,19 @@ impl ImplicitLevel {
         Self::each_on_side(&self.digits[self.within..], side, start, f);
     }
 
-    /// Calls `f` with the child slot on `side` of the level's pairs, once
-    /// for every setting of the digits, place or node, that move the side's
-    /// slot: every slot on that side a pair of the level names, some more
-    /// than once, at [`slots_on`](Self::slots_on) calls.
-    pub(crate) fn each_slot_on(&self, side: ChildSide, mut f: impl FnMut(i64)) {
+    /// Calls `f` with the child slot on `side` of a pair of the level and
+    /// the index of the pair's node, once for every setting of the digits,
+    /// place or node, that move the side's slot, the others at zero: every
+    /// slot on that side a pair names, some more than once, and the least
+    /// of the nodes `f` is given with a slot is the first node naming it.
+    /// At most the level's pairs calls, the product of the radices of the
+    /// digits that move the side's slot.
+    pub(crate) fn each_slot_on(&self, side: ChildSide, f: impl FnMut(i64, usize)) {
         let start = match side {
             ChildSide::Left => self.first.0,
             ChildSide::Right => self.first.1,
         };
-        Self::each_on_side(&self.digits, side, start, |s, _| f(s));
-    }
-
-    /// How many slots [`each_slot_on`](Self::each_slot_on) gives on `side`:
-    /// the product of the radices of the digits that move the side's slot,
-    /// at most the level's pairs.
-    pub(crate) fn slots_on(&self, side: ChildSide) -> usize {
-        self.digits.iter().filter(|d| Self::step(d, side) != 0).map(|d| d.radix).product()
+        Self::each_on_side(&self.digits, side, start, f);
     }
 
     /// The child slots every pair of a node adds to its first, in their
