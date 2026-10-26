@@ -68,7 +68,7 @@ pub(super) fn contract_twins(
     // the budget surfaces before the diagram changes.
     let ContractScratch {
         remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
-        diagram_marginal, unnamed, ..
+        diagram_marginal, unnamed, listing, ..
     } = scratch;
     lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
     let words = width.div_ceil(64);
@@ -147,7 +147,17 @@ pub(super) fn contract_twins(
         && !diagram_marginal
         && !tdd.levels[t1.idx()].any_value_ref_side();
     rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint);
-    rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
+    // Without a marginal level a rebuilt level, and a parent the rewrite
+    // leaves in node order, stay so for the rest of the sweep
+    // (`Listing::ordered`), and a later rewrite of either reads no order.
+    let known = !diagram_marginal && listing.ordered(parent.idx());
+    let ordered = rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
+    if !diagram_marginal {
+        listing.set_ordered(t1.idx());
+        if ordered {
+            listing.set_ordered(parent.idx());
+        }
+    }
     // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
     // is done and no pair-arena offset is held across the call (the caller
     // obligation on `compact_pairs_if_stale`).

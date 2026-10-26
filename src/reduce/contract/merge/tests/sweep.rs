@@ -124,7 +124,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     // T1 twins {0, 1} merged into 0: the parent's second pair is dropped.
     let remap = remap_of(&[0, 0], &[]);
 
-    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
+    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None, false);
 
     let parent = &tdd.levels[root.idx()];
     assert_eq!(parent.ranges.len(), 1, "no range entry is added for an inlined survivor");
@@ -161,7 +161,7 @@ fn rewritten_parent(len: usize, place: &[(Option<usize>, Vec<ChildPair>)]) -> Td
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
     let remap = remap_of(&[0, 0, 2, 3, 3], &[]);
-    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
+    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None, false);
     tdd.levels[root.idx()].clone()
 }
 

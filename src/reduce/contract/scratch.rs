@@ -497,6 +497,9 @@ pub(super) struct Listing {
     /// Per vtree node: the sweep in which it was last known fused but for
     /// the nodes its list holds.
     fused_but: Vec<u32>,
+    /// Per vtree node: the sweep in which its level was last known to hold
+    /// its pair ranges in node order.
+    ordered: Vec<u32>,
 }
 
 impl Listing {
@@ -512,11 +515,13 @@ impl Listing {
         lim.try_resize(&mut self.whole, num_nodes, 0)?;
         lim.try_resize(&mut self.at, num_nodes, (0, 0))?;
         lim.try_resize(&mut self.fused_but, num_nodes, 0)?;
+        lim.try_resize(&mut self.ordered, num_nodes, 0)?;
         self.sweep = self.sweep.wrapping_add(1);
         if self.sweep == 0 {
             self.whole.fill(0);
             self.at.fill((0, 0));
             self.fused_but.fill(0);
+            self.ordered.fill(0);
             self.sweep = 1;
         }
         let used = self.used.min(self.lists.len());
@@ -559,6 +564,23 @@ impl Listing {
     pub(super) fn set_fused_but(&mut self, t: usize, fused_but: bool) {
         if let Some(stamp) = self.fused_but.get_mut(t) {
             *stamp = if fused_but { self.sweep } else { 0 };
+        }
+    }
+
+    /// Whether level `t` is known to hold its pair ranges in node order:
+    /// a merge rebuilt it, or a parent rewrite left it so, in the current
+    /// sweep. Without a marginal level nothing else in a sweep moves a
+    /// level's pairs, and those passes keep the order.
+    #[inline]
+    pub(super) fn ordered(&self, t: usize) -> bool {
+        self.ordered.get(t) == Some(&self.sweep)
+    }
+
+    /// Record that level `t` holds its pair ranges in node order.
+    #[inline]
+    pub(super) fn set_ordered(&mut self, t: usize) {
+        if let Some(stamp) = self.ordered.get_mut(t) {
+            *stamp = self.sweep;
         }
     }
 
@@ -635,14 +657,15 @@ impl Listing {
     }
 }
 
-/// Released like any other buffer: a released `at`, `whole` or `fused_but`
-/// regrows unstamped, and a released `lists` past `used` is clamped at the
-/// next start.
+/// Released like any other buffer: a released `at`, `whole`, `fused_but`
+/// or `ordered` regrows unstamped, and a released `lists` past `used` is
+/// clamped at the next start.
 impl Buffers for Listing {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.whole);
         visit(&mut self.at);
         visit(&mut self.fused_but);
+        visit(&mut self.ordered);
         visit(&mut Nested(&mut self.lists));
     }
 }

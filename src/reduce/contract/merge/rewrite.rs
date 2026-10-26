@@ -42,6 +42,9 @@ pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize)
 ///
 /// Infallible: every allocation it could need was reserved before the pass
 /// mutated anything (`room`, an implicit parent's, through `lim`).
+///
+/// `ordered` says the parent is known to hold its ranges in node order,
+/// which is then not read again. Returns whether the parent is left so.
 pub(super) fn rewrite_parent(
     lim: &Limits,
     tdd: &mut Tdd,
@@ -49,7 +52,8 @@ pub(super) fn rewrite_parent(
     t1_side: ChildSide,
     remap: &MergeRemap,
     room: Option<StoreRoom>,
-) {
+    ordered: bool,
+) -> bool {
     // Arena garbage from the whole rewrite, accumulated and noted in one charge
     // below: the only reader (`compact_pairs_if_stale`) runs after the loop, so a
     // per-iteration saturating add buys nothing.
@@ -67,21 +71,21 @@ pub(super) fn rewrite_parent(
             .expect("an implicit parent is rewritten in its room");
         // Built stored at its description's places, in node order: its
         // arena is left as the stored route below leaves it.
-        parent_level.compact_in_node_order();
-        return;
+        return parent_level.compact_in_node_order();
     }
     // Where the arena holds the ranges in node order, each node's kept pairs
     // move down to a write cursor as they are rewritten, which leaves the
     // arena with no dead pairs and the parent no sweep to run; otherwise
     // each node shrinks in place and its tail is left dead. The side is a
     // constant of each slide's loop.
-    if parent_level.ranges_in_node_order() {
+    debug_assert!(!ordered || parent_level.ranges_in_node_order(), "a parent known in node order is so");
+    if ordered || parent_level.ranges_in_node_order() {
         let final_remap = &remap.final_remap;
         match t1_side {
             ChildSide::Left => parent_level.slide_pairs(|pair| canonical_pair::<true>(pair, final_remap)),
             ChildSide::Right => parent_level.slide_pairs(|pair| canonical_pair::<false>(pair, final_remap)),
         }
-        return;
+        return true;
     }
     for node_idx in 0..parent_level.nodes().len() {
         let kind = parent_level.node(node_idx).kind();
@@ -95,6 +99,7 @@ pub(super) fn rewrite_parent(
         }
     }
     parent_level.note_dead_pairs(dead_acc);
+    false
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
