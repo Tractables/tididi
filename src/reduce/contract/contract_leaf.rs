@@ -89,36 +89,35 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
         return try_contract_described(eng, tdd, parent_vi, side);
     };
 
-    // Singleton-pair witness pre-pass: a length-1 pair list whose label on
-    // `side` is a literal cannot hold the opposite-polarity partner, so the
-    // level is not contractible. O(1) per node, read off the node words,
-    // against `classify`'s collect-and-sort per pair list.
-    for node in stored.nodes() {
-        if let [pair] = *stored.of(node) {
-            let label = if side == ChildSide::Left { pair.left } else { pair.right };
-            if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
-                return Ok(false);
-            }
-        }
-    }
-
-    // The two partner lists `classify` compares, reused across the level's
-    // nodes so the sort buffers are allocated once per level, not per node,
-    // and charged only while the level is classified. A node of two pairs
-    // is classified by its labels alone ([`classify_two`]).
+    // One pass in node order, stopping at the first node that refuses the
+    // rewrite: most levels that refuse it refuse it near the start. A node
+    // of one pair admits it only where its label on `side` is `One` (a lone
+    // literal has no opposite-polarity partner), and a node of two by its
+    // labels alone ([`classify_two`]); a wider one is classified by its
+    // partners sorted, on the stack up to [`SMALL_PAIRS`] pairs
+    // ([`classify_small`]), and past that in two lists reused across the
+    // level's nodes so the sort buffers are allocated once per level, not
+    // per node, and charged only while the level is classified.
     let lim = eng.limits();
+    let one: EncodedChildRef = ONE_LEAF_IDX.into();
     let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
     for node in stored.nodes() {
         let class = match *stored.of(node) {
+            [pair] => {
+                let label = if side == ChildSide::Left { pair.left } else { pair.right };
+                if label == one {
+                    continue;
+                }
+                Class::NotContractible
+            }
             [p, q] => classify_two(p, q, side),
+            ref pairs if pairs.len() <= SMALL_PAIRS => classify_small(pairs, side),
             ref pairs => classify(lim, pairs.iter().copied(), side, &mut pos, &mut neg)?,
         };
         match class {
-            Class::AllContractible { has_literal } => {
-                any_literal |= has_literal;
-            }
+            Class::AllContractible { has_literal } => any_literal |= has_literal,
             Class::NotContractible => return Ok(false),
         }
     }
@@ -181,6 +180,42 @@ fn classify_two(p: ChildPair, q: ChildPair, side: ChildSide) -> Class {
     } else {
         Class::NotContractible
     }
+}
+
+/// The widest node [`classify_small`] classifies on the stack.
+const SMALL_PAIRS: usize = 8;
+
+/// [`classify`] of a pair list of at most [`SMALL_PAIRS`] pairs, its
+/// partners collected and sorted on the stack.
+#[inline]
+fn classify_small(pairs: &[ChildPair], side: ChildSide) -> Class {
+    let (one, pos_label, neg_label): (EncodedChildRef, EncodedChildRef, EncodedChildRef) =
+        (ONE_LEAF_IDX.into(), POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
+    let (mut pos, mut neg) = ([one; SMALL_PAIRS], [one; SMALL_PAIRS]);
+    let (mut np, mut nn, mut has_one) = (0usize, 0usize, false);
+    for p in pairs {
+        let (label, partner) = if side == ChildSide::Left { (p.left, p.right) } else { (p.right, p.left) };
+        if label == pos_label {
+            pos[np] = partner;
+            np += 1;
+        } else if label == neg_label {
+            neg[nn] = partner;
+            nn += 1;
+        } else if label == one {
+            has_one = true;
+        } else {
+            return Class::NotContractible;
+        }
+    }
+    let has_literal = np + nn > 0;
+    // A mode-mixed list refuses, as in `classify`, and so do partner lists
+    // of different lengths.
+    if (has_literal && has_one) || np != nn {
+        return Class::NotContractible;
+    }
+    pos[..np].sort_unstable();
+    neg[..nn].sort_unstable();
+    if pos[..np] == neg[..nn] { Class::AllContractible { has_literal } } else { Class::NotContractible }
 }
 
 /// `pos` and `neg` are the caller's buffers for the partners of the `Pos` and
@@ -247,8 +282,8 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     tdd.rewrite_level(parent_vi, |level| {
         for i in 0..level.nodes().len() {
             if let NodeKind::Inline(p) = level.node(i).kind() {
-                // A single-pair node is labelled `One` on `side` (the singleton
-                // pre-pass in `try_contract_leaf_twins` aborted the level on a
+                // A single-pair node is labelled `One` on `side` (the first
+                // pass of `try_contract_leaf_twins` refused the level on a
                 // lone literal), and `One` pairs are copied verbatim.
                 debug_assert!(
                     {
