@@ -4,7 +4,7 @@ use super::*;
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use crate::limits::PollGate;
 
-/// The f pairs a row's ANDs are kept for on the stack; a longer row keeps
+/// The f pairs a row's intersections are kept for on the stack; a longer row keeps
 /// them in a buffer of the level's.
 const FEW_PAIRS: usize = 16;
 
@@ -26,9 +26,9 @@ const REACH_TABLE_ROWS_A_BYTE: usize = 64;
 /// at `a` and g pair `q`'s child on that side holds a product, and
 /// [`ROW_LIVE`] iff the child row has a live cell. An f pair `(a, b)` and
 /// g pair `q` make a live candidate iff the words of `a` on the left and
-/// `b` on the right both have bit `q`: one AND decides an f pair against
+/// `b` on the right both have bit `q`: one intersection decides an f pair against
 /// every pair of g's level, where the cell walks read both child grids for
-/// each candidate, and a cell holds a product iff the OR of its row's ANDs
+/// each candidate, and a cell holds a product iff the union of its row's intersections
 /// has a bit of its column. A complete side kills nothing, and is read as
 /// a word of every pair.
 ///
@@ -41,7 +41,7 @@ const REACH_TABLE_ROWS_A_BYTE: usize = 64;
 /// are written in the order of its walk, f pair by f pair and each against
 /// the column's pairs in order (no column of so few pairs is grouped), one
 /// pair alone as the one-pair cell writes it. A row visits its live cells
-/// alone, the columns of the g pairs its ANDs have, all of them entered.
+/// alone, the columns of the g pairs its intersections have, all of them entered.
 pub(crate) fn run_level_rows_pairs(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -292,7 +292,7 @@ where
         out
     };
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
-    // The ANDs of a row's f pairs: of `FEW_PAIRS` pairs or fewer on the
+    // The intersections of a row's f pairs: of `FEW_PAIRS` pairs or fewer on the
     // stack, of more in a buffer.
     let mut few_ands = [0u64; FEW_PAIRS];
     let mut many: Vec<u64> = Vec::new();
@@ -339,7 +339,7 @@ where
             }
             // A row of two f pairs on two one-pair columns, the arenas with
             // room for its every candidate: the loop below unrolled, each f
-            // pair's AND held in a register.
+            // pair's intersection held in a register.
             if W == 2
                 && let [p0, p1] = f_pairs
                 && let Some(o) = out.as_mut().filter(|o| o.has_room(4, 2))
@@ -383,7 +383,7 @@ where
                 continue;
             }
             // Each side's fold, the g pairs some candidate of the row survives
-            // against, and each f pair's AND.
+            // against, and each f pair's intersection.
             let few = f_pairs.len() <= FEW_PAIRS;
             if !few {
                 many.clear();
@@ -491,7 +491,7 @@ where
                     sink.single(eng, node_idx, grid_pos, lc, rc)?;
                     continue;
                 }
-                // Every candidate of the cell an AND keeps survives.
+                // Every candidate of the cell an intersection keeps survives.
                 let bound = if ONE { n1 } else { n1 * usize::from(col_pairs[j]) };
                 if let Some(mut cell) = sink.open_cell(bound) {
                     for (p, &and) in f_pairs.iter().zip(ands) {

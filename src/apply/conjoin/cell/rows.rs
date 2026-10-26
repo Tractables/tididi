@@ -181,7 +181,7 @@ fn reaching(mask: u128, reach: &[u128]) -> u64 {
 
 /// Word `w` of the g nodes whose reach meets `mask`, read off the reach
 /// columns `columns` of `words` words a bit (`liveness::build_reach_columns`):
-/// the OR of that word of each of the mask's bits that some reach mask has.
+/// the union of that word of each of the mask's bits that some reach mask has.
 #[inline(always)]
 fn reach_word(mask: u128, columns: &[u64], words: usize, w: usize) -> u64 {
     let bits = columns.len() / words;
@@ -408,7 +408,7 @@ where
         };
         if by_rows {
             // The row's pairs' row columns folded on each culling side:
-            // their AND is the g nodes the reach scan below would find, and
+            // their intersection is the g nodes the reach scan below would find, and
             // a side without a live child row skips the row, as the alive
             // masks' fold would. An OR a pair a side, in place of the
             // masks' fold and a test a g node. A side that culls nothing

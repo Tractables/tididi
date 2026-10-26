@@ -250,7 +250,7 @@ pub(super) const REACH_COLUMNS_MIN_WIDTH: usize = 32;
 /// `columns` is set iff `reach[j]` has bit `b`, for `words` the g nodes'
 /// words, `reach.len().div_ceil(64)`, and `b` up to the highest bit any
 /// reach mask sets. The cells of a row whose reach meets the row's alive
-/// mask are then the OR of the words of the mask's bits, a word a bit for
+/// mask are then the union of the words of the mask's bits, a word a bit for
 /// 64 g nodes, where a scan of `reach` tests every g node. Empty under
 /// [`REACH_COLUMNS_MIN_WIDTH`] g nodes.
 pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Vec<u64>) -> Result<(), OperationError> {
@@ -331,11 +331,11 @@ pub(super) const ROW_LIVE: u64 = 1 << 63;
 /// `live_cols[a] & reach[j] != 0`, for `j` below `reach.len()`, and
 /// [`ROW_LIVE`] iff `live_cols[a] != 0`. A row of the level folds its
 /// pairs' words, an OR a pair a side, where the reach scan tests every g
-/// node against the row's folded masks: the two sides' folds ANDed are
+/// node against the row's folded masks: the two sides' folds intersected are
 /// the g nodes that scan finds, and a side's fold without `ROW_LIVE` is
 /// the row it skips. Empty above [`ROW_COLUMNS_MAX_WIDTH`] g nodes.
 ///
-/// A row's word is the OR of the g nodes of each of its live bits, or its
+/// A row's word is the union of the g nodes of each of its live bits, or its
 /// test against each g node's reach, whichever is fewer steps.
 pub(super) fn build_row_columns(
     eng: &Engine,

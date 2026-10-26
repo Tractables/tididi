@@ -91,7 +91,7 @@ pub(crate) struct WordScratch {
     named_start: Sides<Vec<u32>>,
     by_child: Sides<Vec<u32>>,
     child_counts: Vec<u32>,
-    /// The current row's pairs' slots on each side; the OR of its pairs'
+    /// The current row's pairs' slots on each side; the union of its pairs'
     /// live candidates; its live cells' columns, ascending, and as bits.
     row_slots: Vec<(u32, u32)>,
     union: Vec<u64>,
@@ -177,7 +177,7 @@ impl WordScratch {
 /// of g pairs. A level with masks is read by vectors where g's nodes are
 /// not all one pair (the masks cull most of the f pairs of a column of
 /// one), at most one in [`MASKED_LIVE_SHARE`] of its candidates is live,
-/// and building and ANDing its vectors, with [`MASKED_PAIR_COST`] an f
+/// and building and intersecting its vectors, with [`MASKED_PAIR_COST`] an f
 /// pair, costs under a quarter of them; a
 /// level without, where the vectors cost less than the row loop by
 /// [`WORDS_COST`] and [`WALK_COST`], the sampled rows that would walk
