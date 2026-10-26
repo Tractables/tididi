@@ -409,6 +409,7 @@ pub(super) fn find_twin_groups(
         early_stop: screens(parent_level),
     };
     scratch.unnamed.clear();
+    scratch.unnamed_exact = false;
     scratch.marked = None;
     // Read from the scratch: a merge's change to any level forgets the
     // diagram's own answer, which takes a pass over every level to give
@@ -433,6 +434,7 @@ pub(super) fn find_twin_groups(
     if cfg!(debug_assertions) {
         list_members(lim, scratch)?;
         let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+        let exact = scratch.unnamed_exact;
         let unnamed = std::mem::take(&mut scratch.unnamed);
         let other = if by_fingerprints {
             refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole, child)?
@@ -450,6 +452,7 @@ pub(super) fn find_twin_groups(
             assert_eq!(unnamed, scratch.unnamed, "the refinement and the fingerprints list different unnamed nodes");
         }
         scratch.unnamed = unnamed;
+        scratch.unnamed_exact = exact;
     }
     Ok(found)
 }

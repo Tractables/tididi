@@ -334,6 +334,10 @@ pub(crate) struct ContractScratch {
     /// parent pair names, ascending: the search lists them where it read
     /// every pair, and the merge drops them.
     pub(super) unnamed: Vec<u32>,
+    /// Whether the last whole search knows that every node of the child
+    /// level it did not list in `unnamed` is named by a pair of the parent:
+    /// a refinement does, at its end.
+    pub(super) unnamed_exact: bool,
     /// Whether the sweep drops the nodes its searches list in `unnamed`.
     pub(super) drop_unnamed: bool,
 

@@ -111,7 +111,7 @@ pub(super) fn refine_context_groups(
     let ContractScratch {
         twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
         refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_met,
-        refine_seen, refine_code, refine_rows, flat_groups, group_starts, unnamed, remap, marked, member_groups, ..
+        refine_seen, refine_code, refine_rows, flat_groups, group_starts, unnamed, unnamed_exact, remap, marked, member_groups, ..
     } = scratch;
     // Zero between parent nodes, so it only grows.
     lim.try_resize(refine_code, width, 0u8)?;
@@ -198,7 +198,11 @@ pub(super) fn refine_context_groups(
             part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
         }
     }
-    part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
+    // A node leaves the first class once a parent node names it, so a
+    // refinement from the whole level that ends with no node there, or with
+    // the two or more it lists, has every other node named.
+    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
+    *unnamed_exact = whole && left_unnamed != 1;
     debug_assert_eq!(
         part.twinable,
         part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
@@ -556,7 +560,8 @@ impl Partition<'_> {
     /// in the first class, leave the partition, which they would otherwise
     /// end as one group; where there are two or more, they are put in
     /// `out`, ascending. A refinement that stopped early leaves at most one.
-    fn drop_unnamed(&mut self, width: usize, out: Option<&mut Vec<u32>>, lim: &Limits) -> Result<(), OperationError> {
+    /// Returns how many there were.
+    fn drop_unnamed(&mut self, width: usize, out: Option<&mut Vec<u32>>, lim: &Limits) -> Result<usize, OperationError> {
         let words = width.div_ceil(64);
         let mut unnamed = 0;
         for w in 0..words {
@@ -567,7 +572,7 @@ impl Partition<'_> {
             unnamed += clear.count_ones() as usize;
         }
         if unnamed < 2 {
-            return Ok(());
+            return Ok(unnamed);
         }
         debug_assert_eq!(self.classes[0].size as usize, unnamed, "the first class is the nodes no pair names");
         if let Some(out) = out {
@@ -590,7 +595,7 @@ impl Partition<'_> {
         }
         self.classes[0].size = 0;
         self.twinable -= unnamed;
-        Ok(())
+        Ok(unnamed)
     }
 
     /// A parent node of three to [`SMALL_PAIRS`] pairs that

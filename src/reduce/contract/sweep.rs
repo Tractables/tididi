@@ -157,6 +157,7 @@ fn contract_child(
     // their children contexts the prune would take away. The merge drops
     // them, and their children are searched whole after. The diagram's
     // output is named by no pair, and stays.
+    let listed_unnamed = scratch.unnamed.len();
     if reach == Reach::Listed || !scratch.drop_unnamed {
         scratch.unnamed.clear();
     } else if tdd.output.vtree == t1 {
@@ -164,6 +165,13 @@ fn contract_child(
         scratch.unnamed.retain(|&u| u != output);
     }
     let drops = !scratch.unnamed.is_empty();
+    // Where the search knows every node it did not list is named, the level
+    // holds no node its parent level does not name once the merge drops the
+    // listed ones, and leaves the loose levels.
+    let tight = reach == Reach::Whole && scratch.unnamed_exact && scratch.unnamed.len() == listed_unnamed;
+    if tight && !drops {
+        unlist_loose(tdd, t1);
+    }
     if !found {
         if !drops {
             return Ok(Contracted::Nothing);
@@ -190,6 +198,9 @@ fn contract_child(
         // reporting progress would spin the sibling-pair loop.
         return Ok(Contracted::Nothing);
     }
+    if tight && drops {
+        unlist_loose(tdd, t1);
+    }
     if lists || fused_but {
         note_survivors(t1, scratch);
     }
@@ -205,6 +216,17 @@ fn contract_child(
         }
     }
     Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
+}
+
+/// Take `t1` off the loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)),
+/// where they are known: its parent level names every node of it.
+fn unlist_loose(tdd: &mut Tdd, t1: VtreeIdx) {
+    if tdd.dirty.loose().is_some_and(|loose| loose.contains(&t1.0))
+        && let Some(mut loose) = tdd.dirty.take_loose()
+    {
+        loose.retain(|&t| t != t1.0);
+        tdd.dirty.set_loose(Some(loose));
+    }
 }
 
 /// A listed search must find every group a search of the whole level does:
