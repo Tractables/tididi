@@ -330,8 +330,12 @@ pub(crate) fn apply_sparse_level(
 /// growth by doubling. A level that holds more grows from there. Seeding
 /// at the two operands' sizes together was no faster and left its slack
 /// with the result, a third more peak memory on some programs. The pair
-/// arena's seed is charged to the output-pair meter, as
-/// `open_level_arenas` charges the dense route's.
+/// arena takes one pair more: a walk pushes a node's first pair before it
+/// knows the node holds one, and takes it back into the node's word, so a
+/// level of f's pairs ending in nodes of one pair would otherwise double its
+/// full arena for that push, and could not take f's arena
+/// ([`Made::F`]). The pair arena's seed is charged to the output-pair
+/// meter, as `open_level_arenas` charges the dense route's.
 fn seed_output(
     eng: &Engine,
     f: &TddLevel,
@@ -349,7 +353,7 @@ fn seed_output(
     }
     let arena = level.pairs.stored_mut();
     let before = arena.capacity();
-    lim.reserve_exact(arena, pairs.saturating_sub(arena.len()))?;
+    lim.reserve_exact(arena, (pairs + 1).saturating_sub(arena.len()))?;
     lim.charge_output_pairs(arena.capacity() - before);
     let stored = level.nodes.stored_mut();
     lim.reserve_exact(stored, nodes.saturating_sub(stored.len()))?;
