@@ -162,9 +162,11 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// The levels a plain conjunction built as an operand holds its level,
     /// node for node and pair for pair: those the sparse leaf arm made f's
     /// ([`Made::F`](super::Made::F), [`Made::CopiedF`](super::Made::CopiedF)),
-    /// and those found equal to an operand's once built. The nodes of their
-    /// children have there the contexts the operand's nodes have.
-    pub(super) as_operand: Vec<usize>,
+    /// and those found equal to an operand's once built, each with the
+    /// operand, 1 for f and 2 for g. The nodes of their children have there
+    /// the contexts the operand's nodes have, and are named where the
+    /// operand's are.
+    pub(super) as_operand: Vec<(usize, u8)>,
     /// Whether the sweep must give its operands back when refused: it drops
     /// no operand level, and `carried` and `lent` go back to the operands.
     pub(super) restoring: bool,

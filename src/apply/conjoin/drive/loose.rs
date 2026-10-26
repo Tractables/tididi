@@ -39,6 +39,13 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// writes unless one side is no node: `(a, b)` is one, and `(x, y)` is one
 /// by (2). So `p`'s product `(i, j)` is a node, and it names `(a, b)`.
 ///
+/// A level `c` whose parent `p` the conjunction built as an operand holds
+/// its level `p` ([`ApplyRun::as_operand`]) is also tight when that
+/// operand's level `c` is tight in it and the result's level `c` has as many
+/// nodes as the operand's. Proof. `p`'s pairs are the operand's, index for
+/// index, so the nodes of `c` they name are those the operand's level `p`
+/// names of its level `c`: all of its nodes, which are as many as `c`'s.
+///
 /// Every other level under a built one is listed, for the prune to read
 /// what it needs of it.
 ///
@@ -105,8 +112,19 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
             true => run.levels[s.idx()].nodes().len() == run.f_widths[s.idx()] * run.g_widths[s.idx()],
             false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
         };
+        // The operand the conjunction built `p` as, if any.
+        let as_operand = run.as_operand.binary_search_by_key(&p.idx(), |e| e.0).ok().map(|i| run.as_operand[i].1);
+        let named_as_operand = |c: VtreeIdx| {
+            as_operand.is_some_and(|by| {
+                let widths = if by == 1 { &run.f_widths[..] } else { &run.g_widths[..] };
+                loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
+            })
+        };
         for (c, s) in [(left, right), (right, left)] {
-            if internal(c) && !(tight_in(c, 1, run.f_widths) && tight_in(c, 2, run.g_widths) && kills_none(s)) {
+            if internal(c)
+                && !(tight_in(c, 1, run.f_widths) && tight_in(c, 2, run.g_widths) && kills_none(s))
+                && !named_as_operand(c)
+            {
                 loose.push(c.0);
             }
         }

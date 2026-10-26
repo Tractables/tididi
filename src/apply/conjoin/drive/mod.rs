@@ -264,13 +264,13 @@ fn build_level(
 /// when its parent is built.
 fn note_operand_level(run: &mut ApplyRun, f: &Tdd, g: &Tdd, vtree: &crate::vtree::Vtree, t: VtreeIdx) {
     let ti = t.idx();
-    if run.as_operand.last() == Some(&ti) || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t) {
+    if run.as_operand.last().is_some_and(|e| e.0 == ti) || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t) {
         return;
     }
     let level = &run.levels[ti];
     let of_f = same_pairs(level, f.level(t));
     if of_f || same_pairs(level, g.level(t)) {
-        run.as_operand.push(ti);
+        run.as_operand.push((ti, if of_f { 1 } else { 2 }));
         super::note_as_operand(ti, of_f);
     }
 }
@@ -569,6 +569,9 @@ pub(crate) fn apply_and_core(
         // factor joined to a large diagram gained the large one's levels,
         // which made the prune after the join walk it. Listing every level
         // the conjunction built made that prune walk every one of them.
+        // In level order, for the lookups of the loose levels and the
+        // contraction's worklists.
+        run.as_operand.sort_unstable();
         let loose = operand_loose
             .map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
         // The levels it built are also all it changed, and so all the seat
@@ -583,9 +586,8 @@ pub(crate) fn apply_and_core(
         // the operand's contexts there, which the operand, not owing the
         // contraction the level, holds once each; where it owes it, so does
         // the result.
-        run.as_operand.sort_unstable();
         let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
-            run.as_operand.binary_search(&t.idx()).is_err()
+            run.as_operand.binary_search_by_key(&t.idx(), |e| e.0).is_err()
                 && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
         });
         let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());

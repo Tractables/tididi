@@ -80,7 +80,7 @@ pub(super) fn run_sparse_level(
         run.lent.push(ti);
     }
     if made != Made::Written {
-        run.as_operand.push(ti);
+        run.as_operand.push((ti, 1));
         crate::apply::conjoin::note_as_operand(ti, true);
     }
     debug_assert!(

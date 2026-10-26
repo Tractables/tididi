@@ -189,3 +189,65 @@ fn a_refused_conjunction_gives_f_the_levels_moved_from_it_back() {
     eprintln!("refusals after a level moved from f: {refused_after}");
     assert!(refused_after > 0, "expected refusals after a level moved from f, got none");
 }
+
+/// Whether every node of the internal level `c` of `out` is named by a pair
+/// of its parent level.
+fn named_whole(out: &Tdd, c: crate::vtree::VtreeIdx) -> bool {
+    let p = out.vtree.node(c).parent().expect("a level below the root");
+    let left = out.vtree.children(p).0 == c;
+    let mut named = vec![false; out.levels[c.idx()].slot_count()];
+    let dec = crate::diagram::ChildDecoder::structural();
+    for (_, pairs) in out.levels[p.idx()].internal_inputs_iter() {
+        for pair in pairs {
+            named[dec.node(if left { pair.left } else { pair.right }).0 as usize] = true;
+        }
+    }
+    named.iter().all(|&n| n)
+}
+
+/// A level under one built as an operand holds it is left off the loose
+/// levels where the operand's is tight and it has as many nodes: every
+/// level the result does not list is tight, and some under levels built as
+/// an operand are not listed.
+#[test]
+fn a_level_under_one_built_as_an_operand_is_tight_where_the_operand_s_is() {
+    let mut unlisted = 0;
+    for nvars in [10, 14] {
+        for (what, vtree, f, g) in cases(nvars, 0x7167_0a5f + u64::from(nvars)) {
+            let eng = Engine::new();
+            let (mut f, mut g) = (f, g);
+            eng.minimize(&mut f).unwrap();
+            eng.minimize(&mut g).unwrap();
+            // A minimized diagram has no loose level.
+            f.dirty.set_loose(Some(Vec::new()));
+            g.dirty.set_loose(Some(Vec::new()));
+            for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
+                for sparse in [true, false] {
+                    take_as_operand();
+                    let out = if sparse {
+                        conjoin(a, b).0
+                    } else {
+                        Engine::new().and(a.clone(), b.clone()).unwrap()
+                    };
+                    let found = take_as_operand();
+                    if out.is_zero() {
+                        continue;
+                    }
+                    let loose = out.dirty.loose().expect("both operands' loose levels are known").to_vec();
+                    for (t, _, _) in vtree.internal_bottomup() {
+                        if t == vtree.root() || loose.contains(&t.0) {
+                            continue;
+                        }
+                        assert!(named_whole(&out, t), "{what}, {order}, sparse {sparse}: level {} is not listed loose but holds a node its parent does not name", t.0);
+                    }
+                    for &(p, _) in &found {
+                        let (l, r) = vtree.children(crate::vtree::VtreeIdx(p));
+                        unlisted += [l, r].iter().filter(|c| !vtree.node(**c).is_leaf() && !loose.contains(&c.0)).count();
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("levels under levels built as an operand, not listed loose: {unlisted}");
+    assert!(unlisted > 0, "expected levels under levels built as an operand left off the loose levels");
+}
