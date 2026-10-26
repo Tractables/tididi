@@ -345,6 +345,38 @@ fn a_one_pair_level_is_rewritten_inline() {
 /// A level of one pair a node, its pairs inline, fits the description of
 /// its pairs, its words compared in runs; with one node's pair moved it
 /// fits only a description of its pairs.
+/// A level of one pair a node whose pairs step on node 0's by one step,
+/// either way on a side and none at all, fits the description of one node
+/// digit, in the normal form the reads of the digits take; with one node's
+/// pair moved, it fits what the reads find, or none.
+#[test]
+fn a_one_step_level_fits_one_node_digit() {
+    let mut rng = Lcg::new(0x1d1e_0033);
+    let mut fitted = 0;
+    for n in [2usize, 3, 255, 256, 257, 1000, 4099] {
+        for _ in 0..6 {
+            let side = |rng: &mut Lcg| -> (i64, i64) {
+                let d = rng.below(9) as i64 - 4;
+                let first = if d < 0 { -d * (n as i64 - 1) } else { 0 } + rng.below(50) as i64;
+                (first, d)
+            };
+            let ((l, dl), (r, dr)) = (side(&mut rng), side(&mut rng));
+            let pairs: Pairs = (0..n as i64).map(|i| vec![(l + i * dl, r + i * dr)]).collect();
+            let d = ImplicitLevel::fit(&level_of(&pairs)).expect("a one-step level fits");
+            assert_eq!(described(&d), pairs);
+            assert_eq!(d, d.read_normal(), "{n} nodes stepping by {:?}", (dl, dr));
+            fitted += 1;
+            let mut moved = pairs.clone();
+            let i = rng.below(n as u64) as usize;
+            moved[i][0].1 += 1 + rng.below(3) as i64;
+            if let Some(d) = ImplicitLevel::fit(&level_of(&moved)) {
+                assert_eq!(described(&d), moved, "node {i} of {n} moved");
+            }
+        }
+    }
+    assert!(fitted > 40);
+}
+
 #[test]
 fn a_one_pair_level_fits_by_its_words() {
     let mut rng = Lcg::new(0x1d1e_0032);

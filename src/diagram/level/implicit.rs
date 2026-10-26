@@ -10,7 +10,7 @@
 //! arena nor its nodes, which the description implies, and nothing writes
 //! them out.
 
-use crate::diagram::primitives::{ChildPair, EncodedChildRef, EncodedNode};
+use crate::diagram::primitives::{ChildPair, EncodedChildRef, EncodedNode, NodeKind};
 use crate::diagram::ChildSide;
 use crate::limits::{Limits, OperationError, Transient};
 
@@ -330,6 +330,15 @@ impl ImplicitLevel {
             return Err(Some(i));
         }
         let first = slots(&first_pairs[0]);
+        // A level of one pair a node, its pairs inline, whose nodes' pairs
+        // step on node 0's by node 1's less node 0's: its words compared in
+        // one pass with those of the description of one node digit, which
+        // is what the reads below find and check on it.
+        if per_node == 1 && level.pairs.stored_vec_len() == 0
+            && let Some(fitted) = Self::fit_one_step(level.nodes.stored(), first)
+        {
+            return Ok(fitted);
+        }
         let offset = |m: usize| {
             let (l, r) = slots(&first_pairs[m]);
             Some((l - first.0, r - first.1))
@@ -362,6 +371,38 @@ impl ImplicitLevel {
         } else {
             Err(None)
         }
+    }
+
+    /// The description of the nodes `words`, two or more, each holding one
+    /// pair inline, node 0's at the slots `first`, where node `i`'s pair is
+    /// node 0's stepped `i` times by node 1's less node 0's, every slot in
+    /// reach of a stored side: one node digit, of radix the nodes. Read in
+    /// one pass of word compares, a run of words at a time.
+    fn fit_one_step(words: &[EncodedNode], first: (i64, i64)) -> Option<ImplicitLevel> {
+        let n = words.len();
+        let second = match words.get(1)?.kind() {
+            NodeKind::Inline(p) => slots(&p),
+            _ => return None,
+        };
+        let step = (second.0 - first.0, second.1 - first.1);
+        let last = |s: i64, d: i64| i128::from(s) + (n as i128 - 1) * i128::from(d);
+        let fits = |s: i64, d: i64| (0..1i128 << 31).contains(&last(s, d));
+        if !fits(first.0, step.0) || !fits(first.1, step.1) {
+            return None;
+        }
+        // Every slot from node 0's to the last node's fits a side, so the
+        // wrapping sums are the slots and an inline word matches only its
+        // own pair.
+        let (dl, dr) = (step.0 as u32, step.1 as u32);
+        let mut at = (first.0 as u32, first.1 as u32);
+        let same = words.chunks(RUN_PAIRS).all(|run| {
+            run.iter().fold(true, |same, w| {
+                let hit = *w == inline_at(at, (0, 0));
+                at = (at.0.wrapping_add(dl), at.1.wrapping_add(dr));
+                same & hit
+            })
+        });
+        same.then(|| ImplicitLevel::assemble(n, 1, first, &[], &[(n, step)]))
     }
 
     /// Whether `f` gives distinct slots for the distinct child slots the
