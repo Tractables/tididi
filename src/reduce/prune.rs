@@ -1540,25 +1540,9 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
 /// for [`mark_sides`] to mark it as bytes.
 const STAGE_SLOTS_PER_NODE: usize = 2;
 
-// A test counts the sides of stored levels marked as bytes and as bits.
+// A test counts the reads and has a settle read every level node by node.
 #[cfg(test)]
-thread_local! {
-    pub(super) static SIDES_MARKED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
-}
-
-// A test counts the stored levels a settle read whole and node by node,
-// and the implicit levels it read off their digits.
-#[cfg(test)]
-thread_local! {
-    pub(super) static SETTLE_READS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
-}
-
-// A test has a settle read every level node by node, to compare the work
-// the other reads charge with it.
-#[cfg(test)]
-thread_local! {
-    pub(super) static SETTLE_BY_NODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+use super::tests::{note_settle_read, note_sides_marked, settle_by_node};
 
 /// Whether a settle reads every level node by node: never, outside a test.
 #[cfg(not(test))]
@@ -1567,32 +1551,15 @@ const fn settle_by_node() -> bool {
     false
 }
 
-#[cfg(test)]
-fn settle_by_node() -> bool {
-    SETTLE_BY_NODE.with(std::cell::Cell::get)
-}
-
 /// How a settle read a level: whole (0), node by node (1) or off its digits (2).
+#[cfg(not(test))]
 #[inline(always)]
-fn note_settle_read(how: usize) {
-    #[cfg(test)]
-    SETTLE_READS.with(|c| {
-        let mut n = c.get();
-        n[how] += 1;
-        c.set(n);
-    });
-    let _ = how;
-}
+fn note_settle_read(_how: usize) {}
 
+/// The sides of a stored level marked as bytes and as bits.
+#[cfg(not(test))]
 #[inline(always)]
-fn note_sides_marked(bytes: u64, bits: u64) {
-    #[cfg(test)]
-    SIDES_MARKED.with(|c| {
-        let [a, b] = c.get();
-        c.set([a + bytes, b + bits]);
-    });
-    let _ = (bytes, bits);
-}
+fn note_sides_marked(_bytes: u64, _bits: u64) {}
 
 /// [`mark_sides`] on a stored level: each side of `LEFT` and `RIGHT` that
 /// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots

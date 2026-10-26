@@ -42,3 +42,32 @@ mod twins;
 mod twins_budget;
 mod twins_inline;
 mod whole_diagrams;
+
+// The prune's test hooks: the sides of stored levels marked as bytes and as
+// bits, the stored levels a settle read whole and node by node and the
+// implicit levels it read off their digits, and whether a settle reads every
+// level node by node, to compare the work the other reads charge with it.
+thread_local! {
+    static SIDES_MARKED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    static SETTLE_READS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    static SETTLE_BY_NODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn note_sides_marked(bytes: u64, bits: u64) {
+    SIDES_MARKED.with(|c| {
+        let [a, b] = c.get();
+        c.set([a + bytes, b + bits]);
+    });
+}
+
+pub(super) fn note_settle_read(how: usize) {
+    SETTLE_READS.with(|c| {
+        let mut n = c.get();
+        n[how] += 1;
+        c.set(n);
+    });
+}
+
+pub(super) fn settle_by_node() -> bool {
+    SETTLE_BY_NODE.with(std::cell::Cell::get)
+}

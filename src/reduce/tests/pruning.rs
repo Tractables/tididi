@@ -114,7 +114,7 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x7b31_c4e9);
     let (mut cases, mut seeded, mut wide_losses) = (0usize, 0usize, 0usize);
-    let sides_before = crate::reduce::prune::SIDES_MARKED.with(std::cell::Cell::get);
+    let sides_before = super::SIDES_MARKED.with(std::cell::Cell::get);
     for shape in [CnfShape { clauses: 16, width: 6 }, CnfShape { clauses: 32, width: 8 }] {
         for (_name, vtree) in vtree_shapes(20) {
             for _ in 0..6 {
@@ -164,7 +164,7 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     assert!(cases > 40, "expected a corpus, got {cases} cases");
     assert!(seeded > 40, "expected the walk from the root on most cases, got {seeded}");
     assert!(wide_losses > 30, "expected losses on levels of several words, got {wide_losses}");
-    let sides = crate::reduce::prune::SIDES_MARKED.with(std::cell::Cell::get);
+    let sides = super::SIDES_MARKED.with(std::cell::Cell::get);
     let (bytes, bits) = (sides[0] - sides_before[0], sides[1] - sides_before[1]);
     assert!(bytes > 100 && bits > 100, "expected sides marked both ways, got {bytes} as bytes and {bits} as bits");
 }
@@ -376,7 +376,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     let mut rng = Lcg::new(0x9e1f_2d47);
     let (mut cases, mut loose, mut cleared, mut settled_away) = (0usize, 0usize, 0usize, 0usize);
     let (mut seeded, mut nested) = (0usize, 0usize);
-    let reads_before = crate::reduce::prune::SETTLE_READS.with(std::cell::Cell::get);
+    let reads_before = super::SETTLE_READS.with(std::cell::Cell::get);
     let mut check = |conj: crate::Tdd, operands: [&[u32]; 2], what: &str| {
         if conj.is_zero() {
             return;
@@ -404,11 +404,11 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         assert_eq!(settled_junk, settled, "{what}: a pair no node names settled a level");
         // The whole read, and the read of an implicit level off its digits,
         // charge what the read node by node does.
-        let by_node_before = crate::reduce::prune::SETTLE_BY_NODE.with(|c| c.replace(true));
+        let by_node_before = super::SETTLE_BY_NODE.with(|c| c.replace(true));
         let start = eng.limits().work_units();
         let settled_by_node = settle_loose(eng, &conj, &listed);
         let by_node = eng.limits().work_units() - start;
-        crate::reduce::prune::SETTLE_BY_NODE.with(|c| c.set(by_node_before));
+        super::SETTLE_BY_NODE.with(|c| c.set(by_node_before));
         assert_eq!(settled_by_node.unwrap(), settled, "{what}: the read node by node settled another list");
         let start = eng.limits().work_units();
         settle_loose(eng, &conj, &listed).unwrap();
@@ -486,7 +486,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
     assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
-    let reads = crate::reduce::prune::SETTLE_READS.with(std::cell::Cell::get);
+    let reads = super::SETTLE_READS.with(std::cell::Cell::get);
     let [whole, by_node, digits] = [0, 1, 2].map(|k| reads[k] - reads_before[k]);
     assert!(
         whole > 400 && by_node > 400 && digits > 100,
