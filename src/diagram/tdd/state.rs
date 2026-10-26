@@ -360,8 +360,9 @@ pub(crate) struct Dirty {
     /// The levels that may hold a node no node of their parent level names,
     /// reachable or not; every other level's nodes are each named by some
     /// node of its parent level. `None` when that is not known, which is
-    /// what every diagram starts as and what any edit makes it. A prune
-    /// leaves none, and it walks only as much as these levels need.
+    /// what every diagram starts as and what any edit makes it, unless the
+    /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
+    /// prune leaves none, and it walks only as much as these levels need.
     loose: Option<Vec<u32>>,
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
@@ -566,6 +567,14 @@ impl Dirty {
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
         self.loose = levels;
+    }
+
+    /// Take the loose levels, leaving them unknown: for an edit that knows
+    /// the levels it leaves loose, which puts them back with
+    /// [`set_loose`](Self::set_loose) after its invalidations.
+    #[inline]
+    pub(crate) fn take_loose(&mut self) -> Option<Vec<u32>> {
+        self.loose.take()
     }
 
     /// List `level` loose where the loose levels are known: an edit dropped

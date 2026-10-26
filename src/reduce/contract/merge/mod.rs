@@ -149,6 +149,19 @@ pub(super) fn contract_twins(
     // The parent's fusion record stands unless a group redirects
     // ([`redirects`]).
     // A level that only lost nodes no pair names keeps its fusion record.
+    //
+    // Without a marginal level the loose levels stay known
+    // ([`Dirty::loose`](crate::diagram::Dirty::loose)): no node its parent
+    // level named before the merge is left unnamed by it. A survivor takes
+    // its members' pairs, so their children stay named; a parent pair
+    // dropped for naming a member has its sibling named beside the
+    // survivor, twins having equal contexts; and the parent keeps its
+    // nodes. Only the children of the dropped unnamed nodes can lose their
+    // last name, and are listed loose after the rebuild.
+    let loose = match diagram_marginal {
+        true => None,
+        false => tdd.dirty.take_loose(),
+    };
     if merged_members == 0 {
         tdd.invalidate_shrunk(t1);
     } else {
@@ -159,6 +172,7 @@ pub(super) fn contract_twins(
     } else {
         tdd.invalidate_shrunk(parent);
     }
+    tdd.dirty.set_loose(loose);
     tdd.levels.mark_changed(parent);
 
     // A repeated pair is legal where a level of the diagram is marginal, and

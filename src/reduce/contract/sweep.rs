@@ -432,7 +432,47 @@ fn sweep_twins(
     // two levels searched again by the next reduction, for nothing. The
     // other passes' entries stay.
     tdd.dirty.clear(Pass::Contract);
+    #[cfg(debug_assertions)]
+    debug_assert_loose_listed(tdd);
     Ok(())
+}
+
+/// Where the diagram knows its loose levels
+/// ([`Dirty::loose`](crate::diagram::Dirty::loose)), each structural
+/// internal level under a structural internal parent that holds a node no
+/// pair of the parent level names, the output aside, is listed. Debug
+/// builds check it after each sweep.
+#[cfg(debug_assertions)]
+fn debug_assert_loose_listed(tdd: &Tdd) {
+    let Some(loose) = tdd.dirty.loose() else { return };
+    if tdd.is_zero() {
+        return;
+    }
+    let dec = crate::diagram::ChildDecoder::structural();
+    for (p, left, right) in tdd.vtree.internal_bottomup() {
+        if !tdd.is_structural_internal(p) {
+            continue;
+        }
+        for (c, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
+            if !tdd.is_structural_internal(c) || loose.contains(&c.0) {
+                continue;
+            }
+            let mut named = vec![false; tdd.levels[c.idx()].slot_count()];
+            tdd.levels[p.idx()].for_each_node_pair(|_, pair| {
+                let r = match side {
+                    ChildSide::Left => pair.left,
+                    ChildSide::Right => pair.right,
+                };
+                named[dec.node(r).0 as usize] = true;
+            });
+            if tdd.output.vtree == c {
+                named[tdd.output.local.0 as usize] = true;
+            }
+            if let Some(n) = named.iter().position(|&n| !n) {
+                panic!("level {} is not listed loose, but no pair of level {} names its node {n}", c.0, p.0);
+            }
+        }
+    }
 }
 
 /// No child of a level in `parents` that the contraction worklist does not
