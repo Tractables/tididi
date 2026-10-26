@@ -1045,6 +1045,14 @@ fn lend_forced_off() -> bool {
 #[inline(always)]
 fn note_lent() {}
 
+// A test lists the levels the sparse leaf arm made f's as f holds them.
+#[cfg(test)]
+use tests::note_as_f;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_as_f(_t: usize) {}
+
 // A test lists the route each level took.
 #[cfg(test)]
 use tests::note_route;

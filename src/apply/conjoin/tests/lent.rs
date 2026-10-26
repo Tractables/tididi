@@ -1,12 +1,13 @@
 //! The sparse leaf arm's levels whose nodes are f's as f stores them, moved
 //! from f instead of written: the same diagram, stored alike, for the same
 //! work, and both operands given back as they were on a refusal after such
-//! a level.
+//! a level; and those levels, moved or written, owed no twin search.
 
 use std::sync::Arc;
 
 use super::*;
 use crate::Engine;
+use crate::diagram::Pass;
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
 use crate::test_helpers::{compile_clauses_on, rand_cnf, same_storage, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::Vtree;
@@ -64,6 +65,42 @@ fn a_level_moved_from_f_is_the_level_written() {
     let lent = lent_levels() - before;
     eprintln!("levels moved from f: {lent} over {conjunctions} conjunctions");
     assert!(lent > 0, "expected levels moved from f, got none over {conjunctions} conjunctions");
+}
+
+/// A level the leaf arm made f's as f holds it is owed no twin search: the
+/// result leaves it off the contraction's worklist unless an operand owed
+/// it, and minimizing the result reaches the diagram minimizing it with
+/// every level owed reaches, stored alike.
+#[test]
+fn a_level_made_f_s_is_owed_no_twin_search() {
+    let mut left_off = 0;
+    for nvars in [10, 14] {
+        for (what, vtree, f, g) in cases(nvars, 0x5e1f_0a5f + u64::from(nvars)) {
+            for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
+                take_as_f();
+                let (out, _) = conjoin(a, b);
+                let as_f = take_as_f();
+                let owed = |t: &Tdd| t.dirty.clone().take(Pass::Contract);
+                let (contract, operands) = (owed(&out), [owed(a), owed(b)].concat());
+                for t in &as_f {
+                    assert!(
+                        !contract.contains(t) || operands.contains(t),
+                        "{what}, {order}: level {t}, made f's, is owed a twin search",
+                    );
+                }
+                left_off += as_f.len();
+                let eng = Engine::new();
+                let mut reduced = out.clone();
+                eng.minimize(&mut reduced).unwrap();
+                let mut oracle = out;
+                oracle.dirty.requeue(Pass::Contract, vtree.internal_bottomup().map(|(t, _, _)| t.0));
+                eng.minimize(&mut oracle).unwrap();
+                assert!(same_storage(&reduced, &oracle), "{what}, {order}: minimized from the owed levels, not the diagram minimized from every level");
+            }
+        }
+    }
+    eprintln!("levels made f's: {left_off}");
+    assert!(left_off > 0, "expected levels made f's, got none");
 }
 
 /// What a refused conjunction gave back of an operand besides its

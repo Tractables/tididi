@@ -641,6 +641,22 @@ pub(super) fn lent_levels() -> u64 {
 }
 
 thread_local! {
+    /// The levels the sparse leaf arm made f's as f holds them on this
+    /// thread since [`take_as_f`] last took them.
+    static AS_F: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(super) fn note_as_f(t: usize) {
+    AS_F.with(|c| c.borrow_mut().push(t as u32));
+}
+
+/// The levels the sparse leaf arm made f's as f holds them on this thread
+/// since the last call.
+pub(super) fn take_as_f() -> Vec<u32> {
+    AS_F.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
+thread_local! {
     /// Whether the relabelling route is closed on this thread ([`no_relabel`]).
     static NO_RELABEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The levels on this thread the relabelling route took: moved whole,

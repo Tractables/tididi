@@ -79,6 +79,10 @@ pub(super) fn run_sparse_level(
     if made == Made::F && run.restoring {
         run.lent.push(ti);
     }
+    if made != Made::Written {
+        run.as_f.push(ti);
+        crate::apply::conjoin::note_as_f(ti);
+    }
     debug_assert!(
         priced.is_none_or(|p| p.admits(built_pairs(&run.levels[ti]))),
         "level {ti} holds {} pairs where its count found {priced:?}",

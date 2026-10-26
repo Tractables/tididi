@@ -57,6 +57,10 @@ pub(crate) enum Made {
     /// its nodes and its arena as the level would, node for node and pair
     /// for pair. The caller moves f's nodes and arena into the level.
     F,
+    /// The level's nodes and pairs, written as f's level holds them, node for
+    /// node, each node's pairs in order: each product is its f node's, and the
+    /// level held nothing before.
+    CopiedF,
 }
 
 /// Where the leaf arm reads the inner side's product from when the inner
@@ -608,9 +612,11 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     let stored = f_level.stored().expect("the walk reads f's stored nodes");
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
+    let empty = start == 0 && level.nodes.stored().is_empty();
     let copied = if DENSE {
         match copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, dense, level, start, out, &mut ticker)? {
             Copied::Level => return Ok(Made::F),
+            Copied::Nodes(made) if empty && made == stored.nodes().len() => return Ok(Made::CopiedF),
             Copied::Nodes(made) => made,
         }
     } else {

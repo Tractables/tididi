@@ -528,9 +528,13 @@ pub(crate) fn apply_and_core(
         built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
         // The contraction is owed the built levels under which the
         // conjunction can have given two nodes equal contexts
-        // ([`adds_no_twins`]); the leaf contraction every built level.
-        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) =
-            built.iter().partition(|&&t| !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t));
+        // ([`adds_no_twins`]); the leaf contraction every built level. A
+        // level made f's as f holds it gives the nodes of its children f's
+        // contexts there, which f, not owing the contraction the level, holds
+        // once each; where f owes it, so does the result.
+        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
+            !run.as_f.contains(&t.idx()) && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
+        });
         let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));
         assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
