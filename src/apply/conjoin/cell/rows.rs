@@ -977,7 +977,7 @@ fn single_rows<const W: usize>(
 /// grid's claim reserved where they reach past its end, any gap before them
 /// `NO_PRODUCT`.
 #[inline(always)]
-fn write_cells<const W: usize>(slab: &mut Vec<u32>, start: usize, cells: [u32; W]) {
+pub(super) fn write_cells<const W: usize>(slab: &mut Vec<u32>, start: usize, cells: [u32; W]) {
     let end = start + W;
     let len = slab.len();
     if len >= end {

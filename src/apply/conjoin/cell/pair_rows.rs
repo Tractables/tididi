@@ -127,9 +127,12 @@ where
     }
     super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let rows = PairRows { f_level, ctx, f_width, columns: &columns };
-    match one_pair {
-        true => pair_rows_of::<true, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
-        false => pair_rows_of::<false, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
+    // A level of two one-pair columns keeps them in registers and writes
+    // each row's cells once.
+    match (one_pair, right_width) {
+        (true, 2) => pair_rows_of::<true, 2, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
+        (true, _) => pair_rows_of::<true, 0, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
+        (false, _) => pair_rows_of::<false, 0, _, _, _>(eng, rows, f_scratch, slab, left, right, sink),
     }
 }
 
@@ -162,8 +165,13 @@ struct PairRows<'a> {
     columns: &'a Columns<'a>,
 }
 
-/// The row loop of [`pair_rows`], `ONE` where every column holds one pair.
-fn pair_rows_of<const ONE: bool, L, R, S>(
+/// The row loop of [`pair_rows`], `ONE` where every column holds one pair,
+/// on a level of `W` columns, or of any number for `W = 0`.
+///
+/// With `W` columns, all of one pair, a row's cells are found and then
+/// written once, a node index or `NO_PRODUCT` each, in place of the reset
+/// and the writes of its live cells.
+fn pair_rows_of<const ONE: bool, const W: usize, L, R, S>(
     eng: &Engine,
     rows: PairRows<'_>,
     f_scratch: &mut Vec<ChildPair>,
@@ -182,7 +190,12 @@ where
     let (g_flat, tabled) = (*g_flat, *tabled);
     let lim = eng.limits();
     let right_width = ctx.right_width;
+    debug_assert!(W == 0 || (ONE && W == right_width));
+    let width = if W == 0 { right_width } else { W };
     let pairs_in = |s: u64| -> u64 {
+        if W > 0 {
+            return (0..W).map(|j| s >> j & 1).sum();
+        }
         if tabled {
             return u64::from(charge_of[s as usize]);
         }
@@ -196,6 +209,8 @@ where
         }
         n
     };
+    // The columns' pairs of a level of `W` one-pair columns.
+    let g: [ChildPair; W] = std::array::from_fn(|j| g_flat[j]);
     let all = ROW_LIVE | low(g_flat.len());
     let (left_words, right_words) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
     debug_assert!(!left.kills() || ctx.sides.left.reach.iter().zip(g_flat).all(|(&r, q)| r == 1u128 << q.left.0));
@@ -223,9 +238,9 @@ where
 
     // The resets of `run_level_rows`: one fill of a small grid, a row at a
     // time on a larger one.
-    let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if slab_fill {
-        let end = ctx.output_grid_base + f_width * right_width;
+    let slab_fill = f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    if W == 0 && slab_fill {
+        let end = ctx.output_grid_base + f_width * width;
         if !extend_slab(slab, ctx.output_grid_base, end) {
             mark_dead(&mut slab[ctx.output_grid_base..end]);
         }
@@ -242,11 +257,12 @@ where
         while next < f_width {
             let i = next;
             next += 1;
-            let row_base = ctx.output_grid_base + i * right_width;
-            let fresh = extend_slab(slab, row_base, row_base + right_width);
-            let node_idx = &mut slab[..];
-            if !slab_fill && !fresh {
-                mark_dead(&mut node_idx[row_base..row_base + right_width]);
+            let row_base = ctx.output_grid_base + i * width;
+            if W == 0 {
+                let fresh = extend_slab(slab, row_base, row_base + width);
+                if !slab_fill && !fresh {
+                    mark_dead(&mut slab[row_base..row_base + width]);
+                }
             }
             let f_pairs = match f_described {
                 Some(k) => &f_scratch[i * k..(i + 1) * k],
@@ -255,6 +271,9 @@ where
             // A dead f node's row stays dead, as does a row with a side
             // without a live child row.
             if f_pairs.is_empty() {
+                if W > 0 {
+                    write_cells(slab, row_base, [NO_PRODUCT; W]);
+                }
                 continue;
             }
             // Each side's fold, the g pairs some candidate of the row survives
@@ -276,6 +295,9 @@ where
                 }
             }
             if l & r & ROW_LIVE == 0 {
+                if W > 0 {
+                    write_cells(slab, row_base, [NO_PRODUCT; W]);
+                }
                 continue;
             }
             // The cells the masks enter, charged with the row's width; the
@@ -283,12 +305,34 @@ where
             let entered = reached(l) & reached(r);
             let n1 = f_pairs.len();
             debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
-            poll.poll(n1 as u64 * pairs_in(entered) + right_width as u64)?;
+            poll.poll(n1 as u64 * pairs_in(entered) + width as u64)?;
             let live = live & !ROW_LIVE;
             let ands = if few { &few_ands[..n1] } else { &many[..] };
             let mut cells = reached(live);
             debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
-            if let Some(o) = out.as_mut().filter(|o| o.has_room(n1 * g_flat.len(), right_width)) {
+            if let Some(o) = out.as_mut().filter(|o| o.has_room(n1 * g_flat.len(), width)) {
+                if W > 0 {
+                    let mut row = [NO_PRODUCT; W];
+                    for (j, (cell, q)) in row.iter_mut().zip(&g).enumerate() {
+                        if cells >> j & 1 == 0 {
+                            continue;
+                        }
+                        for (p, &and) in f_pairs.iter().zip(ands) {
+                            if and >> j & 1 != 0 {
+                                // Safety: the arenas have room for a pair an
+                                // f pair and a g pair.
+                                unsafe { o.push(left.get(slab, p.left.0, q.left.0), right.get(slab, p.right.0, q.right.0)) };
+                            }
+                        }
+                        // Safety: the arenas have room for a node a column.
+                        if let Some(node) = unsafe { o.close_node() } {
+                            *cell = node;
+                        }
+                    }
+                    write_cells(slab, row_base, row);
+                    continue;
+                }
+                let node_idx = &mut slab[..];
                 while cells != 0 {
                     let j = cells.trailing_zeros() as usize;
                     cells &= cells - 1;
@@ -318,6 +362,10 @@ where
                 continue;
             }
             drop(out);
+            if W > 0 {
+                write_cells(slab, row_base, [NO_PRODUCT; W]);
+            }
+            let node_idx = &mut slab[..];
             while cells != 0 {
                 let j = cells.trailing_zeros() as usize;
                 cells &= cells - 1;

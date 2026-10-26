@@ -231,8 +231,22 @@ impl<'a> ArenaRow<'a> {
     /// [`has_room`](Self::has_room) admitted.
     #[inline(always)]
     pub(crate) unsafe fn close(&mut self, node_idx: &mut [u32], grid_pos: usize) {
+        // Safety: as the caller's.
+        if let Some(node) = unsafe { self.close_node() } {
+            node_idx[grid_pos] = node;
+        }
+    }
+
+    /// [`close`](Self::close), the node's index returned for the caller to
+    /// record, `None` for a cell of no survivor.
+    ///
+    /// # Safety
+    ///
+    /// As [`close`](Self::close)'s.
+    #[inline(always)]
+    pub(crate) unsafe fn close_node(&mut self) -> Option<u32> {
         let node = match self.cell {
-            0 => return,
+            0 => return None,
             // Safety: the slot at `len` holds the cell's one survivor.
             1 => EncodedNode::inline(unsafe { self.out.add(self.len).read() }),
             n => {
@@ -246,8 +260,8 @@ impl<'a> ArenaRow<'a> {
         // Safety: the node arena's capacity holds a node for every cell the
         // row was opened or found room for, and the caller closes no more.
         unsafe { self.node_out.add(self.node_len).write(node) };
-        node_idx[grid_pos] = self.node_len as u32;
         self.node_len += 1;
+        Some((self.node_len - 1) as u32)
     }
 
     /// A cell of the one survivor `(lc, rc)`, closed into the level's next
