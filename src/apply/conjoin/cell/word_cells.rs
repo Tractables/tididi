@@ -54,8 +54,8 @@ const MASKED_LIVE_SHARE: u128 = 10;
 /// candidate a unit, besides its vector words read ([`words_pay`]).
 const MASKED_PAIR_COST: u128 = 32;
 
-/// The row loop's cost of a level without masks, in about a cycle a unit:
-/// a cell, a candidate and a live candidate; and the vectors': a child
+/// The costs of a level without masks, in one unit: the row loop's of a
+/// cell, a candidate and a live candidate; and the vectors' of a child
 /// cell read or a vector word built, an f pair's vector word read, a live
 /// cell, a live candidate, a cell and an f pair ([`words_pay`]). Fitted to
 /// levels run both ways.
@@ -163,10 +163,12 @@ impl WordScratch {
 }
 
 /// Whether a level's cells are read by g-pair vectors. Its candidates,
-/// each f pair against each g pair, are enough, and the vectors of the
-/// child rows its f pairs name on each side that kills, `f_rows` rows a
-/// side at most, fit [`WORDS_MAX_VECTOR_WORDS`]. Then a sample of its cells
-/// ([`sample_cells`]) estimates its live candidates and live cells. A
+/// each f pair against each g pair, are enough ([`WORDS_MIN_CANDIDATES`]),
+/// and the vectors of the child rows its f pairs name on each side that
+/// kills, `f_rows` rows a side at most, fit [`WORDS_MAX_VECTOR_WORDS`].
+/// Then a sample of its cells ([`sample_cells`]) estimates its live
+/// candidates and live cells, unless the costs that do not depend on it
+/// decide the level already. A
 /// level whose sampled candidates are mostly in grouped cells is walked:
 /// the grouped walk reads a left cell once a run of f pairs against a run
 /// of g pairs. A level with masks is read by vectors where g's nodes are
@@ -260,22 +262,36 @@ fn pays<L: ChildLookup, R: ChildLookup>(
     if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS || (rows.ctx.masked && !g.has_multi_pair()) {
         return false;
     }
-    let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.right_width.min(SAMPLE_NODES);
-    let budget = (candidates / SAMPLE_SHARE / sampled.max(1)).clamp(1, SAMPLE_CELL);
-    let Ok(s) = sample_cells(eng, rows, w, left, right, node_idx, budget) else { return false };
-    if s.candidates == 0 || (!rows.ctx.masked && s.grouped * 2 > s.candidates) {
-        return false;
-    }
+    let masked = rows.ctx.masked;
     let side = |rows: usize, named: usize, k: bool| {
         if k { rows.saturating_mul(named.min(gp) + words).saturating_add(gp + named) } else { 0 }
     };
     let (named_l, named_r) = (sides.left.stride as usize, sides.right.stride as usize);
     let build = (side(rows_l, named_l, kills.left) + side(rows_r, named_r, kills.right) + f_rows.left + f_rows.right) as u128;
     let reads = fp as u128 * words as u128;
+    let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.right_width.min(SAMPLE_NODES);
+    let budget = (candidates / SAMPLE_SHARE / sampled.max(1)).clamp(1, SAMPLE_CELL);
     let (candidates, cells) = (candidates as u128, rows.f_width as u128 * rows.ctx.right_width as u128);
+    // The costs no sample changes: a masked level's vectors against its
+    // candidates; a level's without, against the most its walk costs, with
+    // every candidate live.
+    let decided = match masked {
+        true => (build + 2 * reads + MASKED_PAIR_COST * fp as u128) * 4 >= candidates,
+        false => {
+            build * WORDS_COST[0] + reads * WORDS_COST[1] + fp as u128 * WORDS_COST[5]
+                >= cells * WALK_COST[0] + candidates * (WALK_COST[1] + WALK_COST[2])
+        }
+    };
+    if decided {
+        return false;
+    }
+    let Ok(s) = sample_cells(eng, rows, w, left, right, node_idx, budget) else { return false };
+    if s.candidates == 0 || (!masked && s.grouped * 2 > s.candidates) {
+        return false;
+    }
     let live = s.live as u128 * candidates / s.candidates as u128;
-    if rows.ctx.masked {
-        return live * MASKED_LIVE_SHARE < candidates && (build + 2 * reads + MASKED_PAIR_COST * fp as u128) * 4 < candidates;
+    if masked {
+        return live * MASKED_LIVE_SHARE < candidates;
     }
     let live_cells = s.live_cells as u128 * cells / s.cells.max(1) as u128;
     let walked = s.walked;
