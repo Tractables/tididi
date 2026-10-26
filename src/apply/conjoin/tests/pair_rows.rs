@@ -43,6 +43,7 @@ fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
 #[test]
 fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
     let mut rng = Lcg::new(0x5a1d_93e7);
+    let unrolled = pair_rows_unrolled();
     let (mut levels, mut cases) = ([0u64; 3], 0usize);
     let mut add = |n: [u64; 3]| (0..3).for_each(|k| levels[k] += n[k]);
     for shape in [CnfShape { clauses: 30, width: 3 }, CnfShape { clauses: 60, width: 4 }] {
@@ -132,7 +133,9 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
         }
     }
     let [all, whole, one] = levels;
-    eprintln!("levels read by pairs {all} ({whole} with a complete side, {one} of one pair a column), over {cases} cases");
+    let unrolled = pair_rows_unrolled() - unrolled;
+    eprintln!("levels read by pairs {all} ({whole} with a complete side, {one} of one pair a column, {unrolled} rows unrolled), over {cases} cases");
+    assert!(unrolled > 0, "expected rows of two f pairs on two one-pair columns, got none over {cases} cases");
     assert!(all > 0, "expected levels read by pairs, got none over {cases} cases");
     assert!(whole > 0, "expected levels read by pairs with a complete side, got none over {cases} cases");
     assert!(one > 0, "expected levels read by pairs of one pair a column, got none over {cases} cases");

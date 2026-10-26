@@ -223,6 +223,9 @@ thread_local! {
     /// complete side, and those of one pair a column
     /// ([`pair_rows_levels`]).
     static PAIR_ROWS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// The rows on this thread of two f pairs on two one-pair columns
+    /// written unrolled ([`pair_rows_unrolled`]).
+    static PAIR_ROWS_UNROLLED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn pair_rows_forced_off() -> bool {
@@ -253,6 +256,16 @@ pub(super) fn pair_rows_off<R>(f: impl FnOnce() -> R) -> R {
 /// complete side, and those of one pair a column.
 pub(super) fn pair_rows_levels() -> [u64; 3] {
     PAIR_ROWS.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pair_row_unrolled() {
+    PAIR_ROWS_UNROLLED.with(|n| n.set(n.get() + 1));
+}
+
+/// The rows on this thread so far of two f pairs on two one-pair columns
+/// written unrolled.
+pub(super) fn pair_rows_unrolled() -> u64 {
+    PAIR_ROWS_UNROLLED.with(std::cell::Cell::get)
 }
 
 thread_local! {

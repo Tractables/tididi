@@ -919,7 +919,7 @@ fn note_row_columns_row(_whole: bool) {}
 // A test runs every masked level on the row loop of any level, as the
 // oracle for the levels read by pairs, and counts those levels.
 #[cfg(test)]
-use tests::{note_pair_rows, pair_rows_forced_off};
+use tests::{note_pair_row_unrolled, note_pair_rows, pair_rows_forced_off};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -930,6 +930,10 @@ fn pair_rows_forced_off() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_pair_rows(_complete: bool, _one_pair: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_pair_row_unrolled() {}
 
 // A test reads the cells of every level that can be read by g-pair vectors
 // by them, or of none, as their oracle, writes every such row's live cells

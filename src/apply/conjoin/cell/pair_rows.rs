@@ -277,6 +277,50 @@ where
                 }
                 continue;
             }
+            // A row of two f pairs on two one-pair columns, the arenas with
+            // room for its every candidate: the loop below unrolled, each f
+            // pair's AND held in a register.
+            if W == 2
+                && let [p0, p1] = f_pairs
+                && let Some(o) = out.as_mut().filter(|o| o.has_room(4, 2))
+            {
+                super::super::note_pair_row_unrolled();
+                let (wl0, wr0, wl1, wr1) = (word_left(p0), word_right(p0), word_left(p1), word_right(p1));
+                let (l, r) = (wl0 | wl1, wr0 | wr1);
+                if l & r & ROW_LIVE == 0 {
+                    write_cells(slab, row_base, [NO_PRODUCT; W]);
+                    continue;
+                }
+                let entered = l & r & !ROW_LIVE;
+                let mut s = entered;
+                let cells = std::iter::from_fn(|| {
+                    let j = (s != 0).then(|| s.trailing_zeros() as usize)?;
+                    s &= s - 1;
+                    Some((j, 1))
+                });
+                poll_row_as_walked(&mut poll, ctx, f_pairs, 2 * u64::from(entered.count_ones()) + 2, 2, cells)?;
+                let (a0, a1) = (wl0 & wr0, wl1 & wr1);
+                let mut row = [NO_PRODUCT; W];
+                for (j, cell) in row.iter_mut().enumerate() {
+                    if (a0 | a1) >> j & 1 == 0 {
+                        continue;
+                    }
+                    let q = &g_flat[j];
+                    for (p, and) in [(p0, a0), (p1, a1)] {
+                        if and >> j & 1 != 0 {
+                            // Safety: the arenas have room for a pair an f
+                            // pair and a g pair.
+                            unsafe { o.push(left.get(slab, p.left.0, q.left.0), right.get(slab, p.right.0, q.right.0)) };
+                        }
+                    }
+                    // Safety: the arenas have room for a node a column.
+                    if let Some(node) = unsafe { o.close_node() } {
+                        *cell = node;
+                    }
+                }
+                write_cells(slab, row_base, row);
+                continue;
+            }
             // Each side's fold, the g pairs some candidate of the row survives
             // against, and each f pair's AND.
             let few = f_pairs.len() <= FEW_PAIRS;
