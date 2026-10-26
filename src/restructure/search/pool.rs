@@ -6,7 +6,7 @@
 //! can change the vtree only for all of them together. [`Engine::rotate_pool_if`]
 //! applies one move to every member and keeps it for all or for none;
 //! [`Engine::pool_search`] runs a greedy descent of such moves on the members'
-//! total live pairs.
+//! total live pairs, and can restart it from random moves ([`PoolRestarts`]).
 //!
 //! A move is a rotation, optionally *crossed*: the promoted child's two
 //! children are swapped first. A swap alone changes no diagram's size, since a
@@ -23,6 +23,7 @@ use crate::limits::{Charged, Limits, OperationError, Transient};
 use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
+use crate::vtree::rng::Lcg;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
@@ -78,11 +79,89 @@ pub struct PoolSearchConfig {
     /// units to the work clock, its opening reduction included. `u64::MAX`
     /// is no bound.
     pub max_work_units: u64,
+    /// Restarts from random moves once the descent stops at a local minimum.
+    pub restarts: PoolRestarts,
 }
 
 impl Default for PoolSearchConfig {
     fn default() -> Self {
-        PoolSearchConfig { max_sweeps: 4, max_inner_pairs: usize::MAX, crossed: true, max_work_units: u64::MAX }
+        PoolSearchConfig {
+            max_sweeps: 4,
+            max_inner_pairs: usize::MAX,
+            crossed: true,
+            max_work_units: u64::MAX,
+            restarts: PoolRestarts::default(),
+        }
+    }
+}
+
+/// The restarts of a [`pool_search`](Engine::pool_search): once its descent
+/// keeps nothing in a sweep, each restart makes random moves that grow the
+/// pool by little, descends again, and keeps the result only if the pool
+/// ends smaller than before the restart, by `min_gain_permille` at least;
+/// otherwise every member and the tree are put back as they were. The
+/// default runs none. The same seed, members and configuration give the
+/// same restarts, moves and charges.
+///
+/// A restart's descent probes only the moves the random ones could have
+/// changed: every move the earlier descents refused on levels left as they
+/// were stays refused. So a restart costs far less than a search from
+/// scratch, and ends where that search would. The search's
+/// [`max_work_units`](PoolSearchConfig::max_work_units) bounds the restarts
+/// too: one under way when it is reached ends there and is judged as it
+/// stands. A search stopped by `max_sweeps` before a sweep kept nothing, or
+/// over a member that has discarded the structure at a level, runs none.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::restructure::search::{PoolRestarts, PoolSearchConfig};
+/// use tididi::{Engine, Vtree};
+///
+/// // Two formulas sharing one right-linear vtree over x1..x6.
+/// let engine = Engine::new();
+/// let vtree = Arc::new(Vtree::linear(6));
+/// let mut f = engine.or(engine.cube(&vtree, [1, 4])?, engine.cube(&vtree, [2, 5])?)?;
+/// let mut g = engine.or(engine.cube(&vtree, [3, 6])?, engine.cube(&vtree, [-1, -4])?)?;
+/// let (f_models, g_models) = (engine.model_count(&f)?, engine.model_count(&g)?);
+/// let config = PoolSearchConfig {
+///     max_sweeps: usize::MAX,
+///     restarts: PoolRestarts { count: 2, min_gain_permille: 20, seed: 7, ..PoolRestarts::default() },
+///     ..PoolSearchConfig::default()
+/// };
+/// let stats = engine.pool_search(&mut [&mut f, &mut g], &config)?;
+/// // The descent ran until a sweep kept nothing, so both restarts ran.
+/// assert_eq!(stats.restarts, 2);
+/// assert!(stats.pairs_after <= stats.pairs_before);
+/// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+/// assert_eq!((engine.model_count(&f)?, engine.model_count(&g)?), (f_models, g_models));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolRestarts {
+    /// Restarts to run. Zero, the default, ends the search at the descent's
+    /// local minimum.
+    pub count: usize,
+    /// Random moves each restart keeps before it descends: a pivot, a
+    /// direction and, if the search crosses, a crossing drawn at random, the
+    /// move kept when it adds at most `slack_permille` thousandths of the
+    /// pool's live pairs. A restart draws at most 50 moves for each one it is
+    /// to keep.
+    pub kick: usize,
+    /// How much a random move may grow the pool, in thousandths of its live
+    /// pairs.
+    pub slack_permille: u32,
+    /// The seed the random moves are drawn from: the same seed and pool give
+    /// the same restarts.
+    pub seed: u64,
+    /// The least share of the pool's live pairs a restart must remove to be
+    /// kept, in thousandths of the pairs it began with. Zero keeps any
+    /// restart that ends smaller; 1000 or more keeps none.
+    pub min_gain_permille: u32,
+}
+
+impl Default for PoolRestarts {
+    fn default() -> Self {
+        PoolRestarts { count: 0, kick: 20, slack_permille: 50, seed: 0, min_gain_permille: 0 }
     }
 }
 
@@ -93,7 +172,7 @@ pub struct PoolSearchStats {
     pub sweeps: usize,
     /// Moves probed, abandoned ones included.
     pub probes: usize,
-    /// Moves kept.
+    /// Moves kept, not counting those of restarts put back.
     pub accepts: usize,
     /// Live pairs over all members before the search, after the opening
     /// reduction.
@@ -103,6 +182,12 @@ pub struct PoolSearchStats {
     pub pairs_after: usize,
     /// Work charged by the search, its two reductions included.
     pub work_units: u64,
+    /// Restarts begun.
+    pub restarts: usize,
+    /// Restarts whose result was kept.
+    pub restarts_kept: usize,
+    /// Work charged by the restarts, part of `work_units`.
+    pub restart_work_units: u64,
 }
 
 /// Work units a member's rebuild charges beyond the pairs of its two old and
@@ -168,7 +253,7 @@ impl Engine {
         let info = pending.commit(&mut tree);
         let mut scratch = self.scratch.restructure.checkout(self);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, false, Twin::Alone, accept)?;
+        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, accept)?;
         if kept {
             install(members, tree);
         }
@@ -179,8 +264,11 @@ impl Engine {
     /// node, the rotations both ways, crossed and not if `config.crossed`,
     /// each kept when it lowers the members' total live pairs. Sweeps repeat
     /// until one keeps nothing, `config.max_sweeps` is reached, or the
-    /// search has charged `config.max_work_units`. Every member is reduced
-    /// before the search and after it.
+    /// search has charged `config.max_work_units`. A descent that stops
+    /// because a sweep kept nothing is followed by `config.restarts`
+    /// ([`PoolRestarts`]), which keep a result only when it is smaller by
+    /// their minimum gain.
+    /// Every member is reduced before the search and after it.
     ///
     /// The members keep their functions and end up sharing one vtree
     /// allocation, a new one if any move was kept. Stops are polled once per
@@ -228,8 +316,9 @@ impl Engine {
         // this one if it kept a move: their levels follow the moves, and
         // nothing in a probe reads a member's tree.
         let mut tree = Vtree::clone(&members[0].vtree);
-        let result = descend(self, members, &mut tree, config, start, &mut scratch, stats);
-        if stats.accepts > 0 {
+        let mut changed = false;
+        let result = search(self, members, &mut tree, config, start, &mut scratch, stats, &mut changed);
+        if changed {
             install(members, tree);
         }
         result?;
@@ -241,10 +330,11 @@ impl Engine {
     }
 }
 
-/// The sweeps of [`Engine::pool_search`], between its two reductions, on
-/// `tree`, the members' tree with the moves kept so far, from the work
-/// clock's `start`.
-fn descend(
+/// The descent of [`Engine::pool_search`] and its restarts, between its two
+/// reductions, on `tree`, the members' tree with the moves kept so far, from
+/// the work clock's `start`. `changed` is set once a move is kept for good.
+#[allow(clippy::too_many_arguments)]
+fn search(
     eng: &Engine,
     members: &mut [&mut Tdd],
     tree: &mut Vtree,
@@ -252,23 +342,10 @@ fn descend(
     start: u64,
     scratch: &mut RestructureScratch,
     stats: &mut PoolSearchStats,
+    changed: &mut bool,
 ) -> Result<(), OperationError> {
-    let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
-    let spent = || eng.limits().work_units() - start >= config.max_work_units;
-    // The pivots whose every move was probed and refused since the last kept
-    // move that could change their outcome: a kept move clears its pivot,
-    // the pivot's two children and its parent. A refused pivot is passed
-    // over.
-    let mut refused = vec![false; tree.num_nodes()];
-    // The charge of each move's last refusal, kept while the two levels the
-    // move reads are unchanged. A move reads its pivot's level and its
-    // promoted child's; a kept move rewrites its own pivot's and promoted
-    // child's. So it changes every move at those two nodes and, at the
-    // pivot's parent, the moves that promote the pivot, and no other. A
-    // move refused before is refused again at the same charge, so it is
-    // charged and not probed: the descent decides and charges what it would
-    // probing every move.
-    let mut refusals: Vec<[Option<u64>; 4]> = vec![[None; 4]; tree.num_nodes()];
+    let lim = eng.limits();
+    let mut known = Known::new(tree.num_nodes());
     // Asked once: a kept move rebuilds every member's two levels and so
     // forgets what each member knows of its levels, and asking at every
     // probe read every level of every member again, most of a search over
@@ -277,18 +354,252 @@ fn descend(
     let marginal = members.iter().any(|m| m.has_marginal_level());
     // The scores of the crossed move at the pivot and rotation under way,
     // one per member, taken with the plain move's ([`Twin`]).
-    let mut crossed_scores = Transient::new(eng.limits(), Vec::new());
-    eng.limits().reserve_exact(&mut crossed_scores, members.len())?;
-    while stats.sweeps < config.max_sweeps && !spent() {
+    let mut crossed_scores = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut crossed_scores, members.len())?;
+    let until = start.saturating_add(config.max_work_units);
+    let accepts = stats.accepts;
+    let converged = descend(eng, members, tree, config, until, scratch, stats, &mut known, &mut crossed_scores, marginal, None);
+    *changed |= stats.accepts > accepts;
+    if !converged? || marginal || config.restarts.count == 0 {
+        return Ok(());
+    }
+    // The restarts. Rotations keep every internal node internal.
+    let internals: Vec<VtreeIdx> = tree.internal_bottomup().map(|(v, _, _)| v).collect();
+    if internals.is_empty() {
+        return Ok(());
+    }
+    let restarts = &config.restarts;
+    let begun = lim.work_units();
+    let mut rng = Lcg::new(restarts.seed);
+    let mut result = Ok(());
+    while stats.restarts < restarts.count && lim.work_units() < until {
+        stats.restarts += 1;
+        let mut undo = Undo::begin(members, tree, &known);
+        let accepts = stats.accepts;
+        let outcome = restart(eng, members, tree, config, until, scratch, stats, &mut known, &mut crossed_scores, &internals, &mut rng, &mut undo);
+        if outcome.is_ok() && live_pairs(members) < kept_below(undo.pairs, restarts.min_gain_permille) {
+            stats.restarts_kept += 1;
+            *changed |= stats.accepts > accepts;
+            drop(undo);
+        } else {
+            undo.revert(lim, members, tree, &mut known);
+            stats.accepts = accepts;
+        }
+        if let Err(e) = outcome {
+            result = Err(e);
+            break;
+        }
+    }
+    stats.restart_work_units = lim.work_units() - begun;
+    result
+}
+
+/// One restart of [`search`]: `restarts.kick` random moves kept, then a
+/// descent, every kept move's replaced levels filed with `undo`. The caller
+/// keeps the result or reverts it.
+#[allow(clippy::too_many_arguments)]
+fn restart<'l>(
+    eng: &'l Engine,
+    members: &mut [&mut Tdd],
+    tree: &mut Vtree,
+    config: &PoolSearchConfig,
+    until: u64,
+    scratch: &mut RestructureScratch,
+    stats: &mut PoolSearchStats,
+    known: &mut Known,
+    crossed_scores: &mut Transient<'l, Vec<Option<Option<usize>>>>,
+    internals: &[VtreeIdx],
+    rng: &mut Lcg,
+    undo: &mut Undo<'l>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let restarts = &config.restarts;
+    let (mut kept, mut draws) = (0usize, 0usize);
+    while kept < restarts.kick && draws < restarts.kick.saturating_mul(KICK_DRAWS) {
+        draws += 1;
+        lim.check_stop()?;
+        if lim.work_units() >= until {
+            return Ok(());
+        }
+        let v = internals[rng.below(internals.len() as u64) as usize];
+        let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
+        let crossed = config.crossed && rng.below(2) == 0;
+        let slack = (live_pairs(members) as u64).saturating_mul(u64::from(restarts.slack_permille)) / 1000;
+        let (left, right) = tree.children(v);
+        let parent = tree.node(v).parent();
+        let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+        stats.probes += 1;
+        let slack = usize::try_from(slack).unwrap_or(usize::MAX).saturating_add(1);
+        if probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, Twin::Alone, slack, Some(undo))? {
+            kept += 1;
+            stats.accepts += 1;
+            known.kept(tree, mv, left, right, parent);
+        }
+    }
+    descend(eng, members, tree, config, until, scratch, stats, known, crossed_scores, false, Some(undo)).map(|_| ())
+}
+
+/// The live pairs a restart that began at `pairs` must end under to be kept.
+fn kept_below(pairs: usize, min_gain_permille: u32) -> usize {
+    let gain = (pairs as u64).saturating_mul(u64::from(min_gain_permille)) / 1000;
+    pairs.saturating_sub(usize::try_from(gain).unwrap_or(usize::MAX))
+}
+
+/// The draws a restart makes for each random move it is to keep.
+const KICK_DRAWS: usize = 50;
+
+/// The members' total live pairs.
+fn live_pairs(members: &[&mut Tdd]) -> usize {
+    members.iter().map(|m| m.pair_count()).sum()
+}
+
+/// What a descent knows of the moves it refused, which holds while the
+/// levels those moves read are unchanged.
+#[derive(Clone)]
+struct Known {
+    /// The pivots whose every move was probed and refused since the last
+    /// kept move that could change their outcome: a kept move clears its
+    /// pivot, the pivot's two children and its parent. A refused pivot is
+    /// passed over.
+    refused: Vec<bool>,
+    /// The charge of each move's last refusal, kept while the two levels the
+    /// move reads are unchanged. A move reads its pivot's level and its
+    /// promoted child's; a kept move rewrites its own pivot's and promoted
+    /// child's. So it changes every move at those two nodes and, at the
+    /// pivot's parent, the moves that promote the pivot, and no other. A
+    /// move refused before is refused again at the same charge, so it is
+    /// charged and not probed: the descent decides and charges what it would
+    /// probing every move.
+    refusals: Vec<[Option<u64>; 4]>,
+}
+
+impl Known {
+    fn new(nodes: usize) -> Known {
+        Known { refused: vec![false; nodes], refusals: vec![[None; 4]; nodes] }
+    }
+
+    /// Forget what the kept move `mv` may have changed, `tree` the tree after
+    /// it, `left`, `right` and `parent` the pivot's children and parent before
+    /// it.
+    fn kept(&mut self, tree: &Vtree, mv: PoolMove, left: VtreeIdx, right: VtreeIdx, parent: Option<VtreeIdx>) {
+        let v = mv.rotation.pivot;
+        let promoted = match mv.rotation.kind {
+            RotationKind::Left => right,
+            RotationKind::Right => left,
+        };
+        self.refusals[v.idx()] = [None; 4];
+        self.refusals[promoted.idx()] = [None; 4];
+        if let Some(parent) = parent {
+            let at_parent = if tree.children(parent).1 == v { RotationKind::Left } else { RotationKind::Right };
+            self.refusals[parent.idx()][move_slot(at_parent, false)] = None;
+            self.refusals[parent.idx()][move_slot(at_parent, true)] = None;
+        }
+        for t in [Some(v), Some(left), Some(right), parent].into_iter().flatten() {
+            self.refused[t.idx()] = false;
+        }
+    }
+}
+
+/// What a restart needs to put the pool back as it began: the tree, what
+/// the descent knew, each member's output and state, and the first level
+/// each kept move replaced at each node.
+struct Undo<'a> {
+    tree: Vtree,
+    known: Known,
+    /// Each member's output, whether it was canonical and closed, and its
+    /// pending reduction work.
+    members: Vec<(TddNodeId, bool, bool, Dirty)>,
+    /// Whether a level of every member at each node is filed in `levels`.
+    filed: Vec<bool>,
+    /// (member, node, the level as the restart found it).
+    levels: Vec<(usize, usize, Transient<'a, TddLevel>)>,
+    /// The members' live pairs when the restart began.
+    pairs: usize,
+}
+
+impl<'a> Undo<'a> {
+    fn begin(members: &[&mut Tdd], tree: &Vtree, known: &Known) -> Undo<'a> {
+        Undo {
+            tree: tree.clone(),
+            known: known.clone(),
+            members: members.iter().map(|m| (m.output, m.levels.is_canonical(m.output), m.levels.is_closed(), m.dirty.clone())).collect(),
+            filed: vec![false; tree.num_nodes()],
+            levels: Vec::new(),
+            pairs: live_pairs(members),
+        }
+    }
+
+    /// File the levels a kept move replaced, `saved` holding member `i`'s
+    /// old levels at `v` and `w`; only the first replaced at a node is kept.
+    fn file(&mut self, v: usize, w: usize, saved: &mut Vec<(usize, Saved<'a>)>) {
+        let (first_v, first_w) = (!self.filed[v], !self.filed[w]);
+        for (i, s) in saved.iter_mut() {
+            if let Some((outer, inner)) = s.levels.take() {
+                if first_v {
+                    self.levels.push((*i, v, outer));
+                }
+                if first_w {
+                    self.levels.push((*i, w, inner));
+                }
+            }
+        }
+        self.filed[v] = true;
+        self.filed[w] = true;
+    }
+
+    /// Put every member, the tree and what the descent knew back as the
+    /// restart found them.
+    fn revert(self, lim: &Limits, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
+        for (i, t, level) in self.levels {
+            let rebuilt = std::mem::replace(&mut members[i].levels[t], level.keep());
+            lim.discard(rebuilt);
+        }
+        for (m, (output, canonical, closed, dirty)) in members.iter_mut().zip(self.members) {
+            m.output = output;
+            m.dirty = dirty;
+            if canonical {
+                m.levels.certify(output);
+            }
+            if closed {
+                m.reinstate_closed_levels();
+            }
+        }
+        *tree = self.tree;
+        *known = self.known;
+    }
+}
+
+/// The sweeps of a descent, until one keeps nothing, `config.max_sweeps`
+/// sweeps, or the work clock reaches `until`: `Ok(true)` when a sweep kept
+/// nothing. Every kept move's replaced levels go to `undo` when given.
+#[allow(clippy::too_many_arguments)]
+fn descend<'l>(
+    eng: &'l Engine,
+    members: &mut [&mut Tdd],
+    tree: &mut Vtree,
+    config: &PoolSearchConfig,
+    until: u64,
+    scratch: &mut RestructureScratch,
+    stats: &mut PoolSearchStats,
+    known: &mut Known,
+    crossed_scores: &mut Transient<'l, Vec<Option<Option<usize>>>>,
+    marginal: bool,
+    mut undo: Option<&mut Undo<'l>>,
+) -> Result<bool, OperationError> {
+    let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
+    let spent = || eng.limits().work_units() >= until;
+    let mut sweeps = 0usize;
+    while sweeps < config.max_sweeps && !spent() {
+        sweeps += 1;
         stats.sweeps += 1;
         let internals: Vec<VtreeIdx> = tree.internal_bottomup().map(|(v, _, _)| v).collect();
         let mut kept = 0usize;
         for v in internals {
             eng.limits().check_stop()?;
             if spent() {
-                return Ok(());
+                return Ok(false);
             }
-            if refused[v.idx()] {
+            if known.refused[v.idx()] {
                 continue;
             }
             let (left, right) = tree.children(v);
@@ -298,11 +609,11 @@ fn descend(
                 let mut twin_scored = false;
                 for &crossed in crossings {
                     if spent() {
-                        return Ok(());
+                        return Ok(false);
                     }
                     let slot = move_slot(kind, crossed);
                     stats.probes += 1;
-                    if let Some(units) = refusals[v.idx()][slot]
+                    if let Some(units) = known.refusals[v.idx()][slot]
                         && replay_refusals()
                     {
                         eng.limits().charge_work(units);
@@ -313,50 +624,36 @@ fn descend(
                     // crossing too; refused, it leaves the levels as they
                     // were, and the crossing reads its scores.
                     let twin = if crossed {
-                        if twin_scored { Twin::Given(&crossed_scores) } else { Twin::Alone }
-                    } else if config.crossed && refusals[v.idx()][move_slot(kind, true)].is_none() {
+                        if twin_scored { Twin::Given(crossed_scores) } else { Twin::Alone }
+                    } else if config.crossed && known.refusals[v.idx()][move_slot(kind, true)].is_none() {
                         crossed_scores.clear();
                         twin_scored = true;
-                        Twin::Fill(&mut crossed_scores)
+                        Twin::Fill(crossed_scores)
                     } else {
                         Twin::Alone
                     };
                     let before = eng.limits().work_units();
-                    if marginal || !probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, twin)? {
-                        refusals[v.idx()][slot] = Some(eng.limits().work_units() - before);
+                    if marginal || !probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, twin, 0, undo.as_deref_mut())? {
+                        known.refusals[v.idx()][slot] = Some(eng.limits().work_units() - before);
                         continue;
                     }
                     debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), marginal);
                     stats.accepts += 1;
                     kept += 1;
                     moved = true;
-                    let promoted = match kind {
-                        RotationKind::Left => right,
-                        RotationKind::Right => left,
-                    };
-                    refusals[v.idx()] = [None; 4];
-                    refusals[promoted.idx()] = [None; 4];
-                    if let Some(parent) = parent {
-                        let at_parent = if tree.children(parent).1 == v { RotationKind::Left } else { RotationKind::Right };
-                        refusals[parent.idx()][move_slot(at_parent, false)] = None;
-                        refusals[parent.idx()][move_slot(at_parent, true)] = None;
-                    }
+                    known.kept(tree, mv, left, right, parent);
                     break 'pivot;
                 }
             }
-            if moved {
-                for t in [Some(v), Some(left), Some(right), parent].into_iter().flatten() {
-                    refused[t.idx()] = false;
-                }
-            } else {
-                refused[v.idx()] = true;
+            if !moved {
+                known.refused[v.idx()] = true;
             }
         }
         if kept == 0 {
-            break;
+            return Ok(true);
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Whether [`descend`] charges a cached refusal rather than probing again.
@@ -372,20 +669,25 @@ fn move_slot(kind: RotationKind, crossed: bool) -> usize {
     2 * usize::from(kind == RotationKind::Right) + usize::from(crossed)
 }
 
-/// One probe of the descent: `mv` made on `tree` in place and kept when it
-/// lowers the members' live pairs, else undone.
-fn probe_in_place(
-    eng: &Engine,
+/// One probe of the descent or of a restart's random moves: `mv` made on
+/// `tree` in place and kept when the members' live pairs end below their
+/// total plus `slack`, else undone. A kept move's replaced levels go to
+/// `undo` when given.
+#[allow(clippy::too_many_arguments)]
+fn probe_in_place<'l>(
+    eng: &'l Engine,
     members: &mut [&mut Tdd],
     tree: &mut Vtree,
     mv: PoolMove,
     bound: usize,
     scratch: &mut RestructureScratch,
     twin: Twin<'_>,
+    slack: usize,
+    undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
     let Some(pending) = move_in_place(tree, mv) else { return Ok(false) };
     let info = pending.info();
-    match probe(eng, members, info, mv, bound, PROBE_UNITS, scratch, true, twin, |p| p.live_pairs_delta() < 0) {
+    match probe_scored(eng, members, info, mv, bound, PROBE_UNITS, scratch, twin, slack, undo) {
         Ok(true) => {
             // The bottom-up order's repair moves the promoted node past the
             // subtree it now needs below it, and every node between.
@@ -516,8 +818,7 @@ impl Charged for PreparedMembers {
 /// new levels and [`REBUILD_UNITS`], taken when it is prepared, or for a
 /// member not prepared, by its rebuild once the move is kept.
 ///
-/// Where `accept` keeps exactly the moves that lower the members' total
-/// (`shrinks`), [`probe_scored`] decides instead, from scores, with `twin`.
+/// The descent's probes decide from scores instead ([`probe_scored`]).
 #[allow(clippy::too_many_arguments)]
 fn probe(
     eng: &Engine,
@@ -527,13 +828,8 @@ fn probe(
     bound: usize,
     extra: u64,
     scratch: &mut RestructureScratch,
-    shrinks: bool,
-    twin: Twin<'_>,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
-    if shrinks {
-        return probe_scored(eng, members, info, mv, bound, extra, scratch, twin);
-    }
     let lim = eng.limits();
     // A level of one pair rebuilds into one of one pair, two pairs for the
     // two levels, which a bound above two lets through.
@@ -591,10 +887,12 @@ fn probe(
             break;
         }
     }
-    settle(lim, members, &info, &mut saved, outcome)
+    settle(lim, members, &info, &mut saved, outcome, None)
 }
 
-/// [`probe`] for a move kept exactly when it lowers the members' total.
+/// [`probe`] for a move kept exactly when it leaves the members' total below
+/// what it was plus `slack`: the descent's, which must lower it, with no
+/// slack, and a restart's random ones with some.
 ///
 /// Each member is scored ([`score_levels`]), which is never above the pairs
 /// its rebuild holds and almost always equal to them. A score reads the
@@ -611,8 +909,8 @@ fn probe(
 /// is put back. So the scores decide, and no member's rebuild waits for the
 /// others'.
 #[allow(clippy::too_many_arguments)]
-fn probe_scored(
-    eng: &Engine,
+fn probe_scored<'l>(
+    eng: &'l Engine,
     members: &mut [&mut Tdd],
     info: RotationInfo,
     mv: PoolMove,
@@ -620,6 +918,8 @@ fn probe_scored(
     extra: u64,
     scratch: &mut RestructureScratch,
     mut twin: Twin<'_>,
+    slack: usize,
+    undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
     debug_assert!(match twin {
         Twin::Alone => true,
@@ -651,6 +951,8 @@ fn probe_scored(
         floors.push(if scores { owners } else { old });
     }
     let total = before.iter().sum::<usize>();
+    // The total the move must stay under.
+    let limit = total.saturating_add(slack);
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
     after.extend_from_slice(&before);
@@ -667,7 +969,7 @@ fn probe_scored(
     // scored, of the move and of its crossing where it is scored too.
     let mut rest = floors.iter().sum::<usize>();
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
-    let cap = |sum: usize, rest: usize| total.saturating_sub(sum + rest);
+    let cap = |sum: usize, rest: usize| limit.saturating_sub(sum + rest);
     for (at, &i) in order.iter().enumerate() {
         let m = &members[i];
         rest -= floors[i];
@@ -704,7 +1006,7 @@ fn probe_scored(
                 gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
             }
             #[cfg(debug_assertions)]
-            debug_check_refusal(lim, members, &info, mv, bound, total, scratch)?;
+            debug_check_refusal(lim, members, &info, mv, bound, limit, scratch)?;
             gate.flush()?;
             lim.check_stop()?;
             return Ok(false);
@@ -713,9 +1015,9 @@ fn probe_scored(
         after[i] = new;
         sum += new;
     }
-    // A score is at most the pairs: a total no lower than before is a move
+    // A score is at most the pairs: a total not under the limit is a move
     // the search refuses.
-    if sum >= total {
+    if sum >= limit {
         #[cfg(debug_assertions)]
         debug_check_scores(lim, members, &info, mv, bound, &after, scratch)?;
         gate.flush()?;
@@ -744,9 +1046,9 @@ fn probe_scored(
     let outcome = outcome.and_then(|kept| {
         gate.flush()?;
         lim.check_stop()?;
-        Ok(kept && after.iter().sum::<usize>() < before.iter().sum::<usize>())
+        Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(lim, members, &info, &mut saved, outcome)
+    settle(lim, members, &info, &mut saved, outcome, undo)
 }
 
 /// A level's live pairs and the nodes that hold them.
@@ -778,20 +1080,25 @@ enum Twin<'s> {
 /// The end of a probe's rebuilds, `saved` holding what each member rebuilt
 /// needs to be put back: where `outcome` keeps the move, every member's two
 /// rebuilt levels closed and its obligations merged back; otherwise every
-/// member rebuilt put back as it was. Returns `outcome`.
+/// member rebuilt put back as it was. Returns `outcome`. A kept move's
+/// replaced levels go to `undo` when given.
 fn settle<'a>(
     lim: &'a Limits,
     members: &mut [&mut Tdd],
     info: &RotationInfo,
     saved: &mut Vec<(usize, Saved<'a>)>,
     outcome: Result<bool, OperationError>,
+    undo: Option<&mut Undo<'a>>,
 ) -> Result<bool, OperationError> {
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     if matches!(outcome, Ok(true)) {
-        // The preimages hand their charge back as they drop; the obligations
-        // taken from each member go back under what the rebuild recorded.
-        // The two levels each member rebuilt are built stored; the kept move
-        // is the operation's end, which closes them.
+        if let Some(undo) = undo {
+            undo.file(v, w, saved);
+        }
+        // The preimages not filed hand their charge back as they drop; the
+        // obligations taken from each member go back under what the rebuild
+        // recorded. The two levels each member rebuilt are built stored; the
+        // kept move is the operation's end, which closes them.
         for (i, s) in saved.drain(..) {
             let m = &mut members[i];
             m.close_changed_levels(&[info.v_idx, info.w_idx]);

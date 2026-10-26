@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::restructure::search::{PoolMove, PoolSearchConfig, RotationMove};
+use crate::restructure::search::{PoolMove, PoolRestarts, PoolSearchConfig, RotationMove};
 use crate::test_helpers::{and2, assert_canonical, compile_clauses, cube};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::Tdd;
@@ -328,7 +328,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
             let mut scratch = crate::restructure::scratch::RestructureScratch::default();
-            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, mv, usize::MAX, &mut scratch, super::Twin::Alone)).unwrap();
+            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, mv, usize::MAX, &mut scratch, super::Twin::Alone, 0, None)).unwrap();
             if kept {
                 continue;
             }
@@ -517,30 +517,52 @@ fn every_stop_in_a_pool_search_keeps_every_function() {
     let eng = crate::Engine::new();
     let original = pool();
     let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
-    let config = PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() };
-    let (mut stopped, mut cut) = (0, 0);
-    loop {
-        let mut members = original.clone();
-        let outcome = {
-            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
-            let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
-            with_members(&mut members, |refs| eng.pool_search(refs, &config))
-        };
-        let done = match outcome {
-            Ok(_) => true,
-            Err(crate::OperationError::Stopped) => {
-                stopped += 1;
-                false
+    for config in [PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() }, with_restarts()] {
+        let (mut stopped, mut cut) = (0, 0);
+        loop {
+            let mut members = original.clone();
+            let outcome = {
+                let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+                let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
+                with_members(&mut members, |refs| eng.pool_search(refs, &config))
+            };
+            let done = match outcome {
+                Ok(_) => true,
+                Err(crate::OperationError::Stopped) => {
+                    stopped += 1;
+                    false
+                }
+                other => panic!("unexpected pool search result at stop {cut}: {other:?}"),
+            };
+            assert_search_kept_every_function(&mut members, &tables, &format!("stop {cut}"));
+            if done {
+                break;
             }
-            other => panic!("unexpected pool search result at stop {cut}: {other:?}"),
-        };
-        assert_search_kept_every_function(&mut members, &tables, &format!("stop {cut}"));
-        if done {
-            break;
+            cut += 1 + cut / 32;
         }
-        cut += 1 + cut / 32;
+        assert!(stopped > 0);
     }
-    assert!(stopped > 0);
+}
+
+/// A search with restarts that keep moves on [`pool`].
+fn with_restarts() -> PoolSearchConfig {
+    PoolSearchConfig {
+        max_sweeps: usize::MAX,
+        restarts: PoolRestarts { count: 3, kick: 4, slack_permille: 300, ..PoolRestarts::default() },
+        ..PoolSearchConfig::default()
+    }
+}
+
+#[test]
+fn restarts_keep_every_function_and_count_their_work() {
+    let eng = crate::Engine::new();
+    let original = pool();
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    let mut members = original.clone();
+    let stats = with_members(&mut members, |refs| eng.pool_search(refs, &with_restarts())).unwrap();
+    assert_eq!(stats.restarts, 3, "{stats:?}");
+    assert!(stats.restart_work_units > 0 && stats.restart_work_units < stats.work_units, "{stats:?}");
+    assert_search_kept_every_function(&mut members, &tables, "restarts");
 }
 
 #[test]
@@ -548,28 +570,29 @@ fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
     let eng = crate::Engine::new();
     let original = pool();
     let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
-    let config = PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() };
-    let (mut refused, mut nth) = (0, 0);
-    loop {
-        let mut members = original.clone();
-        eng.limits().refuse_nth_reserve(nth);
-        let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &config));
-        eng.limits().grant_every_reserve();
-        let done = match outcome {
-            Ok(_) => true,
-            Err(crate::OperationError::OverBudget) => {
-                refused += 1;
-                false
+    for config in [PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() }, with_restarts()] {
+        let (mut refused, mut nth) = (0, 0);
+        loop {
+            let mut members = original.clone();
+            eng.limits().refuse_nth_reserve(nth);
+            let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &config));
+            eng.limits().grant_every_reserve();
+            let done = match outcome {
+                Ok(_) => true,
+                Err(crate::OperationError::OverBudget) => {
+                    refused += 1;
+                    false
+                }
+                other => panic!("unexpected pool search result at reservation {nth}: {other:?}"),
+            };
+            assert_search_kept_every_function(&mut members, &tables, &format!("reservation {nth}"));
+            if done {
+                break;
             }
-            other => panic!("unexpected pool search result at reservation {nth}: {other:?}"),
-        };
-        assert_search_kept_every_function(&mut members, &tables, &format!("reservation {nth}"));
-        if done {
-            break;
+            nth += 1 + nth / 32;
         }
-        nth += 1 + nth / 32;
+        assert!(refused > 0);
     }
-    assert!(refused > 0);
 }
 
 /// The descent without the refused moves skipped: every move of every
@@ -578,6 +601,16 @@ fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchCon
     for m in members.iter_mut() {
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
+    let (accepts, probes, _) = full_sweeps(eng, members, config);
+    for m in members.iter_mut() {
+        eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
+    }
+    (accepts, probes)
+}
+
+/// The sweeps of [`full_descent`], without its reductions. Returns the moves
+/// kept and probed, and whether a sweep kept nothing.
+fn full_sweeps(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize, bool) {
     let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
     let (mut accepts, mut probes) = (0, 0);
     for _ in 0..config.max_sweeps {
@@ -597,13 +630,186 @@ fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchCon
             }
         }
         if kept == 0 {
-            break;
+            return (accepts, probes, true);
+        }
+    }
+    (accepts, probes, false)
+}
+
+/// What [`full_search_with_restarts`] kept.
+#[derive(Default)]
+struct Kept {
+    /// Restarts kept.
+    restarts: usize,
+    /// Moves kept: the descent's and those of the restarts kept.
+    moves: usize,
+    /// Restarts kept whose descent kept no move: their random moves alone
+    /// made the pool smaller.
+    by_their_random_moves: usize,
+}
+
+/// [`Engine::pool_search`](crate::Engine::pool_search) with its restarts,
+/// written out: the random moves drawn as the search draws them and made
+/// with [`rotate_pool_if`](crate::Engine::rotate_pool_if), each restart's
+/// descent probing every move, and a restart that does not end smaller put
+/// back from a copy of the pool.
+fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config: &PoolSearchConfig) -> Kept {
+    use crate::vtree::rng::Lcg;
+    let pairs = |members: &[Tdd]| members.iter().map(Tdd::pair_count).sum::<usize>();
+    for m in members.iter_mut() {
+        eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
+    }
+    let mut won = Kept::default();
+    let (moves, _, converged) = full_sweeps(eng, members, config);
+    won.moves = moves;
+    if converged {
+        let internals: Vec<VtreeIdx> = members[0].vtree().internal_bottomup().map(|(v, _, _)| v).collect();
+        let mut rng = Lcg::new(config.restarts.seed);
+        for _ in 0..config.restarts.count {
+            let start = members.clone();
+            let before = pairs(members);
+            let (mut kept, mut draws) = (0, 0);
+            while kept < config.restarts.kick && draws < config.restarts.kick * 50 {
+                draws += 1;
+                let pivot = internals[rng.below(internals.len() as u64) as usize];
+                let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
+                let crossed = config.crossed && rng.below(2) == 0;
+                let slack = (pairs(members) as u64 * u64::from(config.restarts.slack_permille) / 1000) as i64 + 1;
+                let mv = PoolMove { rotation: RotationMove { pivot, kind }, crossed };
+                if with_members(members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |p| p.live_pairs_delta() < slack)).unwrap() {
+                    kept += 1;
+                }
+            }
+            let descended = full_sweeps(eng, members, config).0;
+            let gain = before as u64 * u64::from(config.restarts.min_gain_permille) / 1000;
+            if (pairs(members) as u64) < (before as u64).saturating_sub(gain) {
+                won.restarts += 1;
+                won.moves += kept + descended;
+                won.by_their_random_moves += usize::from(descended == 0);
+            } else {
+                *members = start;
+            }
         }
     }
     for m in members.iter_mut() {
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
-    (accepts, probes)
+    won
+}
+
+/// Seeded pools of four functions on every vtree shape of six to nine
+/// variables: a search whose restarts descend only where their random moves
+/// changed a level, and put the pool back from what the moves replaced, ends
+/// with the vtree, the pairs and the moves kept of the search that descends
+/// from scratch and puts the pool back from a copy.
+#[test]
+fn restarts_end_where_restarts_descending_from_scratch_end() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x7e57);
+    let (mut restarts, mut won, mut pools) = (0, 0, 0);
+    for n in 6..10 {
+        for (shape, vtree) in vtree_shapes(n) {
+            let members: Vec<Tdd> = (0..4)
+                .map(|_| {
+                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+                    f.minimize().expect("an unarmed engine refuses nothing");
+                    f
+                })
+                .collect();
+            for (crossed, min_gain_permille) in [(false, 0), (true, 0), (true, 100)] {
+                let config = PoolSearchConfig {
+                    max_sweeps: usize::MAX,
+                    crossed,
+                    restarts: PoolRestarts { count: 4, kick: 3, slack_permille: 200, seed: n as u64, min_gain_permille },
+                    ..PoolSearchConfig::default()
+                };
+                let label = format!("{n} variables, {shape}, crossed {crossed}, minimum gain {min_gain_permille}");
+                let mut searched = members.clone();
+                let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
+                let mut full = members.clone();
+                let kept = full_search_with_restarts(&eng, &mut full, &config);
+                assert_eq!((stats.restarts_kept, stats.accepts), (kept.restarts, kept.moves), "{label}");
+                assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
+                let first = Arc::clone(searched[0].vtree());
+                for (s, f) in searched.iter().zip(&full) {
+                    assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
+                    assert_eq!(s.pair_count(), f.pair_count(), "{label}");
+                    assert_canonical(s);
+                }
+                restarts += stats.restarts;
+                won += kept.restarts;
+                pools += 1;
+            }
+        }
+    }
+    assert!(won > 0 && restarts > won, "{won} of {restarts} restarts kept over {pools} pools");
+}
+
+/// Seeded pools of four small functions on every vtree shape of six to eight
+/// variables, under several seeds: a restart whose random moves alone make
+/// the pool smaller, its descent and the search's keeping no move, is kept
+/// with the vtree its moves made, which every member then shares, as in the
+/// search written out.
+#[test]
+fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x7e57);
+    let (mut by_their_random_moves, mut pools) = (0, 0);
+    for n in 6..9 {
+        for (shape, vtree) in vtree_shapes(n) {
+            let members: Vec<Tdd> = (0..4)
+                .map(|_| {
+                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 2, width: 2 }));
+                    f.minimize().expect("an unarmed engine refuses nothing");
+                    f
+                })
+                .collect();
+            for seed in 0..8 {
+                let config = PoolSearchConfig {
+                    max_sweeps: usize::MAX,
+                    restarts: PoolRestarts { count: 4, kick: 20, slack_permille: 50, seed, min_gain_permille: 0 },
+                    ..PoolSearchConfig::default()
+                };
+                let label = format!("{n} variables, {shape}, seed {seed}");
+                let mut searched = members.clone();
+                let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
+                let mut full = members.clone();
+                let kept = full_search_with_restarts(&eng, &mut full, &config);
+                assert_eq!((stats.restarts_kept, stats.accepts), (kept.restarts, kept.moves), "{label}");
+                assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
+                let first = Arc::clone(searched[0].vtree());
+                for (s, f) in searched.iter().zip(&full) {
+                    assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
+                    assert_eq!(s.pair_count(), f.pair_count(), "{label}");
+                    assert_canonical(s);
+                }
+                by_their_random_moves += kept.by_their_random_moves;
+                pools += 1;
+            }
+        }
+    }
+    assert!(by_their_random_moves > 0, "no restart kept for its random moves alone over {pools} pools");
+}
+
+#[test]
+fn restarts_short_of_their_minimum_gain_leave_the_descent_as_it_ended() {
+    let eng = crate::Engine::new();
+    let mut plain = pool();
+    let descent = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
+    let alone = with_members(&mut plain, |refs| eng.pool_search(refs, &descent)).unwrap();
+    let mut config = with_restarts();
+    config.restarts.min_gain_permille = 1000;
+    let mut restarted = pool();
+    let stats = with_members(&mut restarted, |refs| eng.pool_search(refs, &config)).unwrap();
+    assert_eq!((stats.restarts, stats.restarts_kept), (3, 0), "{stats:?}");
+    assert_eq!((stats.accepts, stats.pairs_after), (alone.accepts, alone.pairs_after), "{stats:?} against {alone:?}");
+    assert_eq!(restarted[0].vtree().to_text(), plain[0].vtree().to_text());
+    for (r, p) in restarted.iter().zip(&plain) {
+        assert_eq!(r.pair_count(), p.pair_count());
+        assert_canonical(r);
+    }
 }
 
 #[test]

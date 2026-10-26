@@ -123,7 +123,8 @@ vtree; [`Engine::rotation_search_with`](crate::Engine::rotation_search_with)
 changes its acceptance rule,
 [`Engine::rotation_multistart`](crate::Engine::rotation_multistart) restarts it
 from perturbed copies, and [`Engine::pool_search`](crate::Engine::pool_search)
-searches one vtree shared by several diagrams.
+searches one vtree shared by several diagrams, restarting from random moves
+under [`PoolRestarts`](crate::restructure::search::PoolRestarts).
 
 For more specialized control:
 

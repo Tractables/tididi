@@ -38,7 +38,7 @@ pub use local::{
 };
 pub use multistart::{MultistartConfig, MultistartStats};
 pub use policy::{AcceptancePolicy, Annealing, Greedy, Tabu};
-pub use pool::{PoolMove, PoolProbe, PoolSearchConfig, PoolSearchStats};
+pub use pool::{PoolMove, PoolProbe, PoolRestarts, PoolSearchConfig, PoolSearchStats};
 pub use probe::{RotationMove, RotationProbe};
 pub(in crate::restructure) use probe::{ProbeRule, probe_moves};
 
