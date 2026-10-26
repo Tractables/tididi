@@ -308,11 +308,15 @@ pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd, free: Opera
         .map(Conjoined::diagram)
 }
 
-/// Move identity levels back to their operands, latest first.
-fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, bool)]) {
+/// Move identity levels back to their operands, latest first, and the
+/// nodes and arenas of the levels `lent` names back to f.
+fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, bool)], lent: &[usize]) {
     for &(t, from_f) in kept.iter().rev() {
         let carrier = if from_f { &mut f.levels } else { &mut g.levels };
         std::mem::swap(&mut levels[t], &mut carrier[t]);
+    }
+    for &t in lent {
+        f.levels.swap_arenas(t, &mut levels[t]);
     }
 }
 
@@ -462,7 +466,7 @@ pub(crate) fn apply_and_core(
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
-            give_back(run.levels, f, g, &run.carried);
+            give_back(run.levels, f, g, &run.carried, &run.lent);
             region::give_back_regions(run.levels, cone, f, g);
         }
         return Err(e);
@@ -484,6 +488,7 @@ pub(crate) fn apply_and_core(
     let out_vtree = f.output.vtree;
     let carried = std::mem::take(&mut run.carried);
     let relabel_moved = std::mem::take(&mut run.relabel_moved);
+    let lent = std::mem::take(&mut run.lent);
     let restoring = run.restoring;
     let output = TddNodeId { vtree: out_vtree, local: out_local };
 
@@ -544,7 +549,7 @@ pub(crate) fn apply_and_core(
         Ok(out) => out,
         Err((e, mut assembly)) => {
             if restoring {
-                give_back(assembly.parts_mut().0, f, g, &carried);
+                give_back(assembly.parts_mut().0, f, g, &carried, &lent);
                 region::give_back_regions(assembly.parts_mut().0, cone, f, g);
             }
             return Err(e);

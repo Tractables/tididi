@@ -153,6 +153,16 @@ impl LevelStorage {
     /// Record that an edit changed level `t`'s nodes or pairs.
     pub(crate) fn mark_changed(&mut self, t: VtreeIdx) { self.changed.push(t); }
 
+    /// Swap level `t`'s stored nodes and pair arena with `level`'s, without
+    /// the mutable access [`DerefMut`] records: for a conjunction that lends
+    /// them to its output, and that consumes this storage or swaps them back
+    /// before it is read again.
+    pub(crate) fn swap_arenas(&mut self, t: usize, level: &mut TddLevel) {
+        let own = &mut self.levels[t];
+        std::mem::swap(&mut own.nodes, &mut level.nodes);
+        std::mem::swap(&mut own.pairs, &mut level.pairs);
+    }
+
     /// Record that every level is closed again: the levels are back as they
     /// were when [`is_closed`](Self::is_closed) last held, as a rollback puts
     /// them back or a renumbering moves them.

@@ -25,6 +25,7 @@ mod scatter;
 use scatter::*;
 mod level;
 pub(crate) use level::{apply_sparse_level, count_sparse_level, sum_sparse_level, Complete, Passthrough};
+pub(crate) use scatter::Made;
 mod fold;
 pub(crate) use fold::CandidateFold;
 mod sum;

@@ -5,6 +5,7 @@ mod complete;
 mod conjunction;
 mod implicit;
 mod kept_counts;
+mod lent;
 mod marginal_leaf_target;
 mod marginal_level;
 mod marginal_orphan;
@@ -603,6 +604,40 @@ pub(crate) fn apply_and_fallible(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
     apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
+}
+
+thread_local! {
+    /// Whether the sparse leaf arm writes the levels it would take from f on
+    /// this thread ([`no_lend`]).
+    static NO_LEND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread the leaf arm took from f ([`lent_levels`]).
+    static LENT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn lend_forced_off() -> bool {
+    NO_LEND.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_lent() {
+    LENT.with(|c| c.set(c.get() + 1));
+}
+
+/// Run `f` with the sparse leaf arm writing every level it would take from
+/// f: the oracle the move is checked against.
+pub(super) fn no_lend<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            NO_LEND.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(NO_LEND.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far the sparse leaf arm took from f.
+pub(super) fn lent_levels() -> u64 {
+    LENT.with(std::cell::Cell::get)
 }
 
 thread_local! {

@@ -31,7 +31,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Complete, Passthrough};
+use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Complete, Made, Passthrough};
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -1028,6 +1028,22 @@ use tests::note_pairs_grown;
 #[cfg(not(test))]
 #[inline(always)]
 fn note_pairs_grown() {}
+
+// A test sends every level the sparse leaf arm would take from f through
+// the walk's writes, as the oracle the move is checked against, and counts
+// the levels it took.
+#[cfg(test)]
+use tests::{lend_forced_off, note_lent};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn lend_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_lent() {}
 
 // A test lists the route each level took.
 #[cfg(test)]

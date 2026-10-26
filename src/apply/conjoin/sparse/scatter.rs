@@ -47,6 +47,18 @@ pub(super) struct Emit<'a> {
     pub(super) thresholds: SparseThresholds,
 }
 
+/// What a walk into the level's nodes ([`Collect::Nodes`]) made of the level.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Made {
+    /// The level's nodes and pairs, written.
+    Written,
+    /// The products listed, and no node or pair written: each product is its
+    /// f node's, made of the node's pairs as they are, and f's level holds
+    /// its nodes and its arena as the level would, node for node and pair
+    /// for pair. The caller moves f's nodes and arena into the level.
+    F,
+}
+
 /// Where the leaf arm reads the inner side's product from when the inner
 /// child is no vtree leaf: the child is joined on its fields alone, and kills
 /// no candidate.
@@ -98,7 +110,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     pl: Sides<&[ProductEntry]>,
     collect: Collect<'_, '_>,
     inner: Option<Inner>,
-) -> Result<(), OperationError> {
+) -> Result<Made, OperationError> {
     let (f_outer, g_outer, pl_outer) = if !SWAPPED {
         (shape.f.right, shape.g.right, pl.right)
     } else {
@@ -172,7 +184,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                 leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
                     |parts| OwnerWalk::<false>::of(parts, f_outer))?;
             }
-            return Ok(());
+            return Ok(Made::Written);
         }
     }
     // g's reverse index by the outer child: normally the right child,
@@ -187,7 +199,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
         (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
     }
     bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
-    match inner {
+    let walked = match inner {
         None => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
             |parts| LabelWalk { g_by_outer: parts.g_by_outer, outer: parts.outer }),
         Some(Inner::Carried(Carrier::F)) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
@@ -196,7 +208,8 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             plain_walk(|_: u32, g_field: u32| g_field)),
         Some(Inner::Complete { g_width }) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
             plain_walk(move |f_node: u32, g_node: u32| (f_node as usize * g_width + g_node as usize) as u32)),
-    }
+    };
+    walked.map(|()| Made::Written)
 }
 
 /// A [`LeafWalk`] with `inner_product`, for [`leaf_walk`] to make.
@@ -587,7 +600,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     outer: GroupedView<'_, OwnedProduct>,
     dense: Listed<'_>,
     to: Emit<'_>,
-) -> Result<(), OperationError> {
+) -> Result<Made, OperationError> {
     const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
     const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let lim = eng.limits();
@@ -596,7 +609,10 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let copied = if DENSE {
-        copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, dense, level, start, out, &mut ticker)?
+        match copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, dense, level, start, out, &mut ticker)? {
+            Copied::Level => return Ok(Made::F),
+            Copied::Nodes(made) => made,
+        }
     } else {
         0
     };
@@ -729,7 +745,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
             );
         }
     }
-    Ok(())
+    Ok(Made::Written)
 }
 
 /// Whether `list` holds one product for each of `width` f indices, in
@@ -791,6 +807,15 @@ fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: Li
     held << 32 | u64::from(g)
 }
 
+/// What [`copy_nodes`] made of the level.
+enum Copied {
+    /// The level's first nodes, this many, written as the walk writes them.
+    Nodes(usize),
+    /// Every node's product, and no node or pair written: the level is f's,
+    /// node for node and pair for pair ([`Made::F`]).
+    Level,
+}
+
 /// The first of [`owner_walk_nodes`] on a level where each outer child of f
 /// has one product (`DENSE`), its arena holding `start` pairs before the
 /// walk: f's nodes from the first for as long as each is its own
@@ -799,7 +824,9 @@ fn copy_code<const SWAPPED: bool, const ONES: bool>(pair: ChildPair, entries: Li
 /// the pair's outer child, all of one g parent ([`copy_code`]): its
 /// candidates are its pairs, in order. Each such node's product, node and
 /// pairs are made, and the clock charged and the arena grown, as the walk
-/// makes, charges and grows them. Return how many nodes it made.
+/// makes, charges and grows them. Return how many nodes it made, or
+/// [`Copied::Level`] where they are all of f's nodes and the level would
+/// hold f's nodes and arena as f holds them.
 #[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
@@ -811,13 +838,28 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
     start: usize,
     out: &mut Vec<ProductEntry>,
     ticker: &mut crate::limits::PollGate<'_>,
-) -> Result<usize, OperationError> {
+) -> Result<Copied, OperationError> {
+    use crate::diagram::NodeKind;
     let lim = eng.limits();
     let (arena, nodes) = (level.pairs.stored_mut(), level.nodes.stored_mut());
+    // While each node made so far is f's node as f stores it, its pairs at
+    // f's arena's start and in order, and the walk's pushes of them would
+    // grow neither the level's nodes nor its arena, nothing is written:
+    // `unwritten` counts the pairs those nodes hold. They are written from
+    // f's at the first node that is not so; where none is, the level is f's.
+    let mut unwritten = (start == 0 && nodes.is_empty() && !crate::apply::conjoin::lend_forced_off()).then_some(0usize);
+    let write = |arena: &mut Vec<ChildPair>, nodes: &mut Vec<crate::diagram::EncodedNode>, made: usize, pairs: usize| {
+        // Within both capacities, as the nodes were taken: nothing grows.
+        arena.extend_from_slice(&stored.arena()[..pairs]);
+        nodes.extend_from_slice(&stored.nodes()[..made]);
+    };
     for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate() {
         let pairs = stored.of(node);
         let Some((first, rest)) = pairs.split_first() else {
-            return Ok(p1);
+            if let Some(n) = unwritten {
+                write(arena, nodes, p1, n);
+            }
+            return Ok(Copied::Nodes(p1));
         };
         let code = copy_code::<SWAPPED, ONES>(*first, entries);
         let (owner, mut held) = (code as u32, code >> 32);
@@ -827,11 +869,14 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             copies &= code as u32 == owner;
             held += code >> 32;
         }
-        let (base, count) = (arena.len(), pairs.len());
+        let (base, count) = (unwritten.unwrap_or(arena.len()), pairs.len());
         // A node too far into the arena for its words is the walk's to make;
         // their sum bounds both.
         if !copies || base + count >= 1 << 31 {
-            return Ok(p1);
+            if let Some(n) = unwritten {
+                write(arena, nodes, p1, n);
+            }
+            return Ok(Copied::Nodes(p1));
         }
         ticker.poll(held)?;
         let product = ProductEntry {
@@ -843,6 +888,22 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             out.push(product);
         } else {
             lim.try_push(out, product)?;
+        }
+        if let Some(n) = unwritten {
+            // A node of one pair is made only where the arena has room for
+            // the push the walk takes back, and one of more where it has
+            // room for all of them.
+            let own = match node.kind() {
+                NodeKind::Inline(_) => n < arena.capacity(),
+                NodeKind::Multi { start, .. } => start as usize == n && n + count <= arena.capacity(),
+                NodeKind::MultiRanged(_) => false,
+            };
+            if own && p1 < nodes.capacity() {
+                unwritten = Some(if count == 1 { n } else { n + count });
+                continue;
+            }
+            write(arena, nodes, p1, n);
+            unwritten = None;
         }
         // The walk's pushes of the candidates: a node of one pair takes its
         // pair back out of the arena, its push having grown it if full, and
@@ -866,7 +927,17 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             nodes.push(node);
         }
     }
-    Ok(f_nodes)
+    match unwritten {
+        Some(n) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
+            crate::apply::conjoin::note_lent();
+            Ok(Copied::Level)
+        }
+        Some(n) => {
+            write(arena, nodes, f_nodes, n);
+            Ok(Copied::Nodes(f_nodes))
+        }
+        None => Ok(Copied::Nodes(f_nodes)),
+    }
 }
 
 /// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps

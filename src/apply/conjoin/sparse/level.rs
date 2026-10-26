@@ -71,7 +71,7 @@ fn scatter_level(
     collect: Collect<'_, '_>,
     passthrough: Option<Passthrough>,
     complete: Option<Complete>,
-) -> Result<(), OperationError> {
+) -> Result<Made, OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
     let (f_level, g_level) = (&f.levels[t_idx], &g.levels[t_idx]);
@@ -113,6 +113,7 @@ fn scatter_level(
         (collect, false) => scatter_join::<false>(eng, ws, f_level, g_level, shape, pl, collect),
         (collect, true) => scatter_join::<true>(eng, ws, f_level, g_level, shape, pl, collect),
     }
+    .map(|()| Made::Written)
 }
 
 /// The join direction on a level with a leaf child, `None` when neither child
@@ -210,7 +211,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    f: &Tdd,
+    f: &mut Tdd,
     g: &Tdd,
     levels: &mut [TddLevel],
     lists: ProductLists<'_>,
@@ -218,7 +219,7 @@ pub(crate) fn apply_sparse_level(
     thresholds: SparseThresholds,
     passthrough: Option<Passthrough>,
     complete: Option<Complete>,
-) -> Result<(), OperationError> {
+) -> Result<Made, OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
     let pl = Sides { left, right };
@@ -263,7 +264,7 @@ pub(crate) fn apply_sparse_level(
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
-        return Ok(());
+        return Ok(Made::Written);
     }
 
     // A level of many products, each found by a lookup or two, is walked by
@@ -297,18 +298,29 @@ pub(crate) fn apply_sparse_level(
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();
-            return Ok(());
+            return Ok(Made::Written);
         }
     }
 
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds };
-    scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    let made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    if made == Made::F {
+        // The level's nodes and arena are f's, kept within the room the
+        // level's own had, which the copy would have filled; f's level holds
+        // none while the caller may give them back.
+        let level = &mut levels[t_idx];
+        let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
+        (level.nodes, level.pairs) = Default::default();
+        f.levels.swap_arenas(t_idx, level);
+        level.nodes.stored_mut().shrink_to(room.0);
+        level.pairs.stored_mut().shrink_to(room.1);
+    }
 
     #[cfg(debug_assertions)]
     debug_check_flushed_level(pl_output, &levels[t_idx]);
 
     guard.scatter_clean();
-    Ok(())
+    Ok(made)
 }
 
 

@@ -154,8 +154,13 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// carrier's, but a subtree under it is not, so the output owes it as a
     /// level it built.
     pub(super) relabel_moved: Vec<usize>,
+    /// The levels whose nodes and arena the sparse leaf arm took from f
+    /// ([`Made::F`](super::Made::F)) on a sweep that gives its operands back
+    /// when refused: f's level holds the output level's empty ones until
+    /// then.
+    pub(super) lent: Vec<usize>,
     /// Whether the sweep must give its operands back when refused: it drops
-    /// no operand level, and `carried` goes back to the operands.
+    /// no operand level, and `carried` and `lent` go back to the operands.
     pub(super) restoring: bool,
     /// Each operand's free levels: internal nodes no variable it was placed
     /// with is under, whose levels are left empty and read as the constant
@@ -564,6 +569,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         words,
         carried: Vec::new(),
         relabel_moved: Vec::new(),
+        lent: Vec::new(),
         restoring: false,
         cone,
     })
