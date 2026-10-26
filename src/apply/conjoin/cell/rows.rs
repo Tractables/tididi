@@ -295,7 +295,7 @@ where
     // Amortized wall-deadline/cancel poll: one read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
-    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     debug_assert!(!A::ONE_COLUMN || ctx.right_width == 1, "a one-column action runs on a level of one column");
     let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
     // Whether the per-column cull below can fire at all: the reach masks exist
@@ -871,7 +871,7 @@ fn single_rows<const W: usize>(
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
     let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
-    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
     // The f nodes, where a row's pair is its node's.
@@ -953,7 +953,9 @@ fn single_rows<const W: usize>(
                         }
                     }
                 }
-                poll.poll(live_cols + width as u64)?;
+                // A unit a live cell, polled as the row loop polls them.
+                poll.poll_each(live_cols)?;
+                poll.poll(width as u64)?;
                 continue;
             }
             drop(out);
@@ -965,7 +967,8 @@ fn single_rows<const W: usize>(
                     sink.single(eng, slab, row_base + j, lc, rc)?;
                 }
             }
-            poll.poll(live_cols + width as u64)?;
+            poll.poll_each(live_cols)?;
+            poll.poll(width as u64)?;
             continue 'rows;
         }
     }

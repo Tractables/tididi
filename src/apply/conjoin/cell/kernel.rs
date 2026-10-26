@@ -938,6 +938,66 @@ pub(crate) fn column_pairs<'a>(
     }
 }
 
+/// Poll `gate` for the walk of cell `j`, the f pairs `f_pairs` against a
+/// column of `n2` g pairs, as [`cell_pairs`] polls it: in one poll unless
+/// the gate comes due inside the cell, and then once for each piece the
+/// walk polls, an f pair's candidates or, on a cell it groups, those of a
+/// run of f pairs sharing a left child. The clock then reads what the
+/// walk's does at the poll that comes due, so that a stop falls at the
+/// same work. For a route that charges a cell's candidates without
+/// walking it.
+#[inline]
+pub(crate) fn poll_cell_as_walked(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usize, f_pairs: &[ChildPair], n2: usize) -> Result<(), OperationError> {
+    let n1 = f_pairs.len();
+    let units = (n1 * n2) as u64;
+    if units < gate.due_in() || n1 == 1 || n2 <= 1 {
+        return gate.poll(units);
+    }
+    if n1 >= GROUPED_MIN_PAIRS && ctx.right_cols.and_then(|cols| cols.runs(j)).is_some() {
+        let mut start = 0;
+        while start < n1 {
+            let left = f_pairs[start].left;
+            let end = f_pairs[start..].iter().position(|p| p.left != left).map_or(n1, |k| start + k);
+            gate.poll(((end - start) * n2) as u64)?;
+            start = end;
+        }
+        return Ok(());
+    }
+    for _ in 0..n1 {
+        gate.poll(n2 as u64)?;
+    }
+    Ok(())
+}
+
+/// Poll `gate` for a row of the row loop over a level without masks or
+/// over the cells the masks enter, `units` in all: the cells at the
+/// columns `cells` gives, each with its column's g pairs, in column
+/// order, and then the row's `width`. In one poll unless the gate comes
+/// due inside the row, and then cell by cell as the row loop polls them
+/// ([`poll_cell_as_walked`]).
+#[inline]
+pub(crate) fn poll_row_as_walked(
+    gate: &mut PollGate,
+    ctx: &CellCtx<'_>,
+    f_pairs: &[ChildPair],
+    units: u64,
+    width: usize,
+    cells: impl Iterator<Item = (usize, usize)>,
+) -> Result<(), OperationError> {
+    if units < gate.due_in() {
+        return gate.poll(units);
+    }
+    let mut polled = 0u64;
+    for (j, n2) in cells {
+        if n2 != 0 {
+            poll_cell_as_walked(gate, ctx, j, f_pairs, n2)?;
+            polled += (f_pairs.len() * n2) as u64;
+        }
+    }
+    debug_assert_eq!(polled + width as u64, units, "a row's cells charge other than its units");
+    gate.poll(width as u64)
+}
+
 /// The product walk of one live cell, `f_pairs` against `g_pairs`, both
 /// nonempty, written at `grid_pos`: the arms of [`process_cell`], which
 /// reads column `j`'s pairs for it.

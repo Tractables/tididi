@@ -22,6 +22,14 @@ pub(super) const APPLY_POLL_STRIDE: u64 = 1 << 20;
 /// of pair-and-cell work.
 pub(super) const DENSE_CELL_POLL_STRIDE: u64 = 1 << 16;
 
+/// The stride of a dense level's poll gate: [`DENSE_CELL_POLL_STRIDE`], or,
+/// under a test, a lower one it sets, so that the gate comes due inside the
+/// levels of small diagrams.
+#[inline(always)]
+pub(super) fn dense_cell_poll_stride() -> u64 {
+    super::dense_poll_stride_forced().unwrap_or(DENSE_CELL_POLL_STRIDE)
+}
+
 /// Grow `v` up to `new_len`, filling with [`NO_PRODUCT`].
 #[inline]
 pub(super) fn try_resize_dead(

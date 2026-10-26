@@ -488,7 +488,8 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
 /// [`run_level_rows_words`] on one pair of lookups. A row of the row loop
 /// over a level without masks enters every cell, charges each a unit a
 /// candidate and charges a unit a column; a row read by vectors charges
-/// the same in one poll. With `SLAB` the rows are a dense slab, row `i`
+/// the same in one poll, or as the row loop polls it where the gate comes
+/// due inside the row ([`poll_row_as_walked`]). With `SLAB` the rows are a dense slab, row `i`
 /// at grid row `i`; without, every row is built in grid row 0 and the
 /// sink is told each row before its cells ([`PairSink::row`]).
 #[expect(clippy::too_many_arguments)]
@@ -511,7 +512,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
     let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
     let RowScratch { f_pairs: f_scratch, g_pairs: g_scratch, node_idx: slab } = scratch;
     let lim = eng.limits();
-    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let width = ctx.right_width;
     let gp = a.w.g_flat.len() as u64;
     // The row loop's resets: a fill of a small grid, a row at a time on a
@@ -539,30 +540,52 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
             continue;
         }
         let candidates = f_pairs.len() as u64 * gp;
+        // A row's charge, the row loop's, in one poll where the gate does
+        // not come due inside the row, and otherwise as the row loop polls
+        // it, cell by cell.
+        let units = candidates + width as u64;
         match a.take_row(i, f_pairs, slab, left, right)? {
             RowMode::Bits => {
                 for k in 0..a.w.live_cols.len() {
                     let j = a.w.live_cols[k] as usize;
                     a.emit_bits(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right)?;
                 }
-                poll.poll(candidates + width as u64)?;
+                let col_start = &a.w.col_start;
+                poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
             }
             RowMode::Sorted => {
                 while let Some(j) = a.next_column() {
                     let (from, to) = a.take_column(j);
                     a.emit_sorted(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
                 }
-                poll.poll(candidates + width as u64)?;
+                let col_start = &a.w.col_start;
+                poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
+            }
+            RowMode::Cells if units >= poll.due_in() => {
+                // The live cells' walks and the others' charges in column
+                // order, as the row loop polls them.
+                for j in 0..width {
+                    if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
+                        process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                    } else {
+                        let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
+                        if n2 != 0 {
+                            poll_cell_as_walked(&mut poll, ctx, j, f_pairs, n2)?;
+                        }
+                    }
+                }
+                poll.poll(width as u64)?;
             }
             RowMode::Cells => {
-                // The walks charge their cells; the row charges the rest.
+                // The walks charge their cells; the row charges the rest,
+                // none of it bringing the gate due.
                 let mut walked = 0u64;
                 for k in 0..a.w.live_cols.len() {
                     let j = a.w.live_cols[k] as usize;
                     walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
                     process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
                 }
-                poll.poll(candidates - walked + width as u64)?;
+                poll.poll(units - walked)?;
             }
             RowMode::Walk => {
                 for j in 0..width {
@@ -1311,7 +1334,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
             a.node_idx[a.row_base + a.j] = NO_PRODUCT;
             return Ok(());
         }
-        a.gate.poll((a.f_pairs.len() * n2) as u64)?;
+        poll_cell_as_walked(a.gate, a.ctx, a.j, a.f_pairs, n2)?;
         match self.mode {
             RowMode::Bits if self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0 => {
                 self.emit_bits(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right)

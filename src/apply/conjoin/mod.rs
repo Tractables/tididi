@@ -949,6 +949,16 @@ fn word_rows_sorted_forced() -> bool {
     false
 }
 
+// A test lowers the stride of the dense levels' poll gates.
+#[cfg(test)]
+use tests::dense_poll_stride_forced;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn dense_poll_stride_forced() -> Option<u64> {
+    None
+}
+
 #[cfg(not(test))]
 #[inline(always)]
 fn note_word_cells(_what: WordNote) {}

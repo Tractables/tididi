@@ -31,7 +31,8 @@ const CHARGE_TABLE_ENTRIES_A_ROW: usize = 8;
 /// level's masks: a row is skipped where a side's fold has no live child
 /// row, the cells entered are the columns with a pair in each side's fold,
 /// the work clock is charged a unit a candidate of an entered cell and the
-/// row's width a row, in one poll a row, and a cell's surviving candidates
+/// row's width a row, in one poll a row unless the gate comes due inside
+/// it, and then as the row loop polls them, and a cell's surviving candidates
 /// are written in the order of its walk, f pair by f pair and each against
 /// the column's pairs in order (no column of so few pairs is grouped), one
 /// pair alone as the one-pair cell writes it. A row visits its live cells
@@ -230,7 +231,7 @@ where
         }
         out
     };
-    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     // The ANDs of a row's f pairs: of `FEW_PAIRS` pairs or fewer on the
     // stack, of more in a buffer.
     let mut few_ands = [0u64; FEW_PAIRS];
@@ -305,7 +306,15 @@ where
             let entered = reached(l) & reached(r);
             let n1 = f_pairs.len();
             debug_assert_eq!(pairs_in(entered), u64::from(cols.iter().enumerate().filter(|&(j, _)| entered >> j & 1 != 0).fold(0, |a, (_, c)| a | c).count_ones()));
-            poll.poll(n1 as u64 * pairs_in(entered) + width as u64)?;
+            // In one poll where the gate does not come due inside the row,
+            // and otherwise as the row loop polls the cells it enters.
+            let mut s = entered;
+            let cells = std::iter::from_fn(|| {
+                let j = (s != 0).then(|| s.trailing_zeros() as usize)?;
+                s &= s - 1;
+                Some((j, if ONE { 1 } else { col_pairs[j] as usize }))
+            });
+            poll_row_as_walked(&mut poll, ctx, f_pairs, n1 as u64 * pairs_in(entered) + width as u64, width, cells)?;
             let live = live & !ROW_LIVE;
             let ands = if few { &few_ands[..n1] } else { &many[..] };
             let mut cells = reached(live);

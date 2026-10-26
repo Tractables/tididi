@@ -18,6 +18,7 @@ mod reach_columns;
 mod restoring;
 mod self_conjunction;
 mod single_rows;
+mod stops;
 mod word_cells;
 
 mod target_completion;
@@ -305,6 +306,29 @@ pub(super) fn word_cells_on<R>(f: impl FnOnce() -> R) -> R {
 /// Run `f` with no level reading its cells by g-pair vectors: their oracle.
 pub(super) fn word_cells_off<R>(f: impl FnOnce() -> R) -> R {
     word_cells_set(false, f)
+}
+
+thread_local! {
+    /// The stride of the dense levels' poll gates on this thread, where a
+    /// test lowered it ([`with_dense_poll_stride`]).
+    static DENSE_POLL_STRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn dense_poll_stride_forced() -> Option<u64> {
+    DENSE_POLL_STRIDE.with(std::cell::Cell::get)
+}
+
+/// Run `f` with the dense levels' poll gates coming due every `stride`
+/// units.
+pub(super) fn with_dense_poll_stride<R>(stride: u64, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<u64>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            DENSE_POLL_STRIDE.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(DENSE_POLL_STRIDE.with(|c| c.replace(Some(stride))));
+    f()
 }
 
 thread_local! {
