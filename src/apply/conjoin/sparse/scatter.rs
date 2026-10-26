@@ -138,20 +138,21 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             // gathered, and the table is cleared after it.
             let collect = match collect {
                 Collect::Nodes(to) if f_level.stored().is_some() && one_each(pl_outer, f_outer) => {
-                    let SparseWorkspace { owners, node_owners, emit, .. } = &mut *ws;
-                    let listed = Listed { list: pl_outer, owners: owners[..OWNER_SLOTS * g_outer].as_chunks().0 };
-                    let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
-                    let walked = if ones {
-                        owner_walk_nodes::<SWAPPED, true, true>(eng, node_owners, emit, f_level, f, none, listed, to)
-                    } else {
-                        owner_walk_nodes::<SWAPPED, false, true>(eng, node_owners, emit, f_level, f, none, listed, to)
-                    };
+                    let gathered = gather_listed_products(lim, pl_outer, &ws.owners[..OWNER_SLOTS * g_outer], &mut ws.owned);
                     if !SWAPPED {
                         clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
                     } else {
                         clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
                     }
-                    return walked;
+                    gathered?;
+                    let SparseWorkspace { owned, node_owners, emit, .. } = &mut *ws;
+                    let listed = Listed { owned: &owned[..f_outer] };
+                    let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
+                    return if ones {
+                        owner_walk_nodes::<SWAPPED, true, true>(eng, node_owners, emit, f_level, f, none, listed, to)
+                    } else {
+                        owner_walk_nodes::<SWAPPED, false, true>(eng, node_owners, emit, f_level, f, none, listed, to)
+                    };
                 }
                 collect => collect,
             };
@@ -172,7 +173,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                 Collect::Nodes(to) if f_level.stored().is_some() => {
                     let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
                     let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
-                    let (f, none) = (shape.f.here, Listed { list: &[], owners: &[] });
+                    let (f, none) = (shape.f.here, Listed { owned: &[] });
                     return if ones {
                         owner_walk_nodes::<SWAPPED, true, false>(eng, node_owners, emit, f_level, f, outer, none, to)
                     } else {
@@ -760,20 +761,20 @@ fn one_each(list: &[ProductEntry], width: usize) -> bool {
     list.len() == width && list.iter().enumerate().all(|(i, e)| e.f_idx.idx() == i)
 }
 
-/// A product list with one product per f index, in order ([`one_each`]),
-/// each product's slots read from the owner table as the walk meets it.
+/// The products of a list with one product per f index, in order
+/// ([`one_each`]), each with its slots, read once from the owner table
+/// ([`gather_listed_products`]): the walk reads a pair's product and slots
+/// in one read, at its outer child.
 #[derive(Clone, Copy)]
 struct Listed<'a> {
-    list: &'a [ProductEntry],
-    owners: &'a [[u32; OWNER_SLOTS]],
+    owned: &'a [OwnedProduct],
 }
 
 impl Listed<'_> {
     /// Outer child `outer`'s one product with its slots.
     #[inline(always)]
     fn entry(self, outer: u32) -> OwnedProduct {
-        let e = self.list[outer as usize];
-        OwnedProduct { prod: e.prod_idx.0, slots: self.owners[e.g_idx.idx()] }
+        self.owned[outer as usize]
     }
 }
 

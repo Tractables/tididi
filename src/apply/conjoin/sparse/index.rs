@@ -743,6 +743,25 @@ pub(super) fn gather_owned_products(
     Ok(kept)
 }
 
+/// Fill `owned` with each product of `list`, which holds one per f index in
+/// order, with its slots in `owners`, at its f index: one pass over `list`,
+/// each slots' read independent of the others.
+pub(super) fn gather_listed_products(
+    lim: &Limits,
+    list: &[ProductEntry],
+    owners: &[u32],
+    owned: &mut Vec<OwnedProduct>,
+) -> Result<(), OperationError> {
+    if owned.len() < list.len() {
+        lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
+    }
+    let (owners, _) = owners.as_chunks::<OWNER_SLOTS>();
+    for (to, e) in owned.iter_mut().zip(list) {
+        *to = OwnedProduct { prod: e.prod_idx.0, slots: owners[e.g_idx.idx()] };
+    }
+    Ok(())
+}
+
 /// Slots per node of a level below which [`clear_owner_table`] empties the
 /// table by writing it whole rather than slot by slot: a line of slots
 /// written in order costs about what one write at random does.
