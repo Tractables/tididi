@@ -8,8 +8,11 @@ use crate::limits::Limits;
 const UNBUILT: u32 = u32::MAX;
 
 /// The fewest candidates, f pairs times g pairs, a level has for its
-/// cells to be read by vectors ([`words_pay`]).
+/// cells to be read by vectors ([`words_pay`]), and the fewest a level
+/// without masks has: below them its sample costs more than the vectors
+/// save.
 const WORDS_MIN_CANDIDATES: usize = 1 << 12;
+const UNMASKED_MIN_CANDIDATES: usize = 1 << 15;
 
 /// The most words a level's vectors take in all ([`words_pay`]).
 const WORDS_MAX_VECTOR_WORDS: usize = 1 << 22;
@@ -59,7 +62,7 @@ const MASKED_PAIR_COST: u128 = 32;
 /// cell read or a vector word built, an f pair's vector word read, a live
 /// cell, a live candidate, a cell and an f pair ([`words_pay`]). Fitted to
 /// levels run both ways.
-const WALK_COST: [u128; 3] = [18, 2, 9];
+const WALK_COST: [u128; 3] = [12, 1, 6];
 const WORDS_COST: [u128; 6] = [5, 10, 31, 6, 2, 30];
 
 /// Scratch of the levels whose cells are read by g-pair vectors
@@ -163,12 +166,12 @@ impl WordScratch {
 }
 
 /// Whether a level's cells are read by g-pair vectors. Its candidates,
-/// each f pair against each g pair, are enough ([`WORDS_MIN_CANDIDATES`]),
-/// and the vectors of the child rows its f pairs name on each side that
-/// kills, `f_rows` rows a side at most, fit [`WORDS_MAX_VECTOR_WORDS`].
-/// Then a sample of its cells ([`sample_cells`]) estimates its live
-/// candidates and live cells, unless the costs that do not depend on it
-/// decide the level already. A
+/// each f pair against each g pair, are enough ([`WORDS_MIN_CANDIDATES`],
+/// [`UNMASKED_MIN_CANDIDATES`]), and the vectors of the child rows its f
+/// pairs name on each side that kills, `f_rows` rows a side at most, fit
+/// [`WORDS_MAX_VECTOR_WORDS`]. Then a sample of its cells
+/// ([`sample_cells`]) estimates its live candidates and live cells, unless
+/// the costs that do not depend on it decide the level already. A
 /// level whose sampled candidates are mostly in grouped cells is walked:
 /// the grouped walk reads a left cell once a run of f pairs against a run
 /// of g pairs. A level with masks is read by vectors where g's nodes are
@@ -263,6 +266,9 @@ fn pays<L: ChildLookup, R: ChildLookup>(
         return false;
     }
     let masked = rows.ctx.masked;
+    if !masked && candidates < UNMASKED_MIN_CANDIDATES {
+        return false;
+    }
     let side = |rows: usize, named: usize, k: bool| {
         if k { rows.saturating_mul(named.min(gp) + words).saturating_add(gp + named) } else { 0 }
     };
