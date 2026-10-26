@@ -954,8 +954,7 @@ fn single_rows<const W: usize>(
                     }
                 }
                 // A unit a live cell, polled as the row loop polls them.
-                poll.poll_each(live_cols)?;
-                poll.poll(width as u64)?;
+                poll_each_then(&mut poll, live_cols, width as u64)?;
                 continue;
             }
             drop(out);
@@ -967,8 +966,7 @@ fn single_rows<const W: usize>(
                     sink.single(eng, slab, row_base + j, lc, rc)?;
                 }
             }
-            poll.poll_each(live_cols)?;
-            poll.poll(width as u64)?;
+            poll_each_then(&mut poll, live_cols, width as u64)?;
             continue 'rows;
         }
     }

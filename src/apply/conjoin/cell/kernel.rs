@@ -946,13 +946,21 @@ pub(crate) fn column_pairs<'a>(
 /// walk's does at the poll that comes due, so that a stop falls at the
 /// same work. For a route that charges a cell's candidates without
 /// walking it.
-#[inline]
+#[inline(always)]
 pub(crate) fn poll_cell_as_walked(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usize, f_pairs: &[ChildPair], n2: usize) -> Result<(), OperationError> {
     let n1 = f_pairs.len();
     let units = (n1 * n2) as u64;
     if units < gate.due_in() || n1 == 1 || n2 <= 1 {
         return gate.poll(units);
     }
+    poll_cell_in_pieces(gate, ctx, j, f_pairs, n2)
+}
+
+/// [`poll_cell_as_walked`] for a cell the gate comes due inside.
+#[cold]
+#[inline(never)]
+fn poll_cell_in_pieces(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usize, f_pairs: &[ChildPair], n2: usize) -> Result<(), OperationError> {
+    let n1 = f_pairs.len();
     if n1 >= GROUPED_MIN_PAIRS && ctx.right_cols.and_then(|cols| cols.runs(j)).is_some() {
         let mut start = 0;
         while start < n1 {
@@ -975,7 +983,7 @@ pub(crate) fn poll_cell_as_walked(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usi
 /// order, and then the row's `width`. In one poll unless the gate comes
 /// due inside the row, and then cell by cell as the row loop polls them
 /// ([`poll_cell_as_walked`]).
-#[inline]
+#[inline(always)]
 pub(crate) fn poll_row_as_walked(
     gate: &mut PollGate,
     ctx: &CellCtx<'_>,
@@ -987,6 +995,20 @@ pub(crate) fn poll_row_as_walked(
     if units < gate.due_in() {
         return gate.poll(units);
     }
+    poll_row_in_cells(gate, ctx, f_pairs, units, width, cells)
+}
+
+/// [`poll_row_as_walked`] for a row the gate comes due inside.
+#[cold]
+#[inline(never)]
+fn poll_row_in_cells(
+    gate: &mut PollGate,
+    ctx: &CellCtx<'_>,
+    f_pairs: &[ChildPair],
+    units: u64,
+    width: usize,
+    cells: impl Iterator<Item = (usize, usize)>,
+) -> Result<(), OperationError> {
     let mut polled = 0u64;
     for (j, n2) in cells {
         if n2 != 0 {
@@ -996,6 +1018,27 @@ pub(crate) fn poll_row_as_walked(
     }
     debug_assert_eq!(polled + width as u64, units, "a row's cells charge other than its units");
     gate.poll(width as u64)
+}
+
+/// Poll `gate` for `each` units polled one at a time and then `then` in
+/// one poll, as the row loop polls a row of `each` one-pair cells and its
+/// width: in one add unless the gate comes due inside them.
+#[inline(always)]
+pub(crate) fn poll_each_then(gate: &mut PollGate, each: u64, then: u64) -> Result<(), OperationError> {
+    let units = each + then;
+    if units < gate.due_in() {
+        gate.add_short(units);
+        return Ok(());
+    }
+    poll_each_then_due(gate, each, then)
+}
+
+/// [`poll_each_then`] for a row the gate comes due inside.
+#[cold]
+#[inline(never)]
+fn poll_each_then_due(gate: &mut PollGate, each: u64, then: u64) -> Result<(), OperationError> {
+    gate.poll_each(each)?;
+    gate.poll(then)
 }
 
 /// The product walk of one live cell, `f_pairs` against `g_pairs`, both
