@@ -98,7 +98,7 @@ where
     // each pair's column. The f rows' buffer decodes a column the table
     // does not hold.
     g_flat.clear();
-    lim.reserve_exact(g_flat, ROW_COLUMNS_MAX_WIDTH)?;
+    lim.reserve_exact(g_flat, (0..right_width).map(|j| g_level.pair_count_at(j)).sum())?;
     let mut columns = Columns {
         g_flat: &[],
         cols: [0; ROW_COLUMNS_MAX_WIDTH],

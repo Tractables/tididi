@@ -146,6 +146,73 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
     assert!(one > 0, "expected levels read by pairs of one pair a column, got none over {cases} cases");
 }
 
+/// Whether the conjunction of `f` and `g`, every level on a dense route,
+/// completes under a byte budget of `bytes`.
+fn completes_within(f: &Tdd, g: &Tdd, bytes: u64) -> bool {
+    let eng = Engine::new();
+    let _limits = eng.limits().scope(
+        LimitConfig::none()
+            .with_sparse_route(SparseRoute { sparsity: 64, min_grid: usize::MAX })
+            .with_memory_budget_bytes(Some(bytes)),
+    );
+    eng.and(f.clone(), g.clone()).is_ok()
+}
+
+/// The least byte budget the conjunction of `f` and `g` completes under.
+fn least_budget(f: &Tdd, g: &Tdd) -> u64 {
+    let (mut refused, mut enough) = (0u64, 1u64 << 16);
+    while !completes_within(f, g, enough) {
+        (refused, enough) = (enough, enough * 2);
+    }
+    while refused + 1 < enough {
+        let mid = refused + (enough - refused) / 2;
+        if completes_within(f, g, mid) {
+            enough = mid;
+        } else {
+            refused = mid;
+        }
+    }
+    enough
+}
+
+/// A level read by pairs reserves room for the pairs it holds, not for the
+/// most such a level can hold: given the least byte budget the row loop
+/// completes the conjunction under, plus room for g's largest level of
+/// pairs in the pair masks and the column buffer, the conjunction that
+/// reads levels by pairs completes too. Small formulas, so that the
+/// reservation can be the peak.
+#[test]
+fn a_level_read_by_pairs_is_charged_for_the_pairs_it_holds() {
+    let mut rng = Lcg::new(0x77aa_1234);
+    let room_per_pair = (std::mem::size_of::<u128>() + std::mem::size_of::<crate::diagram::ChildPair>()) as u64;
+    let mut read = 0;
+    for num_vars in [8, 10] {
+        for (name, vtree) in vtree_shapes(num_vars) {
+            for clauses in [3, 8, 12] {
+                for case in 0..24 {
+                    let eng = Engine::new();
+                    let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, num_vars, CnfShape { clauses, width: 3 }));
+                    let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 + case % 3, width: 2 }));
+                    let before = pair_rows_levels()[0];
+                    let _ = conjoin(&f, &g);
+                    if pair_rows_levels()[0] == before {
+                        continue;
+                    }
+                    read += 1;
+                    let pairs = (0..g.levels.len()).map(|t| g.levels[t].pair_counts().sum::<usize>()).max().unwrap_or(0);
+                    let budget = pair_rows_off(|| least_budget(&f, &g)) + pairs as u64 * room_per_pair;
+                    assert!(
+                        completes_within(&f, &g, budget),
+                        "{name}, {num_vars} variables, {clauses} clauses, case {case}: refused under {budget} bytes, which fit the row loop and {pairs} pairs"
+                    );
+                }
+            }
+        }
+    }
+    eprintln!("conjunctions reading levels by pairs: {read}");
+    assert!(read > 0, "expected conjunctions reading levels by pairs, got none");
+}
+
 /// The subsets of `free`.
 pub(super) fn subsets(free: u64) -> impl Iterator<Item = u64> {
     let mut next = Some(free);

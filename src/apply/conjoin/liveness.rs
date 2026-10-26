@@ -314,7 +314,10 @@ pub(super) fn build_pair_reach(
     pair_side: impl Fn(&ChildPair) -> usize,
 ) -> Result<(), OperationError> {
     reach.clear();
-    eng.limits().reserve_exact(reach, ROW_COLUMNS_MAX_WIDTH)?;
+    // The pairs the level holds, at most `ROW_COLUMNS_MAX_WIDTH`: a byte
+    // budget is charged for them only.
+    let n = (0..k_level).map(|x| level.pair_count_at(x)).sum();
+    eng.limits().reserve_exact(reach, n)?;
     level.try_for_each_node::<std::convert::Infallible>(0..k_level, |_, pairs| {
         debug_assert!(reach.len() + pairs.len() <= ROW_COLUMNS_MAX_WIDTH, "a level read by pairs fits");
         reach.extend(pairs.iter().map(|p| 1u128 << pair_side(p)));
