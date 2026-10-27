@@ -495,9 +495,12 @@ fn walk_pairs(
             }
         }
         let dense = &pb.dense;
-        let walk = BothSides::new(pl, offsets, one_each,
+        let pipelined = std::mem::size_of_val(&dense[..]) >= emit.thresholds.pipelined_bytes;
+        let walk = BothSides::new(pl, offsets, one_each, pipelined,
             #[inline(always)]
-            |c: u32, d: u32| dense[c as usize * width + d as usize]);
+            |c: u32, d: u32| dense[c as usize * width + d as usize],
+            #[inline(always)]
+            |c: u32, d: u32| prefetch_at(dense, c as usize * width + d as usize));
         walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
         for (_, pairs) in g_level.internal_inputs_iter() {
             for pair in pairs {
@@ -523,7 +526,8 @@ fn walk_pairs(
         }
     }
     let table = &pb.table;
-    let walk = BothSides::new(pl, offsets, one_each,
+    let pipelined = std::mem::size_of_val(&table[..]) >= emit.thresholds.pipelined_bytes;
+    let walk = BothSides::new(pl, offsets, one_each, pipelined,
         #[inline(always)]
         |c: u32, d: u32| {
             let key = pair_key(c, d);
@@ -538,7 +542,9 @@ fn walk_pairs(
                 }
                 s = (s + 1) & mask;
             }
-        });
+        },
+        #[inline(always)]
+        |c: u32, d: u32| prefetch_at(table, slot_of(pair_key(c, d), mask)));
     walk_level::<false, _>(eng, ws, &walk, f_level, emit)
 }
 
@@ -546,21 +552,61 @@ fn walk_pairs(
 /// lists and their bucket bounds by `f` index, and `find`, naming the `g`
 /// node of a pair of `g`'s children, `NO_PRODUCT` for none. Where both
 /// lists hold one product per `f` index, in order ([`one_each`]), a pair's
-/// products are read at its children, without bucket bounds.
-struct BothSides<'a, F> {
+/// products are read at its children, without bucket bounds, and on a map
+/// of at least [`SparseThresholds::pipelined_bytes`] (`pipelined`) the
+/// walk asks the cache for a group of pairs' map places (`touch`) before
+/// it reads any.
+struct BothSides<'a, F, T> {
     pl: Sides<&'a [ProductEntry]>,
     offsets: (&'a [u32], &'a [u32]),
     one_each: bool,
+    pipelined: bool,
     find: F,
+    touch: T,
 }
 
-impl<'a, F: Fn(u32, u32) -> u32> BothSides<'a, F> {
-    fn new(pl: Sides<&'a [ProductEntry]>, offsets: (&'a [u32], &'a [u32]), one_each: bool, find: F) -> Self {
-        BothSides { pl, offsets, one_each, find }
+/// The pairs a pipelined [`BothSides`] walk asks the cache for at once.
+const PAIR_GROUP: usize = 16;
+
+impl<'a, F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> BothSides<'a, F, T> {
+    fn new(
+        pl: Sides<&'a [ProductEntry]>,
+        offsets: (&'a [u32], &'a [u32]),
+        one_each: bool,
+        pipelined: bool,
+        find: F,
+        touch: T,
+    ) -> Self {
+        BothSides { pl, offsets, one_each, pipelined, find, touch }
+    }
+
+    /// The pipelined walk of a node's pairs, one product a side.
+    #[inline(always)]
+    fn node_pipelined(
+        &self,
+        pairs: &[ChildPair],
+        push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        let mut group = [(0u32, 0u32, 0u32, 0u32); PAIR_GROUP];
+        for chunk in pairs.chunks(PAIR_GROUP) {
+            for (looked, pair) in group.iter_mut().zip(chunk) {
+                let l = &self.pl.left[pair.left.raw() as usize];
+                let r = &self.pl.right[pair.right.raw() as usize];
+                (self.touch)(l.g_idx.0, r.g_idx.0);
+                *looked = (l.g_idx.0, r.g_idx.0, l.prod_idx.0, r.prod_idx.0);
+            }
+            for &(c, d, left_prod, right_prod) in &group[..chunk.len()] {
+                let parent = (self.find)(c, d);
+                if parent != NO_PRODUCT {
+                    push(ParEntry { g_parent: parent, left_prod, right_prod })?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
-impl<F: Fn(u32, u32) -> u32> NodeWalk for BothSides<'_, F> {
+impl<F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> NodeWalk for BothSides<'_, F, T> {
     #[inline(always)]
     fn node<const SWAPPED: bool>(
         &self,
@@ -568,6 +614,10 @@ impl<F: Fn(u32, u32) -> u32> NodeWalk for BothSides<'_, F> {
         ticker: &mut crate::limits::PollGate,
         mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
+        if self.one_each && self.pipelined {
+            self.node_pipelined(pairs, &mut push)?;
+            return ticker.poll(2 * pairs.len() as u64);
+        }
         if self.one_each {
             // One product a side: two units a pair, as below.
             for pair in pairs {
