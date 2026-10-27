@@ -76,3 +76,17 @@ pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// No level holds live pairs left for a close (`TddLevel::leave_live_pairs`)
+/// once the close that ends the operation has run: the levels an operation
+/// leaves counts on are levels its close closes.
+pub fn check_left_pairs_taken(tdd: &Tdd) -> Result<(), String> {
+    for (t, level) in tdd.levels.iter().enumerate() {
+        if let LevelState::Structural(held) = &level.state
+            && held.is_left()
+        {
+            return Err(format!("level {t}: holds live pairs left for a close that did not take them"));
+        }
+    }
+    Ok(())
+}

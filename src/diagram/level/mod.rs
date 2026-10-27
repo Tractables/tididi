@@ -111,36 +111,90 @@ impl LevelState {
 }
 
 /// The live pairs of a structural level, kept once a closed diagram read
-/// them ([`Tdd::pair_count`](crate::Tdd::pair_count)), so that the count
-/// reads each level a diagram's last operation left as it was once. Not a
-/// hint: trusted while the diagram is closed. A level starts with it
-/// unknown, and the closes that end an operation forget it on every level
-/// the operation changed ([`forget_held_pairs`](TddLevel::forget_held_pairs)),
-/// those being the levels whose pairs a closed diagram may hold changed. A
-/// debug build checks it against the level's pairs at every close. Atomic,
-/// so that a level is shared as a plain one is.
+/// them ([`Tdd::pair_count`](crate::Tdd::pair_count)) or left by the
+/// operation that last changed the level for the close that ends it
+/// ([`leave_live_pairs`](TddLevel::leave_live_pairs)): the count reads a
+/// level at most once, and not at all where its operation counted it. Not
+/// a hint: trusted while the diagram is closed. A level starts with it
+/// unknown. An edit that marks the level changed forgets it
+/// ([`forget_held_pairs`](TddLevel::forget_held_pairs)); a close keeps a
+/// count left on a level it closes and forgets any other
+/// ([`close_held_pairs`](TddLevel::close_held_pairs)), the levels it closes
+/// being those the operation may have changed. A debug build counts the
+/// pairs again where a count is left, and checks every kept count at every
+/// close. Atomic, so that a level is shared as a plain one is.
 #[derive(Debug)]
 pub(crate) struct HeldPairs(AtomicU64);
 
 /// [`HeldPairs`] not read.
 const UNKNOWN_PAIRS: u64 = u64::MAX;
 
+/// The bit of a count left for the close ([`HeldPairs::leave`]): no read
+/// takes it until a close keeps it.
+const LEFT_PAIRS: u64 = 1 << 63;
+
 impl HeldPairs {
     pub(crate) const fn unknown() -> Self {
         HeldPairs(AtomicU64::new(UNKNOWN_PAIRS))
     }
 
-    /// The pairs kept, if read.
+    /// The pairs kept, if read or kept by a close.
     #[inline]
     pub(crate) fn get(&self) -> Option<u64> {
         let n = self.0.load(Relaxed);
-        (n != UNKNOWN_PAIRS).then_some(n)
+        (n & LEFT_PAIRS == 0).then_some(n)
     }
 
     /// Keep `n` pairs; a count of `u64::MAX` reads as unknown.
     #[inline]
     pub(crate) fn set(&self, n: u64) {
         self.0.store(n, Relaxed);
+    }
+
+    /// Leave `n` pairs for the next close of the level to keep.
+    #[inline]
+    fn leave(&mut self, n: u64) {
+        debug_assert!(n < LEFT_PAIRS, "a level holds fewer than 2^63 pairs");
+        *self.0.get_mut() = n | LEFT_PAIRS;
+    }
+
+    /// What a close of the level does: keep the count left for it, forget
+    /// any other.
+    #[inline]
+    fn close(&mut self) {
+        let n = self.0.get_mut();
+        *n = if *n != UNKNOWN_PAIRS && *n & LEFT_PAIRS != 0 { *n & !LEFT_PAIRS } else { UNKNOWN_PAIRS };
+    }
+
+    /// What a close of a level no unmarked edit changed does: keep the
+    /// count left for it, and any count kept before.
+    #[inline]
+    fn settle(&mut self) {
+        let n = self.0.get_mut();
+        if *n != UNKNOWN_PAIRS {
+            *n &= !LEFT_PAIRS;
+        }
+    }
+
+    /// Whether a count is left for a close to keep.
+    #[inline]
+    pub(crate) fn is_left(&self) -> bool {
+        self.left().is_some()
+    }
+
+    /// The count left for a close to keep, if any.
+    #[inline]
+    fn left(&self) -> Option<u64> {
+        let n = self.0.load(Relaxed);
+        (n != UNKNOWN_PAIRS && n & LEFT_PAIRS != 0).then_some(n & !LEFT_PAIRS)
+    }
+
+    /// Forget a count left for a close, keeping a count kept already.
+    #[inline]
+    fn drop_left(&mut self) {
+        if self.is_left() {
+            *self.0.get_mut() = UNKNOWN_PAIRS;
+        }
     }
 }
 

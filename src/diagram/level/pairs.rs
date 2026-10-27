@@ -779,11 +779,68 @@ impl TddLevel {
         n as usize
     }
 
-    /// Forget the live pairs kept on this level: an operation changed it.
+    /// The live pairs of this level, where an operation knows them without
+    /// a census: off a description, a count left for the close
+    /// ([`leave_live_pairs`](Self::leave_live_pairs)), or one kept
+    /// ([`HeldPairs`](super::HeldPairs)) where the levels were closed when
+    /// the operation began (`closed_before`) and its every edit since
+    /// marked the level it changed, which forgot what that level kept.
+    #[inline]
+    pub(crate) fn known_live_pairs(&self, closed_before: bool) -> Option<usize> {
+        if let Some(d) = self.implicit() {
+            return Some(d.pairs());
+        }
+        match &self.state {
+            LevelState::Structural(held) => held.left().or_else(|| held.get().filter(|_| closed_before)).map(|n| n as usize),
+            _ => None,
+        }
+    }
+
+    /// Leave `n`, the level's live pairs, for the close that ends the
+    /// operation to keep ([`HeldPairs`](super::HeldPairs)), at the level's
+    /// last change before that close. A debug build counts them again.
+    #[inline]
+    pub(crate) fn leave_live_pairs(&mut self, n: usize) {
+        debug_assert_eq!(n, self.live_pairs(), "a level left a count other than its live pairs");
+        if let LevelState::Structural(held) = &mut self.state {
+            held.leave(n as u64);
+        }
+    }
+
+    /// Forget the live pairs kept or left on this level: an edit changed it.
     #[inline]
     pub(crate) fn forget_held_pairs(&mut self) {
         if let LevelState::Structural(held) = &mut self.state {
             *held = super::HeldPairs::unknown();
+        }
+    }
+
+    /// What a close does with the live pairs kept on this level: keeps a
+    /// count left for it ([`leave_live_pairs`](Self::leave_live_pairs)),
+    /// forgets any other.
+    #[inline]
+    pub(crate) fn close_held_pairs(&mut self) {
+        if let LevelState::Structural(held) = &mut self.state {
+            held.close();
+        }
+    }
+
+    /// Forget a count left on this level for a close that will not come.
+    #[inline]
+    pub(crate) fn forget_left_pairs(&mut self) {
+        if let LevelState::Structural(held) = &mut self.state {
+            held.drop_left();
+        }
+    }
+
+    /// [`close_held_pairs`](Self::close_held_pairs) on a level whose every
+    /// change since the levels were last closed marked it changed, which
+    /// forgot what it kept: keeps a count left for it, and one kept since
+    /// before.
+    #[inline]
+    pub(crate) fn settle_held_pairs(&mut self) {
+        if let LevelState::Structural(held) = &mut self.state {
+            held.settle();
         }
     }
 

@@ -94,8 +94,9 @@ pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<N
     } else {
         let mut filled = Vec::new();
         eng.limits().try_resize(&mut filled, tdd.vtree.num_nodes(), false)?;
+        let closed = tdd.levels.is_closed();
         expand_full(eng, &mut tdd, &mut filled)?;
-        complement_full_at_root(eng, tdd, &filled)?
+        complement_full_at_root(eng, tdd, &filled, closed)?
     };
     result.weights = weights;
     Ok((result, old))
@@ -103,11 +104,13 @@ pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<N
 
 /// Complement at the root a diagram full below it: collect the root-level
 /// pairs not in the output node and drop the dead ones. With the old
-/// output's slot when the complement is a node beside it.
+/// output's slot when the complement is a node beside it. `closed` says the
+/// levels were closed before [`expand_full`], which left the root as it was.
 fn complement_full_at_root(
     eng: &Engine,
     full_tdd: Tdd,
     filled: &[bool],
+    closed: bool,
 ) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
@@ -180,7 +183,10 @@ fn complement_full_at_root(
             return Ok((crate::build::constant_on(eng, &vtree, false)?, None));
         }
 
-        let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;
+        let root_level = &mut levels[root_idx];
+        let pairs = level_pairs(root_level, closed) as usize;
+        let neg_idx = root_level.push_node(eng.limits(), &neg_pairs)?;
+        root_level.leave_live_pairs(pairs + neg_pairs.len());
 
         Ok((assembly.finish(TddNodeId { vtree: root, local: neg_idx })?, Some(out_local)))
     }
@@ -198,7 +204,9 @@ fn complement_full_at_root(
 /// node is read off the cells left unmarked. The walk also records, per leaf
 /// child, whether the level refers to it as `One` or as `Pos`/`Neg`, and the
 /// fill is emitted in that same form. `filled[t]` is set for each level `t`
-/// it adds a node to, as the level's last.
+/// it adds a node to, as the level's last. Each level it visits is left its
+/// live pairs for the close that ends the negation
+/// ([`TddLevel::leave_live_pairs`]), off the pairs the cover counts.
 pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd, filled: &mut [bool]) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut marked = scratch.cover.checkout_preserving(eng);
@@ -259,6 +267,7 @@ fn expand_full_with(
                 #[cfg(debug_assertions)]
                 debug_assert!(missing_by_cover(eng, marked, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
                 charge_pairs(eng, pairs)?;
+                level.leave_live_pairs(pairs as usize);
                 eng.limits().check_stop()?;
                 continue;
             }
@@ -274,6 +283,7 @@ fn expand_full_with(
                     level.push_node(eng.limits(), cells)?;
                     filled[t.idx()] = true;
                 }
+                level.leave_live_pairs(pairs as usize + if filled[t.idx()] { cells.len() } else { 0 });
                 eng.limits().check_stop()?;
                 continue;
             }
@@ -304,6 +314,7 @@ fn expand_full_with(
             level.push_node(eng.limits(), cells)?;
             filled[t.idx()] = true;
         }
+        level.leave_live_pairs(pairs as usize + cells.len());
         eng.limits().check_stop()?;
     }
     Ok(())

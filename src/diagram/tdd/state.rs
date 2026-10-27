@@ -66,11 +66,12 @@ impl Summary {
 ///
 /// The same holds for the closed form of the levels: `closed` says every
 /// level is closed ([`TddLevel::close`]), as the end of an operation leaves
-/// them, and any mutable access clears it. A close forgets the live pairs
-/// kept on each level it closes, so that what a level keeps while the
-/// levels are closed holds of its pairs. `changed` lists the levels the
-/// edits since then say they changed ([`mark_changed`](Self::mark_changed)),
-/// so that a reduction that began on closed levels closes only those.
+/// them, and any mutable access clears it. A close keeps the live pairs an
+/// operation left on a level it closes and forgets any other kept there,
+/// so that what a level keeps while the levels are closed holds of its
+/// pairs. `changed` lists the levels the edits since then say they changed
+/// ([`mark_changed`](Self::mark_changed)), so that a reduction that began on
+/// closed levels closes only those.
 ///
 /// The level counts ([`LevelCounts`]) are kept on the same terms: they
 /// describe the levels as they were when counted, so any mutable access, and
@@ -153,8 +154,23 @@ impl LevelStorage {
     /// the levels since.
     pub(crate) fn is_closed(&self) -> bool { self.closed }
 
-    /// Record that an edit changed level `t`'s nodes or pairs.
-    pub(crate) fn mark_changed(&mut self, t: VtreeIdx) { self.changed.push(t); }
+    /// Record that an edit changed level `t`'s nodes or pairs, forgetting
+    /// the live pairs the level keeps or was left
+    /// ([`TddLevel::forget_held_pairs`]).
+    pub(crate) fn mark_changed(&mut self, t: VtreeIdx) {
+        self.changed.push(t);
+        self.levels[t.idx()].forget_held_pairs();
+    }
+
+    /// Forget the live pairs left on the levels for a close that will not
+    /// come ([`TddLevel::forget_left_pairs`]), as when an operation that
+    /// left them is refused before its close. What is known of the levels'
+    /// closed form stands: no level changes.
+    pub(crate) fn forget_left_pairs(&mut self) {
+        for level in &mut self.levels {
+            level.forget_left_pairs();
+        }
+    }
 
     /// Swap level `t`'s stored nodes and pair arena with `level`'s, without
     /// the mutable access [`DerefMut`] records: for a conjunction that lends
@@ -189,7 +205,7 @@ impl LevelStorage {
         self.summary.forget();
         for level in &mut self.levels {
             level.close();
-            level.forget_held_pairs();
+            level.close_held_pairs();
         }
         self.closed = true;
         self.changed.clear();
@@ -201,7 +217,7 @@ impl LevelStorage {
         self.summary.forget();
         for &t in changed {
             self.levels[t.idx()].close();
-            self.levels[t.idx()].forget_held_pairs();
+            self.levels[t.idx()].close_held_pairs();
         }
         self.closed = true;
         self.changed.clear();
@@ -209,16 +225,23 @@ impl LevelStorage {
 
     /// [`close_changed`](Self::close_changed) the levels the edits marked
     /// changed, every other level being closed already; every level when
-    /// the edits marked as many as there are levels.
+    /// the edits marked as many as there are levels. Every edit marked the
+    /// level it changed, forgetting the live pairs the level kept, so the
+    /// close keeps both a count kept and one left
+    /// ([`TddLevel::settle_held_pairs`]).
     pub(crate) fn close_marked(&mut self) {
         self.summary.forget();
-        if self.changed.len() >= self.levels.len() {
-            return self.close();
-        }
         let Self { levels, changed, .. } = self;
-        for &t in changed.iter() {
-            levels[t.idx()].close();
-            levels[t.idx()].forget_held_pairs();
+        if changed.len() >= levels.len() {
+            for level in levels.iter_mut() {
+                level.close();
+                level.settle_held_pairs();
+            }
+        } else {
+            for &t in changed.iter() {
+                levels[t.idx()].close();
+                levels[t.idx()].settle_held_pairs();
+            }
         }
         self.closed = true;
         self.changed.clear();

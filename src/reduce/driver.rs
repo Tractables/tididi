@@ -25,6 +25,17 @@ impl<'a> Reduction<'a> {
     pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd) -> Self { Self { eng, tdd } }
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
+        let done = self.run_passes(plan, scope);
+        // A pass that left a level's live pairs for the close at the end
+        // (`TddLevel::leave_live_pairs`) may be followed by one refused
+        // before that close.
+        if done.is_err() {
+            self.tdd.levels.forget_left_pairs();
+        }
+        done
+    }
+
+    fn run_passes(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let whole = matches!(scope, PruneScope::Whole);
         // The passes mark the levels they change; on levels closed before

@@ -963,6 +963,7 @@ fn compact_levels(
     remap: &mut [u32],
     mut plans: Plans,
 ) {
+    let counted = tdd.levels.is_closed();
     // Bottom-up topological order, so a level's children are compacted
     // before it rewrites its references into them; raw indices do not encode
     // parent/child order on a rotated vtree. A level whose children kept
@@ -983,7 +984,7 @@ fn compact_levels(
         let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
         let (l, r) = (child(left), child(right));
         let plan = plans.take(t);
-        compact_one_level(tdd, t, &marks[level_base[t.idx()]..], marks, remap, l, r, plan);
+        compact_one_level(tdd, t, &marks[level_base[t.idx()]..], marks, remap, l, r, plan, counted);
     }
 }
 
@@ -1025,6 +1026,19 @@ impl Child {
 /// room reserved for it ([`store_kept`]).
 ///
 /// `remap` must hold the spans of the dirty children side by side.
+///
+/// A stored level it changes is left its live pairs for the close
+/// ([`TddLevel::leave_live_pairs`]) where it knew them before
+/// ([`TddLevel::known_live_pairs`], `counted` saying the levels were closed
+/// when the reduction began): those less the pairs of the nodes it drops,
+/// which a rewrite of references leaves as they were. Where every node
+/// holds the same count of pairs (a description's, or one on a stored level
+/// of inline nodes alone), the level counts the nodes it keeps off the
+/// marks; a stored level otherwise reads the pairs of the nodes it drops in
+/// the loop that counts their arena pairs.
+///
+/// [`TddLevel::leave_live_pairs`]: crate::diagram::TddLevel::leave_live_pairs
+/// [`TddLevel::known_live_pairs`]: crate::diagram::TddLevel::known_live_pairs
 #[expect(clippy::too_many_arguments)]
 fn compact_one_level(
     tdd: &mut Tdd,
@@ -1035,15 +1049,27 @@ fn compact_one_level(
     left: Child,
     right: Child,
     plan: Option<Kept>,
+    counted: bool,
 ) -> bool {
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
     let own = &own[..words(width)];
     let lost = !all_marked(own, width);
-    if lost || left.dirty || right.dirty {
-        tdd.levels.mark_changed(t);
-    }
     debug_assert_eq!(plan.is_some(), tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty));
+    if !(lost || left.dirty || right.dirty) {
+        return false;
+    }
+    let level = &tdd.levels[t_idx];
+    let before = level.known_live_pairs(counted);
+    // The pairs each node holds, where they are the same for every node: a
+    // description's, or one on a stored level of no arena pairs and as many
+    // pairs as nodes (each node there holds at most one).
+    let per_node = match level.pairs.implicit() {
+        Some(d) => Some(d.pairs_per_node()),
+        None if level.pairs.is_empty() && before == Some(width) => Some(1),
+        None => None,
+    };
+    tdd.levels.mark_changed(t);
 
     let redescribed = match plan {
         Some(Kept::Described(d, dead)) => {
@@ -1063,21 +1089,31 @@ fn compact_one_level(
         None => None,
     };
 
+    let level = &mut tdd.levels[t_idx];
     if !lost {
+        if let Some(pairs) = before.filter(|_| level.implicit().is_none()) {
+            level.leave_live_pairs(pairs);
+        }
         return false;
     }
+    // The live pairs of the stored nodes it drops, where it keeps a count.
+    let mut dropped = 0usize;
     // Compact the node Vec in place, O(width) with no allocation. Dropping a
     // node abandons its pair range; the arena is swept once enough of it is
     // dead, which is legal here because no pair offset is held across the
     // call.
-    let level = &mut tdd.levels[t_idx];
     let dead = match redescribed {
         Some(dead) => dead,
         None => {
             // A node drops arena pairs only where the arena holds some: on
             // a level of inline nodes alone nothing is read.
             let mut dead = 0usize;
-            if !level.pairs.is_empty() {
+            if before.is_some() && per_node.is_none() {
+                for_each_unmarked(own, width, |i| {
+                    dead += level.arena_pairs_at(i);
+                    dropped += level.pair_count_at(i);
+                });
+            } else if !level.pairs.is_empty() {
                 for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
             }
             keep_marked(level.nodes.stored_mut(), own);
@@ -1086,6 +1122,13 @@ fn compact_one_level(
     };
     level.note_dead_pairs(dead);
     level.compact_pairs_if_stale();
+    if let Some(before) = before.filter(|_| level.implicit().is_none()) {
+        let pairs = match per_node {
+            Some(k) => own.iter().map(|w| w.count_ones() as usize).sum::<usize>() * k,
+            None => before - dropped,
+        };
+        level.leave_live_pairs(pairs);
+    }
     true
 }
 
@@ -1322,6 +1365,10 @@ fn store_kept(tdd: &mut Tdd, t: VtreeIdx, room: StoreRoom, own: &[u64], left: Op
 /// A child that lost a slot is structural, the only kind a prune compacts,
 /// so a reference into it is the child's slot, read straight through its
 /// table; a side whose child kept every slot is not written.
+///
+/// Out of line, so that the rewrite's loop keeps its registers apart from
+/// what the compaction holds across it.
+#[inline(never)]
 fn rewrite_child_refs(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left_remap: Option<&[u32]>, right_remap: Option<&[u32]>) {
     let (left, right) = tdd.vtree.children(t);
     debug_assert!(left_remap.is_none() || tdd.is_structural_internal(left));
@@ -1948,6 +1995,7 @@ fn compact_visited(
     remap_need: usize,
 ) -> Result<(), OperationError> {
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
+    let counted = tdd.levels.is_closed();
     // What the compaction does with the levels held as descriptions is
     // decided first.
     let order = visits.iter().rev().map(|v| (v.level, v.base, v.left, v.right));
@@ -1958,7 +2006,7 @@ fn compact_visited(
     for k in (0..visits.len()).rev() {
         let v = visits[k];
         let plan = plans.take(v.level);
-        if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, v.left, v.right, plan) {
+        if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, v.left, v.right, plan, counted) {
             if !room {
                 tdd.dirty.reserve_all(k + 1);
                 room = true;
@@ -2081,6 +2129,7 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
     // dropped and the nodes after it one slot down, and in a stored parent
     // the references past it one slot down.
     tdd.dirty.reserve_all(chain.len());
+    let counted = tdd.levels.is_closed();
     for j in (0..chain.len()).rev() {
         let [c, k, up] = chain[j];
         let c = VtreeIdx(c);
@@ -2088,11 +2137,17 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
         match plans.as_mut().and_then(|plans| plans.take(c)) {
             Some(plan) => {
                 let v = visits[j];
-                compact_one_level(tdd, c, &marks[v.base..], marks, remap, v.left, v.right, Some(plan));
+                compact_one_level(tdd, c, &marks[v.base..], marks, remap, v.left, v.right, Some(plan), counted);
             }
             None => {
+                let level = &tdd.levels[c.idx()];
+                let pairs = level.known_live_pairs(counted).map(|n| n - level.pair_count_at(k as usize));
                 tdd.levels.mark_changed(c);
-                retire(&mut tdd.levels[c.idx()], k as usize);
+                let level = &mut tdd.levels[c.idx()];
+                retire(level, k as usize);
+                if let Some(pairs) = pairs {
+                    level.leave_live_pairs(pairs);
+                }
             }
         }
         tdd.invalidate_shrunk(c);

@@ -325,9 +325,12 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // admits the rewrite is built stored where its pairs lie, and the close
     // at the end of the operation describes what is affine again.
     tdd.levels[parent_vi.idx()].store_if_implicit(lim)?;
-    tdd.rewrite_level(parent_vi, |level| {
+    let pairs = tdd.rewrite_level(parent_vi, |level| {
+        // The level's live pairs, the pairs its nodes hold once rewritten.
+        let mut pairs = 0usize;
         for i in 0..level.nodes().len() {
             if let NodeKind::Inline(p) = level.node(i).kind() {
+                pairs += 1;
                 // A single-pair node is labelled `One` on `side` (the first
                 // pass of `try_contract_leaf_twins` refused the level on a
                 // lone literal), and `One` pairs are copied verbatim.
@@ -369,6 +372,7 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 w += 1;
             }
             let new_len = w - start;
+            pairs += new_len;
             debug_assert!(
                 new_len == old_len || new_len * 2 == old_len,
                 "leaf rewrite: `classify` admits a pure-One list (unchanged) or a matched \
@@ -390,6 +394,8 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         // copied through verbatim. The dropped slots stay in the arena until the
         // level's compaction threshold; no pair-arena offset is held across it.
         level.compact_pairs_if_stale();
+        pairs
     });
+    tdd.levels[parent_vi.idx()].leave_live_pairs(pairs);
     Ok(())
 }

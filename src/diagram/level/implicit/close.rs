@@ -44,11 +44,14 @@ impl crate::diagram::Tdd {
     }
 
     /// In a debug build, panic unless every level is in the canonical form of
-    /// implicit levels; nothing in a release build.
+    /// implicit levels and holds no live pairs left for a close; nothing in
+    /// a release build.
     #[inline]
     pub(crate) fn debug_check_implicit_levels(&self) {
         #[cfg(debug_assertions)]
-        if let Err(e) = crate::test_helpers::check::check_implicit_levels(self) {
+        if let Err(e) = crate::test_helpers::check::check_implicit_levels(self)
+            .and_then(|()| crate::test_helpers::check::check_left_pairs_taken(self))
+        {
             panic!("a level is out of canonical form at an operation's end: {e}");
         }
     }
