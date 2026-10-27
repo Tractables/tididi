@@ -59,3 +59,46 @@ fn every_emit_builds_the_dense_grids_nodes() {
         }
     }
 }
+
+/// Gathering a node's pairs a pass a product leaves each product's pairs
+/// in its range in candidate order, and a product of one pair in its single,
+/// as a stable sort of the candidates by product would.
+#[test]
+fn gathering_by_product_is_a_stable_sort() {
+    use crate::apply::conjoin::sparse::scatter::gather_by_product;
+    use crate::diagram::{ChildPair, EncodedChildRef};
+    let mut rng = crate::test_helpers::Lcg::new(11);
+    for products in 2..=4u32 {
+        for n in [64usize, 65, 100, 301] {
+            // Product 0 holds one candidate, the others the rest at random,
+            // each at least one.
+            let lone = rng.below(n as u64) as usize;
+            let mut owners: Vec<u32> = (0..n).map(|i| if i == lone { 0 } else { 1 + rng.below(u64::from(products - 1)) as u32 }).collect();
+            for k in 1..products {
+                if !owners.contains(&k) {
+                    owners[(lone + k as usize) % n] = k;
+                }
+            }
+            let pairs: Vec<ChildPair> = (0..n as u32)
+                .map(|i| ChildPair::new(EncodedChildRef::from_raw(i), EncodedChildRef::from_raw(i * 7 + 1)))
+                .collect();
+            let mut cursors: Vec<u32> = (0..products).map(|k| owners.iter().filter(|&&o| o == k).count() as u32).collect();
+            let total = super::prefix_offsets(&mut cursors, true).unwrap() as usize;
+            let starts = cursors.clone();
+            let zero = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
+            let mut singles = vec![zero; products as usize];
+            let mut into = vec![zero; total + 1];
+            gather_by_product(&pairs, &owners, &mut cursors, &mut singles, &mut into);
+            for k in 0..products {
+                let mine: Vec<ChildPair> = owners.iter().zip(&pairs).filter(|(o, _)| **o == k).map(|(_, p)| *p).collect();
+                if starts[k as usize] == u32::MAX {
+                    assert_eq!(mine, [singles[k as usize]], "products {products}, n {n}: product {k}'s single");
+                    assert_eq!(cursors[k as usize], u32::MAX);
+                } else {
+                    let (start, end) = (starts[k as usize] as usize, cursors[k as usize] as usize);
+                    assert_eq!(&into[start..end], &mine[..], "products {products}, n {n}: product {k}'s range");
+                }
+            }
+        }
+    }
+}

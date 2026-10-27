@@ -3253,9 +3253,10 @@ fn emit_alternating(
 /// parent's products, and each pair is written into its product's range;
 /// the ranges take no more of the arena than the walk gave the pairs.
 ///
-/// Up to [`FEW_PRODUCTS`] products, each product's pairs are counted and
+/// A node of up to [`FEW_PRODUCTS`] products and at least
+/// [`GATHERED_CANDIDATES`] candidates has each product's pairs counted and
 /// then gathered by a pass of their own over the candidates, whose cursor
-/// stays in a register ([`gather_by_product`]). With more, one pass counts
+/// stays in a register ([`gather_by_product`]). Otherwise one pass counts
 /// them all and one writes each pair at its product's cursor, read from and
 /// written back to memory.
 #[expect(clippy::too_many_arguments)]
@@ -3272,6 +3273,7 @@ fn emit_owned(
     let lim = eng.limits();
     let EmitScratch { p2_map, pair_counts, single_pairs, moved_pairs } = emit;
     let first = pl_output.len();
+    pair_counts.clear();
     let keyed = owners.iter_mut().try_for_each(|owner| {
         let g_parent = *owner;
         let slot = p2_map[g_parent as usize];
@@ -3283,6 +3285,7 @@ fn emit_owned(
                 g_idx: GNodeIdx(g_parent),
                 prod_idx: ProductNodeIdx(idx),
             })?;
+            lim.try_push(pair_counts, 0)?;
             idx - first as u32
         } else {
             slot - first as u32
@@ -3303,9 +3306,7 @@ fn emit_owned(
             arena.truncate(base);
             return Ok(());
         }
-        pair_counts.clear();
-        lim.try_resize(pair_counts, products, 0)?;
-        let few = products <= FEW_PRODUCTS;
+        let few = products <= FEW_PRODUCTS && n >= GATHERED_CANDIDATES;
         if few {
             for (k, count) in pair_counts.iter_mut().enumerate() {
                 *count = owners.iter().filter(|&&o| o == k as u32).count() as u32;
@@ -3361,6 +3362,10 @@ fn emit_owned(
 /// The most products [`emit_owned`] gathers a pass each.
 const FEW_PRODUCTS: usize = 4;
 
+/// The fewest candidates [`emit_owned`] gathers a pass a product: below
+/// it, the passes cost more than the chains through memory they avoid.
+const GATHERED_CANDIDATES: usize = 64;
+
 /// Gather `pairs` by product, `owners[i]` the product of `pairs[i]`, into
 /// `into` for [`emit_owned`]: each product's pairs, in candidate order, at
 /// the start `cursors` gives it, `cursors[k]` left at the range's end; a
@@ -3372,7 +3377,7 @@ const FEW_PRODUCTS: usize = 4;
 /// last write of a pass lands at the range's end, one place past the last
 /// range's, which `into` holds.
 #[inline(always)]
-fn gather_by_product(pairs: &[ChildPair], owners: &[u32], cursors: &mut [u32], singles: &mut [ChildPair], into: &mut [ChildPair]) {
+pub(super) fn gather_by_product(pairs: &[ChildPair], owners: &[u32], cursors: &mut [u32], singles: &mut [ChildPair], into: &mut [ChildPair]) {
     for (k, cursor) in cursors.iter_mut().enumerate() {
         let k = k as u32;
         if *cursor == INLINE {
