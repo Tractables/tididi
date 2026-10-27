@@ -343,7 +343,14 @@ impl LimitConfig {
 ///
 /// Callbacks may inspect or change settings without holding an internal borrow.
 pub struct Limits {
-    budget: Cell<Option<u64>>,
+    /// The soft byte budget, or `u64::MAX` when none is armed, which the
+    /// saturating in-flight meter never exceeds. Every reservation compares
+    /// the meter with this word. It is not an `Option<u64>`: that leaves its
+    /// payload unwritten when `None`, and a compare scheduled before the tag
+    /// test then branches on unwritten bytes.
+    budget_ceiling: Cell<u64>,
+    /// Whether a soft budget is armed, `budget_ceiling` holding it.
+    budget_armed: Cell<bool>,
     in_flight_bytes: Cell<u64>,
     pairs_in_flight: Cell<u64>,
     pairs_level_charge: Cell<u64>,
@@ -404,7 +411,8 @@ impl Limits {
     #[must_use]
     pub(crate) const fn new() -> Limits {
         Limits {
-            budget: Cell::new(None),
+            budget_ceiling: Cell::new(u64::MAX),
+            budget_armed: Cell::new(false),
             in_flight_bytes: Cell::new(0),
             pairs_in_flight: Cell::new(0),
             pairs_level_charge: Cell::new(0),
@@ -446,7 +454,7 @@ impl Limits {
     #[must_use]
     pub fn armed(&self) -> LimitConfig {
         LimitConfig {
-            memory_budget_bytes: self.budget.get(),
+            memory_budget_bytes: self.budget(),
             output_node_cap: self.output_node_cap.get(),
             stop: self.stop.get(),
             stop_callback: self.stop_callback.borrow().clone(),
@@ -490,7 +498,7 @@ impl Limits {
     #[must_use = "install returns the prior set; bind it or use scope/edit"]
     pub fn install(&self, set: LimitConfig) -> LimitConfig {
         let prior = self.armed();
-        self.budget.set(set.memory_budget_bytes);
+        self.set_budget(set.memory_budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
         self.quiet.set(Quiet::of(set.stop, set.stop_callback.is_some()));
@@ -552,7 +560,14 @@ impl Limits {
     /// Set or clear the soft budget alone, for a caller that re-derives it as it
     /// goes (a compile loop refreshing `budget − live` after every step).
     pub fn set_budget(&self, remaining_bytes: Option<u64>) {
-        self.budget.set(remaining_bytes);
+        self.budget_armed.set(remaining_bytes.is_some());
+        self.budget_ceiling.set(remaining_bytes.unwrap_or(u64::MAX));
+    }
+
+    /// The armed soft budget, if any.
+    #[inline]
+    fn budget(&self) -> Option<u64> {
+        self.budget_armed.get().then(|| self.budget_ceiling.get())
     }
 
 
@@ -683,10 +698,10 @@ impl Limits {
         }
         let total = self.in_flight_bytes.get().saturating_add(bytes);
         self.in_flight_bytes.set(total);
-        match self.budget.get() {
-            Some(rem) if total > rem => Err(OperationError::OverBudget),
-            _ => Ok(()),
+        if total > self.budget_ceiling.get() {
+            return Err(OperationError::OverBudget);
         }
+        Ok(())
     }
 
     /// Give `bytes` back when a transient's backing allocation is actually

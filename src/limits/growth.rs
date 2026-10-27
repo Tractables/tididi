@@ -39,9 +39,7 @@ impl Limits {
     /// many bytes is guaranteed not to trip the soft trigger.
     #[inline]
     pub(crate) fn budget_headroom(&self) -> Option<u64> {
-        self.budget
-            .get()
-            .map(|rem| rem.saturating_sub(self.in_flight_bytes.get()))
+        self.budget().map(|rem| rem.saturating_sub(self.in_flight_bytes.get()))
     }
 
     /// Whether nothing bounds this engine's memory but the allocator: no
@@ -49,7 +47,7 @@ impl Limits {
     /// allocated or in what order.
     #[inline]
     pub(crate) fn memory_unbounded(&self) -> bool {
-        self.budget.get().is_none() && !self.hooked.get()
+        !self.budget_armed.get() && !self.hooked.get()
     }
 
 

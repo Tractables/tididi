@@ -98,3 +98,20 @@ fn install_returns_the_whole_prior_set_and_restores_it() {
     let _restored = lim.install(prior);
     assert_eq!(lim.armed().output_node_cap(), first.output_node_cap());
 }
+
+/// The largest budget is armed, not absent: it reads back and keeps the
+/// engine metered, though no saturating total exceeds it.
+#[test]
+fn the_largest_budget_is_armed_and_clearing_it_unarms() {
+    let lim = Limits::new();
+    lim.set_budget(Some(u64::MAX));
+    assert_eq!(lim.armed().memory_budget_bytes(), Some(u64::MAX));
+    assert!(!lim.memory_unbounded());
+    assert_eq!(lim.charge_bytes(u64::MAX), Ok(()));
+    assert_eq!(lim.charge_bytes(1), Ok(()), "the meter saturates at the largest budget");
+
+    lim.set_budget(None);
+    assert_eq!(lim.armed().memory_budget_bytes(), None);
+    assert!(lim.memory_unbounded());
+    assert_eq!(lim.budget_headroom(), None);
+}
