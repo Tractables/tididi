@@ -3250,9 +3250,14 @@ fn emit_alternating(
 /// [`emit_walked`] on more than [`FEW_CANDIDATES`] candidates of more than
 /// one g parent, through `p2_map`, the map from a g parent to its product.
 /// Each owner is replaced in place by its product's place among the
-/// parent's products, the pairs are moved out of the arena once, and each
-/// is written back into its product's range; the ranges take no more of
-/// the arena than the walk gave the pairs.
+/// parent's products, and each pair is written into its product's range;
+/// the ranges take no more of the arena than the walk gave the pairs.
+///
+/// Up to [`FEW_PRODUCTS`] products, each product's pairs are counted and
+/// then gathered by a pass of their own over the candidates, whose cursor
+/// stays in a register ([`gather_by_product`]). With more, one pass counts
+/// them all and one writes each pair at its product's cursor, read from and
+/// written back to memory.
 #[expect(clippy::too_many_arguments)]
 fn emit_owned(
     eng: &Engine,
@@ -3267,7 +3272,6 @@ fn emit_owned(
     let lim = eng.limits();
     let EmitScratch { p2_map, pair_counts, single_pairs, moved_pairs } = emit;
     let first = pl_output.len();
-    pair_counts.clear();
     let keyed = owners.iter_mut().try_for_each(|owner| {
         let g_parent = *owner;
         let slot = p2_map[g_parent as usize];
@@ -3279,12 +3283,9 @@ fn emit_owned(
                 g_idx: GNodeIdx(g_parent),
                 prod_idx: ProductNodeIdx(idx),
             })?;
-            lim.try_push(pair_counts, 1)?;
             idx - first as u32
         } else {
-            let k = slot - first as u32;
-            pair_counts[k as usize] += 1;
-            k
+            slot - first as u32
         };
         Ok(())
     });
@@ -3302,20 +3303,41 @@ fn emit_owned(
             arena.truncate(base);
             return Ok(());
         }
-        moved_pairs.clear();
-        lim.reserve(moved_pairs, n)?;
-        moved_pairs.extend_from_slice(&arena[base..base + n]);
+        pair_counts.clear();
+        lim.try_resize(pair_counts, products, 0)?;
+        let few = products <= FEW_PRODUCTS;
+        if few {
+            for (k, count) in pair_counts.iter_mut().enumerate() {
+                *count = owners.iter().filter(|&&o| o == k as u32).count() as u32;
+            }
+        } else {
+            for &k in owners.iter() {
+                pair_counts[k as usize] += 1;
+            }
+        }
         let total = prefix_offsets(pair_counts, true)? as usize;
-        arena.truncate(base + total);
         single_pairs.clear();
-        lim.try_resize(single_pairs, products, moved_pairs[0])?;
-        for (&k, &pair) in owners.iter().zip(moved_pairs.iter()) {
-            let cursor = pair_counts[k as usize];
-            if cursor == INLINE {
-                single_pairs[k as usize] = pair;
-            } else {
-                arena[base + cursor as usize] = pair;
-                pair_counts[k as usize] = cursor + 1;
+        lim.try_resize(single_pairs, products, arena[base])?;
+        if few {
+            if moved_pairs.len() <= total {
+                lim.try_resize(moved_pairs, total + 1, arena[base])?;
+            }
+            gather_by_product(&arena[base..base + n], owners, pair_counts, single_pairs, moved_pairs);
+            arena[base..base + total].copy_from_slice(&moved_pairs[..total]);
+            arena.truncate(base + total);
+        } else {
+            moved_pairs.clear();
+            lim.reserve(moved_pairs, n)?;
+            moved_pairs.extend_from_slice(&arena[base..base + n]);
+            arena.truncate(base + total);
+            for (&k, &pair) in owners.iter().zip(moved_pairs.iter()) {
+                let cursor = pair_counts[k as usize];
+                if cursor == INLINE {
+                    single_pairs[k as usize] = pair;
+                } else {
+                    arena[base + cursor as usize] = pair;
+                    pair_counts[k as usize] = cursor + 1;
+                }
             }
         }
         push_ranged_nodes(eng, level, base, pair_counts, single_pairs)
@@ -3334,6 +3356,37 @@ fn emit_owned(
         "sparse apply: duplicate pair emitted — canonicity violated"
     );
     Ok(())
+}
+
+/// The most products [`emit_owned`] gathers a pass each.
+const FEW_PRODUCTS: usize = 4;
+
+/// Gather `pairs` by product, `owners[i]` the product of `pairs[i]`, into
+/// `into` for [`emit_owned`]: each product's pairs, in candidate order, at
+/// the start `cursors` gives it, `cursors[k]` left at the range's end; a
+/// product of one pair ([`INLINE`]) is its pair in `singles`.
+///
+/// Each product takes a pass over every candidate: the pair is written at
+/// the product's cursor whatever its product, and the cursor steps past it
+/// only for the product's own, so the next pair overwrites any other. The
+/// last write of a pass lands at the range's end, one place past the last
+/// range's, which `into` holds.
+#[inline(always)]
+fn gather_by_product(pairs: &[ChildPair], owners: &[u32], cursors: &mut [u32], singles: &mut [ChildPair], into: &mut [ChildPair]) {
+    for (k, cursor) in cursors.iter_mut().enumerate() {
+        let k = k as u32;
+        if *cursor == INLINE {
+            let at = owners.iter().position(|&o| o == k).expect("a product holds a candidate");
+            singles[k as usize] = pairs[at];
+            continue;
+        }
+        let mut at = *cursor as usize;
+        for (&o, &pair) in owners.iter().zip(pairs) {
+            into[at] = pair;
+            at += usize::from(o == k);
+        }
+        *cursor = at as u32;
+    }
 }
 
 /// The most candidates of more than one g parent that [`emit_few`] groups
