@@ -1045,6 +1045,15 @@ fn lend_forced_off() -> bool {
 #[inline(always)]
 fn note_lent() {}
 
+// A test counts the levels the sparse leaf arm's owner walk read from f's
+// implied nodes.
+#[cfg(test)]
+use tests::note_implied_walk;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_implied_walk(_dense: bool) {}
+
 // A test lists the levels a conjunction built as an operand holds them.
 #[cfg(test)]
 use tests::note_as_operand;

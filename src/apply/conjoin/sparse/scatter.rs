@@ -137,12 +137,13 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
         };
         if let Some(ones) = built {
-            // Into the level's nodes from f's stored nodes where each f index
+            // Into the level's nodes from f's nodes, stored or implied at one
+            // pair a node ([`walkable`]), where each f index
             // has one live product, in order: the walk reads each product and
             // its slots from the list and the table themselves, nothing
             // gathered, and the table is cleared after it.
             let collect = match collect {
-                Collect::Nodes(to) if f_level.stored().is_some() && one_each(pl_outer, f_outer) => {
+                Collect::Nodes(to) if walkable(f_level) && one_each(pl_outer, f_outer) => {
                     let gathered = gather_listed_products(lim, pl_outer, &ws.owners[..OWNER_SLOTS * g_outer], &mut ws.owned);
                     if !SWAPPED {
                         clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
@@ -156,9 +157,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     let listed = Listed { owned: &owned[..f_outer], plain };
                     let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
                     return if ones {
-                        owner_walk_nodes::<SWAPPED, true, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
+                        walk_owned::<SWAPPED, true, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
                     } else {
-                        owner_walk_nodes::<SWAPPED, false, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
+                        walk_owned::<SWAPPED, false, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
                     };
                 }
                 collect => collect,
@@ -175,20 +176,20 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             let held;
             (ws.owned_len, held) = gathered?;
             ws.outer_held = held && ws.owned_len == pl_outer.len();
-            // Into the level's nodes from f's stored nodes, the walk runs as
+            // Into the level's nodes from f's nodes, the walk runs as
             // one loop over them ([`owner_walk_nodes`]), each pair's products
             // read from its outer child's bucket.
             let collect = match collect {
-                Collect::Nodes(to) if f_level.stored().is_some() => {
+                Collect::Nodes(to) if walkable(f_level) => {
                     let SparseWorkspace { owned, owned_len, outer_offsets, node_owners, emit, .. } = ws;
                     let outer = GroupedView { offsets: &outer_offsets[..=f_outer], entries: &owned[..*owned_len] };
                     let (f, none) = (shape.f.here, Listed { owned: &[], plain: false });
                     // Without One, a product held for every label is held
                     // with both literals.
                     return match (ones, held) {
-                        (true, _) => owner_walk_nodes::<SWAPPED, true, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
-                        (false, false) => owner_walk_nodes::<SWAPPED, false, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
-                        (false, true) => owner_walk_nodes::<SWAPPED, false, false, true>(eng, node_owners, emit, f_level, f, outer, none, to),
+                        (true, _) => walk_owned::<SWAPPED, true, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
+                        (false, false) => walk_owned::<SWAPPED, false, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
+                        (false, true) => walk_owned::<SWAPPED, false, false, true>(eng, node_owners, emit, f_level, f, outer, none, to),
                     };
                 }
                 collect => collect,
@@ -595,8 +596,8 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
     }
 }
 
-/// [`walk_nodes`] of an [`OwnerWalk`] into the level's nodes, f's first
-/// `f_nodes` nodes stored, its outer child `f_outer` wide: the candidates,
+/// [`walk_nodes`] of an [`OwnerWalk`] into the level's nodes, over f's first
+/// `f_nodes` nodes as `f_level` reads them ([`FNodes`]): the candidates,
 /// products, nodes and clock charges of that walk, in the same order. f's
 /// nodes are walked in this loop, not handed one by one to a closure, the
 /// clock is charged once a node, and a node's g parent is held as its walk
@@ -609,11 +610,11 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
 /// label meets holds a candidate, and a product's g pairs are two.
 #[expect(clippy::too_many_arguments)]
 #[inline(never)]
-fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool>(
+fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool, N: FNodes<'f>>(
     eng: &Engine,
     node_owners: &mut Vec<u32>,
     emit: &mut EmitScratch,
-    f_level: &TddLevel,
+    f_level: N,
     f_nodes: usize,
     outer: GroupedView<'_, OwnedProduct>,
     dense: Listed<'_>,
@@ -623,14 +624,13 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool, co
     const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let lim = eng.limits();
     let Emit { level, out, duplicates_legal, .. } = to;
-    let stored = f_level.stored().expect("the walk reads f's stored nodes");
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let empty = start == 0 && level.nodes.stored().is_empty();
     let copied = if DENSE {
-        match copy_nodes::<SWAPPED, ONES>(eng, stored, f_nodes, dense, level, start, out, &mut ticker)? {
+        match copy_nodes::<SWAPPED, ONES, N>(eng, &f_level, f_nodes, dense, level, start, out, &mut ticker)? {
             Copied::Level => return Ok(Made::F),
-            Copied::Nodes(made) if empty && made == stored.nodes().len() => return Ok(Made::CopiedF),
+            Copied::Nodes(made) if empty && made == f_level.len() => return Ok(Made::CopiedF),
             Copied::Nodes(made) => made,
         }
     } else {
@@ -683,7 +683,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool, co
             }
         };
     }
-    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate().skip(copied) {
+    for (p1, node) in (copied..f_nodes).zip(f_level.words(copied, f_nodes)) {
         // Where the node's candidates start.
         let mut first = next;
         // The g parent the node's next candidate has while its candidates
@@ -782,7 +782,7 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool, co
         }
         // The pair's label is tested once, not at each product: a loop for
         // each literal, and one for any other label, which meets all three.
-        for pair in stored.of(node) {
+        for pair in f_level.of(&node) {
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
             if BOTH {
                 // Every slot read holds a candidate, and a product's
@@ -911,6 +911,146 @@ fn owner_walk_nodes<const SWAPPED: bool, const ONES: bool, const DENSE: bool, co
     }
     settle!();
     Ok(Made::Written)
+}
+
+/// Whether [`owner_walk_nodes`] reads f's level: one that stores its pairs,
+/// or an implicit one of one pair a node ([`ImpliedNodes`]).
+fn walkable(f_level: &TddLevel) -> bool {
+    f_level.pairs.implicit().is_none_or(|d| d.pairs_per_node() == 1)
+}
+
+/// [`owner_walk_nodes`] over f's nodes, stored or implied ([`walkable`]).
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn walk_owned<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool>(
+    eng: &Engine,
+    node_owners: &mut Vec<u32>,
+    emit: &mut EmitScratch,
+    f_level: &TddLevel,
+    f_nodes: usize,
+    outer: GroupedView<'_, OwnedProduct>,
+    dense: Listed<'_>,
+    to: Emit<'_>,
+) -> Result<Made, OperationError> {
+    match f_level.stored() {
+        Some(stored) => owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, node_owners, emit, stored, f_nodes, outer, dense, to),
+        None => {
+            let nodes = ImpliedNodes::of(f_level).expect("an implicit level the walk reads has one pair a node");
+            crate::apply::conjoin::note_implied_walk(DENSE);
+            owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, node_owners, emit, nodes, f_nodes, outer, dense, to)
+        }
+    }
+}
+
+/// f's nodes as [`owner_walk_nodes`] and [`copy_nodes`] read them, from the
+/// first in increasing order: a stored level's words and pairs, or those
+/// of an implicit level of one pair a node ([`ImpliedNodes`]).
+trait FNodes<'a> {
+    /// The words of nodes `from..to`, in order.
+    type Words: Iterator<Item = EncodedNode>;
+    /// The level's nodes.
+    fn len(&self) -> usize;
+    /// The words of nodes `from..to`, below [`len`](Self::len), in order.
+    fn words(&self, from: usize, to: usize) -> Self::Words;
+    /// The pairs of `node`, a word [`word`](Self::word) gave.
+    fn of<'n>(&self, node: &'n EncodedNode) -> &'n [ChildPair]
+    where
+        'a: 'n;
+    /// The level's stored pairs, which [`copy_nodes`] can lend; `None` on
+    /// an implicit level.
+    fn stored(&self) -> Option<crate::diagram::StoredPairs<'a>>;
+}
+
+impl<'a> FNodes<'a> for crate::diagram::StoredPairs<'a> {
+    type Words = std::iter::Copied<std::slice::Iter<'a, EncodedNode>>;
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.nodes().len()
+    }
+
+    #[inline(always)]
+    fn words(&self, from: usize, to: usize) -> Self::Words {
+        self.nodes()[from..to].iter().copied()
+    }
+
+    #[inline(always)]
+    fn of<'n>(&self, node: &'n EncodedNode) -> &'n [ChildPair]
+    where
+        'a: 'n,
+    {
+        crate::diagram::StoredPairs::of(*self, node)
+    }
+
+    #[inline(always)]
+    fn stored(&self) -> Option<crate::diagram::StoredPairs<'a>> {
+        Some(*self)
+    }
+}
+
+/// The nodes of an implicit level of one pair a node, each its pair
+/// inline, read off its description in increasing order by a cursor that
+/// steps each node's pair on from the last one's.
+struct ImpliedNodes<'a> {
+    nodes: usize,
+    cursor: crate::diagram::NodeCursor<'a>,
+}
+
+/// The words of nodes `at..end` of [`ImpliedNodes`], in order.
+struct ImpliedWords<'a> {
+    cursor: crate::diagram::NodeCursor<'a>,
+    at: usize,
+    end: usize,
+}
+
+impl Iterator for ImpliedWords<'_> {
+    type Item = EncodedNode;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<EncodedNode> {
+        if self.at == self.end {
+            return None;
+        }
+        let (l, r) = self.cursor.first_of(self.at);
+        self.at += 1;
+        Some(EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(l as u32), EncodedChildRef::from_raw(r as u32))))
+    }
+}
+
+impl<'a> ImpliedNodes<'a> {
+    /// The nodes `level` implies, where it is implicit with one pair a node.
+    fn of(level: &'a TddLevel) -> Option<Self> {
+        let d = level.pairs.implicit().filter(|d| d.pairs_per_node() == 1)?;
+        Some(ImpliedNodes { nodes: d.nodes(), cursor: d.cursor() })
+    }
+}
+
+impl<'a> FNodes<'a> for ImpliedNodes<'a> {
+    type Words = ImpliedWords<'a>;
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.nodes
+    }
+
+    #[inline(always)]
+    fn words(&self, from: usize, to: usize) -> ImpliedWords<'a> {
+        assert!(from <= to && to <= self.nodes, "nodes of the level");
+        ImpliedWords { cursor: self.cursor.clone(), at: from, end: to }
+    }
+
+    #[inline(always)]
+    fn of<'n>(&self, node: &'n EncodedNode) -> &'n [ChildPair]
+    where
+        'a: 'n,
+    {
+        crate::diagram::inline_pair(node)
+    }
+
+    #[inline(always)]
+    fn stored(&self) -> Option<crate::diagram::StoredPairs<'a>> {
+        None
+    }
 }
 
 /// The owner [`owner_walk_nodes`] holds for a node whose candidates' g
@@ -1202,12 +1342,13 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
 /// pairs are made, and the clock charged and the arena grown, as the walk
 /// makes, charges and grows them. Return how many nodes it made, or
 /// [`Copied::Level`] where they are all of f's nodes and the level would
-/// hold f's nodes and arena as f holds them.
+/// hold f's nodes and arena as f holds them, which only a level f stores
+/// can hold.
 #[expect(clippy::too_many_arguments)]
 #[inline(never)]
-fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
+fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     eng: &Engine,
-    stored: crate::diagram::StoredPairs<'_>,
+    f_level: &N,
     f_nodes: usize,
     entries: Listed<'_>,
     level: &mut TddLevel,
@@ -1223,14 +1364,17 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
     // grow neither the level's nodes nor its arena, nothing is written:
     // `unwritten` counts the pairs those nodes hold. They are written from
     // f's at the first node that is not so; where none is, the level is f's.
-    let mut unwritten = (start == 0 && nodes.is_empty() && !crate::apply::conjoin::lend_forced_off()).then_some(0usize);
+    // f's nodes are lent only where it stores them.
+    let lendable = f_level.stored();
+    let mut unwritten = (lendable.is_some() && start == 0 && nodes.is_empty() && !crate::apply::conjoin::lend_forced_off()).then_some(0usize);
     let write = |arena: &mut Vec<ChildPair>, nodes: &mut Vec<crate::diagram::EncodedNode>, made: usize, pairs: usize| {
         // Within both capacities, as the nodes were taken: nothing grows.
+        let stored = lendable.expect("nodes are unwritten only where f stores them");
         arena.extend_from_slice(&stored.arena()[..pairs]);
         nodes.extend_from_slice(&stored.nodes()[..made]);
     };
     let mut taken = 0;
-    if let Some(n) = unwritten {
+    if let (Some(n), Some(stored)) = (unwritten, lendable) {
         let lent = if entries.plain {
             take_lent::<SWAPPED, ONES, true>(lim, stored, f_nodes, entries, n, (arena.capacity(), nodes.capacity()), out, ticker)
         } else {
@@ -1239,8 +1383,9 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
         let (lent, n) = lent?;
         (taken, unwritten) = (lent, Some(n));
     }
-    for (p1, node) in stored.nodes()[..f_nodes].iter().enumerate().skip(taken) {
-        let pairs = stored.of(node);
+    for (p1, word) in (taken..f_nodes).zip(f_level.words(taken, f_nodes)) {
+        let node = &word;
+        let pairs = f_level.of(node);
         let Some((first, rest)) = pairs.split_first() else {
             if let Some(n) = unwritten {
                 write(arena, nodes, p1, n);
@@ -1313,16 +1458,16 @@ fn copy_nodes<const SWAPPED: bool, const ONES: bool>(
             nodes.push(node);
         }
     }
-    match unwritten {
-        Some(n) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
+    match (unwritten, lendable) {
+        (Some(n), Some(stored)) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
             crate::apply::conjoin::note_lent();
             Ok(Copied::Level)
         }
-        Some(n) => {
+        (Some(n), _) => {
             write(arena, nodes, f_nodes, n);
             Ok(Copied::Nodes(f_nodes))
         }
-        None => Ok(Copied::Nodes(f_nodes)),
+        (None, _) => Ok(Copied::Nodes(f_nodes)),
     }
 }
 

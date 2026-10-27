@@ -43,7 +43,7 @@ pub(crate) fn decoded(pair: ChildPair, left: ChildDecoder, right: ChildDecoder) 
 
 /// The one pair an inline node holds, as a slice of the node itself.
 #[inline(always)]
-fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
+pub(crate) fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
     // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
     //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
     //         For inline nodes, a == left.0 and b == right.0 by construction.

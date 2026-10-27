@@ -10,11 +10,11 @@ mod nodes;
 mod pairs;
 pub use count_overflow::CountOverflow;
 pub use implicit::{described, redescribed, stored_moved, Digit, ImplicitLevel, FLOOR};
-pub(crate) use implicit::{floor, kept_capacity, stored_levels_forced, ChildKept, NodeChunks, PairArena, Places, StoreRoom};
+pub(crate) use implicit::{floor, kept_capacity, stored_levels_forced, ChildKept, NodeChunks, NodeCursor, PairArena, Places, StoreRoom};
 pub use nodes::{Nodes, NodesIter};
 pub(crate) use nodes::NodeArena;
 pub use pairs::{Pairs, StoredPairs};
-pub(crate) use pairs::{decoded, sort_pairs};
+pub(crate) use pairs::{decoded, inline_pair, sort_pairs};
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};

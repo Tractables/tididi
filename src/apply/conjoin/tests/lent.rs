@@ -68,6 +68,71 @@ fn a_level_moved_from_f_is_the_level_written() {
     assert!(lent > 0, "expected levels moved from f, got none over {conjunctions} conjunctions");
 }
 
+/// f's levels of one pair a node held as their description, read by the
+/// leaf arm's owner walk node by node as their stored copies are: against
+/// the conjunction of the stored copies with every level stored, the same
+/// levels, node for node, the same work, and the same stop at the same work
+/// under each work bound. The operands are those of [`cases`] and pairs of
+/// unrelated formulas, built with the floor lowered so that their small
+/// levels are described. Both write the levels they would take from f
+/// ([`no_lend`]): a level taken holds f's arena at f's capacity.
+#[test]
+fn a_level_walked_from_implied_nodes_is_the_level_walked_from_stored_ones() {
+    use crate::test_helpers::{same_levels, stored_copies, stored_levels, with_floor, LOW_FLOOR};
+    let before = implied_walks();
+    let run = |f: &Tdd, g: &Tdd, bound: Option<u64>| {
+        let eng = Engine::new();
+        let config = LimitConfig::none().with_sparse_route(SPARSE);
+        let stop = bound.map(|n| StopRules { unconditional: Some(StopAt::WorkUnits(n)), after_pairs: None });
+        let _scope = eng.limits().scope(match stop {
+            Some(rules) => config.with_stop_rules(rules),
+            None => config,
+        });
+        let mark = eng.limits().mark();
+        let out = eng.and(f.clone(), g.clone());
+        (out, eng.limits().work_since(mark))
+    };
+    let mut conjunctions = 0;
+    for nvars in [10, 14] {
+        let mut rng = Lcg::new(0x1e47_1a00 + u64::from(nvars));
+        let cases = with_floor(LOW_FLOOR, || {
+            let mut cases = cases(nvars, 0x1e47_1b00 + u64::from(nvars));
+            for (name, vtree) in vtree_shapes(nvars) {
+                for case in 0..3 {
+                    let eng = Engine::new();
+                    let mut formula = || rand_cnf(&mut rng, nvars, CnfShape { clauses: nvars as usize + 2 * case, width: 3 });
+                    let (f, g) = (formula(), formula());
+                    let (f, g) = (compile_clauses_on(&eng, &vtree, &f), compile_clauses_on(&eng, &vtree, &g));
+                    cases.push((format!("{name}, {nvars} variables, unrelated {case}"), Arc::clone(&vtree), f, g));
+                }
+            }
+            cases
+        });
+        for (what, _, f, g) in cases {
+            for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
+                let (sa, sb) = (stored_copies(a), stored_copies(b));
+                let (out, work) = no_lend(|| with_floor(LOW_FLOOR, || run(a, b, None)));
+                let (oracle, oracle_work) = no_lend(|| stored_levels(|| run(&sa, &sb, None)));
+                same_levels(&out.unwrap(), &oracle.unwrap());
+                assert_eq!(work, oracle_work, "{what}, {order}: the implied nodes took other work");
+                let mut bound = 1;
+                while bound <= work {
+                    let (out, at) = no_lend(|| with_floor(LOW_FLOOR, || run(a, b, Some(bound))));
+                    let (oracle, oracle_at) = no_lend(|| stored_levels(|| run(&sa, &sb, Some(bound))));
+                    assert_eq!(out.is_ok(), oracle.is_ok(), "{what}, {order}: a stop at {bound} units fell differently");
+                    assert_eq!(at, oracle_at, "{what}, {order}: a stop at {bound} units fell at other work");
+                    bound = bound * 2 + 1;
+                }
+                conjunctions += 1;
+            }
+        }
+    }
+    let after = implied_walks();
+    let walked = [after[0] - before[0], after[1] - before[1]];
+    eprintln!("levels walked from implied nodes: {walked:?} over {conjunctions} conjunctions");
+    assert!(walked.iter().all(|&n| n > 0), "expected both walks from implied nodes, got {walked:?} over {conjunctions} conjunctions");
+}
+
 /// A level built as an operand holds it is owed no twin search: the result
 /// leaves it off the contraction's worklist unless an operand owed it, and
 /// minimizing the result reaches the diagram minimizing it with every level

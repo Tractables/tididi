@@ -641,6 +641,28 @@ pub(super) fn lent_levels() -> u64 {
 }
 
 thread_local! {
+    /// The levels on this thread the sparse leaf arm's owner walk read from
+    /// f's implied nodes, those whose outer children each hold one product
+    /// and the others ([`implied_walks`]).
+    static IMPLIED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn note_implied_walk(dense: bool) {
+    IMPLIED.with(|c| {
+        let mut v = c.get();
+        v[usize::from(!dense)] += 1;
+        c.set(v);
+    });
+}
+
+/// The levels on this thread so far the sparse leaf arm's owner walk read
+/// from f's implied nodes: those whose outer children each hold one product,
+/// and the others.
+pub(super) fn implied_walks() -> [u64; 2] {
+    IMPLIED.with(std::cell::Cell::get)
+}
+
+thread_local! {
     /// The levels on this thread a plain conjunction left off its loose
     /// levels only for the leaf arm's held products ([`held_tight_levels`]).
     static HELD_TIGHT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
