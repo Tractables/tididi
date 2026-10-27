@@ -1,6 +1,6 @@
 //! Boolean queries over structural diagrams.
 
-use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use rustc_hash::FxHashMap;
@@ -244,7 +244,7 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
 }
 
 /// Referenced positive, negative and free labels of one non-marginal leaf.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct LeafLabels(u8);
 
 impl LeafLabels {
@@ -277,9 +277,14 @@ impl LeafLabels {
 ///
 /// Each leaf has one parent, so that parent's pairs finish its summary. They
 /// are read until each leaf side's summary is `settled`, past which further
-/// labels change nothing the caller reads, or to the end. `poll(units, pairs)`
-/// is charged a parent's pairs, each one unit per leaf side, as a read of
-/// every pair charging a poll of those units would be, before they are read.
+/// labels change nothing the caller reads, or to the end. An implicit parent
+/// is read off its digits instead ([`ImplicitLevel::each_slot_on`]): the
+/// slots they reach on a leaf side are the labels its pairs name there.
+/// `poll(units, pairs)` is charged a parent's pairs, each one unit per leaf
+/// side, as a read of every pair charging a poll of those units would be,
+/// before they are read.
+///
+/// [`ImplicitLevel::each_slot_on`]: crate::diagram::ImplicitLevel::each_slot_on
 pub(super) fn visit_leaf_labels(
     f: &Tdd,
     settled: impl Fn(LeafLabels) -> bool,
@@ -308,16 +313,24 @@ pub(super) fn visit_leaf_labels(
         let mut labels = [LeafLabels::default(); 2];
         let mut open = vars.map(|var| var.is_some());
         let level = &f.levels[t.idx()];
-        'read: for node in level.nodes().iter() {
-            for pair in level.pairs_iter_of(&node) {
-                for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
-                    if open[k] {
-                        labels[k].insert(side);
-                        open[k] = !settled(labels[k]);
-                    }
+        if let Some(d) = level.implicit() {
+            for (k, side) in [ChildSide::Left, ChildSide::Right].into_iter().enumerate() {
+                if open[k] {
+                    d.each_slot_on(side, |s, _| labels[k].insert(EncodedChildRef::from_raw(s as u32)));
                 }
-                if open == [false; 2] {
-                    break 'read;
+            }
+        } else {
+            'read: for node in level.nodes().iter() {
+                for pair in level.pairs_iter_of(&node) {
+                    for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
+                        if open[k] {
+                            labels[k].insert(side);
+                            open[k] = !settled(labels[k]);
+                        }
+                    }
+                    if open == [false; 2] {
+                        break 'read;
+                    }
                 }
             }
         }

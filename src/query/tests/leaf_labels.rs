@@ -207,6 +207,64 @@ fn support_and_backbone_charge_every_pair_of_a_leaf_parent_however_far_they_read
 }
 
 #[test]
+fn an_implicit_leaf_parent_names_the_labels_of_its_stored_copy() {
+    // Read off its digits, a described parent of a leaf gives every leaf the
+    // labels its stored copy's pairs give, charged the same.
+    let eng = Engine::new();
+    let vars: Vec<VarId> = (1..=6).map(VarId).collect();
+    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let read = |g: &Tdd| {
+        let (mut labels, mut charged) = (Vec::new(), 0u64);
+        visit_leaf_labels(g, |_| false, |work, pairs| { charged += work * pairs; Ok(()) }, |var, l| {
+            labels.push((var, l));
+            Ok(())
+        }).unwrap();
+        (labels, charged)
+    };
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut described = 0;
+    crate::test_helpers::with_floor(crate::test_helpers::LOW_FLOOR, || {
+        for _ in 0..60 {
+            let mut f = Tdd::one(&tree);
+            for _ in 0..3 {
+                let clause: Vec<Literal> = vars.iter().filter_map(|&var| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    match seed % 3 {
+                        0 => Some(Literal::pos(var)),
+                        1 => Some(Literal::neg(var)),
+                        _ => None,
+                    }
+                }).collect();
+                if !clause.is_empty() {
+                    f = eng.and(f, eng.clause(&tree, clause).unwrap()).unwrap();
+                }
+            }
+            f.minimize().unwrap();
+            if f.is_zero() {
+                continue;
+            }
+            described += tree.internal_bottomup()
+                .filter(|&(_, l, r)| tree.node(l).is_leaf() || tree.node(r).is_leaf())
+                .filter(|&(t, _, _)| f.level(t).implicit().is_some())
+                .count();
+            let stored = crate::test_helpers::stored_copies(&f);
+            let (labels, charged) = read(&f);
+            assert_eq!((labels.clone(), charged), read(&stored));
+            let support: Vec<VarId> = labels.iter().filter(|(_, l)| l.depends()).map(|&(var, _)| var).collect();
+            let mut backbone: Vec<Literal> = labels.iter().filter_map(|&(var, l)| l.implied(var)).collect();
+            backbone.sort_unstable_by_key(|literal| (literal.var, literal.sign));
+            let mut want = support;
+            want.sort_unstable();
+            assert_eq!(eng.support(&f).unwrap(), want);
+            assert_eq!(f.implied_literals().unwrap(), backbone);
+        }
+    });
+    assert!(described > 0, "no leaf parent was implicit");
+}
+
+#[test]
 fn checked_backbone_preserves_inputs_across_resource_refusals() {
     use crate::limits::{StopCallback, StopDecision};
     let engine = Engine::new();
