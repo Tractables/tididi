@@ -820,6 +820,20 @@ impl TddLevel {
         }
     }
 
+    /// Leave the live pairs this level keeps ([`HeldPairs`](super::HeldPairs))
+    /// for the close that ends the operation, on a level an operation moved
+    /// into its result unchanged from a closed diagram.
+    #[inline]
+    pub(crate) fn leave_kept_pairs(&mut self) {
+        let kept = match &self.state {
+            LevelState::Structural(held) => held.get(),
+            _ => None,
+        };
+        if let Some(n) = kept {
+            self.leave_live_pairs(n as usize);
+        }
+    }
+
     /// Forget the live pairs kept or left on this level: an edit changed it.
     #[inline]
     pub(crate) fn forget_held_pairs(&mut self) {

@@ -193,7 +193,11 @@ pub(super) fn take_relabel_level(
 
     let mut map = pools.relabel_map.checkout(eng);
     let carrier = if carrier_f { &f.levels[ti] } else { &g.levels[ti] };
-    relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
+    let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
+    // A plain conjunction's seat closes the level as it stands.
+    if run.plain {
+        run.levels[ti].leave_live_pairs(pairs);
+    }
     let nodes = run.levels[ti].nodes().len();
     run.products.publish_relabelled(eng, ti, carrier_f, &map, nodes)?;
     note_relabelled(false);
@@ -217,7 +221,8 @@ pub(super) fn fuses_target_child(sweep: &Sweep<'_, '_>, t: VtreeIdx, f_here: usi
 /// Write the carrier level's nodes into `level`, each pair carried through
 /// the two side maps and dropped where either side's product is false, and
 /// a node only where a pair survives; `map` receives each carrier node's
-/// output node, `NO_PRODUCT` for one that died.
+/// output node, `NO_PRODUCT` for one that died. Returns the level's live
+/// pairs.
 fn relabel_level(
     eng: &Engine,
     carrier: &TddLevel,
@@ -226,7 +231,7 @@ fn relabel_level(
     lm: &SideMap<'_>,
     rm: &SideMap<'_>,
     map: &mut Vec<u32>,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     map.clear();
     lim.reserve(map, width)?;
@@ -237,6 +242,7 @@ fn relabel_level(
     level.reserve_on(lim, width, carrier.pairs.len() + 1)?;
     lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     let mut gate = lim.gate_with(APPLY_POLL_STRIDE);
+    let mut inline = 0usize;
     // An implicit carrier's pairs are generated a run of nodes at a time.
     carrier.try_for_each_node::<OperationError>(0..width, |_, pairs| {
         gate.poll(pairs.len() as u64)?;
@@ -263,6 +269,7 @@ fn relabel_level(
         if survivors == 1 {
             let pair = out.pop().expect("one survivor");
             level.nodes.stored_mut().push(EncodedNode::inline(pair));
+            inline += 1;
         } else {
             level.try_push_multi_by_range(start, survivors).map_err(|()| OperationError::OverBudget)?;
         }
@@ -271,5 +278,5 @@ fn relabel_level(
     gate.flush()?;
     level.shrink_arrays();
     lim.level_settled(level.pairs.len() as u64);
-    Ok(())
+    Ok(level.pairs.len() + inline)
 }

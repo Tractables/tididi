@@ -571,6 +571,7 @@ fn apply_and_held(
     // or drop any operand level: an access that changed a level would have
     // dropped them.
     let kept = Operands { f: f.levels.counts().cloned(), g: g.levels.counts().cloned() };
+    let closed = Operands { f: f.levels.is_closed(), g: g.levels.is_closed() };
     region::take_regions(&vtree, lim, &mut run, f, g)?;
     let mut sweep = Sweep {
         vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
@@ -655,6 +656,15 @@ fn apply_and_held(
         });
         let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));
+        // A level the relabelling route moved is as its carrier's last close
+        // left it; where that diagram was closed when the sweep began, the
+        // live pairs it keeps are left for the seat's close.
+        let levels = assembly.parts_mut().0;
+        for &(t, from_f) in &carried {
+            if (if from_f { closed.f } else { closed.g }) && relabel_moved.contains(&t) {
+                levels[t].leave_kept_pairs();
+            }
+        }
         assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));
@@ -671,6 +681,11 @@ fn apply_and_held(
         Ok(out) => out,
         Err((e, mut assembly)) => {
             if restoring {
+                // A level the relabelling route moved goes back keeping the
+                // count its carrier kept, which is the count left on it.
+                for &t in &relabel_moved {
+                    assembly.parts_mut().0[t].settle_held_pairs();
+                }
                 give_back(assembly.parts_mut().0, f, g, &carried, &lent);
                 region::give_back_regions(assembly.parts_mut().0, cone, f, g);
             }

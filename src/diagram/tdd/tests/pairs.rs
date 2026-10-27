@@ -82,7 +82,9 @@ fn assert_counts_hold(f: &Tdd, what: &str) {
     assert_eq!(f.pair_count(), census(f), "{what}");
 }
 
-/// Conjoined unreduced, one random clause at a time.
+/// Conjoined unreduced, one random clause at a time; every other
+/// conjunction's operands keep the counts a read left them, which the
+/// levels it moves bring along.
 fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
     use crate::test_helpers::{rand_cnf, vtree_shapes, CnfShape, Lcg};
     let mut rng = Lcg::new(seed);
@@ -90,10 +92,14 @@ fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
     for (_, vtree) in vtree_shapes(8) {
         for _ in 0..6 {
             let mut f = Tdd::one(&vtree);
-            for clause in rand_cnf(&mut rng, 8, CnfShape { clauses: 8, width: 3 }) {
+            for (k, clause) in rand_cnf(&mut rng, 8, CnfShape { clauses: 8, width: 3 }).into_iter().enumerate() {
                 let mut g = eng.clause(&vtree, clause.iter().copied()).unwrap();
-                forget_counts(&mut f);
-                forget_counts(&mut g);
+                if k % 2 == 0 {
+                    forget_counts(&mut f);
+                    forget_counts(&mut g);
+                } else {
+                    let _ = (f.pair_count(), g.pair_count());
+                }
                 f = eng.and(f, g).unwrap();
                 out.push(f.clone());
             }
@@ -105,7 +111,7 @@ fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
 #[test]
 fn the_operations_leave_the_levels_they_change_counted() {
     let left = left_counted(0x9a17);
-    assert!(left[1..].iter().all(|&n| n > 0), "levels left counted: {left:?}");
+    assert!(left.iter().all(|&n| n > 0), "levels left counted: {left:?}");
     // The same where small levels are held as descriptions.
     crate::test_helpers::with_floor(crate::test_helpers::LOW_FLOOR, || left_counted(0x9a18));
 }
@@ -184,4 +190,65 @@ fn a_refused_reduction_leaves_no_count_for_a_close() {
         }
     }
     assert!(refused > 0);
+}
+
+/// A conjunction that borrows an operand leaves the borrow's counts as they
+/// were and the result's counts holding; a restoring one refused at each
+/// unit of work hands an owned operand back with the counts it kept.
+#[test]
+fn borrowed_and_refused_conjunctions_keep_the_counts_they_were_given() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    use std::borrow::Cow;
+    let eng = crate::Engine::new();
+    let diagrams = conjunctions(&eng, 0xb0e5);
+    let mut refusals = 0;
+    for (i, j) in (0..diagrams.len() - 9).step_by(7).map(|i| (i, i + 9)) {
+        if !Arc::ptr_eq(diagrams[i].vtree(), diagrams[j].vtree()) {
+            continue;
+        }
+        for read in [true, false] {
+            let mut ab = [diagrams[i].clone(), diagrams[j].clone()];
+            for t in &mut ab {
+                if read {
+                    let _ = t.pair_count();
+                } else {
+                    forget_counts(t);
+                }
+            }
+            let [a, b] = &ab;
+            let given = [kept(a), kept(b)];
+            for (x, y) in [(a, b), (b, a)] {
+                for borrow in [(true, false), (false, true), (true, true)] {
+                    let side = |t, borrowed| if borrowed { Cow::Borrowed(t) } else { Cow::Owned(Tdd::clone(t)) };
+                    let out = eng.and(side(x, borrow.0), side(y, borrow.1)).unwrap();
+                    assert_counts_hold(&out, "a conjunction of a borrowed operand");
+                }
+                assert_eq!([kept(a), kept(b)], given, "a borrowed operand's counts changed");
+                for n in 0u64.. {
+                    let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + n)), after_pairs: None };
+                    let done = {
+                        let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
+                        eng.and_restoring(x.clone(), y.clone())
+                    };
+                    match done {
+                        Ok(out) => {
+                            assert_counts_hold(&out, "a granted restoring conjunction");
+                            break;
+                        }
+                        Err(r) => {
+                            refusals += 1;
+                            for (back, was) in [(r.f, x), (r.g, y)] {
+                                let back = back.into_owned();
+                                assert_eq!(kept(&back), kept(was), "refused at work {n}: an operand's counts changed");
+                                assert_eq!(back.levels.is_closed(), was.levels.is_closed());
+                                assert_counts_hold(&back, "a refused restoring conjunction's operand");
+                            }
+                        }
+                    }
+                    assert!(n < 100_000, "never granted");
+                }
+            }
+        }
+    }
+    assert!(refusals > 100, "only {refusals} refusals");
 }
