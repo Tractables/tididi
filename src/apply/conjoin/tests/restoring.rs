@@ -1,12 +1,15 @@
 //! `Engine::and_restoring` gives both operands back as they were at every
 //! point the conjunction can be refused: before the sweep, between levels
 //! after identity levels have moved into the output, and when the result's
-//! worklists are seeded. The table of the level counts the result keeps is
-//! not such a point: refused, the result keeps none.
+//! worklists are seeded. Each comes back stored as given and known as
+//! given: certified canonical, closed and keeping level counts where it
+//! was, so that what is done with it next costs what it would have. The
+//! table of the level counts the result keeps is not such a point:
+//! refused, the result keeps none.
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::same_storage as same;
+use crate::test_helpers::{known, same_storage as same};
 use crate::{Engine, Tdd, Vtree};
 
 /// Two operands whose supports overlap on a few variables of a balanced
@@ -27,12 +30,42 @@ fn operands(eng: &Engine, vtree: &Arc<Vtree>) -> (Tdd, Tdd) {
     (f, g)
 }
 
-/// Refuse the conjunction at each point `arm` picks in turn, checking that
-/// every refusal hands both operands back unchanged, until one is granted.
-fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>) {
+/// `t` minimized and then negated on a fresh engine, with the work each
+/// took: what the certificate and the closed form save.
+fn reduced_and_negated(t: &Tdd) -> (Tdd, u64, Tdd, u64) {
+    let eng = Engine::new();
+    let mut m = t.clone();
+    let mark = eng.limits().mark();
+    eng.minimize(&mut m).unwrap();
+    let minimized = eng.limits().work_since(mark);
+    let mark = eng.limits().mark();
+    let n = eng.negate_with(t.clone(), crate::reduce::ReductionPlan::Prune).unwrap();
+    (m, minimized, n, eng.limits().work_since(mark))
+}
+
+/// Whether `back`, handed back by a refusal, is `given`: stored and known
+/// alike, and minimized and negated alike for the same work.
+fn as_given(back: &Tdd, given: &Tdd) -> bool {
+    let (m, mw, n, nw) = reduced_and_negated(back);
+    let (gm, gmw, gn, gnw) = reduced_and_negated(given);
+    same(back, given) && known(back) == known(given) && same(&m, &gm) && mw == gmw && same(&n, &gn) && nw == gnw
+}
+
+/// Refuse the conjunction at each point `arm` picks in turn, on operands
+/// keeping level counts where `counts` says, checking that every refusal
+/// hands both operands back as given, until one is granted.
+fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>) {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(12));
-    let (f, g) = operands(&eng, &vtree);
+    let (mut f, mut g) = operands(&eng, &vtree);
+    if counts {
+        eng.attach_level_counts(&mut f).unwrap();
+        eng.attach_level_counts(&mut g).unwrap();
+    }
+    for t in [&f, &g] {
+        let (canonical, closed, kept, _) = known(t);
+        assert!(canonical && closed && kept == counts, "an operand certified, closed and keeping counts as the test needs");
+    }
     let expected = eng.and(f.clone(), g.clone()).unwrap();
     for (a, b) in [(&f, &g), (&g, &f)] {
         let mut refusals = 0;
@@ -47,7 +80,7 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
                     break;
                 }
                 Err(refused) => {
-                    assert!(same(&refused.f, a) && same(&refused.g, b), "refused at {n}: an operand changed");
+                    assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
                     refusals += 1;
                 }
             }
@@ -59,19 +92,23 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
 
 #[test]
 fn every_refused_reserve_gives_the_operands_back() {
-    refuse_at_every_point(|eng, n| {
-        eng.limits().refuse_nth_reserve(n as u32);
-        None
-    });
+    for counts in [false, true] {
+        refuse_at_every_point(counts, |eng, n| {
+            eng.limits().refuse_nth_reserve(n as u32);
+            None
+        });
+    }
 }
 
 #[test]
 fn every_stop_gives_the_operands_back() {
-    refuse_at_every_point(|eng, n| {
-        let at = eng.limits().work_units() + n;
-        let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
-        Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
-    });
+    for counts in [false, true] {
+        refuse_at_every_point(counts, |eng, n| {
+            let at = eng.limits().work_units() + n;
+            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
+            Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
+        });
+    }
 }
 
 /// Operands keeping their level counts, the conjunction refused at each
@@ -103,9 +140,7 @@ fn a_refused_count_table_keeps_the_operands_and_drops_the_counts() {
                     dropped += usize::from(!out.has_level_counts());
                 }
                 Err(refused) => {
-                    // Their levels as given; a moved level dropped its
-                    // operand's counts, a cache, on the way out.
-                    assert!(same(&refused.f, a) && same(&refused.g, b), "refused at {n}: an operand changed");
+                    assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
                     refusals += 1;
                 }
             }

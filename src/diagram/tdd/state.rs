@@ -226,6 +226,27 @@ impl LevelStorage {
 
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
 
+    /// What is known of the levels besides the levels themselves, for a
+    /// caller that moves levels out and back through mutable accesses,
+    /// which forget it, and puts every one back as it was
+    /// ([`reinstate_known`](Self::reinstate_known)).
+    pub(crate) fn known(&self) -> Known {
+        Known {
+            canonical_output: self.canonical_output,
+            closed: self.closed,
+            changed: self.changed.clone(),
+            counts: self.counts.clone(),
+        }
+    }
+
+    /// Take back what [`known`](Self::known) read, the levels being exactly
+    /// as they were then.
+    pub(crate) fn reinstate_known(&mut self, known: Known) {
+        self.summary.forget();
+        let Known { canonical_output, closed, changed, counts } = known;
+        (self.canonical_output, self.closed, self.changed, self.counts) = (canonical_output, closed, changed, counts);
+    }
+
     /// The model counts of the levels as they are, when kept.
     pub(crate) fn counts(&self) -> Option<&LevelCounts> { self.counts.as_deref() }
 
@@ -265,6 +286,15 @@ impl<'a> IntoIterator for &'a mut LevelStorage {
     }
 }
 
+
+/// What [`LevelStorage::known`] reads: the canonical certificate, the
+/// closed form with the levels changed since, and the level counts.
+pub(crate) struct Known {
+    canonical_output: Option<TddNodeId>,
+    closed: bool,
+    changed: Vec<VtreeIdx>,
+    counts: Option<Box<LevelCounts>>,
+}
 
 /// The model counts of a diagram's internal structural levels: column `t`,
 /// where kept, holds at slot `i` the model count of node `i` of level `t`

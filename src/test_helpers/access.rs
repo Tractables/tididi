@@ -24,6 +24,14 @@ pub(crate) fn same_storage(a: &Tdd, b: &Tdd) -> bool {
         })
 }
 
+/// What is known of `t` besides its levels: whether it is certified
+/// canonical, whether its levels are closed, whether it keeps level counts,
+/// and its worklists. An operation that gives its input back returns it
+/// known as it was given.
+pub(crate) fn known(t: &Tdd) -> (bool, bool, bool, String) {
+    (t.levels.is_canonical(t.output), t.levels.is_closed(), t.has_level_counts(), format!("{:?}", t.dirty))
+}
+
 /// Count-column fixture builders that expect every reservation to succeed.
 pub(crate) trait CountVecExt {
     /// `push`, infallible.

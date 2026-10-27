@@ -472,13 +472,34 @@ fn conjoin_kept<'a>(
         recycle(eng, g);
         return Ok(out);
     }
+    // A refusal puts an owned operand's levels back as they were, through
+    // accesses that forget its certificate, closed form and level counts:
+    // they are read here and taken back with the levels. An operand placed
+    // with free levels comes back with them built, a diagram of its own.
+    let known = |tdd: &Cow<'_, Tdd>, free: VtreeMask<'_>| match tdd {
+        Cow::Owned(tdd) if free.is_empty() => Some(tdd.levels.known()),
+        _ => None,
+    };
+    let (f_known, g_known) = (known(&f, free.f), known(&g, free.g));
     match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
         Ok(out) => {
             recycle(eng, f);
             recycle(eng, g);
             Ok(out)
         }
-        Err(error) => Err(give_back(error, f, g)),
+        Err(error) => {
+            reinstate_known(&mut f, f_known);
+            reinstate_known(&mut g, g_known);
+            Err(give_back(error, f, g))
+        }
+    }
+}
+
+/// Take back what an owned operand given whole was known to be before a
+/// refused conjunction put its levels back ([`conjoin_kept`]).
+fn reinstate_known(tdd: &mut Cow<'_, Tdd>, known: Option<diagram::Known>) {
+    if let (Cow::Owned(tdd), Some(known)) = (tdd, known) {
+        tdd.levels.reinstate_known(known);
     }
 }
 
@@ -616,7 +637,10 @@ impl crate::Engine {
     /// the result exists, which holds their storage as long as a clone would,
     /// without the copy. Operands with a weight table or a marginal level are
     /// cloned first. Each operand is owned or borrowed, at the costs
-    /// [`and`] states; a borrowed one comes back as the borrow.
+    /// [`and`] states; a borrowed one comes back as the borrow. An owned one
+    /// comes back as reduced as it was given and with the level counts it
+    /// kept ([`Engine::attach_level_counts`]), so what is done with it next
+    /// costs what it would have.
     ///
     /// ```
     /// use std::sync::Arc;

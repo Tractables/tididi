@@ -225,7 +225,7 @@ pub use crate::build::models::RowSelection;
 pub(crate) use leaf_column::{
     find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,
 };
-pub(crate) use tdd::{Dirty, LevelCounts, Pass};
+pub(crate) use tdd::{Dirty, Known, LevelCounts, Pass};
 
 #[cfg(test)]
 mod tests;

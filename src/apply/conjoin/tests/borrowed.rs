@@ -3,8 +3,8 @@
 //! worklists, kept counts, certificate and closed form, for the same work,
 //! minimized alike, whichever operand is borrowed and on whichever route; it
 //! leaves a borrowed operand as it was. A refused conjunction hands an owned
-//! operand back as it would have and a borrowed one as the borrow, refused
-//! at the same work as the owned one.
+//! operand back as it was given, certificate and closed form included, and
+//! a borrowed one as the borrow, refused at the same work as the owned one.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -31,12 +31,13 @@ fn given(t: &Tdd, borrowed: bool) -> Cow<'_, Tdd> {
 }
 
 /// Whether `back` is what was given as `given(t, borrowed)`: the borrow
-/// itself, or an owned diagram stored as `t`.
+/// itself, or an owned diagram stored as `t` and known as `t` is
+/// ([`outcome`]).
 #[expect(clippy::ptr_arg, reason = "which form came back is what is tested")]
 fn handed_back(back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool) -> bool {
     match (back, borrowed) {
         (Cow::Borrowed(back), true) => std::ptr::eq(*back, t),
-        (Cow::Owned(back), false) => same_storage(back, t),
+        (Cow::Owned(back), false) => same_storage(back, t) && outcome(back, 0) == outcome(t, 0),
         _ => false,
     }
 }

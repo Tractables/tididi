@@ -1,12 +1,12 @@
 //! `Engine::embed_moving` builds the diagram `Engine::embed` builds, up to
 //! node numbering and unread literal nodes, deterministic before any
 //! minimization, and gives its input back as it was at every point it can
-//! be refused.
+//! be refused, stored and known as it was given.
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::check::check_determinism;
-use crate::test_helpers::{assert_same_shape, compile_clauses, same_storage, test_cases, vtree_shapes};
+use crate::test_helpers::{assert_same_shape, compile_clauses, known, same_storage, test_cases, vtree_shapes};
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, Tdd};
 
@@ -145,13 +145,19 @@ fn source_and_destination() -> (Tdd, Arc<Vtree>, impl Fn(VarId) -> VarId + Copy)
 }
 
 /// Refuse the embedding at each point `arm` picks in turn, checking that
-/// every refusal hands the diagram back unchanged, until one is granted.
+/// every refusal hands the diagram back unchanged, stored and known as it
+/// was given ([`known`]), until one is granted.
 ///
 /// With `mirror`, onto the destination with some children swapped, by
-/// `embed_moving_mirrored`.
-fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>, mirror: bool) -> usize {
+/// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts.
+fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>, mirror: bool, counts: bool) -> usize {
     let eng = Engine::new();
-    let (f, big, map) = source_and_destination();
+    let (mut f, big, map) = source_and_destination();
+    if counts {
+        eng.attach_level_counts(&mut f).unwrap();
+    }
+    let (canonical, closed, kept, _) = known(&f);
+    assert!(canonical && closed && kept == counts, "a diagram certified, closed and keeping counts as the test needs");
     let big = match mirror {
         true => Arc::new(super::mirror::mirrored_shape(&big, |v| v, |t| t.0.is_multiple_of(3), big.num_vars())),
         false => big,
@@ -177,6 +183,7 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
             }
             Err(refused) => {
                 assert!(same_storage(&refused.tdd, &f), "refused at {n}: the diagram changed");
+                assert_eq!(known(&refused.tdd), known(&f), "refused at {n}: the diagram known otherwise");
                 refusals += 1;
             }
         }
@@ -187,13 +194,14 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
 
 #[test]
 fn every_refused_reserve_gives_the_diagram_back() {
-    for mirror in [false, true] {
+    for (mirror, counts) in [(false, false), (true, false), (false, true), (true, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
                 eng.limits().refuse_nth_reserve(n as u32);
                 None
             },
             mirror,
+            counts,
         );
         assert!(refusals >= 2, "only {refusals} refusal points, mirror {mirror}");
     }
@@ -201,7 +209,7 @@ fn every_refused_reserve_gives_the_diagram_back() {
 
 #[test]
 fn every_stop_gives_the_diagram_back() {
-    for mirror in [false, true] {
+    for (mirror, counts) in [(false, false), (true, false), (false, true), (true, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
                 let at = eng.limits().work_units() + n;
@@ -209,6 +217,7 @@ fn every_stop_gives_the_diagram_back() {
                 Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
             },
             mirror,
+            counts,
         );
         assert!(refusals >= 1, "no stop point, mirror {mirror}");
     }

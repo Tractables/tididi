@@ -13,7 +13,7 @@ mod operations;
 mod renumber;
 mod state;
 
-pub(crate) use state::{Dirty, LevelCounts, Pass};
+pub(crate) use state::{Dirty, Known, LevelCounts, Pass};
 
 #[cfg(test)]
 mod tests;

@@ -842,6 +842,9 @@ fn assemble_moving(
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
     };
+    // Moving the levels out and back forgets what `tdd` is known to be: a
+    // refusal takes it back with them.
+    let known = tdd.levels.known();
     placement.move_part(&mut tdd, &plan.embedding.levels);
     // A mirrored image reads its pairs the other way round, before anything
     // reads its sides (`literal_chain`). A refusal undoes it by the same
@@ -897,6 +900,7 @@ fn assemble_moving(
     if let Err(e) = stopped.and_then(|()| gate.flush()) {
         placement.mirror(plan);
         placement.move_back(&mut tdd, &plan.embedding.levels);
+        tdd.levels.reinstate_known(known);
         return Err((e, tdd));
     }
     let mut result = match placement.seat(tdd.output().local, carried) {
@@ -904,6 +908,7 @@ fn assemble_moving(
         Err((e, mut placement)) => {
             placement.mirror(plan);
             placement.move_back(&mut tdd, &plan.embedding.levels);
+            tdd.levels.reinstate_known(known);
             return Err((e, tdd));
         }
     };
