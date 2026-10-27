@@ -18,8 +18,13 @@
 //! Runs at the end of every prune and every full reduction, and after each
 //! `fuse_pairs_at_parents` sweep; the contract-only plan kills no pairs and
 //! skips it.
+//!
+//! Every buffer a level's compaction grows is reserved through the engine's
+//! limits before the level is touched, so a refusal is an error at a level
+//! boundary, never an allocation failure partway through a store.
 
 use crate::Engine;
+use crate::limits::OperationError;
 
 use crate::diagram::{Tdd, MarginalValues, MarginalStorage};
 
@@ -33,13 +38,20 @@ use crate::diagram::boundary_marginal_levels;
 /// itself to their boundary parents.
 ///
 /// Precondition: the diagram is in post-tagger form (module doc).
-pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Vec<u32> {
+///
+/// # Errors
+///
+/// `OverBudget` where the limits refuse a level's buffers: the levels before
+/// it are compacted, it and the levels after it are as they were, and the
+/// diagram denotes what it did.
+pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>, OperationError> {
     // Invariant 11 (`check_leaf_columns_pinned`), checked here because this
     // pass runs after every pass that could break it.
     #[cfg(debug_assertions)]
     if let Err(e) = crate::test_helpers::check::marginal::check_leaf_columns_pinned(tdd) {
         panic!("leaf column pin: {e}");
     }
+    let lim = eng.limits();
     let mut merged_levels = Vec::new();
     // Both buffers are refilled per level, so a pooled pair differs from a
     // fresh one only in capacity.
@@ -62,11 +74,14 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Vec<u32> {
         let store_len = MarginalValues::read(&tdd.levels[v.idx()], tdd.weights.as_ref(), v.idx()).map_or(0, |values| values.len());
         if store_len == 0 {
             tdd.reindex_level(v, &[], &mut [], |level, weights, referenced, remap| {
-                MarginalStorage::new(level, weights, v.idx()).compact(referenced, remap)
-            });
+                MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap)
+            })?;
             continue;
         }
 
+        slots.reserve(lim, store_len)?;
+        remap.clear();
+        lim.reserve(&mut *remap, store_len)?;
         let referenced =
             referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut slots);
         if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
@@ -76,11 +91,10 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Vec<u32> {
         // The composed remap, old slot to final slot: unreferenced slots are
         // dropped, and equal-valued referenced slots map to one output slot
         // (first occurrence wins).
-        remap.clear();
         remap.resize(store_len, u32::MAX);
         let values_merged = tdd.reindex_level(v, referenced, &mut remap, |level, weights, referenced, remap| {
-            MarginalStorage::new(level, weights, v.idx()).compact(referenced, remap)
-        });
+            MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap)
+        })?;
         if values_merged > 0 {
             merged_levels.push(v.0);
         }
@@ -88,9 +102,9 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Vec<u32> {
 
     // It rewrites stores in place and so cannot stop partway, for the reason
     // `prune_unreachable` gives; charging keeps the walk on the work clock.
-    eng.limits().charge_work(tdd.vtree.num_nodes() as u64);
+    lim.charge_work(tdd.vtree.num_nodes() as u64);
 
-    merged_levels
+    Ok(merged_levels)
 }
 
 #[cfg(test)]

@@ -20,15 +20,17 @@ impl Tdd {
     /// Compact a value column and redirect its references as one edit. The
     /// closure updates both column storage and level metadata and fills `remap`.
     /// This preserves every referenced value; the caller schedules any extra
-    /// content-twin work caused by equal values acquiring the same slot.
+    /// content-twin work caused by equal values acquiring the same slot. A
+    /// closure that fails leaves the column as it was, and no reference is
+    /// redirected.
     #[inline]
-    pub(crate) fn reindex_level<R>(
+    pub(crate) fn reindex_level<R, E>(
         &mut self, v: VtreeIdx, referenced: &[u32], remap: &mut [u32],
-        compact: impl FnOnce(&mut TddLevel, Option<&mut WeightStore>, &[u32], &mut [u32]) -> R,
-    ) -> R {
-        let result = compact(&mut self.levels[v.idx()], self.weights.as_mut(), referenced, remap);
+        compact: impl FnOnce(&mut TddLevel, Option<&mut WeightStore>, &[u32], &mut [u32]) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let result = compact(&mut self.levels[v.idx()], self.weights.as_mut(), referenced, remap)?;
         if !referenced.is_empty() { remap_refs_into(self, v, remap); }
-        result
+        Ok(result)
     }
 
     /// Redirect merged nodes and schedule their parent for reduction. Return

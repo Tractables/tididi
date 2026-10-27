@@ -26,7 +26,8 @@ use crate::vtree::VtreeIdx;
 /// to `new_len` afterwards.
 ///
 /// `key_at(store, i)` reads the key of slot `i`; `move_down(store, dst, src)`
-/// moves slot `src` to `dst`, with `dst <= src`.
+/// moves slot `src` to `dst`, with `dst <= src`. `by_key` is an empty map;
+/// one with room for every kept slot ([`key_map`]) never grows.
 ///
 /// # Soundness
 ///
@@ -38,11 +39,11 @@ use crate::vtree::VtreeIdx;
 pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
     store: &mut S,
     kept: impl IntoIterator<Item = usize>,
+    by_key: &mut FxHashMap<K, u32>,
     key_at: impl Fn(&S, usize) -> K,
     mut move_down: impl FnMut(&mut S, usize, usize),
     remap: &mut [u32],
 ) -> (usize, usize) {
-    let mut by_key: FxHashMap<K, u32> = FxHashMap::default();
     let mut values_merged = 0usize;
     let mut new_len = 0usize;
     for old in kept {
@@ -69,11 +70,13 @@ pub(crate) fn compact_count_slots(
     counts: &mut Vec<u128>,
     big: &mut Option<CountOverflow>,
     kept: impl IntoIterator<Item = usize>,
+    by_key: &mut FxHashMap<Count, u32>,
     remap: &mut [u32],
 ) -> (usize, usize) {
     let (new_len, merged) = compact_slots(
         counts,
         kept,
+        by_key,
         |counts, old| count_key_at(counts, big.as_ref(), old),
         |counts, dst, src| counts[dst] = counts[src],
         remap,
@@ -97,6 +100,21 @@ fn rekey_big(big: Option<CountOverflow>, remap: &[u32]) -> Option<CountOverflow>
             })
             .collect::<CountOverflow>()
     })
+}
+
+/// An empty key map for [`compact_slots`] with room for `keys` keys,
+/// reserved through `lim`; give its room back with [`release_key_map`].
+pub(crate) fn key_map<K: Hash + Eq>(lim: &Limits, keys: usize) -> Result<FxHashMap<K, u32>, OperationError> {
+    let mut map = FxHashMap::default();
+    lim.reserve_map(&mut map, keys)?;
+    Ok(map)
+}
+
+/// Drop a map [`key_map`] reserved, releasing the bytes its reservation
+/// charged.
+pub(crate) fn release_key_map<K>(lim: &Limits, map: FxHashMap<K, u32>) {
+    let bytes = (std::mem::size_of::<(K, u32)>() + 1) as u64;
+    lim.release_bytes((map.capacity() as u64).saturating_mul(bytes));
 }
 
 /// Truncate a store compacted in place to `new_len`, giving its slack back
@@ -419,6 +437,15 @@ impl RefSlotScratch {
     pub(crate) fn clear(&mut self) {
         self.referenced.clear();
         self.seen.clear();
+    }
+
+    /// Empty both buffers and reserve, through `lim`, room for `slots`
+    /// distinct slots in each, so that [`referenced_marginal_slots`] grows
+    /// neither on a level whose references name only slots below `slots`.
+    pub(crate) fn reserve(&mut self, lim: &Limits, slots: usize) -> Result<(), OperationError> {
+        self.clear();
+        lim.reserve(&mut self.referenced, slots)?;
+        lim.reserve_set(&mut self.seen, slots)
     }
 }
 

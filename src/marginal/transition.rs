@@ -407,7 +407,7 @@ pub(crate) fn dedup_fresh_store(
     // Written for every `i`, so the remap is final as it is written and the
     // overflow table can be rekeyed in one drain once it is complete.
     let mut remap: Vec<u32> = vec![0; n];
-    let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut remap);
+    let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut Default::default(), &mut remap);
     truncate_with_slack(&mut counts, new_len);
     (counts, big, remap)
 }

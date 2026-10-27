@@ -15,7 +15,7 @@ fn compaction_merges_values_and_rekeys_only_referenced_overflows() {
         let mut big = Some(overflow.clone());
         let mut remap = vec![u32::MAX; counts.len()];
         let (new_len, merged) = compact_count_slots(
-            &mut counts, &mut big, kept.iter().copied(), &mut remap,
+            &mut counts, &mut big, kept.iter().copied(), &mut Default::default(), &mut remap,
         );
         counts.truncate(new_len);
         assert_eq!(merged, if kept.is_empty() { 0 } else { 2 });

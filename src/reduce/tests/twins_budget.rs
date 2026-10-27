@@ -265,7 +265,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         super::contract::contract_all_twins(&eng, &mut tdd2)
             .expect("contract must not OOM");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
-        let merged = prune_value_slots(&eng, &mut tdd2);
+        let merged = prune_value_slots(&eng, &mut tdd2).unwrap();
         assert!(
             !merged.is_empty(),
             "prune must report a value merge (equal-valued slots 0 and 1 collapse)"

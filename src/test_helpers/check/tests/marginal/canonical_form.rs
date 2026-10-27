@@ -23,7 +23,7 @@ fn canonical_form_holds_after_p_fusion_and_slot_prune() {
     assert_eq!(stats.fusion_groups, 1);
     let v = tdd.levels.iter().position(|l| l.is_marginal()).unwrap();
     let slots_after_fusion = tdd.levels[v].marginal_counts().unwrap().len();
-    crate::reduce::slot_prune::prune_value_slots(&eng, &mut tdd);
+    crate::reduce::slot_prune::prune_value_slots(&eng, &mut tdd).unwrap();
     assert_eq!(
         tdd.levels[v].marginal_counts().unwrap().len(),
         slots_after_fusion - 2,
@@ -65,7 +65,7 @@ fn slot_uniqueness_rejects_a_stale_duplicate_until_the_slot_prune() {
     let mut tdd = toy(vec![BIG, BIG], &[&[(0, 0)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("invariant 10"), "wrong violation: {err}");
-    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd);
+    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd).unwrap();
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
@@ -118,7 +118,7 @@ fn slot_reachability_holds_after_the_slot_prune() {
         check_no_orphan_slots(&tdd).is_err(),
         "pre-prune: expected invariant 12 violation"
     );
-    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd);
+    crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd).unwrap();
     // Post-condition: invariant 12 passes.
     check_no_orphan_slots(&tdd).unwrap();
     // invariant 10 must also hold after prune.

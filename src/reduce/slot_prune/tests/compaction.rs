@@ -40,7 +40,7 @@ fn weighted_prune_merges_equal_value_slots() {
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
-    let merged = prune_value_slots(eng, &mut tdd);
+    let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].slot_count();
@@ -74,7 +74,7 @@ fn weighted_prune_compacts_orphans() {
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
-    let merged = prune_value_slots(eng, &mut tdd);
+    let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].slot_count();
@@ -97,7 +97,7 @@ fn prune_compacts_boundary_store_and_remaps() {
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
     let v = boundary_marginal_levels(&tdd)[0].0;
     let slots_before = tdd.levels[v.idx()].marginal_counts().unwrap().len();
-    prune_value_slots(eng, &mut tdd);
+    prune_value_slots(eng, &mut tdd).unwrap();
     let counts = tdd.levels[v.idx()].marginal_counts().unwrap();
     assert_eq!(counts, &[BIG + 1]);
     assert_eq!(slots_before - counts.len(), 2, "two orphan slots freed");
@@ -116,7 +116,7 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
     let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
     let nodes_before = tdd.node_count();
-    prune_value_slots(eng, &mut tdd);
+    prune_value_slots(eng, &mut tdd).unwrap();
     // Boundary level: 3 slots, 1 referenced → 2 freed.
     let v = {
         let mut it = boundary_marginal_levels(&tdd).into_iter();
@@ -146,7 +146,7 @@ fn prune_keeps_dense_store() {
     let mut tdd = toy(vec![BIG + 1, BIG + 2], &[&[(0, 0), (1, 1)]]);
     let v = boundary_marginal_levels(&tdd)[0].0;
     let before = tdd.levels[v.idx()].marginal_counts().unwrap().to_vec();
-    prune_value_slots(eng, &mut tdd);
+    prune_value_slots(eng, &mut tdd).unwrap();
     assert_eq!(tdd.levels[v.idx()].marginal_counts().unwrap(), &before[..]);
 }
 
@@ -173,7 +173,7 @@ fn prune_merges_equal_value_referenced_slots() {
 
     let v = boundary_marginal_levels(&tdd)[0].0;
     let slots_before = tdd.levels[v.idx()].marginal_counts().unwrap().len();
-    prune_value_slots(eng, &mut tdd);
+    prune_value_slots(eng, &mut tdd).unwrap();
 
     // (a) Unique values: slot-count uniqueness holds after prune.
     check_slot_count_uniqueness(&tdd)
@@ -248,7 +248,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(&[1, 2, 3, 5], &mut remap);
+            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap).unwrap();
 
         assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
@@ -319,7 +319,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(&[1, 2, 3, 5], &mut remap);
+            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap).unwrap();
 
         let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 
@@ -331,5 +331,67 @@ mod compact_store_in_place_tests {
             vec![u32::MAX, 0, 1, 1, u32::MAX, 2],
             "orphans keep the u32::MAX sentinel; merged refs share a slot",
         );
+    }
+}
+
+/// A boundary store's values and its parent's pairs, as raw references.
+fn boundary_state(tdd: &Tdd) -> (Vec<String>, Vec<Vec<(u32, u32)>>) {
+    let (v, parent, _) = boundary_marginal_levels(tdd)[0];
+    let values = match tdd.weights() {
+        Some(ws) => ws.level(v.idx()).unwrap().iter().map(|w| format!("{w:?}")).collect(),
+        None => tdd.levels[v.idx()].marginal_counts().unwrap().iter().map(u128::to_string).collect(),
+    };
+    let pairs = tdd.levels[parent.idx()]
+        .internal_inputs_iter()
+        .map(|(_, pairs)| pairs.map(|p| (p.left.0, p.right.0)).collect())
+        .collect();
+    (values, pairs)
+}
+
+/// The slot prune reserves every buffer a level's compaction grows before
+/// it touches the level: refused at any reserve, it is an error that leaves
+/// the boundary store and its parent's references as they were, and the
+/// prune granted afterwards compacts as an unrefused one does. A count store
+/// and an exact weighted one, each with an orphan slot and two equal
+/// referenced values.
+#[test]
+fn a_refused_prune_leaves_the_level_untouched() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights};
+    use crate::test_helpers::rat;
+    let eng = crate::Engine::new();
+    let nodes: &[&[(u32, u32)]] = &[&[(0, 0)], &[(0, 1)], &[(0, 3)]];
+    let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
+    let exact = crate::diagram::WeightStore::new(RationalWeights::from_literals(&[half]), Arithmetic::ExactRational);
+    let diagrams = [
+        toy(vec![BIG + 5, BIG + 7, BIG + 9, BIG + 5], nodes),
+        toy_weighted(exact, vec![rat(3, 7), rat(1, 7), rat(2, 7), rat(3, 7)], nodes),
+    ];
+    for original in diagrams {
+        let mut expected = original.clone();
+        prune_value_slots(&eng, &mut expected).unwrap();
+        assert_eq!(boundary_state(&expected).0.len(), 2, "the orphan dropped, the equal values merged");
+        let mut refusals = 0;
+        for n in 0.. {
+            let mut tdd = original.clone();
+            eng.limits().refuse_nth_reserve(n);
+            let outcome = prune_value_slots(&eng, &mut tdd);
+            let fired = !eng.limits().refusal_pending();
+            eng.limits().grant_every_reserve();
+            match outcome {
+                Ok(_) => assert_eq!(boundary_state(&tdd), boundary_state(&expected), "granted at {n}"),
+                Err(e) => {
+                    assert_eq!(e, crate::OperationError::OverBudget, "refused at {n}");
+                    assert_eq!(boundary_state(&tdd), boundary_state(&original), "refused at {n}");
+                    refusals += 1;
+                    prune_value_slots(&eng, &mut tdd).unwrap();
+                    assert_eq!(boundary_state(&tdd), boundary_state(&expected), "repeated after a refusal at {n}");
+                }
+            }
+            if !fired {
+                break;
+            }
+            assert!(n < 100, "never past the last reserve");
+        }
+        assert!(refusals >= 4, "{refusals} refusal points: the slot list, its set, the remap and the key map");
     }
 }

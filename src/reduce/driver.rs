@@ -38,7 +38,7 @@ impl<'a> Reduction<'a> {
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
-                prune_value_slots(self.eng, self.tdd);
+                prune_value_slots(self.eng, self.tdd)?;
                 self.tdd.close_marked_levels(closed);
                 return Ok(());
             }
@@ -68,7 +68,7 @@ impl<'a> Reduction<'a> {
         // that prune and contraction orphaned at the boundary stores are still
         // there.
         if !scanned && self.tdd.has_marginal_level() {
-            prune_value_slots(self.eng, self.tdd);
+            prune_value_slots(self.eng, self.tdd)?;
         }
         let mut structural = true;
         for level in &mut self.tdd.levels {
@@ -162,16 +162,17 @@ impl<'a> Reduction<'a> {
 
     /// Slot compaction reports value merges at marginal levels. They may
     /// make their parents' nodes equal, so include those boundaries in a rescan.
-    fn compact_for_rescan(&mut self) {
-        let merged = prune_value_slots(self.eng, self.tdd);
+    fn compact_for_rescan(&mut self) -> Result<(), OperationError> {
+        let merged = prune_value_slots(self.eng, self.tdd)?;
         self.tdd.dirty.requeue(Pass::ContentTwin, merged);
+        Ok(())
     }
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
     /// what the slot prune before it reports is not kept.
     pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
-        prune_value_slots(self.eng, self.tdd);
+        prune_value_slots(self.eng, self.tdd)?;
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
         loop {
@@ -181,7 +182,7 @@ impl<'a> Reduction<'a> {
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
-            self.compact_for_rescan();
+            self.compact_for_rescan()?;
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);
@@ -201,7 +202,7 @@ impl<'a> Reduction<'a> {
             #[cfg(debug_assertions)]
             crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(self.tdd, Some(&parents), "marginalize_levels");
         }
-        prune_value_slots(self.eng, self.tdd);
+        prune_value_slots(self.eng, self.tdd)?;
         self.tdd.close_marked_levels(closed);
         Ok(())
     }

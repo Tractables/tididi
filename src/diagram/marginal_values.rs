@@ -6,7 +6,8 @@
 
 use super::{TddLevel, WeightStore, WeightValue};
 use crate::value::{CountRead, CountRef};
-use crate::value::slots::{compact_count_slots, compact_slots, truncate_with_slack};
+use crate::limits::{Limits, OperationError};
+use crate::value::slots::{compact_count_slots, compact_slots, key_map, release_key_map, truncate_with_slack};
 
 /// A level's stored values, with their numeric representation already selected.
 pub(crate) enum MarginalValues<'a> {
@@ -70,30 +71,40 @@ impl<'a> MarginalStorage<'a> {
 
     /// Keep only referenced slots, merging equal values, and return the number merged.
     /// Weighted leaf columns must never be passed here: they are pinned by label.
-    pub(crate) fn compact(&mut self, referenced: &[u32], remap: &mut [u32]) -> usize {
+    ///
+    /// # Errors
+    ///
+    /// `OverBudget` where `lim` refuses the map that finds equal values,
+    /// which is reserved before any slot moves: the level is then untouched.
+    pub(crate) fn compact(&mut self, lim: &Limits, referenced: &[u32], remap: &mut [u32]) -> Result<usize, OperationError> {
+        let kept = referenced.iter().map(|&i| i as usize);
         if let Some((counts, big)) = self.level.marginal_store_mut() {
             let old_len = counts.len();
-            if old_len == 0 { return 0; }
-            let (new_len, merged) = compact_count_slots(counts, big, referenced.iter().map(|&i| i as usize), remap);
+            if old_len == 0 { return Ok(0); }
+            let mut by_key = key_map(lim, referenced.len())?;
+            let (new_len, merged) = compact_count_slots(counts, big, kept, &mut by_key, remap);
+            release_key_map(lim, by_key);
             truncate_with_slack(counts, new_len);
             self.level.retire_marginal_slots((old_len - new_len) as u32);
-            return merged;
+            return Ok(merged);
         }
-        if !self.level.is_weight_marginal() { return 0; }
+        if !self.level.is_weight_marginal() { return Ok(0); }
         if remap.is_empty() {
             self.level.set_weight_width(0);
-            return 0;
+            return Ok(0);
         }
+        let mut by_key = key_map(lim, referenced.len())?;
         let values = self.weights.as_mut().expect("weighted compaction requires its store")
             .level_vals_mut(self.index).expect("a nonempty weighted store has a column");
         let (new_len, merged) = compact_slots(
-            values, referenced.iter().map(|&i| i as usize),
+            values, kept, &mut by_key,
             |values, old| super::semiring::weight_key(&values[old]),
             |values, dst, src| values.swap(dst, src), remap,
         );
+        release_key_map(lim, by_key);
         truncate_with_slack(values, new_len);
         self.level.set_weight_width(new_len as u32);
-        merged
+        Ok(merged)
     }
 
     /// Release a subsumed column without making the level structural again.
