@@ -434,7 +434,8 @@ const DENSE_PAIR_CELLS: usize = 1 << 24;
 
 /// The walk through both children, each candidate's `g` pair found in a
 /// map of `g`'s pairs: a dense array over the two children's widths where
-/// it is small, else an open-addressing table.
+/// it is small ([`DENSE_PAIR_CELLS`]) or no larger than the hash table,
+/// else an open-addressing table.
 #[expect(clippy::too_many_arguments)]
 fn walk_pairs(
     eng: &Engine,
@@ -451,7 +452,11 @@ fn walk_pairs(
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
     let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
-    if cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs && !pairs_hashed_forced() {
+    let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
+    let slots = (2 * g_pairs).next_power_of_two().max(16);
+    let small = cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs;
+    let no_larger = cells.saturating_mul(std::mem::size_of::<u32>()) <= slots * std::mem::size_of::<PairSlot>();
+    if (small || no_larger) && !pairs_hashed_forced() {
         if !pb.dense_clean {
             pb.dense.fill(NO_PRODUCT);
         }
@@ -477,8 +482,6 @@ fn walk_pairs(
         pb.dense_clean = true;
         return Ok(());
     }
-    let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
-    let slots = (2 * g_pairs).next_power_of_two().max(16);
     let mask = slots - 1;
     pb.table.clear();
     lim.try_resize(&mut pb.table, slots, PairSlot::default())?;
