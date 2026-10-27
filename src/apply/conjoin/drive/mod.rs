@@ -277,12 +277,13 @@ fn note_operand_level(run: &mut ApplyRun, f: &Tdd, g: &Tdd, vtree: &crate::vtree
 
 /// Whether `a` holds `b`'s nodes and pairs, node for node and each node's
 /// pairs in order: stored as `b` stores them (the same node words, ranges
-/// and pair arena, or the same description), or laid out otherwise in its
-/// arena. Never on a marginal level or one without nodes. The lengths and
-/// the last node and pair are compared first, then the rest as memory, so
-/// that a level that differs costs a read of its first difference; where
-/// the memory differs, the first and last nodes' pairs, then each node's.
-/// A level that holds a node's pairs in another order is not found.
+/// and pair arena, or the same description), laid out otherwise in its
+/// arena, or one of them stored and the other described. Never on a
+/// marginal level or one without nodes. The lengths and the last node and
+/// pair are compared first, then the rest as memory, so that a level that
+/// differs costs a read of its first difference; where the memory differs,
+/// or one level is described, the first and last nodes' pairs, then each
+/// node's. A level that holds a node's pairs in another order is not found.
 fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
     let n = a.node_count();
     if n == 0 || n != b.node_count() || a.is_marginal() || b.is_marginal() {
@@ -305,7 +306,12 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
             same(0) && same(n - 1) && (1..n - 1).all(same)
         }
         (None, None) => a.pairs == b.pairs && a.nodes == b.nodes,
-        _ => false,
+        _ => {
+            let (mut xs, mut ys) = (Vec::new(), Vec::new());
+            let (mut xc, mut yc) = (None, None);
+            let mut same = |k: usize| a.pairs_read_next(&mut xc, k, &mut xs) == b.pairs_read_next(&mut yc, k, &mut ys);
+            same(0) && same(n - 1) && (1..n - 1).all(same)
+        }
     }
 }
 
