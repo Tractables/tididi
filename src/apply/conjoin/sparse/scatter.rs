@@ -3140,7 +3140,8 @@ fn emit_walked(
 
 /// [`emit_walked`] on candidates of more than one g parent: two g parents
 /// taking turns in place ([`emit_alternating`]), a few others grouped by
-/// comparison ([`emit_few`]), more through the map ([`emit_owned`]).
+/// comparison ([`emit_few`]), many of two g parents keyed by comparison
+/// ([`emit_two`]), and others through the map ([`emit_owned`]).
 #[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_mixed(
@@ -3173,7 +3174,87 @@ fn emit_mixed(
     if owners.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
+    if owners.len() >= GATHERED_CANDIDATES
+        && let Some(b) = two_owners(owners)
+    {
+        return emit_two(eng, emit, level, pl_output, p1, base, owners, b, duplicates_legal);
+    }
     emit_owned(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+}
+
+/// The g parent other than the first candidate's where the candidates'
+/// owners are those two g parents: the first block of owners tested one
+/// at a time, which finds a third g parent of a node of many soon, and the
+/// rest a block at a time, each block's test without a branch.
+#[inline(always)]
+fn two_owners(owners: &[u32]) -> Option<u32> {
+    let a = *owners.first()?;
+    let b = *owners.iter().find(|&&g| g != a)?;
+    let (head, rest) = owners.split_at(owners.len().min(16));
+    let two = |g: u32| (g == a) | (g == b);
+    (head.iter().all(|&g| two(g)) && rest.chunks(16).all(|block| block.iter().fold(true, |all, &g| all & two(g)))).then_some(b)
+}
+
+/// [`emit_owned`] on [`GATHERED_CANDIDATES`] candidates or more of two g
+/// parents, the first candidate's and `b`: each owner is keyed by comparing it with `b`, in the pass that
+/// counts the second product's pairs, without the map, and the pairs are
+/// gathered by product in one pass ([`gather_by_product`]).
+#[expect(clippy::too_many_arguments)]
+pub(super) fn emit_two(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &mut [u32],
+    b: u32,
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let EmitScratch { pair_counts, single_pairs, moved_pairs, .. } = emit;
+    let (a, n) = (owners[0], owners.len());
+    let first = pl_output.len();
+    reserve_room(lim, pl_output, 2)?;
+    for (k, g_parent) in [a, b].into_iter().enumerate() {
+        pl_output.push(ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(g_parent),
+            prod_idx: ProductNodeIdx((first + k) as u32),
+        });
+    }
+    let mut second = 0u32;
+    for owner in owners.iter_mut() {
+        let k = u32::from(*owner == b);
+        *owner = k;
+        second += k;
+    }
+    pair_counts.clear();
+    lim.try_push(pair_counts, n as u32 - second)?;
+    lim.try_push(pair_counts, second)?;
+    let total = prefix_offsets(pair_counts, true)? as usize;
+    reserve_room(lim, level.nodes.stored_mut(), 2)?;
+    let arena = level.pairs.stored_mut();
+    single_pairs.clear();
+    lim.try_resize(single_pairs, 2, arena[base])?;
+    if moved_pairs.len() <= total {
+        lim.try_resize(moved_pairs, total + 1, arena[base])?;
+    }
+    gather_by_product(&arena[base..base + n], owners, pair_counts, single_pairs, moved_pairs);
+    arena[base..base + total].copy_from_slice(&moved_pairs[..total]);
+    arena.truncate(base + total);
+    let first_node = level.nodes().len();
+    push_ranged_nodes(eng, level, base, pair_counts, single_pairs)?;
+    // As in `emit_walked`: canonical children make a node's pairs distinct
+    // unless pair lists are multisets.
+    debug_assert!(
+        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
+            let mut seen = std::collections::HashSet::new();
+            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+        }),
+        "sparse apply: duplicate pair emitted — canonicity violated"
+    );
+    Ok(())
 }
 
 /// [`emit_mixed`] where the `n` candidates at `base`, an even number up to
@@ -3261,7 +3342,7 @@ fn emit_alternating(
 /// them all and one writes each pair at its product's cursor, read from and
 /// written back to memory.
 #[expect(clippy::too_many_arguments)]
-fn emit_owned(
+pub(super) fn emit_owned(
     eng: &Engine,
     emit: &mut EmitScratch,
     level: &mut TddLevel,

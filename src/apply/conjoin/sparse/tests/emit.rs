@@ -106,3 +106,52 @@ fn gathering_by_product_is_a_stable_sort() {
         }
     }
 }
+
+/// A node of two g parents keyed by comparison makes the products, node
+/// words and arena the map's emission makes, with either product of one
+/// candidate or both of many.
+#[test]
+fn two_parents_emit_as_the_map_does() {
+    use crate::apply::conjoin::budget::NO_PRODUCT;
+    use crate::apply::conjoin::sparse::index::EmitScratch;
+    use crate::apply::conjoin::sparse::scatter::{emit_owned, emit_two};
+    use crate::diagram::{ChildPair, EncodedChildRef, TddLevel};
+    let eng = Engine::new();
+    let mut rng = crate::test_helpers::Lcg::new(29);
+    let (a, b) = (5u32, 2u32);
+    for n in [64usize, 65, 100, 301] {
+        for lone in [None, Some(a), Some(b)] {
+            // The first candidate is a's; a lone parent holds one candidate.
+            let at = 1 + rng.below(n as u64 - 1) as usize;
+            let owners: Vec<u32> = (0..n)
+                .map(|i| match lone {
+                    _ if i == 0 => a,
+                    Some(g) if g == a => b,
+                    Some(_) => if i == at { b } else { a },
+                    None => if i == at || rng.below(2) == 0 { b } else { a },
+                })
+                .collect();
+            let pairs: Vec<ChildPair> = (0..n as u32)
+                .map(|i| ChildPair::new(EncodedChildRef::from_raw(i), EncodedChildRef::from_raw(i * 5 + 3)))
+                .collect();
+            let run = |two: bool| {
+                let mut level = TddLevel::new();
+                level.pairs.stored_mut().extend_from_slice(&pairs);
+                let mut out = Vec::new();
+                let mut emit = EmitScratch { p2_map: vec![NO_PRODUCT; 8], ..EmitScratch::default() };
+                let mut owners = owners.clone();
+                let made = if two {
+                    emit_two(&eng, &mut emit, &mut level, &mut out, 3, 0, &mut owners, b, false)
+                } else {
+                    emit_owned(&eng, &mut emit, &mut level, &mut out, 3, 0, &mut owners, false)
+                };
+                made.unwrap();
+                assert!(emit.p2_map.iter().all(|&p| p == NO_PRODUCT), "the map is left clear");
+                let stored = level.stored().expect("an emitted level is stored");
+                let products: Vec<(u32, u32, u32)> = out.iter().map(|e| (e.f_idx.0, e.g_idx.0, e.prod_idx.0)).collect();
+                (products, stored.nodes().to_vec(), stored.arena().to_vec())
+            };
+            assert!(run(true) == run(false), "n {n}, lone {lone:?}: the two emits differ");
+        }
+    }
+}
