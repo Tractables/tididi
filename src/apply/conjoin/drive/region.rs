@@ -66,39 +66,30 @@ pub(super) fn take_regions(
         publish_identity_level(run.products, at, width);
         run.products.note_complete(at);
     }
-    // The copies first, then the moves.
-    for borrowed in [true, false] {
+    // The copies first, then the moves: a refused copy leaves every owned
+    // operand's levels in place.
+    if f.is_borrowed() || g.is_borrowed() {
         for &t in cone.free {
             let at = t.idx();
             let out = &mut run.levels[at];
             match carried_from_f(cone, at) {
-                true => carry_free(lim, vtree, cone, t, f, borrowed, out)?,
-                false => carry_free(lim, vtree, cone, t, g, borrowed, out)?,
+                true if f.is_borrowed() => f.carry(lim, at, out)?,
+                false if g.is_borrowed() => g.carry(lim, at, out)?,
+                _ => {}
             }
         }
     }
+    for &t in cone.free {
+        let at = t.idx();
+        let owned = if carried_from_f(cone, at) { f.owned() } else { g.owned() };
+        if let Some(owned) = owned {
+            if cone.free_in_f(at) && cone.free_in_g(at) {
+                push_free_level(&mut owned.levels[at], vtree, t);
+            }
+            std::mem::swap(&mut run.levels[at], &mut owned.levels[at]);
+        }
+    }
     Ok(())
-}
-
-/// [`take_regions`]' carry of the free level `t` into `out` from `carrier`,
-/// where it is borrowed as `borrowed` says.
-fn carry_free(
-    lim: &Limits,
-    vtree: &Arc<Vtree>,
-    cone: Cone<'_>,
-    t: VtreeIdx,
-    carrier: &mut Held<'_>,
-    borrowed: bool,
-    out: &mut TddLevel,
-) -> Result<(), OperationError> {
-    let at = t.idx();
-    if carrier.is_borrowed() != borrowed {
-        return Ok(());
-    }
-    if let Some(owned) = carrier.owned().filter(|_| cone.free_in_f(at) && cone.free_in_g(at)) {
-        push_free_level(&mut owned.levels[at], vtree, t);
-    }
-    carrier.carry(lim, at, out)
 }
 
 /// Move the levels [`take_regions`] took back to their owned operands, for

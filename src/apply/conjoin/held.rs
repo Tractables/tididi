@@ -74,6 +74,7 @@ impl Held<'_> {
     ///
     /// [`OperationError::OverBudget`] where the copy is refused; `out` is
     /// then as it was.
+    #[inline]
     pub(crate) fn carry(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
         match self {
             Held::Owned(tdd) => std::mem::swap(out, &mut tdd.levels[t]),
