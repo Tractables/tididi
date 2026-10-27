@@ -88,6 +88,65 @@ fn weighted_prune_compacts_orphans() {
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");
 }
 
+/// A scaled-float store merges equal referenced values as an exact one
+/// does, so that parent nodes differing only in which of them they name
+/// can merge; orphans drop and the rest move down in slot order.
+#[test]
+fn a_bounded_prune_merges_equal_values() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightValue};
+    use crate::test_helpers::rat;
+    let eng = &crate::Engine::new();
+    let sevenths = |vals: &[i64]| -> Vec<ScaledFloat> { vals.iter().map(|&v| ScaledFloat::from_rational(&rat(v, 7))).collect() };
+    // The column's numerators, the parent's pairs and the numerators kept.
+    type Case<'a> = (&'a [i64], &'a [&'a [(u32, u32)]], &'a [i64]);
+    let cases: [Case; 2] = [
+        (&[3, 3, 5], &[&[(0, 0)], &[(0, 1)], &[(0, 2)]], &[3, 5]),
+        (&[1, 3, 5, 3], &[&[(0, 3)], &[(0, 1)]], &[3]),
+    ];
+    for (vals, nodes, kept) in cases {
+        // Built on an exact store, whose values the toy takes, then given a
+        // scaled-float store holding the same values as scaled floats.
+        let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
+        let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
+        let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
+        let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
+        let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
+        let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
+        ws.set_level(v.idx(), sevenths(vals).into_iter().map(WeightValue::scaled).collect());
+        tdd.weights = Some(ws);
+
+        let merged = prune_value_slots(eng, &mut tdd).unwrap();
+
+        let values = tdd.weights().unwrap().level(v.idx()).unwrap();
+        let got: Vec<ScaledFloat> = values.iter().map(|v| *v.as_scaled().unwrap()).collect();
+        assert_eq!(got, sevenths(kept), "{vals:?}");
+        assert_eq!(tdd.levels[v.idx()].slot_count() as usize, kept.len(), "{vals:?}");
+        assert_eq!(merged, vec![v.0], "{vals:?}");
+        let mut buf = RefSlotScratch::default();
+        let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
+        assert_eq!(refs, (0..kept.len() as u32).collect::<Vec<_>>(), "{vals:?}");
+        check_slot_count_uniqueness(&tdd).unwrap();
+    }
+}
+
+/// The referenced slots come out sorted and deduplicated, whatever order
+/// and multiplicity the parent's pairs name them in, past a word of slots.
+#[test]
+fn referenced_slots_are_sorted_and_distinct() {
+    let slots = [130u32, 3, 64, 3, 0, 130, 63, 65];
+    let values = vec![BIG + 1; 131];
+    let pairs: Vec<Vec<(u32, u32)>> = slots.iter().map(|&s| vec![(0, s)]).collect();
+    let lists: Vec<&[(u32, u32)]> = pairs.iter().map(Vec::as_slice).collect();
+    let tdd = toy(values, &lists);
+    let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
+    let mut buf = RefSlotScratch::default();
+    let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf).to_vec();
+    assert_eq!(refs, vec![0, 3, 63, 64, 65, 130]);
+    // The scratch is ready for the next level.
+    let again = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
+    assert_eq!(again, &refs[..]);
+}
+
 /// Boundary compaction: unreferenced slots drop, the surviving ref is
 /// remapped onto the compacted index.
 #[test]

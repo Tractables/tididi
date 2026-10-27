@@ -5,7 +5,7 @@
 use std::hash::Hash;
 
 use num_bigint::BigUint;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::value::{Count, CountRead, CountRef, IntFold, WeightFold};
 use crate::diagram::{weight_key, ChildSide, WeightKey};
@@ -429,7 +429,9 @@ pub(crate) fn sum_marginal_counts(counts: CountRef<'_>, indices: &[u32]) -> Coun
 pub(crate) struct RefSlotScratch {
     /// The deduped, sorted slot list — the pass's result, borrowed by the caller.
     pub(crate) referenced: Vec<u32>,
-    seen: FxHashSet<u32>,
+    /// One bit a slot, set for each slot a reference names; every word is
+    /// zero again once the list is read off it.
+    seen: Vec<u64>,
 }
 
 impl RefSlotScratch {
@@ -440,12 +442,13 @@ impl RefSlotScratch {
     }
 
     /// Empty both buffers and reserve, through `lim`, room for `slots`
-    /// distinct slots in each, so that [`referenced_marginal_slots`] grows
-    /// neither on a level whose references name only slots below `slots`.
+    /// slots in the list and a bit for each in the set, so that
+    /// [`referenced_marginal_slots`] grows neither on a level whose
+    /// references name only slots below `slots`.
     pub(crate) fn reserve(&mut self, lim: &Limits, slots: usize) -> Result<(), OperationError> {
         self.clear();
         lim.reserve(&mut self.referenced, slots)?;
-        lim.reserve_set(&mut self.seen, slots)
+        lim.reserve(&mut self.seen, slots.div_ceil(64))
     }
 }
 
@@ -465,7 +468,9 @@ impl crate::execution::pool::PooledScratch for RefSlotScratch {
 /// `ZERO` sentinels and inline refs; discarding out-of-range slots is the
 /// caller's choice.
 ///
-/// Dedup is hash-based so the sort is over distinct slots, not ref occurrences.
+/// Each reference sets its slot's bit, and the list is read off the bits in
+/// slot order: no hashing and no sort, and a pass over one bit a slot up to
+/// the highest slot named.
 pub(crate) fn referenced_marginal_slots<'a>(
     plevel: &TddLevel,
     side: ChildSide,
@@ -482,13 +487,22 @@ pub(crate) fn referenced_marginal_slots<'a>(
             if EncodedChildRef::from_raw(raw).is_reserved() {
                 continue;
             }
-            if let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw))
-                && seen.insert(s) {
-                    referenced.push(s);
+            if let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
+                let word = s as usize / 64;
+                if word >= seen.len() {
+                    seen.resize(word + 1, 0);
                 }
+                seen[word] |= 1 << (s % 64);
+            }
         }
     }
-    referenced.sort_unstable();
+    for (w, word) in seen.iter_mut().enumerate() {
+        let mut bits = std::mem::take(word);
+        while bits != 0 {
+            referenced.push((w * 64) as u32 + bits.trailing_zeros());
+            bits &= bits - 1;
+        }
+    }
     referenced
 }
 
