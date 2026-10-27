@@ -371,15 +371,6 @@ pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>, f
         .map(Conjoined::diagram)
 }
 
-/// [`apply_and_held`] of a plain conjunction ([`ConjoinMode::Build`]) of
-/// structural, unweighted operands, each owned or borrowed, without free
-/// levels: an owned operand's levels are dropped as the sweep reads them.
-pub(crate) fn apply_and_plain(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>) -> Result<Tdd, OperationError> {
-    debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
-    apply_and_held(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Build, Operands::default())
-        .map(Conjoined::diagram)
-}
-
 /// Move identity levels back to their owned operands, latest first, and
 /// the nodes and arenas of the levels `lent` names back to f, which lends
 /// only where it is owned.
@@ -448,10 +439,26 @@ pub(crate) fn apply_and_core(
     apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), targets, quantified, filter, mode, free)
 }
 
+/// [`apply_and_core`] of operands each owned or borrowed, without a filter
+/// or free levels: a borrowed operand is read in place, weights and marginal
+/// levels included, and an owned operand's levels are dropped as the sweep
+/// reads them ([`apply_and_held`]).
+pub(crate) fn apply_and_either(
+    eng: &Engine,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    mode: ConjoinMode,
+) -> Result<Conjoined, OperationError> {
+    apply_and_held(eng, f, g, targets, quantified, None, mode, Operands::default())
+}
+
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
-/// borrowed operand has no weights and no marginal level, and is on the
-/// operands' vtree as it is, with no free level: the caller copies one that
-/// is not so first.
+/// borrowed operand is on the operands' vtree as it is, with no free level:
+/// the caller copies one that is not so first. Its weight store is copied
+/// into the result's, which takes every marginal level it has; an owned
+/// operand's is moved there.
 #[expect(clippy::too_many_arguments)]
 fn apply_and_held(
     eng: &Engine,
@@ -464,10 +471,8 @@ fn apply_and_held(
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
     debug_assert!(
-        [(&*f, free.f), (&*g, free.g)].into_iter().all(|(op, free)| {
-            !op.is_borrowed() || (op.weights.is_none() && !op.has_marginal_level() && free.is_empty())
-        }),
-        "a borrowed operand is structural, unweighted and has no free level",
+        [(&*f, free.f), (&*g, free.g)].into_iter().all(|(op, free)| !op.is_borrowed() || free.is_empty()),
+        "a borrowed operand has no free level",
     );
     let count_root = matches!(mode, ConjoinMode::Count);
     let keep = matches!(mode, ConjoinMode::Restore);
@@ -484,9 +489,12 @@ fn apply_and_held(
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
-    let take_weights = |op: &mut Held<'_>| op.owned().and_then(|op| op.weights.take());
+    let take_weights = |op: &mut Held<'_>| match op {
+        Held::Owned(op) => Ok(op.weights.take()),
+        Held::Borrowed(op) => op.weights.as_ref().map(|ws| ws.try_clone_on(lim)).transpose(),
+    };
     let ws: Option<crate::diagram::WeightStore> =
-        match (take_weights(f), take_weights(g)) {
+        match (take_weights(f)?, take_weights(g)?) {
             (Some(mut a), Some(b)) => {
                 a.absorb(b);
                 Some(a)

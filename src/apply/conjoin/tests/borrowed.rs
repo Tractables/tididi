@@ -164,10 +164,10 @@ fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
     assert!(check_against_owned(&cases(10, 0xc0_0475), true) > 100);
 }
 
-/// A weighted operand, or one with a marginal level, is copied whole first:
-/// the conjunction is the owned one's, for the same work.
+/// A weighted operand, or one with a marginal level, is read in place: the
+/// conjunction is the owned one's, for the same work.
 #[test]
-fn a_weighted_or_marginal_borrowed_operand_is_copied_first() {
+fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));
     let f = compile_clauses_on(&eng, &vtree, &[vec![1, 2, -3], vec![3, 4], vec![-5, 6, 7], vec![8, -1]]);
@@ -290,4 +290,112 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
         }
     }
     assert_eq!(checked, 48);
+}
+
+/// What a weighted or summed-out diagram holds besides its stored levels:
+/// each level's marginal form and slot count, and its weight store's
+/// column, as text.
+fn values(t: &Tdd) -> Vec<(bool, usize, String)> {
+    (0..t.levels.len())
+        .map(|i| {
+            let level = &t.levels[i];
+            let column = t.weights.as_ref().and_then(|ws| ws.level(i)).map(|c| format!("{c:?}")).unwrap_or_default();
+            (level.is_marginal(), level.slot_count(), column)
+        })
+        .collect()
+}
+
+/// The internal vtree nodes not yet marginal in `acc` that no clause of
+/// `rest` reaches: what a walk that sums out each finished subtree asks of
+/// a join.
+fn finished(tree: &Vtree, acc: &Tdd, rest: &[Vec<i32>]) -> Vec<VtreeIdx> {
+    let live: std::collections::HashSet<u32> = rest.iter().flatten().map(|l| l.unsigned_abs()).collect();
+    tree.bottomup()
+        .filter(|&t| !tree.node(t).is_leaf() && !acc.level(t).is_marginal())
+        .filter(|&t| tree.subtree(t).all(|x| match *tree.node(x) {
+            crate::vtree::VtreeNode::Leaf { var, .. } => !live.contains(&var.0),
+            _ => true,
+        }))
+        .collect()
+}
+
+/// [`Engine::and_marginalizing`] with each operand borrowed in turn and
+/// both, against the same call with both owned, along walks that sum out
+/// each finished subtree, so that the operands are weighted and carry
+/// marginal levels: the same diagram, values and work, and the borrowed
+/// operands left as they were. Refused at each reserve in turn, a borrowed
+/// operand is left as it was and the call repeats to the same result.
+#[test]
+fn a_borrowed_operand_sums_out_as_an_owned_one() {
+    let mut rng = Lcg::new(0x5_0b0e);
+    let (mut checked, mut marginal, mut refusals) = (0, 0, 0);
+    for nvars in [6u32, 9] {
+        for (shape, tree) in vtree_shapes(nvars) {
+            // Clauses over a window of three variables sliding left to
+            // right, so that subtrees finish early in the walk and its
+            // diagram carries marginal levels.
+            let clauses: Vec<Vec<i32>> = (1..=nvars as i32 - 2)
+                .flat_map(|v| [0, 1].map(|_| (v..v + 3).map(|x| if rng.below(2) == 0 { x } else { -x }).collect()))
+                .collect();
+            let literals: Vec<LiteralWeights<_>> =
+                (0..nvars as i64).map(|i| LiteralWeights { negative: rat(1 + i % 4, 3), positive: rat(2 + i % 3, 5) }).collect();
+            let stores = [
+                None,
+                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)),
+                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::SignedLog)),
+                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ScaledFloat)),
+            ];
+            for store in &stores {
+                let eng = Engine::new();
+                let weighted = |mut t: Tdd| {
+                    if let Some(store) = store {
+                        t.set_weights(store.empty_like()).unwrap();
+                    }
+                    t
+                };
+                // Each step joins the next two clauses into the walk's diagram.
+                let mut acc = weighted(eng.one(&tree));
+                for (k, pair) in clauses.chunks(2).enumerate() {
+                    let g = weighted(compile_clauses_on(&eng, &tree, pair));
+                    let rest = clauses.get(2 * (k + 1)..).unwrap_or_default();
+                    let targets = finished(&tree, &acc, rest);
+                    marginal += usize::from(acc.has_marginal_level());
+                    let at = |borrow: (bool, bool)| format!("{shape}, {:?}, step {k}, borrowing {borrow:?}", store.as_ref().map(WeightStore::arithmetic));
+                    let (owned, owned_work) = on_fresh(false, |eng| eng.and_marginalizing(acc.clone(), g.clone(), &targets).unwrap());
+                    let (acc_before, g_before) = (values(&acc), values(&g));
+                    for borrow in BORROWS {
+                        let (out, work) = on_fresh(false, |eng| eng.and_marginalizing(given(&acc, borrow.0), given(&g, borrow.1), &targets).unwrap());
+                        assert!(same_storage(&out, &owned) && values(&out) == values(&owned), "{}: a different diagram", at(borrow));
+                        assert_eq!(work, owned_work, "{}: other work", at(borrow));
+                        assert!(values(&acc) == acc_before && values(&g) == g_before, "{}: a borrowed operand changed", at(borrow));
+                        checked += 1;
+                    }
+                    if k % 2 == 0 {
+                        let borrow = (true, true);
+                        for n in 0u32.. {
+                            let eng = Engine::new();
+                            eng.limits().refuse_nth_reserve(n);
+                            let refused = eng.and_marginalizing(&acc, &g, &targets).is_err();
+                            let fired = !eng.limits().refusal_pending();
+                            eng.limits().grant_every_reserve();
+                            assert!(values(&acc) == acc_before && values(&g) == g_before, "{}: refused at reserve {n}, an operand changed", at(borrow));
+                            if refused {
+                                refusals += 1;
+                                let again = eng.and_marginalizing(&acc, &g, &targets).unwrap();
+                                assert!(same_storage(&again, &owned) && values(&again) == values(&owned), "{}: repeated after reserve {n}", at(borrow));
+                            }
+                            if !fired {
+                                break;
+                            }
+                        }
+                    }
+                    acc = owned;
+                    if acc.is_zero() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 800 && marginal > 60 && refusals > 1000, "{checked} joins, {marginal} with a marginal level, {refusals} refusals");
 }

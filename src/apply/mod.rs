@@ -66,23 +66,32 @@ pub(crate) fn check_same_vtree(operands: &[crate::Tdd]) -> Result<(), crate::Ope
 
 /// Validate one weight interpretation for all operands, then install it where absent.
 pub(crate) fn prepare_weights<T: std::borrow::BorrowMut<crate::Tdd>>(operands: &mut [T]) -> Result<(), crate::OperationError> {
-    let Some(source) = operands.iter().position(|f| f.borrow().weights.is_some()) else { return Ok(()) };
-    let (before, rest) = operands.split_at_mut(source);
-    let (source, after) = rest.split_first_mut().unwrap();
-    let weights = source.borrow().weights.as_ref().unwrap();
-    for operand in before.iter().chain(after.iter()) {
-        let f = operand.borrow();
+    let Some(empty) = shared_weights(operands.iter().map(|f| f.borrow()))? else { return Ok(()) };
+    for operand in operands.iter_mut() {
+        let f = operand.borrow_mut();
+        if f.weights.is_none() { f.weights = Some(empty.empty_like()); }
+    }
+    Ok(())
+}
+
+/// The weight interpretation `operands` share, as an empty store: `None`
+/// where none is weighted, and [`IncompatibleWeights`] where two stores
+/// differ or an unweighted operand has a marginal level beside a weighted
+/// one.
+///
+/// [`IncompatibleWeights`]: crate::OperationError::IncompatibleWeights
+pub(crate) fn shared_weights<'a>(
+    operands: impl Iterator<Item = &'a crate::Tdd> + Clone,
+) -> Result<Option<crate::diagram::WeightStore>, crate::OperationError> {
+    let Some(weights) = operands.clone().find_map(|f| f.weights.as_ref()) else { return Ok(None) };
+    for f in operands {
         match &f.weights {
             Some(other) if !weights.compatible(other) => return Err(crate::OperationError::IncompatibleWeights),
             None if f.has_marginal_level() => return Err(crate::OperationError::IncompatibleWeights),
             _ => {}
         }
     }
-    for operand in before.iter_mut().chain(after.iter_mut()) {
-        let f = operand.borrow_mut();
-        if f.weights.is_none() { f.weights = Some(weights.empty_like()); }
-    }
-    Ok(())
+    Ok(Some(weights.empty_like()))
 }
 
 /// The pair of a ⊤ node: the constant-true node sits at local index 0 of every

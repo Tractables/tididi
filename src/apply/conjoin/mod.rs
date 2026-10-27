@@ -201,54 +201,30 @@ fn recycle(eng: &Engine, tdd: Cow<'_, Tdd>) {
     }
 }
 
-/// Whether a conjunction reads its borrowed operands in place: where
-/// neither operand has a weight table or a marginal level. Otherwise it
-/// consumes copies of them.
-fn reads_in_place(f: &Tdd, g: &Tdd) -> bool {
-    f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level()
-}
-
-/// `tdd` to consume: itself where owned, a copy where borrowed
-/// ([`Engine::try_clone`](crate::Engine::try_clone)).
-fn into_owned(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    match tdd {
-        Cow::Owned(tdd) => Ok(tdd),
-        Cow::Borrowed(tdd) => tdd.try_clone_on(eng),
-    }
-}
-
-/// [`Engine::and`] after its entry, for operands each owned or borrowed.
-/// Two owned operands take [`conjoin_on`]; a borrowed one is read in place
-/// where [`reads_in_place`] holds and copied first where it does not.
-fn conjoin_either(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    let (f, g) = match (f, g) {
-        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_on(eng, f, g, VtreeMask::default()).map(|(out, _)| out),
-        operands => operands,
-    };
+/// [`Engine::and`] after its entry, for operands each owned or borrowed
+/// ([`conjoin_cow_as`]).
+fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     crate::apply::check_vtree(&f, &g)?;
-    if !reads_in_place(&f, &g) {
-        let (f, g) = (into_owned(eng, f)?, into_owned(eng, g)?);
-        return conjoin_on(eng, f, g, VtreeMask::default()).map(|(out, _)| out);
+    prepare_owned_weights(&mut f, &mut g)?;
+    conjoin_cow_as(eng, f, g, VtreeMask::default(), VtreeMask::default(), ConjoinMode::Build).map(|(out, _)| out.diagram())
+}
+
+/// Check that the operands share one weight interpretation, and give an
+/// owned operand without weights beside a weighted one an empty store, as
+/// [`prepare_weights`](crate::apply::prepare_weights) does; a borrowed one
+/// is read as it is.
+fn prepare_owned_weights(f: &mut Cow<'_, Tdd>, g: &mut Cow<'_, Tdd>) -> Result<(), OperationError> {
+    let Some(empty) = crate::apply::shared_weights([&**f, &**g].into_iter())? else { return Ok(()) };
+    fn owned<'a>(op: &'a mut Cow<'_, Tdd>) -> Option<&'a mut Tdd> {
+        match op {
+            Cow::Owned(op) => Some(op),
+            Cow::Borrowed(_) => None,
+        }
     }
-    // The swap and the self-conjunction shortcut of `conjoin_checked_as`.
-    let (mut f, mut g) = (f, g);
-    let widths = Operands { f: f.max_width(), g: g.max_width() };
-    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
-    if is_self_conjunction(&f, &g) {
-        // f ∧ f = f, as two owned operands return it: f itself where owned,
-        // a copy of it where borrowed.
-        let _op = eng.limits().enter()?;
-        let out = match f {
-            Cow::Owned(out) => out,
-            Cow::Borrowed(f) => f.try_clone_on(eng)?,
-        };
-        recycle(eng, g);
-        return Ok(out);
+    for op in [owned(f), owned(g)].into_iter().flatten() {
+        op.weights.get_or_insert_with(|| empty.empty_like());
     }
-    let result = drive::apply_and_plain(eng, &mut Held::of(&mut f), &mut Held::of(&mut g));
-    recycle(eng, f);
-    recycle(eng, g);
-    result
+    Ok(())
 }
 
 /// Make `g` the narrower operand, and say whether the two were swapped; the
@@ -315,6 +291,41 @@ fn conjoin_checked_as(
     result.map(|out| (out, !zero))
 }
 
+/// [`conjoin_checked_as`] of operands each owned or borrowed: two owned ones
+/// take it; a borrowed one is read in place, weights and marginal levels
+/// included, and left as it was, for the result and work of the owned call.
+fn conjoin_cow_as<'a>(
+    eng: &Engine,
+    f: Cow<'a, Tdd>,
+    g: Cow<'a, Tdd>,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    mode: ConjoinMode,
+) -> Result<(Conjoined, bool), OperationError> {
+    let (mut f, mut g) = match (f, g) {
+        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_checked_as(eng, f, g, targets, quantified, mode),
+        operands => operands,
+    };
+    let widths = Operands { f: f.max_width(), g: g.max_width() };
+    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
+    if is_self_conjunction(&f, &g) {
+        // f ∧ f = f, as two owned operands return it: f itself where owned,
+        // a copy of it where borrowed.
+        let _op = eng.limits().enter()?;
+        let out = match f {
+            Cow::Owned(out) => out,
+            Cow::Borrowed(f) => f.try_clone_on(eng)?,
+        };
+        recycle(eng, g);
+        return Ok((Conjoined::Built(out), false));
+    }
+    let zero = f.is_zero() || g.is_zero();
+    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets, quantified, mode);
+    recycle(eng, f);
+    recycle(eng, g);
+    result.map(|out| (out, !zero))
+}
+
 /// Run the sweep over `f` and `g`, then hand both operands' level arrays back
 /// to the pool whatever the outcome.
 fn conjoin_recycling(
@@ -353,11 +364,10 @@ fn conjoin_recycling_as(
 /// `&Tdd`, read in place and left as it is. Where the result takes a level
 /// of an operand as it stands, such as one the other operand is constant
 /// true under, an owned operand's level is moved and a borrowed one's
-/// copied: borrowing costs those levels, where cloning first copies every
-/// level. Where either operand has a weight table or a marginal level, a
-/// borrowed operand is copied whole first. Owned or borrowed, the result is
-/// the same diagram for the same work. It is correct for counting but may
-/// retain unreachable nodes and twins; [`Tdd::minimize`] establishes
+/// copied: borrowing costs those levels and a borrowed operand's weight
+/// store, where cloning first copies every level. Owned or borrowed, the
+/// result is the same diagram for the same work. It is correct for counting
+/// but may retain unreachable nodes and twins; [`Tdd::minimize`] establishes
 /// canonical form when required.
 ///
 /// ```
@@ -617,8 +627,8 @@ impl crate::Engine {
     /// operand owned or borrowed, as [`and`] says.
     ///
     /// A copy that a borrowed operand costs (a level the result takes from
-    /// it, or the whole operand where weights or a marginal level require
-    /// it) is charged to the memory budget, not to the work clock.
+    /// it, and its weight store) is charged to the memory budget, not to the
+    /// work clock.
     ///
     /// # Errors
     ///
@@ -780,6 +790,10 @@ impl crate::Engine {
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.
     ///
+    /// Each operand is owned or borrowed, as [`and`] says: a borrowed one is
+    /// read in place, weights and summed-out levels included, and costs the
+    /// levels the result takes from it and a copy of its weight store.
+    ///
     /// `targets` names vtree nodes; order and duplicates do not matter. Internal
     /// targets can be summed out during product construction; leaf targets are
     /// handled afterward. The result preserves the conjunction's count, or its
@@ -816,9 +830,10 @@ impl crate::Engine {
     /// let (left, _) = vtree.children(vtree.root());
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
-    /// let counted = engine.and_marginalizing(f, g, &[left])?;
+    /// let counted = engine.and_marginalizing(&f, g, &[left])?;
     /// assert!(counted.level(left).is_marginal());
     /// assert_eq!(engine.model_count(&counted)?, 9u32.into());
+    /// assert_eq!(engine.model_count(&f)?, 12u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     ///
@@ -826,17 +841,19 @@ impl crate::Engine {
     ///
     /// The operand and resource errors of [`Engine::and`], plus
     /// [`OperationError::LevelNotInVtree`] for an invalid target, checked before
-    /// product construction. Both operands are consumed on every outcome.
-    pub fn and_marginalizing(
+    /// product construction. An owned operand is consumed on every outcome,
+    /// and a borrowed one is left as it was.
+    pub fn and_marginalizing<'f, 'g>(
         &self,
-        mut f: Tdd,
-        mut g: Tdd,
+        f: impl Into<Cow<'f, Tdd>>,
+        g: impl Into<Cow<'g, Tdd>>,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
+        let (mut f, mut g) = (f.into(), g.into());
         let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
-        crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
+        prepare_owned_weights(&mut f, &mut g)?;
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.
@@ -863,7 +880,7 @@ impl crate::Engine {
             Some(c) => ConjoinMode::Sum(c),
             None => ConjoinMode::Build,
         };
-        let (out, _) = conjoin_checked_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
+        let (out, _) = conjoin_cow_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
         let mut out = match out {
             // The root summed the target out as it found its pairs, leaving
             // what the pass below and its pair fusion leave but for the

@@ -153,6 +153,22 @@ impl WeightStore {
         Self { per_level: FxHashMap::default(), config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
     }
 
+    /// A copy whose columns are reserved through `lim`, so a copy the host
+    /// cannot serve comes back as
+    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget). The
+    /// weight table is shared, not copied.
+    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<Self, crate::limits::OperationError> {
+        let mut per_level = FxHashMap::default();
+        lim.reserve_map(&mut per_level, self.per_level.len())?;
+        for (&level, values) in &self.per_level {
+            let mut column = Vec::new();
+            lim.reserve_exact(&mut column, values.len())?;
+            column.extend(values.iter().cloned());
+            per_level.insert(level, column);
+        }
+        Ok(Self { per_level, config: self.config.clone() })
+    }
+
     /// A second empty store over the same weight table, for another diagram of
     /// the same weighted build. The table is shared, not copied.
     pub fn empty_like(&self) -> Self {

@@ -63,7 +63,8 @@ Follow one conjunction, [`and(f, g)`]:
    their weights and returns the arenas to the pool if the operation fails.
 4. **Recycle.** The level arenas of owned operands, which the conjunction
    consumed, return to the engine's pools for the next operation. A borrowed
-   operand is read in place; a level the result would take from it is copied.
+   operand is read in place; a level the result would take from it, and its
+   weight store, are copied.
 5. **Reduce.** The result already has the right function and count, but it
    may hold nodes the output no longer reaches and *twins*: nodes that every
    parent uses with exactly the same siblings. A full reduction prunes the
