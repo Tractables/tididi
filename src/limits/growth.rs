@@ -110,6 +110,19 @@ impl Limits {
         crate::diagram::NodeIdx::MAX_LIVE
     }
 
+    /// The slot a value column of `len` values gives its next value, which a
+    /// parent's pair names in a bare marginal reference. Past the slots a
+    /// reference can name, [`OperationError::IndexOverflow`], which no
+    /// budget makes succeed.
+    #[inline(always)]
+    pub(crate) fn next_slot(&self, len: usize) -> Result<u32, OperationError> {
+        #[cfg(test)]
+        if self.slot_cap_pin.get().is_some_and(|cap| len >= cap) {
+            return Err(OperationError::IndexOverflow);
+        }
+        crate::value::slots::next_slot_index(len)
+    }
+
     /// Refuse an emitted-node total above the installed cap.
     #[inline]
     pub(crate) fn check_output_cap(&self, out_nodes: u64) -> Result<(), OperationError> {

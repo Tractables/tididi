@@ -21,6 +21,7 @@ mod restoring;
 mod self_conjunction;
 mod single_rows;
 mod stops;
+mod stream_slots;
 mod word_cells;
 
 mod target_completion;

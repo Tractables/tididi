@@ -376,6 +376,8 @@ pub struct Limits {
     refuse_after: Cell<Option<u32>>,
     #[cfg(test)]
     width_cap_pin: Cell<Option<usize>>,
+    #[cfg(test)]
+    slot_cap_pin: Cell<Option<usize>>,
     /// Bytes asked for by the most recent reserve the allocator turned down.
     /// An allocator refusal and a soft-budget refusal both arrive as
     /// [`OperationError::OverBudget`]; the size tells a caller which it was.
@@ -426,6 +428,8 @@ impl Limits {
             refuse_after: Cell::new(None),
             #[cfg(test)]
             width_cap_pin: Cell::new(None),
+            #[cfg(test)]
+            slot_cap_pin: Cell::new(None),
             refused_bytes: Cell::new(None),
             refused_level: Cell::new(None),
         }

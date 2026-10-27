@@ -6,7 +6,9 @@ use super::word_cells::WordScratch;
 use super::*;
 
 impl<F: ValueDomain> StreamState<'_, F> {
-    /// Fold one cell into the output column and record its slot in the grid.
+    /// Fold one cell into the output column and record its slot in the grid,
+    /// where the parent's pairs take it as a bare slot reference: a column
+    /// past the slots a reference can name is refused.
     #[inline(always)]
     fn fold_cell(
         &mut self,
@@ -15,10 +17,10 @@ impl<F: ValueDomain> StreamState<'_, F> {
         node_idx: &mut [u32],
         grid_pos: usize,
     ) -> Result<(), OperationError> {
+        let slot = eng.limits().next_slot(F::col_len(self.counts))?;
         let v = F::fold_cell(pairs, &self.left, &self.right, self.store);
-        let cell_idx = F::col_len(self.counts);
         F::push_col(eng, self.counts, v)?;
-        node_idx[grid_pos] = cell_idx as u32;
+        node_idx[grid_pos] = slot;
         Ok(())
     }
 }

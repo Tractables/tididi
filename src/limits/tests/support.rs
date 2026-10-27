@@ -32,6 +32,13 @@ impl Limits {
     pub(crate) fn pin_level_width_cap(&self, cap: Option<usize>) {
         self.width_cap_pin.set(cap);
     }
+
+    /// Pin a slot cap standing in for the one the marginal reference
+    /// encoding imposes, so a test reaches the refusal without a column of
+    /// 2^30 values.
+    pub(crate) fn pin_slot_cap(&self, cap: Option<usize>) {
+        self.slot_cap_pin.set(cap);
+    }
 }
 
 impl Limits {
