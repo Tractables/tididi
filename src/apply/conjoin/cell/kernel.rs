@@ -391,6 +391,14 @@ pub(crate) trait PairSink {
     fn open_row(&mut self, _pairs: usize, _nodes: usize) -> Option<ArenaRow<'_>> {
         None
     }
+
+    /// Row `i` of a row loop, entered through the sink where the arenas a
+    /// row opens ([`open_row`](Self::open_row)) have no room for it, before
+    /// its cells: a sink that sizes the arenas it builds sizes them here.
+    #[inline(always)]
+    fn enter_row(&mut self, _eng: &Engine, _i: usize) -> Result<(), OperationError> {
+        Ok(())
+    }
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
@@ -543,6 +551,265 @@ impl PairSink for ReservedEmitSink<'_> {
         let room = self.room();
         ArenaRow::open(self.level, room, pairs, nodes)
     }
+}
+
+/// The share of a row loop's rows a [`ProjectedEmitSink`] writes before it
+/// may reserve its level's arenas, as one in this many.
+const AHEAD_AFTER: usize = 64;
+
+/// The most a [`ProjectedEmitSink`] reserves its pair arena for, as a
+/// multiple of the larger operand level's pairs, and its node arena for,
+/// of the larger operand level's nodes.
+const AHEAD_OPERAND_FACTOR: usize = 8;
+
+/// A [`ReservedEmitSink`] that sizes its level's arenas by projection: at
+/// the first row past one in [`AHEAD_AFTER`] of the row loop's rows that
+/// they have no room for, it moves them to fresh ones of what the rows
+/// before it project the loop writes, an eighth more, copying only what
+/// they hold, and a pair arena that fills after that grows to the
+/// projection of the rows written by then. Grown
+/// by doubling from their seeds instead, the arenas of a large level are
+/// copied whole at each growth, and those copies and the page faults that
+/// follow them took a twentieth of the cycles of a program whose levels
+/// are wide.
+///
+/// The output-pair meter stays on the doubling schedule an
+/// [`EmitSink`]'s arena grows on, so no stop rule reading it moves; the
+/// arenas are charged to the budget as they grow. A projection is bounded
+/// by what the level can write, by [`AHEAD_OPERAND_FACTOR`] times the
+/// larger operand level, and by half the memory left; an arena it leaves
+/// short doubles. Under bounded growth the sink is an [`EmitSink`].
+pub(crate) struct ProjectedEmitSink<'a> {
+    sink: ReservedEmitSink<'a>,
+    /// The most pairs and nodes a projection sizes the arenas for, past
+    /// the lengths `start` they had when the row loop began.
+    most: (usize, usize),
+    start: (usize, usize),
+    /// The node arena's capacity when the row loop began.
+    node_seed: usize,
+    /// Where the pair arena's room ends: its capacity, or the capacity the
+    /// output-pair meter is charged for where that is less. At most the
+    /// capacity; set again wherever either moves.
+    limit: usize,
+    /// The row loop's rows, and the first row that sizes the arenas
+    /// where it goes through the sink, `usize::MAX` for none or once one
+    /// has.
+    total: usize,
+    at: usize,
+    /// The row loop's rows once a row has sized the arenas, and 0 before;
+    /// the row the cells that follow are of.
+    rows: usize,
+    row: usize,
+}
+
+impl<'a> ProjectedEmitSink<'a> {
+    /// The sink of `level` for a row loop of `total` rows, whose
+    /// projections reach at most `most` pairs and nodes past the arenas'
+    /// lengths now ([`ahead_most`]).
+    #[inline]
+    pub(crate) fn new(lim: &crate::limits::Limits, most: (usize, usize), total: usize, level: &'a mut TddLevel) -> Self {
+        let bounded = lim.bounded_growth();
+        let start = (level.pairs.len(), level.nodes.stored().len());
+        let node_seed = level.nodes.stored_mut().capacity();
+        let limit = level.pairs.capacity();
+        let charged = if bounded { usize::MAX } else { limit };
+        let after = super::super::ahead_after_forced().unwrap_or(AHEAD_AFTER);
+        let at = if bounded || total < after || super::super::ahead_forced_off() { usize::MAX } else { total / after };
+        ProjectedEmitSink { sink: ReservedEmitSink { level, charged }, most, start, node_seed, limit, total, at, rows: 0, row: 0 }
+    }
+
+    /// The arenas sized for the row loop from the `done` rows written: to
+    /// what those rows project it writes, where that fits half the memory
+    /// left.
+    #[inline(never)]
+    pub(crate) fn reserve_ahead(&mut self, eng: &Engine, done: usize) -> Result<(), OperationError> {
+        let rows = self.total;
+        let lim = eng.limits();
+        if done == 0 || self.sink.charged == usize::MAX || lim.bounded_growth() {
+            return Ok(());
+        }
+        self.rows = rows;
+        let level = &mut *self.sink.level;
+        let (pairs, nodes) = (level.pairs.len(), level.nodes.stored().len());
+        let pairs_to = projected_len(pairs, self.start.0, done, rows, self.most.0);
+        let nodes_to = projected_len(nodes, self.start.1, done, rows, self.most.1);
+        let more_pairs = pairs_to.saturating_sub(level.pairs.capacity());
+        let more_nodes = nodes_to.saturating_sub(level.nodes.stored_mut().capacity());
+        let bytes = (more_pairs * std::mem::size_of::<ChildPair>() + more_nodes * std::mem::size_of::<EncodedNode>()) as u64;
+        if bytes == 0 || bytes > lim.headroom() / 2 {
+            return Ok(());
+        }
+        super::super::note_pairs_grown();
+        super::super::note_ahead(false);
+        lim.reserve_exact_moving(level.pairs.stored_mut(), pairs_to.saturating_sub(pairs))?;
+        lim.reserve_exact_moving(level.nodes.stored_mut(), nodes_to.saturating_sub(nodes))?;
+        self.set_limit();
+        Ok(())
+    }
+
+    /// The pair arena's limit set again from its capacity and the meter's.
+    #[inline(always)]
+    fn set_limit(&mut self) {
+        self.limit = self.sink.charged.min(self.sink.level.pairs.capacity());
+    }
+
+    /// A pair at the limit, pushed as [`ReservedEmitSink`] pushes it, a full
+    /// arena grown first ([`grow_projected`]).
+    #[cold]
+    #[inline(never)]
+    fn pair_past_limit(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        let v = self.sink.level.pairs.stored_mut();
+        if v.len() == v.capacity() && self.sink.charged != usize::MAX {
+            grow_projected(eng, v, self.start.0, self.most.0, self.row, self.rows)?;
+        }
+        self.sink.pair(eng, lc, rc)?;
+        self.set_limit();
+        Ok(())
+    }
+
+    /// The arenas, once the row loop is done, given back the room a
+    /// projection left past what doubling would have grown them to: the
+    /// pair arena past the capacity the output-pair meter is charged for,
+    /// the node arena past its doubling from its capacity as the loop
+    /// began. A projection the first rows overstate would otherwise stay
+    /// with the level for as long as it is held.
+    #[inline]
+    pub(crate) fn trim(&mut self) {
+        if self.rows == 0 {
+            return;
+        }
+        let level = &mut *self.sink.level;
+        super::super::budget::trim_to(level.pairs.stored_mut(), self.sink.charged);
+        let nodes = level.nodes.stored_mut();
+        super::super::budget::trim_to(nodes, super::super::budget::doubled_to(self.node_seed, nodes.len()));
+    }
+}
+
+/// The most pairs and nodes a [`ProjectedEmitSink`] sizes a level of
+/// `cells` cells of the levels `f` and `g` for: what it can write, within
+/// [`AHEAD_OPERAND_FACTOR`] times the larger operand level.
+#[inline]
+pub(crate) fn ahead_most(f: &TddLevel, g: &TddLevel, cells: usize) -> (usize, usize) {
+    let (af, nf, ag, ng) = (f.pairs.len() as u128, f.node_count(), g.pairs.len() as u128, g.node_count());
+    // As `open_level_arenas` bounds the level's arena.
+    let bound = af.saturating_mul(ag.saturating_add(ng as u128)).saturating_add((nf as u128).saturating_mul(ag));
+    let factor = (AHEAD_OPERAND_FACTOR as u128).saturating_mul(af.max(ag));
+    (bound.min(factor) as usize, cells.min(AHEAD_OPERAND_FACTOR.saturating_mul(nf.max(ng))))
+}
+
+/// The length an arena that holds `len`, `start` of it before a walk
+/// `done` of whose `total` units are walked, is projected to reach, an
+/// eighth more, within `most` past `start`.
+#[inline(always)]
+fn projected_len(len: usize, start: usize, done: usize, total: usize, most: usize) -> usize {
+    let projected = len.saturating_sub(start) as u128 * total as u128 / done as u128;
+    start + (projected + projected / 8).min(most as u128) as usize
+}
+
+/// A full pair arena of a [`ProjectedEmitSink`] grown, charged to the
+/// budget and not to the output-pair meter, which [`ReservedEmitSink`]
+/// charges on its own schedule: to the projection of the `row` rows of
+/// `rows` written, past the arena's start `start` and within `most` past
+/// it, where the row loop has passed the row it projects at and the
+/// projection fits half the memory left, and by doubling elsewhere.
+#[cold]
+#[inline(never)]
+fn grow_projected(eng: &Engine, v: &mut Vec<ChildPair>, start: usize, most: usize, row: usize, rows: usize) -> Result<(), OperationError> {
+    super::super::note_pairs_grown();
+    let lim = eng.limits();
+    let len = v.len();
+    if rows != 0 && row != 0 {
+        let to = projected_len(len, start, row, rows, most);
+        if to > len && ((to - len) * std::mem::size_of::<ChildPair>()) as u64 <= lim.headroom() / 2 {
+            return lim.reserve_exact(v, to - len);
+        }
+    }
+    lim.reserve(v, 1)
+}
+
+impl PairSink for ProjectedEmitSink<'_> {
+    #[inline(always)]
+    fn single(
+        &mut self, eng: &Engine, node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
+        self.sink.single(eng, node_idx, grid_pos, lc, rc)
+    }
+
+    #[inline(always)]
+    fn begin(&mut self) -> usize {
+        self.sink.begin()
+    }
+
+    /// A pair stored below the limit with one test, as an [`EmitSink`]
+    /// stores it below the capacity; at the limit, pushed as
+    /// [`ReservedEmitSink`] pushes it ([`pair_past_limit`](Self::pair_past_limit)).
+    #[inline(always)]
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        let limit = self.limit;
+        let v = self.sink.level.pairs.stored_mut();
+        let len = v.len();
+        if len < limit {
+            // Safety: the limit is within the capacity.
+            unsafe {
+                v.as_mut_ptr().add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)));
+                v.set_len(len + 1);
+            }
+            return Ok(());
+        }
+        self.pair_past_limit(eng, lc, rc)
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        self.sink.buf()
+    }
+
+    #[inline(always)]
+    fn room(&mut self) -> usize {
+        self.limit - self.sink.level.pairs.stored_mut().len()
+    }
+
+    #[inline(always)]
+    fn end(
+        &mut self, eng: &Engine, node_idx: &mut [u32],
+        grid_pos: usize,
+        start: usize,
+    ) -> Result<(), OperationError> {
+        self.sink.end(eng, node_idx, grid_pos, start)
+    }
+
+    #[inline(always)]
+    fn row(&mut self, i: usize) {
+        self.row = i;
+    }
+
+    /// The row recorded; at the first row past [`AHEAD_AFTER`]'s share
+    /// of them, the arenas sized ([`reserve_ahead`](Self::reserve_ahead)).
+    #[inline(always)]
+    fn enter_row(&mut self, eng: &Engine, i: usize) -> Result<(), OperationError> {
+        self.row = i;
+        if i < self.at {
+            return Ok(());
+        }
+        self.at = usize::MAX;
+        self.reserve_ahead(eng, i)
+    }
+
+    #[inline(always)]
+    fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
+        let room = self.room();
+        ArenaCell::open(self.sink.level, room, bound)
+    }
+
+    #[inline(always)]
+    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+        let room = self.room();
+        ArenaRow::open(self.sink.level, room, pairs, nodes)
+    }
+
 }
 
 /// Collect surviving `(lc, rc)` pairs into a caller-owned scratch Vec — the

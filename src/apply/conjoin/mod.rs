@@ -1133,6 +1133,36 @@ fn note_relayed() {}
 #[inline(always)]
 fn note_row_columns_row(_whole: bool) {}
 
+// A test builds levels with their arenas left to grow, as the oracle for
+// the levels sized ahead from the first share of their walk, sizes small
+// levels ahead from a larger share, and counts the levels sized ahead by
+// route; it seeds the dense route's pair arenas small, so that the levels
+// of small diagrams outgrow them.
+#[cfg(test)]
+use tests::{ahead_after_forced, ahead_forced_off, note_ahead, seed_pairs_forced};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn ahead_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn ahead_after_forced() -> Option<usize> {
+    None
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_ahead(_sparse: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn seed_pairs_forced() -> Option<usize> {
+    None
+}
+
 // A test runs every masked level on the row loop of any level, as the
 // oracle for the levels read by pairs, and counts those levels.
 #[cfg(test)]

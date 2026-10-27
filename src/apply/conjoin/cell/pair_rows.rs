@@ -54,7 +54,12 @@ pub(crate) fn run_level_rows_pairs(
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
     match lookups {
         PlainLookups::Grid => {
-            pair_rows(eng, rows, scratch, &grid(&sides.left), &grid(&sides.right), &mut EmitSink { level })
+            let cells = rows.f_width.saturating_mul(rows.ctx.right_width);
+            let most = ahead_most(rows.f_level, rows.g_level, cells);
+            let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level);
+            pair_rows(eng, rows, scratch, &grid(&sides.left), &grid(&sides.right), &mut sink)?;
+            sink.trim();
+            Ok(())
         }
         PlainLookups::CompleteLeft { charged } => {
             pair_rows(
@@ -475,6 +480,7 @@ where
                 continue;
             }
             drop(out);
+            sink.enter_row(eng, i)?;
             if W > 0 {
                 write_cells(slab, row_base, [NO_PRODUCT; W]);
             }

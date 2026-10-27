@@ -377,20 +377,30 @@ impl Projection {
 #[inline(never)]
 fn grow_to_projection(eng: &Engine, v: &mut Vec<ChildPair>, made: usize, done: usize, total: usize, least: usize) {
     let lim = eng.limits();
-    if done == 0 || done.saturating_mul(PROJECT_AFTER) < total || lim.bounded_growth() {
+    let Some(want) = projected_growth(lim, made, done, total, least, v.capacity() - v.len()) else {
         return;
-    }
-    let projected = (made as u128 * total as u128 / done as u128) as usize;
-    let want = projected.saturating_add(projected / 8).saturating_sub(made).max(least);
-    let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
-    if want <= v.capacity() - v.len() || bytes >= lim.headroom() {
-        return;
-    }
+    };
     let before = v.capacity();
     if lim.reserve_exact(v, want).is_ok() {
         crate::apply::conjoin::note_pairs_grown();
         lim.charge_output_pairs(v.capacity().saturating_sub(before));
     }
+}
+
+/// The pairs [`grow_to_projection`] grows an arena of `spare` room by, or
+/// `None` where it leaves it to grow by doubling.
+#[inline(always)]
+fn projected_growth(lim: &crate::limits::Limits, made: usize, done: usize, total: usize, least: usize, spare: usize) -> Option<usize> {
+    if done == 0 || done.saturating_mul(PROJECT_AFTER) < total || lim.bounded_growth() {
+        return None;
+    }
+    let projected = (made as u128 * total as u128 / done as u128) as usize;
+    let want = projected.saturating_add(projected / 8).saturating_sub(made).max(least);
+    let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
+    if want <= spare || bytes >= lim.headroom() {
+        return None;
+    }
+    Some(want)
 }
 
 /// [`grow_to_projection`] for a walk of a level's nodes whose arena held
@@ -636,15 +646,30 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
     } else {
         0
     };
+    // The node at which the walk sizes the level's arenas and products from
+    // the share of its nodes before it ([`reserve_walk_ahead`]), none
+    // under bounded growth; their lengths and capacities as it begins; and
+    // the pair capacity the output-pair meter is charged for where that
+    // moved the arena past it, `usize::MAX` elsewhere.
+    let walked = f_nodes - copied;
+    let after = crate::apply::conjoin::ahead_after_forced().unwrap_or(PROJECT_AFTER);
+    let ahead = if walked >= after && !lim.bounded_growth() && !crate::apply::conjoin::ahead_forced_off() {
+        copied + walked / after
+    } else {
+        usize::MAX
+    };
+    let from = [level.pairs.stored_len(), level.nodes.stored().len(), out.len()];
+    let seeds = [level.pairs.capacity(), level.nodes.stored_mut().capacity(), out.capacity()];
+    let mut charged = usize::MAX;
     // The level's pair arena, nodes and products, held here while the walk
     // writes past their lengths, and set back into them before a call that
     // takes them and where the walk ends or fails: a candidate, node or
     // product is a store and a step. The arena is held as its start `at`,
     // the next candidate's place `next` and the end of its room
-    // `room_end`; a candidate that finds no room is pushed as the arena's
-    // own push would push it, growth and charges included
-    // ([`push_past_room`]), and so is a node or product, by the calls the
-    // walk made before.
+    // `room_end`, within the capacity the meter is charged for; a candidate
+    // that finds no room is pushed as the arena's own push would push it,
+    // growth and charges included ([`push_past_room`]), and so is a node or
+    // product, by the calls the walk made before.
     let arena = level.pairs.stored_mut();
     let mut at = arena.as_mut_ptr();
     // Safety: the length and capacity are within the allocation.
@@ -667,7 +692,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
             let arena = level.pairs.stored_mut();
             at = arena.as_mut_ptr();
             // Safety: as at the start.
-            unsafe { (next, room_end) = (at.add(arena.len()), at.add(arena.capacity())) };
+            unsafe { (next, room_end) = (at.add(arena.len()), at.add(arena.capacity().min(charged))) };
             nodes = Tail::of(level.nodes.stored_mut());
             prods = Tail::of(out);
         };
@@ -684,6 +709,11 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
         };
     }
     for (p1, node) in (copied..f_nodes).zip(f_level.words(copied, f_nodes)) {
+        if p1 == ahead {
+            settle!();
+            charged = reserve_walk_ahead(eng, level, out, from, seeds, p1 - copied, walked)?;
+            retake!();
+        }
         // Where the node's candidates start.
         let mut first = next;
         // The g parent the node's next candidate has while its candidates
@@ -716,7 +746,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                     // pairs and the node's candidates so far, and it is
                     // the room's end.
                     (at, first, next, room_end) =
-                        tri!(unsafe { push_past_room(eng, level.pairs.stored_mut(), at, first, next, pair, start, p1, f_nodes) });
+                        tri!(unsafe { push_past_room(eng, level.pairs.stored_mut(), at, first, next, pair, start, p1, f_nodes, &mut charged) });
                 }
                 if g_parent == owner {
                     owner ^= turn;
@@ -952,6 +982,10 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
         }
     }
     settle!();
+    debug_assert!(charged == usize::MAX || level.pairs.stored_len() <= charged, "a walk's pairs stay within the capacity the meter is charged for");
+    if ahead != usize::MAX {
+        trim_walk(level, out, seeds, charged);
+    }
     Ok(Made::Written)
 }
 
@@ -1142,9 +1176,13 @@ fn owned_bucket(view: GroupedView<'_, OwnedProduct>, outer: u32) -> &[OwnedProdu
 /// `next`, the node's candidates starting at `first`: the length set to
 /// `next`'s index and the pair pushed as [`try_push_pair_growing`] pushes
 /// it, the arena grown first as [`grow_by_nodes`] projects at node `p1` of
-/// `nodes` from `start`. Returns the arena's start, the node's first
-/// candidate's place, the next one's and the room's end, for the writes
-/// that follow.
+/// `nodes` from `start`. Where a reservation ahead moved the arena past
+/// `charged`, the capacity the output-pair meter is charged for, the room
+/// ends there too, the meter is charged there as the arena would have
+/// grown ([`charge_walk_growth`]), and the arena doubles where it fills.
+/// Returns the arena's start, the node's
+/// first candidate's place, the next one's and the room's end, for the
+/// writes that follow.
 ///
 /// # Safety
 ///
@@ -1163,15 +1201,120 @@ unsafe fn push_past_room(
     start: usize,
     p1: usize,
     nodes: usize,
+    charged: &mut usize,
 ) -> Result<PlacesPastRoom, OperationError> {
     // Safety: as the caller's.
     let (base, len) = unsafe { (first.offset_from_unsigned(at), next.offset_from_unsigned(at)) };
     // Safety: as the caller's.
     unsafe { arena.set_len(len) };
-    try_push_pair_growing(eng, arena, pair, |v| grow_by_nodes(eng, v, start, p1, nodes))?;
+    if *charged == usize::MAX {
+        try_push_pair_growing(eng, arena, pair, |v| grow_by_nodes(eng, v, start, p1, nodes))?;
+    } else {
+        // The arena was reserved ahead: the meter is charged where its
+        // room ends, and the arena doubles where it fills.
+        if len == *charged {
+            *charged = charge_walk_growth(eng.limits(), *charged, start, p1, nodes);
+        }
+        if len == arena.capacity() {
+            crate::apply::conjoin::note_pairs_grown();
+            eng.limits().try_push(arena, pair)?;
+        } else {
+            arena.push(pair);
+        }
+    }
     let at = arena.as_mut_ptr();
+    let end = arena.capacity().min(*charged);
     // Safety: `base` and the length are within the capacity.
-    unsafe { Ok((at, at.add(base), at.add(arena.len()), at.add(arena.capacity()))) }
+    unsafe { Ok((at, at.add(base), at.add(arena.len()), at.add(end))) }
+}
+
+/// The capacity a walk's pair arena full at `charged` pairs, the
+/// capacity the output-pair meter is charged for, would grow to as
+/// [`push_past_room`] grows it at a candidate of node `p1` of the walk's
+/// `nodes`, which began at `start` pairs ([`grow_by_nodes`], or doubling),
+/// the meter charged for it: an arena reserved ahead
+/// ([`reserve_walk_ahead`]) grows on its own.
+#[cold]
+#[inline(never)]
+fn charge_walk_growth(lim: &crate::limits::Limits, charged: usize, start: usize, p1: usize, nodes: usize) -> usize {
+    let grown = match projected_growth(lim, charged.saturating_sub(start), p1, nodes, 1, 0) {
+        Some(want) => charged + want,
+        None => crate::apply::conjoin::budget::doubled_pairs_capacity(charged),
+    };
+    lim.charge_output_pairs(grown - charged);
+    grown
+}
+
+/// Move a level's pair and node arenas and its products, at lengths
+/// `from` where an owner walk of `walked` f nodes began and `done` of them
+/// walked, to fresh ones of the lengths those nodes project, an eighth
+/// more, copying only what they hold. Grown by doubling or projection from
+/// their operand-sized seeds where they fill instead, each was copied
+/// whole at its growth, and those copies took a twentieth of the cycles of
+/// the programs whose sparse levels are large. Each is at most
+/// [`WALK_AHEAD_FACTOR`] times its capacity `seeds` as the walk began, and
+/// the three together at most half the memory left; one that fills after
+/// doubles. Returns the capacity the output-pair meter is charged for
+/// where the pair arena moved past it, which the walk then charges as the
+/// arena would have grown ([`charge_walk_growth`]), and `usize::MAX` where
+/// it did not.
+#[cold]
+#[inline(never)]
+fn reserve_walk_ahead(
+    eng: &Engine,
+    level: &mut TddLevel,
+    out: &mut Vec<ProductEntry>,
+    from: [usize; 3],
+    seeds: [usize; 3],
+    done: usize,
+    walked: usize,
+) -> Result<usize, OperationError> {
+    const SIZES: [usize; 3] = [size_of::<ChildPair>(), size_of::<EncodedNode>(), size_of::<ProductEntry>()];
+    let lim = eng.limits();
+    let lens = [level.pairs.stored_len(), level.nodes.stored().len(), out.len()];
+    let caps = [level.pairs.capacity(), level.nodes.stored_mut().capacity(), out.capacity()];
+    let mut to = [0; 3];
+    let mut bytes = 0u64;
+    for i in 0..3 {
+        let projected = lens[i].saturating_sub(from[i]) as u128 * walked as u128 / done as u128;
+        let most = WALK_AHEAD_FACTOR.saturating_mul(seeds[i]) as u128;
+        to[i] = from[i] + (projected + projected / 8).min(most) as usize;
+        bytes += (to[i].saturating_sub(caps[i]) * SIZES[i]) as u64;
+    }
+    if bytes == 0 || bytes > lim.headroom() / 2 {
+        return Ok(usize::MAX);
+    }
+    if to[0] > caps[0] {
+        crate::apply::conjoin::note_pairs_grown();
+    }
+    crate::apply::conjoin::note_ahead(true);
+    lim.reserve_exact_moving(level.pairs.stored_mut(), to[0].saturating_sub(lens[0]))?;
+    lim.reserve_exact_moving(level.nodes.stored_mut(), to[1].saturating_sub(lens[1]))?;
+    lim.reserve_exact_moving(out, to[2].saturating_sub(lens[2]))?;
+    Ok(if to[0] > caps[0] { caps[0] } else { usize::MAX })
+}
+
+/// The most [`reserve_walk_ahead`] reserves a vector for, as a multiple of
+/// its capacity as the walk began.
+const WALK_AHEAD_FACTOR: usize = 8;
+
+/// A level's pair and node arenas and its products, once an owner walk
+/// that reserved them ahead ([`reserve_walk_ahead`]) is done, given back
+/// the room the reservation left past what growth would have given them:
+/// the pair arena past `charged`, the capacity the output-pair meter is
+/// charged for, where the reservation moved it, and the nodes and products
+/// past their doubling from their capacities `seeds` as the walk began. A
+/// projection the walk's first nodes overstate would otherwise stay with
+/// the level for as long as it is held.
+#[inline]
+fn trim_walk(level: &mut TddLevel, out: &mut Vec<ProductEntry>, seeds: [usize; 3], charged: usize) {
+    use crate::apply::conjoin::budget::{doubled_to, trim_to};
+    if charged != usize::MAX {
+        trim_to(level.pairs.stored_mut(), charged);
+    }
+    let nodes = level.nodes.stored_mut();
+    trim_to(nodes, doubled_to(seeds[1], nodes.len()));
+    trim_to(out, doubled_to(seeds[2], out.len()));
 }
 
 /// What [`push_past_room`] returns: the arena's start, the node's first

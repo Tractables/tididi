@@ -223,6 +223,25 @@ impl Limits {
         self.reserve_impl::<T, true, true>(v, additional)
     }
 
+    /// [`reserve_exact`](Self::reserve_exact) of a buffer whose length is a
+    /// small share of its capacity: its elements are copied to a fresh
+    /// buffer and the old one freed, where a reallocation that cannot grow
+    /// in place copies the whole old buffer. Charged, and refused, as
+    /// `reserve_exact` charges and refuses the growth.
+    #[inline(never)]
+    pub(crate) fn reserve_exact_moving<T: Copy>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        if additional <= v.capacity() - v.len() {
+            return Ok(());
+        }
+        let pre_cap = v.capacity();
+        let mut fresh = Vec::new();
+        self.reserve_impl::<T, true, false>(&mut fresh, v.len() + additional)?;
+        fresh.extend_from_slice(v);
+        *v = fresh;
+        let elem = std::mem::size_of::<T>() as u64;
+        self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
+    }
+
     /// [`reserve_exact`](Self::reserve_exact) of room the meters already
     /// count, and so not charged again: the arenas a level held as the
     /// description of its pairs is stored in, whose capacities the meters

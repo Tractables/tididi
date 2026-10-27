@@ -763,8 +763,8 @@ pub(super) fn open_level_arenas(
     // empty on every level; the emit's own `try_push_pair_into` choke
     // point, under the growth mode just armed, carries a level that
     // outgrows the cap.
-    let pairs_reserve =
-        emit_pair_bound.min(LEVEL_RESERVE_PAIRS_CAP as u128) as usize;
+    let cap = super::super::seed_pairs_forced().unwrap_or(LEVEL_RESERVE_PAIRS_CAP);
+    let pairs_reserve = emit_pair_bound.min(cap as u128) as usize;
     let pre_pairs_cap = level.pairs.capacity();
     lim.reserve(level.pairs.stored_mut(), pairs_reserve)?;
     // Output-pair meter: this bulk seed is real arena capacity the

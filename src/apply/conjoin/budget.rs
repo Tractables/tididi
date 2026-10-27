@@ -131,6 +131,26 @@ pub(super) fn doubled_pairs_capacity(cap: usize) -> usize {
     cap.saturating_mul(2).max(cap.saturating_add(1)).max(4)
 }
 
+/// The capacity a vector of capacity `seed` grows to as pushes double it
+/// ([`doubled_pairs_capacity`]) until it holds `len`.
+pub(super) fn doubled_to(seed: usize, len: usize) -> usize {
+    let mut cap = seed;
+    while cap < len {
+        cap = doubled_pairs_capacity(cap);
+    }
+    cap
+}
+
+/// `v` shrunk to `cap`, or to its length, where its capacity is past both:
+/// room a projection reserved past what growth would have given it.
+#[cold]
+#[inline(never)]
+pub(super) fn trim_to<T>(v: &mut Vec<T>, cap: usize) {
+    if v.capacity() > cap.max(v.len()) {
+        v.shrink_to(cap);
+    }
+}
+
 /// Turn the pairs pushed since `pair_start` into the level's next node and
 /// say which node it is; `None` when nothing was pushed, so the product is
 /// `⊥`. A single pair is popped back off the arena and stored inline

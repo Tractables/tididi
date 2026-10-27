@@ -232,6 +232,86 @@ thread_local! {
     static PAIR_ROWS_UNROLLED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// Whether every level on this thread leaves its arenas to grow
+    /// ([`without_ahead`]).
+    static AHEAD_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread whose arenas were sized ahead, on the
+    /// dense route and the sparse one ([`levels_ahead`]).
+    static AHEAD: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// The share of a walk on this thread after which its level's arenas
+    /// are sized ahead, as one in this many ([`ahead_after`]).
+    static AHEAD_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// The most pairs a level's arena is seeded with on this thread
+    /// ([`seeded_with`]).
+    static SEED_PAIRS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn seed_pairs_forced() -> Option<usize> {
+    SEED_PAIRS.with(std::cell::Cell::get)
+}
+
+/// Run `f` with each level's pair arena seeded with at most `pairs`
+/// pairs, so that the levels of small diagrams outgrow their seeds.
+pub(super) fn seeded_with<R>(pairs: usize, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<usize>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SEED_PAIRS.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(SEED_PAIRS.with(|c| c.replace(Some(pairs))));
+    f()
+}
+
+pub(super) fn ahead_after_forced() -> Option<usize> {
+    AHEAD_AFTER.with(std::cell::Cell::get)
+}
+
+/// Run `f` with each level's arenas sized ahead once one in `share` of
+/// its walk is done, so that the levels of small diagrams are.
+pub(super) fn ahead_after<R>(share: usize, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<usize>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            AHEAD_AFTER.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(AHEAD_AFTER.with(|c| c.replace(Some(share))));
+    f()
+}
+
+pub(super) fn ahead_forced_off() -> bool {
+    AHEAD_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_ahead(sparse: bool) {
+    AHEAD.with(|n| {
+        let mut seen = n.get();
+        seen[usize::from(sparse)] += 1;
+        n.set(seen);
+    });
+}
+
+/// Run `f` with every level's arenas left to grow from their seeds: the
+/// oracle the levels sized ahead are checked against.
+pub(super) fn without_ahead<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            AHEAD_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(AHEAD_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far whose arenas were sized ahead, on the
+/// dense route and the sparse one.
+pub(super) fn levels_ahead() -> [u64; 2] {
+    AHEAD.with(std::cell::Cell::get)
+}
+
 pub(super) fn pair_rows_forced_off() -> bool {
     PAIR_ROWS_OFF.with(std::cell::Cell::get)
 }

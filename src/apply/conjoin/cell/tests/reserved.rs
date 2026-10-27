@@ -64,3 +64,57 @@ fn a_reserved_sink_charges_where_an_emit_sink_grows() {
         }
     }
 }
+
+/// A projected sink charges the output-pair meter after every pair where an
+/// emit sink seeded at the same capacity does, and holds the same pairs,
+/// whether its reservation ahead covers the level, falls short of it, is cut
+/// by its bound or finds the room there already; a reservation that covers
+/// the level leaves the arena at its size.
+#[test]
+fn a_projected_sink_charges_where_an_emit_sink_grows() {
+    let eng_emit = Engine::new();
+    let eng_projected = Engine::new();
+    let _ops = (eng_emit.limits().begin_operation(), eng_projected.limits().begin_operation());
+    let cands: Vec<(u32, u32)> = (0..3000u32).map(|k| (k, k + 7)).collect();
+    let runs = [1usize, 3, 2, 7, 50, 1, 100, 136, 700, 2000];
+    // The rows done and in all when the reservation is made, after the
+    // first four runs (13 pairs), and the most it may reserve.
+    for seed in [0usize, 8, 64] {
+        for (done, rows, most) in [(1, 512, usize::MAX), (1, 64, usize::MAX), (1, 512, 100), (1, 2, usize::MAX)] {
+            let mut emit = TddLevel::new();
+            emit.pairs.stored_mut().reserve_exact(seed);
+            let mut projected = TddLevel::new();
+            projected.pairs.stored_mut().reserve_exact(seed);
+            let mut a = EmitSink { level: &mut emit };
+            let mut b = ProjectedEmitSink::new(eng_projected.limits(), (most, most), rows, &mut projected);
+            let mut at = 0;
+            let mut reserved = 0;
+            for (k, len) in runs.into_iter().enumerate() {
+                if k == 4 {
+                    b.reserve_ahead(&eng_projected, done).unwrap();
+                    reserved = b.buf().capacity();
+                }
+                let run = &cands[at..at + len];
+                at += len;
+                push_kept(&eng_emit, &mut a, run, false, |&(l, r)| (l, r)).unwrap();
+                push_kept(&eng_projected, &mut b, run, false, |&(l, r)| (l, r)).unwrap();
+                assert_eq!(
+                    eng_projected.limits().meters().pairs_in_flight,
+                    eng_emit.limits().meters().pairs_in_flight,
+                    "seed {seed}, {done} of {rows} rows, most {most}, after {at} pairs"
+                );
+            }
+            assert_eq!(b.buf()[..], a.buf()[..]);
+            // 13 pairs in one of 512 rows project 7488, an eighth over.
+            if rows == 512 && most == usize::MAX {
+                assert_eq!(reserved, 7488, "seed {seed}");
+                assert_eq!(b.buf().capacity(), 7488, "a level within its reservation does not grow");
+            }
+            if most == 100 {
+                assert_eq!(reserved, 100.max(seed), "a reservation within its bound");
+            }
+            eng_emit.limits().level_settled(0);
+            eng_projected.limits().level_settled(0);
+        }
+    }
+}
