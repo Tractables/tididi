@@ -104,9 +104,10 @@ jobs:
       # The last commit since the newest tag that broke the public API on
       # purpose, so the check keeps catching breaks after it; empty compares
       # with the tag. 1c554079 added fields to PoolSearchConfig and
-      # PoolSearchStats, so the next release is 0.2.0. The release commit
-      # empties it.
-      BREAKING_BASE: 1c55407966e3a2df40296b41b0a21c8d5899bd92
+      # PoolSearchStats, so the next release is 0.2.0, and f93ff926 gave
+      # AndRefused and AndOntoRefused a lifetime. The release commit empties
+      # it.
+      BREAKING_BASE: f93ff9269df20ec748426a135f3e2cf4000b3f63
     steps:
     - uses: actions/checkout@v4
       with:
