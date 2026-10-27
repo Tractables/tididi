@@ -807,6 +807,15 @@ impl TddLevel {
         }
     }
 
+    /// [`leave_live_pairs`](Self::leave_live_pairs) on a level just written
+    /// whole, whose arena holds the pairs of its nodes of two or more and
+    /// nothing else, and whose `inline` nodes of one pair hold it in their
+    /// words: its live pairs are the arena's and one a node of one.
+    #[inline]
+    pub(crate) fn leave_written_pairs(&mut self, inline: usize) {
+        self.leave_live_pairs(self.pairs.len() + inline);
+    }
+
     /// [`leave_live_pairs`](Self::leave_live_pairs) off a census of the
     /// level ([`live_pairs`](Self::live_pairs)), for an operation that has
     /// just written its nodes and knows no count.

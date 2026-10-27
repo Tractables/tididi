@@ -250,6 +250,10 @@ fn build_level(
     }
     if run.plain && !taken {
         note_operand_level(run, f, g, vtree, t);
+    } else if !taken {
+        // The live pairs the level's build left are kept by the seat of a
+        // plain conjunction only.
+        run.levels[t.idx()].forget_left_pairs();
     }
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.

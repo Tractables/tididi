@@ -337,11 +337,12 @@ pub(super) fn probe_level(
         // The emit looks each candidate's `g` parent up here; it leaves the
         // map as it found it, all `NO_PRODUCT`.
         eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
-        match probe {
+        let candidates = match probe {
             Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.right, duplicates_legal)?,
             Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.left, duplicates_legal)?,
             Probe::Pairs => walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, level_pairs, duplicates_legal)?,
-        }
+        };
+        level.leave_live_pairs(candidates);
         Ok(true)
     })();
     ws.probe = pb;
@@ -349,7 +350,8 @@ pub(super) fn probe_level(
 }
 
 /// The walk through one child: through the left child unswapped, the right
-/// one `SWAPPED`, the other child's product read by `other`.
+/// one `SWAPPED`, the other child's product read by `other`. Returns the
+/// candidates, each one pair of one of the level's nodes.
 #[expect(clippy::too_many_arguments)]
 fn walk_one_side<const SWAPPED: bool>(
     eng: &Engine,
@@ -363,7 +365,7 @@ fn walk_one_side<const SWAPPED: bool>(
     pl_output: &mut Vec<ProductEntry>,
     other: CellLookup<'_>,
     duplicates_legal: bool,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     let (list, offsets, counts, key_width) = if !SWAPPED {
         (pl.left, &pb.left_offsets, &pb.g_by_left, shape.g.left)
@@ -374,6 +376,7 @@ fn walk_one_side<const SWAPPED: bool>(
     let index = pb.index.view();
     let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    let mut found = 0;
     f_level.try_for_each_node::<OperationError>(0..shape.f.here, |i, pairs| {
         candidates.clear();
         let mut work = 0u64;
@@ -395,12 +398,13 @@ fn walk_one_side<const SWAPPED: bool>(
             }
         }
         gate.poll(work + 1)?;
+        found += candidates.len();
         if !candidates.is_empty() {
             emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
         }
         Ok(())
     })?;
-    gate.flush()
+    gate.flush().map(|()| found)
 }
 
 /// Cells of `g`'s pair map, left child by right child, up to which the
@@ -411,7 +415,8 @@ const DENSE_PAIR_CELLS: usize = 1 << 24;
 
 /// The walk through both children, each candidate's `g` pair found in a
 /// map of `g`'s pairs: a dense array over the two children's widths where
-/// it is small, else an open-addressing table.
+/// it is small, else an open-addressing table. Returns the candidates, as
+/// [`walk_one_side`] does.
 #[expect(clippy::too_many_arguments)]
 fn walk_pairs(
     eng: &Engine,
@@ -425,7 +430,7 @@ fn walk_pairs(
     pl_output: &mut Vec<ProductEntry>,
     level_pairs: u64,
     duplicates_legal: bool,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
@@ -443,7 +448,7 @@ fn walk_pairs(
             }
         }
         let dense = &pb.dense;
-        walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
+        let found = walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
             #[inline(always)]
             |c, d| dense[c as usize * width + d as usize])?;
         for (_, pairs) in g_level.internal_inputs_iter() {
@@ -452,7 +457,7 @@ fn walk_pairs(
             }
         }
         pb.dense_clean = true;
-        return Ok(());
+        return Ok(found);
     }
     let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
     let slots = (2 * g_pairs).next_power_of_two().max(16);
@@ -504,10 +509,11 @@ fn walk_both(
     (lo, ro): (&[u32], &[u32]),
     duplicates_legal: bool,
     find: impl Fn(u32, u32) -> u32,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     let lim = eng.limits();
     let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    let mut found = 0;
     f_level.try_for_each_node::<OperationError>(0..f_level.nodes().len(), |i, pairs| {
         candidates.clear();
         let mut work = 0u64;
@@ -526,12 +532,13 @@ fn walk_both(
             }
         }
         gate.poll(work)?;
+        found += candidates.len();
         if !candidates.is_empty() {
             emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
         }
         Ok(())
     })?;
-    gate.flush()
+    gate.flush().map(|()| found)
 }
 
 // A test sends every level past the probe, as the oracle it is checked

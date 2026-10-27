@@ -53,11 +53,12 @@ pub(crate) fn run_level_rows_pairs(
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {
             let cells = rows.f_width.saturating_mul(rows.ctx.right_width);
             let most = ahead_most(rows.f_level, rows.g_level, cells);
-            let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level);
+            let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
             pair_rows(eng, rows, scratch, &grid(&sides.left), &grid(&sides.right), &mut sink)?;
             sink.trim();
             Ok(())
@@ -66,18 +67,20 @@ pub(crate) fn run_level_rows_pairs(
             pair_rows(
                 eng, rows, scratch,
                 &complete(&sides.left), &grid(&sides.right),
-                &mut ReservedEmitSink { level, charged },
+                &mut ReservedEmitSink { level, charged, inline: &mut inline },
             )
         }
         PlainLookups::CompleteRight { charged } => {
             pair_rows(
                 eng, rows, scratch,
                 &grid(&sides.left), &complete(&sides.right),
-                &mut ReservedEmitSink { level, charged },
+                &mut ReservedEmitSink { level, charged, inline: &mut inline },
             )
         }
         PlainLookups::Complete { .. } => unreachable!("a level of two complete sides builds no masks"),
-    }
+    }?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// [`run_level_rows_pairs`] on its lookups and sink.

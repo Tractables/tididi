@@ -268,7 +268,10 @@ pub(crate) fn apply_sparse_level(
         let base = level.pairs.len();
         scatter_level(eng, ws, f, g, shape, pl, Collect::Direct(&mut *level), passthrough, complete)?;
         let held = ws.outer_held;
+        // The one product's node holds every candidate.
+        let candidates = level.pairs.len() - base;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
+        level.leave_live_pairs(candidates);
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
@@ -310,7 +313,8 @@ pub(crate) fn apply_sparse_level(
         }
     }
 
-    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds };
+    let mut live = None;
+    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
     let mut made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
     let held = ws.outer_held;
     if made == Made::F {
@@ -335,6 +339,9 @@ pub(crate) fn apply_sparse_level(
                 made = Made::CopiedF;
             }
         }
+    }
+    if let Some(n) = live {
+        levels[t_idx].leave_live_pairs(n);
     }
 
     #[cfg(debug_assertions)]

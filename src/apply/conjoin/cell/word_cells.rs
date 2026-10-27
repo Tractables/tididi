@@ -472,21 +472,24 @@ pub(crate) fn run_level_rows_words(
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {
             super::super::note_word_cells(super::super::WordNote::Grids);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level, inline: &mut inline })
         }
         PlainLookups::CompleteLeft { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged, inline: &mut inline })
         }
         PlainLookups::CompleteRight { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged, inline: &mut inline })
         }
         PlainLookups::Complete { .. } => unreachable!("a level of two complete sides kills no candidate"),
-    }
+    }?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// [`run_level_rows_marginal_sparse`] on a level whose cells are read by
@@ -503,8 +506,11 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
 ) -> Result<(), OperationError> {
     super::super::note_word_cells(super::super::WordNote::SparseMarginal);
     let (left, right) = (MarginalLookup::new(&rows.ctx.sides.left), MarginalLookup::new(&rows.ctx.sides.right));
-    let sink = ListSink { emit: EmitSink { level }, product_list, base: rows.ctx.output_grid_base, row: 0 };
-    rows_by_words::<false, _, _, _>(eng, rows, scratch, words, f_rows, &left, &right, sink)
+    let mut inline = 0;
+    let sink = ListSink { emit: EmitSink { level, inline: &mut inline }, product_list, base: rows.ctx.output_grid_base, row: 0 };
+    rows_by_words::<false, _, _, _>(eng, rows, scratch, words, f_rows, &left, &right, sink)?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// [`run_level_rows_words`] on one pair of lookups. A row of the row loop

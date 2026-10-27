@@ -609,14 +609,17 @@ pub(crate) fn run_level_rows_marginal(
 ) -> Result<(), OperationError> {
     let left = MarginalLookup::new(&rows.ctx.sides.left);
     let right = MarginalLookup::new(&rows.ctx.sides.right);
+    let mut inline = 0;
     run_level_rows::<false, _, _, _>(
         eng,
         rows,
         scratch,
         &left,
         &right,
-        &mut Emit { sink: EmitSink { level } },
-    )
+        &mut Emit { sink: EmitSink { level, inline: &mut inline } },
+    )?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// [`EmitSink`] on a level built a row at a time in one reused grid row
@@ -749,6 +752,7 @@ pub(crate) fn run_level_rows_marginal_sparse(
 ) -> Result<(), OperationError> {
     let left = MarginalLookup::new(&rows.ctx.sides.left);
     let right = MarginalLookup::new(&rows.ctx.sides.right);
+    let mut inline = 0;
     run_level_rows::<false, _, _, _>(
         eng,
         rows,
@@ -756,9 +760,11 @@ pub(crate) fn run_level_rows_marginal_sparse(
         &left,
         &right,
         &mut SparseMargEmit {
-            sink: ListSink { emit: EmitSink { level }, product_list, base: rows.ctx.output_grid_base, row: 0 },
+            sink: ListSink { emit: EmitSink { level, inline: &mut inline }, product_list, base: rows.ctx.output_grid_base, row: 0 },
         },
-    )
+    )?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// The row loop of `Route::PlainDense` and `Route::Dense`: a level with no
@@ -786,7 +792,8 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     //   left_alive_mask  = 0u128      (the !masked branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !masked` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
-    let mut action = Emit { sink: EmitSink { level } };
+    let mut inline = 0;
+    let mut action = Emit { sink: EmitSink { level, inline: &mut inline } };
     run_level_rows::<DENSE, _, _, _>(
         eng,
         rows,
@@ -794,7 +801,9 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
         &left,
         &right,
         &mut action,
-    )
+    )?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// The row loop of `Route::PlainDense` on a level where neither operand has
@@ -833,7 +842,8 @@ pub(crate) fn run_level_rows_single(
         super::super::note_relayed();
         return Ok(());
     }
-    let mut sink = EmitSink { level };
+    let mut inline = 0;
+    let mut sink = EmitSink { level: &mut *level, inline: &mut inline };
     // A level of a few columns keeps them in registers, and writes each
     // row's cells once.
     match right_width {
@@ -842,7 +852,9 @@ pub(crate) fn run_level_rows_single(
         3 => single_rows::<3>(eng, rows, f_scratch, slab, &mut sink),
         4 => single_rows::<4>(eng, rows, f_scratch, slab, &mut sink),
         _ => single_rows::<0>(eng, rows, f_scratch, slab, &mut sink),
-    }
+    }?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// What the row loop of [`run_level_rows_single`] reads.
@@ -1245,17 +1257,18 @@ pub(crate) fn run_level_rows_complete(
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let mut inline = 0;
     match lookups {
         PlainLookups::Complete { charged } => match lone_pair(rows, &mut *scratch.g_pairs) {
             Some(g) => run_level_rows::<true, _, _, _>(
                 eng, rows, scratch,
                 &complete(&sides.left), &complete(&sides.right),
-                &mut EmitBesideOne { sink: ReservedEmitSink { level, charged }, g: [g] },
+                &mut EmitBesideOne { sink: ReservedEmitSink { level, charged, inline: &mut inline }, g: [g] },
             ),
             None => run_level_rows::<true, _, _, _>(
                 eng, rows, scratch,
                 &complete(&sides.left), &complete(&sides.right),
-                &mut Emit { sink: ReservedEmitSink { level, charged } },
+                &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
             ),
         },
         PlainLookups::CompleteLeft { charged } => {
@@ -1264,11 +1277,11 @@ pub(crate) fn run_level_rows_complete(
             match &lone {
                 Some(lone) => run_level_rows::<false, _, _, _>(
                     eng, rows, scratch, &left, &right,
-                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged }, lone },
+                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
                 ),
                 None => run_level_rows::<false, _, _, _>(
                     eng, rows, scratch, &left, &right,
-                    &mut Emit { sink: ReservedEmitSink { level, charged } },
+                    &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
                 ),
             }
         }
@@ -1278,16 +1291,18 @@ pub(crate) fn run_level_rows_complete(
             match &lone {
                 Some(lone) => run_level_rows::<false, _, _, _>(
                     eng, rows, scratch, &left, &right,
-                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged }, lone },
+                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
                 ),
                 None => run_level_rows::<false, _, _, _>(
                     eng, rows, scratch, &left, &right,
-                    &mut Emit { sink: ReservedEmitSink { level, charged } },
+                    &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
                 ),
             }
         }
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
-    }
+    }?;
+    level.leave_written_pairs(inline);
+    Ok(())
 }
 
 /// Each column's g pair, where every column of the level holds one: the

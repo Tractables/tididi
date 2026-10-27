@@ -37,8 +37,9 @@ fn a_reserved_sink_charges_where_an_emit_sink_grows() {
             if !unscheduled {
                 reserved.pairs.stored_mut().reserve_exact(total);
             }
-            let mut a = EmitSink { level: &mut emit };
-            let mut b = ReservedEmitSink { level: &mut reserved, charged };
+            let (mut ones_a, mut ones_b) = (0, 0);
+            let mut a = EmitSink { level: &mut emit, inline: &mut ones_a };
+            let mut b = ReservedEmitSink { level: &mut reserved, charged, inline: &mut ones_b };
             // Runs of uneven length, so room runs out mid-run and between runs.
             let mut at = 0;
             for len in [1usize, 3, 2, 7, 50, 1, 100, 136] {
@@ -85,8 +86,9 @@ fn a_projected_sink_charges_where_an_emit_sink_grows() {
             emit.pairs.stored_mut().reserve_exact(seed);
             let mut projected = TddLevel::new();
             projected.pairs.stored_mut().reserve_exact(seed);
-            let mut a = EmitSink { level: &mut emit };
-            let mut b = ProjectedEmitSink::new(eng_projected.limits(), (most, most), rows, &mut projected);
+            let (mut ones_a, mut ones_b) = (0, 0);
+            let mut a = EmitSink { level: &mut emit, inline: &mut ones_a };
+            let mut b = ProjectedEmitSink::new(eng_projected.limits(), (most, most), rows, &mut projected, &mut ones_b);
             let mut at = 0;
             let mut reserved = 0;
             for (k, len) in runs.into_iter().enumerate() {
