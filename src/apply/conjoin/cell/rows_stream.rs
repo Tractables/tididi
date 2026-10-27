@@ -25,7 +25,8 @@ impl<F: ValueDomain> StreamState<'_, F> {
     }
 }
 
-/// Fold a streaming target's cells directly into an integer or weighted column.
+/// Fold a streaming target's cells directly into an integer, weighted or
+/// scaled-float column.
 /// The child lookups handle both structural and marginal children. Child views
 /// borrow their levels only during this call; `stream_state` owns the output
 /// column so the caller can borrow the levels mutably again to commit it.
@@ -41,6 +42,9 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             stream_level::<WeightFold, L, R>(eng, rows, scratch, left, right, counts, env)
+        }
+        StreamLevelState::Float(values) => {
+            stream_level::<FloatFold, L, R>(eng, rows, scratch, left, right, values, env)
         }
         StreamLevelState::Int(counts) => {
             stream_level::<IntFold, L, R>(eng, rows, scratch, left, right, counts, env)
@@ -109,6 +113,11 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(env, rows.children, counts);
+            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
+        }
+        StreamLevelState::Float(values) => {
+            let mut st = attach_children::<FloatFold>(env, rows.children, values);
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
             super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
         }

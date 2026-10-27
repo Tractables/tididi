@@ -1,4 +1,4 @@
-use super::{same_value, weight_key, ScaledFloat, SignedLog, WeightValue};
+use super::{same_value, weight_key, ScaledFloat, ScaledSum, SignedLog, WeightValue};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
@@ -201,4 +201,57 @@ fn scaled_times_log_panics() {
 fn exact_plus_scaled_panics() {
     let mut a = WeightValue::exact(rat(1, 2));
     a.add_assign(&WeightValue::scaled(ScaledFloat::from_f64(0.5)));
+}
+
+/// Scaled floats of either sign over `binades` binades, with zeros.
+fn spread(seed: u64, n: usize, binades: u64) -> Vec<ScaledFloat> {
+    let mut s = seed;
+    (0..n)
+        .map(|_| {
+            s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            if s.is_multiple_of(17) {
+                return ScaledFloat::ZERO;
+            }
+            let mut v = ScaledFloat::from_f64(if s & 2 == 0 { 1.0 } else { -1.0 } * (0.5 + (s >> 12) as f64 / (1u64 << 53) as f64));
+            v.exponent += ((s >> 4) % binades) as i64 - (binades / 2) as i64;
+            v
+        })
+        .collect()
+}
+
+/// The unnormalized product sum leaves what the normalized operations
+/// leave, bit for bit: near and far exponents, cancellation to zero and
+/// below `2^-64`, and gaps beyond its span.
+#[test]
+fn product_sum_matches_mul_and_add_assign() {
+    for (seed, binades) in [(1u64, 4u64), (2, 60), (3, 200), (4, 3000), (5, 1)] {
+        for len in [1usize, 2, 3, 7, 40, 300] {
+            let a = spread(seed * 1000 + len as u64, len, binades);
+            let b = spread(seed * 7777 + len as u64, len, binades);
+            let mut want = ScaledFloat::ZERO;
+            let mut got = ScaledSum::ZERO;
+            for (x, y) in a.iter().zip(&b) {
+                want.add_assign(&x.mul(y));
+                got.add_product(x, y);
+                let g = got.finish();
+                assert_normal(&g);
+                assert_eq!((g.mantissa().to_bits(), g.exponent()), (want.mantissa().to_bits(), want.exponent()),
+                    "seed {seed}, {binades} binades, {len} terms");
+            }
+        }
+    }
+    // Exact cancellation, then a term far below the cancelled ones.
+    let one = ScaledFloat::from_f64(1.0);
+    let mut tiny = ScaledFloat::from_f64(0.75);
+    tiny.exponent -= 2000;
+    let terms = [(one, one), (ScaledFloat::from_f64(-1.0), one), (tiny, one), (ScaledFloat::from_f64(1.0 + f64::EPSILON), one),
+        (ScaledFloat::from_f64(-1.0), one)];
+    let mut want = ScaledFloat::ZERO;
+    let mut got = ScaledSum::ZERO;
+    for (x, y) in &terms {
+        want.add_assign(&x.mul(y));
+        got.add_product(x, y);
+        let g = got.finish();
+        assert_eq!((g.mantissa().to_bits(), g.exponent()), (want.mantissa().to_bits(), want.exponent()));
+    }
 }

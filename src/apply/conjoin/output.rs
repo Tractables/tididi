@@ -67,11 +67,11 @@ pub(super) fn finalize_level(
 ) {
     let lim = eng.limits();
     let (t, t_idx) = (shape.t, shape.t.idx());
-    let ApplyRun { levels, products, .. } = run;
+    let ApplyRun { levels, products, stream_cache, .. } = run;
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
     // before the `levels[t_idx]` reborrows below.
     if let Some(st) = stream_state {
-        commit_stream_state(st, t, sweep.vtree, levels, sweep.ws.as_deref_mut());
+        commit_stream_state(st, t, sweep.vtree, levels, stream_cache, sweep.ws.as_deref_mut());
     }
 
     // Record live count for parent density checks (only when sparse mode possible).

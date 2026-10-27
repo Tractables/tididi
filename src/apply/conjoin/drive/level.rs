@@ -430,12 +430,19 @@ fn install_summed(
             self.levels
         }
 
-        fn install<K: MarginalDomain>(&mut self, vtree: &crate::vtree::Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
+        fn install<K: MarginalDomain>(
+            &mut self,
+            vtree: &crate::vtree::Vtree,
+            t: InternalLevel,
+            col: K::Col,
+            computed: &mut [Option<K::Col>],
+            store: &mut K::Store,
+        ) {
             let v = t.vtree_idx();
             debug_assert!(self.installed.len() < self.installed.capacity(), "reserved for every internal level of the subtree");
             self.installed.push(v);
             if v != self.c {
-                install_streamed::<K>(self.levels, vtree, t, col, store);
+                install_streamed::<K>(self.levels, vtree, t, col, computed, store);
                 return;
             }
             crate::diagram::assert_can_make_marginal(self.levels, vtree, v);

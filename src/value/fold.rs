@@ -1,11 +1,11 @@
-//! The two value domains' sum-of-products folds, and the walk that drives them.
+//! The value domains' sum-of-products folds, and the walk that drives them.
 
 use crate::diagram::EncodedChildRef;
 
 use num_bigint::BigUint;
 
 use crate::diagram::ChildPair;
-use crate::diagram::WeightValue;
+use crate::diagram::{ScaledFloat, ScaledSum, WeightValue};
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
@@ -35,6 +35,11 @@ pub(crate) struct IntFold;
 
 /// Exact weighted semiring values: no overflow machinery.
 pub(crate) struct WeightFold;
+
+/// Scaled-float weighted values held as bare [`ScaledFloat`]s: the weighted
+/// domain of a conjunction's summed-out levels under
+/// [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat).
+pub(crate) struct FloatFold;
 
 impl IntFold {
     /// The two-pass integer fold: `Σ over pairs (left × right)`.
@@ -312,6 +317,25 @@ impl WeightFold {
             total.add_assign(&lc.mul(&rc));
         }
         total
+    }
+}
+
+impl FloatFold {
+    /// `Σ over pairs (left × right)` in scaled floats, in pair order: the
+    /// value [`WeightFold::fold`] computes on [`WeightValue::Scaled`] values,
+    /// bit for bit, with the sum normalized once ([`ScaledSum`]).
+    #[inline]
+    pub(crate) fn fold<P, L, R>(pairs: P, l: L, r: R) -> ScaledFloat
+    where
+        P: Iterator<Item = ChildPair>,
+        L: Fn(EncodedChildRef) -> ScaledFloat,
+        R: Fn(EncodedChildRef) -> ScaledFloat,
+    {
+        let mut total = ScaledSum::ZERO;
+        for pair in pairs {
+            total.add_product(&l(pair.left), &r(pair.right));
+        }
+        total.finish()
     }
 }
 

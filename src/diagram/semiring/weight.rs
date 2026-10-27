@@ -159,9 +159,18 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
 /// addition, where a [`SignedLog`] sum costs an `exp` and a `ln_1p`; each
 /// operation rounds once, to the mantissa's 53 bits.
 ///
-/// Arithmetic has bounded precision. In particular, cancellation of nearly
-/// equal values can cause large relative error; use exact rational arithmetic
-/// when the result must be exact.
+/// # Accuracy
+///
+/// [`mul`](Self::mul) and [`add_assign`](Self::add_assign) each return the
+/// exact result rounded once to 53 bits, so each has relative error at most
+/// `2^-53`; the exponent's range (an `i64`) leaves no overflow or underflow
+/// to account for. [`from_rational`](Self::from_rational) converts with
+/// relative error at most about `2^-53`. With nonnegative weights every
+/// intermediate value is nonnegative, so a value reached through at most `L`
+/// roundings along any chain of operations has relative error at most
+/// `(1 + 2^-53)^L - 1`, about `L · 2^-53`. With negative weights,
+/// cancellation of nearly equal values can cause large relative error; use
+/// exact rational arithmetic when the result must be exact.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScaledFloat {
     mantissa: f64,
@@ -327,6 +336,76 @@ impl ScaledFloat {
             return f64::NEG_INFINITY;
         }
         self.mantissa.abs().log10() + self.exponent as f64 * std::f64::consts::LOG10_2
+    }
+}
+
+/// A running `Σ a × b` over pairs of [`ScaledFloat`]s whose result is, bit
+/// for bit, what [`ScaledFloat::add_assign`] of each [`ScaledFloat::mul`]
+/// leaves, without normalizing between terms.
+///
+/// The sum is one `f64` standing under `2^exponent`, the exponent of a term
+/// already added. A term within [`Self::SPAN`] binades of it is scaled to it
+/// by a power of two, which is exact, so each addition rounds the same real
+/// sum the normalized form rounds: rounding commutes with exact scaling while
+/// every operand and result is a normal float, which the span and the
+/// renormalization of a sum that cancels below `2^-64` keep. A term further
+/// away takes the normalized path itself.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScaledSum {
+    sum: f64,
+    exponent: i64,
+}
+
+impl ScaledSum {
+    /// The widest gap, in binades, between the sum's exponent and a term's
+    /// that the sum absorbs by scaling: a term or rescaled sum of at least
+    /// `2^-64 · 2^-SPAN` stays far above the least normal float.
+    const SPAN: i64 = 900;
+
+    /// The empty sum.
+    pub(crate) const ZERO: ScaledSum = ScaledSum { sum: 0.0, exponent: 0 };
+
+    /// Add `a × b`.
+    #[inline(always)]
+    pub(crate) fn add_product(&mut self, a: &ScaledFloat, b: &ScaledFloat) {
+        // At most one rounding: the mantissas' product is the one `mul` takes
+        // before its exact doubling.
+        let m = a.mantissa * b.mantissa;
+        if m == 0.0 {
+            return;
+        }
+        let e = a.exponent + b.exponent;
+        if self.sum == 0.0 {
+            *self = ScaledSum { sum: m, exponent: e };
+            return;
+        }
+        let d = self.exponent - e;
+        if (0..=Self::SPAN).contains(&d) {
+            self.sum += m * pow2(-d);
+        } else if (-Self::SPAN..0).contains(&d) {
+            self.sum = self.sum * pow2(d) + m;
+            self.exponent = e;
+        } else {
+            let mut total = self.finish();
+            let (mantissa, shift) = frexp_normal(m);
+            total.add_assign(&ScaledFloat { mantissa, exponent: e + shift });
+            *self = ScaledSum { sum: total.mantissa, exponent: total.exponent };
+            return;
+        }
+        if self.sum.abs() < pow2(-64) && self.sum != 0.0 {
+            let (sum, shift) = frexp_normal(self.sum);
+            *self = ScaledSum { sum, exponent: self.exponent + shift };
+        }
+    }
+
+    /// The sum as a normalized [`ScaledFloat`].
+    #[inline]
+    pub(crate) fn finish(self) -> ScaledFloat {
+        if self.sum == 0.0 {
+            return ScaledFloat::ZERO;
+        }
+        let (mantissa, shift) = frexp_normal(self.sum);
+        ScaledFloat { mantissa, exponent: self.exponent + shift }
     }
 }
 

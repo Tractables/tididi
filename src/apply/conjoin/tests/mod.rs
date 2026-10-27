@@ -4,6 +4,7 @@ use super::identity::level_marginal_is_constant_true;
 mod borrowed;
 mod complete;
 mod conjunction;
+mod float_targets;
 mod implicit;
 mod kept_counts;
 mod lent;

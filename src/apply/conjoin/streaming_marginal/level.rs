@@ -17,9 +17,8 @@ pub(crate) struct StreamEnv<'a> {
 }
 
 /// Prepare the children and open the [`StreamLevelState`] output column when
-/// the level is a streaming target; `None` otherwise. Weighted when the sweep
-/// carries a weight store, integer otherwise; both arms run
-/// [`open_stream_output`].
+/// the level is a streaming target; `None` otherwise. In the kind
+/// [`stream_kind`] names; every arm runs [`open_stream_output`].
 ///
 /// Needs the whole `levels` slice, since the cascade re-marginalizes any
 /// descendant, and returns nothing that borrows it; the child columns are
@@ -35,6 +34,11 @@ pub(in crate::apply::conjoin) fn build_stream_state(
         return Ok(None);
     }
     if let Some(ws) = sweep.ws.as_deref_mut() {
+        if ws.arithmetic() == Arithmetic::ScaledFloat {
+            return Ok(Some(StreamLevelState::Float(open_stream_output::<FloatFold>(
+                eng, shape, sweep.vtree, levels, cache.float_mut(), ws,
+            )?)));
+        }
         Ok(Some(StreamLevelState::Weighted(open_stream_output::<WeightFold>(
             eng, shape, sweep.vtree, levels, cache.weighted_mut(), ws,
         )?)))
@@ -119,16 +123,52 @@ pub(crate) fn commit_stream_state(
     t: VtreeIdx,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
+    cache: &mut StreamCache,
     ws: Option<&mut WeightStore>,
 ) {
     let t = InternalLevel::new(vtree, t).expect("a streaming target is an internal level");
     match st {
         StreamLevelState::Int(counts) => {
-            install_streamed::<IntFold>(levels, vtree, t, counts, &mut ());
+            install_streamed::<IntFold>(levels, vtree, t, counts, cache.int_mut(), &mut ());
         }
         StreamLevelState::Weighted(counts) => {
             let ws = ws.expect("a weighted column is only ever built with a store attached");
-            install_streamed::<WeightFold>(levels, vtree, t, counts, ws);
+            install_streamed::<WeightFold>(levels, vtree, t, counts, cache.weighted_mut(), ws);
+        }
+        StreamLevelState::Float(values) => {
+            let ws = ws.expect("a scaled-float column is only ever built with a store attached");
+            install_streamed::<FloatFold>(levels, vtree, t, values, cache.float_mut(), ws);
         }
     }
+}
+
+/// Move into the weight store every column the apply still keeps: those of
+/// the levels it summed out whose parent it did not. Called once the sweep
+/// has built its last level, before anything reads the store.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a store column's reservation is refused.
+pub(crate) fn store_kept_columns(
+    eng: &Engine,
+    levels: &mut [TddLevel],
+    cache: &mut StreamCache,
+    ws: Option<&mut WeightStore>,
+) -> Result<(), OperationError> {
+    let StreamCache::Float(cols) = cache else { return Ok(()) };
+    let mut ws = ws;
+    for (i, slot) in cols.iter_mut().enumerate() {
+        let Some(values) = slot.take() else { continue };
+        let ws = ws.as_deref_mut().expect("a scaled-float column is only ever built with a store attached");
+        debug_assert!(
+            levels[i].is_weight_marginal() && levels[i].slot_count() == values.len(),
+            "a kept column belongs to a weight-marginal level of its width",
+        );
+        let mut column: Vec<WeightValue> = Vec::new();
+        eng.limits().reserve_exact(&mut column, values.len())?;
+        column.extend(values.iter().map(|&v| WeightValue::scaled(v)));
+        drop(values);
+        crate::diagram::MarginalStorage::new(&mut levels[i], Some(ws), i).install_weights(column);
+    }
+    Ok(())
 }

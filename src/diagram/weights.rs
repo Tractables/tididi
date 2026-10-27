@@ -28,7 +28,8 @@ pub enum Arithmetic {
     ExactRational,
     /// Bounded-precision signed log domain.
     SignedLog,
-    /// Bounded-precision `f64` mantissa with a binary exponent of its own.
+    /// Bounded-precision `f64` mantissa with a binary exponent of its own;
+    /// [`ScaledFloat`] states its error bounds.
     ScaledFloat,
 }
 

@@ -543,7 +543,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     g: &Tdd,
     targets: VtreeMask<'_>,
     free: Operands<VtreeMask<'r>>,
-    weighted: bool,
+    kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
 ) -> Result<ApplyRun<'a, 'r>, OperationError> {
@@ -566,7 +566,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
-    stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(weighted));
+    stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(kind));
     // With no level over the threshold, all the sparse infrastructure — product
     // lists, live counts, bump allocator — is skipped outright. A level under
     // a free level is taken whole with its region, and no level reads its

@@ -6,7 +6,7 @@
 //! input pairs and output cells so wide cells remain cancellable.
 
 use crate::diagram::{ChildPair, TddLevel, EncodedNode};
-use crate::value::{IntFold, WeightFold};
+use crate::value::{FloatFold, IntFold, WeightFold};
 use crate::Engine;
 
 mod rows_stream;

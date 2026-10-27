@@ -5,17 +5,16 @@
 //! routes share the same driver through [`ValueDomain`]. The output is still
 //! a slice of levels, so column installation does not require a finished `Tdd`.
 
-use crate::diagram::WeightValue;
-use crate::diagram::WeightStore;
+use crate::diagram::{Arithmetic, ScaledFloat, WeightStore, WeightValue};
 use crate::Engine;
 use super::{OperationError, TddLevel, Sides};
 
 use crate::value::{
-    Retention, CountVec, FoldInput, IntFold, StreamChild,
+    Retention, CountVec, FloatFold, FoldInput, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
 
-use crate::value::StreamCache;
+use crate::value::{StreamCache, StreamKind};
 use crate::marginal::transition::{InternalLevel, MarginalDomain, cascade, install_streamed};
 mod level;
 pub(crate) use level::*;
@@ -41,7 +40,19 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 /// not pin `levels`.
 pub(crate) enum StreamLevelState {
     Int(CountVec),
-    /// Weighted: exact `BigRational` semiring values carried into the
-    /// external `WeightStore`.
+    /// Weighted: semiring values carried into the external `WeightStore`.
     Weighted(Vec<WeightValue>),
+    /// Scaled floats, kept by the apply until the level's parent has read
+    /// them or the sweep ends.
+    Float(Vec<ScaledFloat>),
+}
+
+/// The value kind an apply streams in: integer without a weight store, bare
+/// scaled floats under [`Arithmetic::ScaledFloat`], weight values otherwise.
+pub(crate) fn stream_kind(ws: Option<&WeightStore>) -> StreamKind {
+    match ws.map(WeightStore::arithmetic) {
+        None => StreamKind::Int,
+        Some(Arithmetic::ScaledFloat) => StreamKind::Float,
+        Some(_) => StreamKind::Weighted,
+    }
 }

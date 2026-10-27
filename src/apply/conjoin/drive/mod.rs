@@ -161,6 +161,7 @@ fn sweep_levels(
     if progress {
         lim.conjunction_reached(internal.len() as u32);
     }
+    super::streaming_marginal::store_kept_columns(eng, run.levels, run.stream_cache, sweep.ws.as_deref_mut())?;
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes + cone.free_nodes)
 }
@@ -519,7 +520,8 @@ fn apply_and_held(
     );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
-    let mut run = apply_and_setup(eng, &vtree, f, g, targets, free, ws.is_some(), levels, &mut scratch)?;
+    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
+    let mut run = apply_and_setup(eng, &vtree, f, g, targets, free, kind, levels, &mut scratch)?;
     run.restoring = keep;
     let plain = unmarked && !run.entry_marginality.any();
     run.plain = plain;

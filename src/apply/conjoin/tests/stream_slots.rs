@@ -45,6 +45,7 @@ fn a_streamed_column_past_the_slot_cap_is_refused() {
         None,
         Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::ExactRational)),
         Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::SignedLog)),
+        Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::ScaledFloat)),
     ];
     for store in &stores {
         let (f, g) = (conjoin_all(&eng, &tree, a, store.as_ref()), conjoin_all(&eng, &tree, b, store.as_ref()));

@@ -1,7 +1,7 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
-use crate::value::{CountVec, IntFold, WeightFold, ValueDomain};
+use crate::diagram::{ScaledFloat, Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
+use crate::value::{CountVec, FloatFold, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::value::slots::{compact_count_slots, truncate_with_slack};
 use crate::diagram::CountOverflow;
@@ -44,12 +44,17 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// The in-flight twin of [`Self::install`]: same column, but the diagram
     /// around it is still being built, so nothing is deduped and no parent
     /// reference is rewritten.
+    ///
+    /// Returns the column when the domain leaves it with the apply rather
+    /// than in the level's store: the apply then keeps it for `t`'s parent
+    /// to read, drops it once the parent is marginal, and stores what is
+    /// left when its sweep ends.
     fn commit_in_flight(
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: Self::Col,
         store: &mut Self::Store,
-    );
+    ) -> Option<Self::Col>;
 
     /// Install `col` as `t`'s marginal store on a finished diagram, and say how
     /// the slot numbering changed.
@@ -92,10 +97,11 @@ impl MarginalDomain for IntFold {
         t: InternalLevel,
         col: CountVec,
         _store: &mut (),
-    ) {
+    ) -> Option<CountVec> {
         let (counts, big) = col.into_parts();
         let i = t.vtree_idx().idx();
         crate::diagram::MarginalStorage::new(&mut levels[i], None, i).install_counts(counts, big);
+        None
     }
 
     /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
@@ -146,13 +152,14 @@ impl MarginalDomain for WeightFold {
         t: InternalLevel,
         col: Vec<WeightValue>,
         store: &mut WeightStore,
-    ) {
+    ) -> Option<Vec<WeightValue>> {
         // No parent contract-dirty marking: the shared level-state machine
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
         // `prune_value_slots`; only the integer
         // count-preservation localizer around it is gated off.
         let i = t.vtree_idx().idx();
         crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).install_weights(col);
+        None
     }
 
     /// The weighted store is full width and its references stay bare slots
@@ -183,6 +190,54 @@ impl MarginalDomain for WeightFold {
     /// there is no tag to apply and no snapshot to key it off.
     fn end_sweep(_tdd: &mut Tdd, _was_marginal: &[bool]) {}
 }
+/// The streamed domain of the scaled-float arithmetic: its in-flight columns
+/// stay with the apply, and a finished diagram's go to the store as
+/// [`WeightValue::Scaled`] values, as the weighted domain's do.
+impl MarginalDomain for FloatFold {
+    fn weight_store(store: &mut WeightStore) -> Option<&mut WeightStore> {
+        Some(store)
+    }
+
+    /// The level becomes marginal at the column's width with no store
+    /// column, and the column goes back to the apply: a parent summed out
+    /// in the same sweep reads it there, so it never takes a
+    /// [`WeightValue`] per slot.
+    #[inline]
+    fn commit_in_flight(
+        levels: &mut [TddLevel],
+        t: InternalLevel,
+        col: Vec<ScaledFloat>,
+        store: &mut WeightStore,
+    ) -> Option<Vec<ScaledFloat>> {
+        let i = t.vtree_idx().idx();
+        crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).hold_weights(col.len() as u32);
+        Some(col)
+    }
+
+    fn install(
+        level: &mut TddLevel,
+        t: InternalLevel,
+        col: Vec<ScaledFloat>,
+        store: &mut WeightStore,
+    ) -> Option<Vec<u32>> {
+        let values = col.into_iter().map(WeightValue::scaled).collect();
+        WeightFold::install(level, t, values, store)
+    }
+
+    fn sum_out_leaf(
+        tdd: &mut Tdd,
+        leaf: VtreeIdx,
+        vtree: &crate::vtree::Vtree,
+        store: &mut WeightStore,
+    ) {
+        WeightFold::sum_out_leaf(tdd, leaf, vtree, store);
+    }
+
+    fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
+        WeightFold::end_sweep(tdd, was_marginal);
+    }
+}
+
 /// Install `col` as `t`'s marginal store and settle the diagram around it:
 /// rewrite the parent's references if the domain minted new slots, mark the
 /// parent for re-contraction, and free the children `t` now subsumes.
@@ -202,19 +257,24 @@ pub(crate) fn install_finished<K: MarginalDomain>(
     free_subsumed_marginal_children(&mut tdd.levels, vtree, t, K::weight_store(store));
 }
 
-/// Install a streamed column without renumbering slots, then release its children.
+/// Install a streamed column without renumbering slots, then release its
+/// children, with any column of theirs the apply kept in `computed`.
 #[inline]
 pub(crate) fn install_streamed<K: MarginalDomain>(
     levels: &mut [TddLevel],
     vtree: &Vtree,
     level: InternalLevel,
     col: K::Col,
+    computed: &mut [Option<K::Col>],
     store: &mut K::Store,
 ) {
     let t = level.vtree_idx();
     assert_can_make_marginal(levels, vtree, t);
-    K::commit_in_flight(levels, level, col, store);
+    computed[t.idx()] = K::commit_in_flight(levels, level, col, store);
     free_subsumed_marginal_children(levels, vtree, t, K::weight_store(store));
+    let (l, r) = vtree.children(t);
+    computed[l.idx()] = None;
+    computed[r.idx()] = None;
 }
 
 /// Where a [`cascade`] installs the columns it takes: a finished diagram, or
@@ -223,8 +283,16 @@ pub(crate) trait InstallTarget {
     /// The levels, read for the marginality test on the way down.
     fn levels(&self) -> &[TddLevel];
 
-    /// Install `col` as level `t`'s marginal store.
-    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store);
+    /// Install `col` as level `t`'s marginal store. `computed` is the
+    /// cascade's column table, for a target that keeps a column there.
+    fn install<K: MarginalDomain>(
+        &mut self,
+        vtree: &Vtree,
+        t: InternalLevel,
+        col: K::Col,
+        computed: &mut [Option<K::Col>],
+        store: &mut K::Store,
+    );
 }
 
 /// Installs through [`install_finished`], which dedups the column and
@@ -234,7 +302,14 @@ impl InstallTarget for Tdd {
         &self.levels
     }
 
-    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
+    fn install<K: MarginalDomain>(
+        &mut self,
+        vtree: &Vtree,
+        t: InternalLevel,
+        col: K::Col,
+        _computed: &mut [Option<K::Col>],
+        store: &mut K::Store,
+    ) {
         install_finished::<K>(self, vtree, t, col, store);
     }
 }
@@ -246,8 +321,15 @@ impl InstallTarget for [TddLevel] {
         self
     }
 
-    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
-        install_streamed::<K>(self, vtree, t, col, store);
+    fn install<K: MarginalDomain>(
+        &mut self,
+        vtree: &Vtree,
+        t: InternalLevel,
+        col: K::Col,
+        computed: &mut [Option<K::Col>],
+        store: &mut K::Store,
+    ) {
+        install_streamed::<K>(self, vtree, t, col, computed, store);
     }
 }
 
@@ -275,7 +357,7 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     cascade::<K, S>(target, vtree, left, computed, store);
     cascade::<K, S>(target, vtree, right, computed, store);
     if let Some(col) = computed[t.idx()].take() {
-        target.install::<K>(vtree, level, col, store);
+        target.install::<K>(vtree, level, col, computed, store);
     }
 }
 

@@ -60,6 +60,14 @@ impl<'a> MarginalStorage<'a> {
         self.level.become_marginal_weighted(width);
     }
 
+    /// Make the level weight-marginal at `width` slots whose values the
+    /// caller holds: the store keeps no column for it until the caller
+    /// installs one with [`Self::install_weights`].
+    pub(crate) fn hold_weights(&mut self, width: u32) {
+        self.weights.as_mut().expect("weighted installation requires its store").take_level(self.index);
+        self.level.become_marginal_weighted(width);
+    }
+
     /// Keep only referenced slots, merging equal values, and return the number merged.
     /// Weighted leaf columns must never be passed here: they are pinned by label.
     pub(crate) fn compact(&mut self, referenced: &[u32], remap: &mut [u32]) -> usize {

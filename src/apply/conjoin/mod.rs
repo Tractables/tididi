@@ -799,6 +799,13 @@ impl crate::Engine {
     /// pairs the fusion would remove are never stored; the diagram is the
     /// one the other order leaves.
     ///
+    /// Under [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat)
+    /// a target summed out during product construction holds its values as
+    /// [`ScaledFloat`](crate::diagram::ScaledFloat)s, 16 bytes each, and the
+    /// weight store receives only the values of targets whose parent is not
+    /// also summed out: naming every finished level of a weighted sum as a
+    /// target keeps the levels below the topmost out of the store.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
