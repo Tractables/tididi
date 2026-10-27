@@ -2,10 +2,10 @@
 //! column's floats centred by a power of two where the cell needs it, and
 //! the sum is the scaled-float fold's, bit for bit.
 
-use super::{plain_fold, plain_fold_centred, pow2, FloatColumn, Plain, PLAIN_HI, PLAIN_LO};
+use super::{plain_fold, plain_fold_centred, pow2, FloatColumn, Plain, PlainProducts, PLAIN_HI, PLAIN_LO};
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ScaledFloat};
 use crate::test_helpers::Lcg;
-use crate::value::{FloatFold, StreamChild};
+use crate::value::{FloatCol, FloatFold, StreamChild};
 
 /// A float at offset `d`, `m · 2^d` with `m` in `[0.5, 1)`, of random
 /// fraction and sign; zero one time in eight.
@@ -133,4 +133,54 @@ fn a_sum_cancelled_below_the_normal_floats_is_declined() {
     assert!(plain_fold(&pairs, left, view, right, view).is_none());
     let exact = scaled_fold(&pairs, &l, 0, &r, 0);
     assert_eq!(bits(exact), (0.5f64.to_bits(), -1071));
+}
+
+/// Cells of nonnegative values under random scales: where the two columns'
+/// offsets fit the plain range, as they are or centred, each cell's
+/// products, summed in pair order, are the float a column under the
+/// products' scale holds for the scaled fold's value, bit for bit. Offsets
+/// that fit neither way, or a negative float, decline the level.
+#[test]
+fn plain_products_sum_to_the_scaled_fold_bit_for_bit() {
+    let mut rng = Lcg::new(0x9a1d);
+    let ranges = [
+        (-3, 3),
+        (-200, 40),
+        (PLAIN_LO / 2, PLAIN_LO / 2 + 30),
+        (PLAIN_HI / 2 - 30, PLAIN_HI / 2),
+        (-900, 900),
+        (-1021, -500),
+        (600, 1024),
+        (-1021, 200),
+    ];
+    let (mut raw, mut centred, mut declined) = (0, 0, 0);
+    for round in 0..800 {
+        let (lo, hi) = ranges[round % ranges.len()];
+        let draw = |rng: &mut Lcg| column(rng, 40, lo, hi).into_iter().map(f64::abs).collect::<Vec<f64>>();
+        let (l, r) = (draw(&mut rng), draw(&mut rng));
+        let (ls, rs) = (rng.below(4000) as i64 - 2000, rng.below(4000) as i64 - 2000);
+        let (left, right) = (child(Plain::new(&l, ls)), child(Plain::new(&r, rs)));
+        let Some(products) = PlainProducts::of(&left, &right) else {
+            declined += 1;
+            continue;
+        };
+        match products.by == (1.0, 1.0) {
+            true => raw += 1,
+            false => centred += 1,
+        }
+        let cells: Vec<Vec<ChildPair>> = (0..8)
+            .map(|_| (0..1 + rng.below(30)).map(|_| pair(rng.below(40) as u32, rng.below(40) as u32)).collect())
+            .collect();
+        let mut col = FloatCol::default();
+        let out = col.narrow_under(products.scale).expect("an empty column takes any scale");
+        for cell in &cells {
+            out.push(cell.iter().fold(0.0, |sum, p| sum + products.product(p.left.0, p.right.0)));
+        }
+        for (i, cell) in cells.iter().enumerate() {
+            assert_eq!(bits(col.get(i)), bits(scaled_fold(cell, &l, ls, &r, rs)), "round {round}, cell {i}");
+        }
+    }
+    assert!(raw > 300 && centred > 100 && declined > 50, "{raw} raw, {centred} centred, {declined} declined");
+    let (l, r) = ([0.75, -0.5], [0.5]);
+    assert!(PlainProducts::of(&child(Plain::new(&l, 0)), &child(Plain::new(&r, 0))).is_none());
 }

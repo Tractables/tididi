@@ -4,6 +4,7 @@
 use super::rows::{Emit, run_level_rows};
 use super::word_cells::WordScratch;
 use super::*;
+use crate::value::{FloatCol, PlainProducts};
 
 impl<F: ValueDomain> StreamState<'_, F> {
     /// Fold one cell into the output column and record its slot in the grid,
@@ -43,13 +44,35 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
         StreamLevelState::Weighted(counts) => {
             stream_level::<WeightFold, L, R>(eng, rows, scratch, left, right, counts, env)
         }
-        StreamLevelState::Float(values) => {
-            stream_level::<FloatFold, L, R>(eng, rows, scratch, left, right, values, env)
-        }
+        StreamLevelState::Float(values) => stream_float_level(eng, rows, scratch, left, right, values, env),
         StreamLevelState::Int(counts) => {
             stream_level::<IntFold, L, R>(eng, rows, scratch, left, right, counts, env)
         }
     }
+}
+
+/// [`stream_level`] on a scaled-float level, each cell summed as its pairs
+/// are found ([`PlainSink`]) where the two child columns allow it.
+fn stream_float_level<L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    left: &L,
+    right: &R,
+    values: &mut FloatCol,
+    env: StreamEnv<'_>,
+) -> Result<(), OperationError> {
+    let st = attach_children::<FloatFold>(env, rows.children, values);
+    if let Some(products) = PlainProducts::of(&st.left, &st.right)
+        && let Some(out) = st.counts.narrow_under(products.scale)
+    {
+        let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
+        return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink });
+    }
+    let mut st = st;
+    let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
+    let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
+    run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
 /// Bind the child columns and collapse this level into its value column.
@@ -118,6 +141,12 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
+            if let Some(products) = PlainProducts::of(&st.left, &st.right)
+                && let Some(out) = st.counts.narrow_under(products.scale)
+            {
+                let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
+                return super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink);
+            }
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
             super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
         }
@@ -170,5 +199,84 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
             return Ok(());
         }
         self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
+    }
+}
+
+/// The fold of a scaled-float level whose two child columns are plain
+/// ([`PlainProducts`]): each pair's product added to its cell's sum as the
+/// row loop finds the pair, in the order [`FoldSink`] would collect it, and
+/// each cell's sum appended to the column as the float a column under the
+/// products' scale holds for it. The values are those [`FoldSink`] folds,
+/// bit for bit, with no pair list between the walk and the fold.
+struct PlainSink<'a> {
+    products: PlainProducts<'a>,
+    /// The output column's floats, under `products.scale`.
+    out: &'a mut Vec<f64>,
+    /// The open cell's sum, and whether a pair reached it.
+    sum: f64,
+    live: bool,
+    /// The buffer [`PairSink::buf`] names, never written: the sink has no
+    /// room, so every pair comes through [`PairSink::pair`].
+    none: Vec<ChildPair>,
+}
+
+impl PlainSink<'_> {
+    /// Append the cell's value `v` and record its slot, as
+    /// [`StreamState::fold_cell`] does.
+    #[inline(always)]
+    fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        let len = self.out.len();
+        let slot = lim.next_slot(len)?;
+        if len == self.out.capacity() {
+            lim.reserve(self.out, 1)?;
+        }
+        self.out.push(v);
+        node_idx[grid_pos] = slot;
+        Ok(())
+    }
+}
+
+impl PairSink for PlainSink<'_> {
+    /// A one-pair cell's sum is its product: adding a nonnegative float to
+    /// zero gives it back.
+    #[inline(always)]
+    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+        let v = self.products.product(lc, rc);
+        self.push(eng, node_idx, grid_pos, v)
+    }
+
+    #[inline(always)]
+    fn begin(&mut self) -> usize {
+        self.sum = 0.0;
+        self.live = false;
+        0
+    }
+
+    #[inline(always)]
+    fn pair(&mut self, _eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        self.sum += self.products.product(lc, rc);
+        self.live = true;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        &mut self.none
+    }
+
+    #[inline(always)]
+    fn room(&mut self) -> usize {
+        0
+    }
+
+    /// An empty cell stays `NO_PRODUCT`, as with [`FoldSink`].
+    #[inline(always)]
+    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, _start: usize) -> Result<(), OperationError> {
+        if !self.live {
+            return Ok(());
+        }
+        let v = self.sum;
+        self.push(eng, node_idx, grid_pos, v)
     }
 }

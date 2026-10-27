@@ -96,6 +96,20 @@ impl FloatCol {
         }
     }
 
+    /// The floats of a narrow column whose scale is or becomes `scale`, for
+    /// a fold that appends each value as its float under that scale; `None`,
+    /// the column unchanged, where it is wide or a nonzero value holds
+    /// another scale.
+    pub(crate) fn narrow_under(&mut self, scale: i64) -> Option<&mut Vec<f64>> {
+        match &mut self.repr {
+            Repr::Narrow { vals, scale: at } if at.is_none_or(|at| at == scale) => {
+                *at = Some(scale);
+                Some(vals)
+            }
+            _ => None,
+        }
+    }
+
     /// The values in slot order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = ScaledFloat> + '_ {
         let s = self.slice();

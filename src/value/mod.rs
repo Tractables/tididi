@@ -362,7 +362,7 @@ mod stream_cache;
 
 pub(crate) use fold::*;
 pub use fold::Retention;
-pub(crate) use domain::{FoldInput, StreamChild, ValueDomain};
+pub(crate) use domain::{FoldInput, PlainProducts, StreamChild, ValueDomain};
 pub(crate) use stream_cache::{StreamCache, StreamKind};
 pub(crate) use float_col::{FloatCol, FloatSlice};
 

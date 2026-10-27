@@ -122,6 +122,23 @@ fn a_value_outside_the_scale_widens_the_column() {
     }
 }
 
+/// A fold that appends floats under a scale of its own takes a narrow
+/// column whose scale is unset, as on a column of zeros, or the same, and
+/// no other; a wide column it never takes.
+#[test]
+fn a_column_is_taken_under_its_own_scale_only() {
+    let eng = Engine::new();
+    let mut col = FloatCol::zeros(&eng, 2).unwrap();
+    col.narrow_under(5).expect("a column of zeros takes any scale").push(0.75);
+    assert!(col.narrow_under(6).is_none());
+    col.narrow_under(5).expect("the column's own scale").push(0.5);
+    let want = [ScaledFloat::ZERO, ScaledFloat::ZERO, value(1 << 19, 5, false), value(0, 5, false)];
+    assert_eq!(col.iter().map(bits).collect::<Vec<_>>(), want.iter().copied().map(bits).collect::<Vec<_>>());
+    let mut wide = of(&[value(5, 0, false), value(7, 5000, false)]);
+    assert!(is_wide(&wide));
+    assert!(wide.narrow_under(0).is_none());
+}
+
 #[test]
 fn a_refused_widening_is_an_error() {
     let eng = Engine::new();

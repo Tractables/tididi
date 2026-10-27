@@ -42,12 +42,14 @@ pub(crate) enum FloatColumn<'a> {
 }
 
 /// The least and greatest offset `d` of a column's nonzero floats, each
-/// `m · 2^d` with `m` in `[0.5, 1)`; `(0, 0)` for a column of zeros.
+/// `m · 2^d` with `m` in `[0.5, 1)`; `(0, 0)` for a column of zeros. `neg`
+/// says whether a float has its sign bit set.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Offsets {
     scale: i64,
     lo: i64,
     hi: i64,
+    neg: bool,
 }
 
 /// Floats `x` standing for `x · 2^scale`, as a narrow column holds them,
@@ -81,7 +83,7 @@ impl<'a> Plain<'a> {
     #[inline(always)]
     fn centred(&self) -> Offsets {
         let k = self.centre;
-        Offsets { scale: self.at.scale - k, lo: self.at.lo + k, hi: self.at.hi + k }
+        Offsets { scale: self.at.scale - k, lo: self.at.lo + k, hi: self.at.hi + k, neg: self.at.neg }
     }
 }
 
@@ -94,14 +96,17 @@ fn pow2(k: i64) -> f64 {
 impl Offsets {
     /// The offsets of `vals` under `scale`.
     fn of(vals: &[f64], scale: i64) -> Offsets {
-        let (lo, hi) = vals
-            .iter()
-            .filter(|&&x| x != 0.0)
-            .map(|&x| ((x.to_bits() >> 52) & 0x7ff) as i64 - 1022)
-            .fold((i64::MAX, i64::MIN), |(lo, hi), d| (lo.min(d), hi.max(d)));
+        let (mut lo, mut hi, mut neg) = (i64::MAX, i64::MIN, false);
+        for &x in vals {
+            neg |= x.is_sign_negative();
+            if x != 0.0 {
+                let d = ((x.to_bits() >> 52) & 0x7ff) as i64 - 1022;
+                (lo, hi) = (lo.min(d), hi.max(d));
+            }
+        }
         match lo <= hi {
-            true => Offsets { scale, lo, hi },
-            false => Offsets { scale, lo: 0, hi: 0 },
+            true => Offsets { scale, lo, hi, neg },
+            false => Offsets { scale, lo: 0, hi: 0, neg },
         }
     }
 }
@@ -210,6 +215,53 @@ fn plain_fold_centred(
         sum += (left.vals[lview.index(pair.left)] * by_left) * (right.vals[rview.index(pair.right)] * by_right);
     }
     (sum == 0.0 || sum.is_normal()).then(|| ScaledFloat::at_offset(sum, l.scale + r.scale))
+}
+
+/// Two child columns every cell of whose level [`FloatFold::fold_cell`]
+/// sums in plain floats, as they are or centred, with no float negative: a
+/// sum of such products, each a normal float or zero, is a normal float or
+/// zero, so no cell falls back to the scaled fold. A cell's sum stands under
+/// `scale`, and is the float a narrow column under that scale holds for the
+/// cell's value, bit for bit.
+pub(crate) struct PlainProducts<'a> {
+    left: &'a [f64],
+    lview: ChildDecoder,
+    right: &'a [f64],
+    rview: ChildDecoder,
+    /// The powers of two each side's floats are read times: 1 unless the
+    /// columns are read centred.
+    by: (f64, f64),
+    pub(crate) scale: i64,
+}
+
+impl<'a> PlainProducts<'a> {
+    /// The products of `left` and `right`, where both columns are narrow
+    /// and nonnegative and their offsets fit the plain range as they are,
+    /// or else centred ([`plain_fold_centred`]).
+    pub(crate) fn of(left: &'a StreamChild<'_, FloatFold>, right: &'a StreamChild<'_, FloatFold>) -> Option<Self> {
+        let (l, r) = (left.col.plain()?, right.col.plain()?);
+        if l.at.neg || r.at.neg {
+            return None;
+        }
+        let fits = |a: Offsets, b: Offsets| a.lo + b.lo >= PLAIN_LO && a.hi + b.hi <= PLAIN_HI;
+        let (by, scale) = if fits(l.at, r.at) {
+            ((1.0, 1.0), l.at.scale + r.at.scale)
+        } else if (l.centre != 0 || r.centre != 0) && fits(l.centred(), r.centred()) {
+            ((pow2(l.centre), pow2(r.centre)), l.centred().scale + r.centred().scale)
+        } else {
+            return None;
+        };
+        Some(PlainProducts { left: l.vals, lview: left.view, right: r.vals, rview: right.view, by, scale })
+    }
+
+    /// The product of the left value `lc` names and the right value `rc`
+    /// names, as [`plain_fold`] and [`plain_fold_centred`] form it.
+    #[inline(always)]
+    pub(crate) fn product(&self, lc: u32, rc: u32) -> f64 {
+        let l = self.left[self.lview.index(EncodedChildRef::from_raw(lc))];
+        let r = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
+        (l * self.by.0) * (r * self.by.1)
+    }
 }
 
 /// Resolve a child reference of level `level_idx` for the ensure walk, as
