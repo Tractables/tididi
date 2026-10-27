@@ -305,7 +305,12 @@ pub(crate) fn apply_sparse_level(
             left: complete.is_none_or(|c| c.side != ChildSide::Left),
             right: complete.is_none_or(|c| c.side != ChildSide::Right),
         };
-        if probe_level(eng, ws, f, g, shape, level, pl, listed, pl_output, cells, multisets, duplicates_legal)? {
+        let mut live = None;
+        let emit = Emit { level, out: &mut *pl_output, duplicates_legal, thresholds, live: &mut live };
+        if probe_level(eng, ws, f, g, shape, pl, listed, cells, multisets, emit)? {
+            if let Some(n) = live {
+                levels[t_idx].leave_live_pairs(n);
+            }
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();

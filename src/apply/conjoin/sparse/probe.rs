@@ -33,8 +33,9 @@
 //!   the shared block's root, where neither half of the block alone picks
 //!   the value but both together do.
 //!
-//! Each `f` node's candidates go to the emit the scatter uses ([`emit_parent`])
-//! as soon as the node is walked, so no candidate is bucketed. The candidates
+//! Each `f` node's candidates are written into the level's pair arena and
+//! emitted as the node ends, as the scatter's routed walk does
+//! ([`walk_nodes`]), so no candidate is bucketed. The candidates
 //! are the scatter's own, so the level is too, up to the order of its nodes
 //! within one `f` parent and of the pairs within a node.
 
@@ -292,8 +293,9 @@ fn plan(
     }))
 }
 
-/// Build the level at `shape.t` by the probe join when it prices as linear,
-/// and say whether it did; otherwise leave everything for the scatter.
+/// Build the level at `shape.t` into `emit` by the probe join when it prices
+/// as linear, and say whether it did; otherwise leave everything for the
+/// scatter.
 ///
 /// The children must be internal and joined (no pass-through side), and the
 /// level must have more than one `f` or `g` node: one of each is the
@@ -312,13 +314,11 @@ pub(super) fn probe_level(
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
-    level: &mut TddLevel,
     pl: Sides<&[ProductEntry]>,
     listed: Sides<bool>,
-    pl_output: &mut Vec<ProductEntry>,
     cells: Sides<CellLookup<'_>>,
     multisets: impl FnOnce() -> bool,
-    duplicates_legal: bool,
+    emit: Emit<'_>,
 ) -> Result<bool, OperationError> {
     if probe_forced_off() {
         return Ok(false);
@@ -337,21 +337,33 @@ pub(super) fn probe_level(
         // The emit looks each candidate's `g` parent up here; it leaves the
         // map as it found it, all `NO_PRODUCT`.
         eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
-        let candidates = match probe {
-            Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.right, duplicates_legal)?,
-            Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.left, duplicates_legal)?,
-            Probe::Pairs => walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, level_pairs, duplicates_legal)?,
-        };
-        level.leave_live_pairs(candidates);
+        match probe {
+            Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.right, emit)?,
+            Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.left, emit)?,
+            Probe::Pairs => walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, pl, level_pairs, emit)?,
+        }
         Ok(true)
     })();
     ws.probe = pb;
     result
 }
 
+/// Walk `f`'s nodes with `walk`, each node's candidates written into the
+/// level's pair arena and emitted as the node ends ([`walk_nodes`]).
+fn walk_level<const SWAPPED: bool, W: NodeWalk>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    walk: &W,
+    f_level: &TddLevel,
+    emit: Emit<'_>,
+) -> Result<(), OperationError> {
+    let SparseWorkspace { node_owners, emit: scratch, .. } = ws;
+    let nodes = Walked::All(f_level.nodes().len());
+    walk_nodes::<SWAPPED, W>(eng, walk, f_level, nodes, Collect::Nodes(emit), node_owners, scratch)
+}
+
 /// The walk through one child: through the left child unswapped, the right
-/// one `SWAPPED`, the other child's product read by `other`. Returns the
-/// candidates, each one pair of one of the level's nodes.
+/// one `SWAPPED`, the other child's product read by `other`.
 #[expect(clippy::too_many_arguments)]
 fn walk_one_side<const SWAPPED: bool>(
     eng: &Engine,
@@ -360,51 +372,58 @@ fn walk_one_side<const SWAPPED: bool>(
     f_level: &TddLevel,
     g_level: &TddLevel,
     shape: LevelShape,
-    level: &mut TddLevel,
     pl: Sides<&[ProductEntry]>,
-    pl_output: &mut Vec<ProductEntry>,
     other: CellLookup<'_>,
-    duplicates_legal: bool,
-) -> Result<usize, OperationError> {
-    let lim = eng.limits();
+    emit: Emit<'_>,
+) -> Result<(), OperationError> {
     let (list, offsets, counts, key_width) = if !SWAPPED {
         (pl.left, &pb.left_offsets, &pb.g_by_left, shape.g.left)
     } else {
         (pl.right, &pb.right_offsets, &pb.g_by_right, shape.g.right)
     };
     build_reverse_index::<SWAPPED>(eng, g_level, key_width, Some(&counts[..key_width]), &mut pb.index)?;
-    let index = pb.index.view();
-    let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
-    let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    let mut found = 0;
-    f_level.try_for_each_node::<OperationError>(0..shape.f.here, |i, pairs| {
-        candidates.clear();
+    let walk = OneSide { list, offsets, index: pb.index.view(), other };
+    walk_level::<SWAPPED, _>(eng, ws, &walk, f_level, emit)
+}
+
+/// What [`walk_one_side`] reads for each `f` pair: the walked child's
+/// product list and its bucket bounds by `f` index, `g`'s pairs by the
+/// walked child, and the other child's products.
+struct OneSide<'a> {
+    list: &'a [ProductEntry],
+    offsets: &'a [u32],
+    index: GroupedView<'a, RevEntry>,
+    other: CellLookup<'a>,
+}
+
+impl NodeWalk for OneSide<'_> {
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let mut work = 0u64;
         for pair in pairs {
             let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
-            let bucket = &list[offsets[a as usize] as usize..offsets[a as usize + 1] as usize];
+            let bucket = &self.list[self.offsets[a as usize] as usize..self.offsets[a as usize + 1] as usize];
             for e in bucket {
                 let through = e.prod_idx.0;
-                let under = index.bucket(e.g_idx.idx());
+                let under = self.index.bucket(e.g_idx.idx());
                 work += under.len() as u64 + 1;
                 for r in under {
-                    let across = other.get(b, r.other);
+                    let across = self.other.get(b, r.other);
                     if across == NO_PRODUCT {
                         continue;
                     }
                     let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
-                    lim.try_push(candidates, ParEntry { g_parent: r.parent, left_prod, right_prod })?;
+                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
                 }
             }
         }
-        gate.poll(work + 1)?;
-        found += candidates.len();
-        if !candidates.is_empty() {
-            emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
-        }
-        Ok(())
-    })?;
-    gate.flush().map(|()| found)
+        ticker.poll(work + 1)
+    }
 }
 
 /// Cells of `g`'s pair map, left child by right child, up to which the
@@ -415,8 +434,7 @@ const DENSE_PAIR_CELLS: usize = 1 << 24;
 
 /// The walk through both children, each candidate's `g` pair found in a
 /// map of `g`'s pairs: a dense array over the two children's widths where
-/// it is small, else an open-addressing table. Returns the candidates, as
-/// [`walk_one_side`] does.
+/// it is small, else an open-addressing table.
 #[expect(clippy::too_many_arguments)]
 fn walk_pairs(
     eng: &Engine,
@@ -425,15 +443,14 @@ fn walk_pairs(
     f_level: &TddLevel,
     g_level: &TddLevel,
     shape: LevelShape,
-    level: &mut TddLevel,
     pl: Sides<&[ProductEntry]>,
-    pl_output: &mut Vec<ProductEntry>,
     level_pairs: u64,
-    duplicates_legal: bool,
-) -> Result<usize, OperationError> {
+    emit: Emit<'_>,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
+    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
     if cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs && !pairs_hashed_forced() {
         if !pb.dense_clean {
             pb.dense.fill(NO_PRODUCT);
@@ -448,16 +465,17 @@ fn walk_pairs(
             }
         }
         let dense = &pb.dense;
-        let found = walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
+        let walk = BothSides::new(pl, offsets,
             #[inline(always)]
-            |c, d| dense[c as usize * width + d as usize])?;
+            |c: u32, d: u32| dense[c as usize * width + d as usize]);
+        walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
         for (_, pairs) in g_level.internal_inputs_iter() {
             for pair in pairs {
                 pb.dense[pair.left.raw() as usize * width + pair.right.raw() as usize] = NO_PRODUCT;
             }
         }
         pb.dense_clean = true;
-        return Ok(found);
+        return Ok(());
     }
     let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
     let slots = (2 * g_pairs).next_power_of_two().max(16);
@@ -477,9 +495,9 @@ fn walk_pairs(
         }
     }
     let table = &pb.table;
-    walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
+    let walk = BothSides::new(pl, offsets,
         #[inline(always)]
-        |c, d| {
+        |c: u32, d: u32| {
             let key = pair_key(c, d);
             let mut s = slot_of(key, mask);
             loop {
@@ -492,53 +510,51 @@ fn walk_pairs(
                 }
                 s = (s + 1) & mask;
             }
-        })
+        });
+    walk_level::<false, _>(eng, ws, &walk, f_level, emit)
 }
 
-/// The walk of [`walk_pairs`] with `find` naming the `g` node of a pair of
-/// `g`'s children, `NO_PRODUCT` for none.
-#[expect(clippy::too_many_arguments)]
-#[inline(always)]
-fn walk_both(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    f_level: &TddLevel,
-    level: &mut TddLevel,
-    pl: Sides<&[ProductEntry]>,
-    pl_output: &mut Vec<ProductEntry>,
-    (lo, ro): (&[u32], &[u32]),
-    duplicates_legal: bool,
-    find: impl Fn(u32, u32) -> u32,
-) -> Result<usize, OperationError> {
-    let lim = eng.limits();
-    let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
-    let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    let mut found = 0;
-    f_level.try_for_each_node::<OperationError>(0..f_level.nodes().len(), |i, pairs| {
-        candidates.clear();
+/// What [`walk_pairs`] reads for each `f` pair: both children's product
+/// lists and their bucket bounds by `f` index, and `find`, naming the `g`
+/// node of a pair of `g`'s children, `NO_PRODUCT` for none.
+struct BothSides<'a, F> {
+    pl: Sides<&'a [ProductEntry]>,
+    offsets: (&'a [u32], &'a [u32]),
+    find: F,
+}
+
+impl<'a, F: Fn(u32, u32) -> u32> BothSides<'a, F> {
+    fn new(pl: Sides<&'a [ProductEntry]>, offsets: (&'a [u32], &'a [u32]), find: F) -> Self {
+        BothSides { pl, offsets, find }
+    }
+}
+
+impl<F: Fn(u32, u32) -> u32> NodeWalk for BothSides<'_, F> {
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        let (lo, ro) = self.offsets;
         let mut work = 0u64;
         for pair in pairs {
             let (a, b) = (pair.left.raw() as usize, pair.right.raw() as usize);
-            let lefts = &pl.left[lo[a] as usize..lo[a + 1] as usize];
-            let rights = &pl.right[ro[b] as usize..ro[b + 1] as usize];
+            let lefts = &self.pl.left[lo[a] as usize..lo[a + 1] as usize];
+            let rights = &self.pl.right[ro[b] as usize..ro[b + 1] as usize];
             work += (lefts.len() * rights.len()) as u64 + 1;
             for l in lefts {
                 for r in rights {
-                    let parent = find(l.g_idx.0, r.g_idx.0);
+                    let parent = (self.find)(l.g_idx.0, r.g_idx.0);
                     if parent != NO_PRODUCT {
-                        lim.try_push(candidates, ParEntry { g_parent: parent, left_prod: l.prod_idx.0, right_prod: r.prod_idx.0 })?;
+                        push(ParEntry { g_parent: parent, left_prod: l.prod_idx.0, right_prod: r.prod_idx.0 })?;
                     }
                 }
             }
         }
-        gate.poll(work)?;
-        found += candidates.len();
-        if !candidates.is_empty() {
-            emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
-        }
-        Ok(())
-    })?;
-    gate.flush().map(|()| found)
+        ticker.poll(work)
+    }
 }
 
 // A test sends every level past the probe, as the oracle it is checked

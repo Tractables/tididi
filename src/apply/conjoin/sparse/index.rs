@@ -87,12 +87,9 @@ pub(crate) struct SparseWorkspace {
     pub(super) f_kept: Vec<u32>,
 
     // ── Candidates, and their dedup into products ──
-    // The candidates of one f node, for the probe, which finds a node's
-    // candidates all at once and emits it before the next.
-    pub(super) node_candidates: Vec<ParEntry>,
     // The g parents of one f node's candidates, in candidate order, for the
     // walks of f's nodes that write the candidates' pairs straight into the
-    // level (`emit_walked`).
+    // level (`emit_walked`): the scatter's and the probe's.
     pub(super) node_owners: Vec<u32>,
 
     // ── Scatter-direction estimator ──
@@ -108,7 +105,7 @@ pub(crate) struct SparseWorkspace {
     pub(super) probe: super::probe::ProbeBuffers,
 }
 
-/// What the emit ([`emit_parent`](super::scatter::emit_parent)) writes as
+/// What the emit (`emit_walked`) writes as
 /// it turns one f parent's candidates into nodes, apart from the buffers
 /// the candidates are read from, so that a walk can hold those while it
 /// emits.
@@ -919,7 +916,6 @@ impl Buffers for SparseWorkspace {
         self.routes.buffers(visit);
         visit(&mut self.f_marked);
         visit(&mut self.f_kept);
-        visit(&mut self.node_candidates);
         visit(&mut self.node_owners);
         visit(&mut self.est_counts);
         self.emit.buffers(visit);

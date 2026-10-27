@@ -38,7 +38,7 @@ pub(super) enum Collect<'a, 'c> {
 }
 
 /// The level the emit writes: its nodes, its product list, whether its
-/// pair lists may repeat a pair (see [`emit_parent`]), the thresholds the
+/// pair lists may repeat a pair (see [`emit_walked`]), the thresholds the
 /// routed walk reads ([`SparseThresholds::pipelined_bytes`]), and the live
 /// pairs of what the walk made, which it sets where it ends.
 pub(super) struct Emit<'a> {
@@ -270,7 +270,7 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
 /// The f nodes a walk of f's nodes visits: all of the level's, or those
 /// whose bit is set in `bits`, one bit per node.
 #[derive(Clone, Copy)]
-enum Walked<'a> {
+pub(super) enum Walked<'a> {
     All(usize),
     Marked { bits: &'a [u64], nodes: usize },
 }
@@ -428,7 +428,7 @@ fn walked_pairs(f_level: &TddLevel, walked: Walked<'_>) -> usize {
 /// ([`emit_walked`]), or, on a level with one product, its pair arena, a
 /// count or sums.
 #[inline(always)]
-fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
+pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     eng: &Engine,
     walk: &W,
     f_level: &TddLevel,
@@ -488,7 +488,7 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
 }
 
 /// How [`leaf_walk`] finds the candidates of one f node.
-trait NodeWalk {
+pub(super) trait NodeWalk {
     /// Hand every candidate of the f node holding `pairs` to `push`, in the
     /// order of its pairs, the products they meet and the g pairs under each.
     fn node<const SWAPPED: bool>(
@@ -995,7 +995,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 level.try_push_multi_by_range(base, count).map_err(|_| OperationError::OverBudget)?;
                 retake!();
             }
-            // As in `emit_parent`: canonical children make a node's pairs
+            // As in `emit_walked`: canonical children make a node's pairs
             // distinct unless pair lists are multisets.
             #[cfg(debug_assertions)]
             {
@@ -3076,135 +3076,23 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
     ChildPair::new(EncodedChildRef::from_raw(entry.left_prod), EncodedChildRef::from_raw(entry.right_prod))
 }
 
-/// Emit one f parent: dedup its candidates' g parents into output products
-/// and push each product's node, holding its candidates' pairs, onto `level`.
+/// Make f parent `p1`'s products of the candidates a walk wrote into
+/// `level`'s pair arena from `base` on, the g parent of each in `owners`,
+/// and push each product's node, holding its candidates' pairs.
 ///
 /// Products are numbered in the order their g parent first appears among
 /// the candidates, and each node lists its pairs in candidate order: the
-/// order a stable sort of the candidates by product would give. `p2_map`
-/// maps a g parent to its product while the parent is emitted and is
-/// restored to `NO_PRODUCT` before returning; a bail leaves entries behind,
-/// which `WsGuard` repairs. A parent whose candidates all name one g
-/// parent has one product and skips the map, as a parent with one
-/// candidate does: each node of an operand that holds one node per value
-/// of a shared block, at that block's levels. A parent with a few
-/// candidates of several g parents skips it as well ([`emit_few`]).
+/// order a stable sort of the candidates by product would give. One
+/// candidate is its product's inline node, and candidates of one g parent
+/// are one node whose pairs stay where they were written; a few are grouped
+/// by comparison ([`emit_few`]), more through the map ([`emit_owned`]).
 ///
-/// A parent whose candidates all name one g parent, or all distinct ones,
-/// has its pairs in node order already, and they are copied into `level` as
-/// they come. Otherwise a counting sort by product writes each pair into
-/// its node's range of `level.pairs` directly; a product with one pair is
-/// stored inline in its node and takes no range.
-///
-/// `duplicates_legal` says a node's pair list may repeat a pair: some level
-/// of an operand, or of the output so far, is marginal, so pair lists are
-/// multisets feeding a sum. Read only by the debug duplicate check below.
-#[inline]
-pub(super) fn emit_parent(
-    eng: &Engine,
-    emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    candidates: &[ParEntry],
-    duplicates_legal: bool,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    if candidates.len() >= u32::MAX as usize {
-        return Err(OperationError::IndexOverflow);
-    }
-    let EmitScratch { p2_map, pair_counts, single_pairs, .. } = emit;
-    let first = pl_output.len();
-    if let [entry] = candidates {
-        // One candidate is one product of one pair: no `g` parent to group
-        // by, so the map is neither read nor written.
-        lim.try_push(pl_output, ProductEntry {
-            f_idx: FNodeIdx(p1 as u32),
-            g_idx: GNodeIdx(entry.g_parent),
-            prod_idx: ProductNodeIdx(first as u32),
-        })?;
-        return emit_single_pair(eng, level, candidate_pair(entry));
-    }
-    // Candidates of one g parent are the pairs of one product.
-    let g_parent = candidates[0].g_parent;
-    let one_product = candidates.iter().all(|entry| entry.g_parent == g_parent);
-    if !one_product && candidates.len() <= FEW_CANDIDATES {
-        let n = candidates.len();
-        let mut owners = [0u32; FEW_CANDIDATES];
-        let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
-        for (i, entry) in candidates.iter().enumerate() {
-            owners[i] = entry.g_parent;
-            pairs[i] = candidate_pair(entry);
-        }
-        return emit_few(eng, level, pl_output, p1, &owners[..n], &pairs[..n], duplicates_legal);
-    }
-    if one_product {
-        lim.try_push(pl_output, ProductEntry {
-            f_idx: FNodeIdx(p1 as u32),
-            g_idx: GNodeIdx(g_parent),
-            prod_idx: ProductNodeIdx(first as u32),
-        })?;
-    } else {
-        pair_counts.clear();
-        for entry in candidates {
-            let slot = p2_map[entry.g_parent as usize];
-            if slot == NO_PRODUCT {
-                let idx = pl_output.len() as u32;
-                p2_map[entry.g_parent as usize] = idx;
-                lim.try_push(pl_output, ProductEntry {
-                    f_idx: FNodeIdx(p1 as u32),
-                    g_idx: GNodeIdx(entry.g_parent),
-                    prod_idx: ProductNodeIdx(idx),
-                })?;
-                lim.try_push(pair_counts, 1)?;
-            } else {
-                pair_counts[slot as usize - first] += 1;
-            }
-        }
-    }
-    let products = pl_output.len() - first;
-    let first_node = level.nodes().len();
-    // The parent's pairs are appended to the level's arena under one reserve
-    // and cut into nodes; the output-pair meter is charged once for the
-    // growth, as the dense walk's choke point charges per growth event.
-    // The level is built here, so its arena is stored.
-    let pre_pairs_cap = level.pairs.stored_mut().capacity();
-    reserve_room(lim, level.nodes.stored_mut(), products)?;
-    let built = if products == candidates.len() {
-        candidates.iter().try_for_each(|entry| emit_single_pair(eng, level, candidate_pair(entry)))
-    } else if products == 1 {
-        push_node_from(eng, level, candidates.iter().map(candidate_pair))
-    } else {
-        push_nodes_sorted(eng, level, pair_counts, single_pairs, candidates, &p2_map[..], first)
-    };
-    lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
-    if !one_product {
-        for e in &pl_output[first..] {
-            p2_map[e.g_idx.idx()] = NO_PRODUCT;
-        }
-    }
-    built?;
-    // No sort and no dedup: pair lists are order-free, and canonical child
-    // levels make the grid lookups injective, so a duplicate in a purely
-    // Boolean diagram is an upstream canonicity violation. Once any level
-    // is marginal, duplicates are legal (`duplicates_legal`).
-    debug_assert!(
-        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
-            let mut seen = std::collections::HashSet::new();
-            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-        }),
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
-    Ok(())
-}
-
-/// Make f parent `p1`'s products of the candidates a walk wrote into
-/// `level`'s pair arena from `base` on, the g parent of each in `owners`:
-/// the nodes and product list [`emit_parent`] makes of the same candidates.
-/// One candidate is its product's inline node, and candidates of one g
-/// parent are one node whose pairs stay where they were written; a few are
-/// grouped by comparison ([`emit_few`]), more through the map
-/// ([`emit_owned`]).
+/// No sort and no dedup: pair lists are order-free, and canonical child
+/// levels make the lookups injective, so a duplicate in a purely Boolean
+/// diagram is an upstream canonicity violation. `duplicates_legal` says a
+/// node's pair list may repeat a pair: some level of an operand, or of the
+/// output so far, is marginal, so pair lists are multisets feeding a sum.
+/// Read only by the debug duplicate checks.
 #[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_walked(
@@ -3235,7 +3123,7 @@ fn emit_walked(
         lim.try_push(pl_output, product)?;
         reserve_room(lim, level.nodes.stored_mut(), 1)?;
         let node = finish_node(eng, level, base)?.expect("the walk wrote the candidates' pairs");
-        // As in `emit_parent`: canonical children make a node's pairs
+        // As in `emit_walked`: canonical children make a node's pairs
         // distinct unless pair lists are multisets.
         debug_assert!(
             duplicates_legal || {
@@ -3360,7 +3248,7 @@ fn emit_alternating(
 }
 
 /// [`emit_walked`] on more than [`FEW_CANDIDATES`] candidates of more than
-/// one g parent: the products, nodes and pair ranges [`emit_parent`] makes.
+/// one g parent, through `p2_map`, the map from a g parent to its product.
 /// Each owner is replaced in place by its product's place among the
 /// parent's products, the pairs are moved out of the arena once, and each
 /// is written back into its product's range; the ranges take no more of
@@ -3436,7 +3324,7 @@ fn emit_owned(
         p2_map[e.g_idx.idx()] = NO_PRODUCT;
     }
     built?;
-    // As in `emit_parent`: canonical children make a node's pairs distinct
+    // As in `emit_walked`: canonical children make a node's pairs distinct
     // unless pair lists are multisets.
     debug_assert!(
         duplicates_legal || (first_node..level.nodes().len()).all(|i| {
@@ -3449,12 +3337,12 @@ fn emit_owned(
 }
 
 /// The most candidates of more than one g parent that [`emit_few`] groups
-/// by comparing their g parents, rather than through [`emit_parent`]'s map.
+/// by comparing their g parents, rather than through [`emit_owned`]'s map.
 const FEW_CANDIDATES: usize = 8;
 
 /// Make f parent `p1`'s products of two to [`FEW_CANDIDATES`] candidates of
 /// more than one g parent, candidate `i` the pair `pairs[i]` of g parent
-/// `owners[i]`: the products, nodes and pair ranges [`emit_parent`] makes
+/// `owners[i]`: the products, nodes and pair ranges [`emit_owned`] makes
 /// through its map, found by comparing the g parents with each other.
 /// Products are numbered in the order their g parent first appears, a
 /// product of one pair is its node inline, and those of more take the next
@@ -3499,8 +3387,8 @@ fn emit_few(
         g_idx: GNodeIdx(g_parent),
         prod_idx: ProductNodeIdx((first + k) as u32),
     }));
-    // As in `emit_parent`: one reserve for the level's pairs, and the
-    // output-pair meter charged once for whatever the arena grew by.
+    // One reserve for the level's pairs, and the output-pair meter
+    // charged once for whatever the arena grew by.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
     reserve_room(lim, level.nodes.stored_mut(), products)?;
     reserve_pairs_for_emit(eng, level, ranged)?;
@@ -3535,59 +3423,6 @@ fn emit_few(
         "sparse apply: duplicate pair emitted — canonicity violated"
     );
     Ok(())
-}
-
-/// Push one node holding every pair of `pairs`, at least two, written
-/// straight into the level's pair arena.
-#[inline]
-fn push_node_from(
-    eng: &Engine,
-    level: &mut TddLevel,
-    pairs: impl ExactSizeIterator<Item = ChildPair>,
-) -> Result<(), OperationError> {
-    debug_assert!(pairs.len() >= 2, "a one-pair node is pushed inline");
-    let start = level.pairs.stored_len();
-    reserve_pairs_for_emit(eng, level, pairs.len())?;
-    level.pairs.stored_mut().extend(pairs);
-    finish_node(eng, level, start)?;
-    Ok(())
-}
-
-/// Push a parent's nodes when its candidates interleave several products:
-/// a counting sort by product writes each multi-pair node's pairs into its
-/// range of the level's pair arena, in candidate order, and a product with
-/// one pair keeps it in `singles` for its inline node.
-///
-/// `cursors[k]` enters as product `first + k`'s candidate count and is
-/// spent as its write cursor.
-fn push_nodes_sorted(
-    eng: &Engine,
-    level: &mut TddLevel,
-    cursors: &mut [u32],
-    singles: &mut Vec<ChildPair>,
-    candidates: &[ParEntry],
-    p2_map: &[u32],
-    first: usize,
-) -> Result<(), OperationError> {
-    let zero = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
-    let base = level.pairs.stored_len();
-    let total = prefix_offsets(cursors, true)?;
-    reserve_pairs_for_emit(eng, level, total as usize)?;
-    let arena = level.pairs.stored_mut();
-    arena.resize(base + total as usize, zero);
-    singles.clear();
-    eng.limits().try_resize(singles, cursors.len(), zero)?;
-    for entry in candidates {
-        let k = p2_map[entry.g_parent as usize] as usize - first;
-        let cursor = cursors[k];
-        if cursor == INLINE {
-            singles[k] = candidate_pair(entry);
-        } else {
-            arena[base + cursor as usize] = candidate_pair(entry);
-            cursors[k] = cursor + 1;
-        }
-    }
-    push_ranged_nodes(eng, level, base, cursors, singles)
 }
 
 /// The cursor of a product of one pair ([`prefix_offsets`]'s mark): it has
