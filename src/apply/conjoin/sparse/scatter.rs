@@ -847,6 +847,48 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                         nodes.put(EncodedNode::inline(pair));
                     }
                 }
+            } else if matches!(count, 4 | 6 | 8) && prods.room() >= 2 && nodes.room() >= 2 && base + count < 1 << 31 {
+                // [`emit_alternating`] of four, six or eight candidates,
+                // where neither vector grows: the first g parent's half
+                // moved before the second's, in place, and each half its
+                // g parent's node.
+                // Safety: the candidates are the `count` pairs at `first`.
+                unsafe {
+                    match count {
+                        4 => split_turns::<4>(first),
+                        6 => split_turns::<6>(first),
+                        _ => split_turns::<8>(first),
+                    }
+                }
+                let half = count / 2;
+                for (k, g_parent) in [owner, owner ^ turn].into_iter().enumerate() {
+                    let product = ProductEntry {
+                        f_idx: FNodeIdx(p1 as u32),
+                        g_idx: GNodeIdx(g_parent),
+                        prod_idx: ProductNodeIdx(prods.len as u32),
+                    };
+                    // Safety: there is room.
+                    unsafe {
+                        prods.put(product);
+                        nodes.put(EncodedNode::multi_pair((base + k * half) as u32, half as u32));
+                    }
+                }
+                // As in `emit_alternating`: canonical children make each
+                // node's pairs distinct unless pair lists are multisets.
+                #[cfg(debug_assertions)]
+                {
+                    settle!();
+                    debug_assert!(
+                        duplicates_legal || {
+                            let made = level.nodes().len();
+                            (made - 2..made).all(|i| {
+                                let mut seen = std::collections::HashSet::new();
+                                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+                            })
+                        },
+                        "sparse apply: duplicate pair emitted — canonicity violated"
+                    );
+                }
             } else {
                 settle!();
                 if matches!(count, 2 | 4 | 6 | 8) {
@@ -911,6 +953,26 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
     }
     settle!();
     Ok(Made::Written)
+}
+
+/// The `N` pairs at `first`, which take turns between two g parents from
+/// the first, put the first parent's before the second's, each half in its
+/// order: [`emit_alternating`]'s split, on the walk's arena in place.
+///
+/// # Safety
+///
+/// `first` points at `N` initialized pairs.
+#[inline(always)]
+unsafe fn split_turns<const N: usize>(first: *mut ChildPair) {
+    // Safety: as the caller's.
+    let read: [ChildPair; N] = unsafe { first.cast::<[ChildPair; N]>().read_unaligned() };
+    for i in 0..N / 2 {
+        // Safety: both places are among the `N`.
+        unsafe {
+            first.add(i).write(read[2 * i]);
+            first.add(N / 2 + i).write(read[2 * i + 1]);
+        }
+    }
 }
 
 /// Whether [`owner_walk_nodes`] reads f's level: one that stores its pairs,
