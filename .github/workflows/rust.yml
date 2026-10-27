@@ -100,21 +100,28 @@ jobs:
 
   semver:
     runs-on: ubuntu-latest
+    env:
+      # The last commit since the newest tag that broke the public API on
+      # purpose, so the check keeps catching breaks after it; empty compares
+      # with the tag. 1c554079 added fields to PoolSearchConfig and
+      # PoolSearchStats, so the next release is 0.2.0. The release commit
+      # empties it.
+      BREAKING_BASE: 1c55407966e3a2df40296b41b0a21c8d5899bd92
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - name: Find the previous tag
+    - name: Find the baseline
       id: previous
-      run: echo "tag=$(git tag --sort=-creatordate | head -n 1)" >> "$GITHUB_OUTPUT"
+      run: echo "rev=${BREAKING_BASE:-$(git tag --sort=-creatordate | head -n 1)}" >> "$GITHUB_OUTPUT"
     - name: Install the checker
-      if: steps.previous.outputs.tag != ''
+      if: steps.previous.outputs.rev != ''
       run: cargo install cargo-semver-checks --locked
-    - name: Compare the public API with the previous tag
-      if: steps.previous.outputs.tag != ''
-      run: cargo semver-checks --baseline-rev "${{ steps.previous.outputs.tag }}"
+    - name: Compare the public API with the baseline
+      if: steps.previous.outputs.rev != ''
+      run: cargo semver-checks --baseline-rev "${{ steps.previous.outputs.rev }}"
     - name: Report that there is nothing to compare with
-      if: steps.previous.outputs.tag == ''
+      if: steps.previous.outputs.rev == ''
       run: echo "No tag in the repository yet, so there is no released version to compare against."
 
   miri:
