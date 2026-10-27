@@ -2,12 +2,15 @@
 //!
 //! Under [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat)
 //! a conjunction's summed-out levels fold into [`FloatCol`] columns, 8
-//! bytes a value where a [`WeightValue`] takes 80, and a column whose
+//! bytes a value where a [`WeightValue`] takes 64, and a column whose
 //! parent the same conjunction sums out never enters the weight store: the
 //! apply keeps it until the parent has read it (see
 //! [`MarginalDomain::commit_in_flight`](crate::marginal::transition::MarginalDomain::commit_in_flight)).
 //! The values are those [`WeightFold`] computes on [`WeightValue::Scaled`]
-//! values, bit for bit.
+//! values, bit for bit. A cell whose two child columns are narrow, with
+//! offsets whose products and their sums stay normal floats, is summed in
+//! plain floats under the two columns' scales ([`plain_fold`]): the same
+//! roundings on the same values, without a scaled float per read.
 
 use super::*;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
@@ -22,26 +25,127 @@ fn scaled(v: &WeightValue) -> ScaledFloat {
 
 /// One child level's values as the float fold reads them.
 pub(crate) enum FloatColumn<'a> {
-    /// A column this apply folded: a level it summed out, or one folded on
-    /// the way to a level it sums out.
+    /// A column this apply folded, a level it summed out or one folded on
+    /// the way to a level it sums out, that holds whole values.
     Folded(FloatSlice<'a>),
+    /// Such a column held narrow, with the range of its offsets.
+    Narrow(Plain<'a>),
     /// A level an earlier operation made marginal: its weight-store column.
     Stored(&'a [WeightValue]),
     /// A structural vtree leaf's three label values, in label order.
     Leaf([ScaledFloat; crate::diagram::LEAF_WIDTH]),
+    /// The same as floats under one scale, with the range of their offsets.
+    LeafPlain([f64; crate::diagram::LEAF_WIDTH], Offsets),
 }
 
-impl FloatColumn<'_> {
+/// The least and greatest offset `d` of a column's nonzero floats, each
+/// `m · 2^d` with `m` in `[0.5, 1)`; `(0, 0)` for a column of zeros.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Offsets {
+    scale: i64,
+    lo: i64,
+    hi: i64,
+}
+
+/// Floats `x` standing for `x · 2^scale`, as a narrow column holds them.
+#[derive(Clone, Copy)]
+pub(crate) struct Plain<'a> {
+    vals: &'a [f64],
+    at: Offsets,
+}
+
+impl Offsets {
+    /// The offsets of `vals` under `scale`.
+    fn of(vals: &[f64], scale: i64) -> Offsets {
+        let (lo, hi) = vals
+            .iter()
+            .filter(|&&x| x != 0.0)
+            .map(|&x| ((x.to_bits() >> 52) & 0x7ff) as i64 - 1022)
+            .fold((i64::MAX, i64::MIN), |(lo, hi), d| (lo.min(d), hi.max(d)));
+        match lo <= hi {
+            true => Offsets { scale, lo, hi },
+            false => Offsets { scale, lo: 0, hi: 0 },
+        }
+    }
+}
+
+impl<'a> FloatColumn<'a> {
+    /// The column of a folded column's values.
+    fn folded(col: FloatSlice<'a>) -> FloatColumn<'a> {
+        match col {
+            FloatSlice::Narrow(vals, scale) => FloatColumn::Narrow(Plain { vals, at: Offsets::of(vals, scale) }),
+            wide => FloatColumn::Folded(wide),
+        }
+    }
+
+    /// The column of a leaf's values, as floats under the greatest of
+    /// their exponents where they all lie within a narrow column's range
+    /// of it.
+    fn leaf(vals: [ScaledFloat; crate::diagram::LEAF_WIDTH]) -> FloatColumn<'a> {
+        let scale = vals.iter().filter(|v| !v.is_zero()).map(ScaledFloat::exponent).max().unwrap_or(0);
+        let mut plain = [0.0; crate::diagram::LEAF_WIDTH];
+        for (x, v) in plain.iter_mut().zip(&vals) {
+            match v.offset_from(scale) {
+                Some(f) => *x = f,
+                None => return FloatColumn::Leaf(vals),
+            }
+        }
+        FloatColumn::LeafPlain(plain, Offsets::of(&plain, scale))
+    }
+
     /// The value at slot or node `i`. The variant is one per child level,
     /// so the branch is taken the same way for every read of a row loop.
     #[inline(always)]
     pub(crate) fn get(&self, i: usize) -> ScaledFloat {
         match self {
             FloatColumn::Folded(col) => col.get(i),
+            FloatColumn::Narrow(col) => ScaledFloat::at_offset(col.vals[i], col.at.scale),
             FloatColumn::Stored(col) => scaled(&col[i]),
             FloatColumn::Leaf(col) => col[i],
+            FloatColumn::LeafPlain(vals, at) => ScaledFloat::at_offset(vals[i], at.scale),
         }
     }
+
+    /// The column as plain floats, where it is narrow.
+    #[inline(always)]
+    fn plain(&self) -> Option<Plain<'_>> {
+        match self {
+            FloatColumn::Narrow(col) => Some(*col),
+            FloatColumn::LeafPlain(vals, at) => Some(Plain { vals, at: *at }),
+            _ => None,
+        }
+    }
+}
+
+/// The least sum of two offsets [`plain_fold`] takes: a product of floats
+/// at offsets `a` and `b` is at least `2^(a + b - 2)`, a normal float.
+const PLAIN_LO: i64 = -1020;
+/// The greatest: a sum of fewer than `2^32` products each below
+/// `2^(a + b)` stays below `2^1023`.
+const PLAIN_HI: i64 = 990;
+
+/// `Σ left × right` over `pairs` in plain floats, the left column's floats
+/// times the right's in pair order, standing under the sum of their
+/// scales; `None` where a sum cancelled below the normal floats.
+///
+/// `ScaledSum` rounds each product and each addition once, and moves its
+/// own scale only by exact powers of two. With every product a normal float
+/// and every partial sum a normal float or an exact difference, the plain
+/// floats round the same values the same way, so the result is
+/// [`FloatFold::fold`]'s, bit for bit.
+#[inline(always)]
+fn plain_fold(
+    pairs: &[ChildPair],
+    left: Plain<'_>,
+    lview: ChildDecoder,
+    right: Plain<'_>,
+    rview: ChildDecoder,
+) -> Option<ScaledFloat> {
+    let mut sum = 0.0f64;
+    for pair in pairs {
+        sum += left.vals[lview.index(pair.left)] * right.vals[rview.index(pair.right)];
+    }
+    (sum == 0.0 || sum.is_normal()).then(|| ScaledFloat::at_offset(sum, left.at.scale + right.at.scale))
 }
 
 /// Resolve a child reference of level `level_idx` for the ensure walk, as
@@ -160,7 +264,7 @@ impl ValueDomain for FloatFold {
         store: &'a WeightStore,
     ) -> StreamChild<'a, FloatFold> {
         if let Some(col) = &computed[level_idx] {
-            return StreamChild { col: FloatColumn::Folded(col.slice()), view: level.child_decoder() };
+            return StreamChild { col: FloatColumn::folded(col.slice()), view: level.child_decoder() };
         }
         if let Some(col) = level.is_weight_marginal().then(|| store.level(level_idx)).flatten() {
             return StreamChild { col: FloatColumn::Stored(col), view: ChildDecoder::marginal() };
@@ -170,7 +274,7 @@ impl ValueDomain for FloatFold {
         };
         // The label-ordered triple `diagram::leaf_column_vals` defines.
         let col = std::array::from_fn(|i| scaled(&store.leaf_val(var, LeafLabel::from_idx(i))));
-        StreamChild { col: FloatColumn::Leaf(col), view: ChildDecoder::structural() }
+        StreamChild { col: FloatColumn::leaf(col), view: ChildDecoder::structural() }
     }
 
     #[inline]
@@ -180,6 +284,13 @@ impl ValueDomain for FloatFold {
         right: &StreamChild<'_, FloatFold>,
         _store: &WeightStore,
     ) -> ScaledFloat {
+        if let (Some(l), Some(r)) = (left.col.plain(), right.col.plain())
+            && l.at.lo + r.at.lo >= PLAIN_LO
+            && l.at.hi + r.at.hi <= PLAIN_HI
+            && let Some(v) = plain_fold(pairs, l, left.view, r, right.view)
+        {
+            return v;
+        }
         FloatFold::fold(
             pairs.iter().copied(),
             |k| left.col.get(left.view.index(k)),
@@ -187,3 +298,7 @@ impl ValueDomain for FloatFold {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "tests/float.rs"]
+mod tests;
