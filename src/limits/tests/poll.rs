@@ -103,6 +103,44 @@ fn poll_each_charges_and_stops_as_single_polls_do() {
     }
 }
 
+/// `poll_times` is that many polls of so many units: the same charges at the
+/// same points, the same stop, the same residue for the drop.
+#[test]
+fn poll_times_charges_and_stops_as_repeated_polls_do() {
+    fn run(stride: u64, held: u64, work: u64, times: u64, stop_at: u64, once: bool) -> (Result<(), OperationError>, u64, u64) {
+        let lim = Limits::new();
+        let _prior = lim.install(
+            LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(0, StopAt::WorkUnits(stop_at))),
+        );
+        let mut gate = lim.gate_with(stride);
+        let mut result = gate.poll(held);
+        if result.is_ok() {
+            result = match once {
+                true => gate.poll_times(work, times),
+                false => (0..times).try_for_each(|_| gate.poll(work)),
+            };
+        }
+        let charged = lim.work_units();
+        drop(gate);
+        (result, charged, lim.work_units())
+    }
+    for stride in [0, 1, 4, 7, 16] {
+        for held in [0, 2, 5] {
+            for work in [0, 1, 2, 3, 5] {
+                for times in [0, 1, 3, 4, 10, 29] {
+                    for stop_at in [1, 6, 9, 20, 1000] {
+                        assert_eq!(
+                            run(stride, held, work, times, stop_at, true),
+                            run(stride, held, work, times, stop_at, false),
+                            "stride {stride}, held {held}, work {work}, times {times}, stop at {stop_at}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A deadline already past when it is installed stops the first poll, and
 /// every poll after it: installing reads the clock afresh, and a reading past
 /// the deadline answers every test it stands in for.

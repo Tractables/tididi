@@ -60,7 +60,7 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn support(&self, f: &Tdd) -> Result<Vec<VarId>, OperationError> {
-        self.collect_leaf_labels(f, |var, labels| labels.depends().then_some(var), |var| *var)
+        self.collect_leaf_labels(f, |var, labels| labels.depends().then_some(var), LeafLabels::depends, |var| *var)
     }
 
     /// Run [`Tdd::implied_literals`](crate::Tdd::implied_literals) using this batch's scratch and resource limits.
@@ -72,7 +72,7 @@ impl Engine {
     /// [`OperationError::OverBudget`].
     pub fn implied_literals(&self, f: &Tdd) -> Result<Vec<Literal>, OperationError> {
         if !f.is_zero() {
-            return self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var);
+            return self.collect_leaf_labels(f, |var, labels| labels.implied(var), LeafLabels::mixed, |literal| literal.var);
         }
         let lim = self.limits();
         let _op = lim.enter()?;
@@ -93,10 +93,14 @@ impl Engine {
     }
 
     /// Collect one optional answer per structural leaf from a checked canonical diagram.
+    ///
+    /// `settled` says of a summary that further labels cannot change what
+    /// `select` makes of it.
     fn collect_leaf_labels<T>(
         &self,
         f: &Tdd,
         select: impl Fn(VarId, LeafLabels) -> Option<T>,
+        settled: impl Fn(LeafLabels) -> bool,
         key: impl Fn(&T) -> VarId,
     ) -> Result<Vec<T>, OperationError> {
         let lim = self.limits();
@@ -106,7 +110,7 @@ impl Engine {
         let f = self.canonical(f)?;
         let mut result = Vec::new();
         let mut gate = lim.gate();
-        visit_leaf_labels(&f, |work| gate.poll(work), |var, labels| {
+        visit_leaf_labels(&f, settled, |work, pairs| gate.poll_times(work, pairs), |var, labels| {
             if let Some(value) = select(var, labels) {
                 lim.try_push(&mut result, value)?;
             }
@@ -255,6 +259,10 @@ impl LeafLabels {
     /// Whether a positive or negative label makes this variable part of the support.
     pub(super) fn depends(self) -> bool { self.0 & 3 != 0 }
 
+    /// Whether two labels are referenced, or the free one: no literal is
+    /// forced whatever else is.
+    pub(super) fn mixed(self) -> bool { !matches!(self.0, 0..=2) }
+
     /// The forced literal, if every reference uses the same non-free label.
     pub(super) fn implied(self, var: VarId) -> Option<Literal> {
         match self.0 {
@@ -267,17 +275,21 @@ impl LeafLabels {
 
 /// Visit each referenced structural leaf's label summary on a minimized diagram.
 ///
-/// Each leaf has one parent, so scanning that parent's pairs finishes its summary.
-/// `poll` receives one work unit per leaf reference, within the pair loop.
+/// Each leaf has one parent, so that parent's pairs finish its summary. They
+/// are read until each leaf side's summary is `settled`, past which further
+/// labels change nothing the caller reads, or to the end. `poll(units, pairs)`
+/// is charged a parent's pairs, each one unit per leaf side, as a read of
+/// every pair charging a poll of those units would be, before they are read.
 pub(super) fn visit_leaf_labels(
     f: &Tdd,
-    mut poll: impl FnMut(u64) -> Result<(), OperationError>,
+    settled: impl Fn(LeafLabels) -> bool,
+    mut poll: impl FnMut(u64, u64) -> Result<(), OperationError>,
     mut visit: impl FnMut(VarId, LeafLabels) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
     if f.is_zero() { return Ok(()); }
     if let VtreeNode::Leaf { var, .. } = *f.vtree.node(f.output.vtree) {
         if !f.levels[f.output.vtree.idx()].is_marginal() {
-            poll(1)?;
+            poll(1, 1)?;
             let mut labels = LeafLabels::default();
             labels.insert(f.output.local.into());
             visit(var, labels)?;
@@ -292,13 +304,21 @@ pub(super) fn visit_leaf_labels(
         let vars = [leaf_var(left), leaf_var(right)];
         let work = vars.iter().filter(|var| var.is_some()).count() as u64;
         if work == 0 { continue; }
+        poll(work, f.levels.live_pairs_at(t.idx()) as u64)?;
         let mut labels = [LeafLabels::default(); 2];
+        let mut open = vars.map(|var| var.is_some());
         let level = &f.levels[t.idx()];
-        for node in level.nodes().iter() {
+        'read: for node in level.nodes().iter() {
             for pair in level.pairs_iter_of(&node) {
-                poll(work)?;
-                if vars[0].is_some() { labels[0].insert(pair.left); }
-                if vars[1].is_some() { labels[1].insert(pair.right); }
+                for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
+                    if open[k] {
+                        labels[k].insert(side);
+                        open[k] = !settled(labels[k]);
+                    }
+                }
+                if open == [false; 2] {
+                    break 'read;
+                }
             }
         }
         for (var, labels) in vars.into_iter().zip(labels) {

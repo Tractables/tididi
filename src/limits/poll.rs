@@ -117,20 +117,35 @@ impl PollGate<'_> {
     /// call, before or after the loop.
     #[inline]
     pub(crate) fn poll_each(&mut self, units: u64) -> Result<(), OperationError> {
-        let step = self.stride.max(1);
-        let due = step - self.work.min(step);
-        if units < due {
-            self.work += units;
-            return Ok(());
+        self.poll_times(1, units)
+    }
+
+    /// [`poll`](Self::poll) `work` units `times` times over: the clock is
+    /// charged the same amounts and cancellation tested at the same points
+    /// as those polls would, in a step per charge. For a loop that charges
+    /// `work` units an item and whose items have no other effect on the
+    /// limits, so it can charge them all in one call, whether or not it
+    /// reads every item.
+    #[inline]
+    pub(crate) fn poll_times(&mut self, work: u64, times: u64) -> Result<(), OperationError> {
+        let mut left = times;
+        while left > 0 {
+            // The polls up to the one that comes due: none ever does when
+            // they add nothing to a gate below its stride.
+            let short = self.stride.saturating_sub(self.work);
+            let polls = match work {
+                0 if short > 0 => return Ok(()),
+                0 => 1,
+                _ => short.div_ceil(work).max(1),
+            };
+            if polls > left {
+                self.work += left * work;
+                return Ok(());
+            }
+            let done = std::mem::replace(&mut self.work, 0) + polls * work;
+            left -= polls;
+            self.lim.poll_now(done)?;
         }
-        self.work = 0;
-        self.lim.poll_now(step)?;
-        let mut left = units - due;
-        while left >= step {
-            self.lim.poll_now(step)?;
-            left -= step;
-        }
-        self.work = left;
         Ok(())
     }
 

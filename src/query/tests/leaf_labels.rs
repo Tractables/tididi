@@ -105,7 +105,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     f.minimize().unwrap();
     assert_canonical(&f);
     let mut literals = Vec::new();
-    visit_leaf_labels(&f, |_| Ok(()), |var, labels| {
+    visit_leaf_labels(&f, |_| false, |_, _| Ok(()), |var, labels| {
         literals.extend(labels.implied(var));
         Ok(())
     }).unwrap();
@@ -117,7 +117,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     let mut visited = 0;
-    visit_leaf_labels(&f, |_| Ok(()), |_, _| { visited += 1; Ok(()) }).unwrap();
+    visit_leaf_labels(&f, |_| false, |_, _| Ok(()), |_, _| { visited += 1; Ok(()) }).unwrap();
     assert_eq!(visited, 0);
     assert!(matches!(f.implied_literals(), Err(OperationError::MarginalLevel(_))));
 }
@@ -138,7 +138,7 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
         }));
         let _op = lim.begin_operation();
         let mut gate = eng.limits().gate_with(1);
-        let result = visit_leaf_labels(&f, |work| gate.poll(work), |_, _| {
+        let result = visit_leaf_labels(&f, |_| false, |work, pairs| gate.poll_times(work, pairs), |_, _| {
             visited += 1;
             Ok(())
         });
@@ -149,6 +149,61 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
     assert_eq!(eng.support(&f).unwrap(), vec![VarId(1), VarId(2)]);
     assert!(f.implied_literals().unwrap().is_empty());
     assert_canonical(&f);
+}
+
+#[test]
+fn support_and_backbone_charge_every_pair_of_a_leaf_parent_however_far_they_read() {
+    // The read stops once a leaf's summary is settled, and is charged a unit
+    // a pair for each leaf child of the level all the same.
+    let eng = Engine::new();
+    let vars: Vec<VarId> = (1..=6).map(VarId).collect();
+    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let lim = eng.limits();
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    for _ in 0..40 {
+        let mut f = Tdd::one(&tree);
+        for _ in 0..4 {
+            let clause: Vec<Literal> = vars.iter().filter_map(|&var| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                match seed % 4 {
+                    0 => Some(Literal::pos(var)),
+                    1 => Some(Literal::neg(var)),
+                    _ => None,
+                }
+            }).collect();
+            if !clause.is_empty() {
+                f = eng.and(f, eng.clause(&tree, clause).unwrap()).unwrap();
+            }
+        }
+        f.minimize().unwrap();
+        assert_canonical(&f);
+        if f.is_zero() || tree.node(f.output().vtree).is_leaf() {
+            continue;
+        }
+        let mut expected = 0u64;
+        for (t, left, right) in tree.internal_bottomup() {
+            let leaves = [left, right].iter().filter(|&&c| tree.node(c).is_leaf()).count() as u64;
+            let pairs: u64 = (0..f.level(t).nodes().len()).map(|i| f.level(t).pair_count_at(i) as u64).sum();
+            expected += leaves * pairs;
+        }
+        let before = lim.work_units();
+        let support = eng.support(&f).unwrap();
+        assert_eq!(lim.work_units() - before, expected);
+        let before = lim.work_units();
+        let backbone = eng.implied_literals(&f).unwrap();
+        assert_eq!(lim.work_units() - before, expected);
+        let mut read = (Vec::new(), Vec::new());
+        visit_leaf_labels(&f, |_| false, |_, _| Ok(()), |var, labels| {
+            read.0.extend(labels.depends().then_some(var));
+            read.1.extend(labels.implied(var));
+            Ok(())
+        }).unwrap();
+        read.0.sort_unstable();
+        read.1.sort_unstable_by_key(|literal| (literal.var, literal.sign));
+        assert_eq!((support, backbone), read);
+    }
 }
 
 #[test]
