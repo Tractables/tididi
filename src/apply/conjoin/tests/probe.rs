@@ -176,6 +176,47 @@ fn counts_and_quantified_conjunctions_agree() {
     }
 }
 
+/// A level the probe walks through one child where each pair's candidate
+/// is the pair itself, and each f node's pairs meet one g parent, is f's
+/// level, taken from f rather than written: against the same conjunction
+/// writing its levels, the same nodes and pairs on every level and the
+/// same work, with f owned and borrowed. g is f with some variables
+/// forgotten, which f implies.
+#[test]
+fn a_level_the_probe_takes_from_f_is_the_level_it_writes() {
+    let before = settled_levels();
+    let mut rng = Lcg::new(0x5e_771e);
+    let vars: Vec<u32> = (1..=10).collect();
+    let mut conjunctions = 0;
+    for (shape, vtree) in vtree_shapes(10) {
+        for round in 0..6 {
+            let eng = Engine::new();
+            let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(EVERY_LEVEL_SPARSE));
+            let mut f = rand_conj_over(&vtree, &vars, 10, 4, false, &mut rng);
+            f.minimize().unwrap();
+            let forgotten: Vec<VarId> = vars.iter().filter(|_| rng.below(3) == 0).map(|&v| VarId(v)).collect();
+            let mut g = eng.exists_vars(f.clone(), &forgotten).unwrap();
+            g.minimize().unwrap();
+            for borrowed in [false, true] {
+                let what = format!("{shape}, round {round}, f borrowed {borrowed}");
+                let conjoin = || {
+                    let mark = eng.limits().mark();
+                    let a = if borrowed { std::borrow::Cow::Borrowed(&f) } else { std::borrow::Cow::Owned(f.clone()) };
+                    let out = always_probe(|| eng.and(a, g.clone()).unwrap());
+                    (out, eng.limits().work_since(mark))
+                };
+                let (out, work) = conjoin();
+                let (oracle, oracle_work) = no_lend(conjoin);
+                assert!(same_storage(&out, &oracle), "{what}: the levels taken from f are not the levels written");
+                assert_eq!(work, oracle_work, "{what}: the levels taken from f took other work");
+                conjunctions += 1;
+            }
+        }
+    }
+    let settled = settled_levels() - before;
+    assert!(settled > 0, "no level the probe took from f over {conjunctions} conjunctions");
+}
+
 /// A conjunction refused at any work point while the probe builds its levels
 /// gives both operands back as they were, and leaves the engine's sparse
 /// workspace fit for the next conjunction.

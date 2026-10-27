@@ -37,7 +37,10 @@
 //! emitted as the node ends, as the scatter's routed walk does
 //! ([`walk_nodes`]), so no candidate is bucketed. The candidates
 //! are the scatter's own, so the level is too, up to the order of its nodes
-//! within one `f` parent and of the pairs within a node.
+//! within one `f` parent and of the pairs within a node. A walk through one
+//! child that would write `f`'s level as `f` stores it, each pair its own
+//! candidate and each node's pairs under one `g` parent, takes `f`'s level
+//! instead ([`settle_f`]).
 
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
@@ -294,8 +297,9 @@ fn plan(
 }
 
 /// Build the level at `shape.t` into `emit` by the probe join when it prices
-/// as linear, and say whether it did; otherwise leave everything for the
-/// scatter.
+/// as linear, and say what it made of the level ([`Made::F`] where the level
+/// is `f`'s, which the caller moves or copies in); `None` leaves everything
+/// for the scatter.
 ///
 /// The children must be internal and joined (no pass-through side), and the
 /// level must have more than one `f` or `g` node: one of each is the
@@ -319,9 +323,9 @@ pub(super) fn probe_level(
     cells: Sides<CellLookup<'_>>,
     multisets: impl FnOnce() -> bool,
     emit: Emit<'_>,
-) -> Result<bool, OperationError> {
+) -> Result<Option<Made>, OperationError> {
     if probe_forced_off() {
-        return Ok(false);
+        return Ok(None);
     }
     let t = shape.t.idx();
     let (f_level, g_level) = (&f.levels[t], &g.levels[t]);
@@ -331,18 +335,21 @@ pub(super) fn probe_level(
     let mut pb = std::mem::take(&mut ws.probe);
     let result = (|| {
         let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, listed, cells, multisets)? else {
-            return Ok(false);
+            return Ok(None);
         };
         note_probe(probe);
         // The emit looks each candidate's `g` parent up here; it leaves the
         // map as it found it, all `NO_PRODUCT`.
         eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
-        match probe {
+        let made = match probe {
             Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.right, emit)?,
             Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.left, emit)?,
-            Probe::Pairs => walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, pl, level_pairs, emit)?,
-        }
-        Ok(true)
+            Probe::Pairs => {
+                walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, pl, level_pairs, emit)?;
+                Made::Written
+            }
+        };
+        Ok(Some(made))
     })();
     ws.probe = pb;
     result
@@ -374,8 +381,8 @@ fn walk_one_side<const SWAPPED: bool>(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     other: CellLookup<'_>,
-    emit: Emit<'_>,
-) -> Result<(), OperationError> {
+    mut emit: Emit<'_>,
+) -> Result<Made, OperationError> {
     let (list, offsets, counts, key_width) = if !SWAPPED {
         (pl.left, &pb.left_offsets, &pb.g_by_left, shape.g.left)
     } else {
@@ -385,7 +392,103 @@ fn walk_one_side<const SWAPPED: bool>(
     let f_width = if !SWAPPED { shape.f.left } else { shape.f.right };
     let direct = one_each(list, f_width) && counts[..key_width].iter().all(|&n| n == 1);
     let walk = OneSide { list, offsets, index: pb.index.view(), other, direct };
-    walk_level::<SWAPPED, _>(eng, ws, &walk, f_level, emit)
+    // Where each pair's candidate is the pair itself, the level is f's
+    // where each f node's pairs meet one g parent.
+    let itself = direct
+        && matches!(other, CellLookup::GIdentity)
+        && list.iter().enumerate().all(|(i, e)| e.prod_idx.0 as usize == i);
+    if itself && f_level.stored().is_some() {
+        // Each walked child's g parent: its one product's one g pair's.
+        let parents = &mut ws.node_owners;
+        parents.clear();
+        eng.limits().reserve(parents, list.len())?;
+        parents.extend(list.iter().map(|e| walk.index.entries[e.g_idx.idx()].parent));
+        if settle_f::<SWAPPED>(eng, parents, f_level, &mut emit)? {
+            return Ok(Made::F);
+        }
+    }
+    walk_level::<SWAPPED, _>(eng, ws, &walk, f_level, emit)?;
+    Ok(Made::Written)
+}
+
+/// Whether the level a [`OneSide`] walk of `f_level` would make is f's
+/// level, node for node and pair for pair, as f stores it; where it is,
+/// list each node's product and charge the clock as the walk would, write
+/// nothing, and leave the level's live pairs ([`Made::F`]). The walk is
+/// direct, and each pair's candidate is the pair itself: the walked
+/// child's products are numbered as its nodes, and the other side's
+/// product is f's child; `parents` holds each walked child's g parent.
+/// The level is then f's where the pairs of each f node meet one g parent,
+/// f's node words place its pairs in its arena in order, and the level's
+/// arenas, empty, hold f's without growing, as the walk's pushes would.
+/// Otherwise nothing is listed or charged: the test reads f's pairs and
+/// charges nothing.
+fn settle_f<const SWAPPED: bool>(
+    eng: &Engine,
+    parents: &[u32],
+    f_level: &TddLevel,
+    emit: &mut Emit<'_>,
+) -> Result<bool, OperationError> {
+    use crate::diagram::NodeKind;
+    let Some(stored) = f_level.stored() else {
+        return Ok(false);
+    };
+    let Emit { level, out, live, .. } = emit;
+    let (f_arena, f_nodes) = (stored.arena(), stored.nodes());
+    // The walk pushes a node's first pair before it takes a one-pair
+    // node's back, so the arena needs one place past f's.
+    let room = out.is_empty()
+        && level.pairs.stored_len() == 0
+        && level.nodes.stored().is_empty()
+        && f_arena.len() < level.pairs.stored_mut().capacity().min(1 << 31)
+        && f_nodes.len() <= level.nodes.stored_mut().capacity();
+    if !room || crate::apply::conjoin::lend_forced_off() {
+        return Ok(false);
+    }
+    let parent = |pair: &ChildPair| parents[if !SWAPPED { pair.left.raw() } else { pair.right.raw() } as usize];
+    // f's arena pairs the node words have placed so far.
+    let mut placed = 0usize;
+    for node in f_nodes {
+        let len = match node.kind() {
+            NodeKind::Inline(_) => continue,
+            NodeKind::Multi { start, len } if start as usize == placed && len != 0 => len,
+            _ => return Ok(false),
+        };
+        let node_pairs = &f_arena[placed..placed + len as usize];
+        placed += len as usize;
+        let first = parent(&node_pairs[0]);
+        if !node_pairs[1..].iter().fold(true, |same, pair| same & (parent(pair) == first)) {
+            return Ok(false);
+        }
+    }
+    if placed != f_arena.len() {
+        return Ok(false);
+    }
+    // The products, each its node's, and the walk's charges, a node at a
+    // time and each before the node's product as the walk's: two units a
+    // pair and one a node.
+    let lim = eng.limits();
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    let mut pairs = 0;
+    for (i, node) in f_nodes.iter().enumerate() {
+        let node_pairs = stored.of(node);
+        pairs += node_pairs.len();
+        ticker.poll(2 * node_pairs.len() as u64 + 1)?;
+        let product = ProductEntry {
+            f_idx: FNodeIdx(i as u32),
+            g_idx: GNodeIdx(parent(&node_pairs[0])),
+            prod_idx: ProductNodeIdx(i as u32),
+        };
+        if out.len() < out.capacity() {
+            out.push(product);
+        } else {
+            lim.try_push(out, product)?;
+        }
+    }
+    crate::apply::conjoin::note_lent();
+    note_settled();
+    **live = Some(pairs);
+    Ok(true)
 }
 
 /// What [`walk_one_side`] reads for each `f` pair: the walked child's
@@ -684,9 +787,9 @@ impl<F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> NodeWalk for BothSides<'_, F, T> {
 
 // A test sends every level past the probe, as the oracle it is checked
 // against, or takes it wherever it is admissible whatever it prices at, and
-// counts the levels each probe built.
+// counts the levels each probe built and those it took from f.
 #[cfg(test)]
-use crate::apply::conjoin::tests::{note_probe, pairs_hashed_forced, probe_forced, probe_forced_off};
+use crate::apply::conjoin::tests::{note_probe, note_settled, pairs_hashed_forced, probe_forced, probe_forced_off};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -703,6 +806,10 @@ fn probe_forced() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_probe(_probe: Probe) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_settled() {}
 
 #[cfg(not(test))]
 #[inline(always)]

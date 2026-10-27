@@ -1245,7 +1245,7 @@ use tests::note_pairs_grown;
 #[inline(always)]
 fn note_pairs_grown() {}
 
-// A test sends every level the sparse leaf arm would take from f through
+// A test sends every level a sparse walk would take from f through
 // the walk's writes, as the oracle the move is checked against, and counts
 // the levels it took.
 #[cfg(test)]

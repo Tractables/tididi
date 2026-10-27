@@ -690,10 +690,10 @@ pub(crate) fn apply_and_fallible(
 }
 
 thread_local! {
-    /// Whether the sparse leaf arm writes the levels it would take from f on
+    /// Whether the sparse walks write the levels they would take from f on
     /// this thread ([`no_lend`]).
     static NO_LEND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The levels on this thread the leaf arm took from f ([`lent_levels`]).
+    /// The levels on this thread a sparse walk took from f ([`lent_levels`]).
     static LENT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -705,7 +705,7 @@ pub(super) fn note_lent() {
     LENT.with(|c| c.set(c.get() + 1));
 }
 
-/// Run `f` with the sparse leaf arm writing every level it would take from
+/// Run `f` with the sparse walks writing every level they would take from
 /// f: the oracle the move is checked against.
 pub(super) fn no_lend<R>(f: impl FnOnce() -> R) -> R {
     struct Reset(bool);
@@ -718,7 +718,7 @@ pub(super) fn no_lend<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// The levels on this thread so far the sparse leaf arm took from f.
+/// The levels on this thread so far a sparse walk took from f.
 pub(super) fn lent_levels() -> u64 {
     LENT.with(std::cell::Cell::get)
 }
@@ -919,6 +919,8 @@ thread_local! {
     /// The levels on this thread each probe built: by left, by right, by
     /// pair ([`probe_census`]).
     static PROBED: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// The levels on this thread the probe took from f ([`settled_levels`]).
+    static SETTLED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Whether the probe by pair hashes `g`'s pairs however few cells a
     /// dense map of them would take ([`hashed_pairs`]).
     static HASHED_PAIRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -976,4 +978,13 @@ pub(super) fn always_probe<R>(f: impl FnOnce() -> R) -> R {
 /// The levels on this thread so far each probe built.
 pub(super) fn probe_census() -> [u64; 3] {
     PROBED.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_settled() {
+    SETTLED.with(|c| c.set(c.get() + 1));
+}
+
+/// The levels on this thread so far the probe took from f.
+pub(super) fn settled_levels() -> u64 {
+    SETTLED.with(std::cell::Cell::get)
 }

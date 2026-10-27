@@ -154,13 +154,13 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// carrier's, but a subtree under it is not, so the output owes it as a
     /// level it built.
     pub(super) relabel_moved: Vec<usize>,
-    /// The levels whose nodes and arena the sparse leaf arm took from f
+    /// The levels whose nodes and arena a sparse walk took from f
     /// ([`Made::F`](super::Made::F)) on a sweep that gives its operands back
     /// when refused: f's level holds the output level's empty ones until
     /// then.
     pub(super) lent: Vec<usize>,
     /// The levels a plain conjunction built as an operand holds its level,
-    /// node for node and pair for pair: those the sparse leaf arm made f's
+    /// node for node and pair for pair: those a sparse walk made f's
     /// ([`Made::F`](super::Made::F), [`Made::CopiedF`](super::Made::CopiedF)),
     /// and those found equal to an operand's once built, each with the
     /// operand, 1 for f and 2 for g. The nodes of their children have there

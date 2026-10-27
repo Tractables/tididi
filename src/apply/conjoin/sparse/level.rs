@@ -307,44 +307,23 @@ pub(crate) fn apply_sparse_level(
         };
         let mut live = None;
         let emit = Emit { level, out: &mut *pl_output, duplicates_legal, thresholds, live: &mut live };
-        if probe_level(eng, ws, f, g, shape, pl, listed, cells, multisets, emit)? {
+        if let Some(made) = probe_level(eng, ws, f, g, shape, pl, listed, cells, multisets, emit)? {
+            let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
             if let Some(n) = live {
                 levels[t_idx].leave_live_pairs(n);
             }
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();
-            return Ok((Made::Written, false));
+            return Ok((made, false));
         }
     }
 
     let mut live = None;
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
-    let mut made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    let made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
     let held = ws.outer_held;
-    if made == Made::F {
-        let level = &mut levels[t_idx];
-        match f.owned() {
-            // The level's nodes and arena are f's, kept within the room the
-            // level's own had, which the copy would have filled; f's level
-            // holds none while the caller may give them back.
-            Some(f) => {
-                let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
-                (level.nodes, level.pairs) = Default::default();
-                f.levels.swap_arenas(t_idx, level);
-                level.nodes.stored_mut().shrink_to(room.0);
-                level.pairs.stored_mut().shrink_to(room.1);
-            }
-            // A borrowed f's are copied into the level's room, which holds
-            // them, as the walk's writes of them would have.
-            None => {
-                let stored = f.levels[t_idx].stored().expect("a level the walk made f's is stored");
-                level.pairs.stored_mut().extend_from_slice(stored.arena());
-                level.nodes.stored_mut().extend_from_slice(stored.nodes());
-                made = Made::CopiedF;
-            }
-        }
-    }
+    let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
     if let Some(n) = live {
         levels[t_idx].leave_live_pairs(n);
     }
@@ -356,6 +335,36 @@ pub(crate) fn apply_sparse_level(
     Ok((made, held))
 }
 
+
+/// Where a walk left `level` f's level at `t_idx` ([`Made::F`]), give it
+/// f's nodes and arena: moved where f is owned, copied where it is
+/// borrowed ([`Made::CopiedF`]). Returns what the level is then.
+fn take_f_level(f: &mut Held<'_>, level: &mut TddLevel, t_idx: usize, made: Made) -> Made {
+    if made != Made::F {
+        return made;
+    }
+    match f.owned() {
+        // The level's nodes and arena are f's, kept within the room the
+        // level's own had, which the copy would have filled; f's level
+        // holds none while the caller may give them back.
+        Some(f) => {
+            let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
+            (level.nodes, level.pairs) = Default::default();
+            f.levels.swap_arenas(t_idx, level);
+            level.nodes.stored_mut().shrink_to(room.0);
+            level.pairs.stored_mut().shrink_to(room.1);
+            Made::F
+        }
+        // A borrowed f's are copied into the level's room, which holds
+        // them, as the walk's writes of them would have.
+        None => {
+            let stored = f.levels[t_idx].stored().expect("a level the walk made f's is stored");
+            level.pairs.stored_mut().extend_from_slice(stored.arena());
+            level.nodes.stored_mut().extend_from_slice(stored.nodes());
+            Made::CopiedF
+        }
+    }
+}
 
 /// Reserve the level's pair and node arenas and its product list at the
 /// sizes of the larger operand's level there, where the budget leaves three
