@@ -804,8 +804,15 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 if DENSE {
                     visit!(dense.entry($outer1), $inner1, $pos, $neg);
                 } else {
-                    for e in owned_bucket(outer, $outer1) {
+                    // Most buckets hold one product: it is visited without
+                    // the loop's tests.
+                    let bucket = owned_bucket(outer, $outer1);
+                    if let [e] = bucket {
                         visit!(*e, $inner1, $pos, $neg);
+                    } else {
+                        for e in bucket {
+                            visit!(*e, $inner1, $pos, $neg);
+                        }
                     }
                 }
             }};
@@ -819,7 +826,19 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 // visit is charged two units: a literal's pair meets one
                 // candidate a product, and any other label's two.
                 let bucket = owned_bucket(outer, outer1);
-                if inner1 == POS {
+                if let &[OwnedProduct { prod, slots: [pos, _, neg] }] = bucket {
+                    // A bucket of one product, as most are, without the
+                    // loops' tests.
+                    if inner1 == POS {
+                        push!(pos, POS, prod);
+                    } else if inner1 == NEG {
+                        push!(neg, NEG, prod);
+                    } else {
+                        held += 2;
+                        push!(pos, POS, prod);
+                        push!(neg, NEG, prod);
+                    }
+                } else if inner1 == POS {
                     for &OwnedProduct { prod, slots: [pos, _, _] } in bucket {
                         push!(pos, POS, prod);
                     }
