@@ -1408,7 +1408,7 @@ impl<T> Tail<T> {
 
 /// Whether `list` holds one product for each of `width` f indices, in
 /// order.
-fn one_each(list: &[ProductEntry], width: usize) -> bool {
+pub(super) fn one_each(list: &[ProductEntry], width: usize) -> bool {
     list.len() == width && list.iter().enumerate().all(|(i, e)| e.f_idx.idx() == i)
 }
 

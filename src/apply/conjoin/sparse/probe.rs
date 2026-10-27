@@ -382,18 +382,26 @@ fn walk_one_side<const SWAPPED: bool>(
         (pl.right, &pb.right_offsets, &pb.g_by_right, shape.g.right)
     };
     build_reverse_index::<SWAPPED>(eng, g_level, key_width, Some(&counts[..key_width]), &mut pb.index)?;
-    let walk = OneSide { list, offsets, index: pb.index.view(), other };
+    let f_width = if !SWAPPED { shape.f.left } else { shape.f.right };
+    let direct = one_each(list, f_width) && counts[..key_width].iter().all(|&n| n == 1);
+    let walk = OneSide { list, offsets, index: pb.index.view(), other, direct };
     walk_level::<SWAPPED, _>(eng, ws, &walk, f_level, emit)
 }
 
 /// What [`walk_one_side`] reads for each `f` pair: the walked child's
 /// product list and its bucket bounds by `f` index, `g`'s pairs by the
 /// walked child, and the other child's products.
+///
+/// Where the walked child lists one product per `f` index, in order
+/// ([`one_each`]), and `g` has one pair under each of its walked child's
+/// nodes, the walk is `direct`: a pair's product is read at its child and
+/// the `g` pair under it at the product's `g` index, without bucket bounds.
 struct OneSide<'a> {
     list: &'a [ProductEntry],
     offsets: &'a [u32],
     index: GroupedView<'a, RevEntry>,
     other: CellLookup<'a>,
+    direct: bool,
 }
 
 impl NodeWalk for OneSide<'_> {
@@ -404,6 +412,22 @@ impl NodeWalk for OneSide<'_> {
         ticker: &mut crate::limits::PollGate,
         mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
+        if self.direct {
+            // A bucket of one product over one `g` pair: two units a pair,
+            // as below.
+            for pair in pairs {
+                let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
+                let e = &self.list[a as usize];
+                let r = &self.index.entries[e.g_idx.idx()];
+                let across = self.other.get(b, r.other);
+                if across != NO_PRODUCT {
+                    let through = e.prod_idx.0;
+                    let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
+                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
+                }
+            }
+            return ticker.poll(2 * pairs.len() as u64 + 1);
+        }
         let mut work = 0u64;
         for pair in pairs {
             let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
@@ -452,6 +476,7 @@ fn walk_pairs(
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
     let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
+    let one_each = one_each(pl.left, shape.f.left) && one_each(pl.right, shape.f.right);
     let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
     let slots = (2 * g_pairs).next_power_of_two().max(16);
     let small = cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs;
@@ -470,7 +495,7 @@ fn walk_pairs(
             }
         }
         let dense = &pb.dense;
-        let walk = BothSides::new(pl, offsets,
+        let walk = BothSides::new(pl, offsets, one_each,
             #[inline(always)]
             |c: u32, d: u32| dense[c as usize * width + d as usize]);
         walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
@@ -498,7 +523,7 @@ fn walk_pairs(
         }
     }
     let table = &pb.table;
-    let walk = BothSides::new(pl, offsets,
+    let walk = BothSides::new(pl, offsets, one_each,
         #[inline(always)]
         |c: u32, d: u32| {
             let key = pair_key(c, d);
@@ -519,16 +544,19 @@ fn walk_pairs(
 
 /// What [`walk_pairs`] reads for each `f` pair: both children's product
 /// lists and their bucket bounds by `f` index, and `find`, naming the `g`
-/// node of a pair of `g`'s children, `NO_PRODUCT` for none.
+/// node of a pair of `g`'s children, `NO_PRODUCT` for none. Where both
+/// lists hold one product per `f` index, in order ([`one_each`]), a pair's
+/// products are read at its children, without bucket bounds.
 struct BothSides<'a, F> {
     pl: Sides<&'a [ProductEntry]>,
     offsets: (&'a [u32], &'a [u32]),
+    one_each: bool,
     find: F,
 }
 
 impl<'a, F: Fn(u32, u32) -> u32> BothSides<'a, F> {
-    fn new(pl: Sides<&'a [ProductEntry]>, offsets: (&'a [u32], &'a [u32]), find: F) -> Self {
-        BothSides { pl, offsets, find }
+    fn new(pl: Sides<&'a [ProductEntry]>, offsets: (&'a [u32], &'a [u32]), one_each: bool, find: F) -> Self {
+        BothSides { pl, offsets, one_each, find }
     }
 }
 
@@ -540,6 +568,18 @@ impl<F: Fn(u32, u32) -> u32> NodeWalk for BothSides<'_, F> {
         ticker: &mut crate::limits::PollGate,
         mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
+        if self.one_each {
+            // One product a side: two units a pair, as below.
+            for pair in pairs {
+                let l = &self.pl.left[pair.left.raw() as usize];
+                let r = &self.pl.right[pair.right.raw() as usize];
+                let parent = (self.find)(l.g_idx.0, r.g_idx.0);
+                if parent != NO_PRODUCT {
+                    push(ParEntry { g_parent: parent, left_prod: l.prod_idx.0, right_prod: r.prod_idx.0 })?;
+                }
+            }
+            return ticker.poll(2 * pairs.len() as u64);
+        }
         let (lo, ro) = self.offsets;
         let mut work = 0u64;
         for pair in pairs {
