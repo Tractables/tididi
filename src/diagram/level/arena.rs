@@ -170,14 +170,16 @@ impl TddLevel {
     /// node's pair is rewritten in its word and must be kept. The arena is
     /// left with the kept pairs only and no dead pairs; a node in the ranged
     /// encoding keeps its `ranges` entry. Allocates nothing. Returns the
-    /// level's live pairs, an inline node's one counted.
+    /// level's live pairs: the moved pairs, and one for each node inline
+    /// before or after, counted in the arms that leave a node inline.
     #[inline]
     pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(ChildPair) -> (ChildPair, bool)) -> usize {
         debug_assert!(self.ranges_in_node_order(), "a slide reads the ranges in node order");
         let TddLevel { nodes, pairs, ranges, dead_pairs, .. } = self;
         let pairs = pairs.stored_mut();
+        let nodes = nodes.stored_mut();
         let (mut cursor, mut inline) = (0usize, 0usize);
-        for node in nodes.stored_mut().iter_mut() {
+        for node in nodes.iter_mut() {
             let (start, len, ranged) = match node.kind() {
                 NodeKind::Inline(pair) => {
                     let (pair, kept) = f(pair);
@@ -199,11 +201,13 @@ impl TddLevel {
                 pairs[write] = pair;
                 write += usize::from(kept);
             }
-            // A node left one pair holds it inline, past the cursor.
-            inline += usize::from(write - cursor == 1);
             *node = match write - cursor {
                 0 => EncodedNode::multi_pair(0, 0),
-                1 => EncodedNode::inline(pairs[cursor]),
+                1 => {
+                    // A node left one pair holds it inline, past the cursor.
+                    inline += 1;
+                    EncodedNode::inline(pairs[cursor])
+                }
                 kept => {
                     let at = std::mem::replace(&mut cursor, write);
                     match ranged {
