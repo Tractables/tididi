@@ -63,6 +63,27 @@ pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
     (new_len, values_merged)
 }
 
+/// [`compact_slots`] merging no values: each kept slot moves down to the
+/// next compacted slot, in the ascending order given. Writes `remap[old]` for
+/// every kept slot and returns the new length, which the caller truncates the
+/// store to.
+pub(crate) fn compact_slots_apart<S: ?Sized>(
+    store: &mut S,
+    kept: impl IntoIterator<Item = usize>,
+    mut move_down: impl FnMut(&mut S, usize, usize),
+    remap: &mut [u32],
+) -> usize {
+    let mut new_len = 0usize;
+    for old in kept {
+        if new_len != old {
+            move_down(store, new_len, old);
+        }
+        remap[old] = new_len as u32;
+        new_len += 1;
+    }
+    new_len
+}
+
 /// Compact counts and rekey their overflow entries together. As with
 /// [`compact_slots`], the caller truncates the column to the returned length.
 /// `kept` is strictly ascending; unreferenced entries in `remap` are `u32::MAX`.

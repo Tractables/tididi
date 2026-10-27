@@ -129,6 +129,43 @@ fn a_bounded_prune_merges_equal_values() {
     }
 }
 
+/// A scaled-float level with as many referenced slots as the merge test
+/// samples from merges where its sample repeats a value: distinct values
+/// stay in their slots, and with every slot referenced the level is left as
+/// it is, while a column of seven values repeated merges to those seven.
+#[test]
+fn a_large_bounded_level_merges_where_its_sample_repeats() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightValue};
+    use crate::test_helpers::rat;
+    let eng = &crate::Engine::new();
+    let n = super::SAMPLE_FROM + 900;
+    for (distinct, kept) in [(n, n), (7, 7)] {
+        let nums: Vec<i64> = (0..n).map(|i| (i % distinct) as i64 + 1).collect();
+        let pairs: Vec<Vec<(u32, u32)>> = (0..n as u32).map(|s| vec![(0, s)]).collect();
+        let lists: Vec<&[(u32, u32)]> = pairs.iter().map(Vec::as_slice).collect();
+        let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
+        let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
+        let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
+        let mut tdd = toy_weighted(exact, nums.iter().map(|&v| rat(v, 7)).collect(), &lists);
+        let (v, _, _) = boundary_marginal_levels(&tdd)[0];
+        let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
+        let scaled = |v: i64| ScaledFloat::from_rational(&rat(v, 7));
+        ws.set_level(v.idx(), nums.iter().map(|&v| WeightValue::scaled(scaled(v))).collect());
+        tdd.weights = Some(ws);
+
+        let merged = prune_value_slots(eng, &mut tdd).unwrap();
+
+        let values = tdd.weights().unwrap().level(v.idx()).unwrap();
+        assert_eq!(values.len(), kept, "{distinct} distinct");
+        assert_eq!(tdd.levels[v.idx()].slot_count() as usize, kept, "{distinct} distinct");
+        assert_eq!(merged.is_empty(), kept == n, "{distinct} distinct");
+        let got: Vec<ScaledFloat> = values.iter().take(distinct).map(|v| *v.as_scaled().unwrap()).collect();
+        let want: Vec<ScaledFloat> = (1..=distinct as i64).map(scaled).collect();
+        assert_eq!(got, want, "{distinct} distinct");
+        check_slot_count_uniqueness(&tdd).unwrap();
+    }
+}
+
 /// The referenced slots come out sorted and deduplicated, whatever order
 /// and multiplicity the parent's pairs name them in, past a word of slots.
 #[test]
@@ -307,7 +344,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap).unwrap();
+            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
 
         assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
@@ -378,7 +415,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap).unwrap();
+            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
 
         let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 

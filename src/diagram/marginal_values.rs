@@ -7,7 +7,7 @@
 use super::{TddLevel, WeightStore, WeightValue};
 use crate::value::{CountRead, CountRef};
 use crate::limits::{Limits, OperationError};
-use crate::value::slots::{compact_count_slots, compact_slots, key_map, release_key_map, truncate_with_slack};
+use crate::value::slots::{compact_count_slots, compact_slots, compact_slots_apart, key_map, release_key_map, truncate_with_slack};
 
 /// A level's stored values, with their numeric representation already selected.
 pub(crate) enum MarginalValues<'a> {
@@ -70,13 +70,16 @@ impl<'a> MarginalStorage<'a> {
     }
 
     /// Keep only referenced slots, merging equal values, and return the number merged.
+    /// With `merge` off, a bounded-precision weighted store keeps equal
+    /// values in their own slots, which invariant 10 allows it; every other
+    /// store merges regardless.
     /// Weighted leaf columns must never be passed here: they are pinned by label.
     ///
     /// # Errors
     ///
     /// `OverBudget` where `lim` refuses the map that finds equal values,
     /// which is reserved before any slot moves: the level is then untouched.
-    pub(crate) fn compact(&mut self, lim: &Limits, referenced: &[u32], remap: &mut [u32]) -> Result<usize, OperationError> {
+    pub(crate) fn compact(&mut self, lim: &Limits, referenced: &[u32], remap: &mut [u32], merge: bool) -> Result<usize, OperationError> {
         let kept = referenced.iter().map(|&i| i as usize);
         if let Some((counts, big)) = self.level.marginal_store_mut() {
             let old_len = counts.len();
@@ -97,6 +100,7 @@ impl<'a> MarginalStorage<'a> {
         let bounded = weights.is_bounded();
         let values = weights.level_vals_mut(self.index).expect("a nonempty weighted store has a column");
         let (new_len, merged) = match bounded {
+            true if !merge => (compact_slots_apart(values, kept, |values, dst, src| values.swap(dst, src), remap), 0),
             // Two words a key, where a `WeightKey` can hold a big rational.
             true => {
                 let mut by_key = key_map(lim, referenced.len())?;

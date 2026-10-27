@@ -10,7 +10,8 @@
 //! through the same remap. The output level's store is exempt: it holds the
 //! result. Equal-valued surviving slots are merged, which is where slot-count
 //! uniqueness (invariant 10) is established for stores born at an apply emit
-//! site.
+//! site. A large bounded-precision weighted store, which invariant 10 does
+//! not ask to merge, merges only where a sample of its values repeats one.
 //!
 //! **Precondition:** parent levels must be in post-tagger form (marginal-side refs
 //! decodable with `ChildDecoder`) — never mid-apply.
@@ -26,7 +27,7 @@
 use crate::Engine;
 use crate::limits::OperationError;
 
-use crate::diagram::{Tdd, MarginalValues, MarginalStorage};
+use crate::diagram::{bounded_key, Tdd, MarginalValues, MarginalStorage, WeightValue};
 
 use crate::value::slots::referenced_marginal_slots;
 use crate::diagram::boundary_marginal_levels;
@@ -74,7 +75,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         let store_len = MarginalValues::read(&tdd.levels[v.idx()], tdd.weights.as_ref(), v.idx()).map_or(0, |values| values.len());
         if store_len == 0 {
             tdd.reindex_level(v, &[], &mut [], |level, weights, referenced, remap| {
-                MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap)
+                MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap, true)
             })?;
             continue;
         }
@@ -88,12 +89,27 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
             continue; // OOB ref: broken upstream (the marginal-canonicality checker's domain)
         }
 
+        // On a large bounded-precision level the merge map is most of the
+        // prune's cost, and floats from different sums seldom agree to the
+        // bit: the level merges where a sample of its referenced values
+        // repeats one, and otherwise keeps its values apart, left as it is
+        // when every slot is referenced.
+        let merge = match tdd.weights.as_ref().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal()) {
+            Some(weights) if referenced.len() >= SAMPLE_FROM => {
+                sample_repeats(weights.level(v.idx()).expect("a nonempty weighted store has a column"), referenced)
+            }
+            _ => true,
+        };
+        if !merge && referenced.len() == store_len {
+            continue;
+        }
+
         // The composed remap, old slot to final slot: unreferenced slots are
         // dropped, and equal-valued referenced slots map to one output slot
         // (first occurrence wins).
         remap.resize(store_len, u32::MAX);
         let values_merged = tdd.reindex_level(v, referenced, &mut remap, |level, weights, referenced, remap| {
-            MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap)
+            MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap, merge)
         })?;
         if values_merged > 0 {
             merged_levels.push(v.0);
@@ -105,6 +121,25 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
     lim.charge_work(tdd.vtree.num_nodes() as u64);
 
     Ok(merged_levels)
+}
+
+/// The referenced values a bounded level's merge test reads.
+const SAMPLE: usize = 1024;
+
+/// The fewest referenced slots on which a bounded level samples before it
+/// merges; a smaller level merges outright.
+const SAMPLE_FROM: usize = 4 * SAMPLE;
+
+/// Whether [`SAMPLE`] of the `referenced` slots, at an even stride, hold two
+/// bit-identical values of the bounded column `values`.
+fn sample_repeats(values: &[WeightValue], referenced: &[u32]) -> bool {
+    let step = referenced.len() / SAMPLE;
+    let mut keys = [(0u64, 0i64); SAMPLE];
+    for (k, key) in keys.iter_mut().enumerate() {
+        *key = bounded_key(&values[referenced[k * step] as usize]).expect("a bounded store holds no exact value");
+    }
+    keys.sort_unstable();
+    keys.windows(2).any(|w| w[0] == w[1])
 }
 
 #[cfg(test)]
