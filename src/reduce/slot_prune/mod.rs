@@ -25,7 +25,7 @@
 //! boundary, never an allocation failure partway through a store.
 
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 
 use crate::diagram::{bounded_key, Tdd, MarginalValues, MarginalStorage, WeightValue};
 
@@ -96,7 +96,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // when every slot is referenced.
         let merge = match tdd.weights.as_ref().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal()) {
             Some(weights) if referenced.len() >= SAMPLE_FROM => {
-                sample_repeats(weights.level(v.idx()).expect("a nonempty weighted store has a column"), referenced)
+                sample_repeats(lim, weights.level(v.idx()).expect("a nonempty weighted store has a column"), referenced)?
             }
             _ => true,
         };
@@ -123,23 +123,59 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
     Ok(merged_levels)
 }
 
-/// The referenced values a bounded level's merge test reads.
+/// The referenced values a bounded level's merge test reads at an even
+/// stride, and about as many as it reads by hash.
 const SAMPLE: usize = 1024;
 
 /// The fewest referenced slots on which a bounded level samples before it
 /// merges; a smaller level merges outright.
 const SAMPLE_FROM: usize = 4 * SAMPLE;
 
-/// Whether [`SAMPLE`] of the `referenced` slots, at an even stride, hold two
-/// bit-identical values of the bounded column `values`.
-fn sample_repeats(values: &[WeightValue], referenced: &[u32]) -> bool {
+/// Whether the `referenced` slots of the bounded column `values` hold two
+/// bit-identical values in either of two samples. [`SAMPLE`] slots at an
+/// even stride find a few values that fill many slots. Failing that, the
+/// values whose key hashes into one part in `referenced.len() / SAMPLE` of
+/// the hash range keep every copy of each value they keep, so they find
+/// values repeated a few times wherever the copies sit; that pass reads
+/// every referenced slot, and keeps at most `4 * SAMPLE` keys.
+fn sample_repeats(lim: &Limits, values: &[WeightValue], referenced: &[u32]) -> Result<bool, OperationError> {
+    let key = |slot: u32| bounded_key(&values[slot as usize]).expect("a bounded store holds no exact value");
     let step = referenced.len() / SAMPLE;
-    let mut keys = [(0u64, 0i64); SAMPLE];
-    for (k, key) in keys.iter_mut().enumerate() {
-        *key = bounded_key(&values[referenced[k * step] as usize]).expect("a bounded store holds no exact value");
+    let mut strided = [(0u64, 0i64); SAMPLE];
+    for (k, out) in strided.iter_mut().enumerate() {
+        *out = key(referenced[k * step]);
     }
+    if repeats(&mut strided) {
+        return Ok(true);
+    }
+    let below = u64::MAX / (referenced.len() / SAMPLE) as u64;
+    let mut hashed = Vec::new();
+    lim.reserve_exact(&mut hashed, 4 * SAMPLE)?;
+    for &slot in referenced {
+        let k = key(slot);
+        if mix(k) <= below {
+            hashed.push(k);
+            if hashed.len() == hashed.capacity() { break; }
+        }
+    }
+    let found = repeats(&mut hashed);
+    // The buffer is freed here, inside the operation: give its charge back.
+    lim.release_bytes((hashed.capacity() * std::mem::size_of::<(u64, i64)>()) as u64);
+    Ok(found)
+}
+
+/// Whether `keys` holds two equal keys; sorts them.
+fn repeats(keys: &mut [(u64, i64)]) -> bool {
     keys.sort_unstable();
     keys.windows(2).any(|w| w[0] == w[1])
+}
+
+/// A hash of a bounded key whose every bit depends on both words.
+fn mix((bits, word): (u64, i64)) -> u64 {
+    let mut h = bits ^ (word as u64).rotate_left(32).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^ (h >> 31)
 }
 
 #[cfg(test)]

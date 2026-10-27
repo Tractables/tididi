@@ -132,14 +132,16 @@ fn a_bounded_prune_merges_equal_values() {
 /// A scaled-float level with as many referenced slots as the merge test
 /// samples from merges where its sample repeats a value: distinct values
 /// stay in their slots, and with every slot referenced the level is left as
-/// it is, while a column of seven values repeated merges to those seven.
+/// it is, while a column of seven values repeated merges to those seven,
+/// and one whose values come in pairs half the column apart, which the
+/// stride never reads together, merges to half its slots.
 #[test]
 fn a_large_bounded_level_merges_where_its_sample_repeats() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightValue};
     use crate::test_helpers::rat;
     let eng = &crate::Engine::new();
     let n = super::SAMPLE_FROM + 900;
-    for (distinct, kept) in [(n, n), (7, 7)] {
+    for (distinct, kept) in [(n, n), (7, 7), (n / 2, n / 2)] {
         let nums: Vec<i64> = (0..n).map(|i| (i % distinct) as i64 + 1).collect();
         let pairs: Vec<Vec<(u32, u32)>> = (0..n as u32).map(|s| vec![(0, s)]).collect();
         let lists: Vec<&[(u32, u32)]> = pairs.iter().map(Vec::as_slice).collect();
