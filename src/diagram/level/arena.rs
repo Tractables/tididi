@@ -169,19 +169,21 @@ impl TddLevel {
     /// [`reencode_shrunk`](Self::reencode_shrunk) leaves them. An inline
     /// node's pair is rewritten in its word and must be kept. The arena is
     /// left with the kept pairs only and no dead pairs; a node in the ranged
-    /// encoding keeps its `ranges` entry. Allocates nothing.
+    /// encoding keeps its `ranges` entry. Allocates nothing. Returns the
+    /// level's live pairs, an inline node's one counted.
     #[inline]
-    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(ChildPair) -> (ChildPair, bool)) {
+    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(ChildPair) -> (ChildPair, bool)) -> usize {
         debug_assert!(self.ranges_in_node_order(), "a slide reads the ranges in node order");
         let TddLevel { nodes, pairs, ranges, dead_pairs, .. } = self;
         let pairs = pairs.stored_mut();
-        let mut cursor = 0usize;
+        let (mut cursor, mut inline) = (0usize, 0usize);
         for node in nodes.stored_mut().iter_mut() {
             let (start, len, ranged) = match node.kind() {
                 NodeKind::Inline(pair) => {
                     let (pair, kept) = f(pair);
                     debug_assert!(kept, "an inline node's pair is never dropped");
                     *node = EncodedNode::inline(pair);
+                    inline += 1;
                     continue;
                 }
                 NodeKind::Multi { start, len } => (start as usize, len as usize, None),
@@ -197,6 +199,8 @@ impl TddLevel {
                 pairs[write] = pair;
                 write += usize::from(kept);
             }
+            // A node left one pair holds it inline, past the cursor.
+            inline += usize::from(write - cursor == 1);
             *node = match write - cursor {
                 0 => EncodedNode::multi_pair(0, 0),
                 1 => EncodedNode::inline(pairs[cursor]),
@@ -215,6 +219,7 @@ impl TddLevel {
         }
         pairs.truncate(cursor);
         *dead_pairs = 0;
+        cursor + inline
     }
 
     /// Whether every nonempty pair range of the level starts at or past the

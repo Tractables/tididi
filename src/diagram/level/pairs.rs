@@ -807,6 +807,19 @@ impl TddLevel {
         }
     }
 
+    /// [`leave_live_pairs`](Self::leave_live_pairs) off a census of the
+    /// level ([`live_pairs`](Self::live_pairs)), for an operation that has
+    /// just written its nodes and knows no count.
+    #[inline]
+    pub(crate) fn leave_census(&mut self) {
+        if matches!(self.state, LevelState::Structural(_)) {
+            let n = self.live_pairs();
+            if let LevelState::Structural(held) = &mut self.state {
+                held.leave(n as u64);
+            }
+        }
+    }
+
     /// Forget the live pairs kept or left on this level: an edit changed it.
     #[inline]
     pub(crate) fn forget_held_pairs(&mut self) {

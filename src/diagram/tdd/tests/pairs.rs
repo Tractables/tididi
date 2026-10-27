@@ -104,11 +104,19 @@ fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
 
 #[test]
 fn the_operations_leave_the_levels_they_change_counted() {
+    let left = left_counted(0x9a17);
+    assert!(left[1..].iter().all(|&n| n > 0), "levels left counted: {left:?}");
+    // The same where small levels are held as descriptions.
+    crate::test_helpers::with_floor(crate::test_helpers::LOW_FLOOR, || left_counted(0x9a18));
+}
+
+/// The stored levels that keep a count after a conjunction, a negation, a
+/// prune of levels counted before it and a minimization, of diagrams
+/// drawn from `seed`, each operation's counts checked.
+fn left_counted(seed: u64) -> [usize; 4] {
     let eng = crate::Engine::new();
-    // Stored levels that keep a count after a conjunction, a negation, a
-    // prune of levels counted before it, a minimization.
     let mut left = [0usize; 4];
-    for f in conjunctions(&eng, 0x9a17) {
+    for f in conjunctions(&eng, seed) {
         left[0] += counted(&f);
         assert_counts_hold(&f, "conjunction");
 
@@ -133,7 +141,7 @@ fn the_operations_leave_the_levels_they_change_counted() {
         left[3] += counted(&m);
         assert_counts_hold(&m, "minimization");
     }
-    assert!(left[1] > 0 && left[2] > 0, "levels left counted: {left:?}");
+    left
 }
 
 #[test]

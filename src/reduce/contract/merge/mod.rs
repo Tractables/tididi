@@ -140,6 +140,7 @@ pub(super) fn contract_twins(
         gather_words(bufs, tdd.levels[t1.idx()].nodes.stored());
     }
     let arenas = reserve_rebuilt(lim, &tdd.levels[t1.idx()], remap, bufs, unnamed, in_order)?;
+    let t1_pairs = arenas.live;
     let parent_room = match tdd.levels[parent.idx()].pairs.implicit() {
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
@@ -201,7 +202,7 @@ pub(super) fn contract_twins(
     // leaves in node order, stay so for the rest of the sweep
     // (`Listing::ordered`), and a later rewrite of either reads no order.
     let known = !diagram_marginal && listing.ordered(parent.idx());
-    let ordered = rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
+    let (ordered, parent_pairs) = rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
     if !diagram_marginal {
         listing.set_ordered(t1.idx());
         if ordered {
@@ -221,6 +222,16 @@ pub(super) fn contract_twins(
         }
     }
     fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
+    // The merge's two levels are left their live pairs: t1's counted as
+    // its arenas were reserved, the parent's as it was rewritten. A
+    // fork-down folds repeated pairs of t1's survivors, which are then
+    // counted again.
+    if bufs.resolve_keeps.is_empty() {
+        tdd.levels[t1.idx()].leave_live_pairs(t1_pairs);
+    } else {
+        tdd.levels[t1.idx()].leave_census();
+    }
+    tdd.levels[parent.idx()].leave_live_pairs(parent_pairs);
     Ok(merged_members + unnamed.len())
 }
 

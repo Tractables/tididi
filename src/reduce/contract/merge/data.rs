@@ -16,6 +16,18 @@ use super::rewrite::{survivor, DISCARDED, DROPPED};
 pub(super) struct RebuiltArenas {
     pairs: Vec<ChildPair>,
     ranges: RangeTable,
+    /// The live pairs of the rebuilt level, which the merge leaves for the
+    /// close.
+    pub(super) live: usize,
+}
+
+/// The pairs of the level `t1` will be after a merge: those of its arena,
+/// which the rebuild reserves, and its live pairs, an inline node's one
+/// counted.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RebuiltPairs {
+    arena: usize,
+    live: usize,
 }
 
 /// The first arena offset or length the packed node encoding cannot hold;
@@ -101,12 +113,14 @@ fn absorbed(bits: &[u64], i: usize) -> bool {
 /// of one pair is inline, so the level's arena pairs are its pairs less its
 /// nodes of one pair, read off the node words in one branch-free pass. The
 /// rest reads only the groups' members and the unnamed nodes. A level with
-/// ranged nodes is counted node by node.
+/// ranged nodes is counted node by node. The live pairs are the level's
+/// less those of the nodes dropped with their pairs, a concat group's
+/// survivor holding its members' pairs.
 ///
 /// `remap` is as [`mark_group_members`](super::mark_group_members) leaves
 /// it, with the unnamed nodes marked [`DISCARDED`]; the survivors are
 /// numbered by [`rebuild_level`]. Where the level is rebuilt in node order,
-/// `in_order` holds the count, from [`in_order_pairs`].
+/// `in_order` holds the counts, from [`in_order_pairs`].
 ///
 /// # Errors
 ///
@@ -118,15 +132,17 @@ pub(super) fn reserve_rebuilt(
     remap: &MergeRemap,
     bufs: &MergeBuffers,
     unnamed: &[u32],
-    in_order: Option<usize>,
+    in_order: Option<RebuiltPairs>,
 ) -> Result<RebuiltArenas, OperationError> {
-    let total = if let Some(total) = in_order {
-        total
+    let RebuiltPairs { arena: total, live } = if let Some(counts) = in_order {
+        counts
     } else if level.ranges.is_empty() {
         let (pairs, _, single) = level.pair_census();
         let mut total = (pairs - single) as usize;
+        let mut live = pairs as usize;
         for &u in unnamed {
             total -= level.arena_pairs_at(u as usize);
+            live -= level.pair_count_at(u as usize);
         }
         for p in &bufs.group_plans {
             let members = &bufs.sel[p.start as usize..p.end as usize];
@@ -134,6 +150,7 @@ pub(super) fn reserve_rebuilt(
                 GroupAction::DupRedirect => {
                     for &m in &members[1..] {
                         total -= level.arena_pairs_at(m as usize);
+                        live -= level.pair_count_at(m as usize);
                     }
                 }
                 GroupAction::Concat => {
@@ -142,7 +159,7 @@ pub(super) fn reserve_rebuilt(
                 }
             }
         }
-        total
+        RebuiltPairs { arena: total, live }
     } else {
         rebuilt_pairs(level, remap, bufs)
     };
@@ -155,37 +172,40 @@ pub(super) fn reserve_rebuilt(
     if ranged > 0 {
         ranges.reserve_exact(lim, ranged)?;
     }
-    Ok(RebuiltArenas { pairs, ranges })
+    Ok(RebuiltArenas { pairs, ranges, live })
 }
 
 /// The pairs of the level `t1` will be after a merge whose search marked
 /// the members ([`Marks`]), where [`rebuild_in_order`] can rebuild it: the
 /// level has no ranged node, the marks say every group holds two pairs or
 /// more, and the rebuilt level fits the packed encoding, so that it has no
-/// ranged node either. The count is the one [`reserve_rebuilt`] makes, the
-/// marks having counted the groups' inline members.
-pub(super) fn in_order_pairs(level: &TddLevel, marks: Marks, unnamed: &[u32]) -> Option<usize> {
+/// ranged node either. The counts are the ones [`reserve_rebuilt`] makes,
+/// the marks having counted the groups' inline members.
+pub(super) fn in_order_pairs(level: &TddLevel, marks: Marks, unnamed: &[u32]) -> Option<RebuiltPairs> {
     if !marks.in_order || !level.ranges.is_empty() {
         return None;
     }
     let (pairs, _, single) = level.pair_census();
     let mut total = (pairs - single) as usize;
+    let mut live = pairs as usize;
     for &u in unnamed {
         total -= level.arena_pairs_at(u as usize);
+        live -= level.pair_count_at(u as usize);
     }
     total += marks.inline;
-    (total < PACKED_LIMIT).then_some(total)
+    (total < PACKED_LIMIT).then_some(RebuiltPairs { arena: total, live })
 }
 
 /// The pairs of the level `t1` will be after the merge, node by node: a
 /// survivor keeps its own range, an absorbed concat member's range moves
 /// to its survivor, and an inline node takes an arena slot only when a
-/// concat group unions it. For a level with ranged nodes.
+/// concat group unions it; every node the rebuild keeps or concatenates
+/// keeps its pairs live. For a level with ranged nodes.
 #[cold]
-fn rebuilt_pairs(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> usize {
+fn rebuilt_pairs(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> RebuiltPairs {
     let MergeRemap { final_remap, absorbed: bits, .. } = remap;
     let mut plans = concat_plans(bufs);
-    let mut total = 0usize;
+    let (mut total, mut live) = (0usize, 0usize);
     for (i, (node, to)) in level.nodes().iter().zip(final_remap).enumerate() {
         let unioned = if absorbed(bits, i) {
             // A node no pair names, or a content-equal redirect: dropped
@@ -197,12 +217,14 @@ fn rebuilt_pairs(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> u
         } else {
             plans.next_if(|p| bufs.sel[p.start as usize] == i as u32).is_some()
         };
-        total += match level.arena_range(node.kind()) {
+        let range = level.arena_range(node.kind());
+        live += range.as_ref().map_or(1, |range| range.len());
+        total += match range {
             Some(range) => range.len(),
             None => usize::from(unioned),
         };
     }
-    total
+    RebuiltPairs { arena: total, live }
 }
 
 /// The concat plans, in survivor order.
@@ -270,7 +292,7 @@ pub(super) fn rebuild_level(
     bufs: &MergeBuffers,
     check_disjoint: bool,
 ) {
-    let RebuiltArenas { pairs: mut fresh, ranges: mut fresh_ranges } = arenas;
+    let RebuiltArenas { pairs: mut fresh, ranges: mut fresh_ranges, .. } = arenas;
     let reserved = fresh.capacity();
     let TddLevel { nodes, pairs, ranges, .. } = &mut *level;
     let old = pairs.stored().expect("a merged level is stored");
@@ -427,7 +449,7 @@ pub(super) fn rebuild_in_order(
     groups: InOrder<'_>,
     check_disjoint: bool,
 ) {
-    let RebuiltArenas { pairs: mut fresh, ranges: fresh_ranges } = arenas;
+    let RebuiltArenas { pairs: mut fresh, ranges: fresh_ranges, .. } = arenas;
     debug_assert!(fresh_ranges.is_empty() && level.ranges.is_empty(), "a level rebuilt in node order has no ranged node");
     let reserved = fresh.capacity();
     let TddLevel { nodes, pairs, .. } = &mut *level;

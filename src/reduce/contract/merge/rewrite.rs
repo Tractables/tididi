@@ -44,7 +44,9 @@ pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize)
 /// mutated anything (`room`, an implicit parent's, through `lim`).
 ///
 /// `ordered` says the parent is known to hold its ranges in node order,
-/// which is then not read again. Returns whether the parent is left so.
+/// which is then not read again. Returns whether the parent is left so,
+/// and its live pairs, counted as they are written: the merge leaves them
+/// for the close.
 pub(super) fn rewrite_parent(
     lim: &Limits,
     tdd: &mut Tdd,
@@ -53,7 +55,7 @@ pub(super) fn rewrite_parent(
     remap: &MergeRemap,
     room: Option<StoreRoom>,
     ordered: bool,
-) -> bool {
+) -> (bool, usize) {
     // Arena garbage from the whole rewrite, accumulated and noted in one charge
     // below: the only reader (`compact_pairs_if_stale`) runs after the loop, so a
     // per-iteration saturating add buys nothing.
@@ -61,17 +63,19 @@ pub(super) fn rewrite_parent(
     let parent_level = &mut tdd.levels[parent.idx()];
     // An implicit parent's pairs are read off the description through the
     // same filter, and the level is built stored where one changes.
-    if parent_level.pairs.implicit().is_some() {
+    if let Some(described) = parent_level.implicit().map(|d| d.pairs()) {
         debug_assert!(room.is_some(), "an implicit parent's room is reserved");
+        let mut dropped = 0usize;
         parent_level
             .rewrite_described_in(lim, room, false, |_, _, _, pair| {
                 let (pair, kept) = canonical_pair_on(pair, t1_side, &remap.final_remap);
+                dropped += usize::from(!kept);
                 kept.then_some(pair)
             })
             .expect("an implicit parent is rewritten in its room");
         // Built stored at its description's places, in node order: its
         // arena is left as the stored route below leaves it.
-        return parent_level.compact_in_node_order();
+        return (parent_level.compact_in_node_order(), described - dropped);
     }
     // Where the arena holds the ranges in node order, each node's kept pairs
     // move down to a write cursor as they are rewritten, which leaves the
@@ -81,25 +85,28 @@ pub(super) fn rewrite_parent(
     debug_assert!(!ordered || parent_level.ranges_in_node_order(), "a parent known in node order is so");
     if ordered || parent_level.ranges_in_node_order() {
         let final_remap = &remap.final_remap;
-        match t1_side {
+        let live = match t1_side {
             ChildSide::Left => parent_level.slide_pairs(|pair| canonical_pair::<true>(pair, final_remap)),
             ChildSide::Right => parent_level.slide_pairs(|pair| canonical_pair::<false>(pair, final_remap)),
-        }
-        return true;
+        };
+        return (true, live);
     }
+    let mut live = 0usize;
     for node_idx in 0..parent_level.nodes().len() {
         let kind = parent_level.node(node_idx).kind();
         let Some(range) = parent_level.arena_range(kind) else {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
+            live += 1;
             continue;
         };
         let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
+        live += new_len;
         if new_len < range.len() {
             dead_acc += parent_level.reencode_shrunk(node_idx, range.start, range.len(), new_len);
         }
     }
     parent_level.note_dead_pairs(dead_acc);
-    false
+    (false, live)
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
