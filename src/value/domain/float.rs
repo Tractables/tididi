@@ -10,7 +10,10 @@
 //! values, bit for bit. A cell whose two child columns are narrow, with
 //! offsets whose products and their sums stay normal floats, is summed in
 //! plain floats under the two columns' scales ([`plain_fold`]): the same
-//! roundings on the same values, without a scaled float per read.
+//! roundings on the same values, without a scaled float per read. Where
+//! the two columns' offsets do not fit that range as they are, a column
+//! whose offsets lie away from its middle is read times a power of two
+//! that centres them ([`Plain::new`], [`plain_fold_centred`]).
 
 use super::*;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
@@ -47,11 +50,45 @@ pub(crate) struct Offsets {
     hi: i64,
 }
 
-/// Floats `x` standing for `x · 2^scale`, as a narrow column holds them.
+/// Floats `x` standing for `x · 2^scale`, as a narrow column holds them,
+/// with the exponent `centre` of the power of two that centres their
+/// offsets ([`Plain::new`]).
 #[derive(Clone, Copy)]
 pub(crate) struct Plain<'a> {
     vals: &'a [f64],
     at: Offsets,
+    centre: i64,
+}
+
+impl<'a> Plain<'a> {
+    /// The floats `vals` under `scale`. Their `centre` moves their offsets
+    /// to the middle of the half of [`PLAIN_LO`]`..=`[`PLAIN_HI`] each
+    /// factor of a product may take, where they lie outside that half and
+    /// span less than it; it is 0 otherwise. A power of two that keeps each
+    /// float normal changes no fraction.
+    fn new(vals: &'a [f64], scale: i64) -> Plain<'a> {
+        let at = Offsets::of(vals, scale);
+        let (lo, hi) = (PLAIN_LO / 2, PLAIN_HI / 2);
+        let k = (lo + hi) / 2 - (at.lo + at.hi).div_euclid(2);
+        let centre = match (at.lo >= lo && at.hi <= hi) || !(-1022..=1023).contains(&k) || at.lo + k < lo || at.hi + k > hi {
+            true => 0,
+            false => k,
+        };
+        Plain { vals, at, centre }
+    }
+
+    /// The offsets of the floats times `2^centre`.
+    #[inline(always)]
+    fn centred(&self) -> Offsets {
+        let k = self.centre;
+        Offsets { scale: self.at.scale - k, lo: self.at.lo + k, hi: self.at.hi + k }
+    }
+}
+
+/// `2^k`, for `k` in `-1022..=1023`.
+#[inline(always)]
+fn pow2(k: i64) -> f64 {
+    f64::from_bits(((k + 1023) as u64) << 52)
 }
 
 impl Offsets {
@@ -73,7 +110,7 @@ impl<'a> FloatColumn<'a> {
     /// The column of a folded column's values.
     fn folded(col: FloatSlice<'a>) -> FloatColumn<'a> {
         match col {
-            FloatSlice::Narrow(vals, scale) => FloatColumn::Narrow(Plain { vals, at: Offsets::of(vals, scale) }),
+            FloatSlice::Narrow(vals, scale) => FloatColumn::Narrow(Plain::new(vals, scale)),
             wide => FloatColumn::Folded(wide),
         }
     }
@@ -111,7 +148,7 @@ impl<'a> FloatColumn<'a> {
     fn plain(&self) -> Option<Plain<'_>> {
         match self {
             FloatColumn::Narrow(col) => Some(*col),
-            FloatColumn::LeafPlain(vals, at) => Some(Plain { vals, at: *at }),
+            FloatColumn::LeafPlain(vals, at) => Some(Plain { vals, at: *at, centre: 0 }),
             _ => None,
         }
     }
@@ -146,6 +183,33 @@ fn plain_fold(
         sum += left.vals[lview.index(pair.left)] * right.vals[rview.index(pair.right)];
     }
     (sum == 0.0 || sum.is_normal()).then(|| ScaledFloat::at_offset(sum, left.at.scale + right.at.scale))
+}
+
+/// [`plain_fold`] with each column's floats times `2^centre`, for a cell
+/// whose columns are plain and whose centred offsets fit its range; `None`
+/// for any other cell. Kept out of line, so the cells that fit as they are
+/// keep their loop.
+#[inline(never)]
+fn plain_fold_centred(
+    pairs: &[ChildPair],
+    lchild: &StreamChild<'_, FloatFold>,
+    rchild: &StreamChild<'_, FloatFold>,
+) -> Option<ScaledFloat> {
+    let (Some(left), Some(right)) = (lchild.col.plain(), rchild.col.plain()) else { return None };
+    if left.centre == 0 && right.centre == 0 {
+        return None;
+    }
+    let (lview, rview) = (lchild.view, rchild.view);
+    let (l, r) = (left.centred(), right.centred());
+    if l.lo + r.lo < PLAIN_LO || l.hi + r.hi > PLAIN_HI {
+        return None;
+    }
+    let (by_left, by_right) = (pow2(left.centre), pow2(right.centre));
+    let mut sum = 0.0f64;
+    for pair in pairs {
+        sum += (left.vals[lview.index(pair.left)] * by_left) * (right.vals[rview.index(pair.right)] * by_right);
+    }
+    (sum == 0.0 || sum.is_normal()).then(|| ScaledFloat::at_offset(sum, l.scale + r.scale))
 }
 
 /// Resolve a child reference of level `level_idx` for the ensure walk, as
@@ -289,6 +353,9 @@ impl ValueDomain for FloatFold {
             && l.at.hi + r.at.hi <= PLAIN_HI
             && let Some(v) = plain_fold(pairs, l, left.view, r, right.view)
         {
+            return v;
+        }
+        if let Some(v) = plain_fold_centred(pairs, left, right) {
             return v;
         }
         FloatFold::fold(
