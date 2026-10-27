@@ -113,6 +113,16 @@ impl ValueDomain for FloatFold {
         Ok(col)
     }
 
+    /// The whole bound when it takes at most half the headroom. A column
+    /// that doubles its way up leaves each block it outgrew behind, beside a
+    /// final block up to twice its length, and the levels a Markov network's
+    /// sum-out streams have every cell alive, so the bound is their length.
+    #[inline]
+    fn stream_capacity(eng: &Engine, cells: usize, widest: usize) -> usize {
+        let bytes = (cells as u64).saturating_mul(std::mem::size_of::<ScaledFloat>() as u64);
+        if bytes <= eng.limits().headroom() / 2 { cells } else { widest }
+    }
+
     #[inline]
     fn push_col(
         eng: &Engine,

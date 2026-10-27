@@ -112,6 +112,15 @@ pub(crate) trait ValueDomain: Sized {
         cap: usize,
     ) -> Result<Self::Col, OperationError>;
 
+    /// The room a streamed level's column opens with: `widest`, the wider
+    /// operand level's node count, from which the column grows, or as much
+    /// as `cells`, the level's cell count, which bounds its alive cells and
+    /// so its length.
+    #[inline]
+    fn stream_capacity(_eng: &Engine, _cells: usize, widest: usize) -> usize {
+        widest
+    }
+
     /// Append one fold result to a column.
     fn push_col(
         eng: &Engine,

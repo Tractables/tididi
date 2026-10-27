@@ -58,8 +58,8 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 /// refers into those descendants: the caller streams only a level whose
 /// descendants are all targets of this apply or of an earlier batch that left
 /// them explicit, and a parent streams no earlier than any descendant. The
-/// output column is opened at the larger of the two operands' widths and
-/// grows; the reservation is fallible.
+/// output column opens at the room [`ValueDomain::stream_capacity`] gives
+/// it; the reservation is fallible.
 ///
 /// # Errors
 ///
@@ -83,7 +83,8 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade::<F, [TddLevel]>(levels, vtree, shape.left, computed, store);
     cascade::<F, [TddLevel]>(levels, vtree, shape.right, computed, store);
-    F::try_with_capacity(eng, shape.f.here.max(shape.g.here))
+    let cells = shape.f.here.saturating_mul(shape.g.here);
+    F::try_with_capacity(eng, F::stream_capacity(eng, cells, shape.f.here.max(shape.g.here)))
 }
 
 /// Phase: streaming row loop (per value kind, per route).
@@ -119,6 +120,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 /// here (see [`MarginalDomain::commit_in_flight`]); the slot prune establishes
 /// slot uniqueness (`test_helpers::check::marginal::check_slot_count_uniqueness`).
 pub(crate) fn commit_stream_state(
+    eng: &Engine,
     st: StreamLevelState,
     t: VtreeIdx,
     vtree: &crate::vtree::Vtree,
@@ -135,8 +137,14 @@ pub(crate) fn commit_stream_state(
             let ws = ws.expect("a weighted column is only ever built with a store attached");
             install_streamed::<WeightFold>(levels, vtree, t, counts, cache.weighted_mut(), ws);
         }
-        StreamLevelState::Float(values) => {
+        StreamLevelState::Float(mut values) => {
             let ws = ws.expect("a scaled-float column is only ever built with a store attached");
+            // A column opened at its level's cell count gives back the room
+            // its dead cells left.
+            let room = values.capacity();
+            values.shrink_to_fit();
+            let freed = (room - values.capacity()) * std::mem::size_of::<ScaledFloat>();
+            eng.limits().release_bytes(freed as u64);
             install_streamed::<FloatFold>(levels, vtree, t, values, cache.float_mut(), ws);
         }
     }

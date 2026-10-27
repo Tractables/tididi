@@ -71,7 +71,7 @@ pub(super) fn finalize_level(
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
     // before the `levels[t_idx]` reborrows below.
     if let Some(st) = stream_state {
-        commit_stream_state(st, t, sweep.vtree, levels, stream_cache, sweep.ws.as_deref_mut());
+        commit_stream_state(eng, st, t, sweep.vtree, levels, stream_cache, sweep.ws.as_deref_mut());
     }
 
     // Record live count for parent density checks (only when sparse mode possible).
