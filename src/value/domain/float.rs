@@ -1,8 +1,8 @@
 //! The scaled-float arm of the streaming fold.
 //!
 //! Under [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat)
-//! a conjunction's summed-out levels fold into bare [`ScaledFloat`] columns,
-//! 16 bytes a value where a [`WeightValue`] takes 80, and a column whose
+//! a conjunction's summed-out levels fold into [`FloatCol`] columns, 8
+//! bytes a value where a [`WeightValue`] takes 80, and a column whose
 //! parent the same conjunction sums out never enters the weight store: the
 //! apply keeps it until the parent has read it (see
 //! [`MarginalDomain::commit_in_flight`](crate::marginal::transition::MarginalDomain::commit_in_flight)).
@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
-use crate::value::FloatFold;
+use crate::value::{FloatCol, FloatFold, FloatSlice};
 use crate::vtree::{Vtree, VtreeNode};
 
 /// A value of a scaled-float store.
@@ -24,7 +24,7 @@ fn scaled(v: &WeightValue) -> ScaledFloat {
 pub(crate) enum FloatColumn<'a> {
     /// A column this apply folded: a level it summed out, or one folded on
     /// the way to a level it sums out.
-    Folded(&'a [ScaledFloat]),
+    Folded(FloatSlice<'a>),
     /// A level an earlier operation made marginal: its weight-store column.
     Stored(&'a [WeightValue]),
     /// A structural vtree leaf's three label values, in label order.
@@ -37,7 +37,7 @@ impl FloatColumn<'_> {
     #[inline(always)]
     pub(crate) fn get(&self, i: usize) -> ScaledFloat {
         match self {
-            FloatColumn::Folded(col) => col[i],
+            FloatColumn::Folded(col) => col.get(i),
             FloatColumn::Stored(col) => scaled(&col[i]),
             FloatColumn::Leaf(col) => col[i],
         }
@@ -54,7 +54,7 @@ fn read_float(
     vtree: &Vtree,
     ws: &WeightStore,
     levels: &[TddLevel],
-    computed: &[Option<Vec<ScaledFloat>>],
+    computed: &[Option<FloatCol>],
 ) -> ScaledFloat {
     if side.is_reserved() {
         return ScaledFloat::ZERO;
@@ -64,7 +64,7 @@ fn read_float(
     }
     let level = &levels[level_idx];
     if let Some(col) = &computed[level_idx] {
-        return col[level.child_decoder().index(side)];
+        return col.get(level.child_decoder().index(side));
     }
     if let Some(values) = level.is_weight_marginal().then(|| ws.level(level_idx)).flatten() {
         return scaled(&values[ChildDecoder::marginal().index(side)]);
@@ -81,36 +81,30 @@ impl ValueDomain for FloatFold {
     type ChildCol<'a> = FloatColumn<'a>;
 
     type Scalar = ScaledFloat;
-    type Col = Vec<ScaledFloat>;
+    type Col = FloatCol;
 
     fn alloc_col(
         eng: &Engine,
         width: usize,
         _store: &WeightStore,
-    ) -> Result<Vec<ScaledFloat>, OperationError> {
-        let mut v: Vec<ScaledFloat> = Vec::new();
-        eng.limits().reserve_exact(&mut v, width)?;
-        v.resize(width, ScaledFloat::ZERO);
-        Ok(v)
+    ) -> Result<FloatCol, OperationError> {
+        FloatCol::zeros(eng, width)
     }
 
     fn set_col(
-        _eng: &Engine,
-        col: &mut Vec<ScaledFloat>,
+        eng: &Engine,
+        col: &mut FloatCol,
         i: usize,
         v: ScaledFloat,
     ) -> Result<(), OperationError> {
-        col[i] = v;
-        Ok(())
+        col.set(eng, i, v)
     }
 
     fn try_with_capacity(
         eng: &Engine,
         cap: usize,
-    ) -> Result<Vec<ScaledFloat>, OperationError> {
-        let mut col = Vec::new();
-        eng.limits().reserve_exact(&mut col, cap)?;
-        Ok(col)
+    ) -> Result<FloatCol, OperationError> {
+        FloatCol::with_capacity(eng, cap)
     }
 
     /// The whole bound when it takes at most half the headroom. A column
@@ -119,27 +113,25 @@ impl ValueDomain for FloatFold {
     /// sum-out streams have every cell alive, so the bound is their length.
     #[inline]
     fn stream_capacity(eng: &Engine, cells: usize, widest: usize) -> usize {
-        let bytes = (cells as u64).saturating_mul(std::mem::size_of::<ScaledFloat>() as u64);
+        let bytes = (cells as u64).saturating_mul(FloatCol::NARROW_BYTES as u64);
         if bytes <= eng.limits().headroom() / 2 { cells } else { widest }
     }
 
     #[inline]
     fn push_col(
         eng: &Engine,
-        col: &mut Vec<ScaledFloat>,
+        col: &mut FloatCol,
         v: ScaledFloat,
     ) -> Result<(), OperationError> {
-        eng.limits().reserve(col, 1)?;
-        col.push(v);
-        Ok(())
+        col.push(eng, v)
     }
 
-    fn col_len(col: &Vec<ScaledFloat>) -> usize {
+    fn col_len(col: &FloatCol) -> usize {
         col.len()
     }
 
     #[inline]
-    fn stream_columns(cache: &StreamCache) -> &[Option<Vec<ScaledFloat>>] {
+    fn stream_columns(cache: &StreamCache) -> &[Option<FloatCol>] {
         cache.float()
     }
 
@@ -164,11 +156,11 @@ impl ValueDomain for FloatFold {
         level_idx: usize,
         vtree: &Vtree,
         level: &'a TddLevel,
-        computed: &'a [Option<Vec<ScaledFloat>>],
+        computed: &'a [Option<FloatCol>],
         store: &'a WeightStore,
     ) -> StreamChild<'a, FloatFold> {
         if let Some(col) = &computed[level_idx] {
-            return StreamChild { col: FloatColumn::Folded(col), view: level.child_decoder() };
+            return StreamChild { col: FloatColumn::Folded(col.slice()), view: level.child_decoder() };
         }
         if let Some(col) = level.is_weight_marginal().then(|| store.level(level_idx)).flatten() {
             return StreamChild { col: FloatColumn::Stored(col), view: ChildDecoder::marginal() };

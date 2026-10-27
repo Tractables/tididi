@@ -5,12 +5,12 @@
 //! routes share the same driver through [`ValueDomain`]. The output is still
 //! a slice of levels, so column installation does not require a finished `Tdd`.
 
-use crate::diagram::{Arithmetic, ScaledFloat, WeightStore, WeightValue};
+use crate::diagram::{Arithmetic, WeightStore, WeightValue};
 use crate::Engine;
 use super::{OperationError, TddLevel, Sides};
 
 use crate::value::{
-    Retention, CountVec, FloatFold, FoldInput, IntFold, StreamChild,
+    Retention, CountVec, FloatCol, FloatFold, FoldInput, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
 
@@ -44,7 +44,7 @@ pub(crate) enum StreamLevelState {
     Weighted(Vec<WeightValue>),
     /// Scaled floats, kept by the apply until the level's parent has read
     /// them or the sweep ends.
-    Float(Vec<ScaledFloat>),
+    Float(FloatCol),
 }
 
 /// The value kind an apply streams in: integer without a weight store, bare

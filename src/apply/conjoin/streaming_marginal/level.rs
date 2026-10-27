@@ -141,10 +141,7 @@ pub(crate) fn commit_stream_state(
             let ws = ws.expect("a scaled-float column is only ever built with a store attached");
             // A column opened at its level's cell count gives back the room
             // its dead cells left.
-            let room = values.capacity();
-            values.shrink_to_fit();
-            let freed = (room - values.capacity()) * std::mem::size_of::<ScaledFloat>();
-            eng.limits().release_bytes(freed as u64);
+            values.shrink_to_fit(eng);
             install_streamed::<FloatFold>(levels, vtree, t, values, cache.float_mut(), ws);
         }
     }
@@ -174,7 +171,7 @@ pub(crate) fn store_kept_columns(
         );
         let mut column: Vec<WeightValue> = Vec::new();
         eng.limits().reserve_exact(&mut column, values.len())?;
-        column.extend(values.iter().map(|&v| WeightValue::scaled(v)));
+        column.extend(values.iter().map(WeightValue::scaled));
         drop(values);
         crate::diagram::MarginalStorage::new(&mut levels[i], Some(ws), i).install_weights(column);
     }

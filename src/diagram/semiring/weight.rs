@@ -266,6 +266,35 @@ impl ScaledFloat {
         self.exponent
     }
 
+    /// This value as `x · 2^scale` with `x` an `f64`, exactly: `x` is zero
+    /// for zero, and otherwise the mantissa times `2^(exponent - scale)`,
+    /// a normal float where that power lies within `[-1021, 1024]`; `None`
+    /// outside it.
+    #[inline(always)]
+    pub(crate) fn offset_from(&self, scale: i64) -> Option<f64> {
+        if self.mantissa == 0.0 {
+            return Some(0.0);
+        }
+        let d = self.exponent.wrapping_sub(scale);
+        if !(-1021..=1024).contains(&d) {
+            return None;
+        }
+        // The mantissa's biased exponent is 1022, and adding `d` leaves it
+        // within 1..=2046: a normal float of the same sign and fraction.
+        Some(f64::from_bits(self.mantissa.to_bits().wrapping_add((d as u64) << 52)))
+    }
+
+    /// The value `x · 2^scale` of an [`offset_from`](Self::offset_from)
+    /// float `x`.
+    #[inline(always)]
+    pub(crate) fn at_offset(x: f64, scale: i64) -> ScaledFloat {
+        if x == 0.0 {
+            return ScaledFloat::ZERO;
+        }
+        let (mantissa, e) = frexp_normal(x);
+        ScaledFloat { mantissa, exponent: e + scale }
+    }
+
     /// Product: the mantissas multiply and the exponents add.
     #[inline]
     #[must_use]

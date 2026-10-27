@@ -1,8 +1,8 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
-use crate::diagram::{ScaledFloat, WeightValue};
+use crate::diagram::WeightValue;
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
-use super::CountVec;
+use super::{CountVec, FloatCol};
 
 /// Lazily computed child columns for streaming-target levels whose children
 /// are still explicit, indexed by vtree node.
@@ -22,7 +22,7 @@ pub(crate) enum StreamCache {
     None,
     Int(Vec<Option<CountVec>>),
     Weighted(Vec<Option<Vec<WeightValue>>>),
-    Float(Vec<Option<Vec<ScaledFloat>>>),
+    Float(Vec<Option<FloatCol>>),
 }
 
 /// The value kind of an apply's streamed columns.
@@ -48,7 +48,7 @@ impl StreamCache {
     }
 
     /// The scaled-float columns. Only ever asked for on the scaled-float route.
-    pub(crate) fn float(&self) -> &[Option<Vec<ScaledFloat>>] {
+    pub(crate) fn float(&self) -> &[Option<FloatCol>] {
         match self {
             StreamCache::Float(cols) => cols,
             _ => unreachable!("scaled-float streaming without a scaled-float cache"),
@@ -56,7 +56,7 @@ impl StreamCache {
     }
 
     /// The scaled-float columns, for the walk that fills them in.
-    pub(crate) fn float_mut(&mut self) -> &mut [Option<Vec<ScaledFloat>>] {
+    pub(crate) fn float_mut(&mut self) -> &mut [Option<FloatCol>] {
         match self {
             StreamCache::Float(cols) => cols,
             _ => unreachable!("scaled-float streaming without a scaled-float cache"),

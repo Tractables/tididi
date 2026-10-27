@@ -99,6 +99,48 @@ fn nested_targets_match_the_exact_value() {
     }
 }
 
+/// `2^k` as an exact rational.
+fn power_of_two(k: i32) -> BigRational {
+    let p = BigRational::from_integer(num_bigint::BigInt::from(1) << k.unsigned_abs());
+    if k < 0 { p.recip() } else { p }
+}
+
+/// Weights hundreds of binades apart spread one level's values beyond an
+/// `f64`'s range of any one scale: the columns widen and the walk still
+/// agrees with the exact one.
+#[test]
+fn values_beyond_one_scale_match_the_exact_value() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0xb1de);
+    let widened = crate::value::float_col::tests::widenings();
+    for num_vars in [6u32, 9] {
+        for (shape, tree) in vtree_shapes(num_vars) {
+            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: num_vars as usize + 2, width: 3 });
+            let weights = RationalWeights::from_literals(
+                &(0..num_vars)
+                    .map(|v| LiteralWeights {
+                        negative: power_of_two(700 * ((v % 3) as i32 - 1)),
+                        positive: power_of_two(-650 * (v % 2) as i32) * rat(3, 1 + v as i64),
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let exact = walk(&eng, &tree, &clauses, &WeightStore::new(weights.clone(), Arithmetic::ExactRational));
+            let scaled = walk(&eng, &tree, &clauses, &WeightStore::new(weights, Arithmetic::ScaledFloat));
+            let exact: BigRational = value(&eng, &exact).into_rational();
+            let got = *value(&eng, &scaled).as_scaled().expect("a scaled value");
+            let want = ScaledFloat::from_rational(&exact);
+            let context = format!("{shape}, {num_vars} vars: {got:?} against {want:?}");
+            if want.is_zero() {
+                assert!(got.is_zero(), "{context}");
+                continue;
+            }
+            let ratio = got.mantissa() / want.mantissa() * f64::powi(2.0, (got.exponent() - want.exponent()) as i32);
+            assert!((ratio - 1.0).abs() < 1e-13, "{context}");
+        }
+    }
+    assert!(crate::value::float_col::tests::widenings() > widened, "no column widened");
+}
+
 /// A conjunction refused at any reserve, the conversion of its kept columns
 /// at the end of the sweep included, leaves the engine able to repeat it.
 #[test]

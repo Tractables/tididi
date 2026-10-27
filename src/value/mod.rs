@@ -355,6 +355,7 @@ impl<'a> CountRef<'a> {
 }
 
 mod domain;
+pub(crate) mod float_col;
 mod fold;
 pub(crate) mod slots;
 mod stream_cache;
@@ -363,6 +364,7 @@ pub(crate) use fold::*;
 pub use fold::Retention;
 pub(crate) use domain::{FoldInput, StreamChild, ValueDomain};
 pub(crate) use stream_cache::{StreamCache, StreamKind};
+pub(crate) use float_col::{FloatCol, FloatSlice};
 
 
 #[cfg(test)]

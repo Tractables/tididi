@@ -1,7 +1,7 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{ScaledFloat, Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
-use crate::value::{CountVec, FloatFold, IntFold, WeightFold, ValueDomain};
+use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
+use crate::value::{CountVec, FloatCol, FloatFold, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::value::slots::{compact_count_slots, truncate_with_slack};
 use crate::diagram::CountOverflow;
@@ -206,9 +206,9 @@ impl MarginalDomain for FloatFold {
     fn commit_in_flight(
         levels: &mut [TddLevel],
         t: InternalLevel,
-        col: Vec<ScaledFloat>,
+        col: FloatCol,
         store: &mut WeightStore,
-    ) -> Option<Vec<ScaledFloat>> {
+    ) -> Option<FloatCol> {
         let i = t.vtree_idx().idx();
         crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).hold_weights(col.len() as u32);
         Some(col)
@@ -217,10 +217,10 @@ impl MarginalDomain for FloatFold {
     fn install(
         level: &mut TddLevel,
         t: InternalLevel,
-        col: Vec<ScaledFloat>,
+        col: FloatCol,
         store: &mut WeightStore,
     ) -> Option<Vec<u32>> {
-        let values = col.into_iter().map(WeightValue::scaled).collect();
+        let values = col.iter().map(WeightValue::scaled).collect();
         WeightFold::install(level, t, values, store)
     }
 

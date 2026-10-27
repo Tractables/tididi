@@ -1,6 +1,6 @@
 use super::*;
 use crate::diagram::{ScaledFloat, WeightValue};
-use crate::value::StreamKind;
+use crate::value::{FloatCol, StreamKind};
 
 const KINDS: [StreamKind; 3] = [StreamKind::Int, StreamKind::Weighted, StreamKind::Float];
 use crate::execution::pool::{Pool, PooledScratch, SCRATCH_RETAIN_BYTES};
@@ -11,7 +11,7 @@ fn populated(kind: StreamKind, n: usize) -> StreamCache {
     cache.reset(n, Some(kind));
     match kind {
         StreamKind::Weighted => cache.weighted_mut()[n - 1] = Some(vec![WeightValue::Exact(rat(7, 3))]),
-        StreamKind::Float => cache.float_mut()[n - 1] = Some(vec![ScaledFloat::from_f64(7.0 / 3.0)]),
+        StreamKind::Float => cache.float_mut()[n - 1] = Some(crate::value::float_col::tests::of(&[ScaledFloat::from_f64(7.0 / 3.0)])),
         StreamKind::Int => {
             let eng = Engine::new();
             let mut counts = CountVec::with_width(&eng, 0);
@@ -116,7 +116,7 @@ fn returning_cache_releases_oversized_table_capacity() {
     let lim = crate::limits::Limits::new();
     let int_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<CountVec>>() + 1;
     let kind_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<Vec<WeightValue>>>() + 1;
-    let float_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<Vec<ScaledFloat>>>() + 1;
+    let float_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<FloatCol>>() + 1;
     for mut cache in [
         StreamCache::Int(Vec::with_capacity(int_slots)),
         StreamCache::Weighted(Vec::with_capacity(kind_slots)),
