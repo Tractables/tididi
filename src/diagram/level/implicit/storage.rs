@@ -252,14 +252,14 @@ impl PairArena {
 
     /// A copy of the arena, reserved through `lim` as
     /// [`TddLevel::try_clone_on`] reserves the others: a stored arena is
-    /// copied at its length, an implicit one keeps its description, its
-    /// length as its capacity and its nodes as their capacity, and has that
-    /// length charged.
-    pub(crate) fn try_clone_on(&self, lim: &Limits) -> Result<PairArena, OperationError> {
+    /// copied at its length plus `room`, an implicit one keeps its
+    /// description, its length as its capacity and its nodes as their
+    /// capacity, and has that length charged.
+    pub(crate) fn try_clone_on(&self, lim: &Limits, room: usize) -> Result<PairArena, OperationError> {
         match &self.described {
             None => {
                 let mut vec = Vec::new();
-                lim.reserve_exact(&mut vec, self.stored.len())?;
+                lim.reserve_exact(&mut vec, self.stored.len().saturating_add(room))?;
                 vec.extend_from_slice(&self.stored);
                 Ok(PairArena::from(vec))
             }

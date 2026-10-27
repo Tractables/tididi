@@ -11,6 +11,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::execution::pool::{Drain, Pool, Pools};
 use crate::apply::falsity::empty_node;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The buffers negation reuses between calls.
@@ -35,14 +36,16 @@ impl Pools for NegateScratch {
 }
 
 impl Engine {
-    /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and resource limits.
+    /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and
+    /// resource limits, on an owned or borrowed operand as
+    /// [`negate_with`](Self::negate_with) says.
     ///
     /// # Errors
     ///
     /// Returns the linked operation's errors; cancellation, allocation refusal and
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
-    pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
+    pub fn negate<'f>(&self, f: impl Into<Cow<'f, Tdd>>) -> Result<Tdd, OperationError> {
         self.negate_with(f, crate::reduce::ReductionPlan::default())
     }
 
@@ -50,15 +53,36 @@ impl Engine {
     /// explicitly. See [`Tdd::negate_with`] for what the plans cost and what
     /// they leave behind.
     ///
+    /// The operand is a [`Tdd`], consumed on success and on error, or a
+    /// `&Tdd`, read in place and left as it is. The result holds every
+    /// level of the operand with the node negation adds to it, so an owned
+    /// operand's levels grow in place and a borrowed one's are copied, each
+    /// once and with room for that node, where cloning first copies each
+    /// level and then grows it. The copies are charged to the memory
+    /// budget, not to the work clock; owned or borrowed, the result is the
+    /// same diagram for the same work.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let either = Tdd::clause(&vtree, [1, 2])?;
+    /// let neither = Engine::new().negate(&either)?;
+    /// assert!(neither.equivalent(&Tdd::cube(&vtree, [-1, -2])?)?);
+    /// assert_eq!(either.model_count()?, 6u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// As [`negate`](Self::negate).
-    pub fn negate_with(
+    pub fn negate_with<'f>(
         &self,
-        f: Tdd,
+        f: impl Into<Cow<'f, Tdd>>,
         plan: crate::reduce::ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        let f = f.into();
         let canonical = f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
         // `expand_full` left every level below the root covering its
@@ -80,44 +104,118 @@ impl Engine {
 /// Make `tdd` full and complement it at the root, consuming the operand;
 /// [`Engine::negate`] also minimizes the result.
 pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
-    complement_on(eng, tdd).map(|(result, _)| result)
+    complement_on(eng, Cow::Owned(tdd)).map(|(result, _)| result)
 }
 
-/// [`negate_on`], with the old output's slot where the complement was built
-/// beside it.
-pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+/// [`negate_on`] of an owned or borrowed operand, with the old output's slot
+/// where the complement was built beside it.
+pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     tdd.require_structure()?;
     eng.limits().check_stop()?;
-    let weights = tdd.weights.take();
-    let (mut result, old) = if tdd.is_zero() {
-        (crate::build::constant_on(eng, &tdd.vtree, true)?, None)
+    let vtree = Arc::clone(&tdd.vtree);
+    // Read before the first change to a level, which drops both.
+    let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
+    let (zero, output) = (tdd.is_zero(), tdd.output.local);
+    let (mut levels, source, weights) = match tdd {
+        Cow::Owned(mut tdd) => {
+            let weights = tdd.weights.take();
+            (tdd.levels.into_vec(), None, weights)
+        }
+        Cow::Borrowed(tdd) => {
+            let weights = tdd.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?;
+            (Target::empty_levels(eng, &tdd.levels)?, Some(&tdd.levels[..]), weights)
+        }
+    };
+    let (mut result, old) = if zero {
+        (crate::build::constant_on(eng, &vtree, true)?, None)
     } else {
         let mut filled = Vec::new();
-        eng.limits().try_resize(&mut filled, tdd.vtree.num_nodes(), false)?;
-        let closed = tdd.levels.is_closed();
-        expand_full(eng, &mut tdd, &mut filled)?;
-        complement_full_at_root(eng, tdd, &filled, closed)?
+        eng.limits().try_resize(&mut filled, vtree.num_nodes(), false)?;
+        expand_full(eng, &vtree, &mut Target { levels: &mut levels, source }, canonical, closed, &mut filled)?;
+        complement_full_at_root(eng, &vtree, levels, source, output, &filled, closed)?
     };
     result.weights = weights;
     Ok((result, old))
 }
 
+/// The levels a negation writes: the operand's own, or, for a borrowed
+/// operand (`source`), empty levels each internal level of the operand is
+/// copied into when the negation reaches it ([`write`](Self::write)). A
+/// leaf level of a structural diagram is empty, so it is its own copy.
+pub(crate) struct Target<'l, 's> {
+    pub(crate) levels: &'l mut Vec<TddLevel>,
+    pub(crate) source: Option<&'s [TddLevel]>,
+}
+
+impl Target<'_, '_> {
+    /// Empty levels for the copy of `source`'s.
+    fn empty_levels(eng: &Engine, source: &[TddLevel]) -> Result<Vec<TddLevel>, OperationError> {
+        debug_assert!(
+            source.iter().all(|level| level.node_count() > 0 || level.arena_len() == 0),
+            "a structural level without nodes holds no pairs",
+        );
+        let mut levels = Vec::new();
+        eng.limits().reserve_exact(&mut levels, source.len())?;
+        levels.resize_with(source.len(), TddLevel::new);
+        Ok(levels)
+    }
+
+    /// Level `t` as the operand has it, to read before it is written.
+    fn read(&self, t: usize) -> &TddLevel {
+        self.source.map_or(&self.levels[t], |source| &source[t])
+    }
+
+    /// Level `t` to write, once a level: with room for a node of `fill`
+    /// pairs where one is about to be added, an owned level grown in place
+    /// and a borrowed operand's copied with that room. An owned level with
+    /// nothing to add, which negation meets at nearly every level it
+    /// visits, is reached without a call.
+    #[inline(always)]
+    fn write(&mut self, eng: &Engine, t: usize, fill: Option<usize>) -> Result<&mut TddLevel, OperationError> {
+        if self.source.is_none() && fill.is_none() {
+            return Ok(&mut self.levels[t]);
+        }
+        self.copy_or_grow(eng, t, fill)
+    }
+
+    /// [`write`](Self::write) of a borrowed operand's level or of a level
+    /// about to take a fill node.
+    #[inline(never)]
+    fn copy_or_grow(&mut self, eng: &Engine, t: usize, fill: Option<usize>) -> Result<&mut TddLevel, OperationError> {
+        if let Some(source) = self.source {
+            let from = &source[t];
+            let (nodes, pairs) = match fill {
+                Some(len) if from.stored().is_some() => (1, fill_pairs(len)),
+                _ => (0, 0),
+            };
+            self.levels[t] = from.try_clone_with_room_on(eng.limits(), nodes, pairs)?;
+        }
+        let level = &mut self.levels[t];
+        if let Some(len) = fill {
+            reserve_fill(eng, level, len)?;
+        }
+        Ok(level)
+    }
+}
+
 /// Complement at the root a diagram full below it: collect the root-level
 /// pairs not in the output node and drop the dead ones. With the old
-/// output's slot when the complement is a node beside it. `closed` says the
-/// levels were closed before [`expand_full`], which left the root as it was.
+/// output's slot when the complement is a node beside it. `levels` and
+/// `source` are an [`expand_full`] target's. `closed` says the levels were
+/// closed before [`expand_full`], which left the root as it was.
 fn complement_full_at_root(
     eng: &Engine,
-    full_tdd: Tdd,
+    vtree: &Arc<crate::vtree::Vtree>,
+    levels: Vec<TddLevel>,
+    source: Option<&[TddLevel]>,
+    out_local: NodeIdx,
     filled: &[bool],
     closed: bool,
 ) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
-    let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
     let root_idx = root.idx();
-    let out_local = full_tdd.output.local;
 
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(&vtree), full_tdd.levels.into_vec(), None);
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, None);
     let (levels, _) = assembly.parts_mut();
 
     if vtree.node(root).is_leaf() {
@@ -125,7 +223,7 @@ fn complement_full_at_root(
         // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
         // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return Ok((crate::build::constant_on(eng, &vtree, false)?, None));
+            return Ok((crate::build::constant_on(eng, vtree, false)?, None));
         };
         Ok((assembly.finish(TddNodeId { vtree: root, local: neg_local })?, None))
     } else {
@@ -139,14 +237,16 @@ fn complement_full_at_root(
         let scratch = &eng.scratch.negate;
         let mut marked = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
-        let lefts = ChildBasis::of(&vtree, levels, left);
-        let rights = ChildBasis::of(&vtree, levels, right);
+        let mut target = Target { levels, source };
+        let lefts = ChildBasis::of(vtree, &target.levels[..], left);
+        let rights = ChildBasis::of(vtree, &target.levels[..], right);
         let leaf = LeafForm { left_one: left_is_leaf, right_one: right_is_leaf };
         let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
         // The other root nodes are dropped with the old output, so the
         // complement takes the leaf form the output uses.
         let mut form = LeafForm::LITERAL;
-        let covered = areas(levels[root_idx].pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
+        let root_level = target.read(root_idx);
+        let covered = areas(root_level.pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
         neg_pairs.clear();
         // The work clock is charged a scan of the root's basis, by either
         // route.
@@ -158,14 +258,14 @@ fn complement_full_at_root(
             #[cfg(debug_assertions)]
             {
                 let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
-                cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
+                cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
                 let mut by_cover = Vec::new();
                 cover.missing_into(eng, &mut by_cover)?;
                 debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
             }
         } else {
             let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
-            cover.mark_pairs(levels[root_idx].pairs_iter_of_idx(out_local.idx()));
+            cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
             cover.missing_into(eng, &mut neg_pairs)?;
         }
 
@@ -173,18 +273,18 @@ fn complement_full_at_root(
         // node with no pairs), which a fill node of `expand_full` can be.
         neg_pairs.retain(|pair| {
             let left_alive = left_is_leaf
-                || !empty_node(&levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
+                || !empty_node(&target.levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
             let right_alive = right_is_leaf
-                || !empty_node(&levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
+                || !empty_node(&target.levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
             left_alive && right_alive
         });
 
         if neg_pairs.is_empty() {
-            return Ok((crate::build::constant_on(eng, &vtree, false)?, None));
+            return Ok((crate::build::constant_on(eng, vtree, false)?, None));
         }
 
-        let root_level = &mut levels[root_idx];
-        let pairs = level_pairs(root_level, closed) as usize;
+        let pairs = level_pairs(target.read(root_idx), closed) as usize;
+        let root_level = target.write(eng, root_idx, Some(neg_pairs.len()))?;
         let neg_idx = root_level.push_node(eng.limits(), &neg_pairs)?;
         root_level.leave_live_pairs(pairs + neg_pairs.len());
 
@@ -206,39 +306,49 @@ fn complement_full_at_root(
 /// fill is emitted in that same form. `filled[t]` is set for each level `t`
 /// it adds a node to, as the level's last. Each level it visits is left its
 /// live pairs for the close that ends the negation
-/// ([`TddLevel::leave_live_pairs`]), off the pairs the cover counts.
-pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd, filled: &mut [bool]) -> Result<(), OperationError> {
+/// ([`TddLevel::leave_live_pairs`]), off the pairs the cover counts. A
+/// borrowed operand's levels are read in `target`'s source and each copied
+/// once into its levels.
+///
+/// `canonical` and `closed` are the operand's, read before any change.
+pub(crate) fn expand_full(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    target: &mut Target<'_, '_>,
+    canonical: bool,
+    closed: bool,
+    filled: &mut [bool],
+) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut marked = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
 
-    expand_full_with(eng, tdd, &mut marked, &mut cells, filled)
+    expand_full_with(eng, vtree, target, (canonical, closed), &mut marked, &mut cells, filled)
 }
 
 /// [`expand_full`] with the scratch checked out.
 fn expand_full_with(
     eng: &Engine,
-    tdd: &mut Tdd,
+    vtree: &crate::vtree::Vtree,
+    target: &mut Target<'_, '_>,
+    (canonical, closed): (bool, bool),
     marked: &mut Vec<u8>,
     cells: &mut Vec<ChildPair>,
     filled: &mut [bool],
 ) -> Result<(), OperationError> {
-    let vtree = tdd.vtree.clone();
     let root = vtree.root();
-    // Read before the first change to a level, which drops both.
-    let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
     for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != root) {
         // Read bottom-up: a child's basis includes the fill node its own visit
         // added.
-        let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
-        let rights = ChildBasis::of(&vtree, &tdd.levels, right);
+        let lefts = ChildBasis::of(vtree, &target.levels[..], left);
+        let rights = ChildBasis::of(vtree, &target.levels[..], right);
         let leaf = LeafForm {
             left_one: vtree.node(left).is_leaf(),
             right_one: vtree.node(right).is_leaf(),
         };
         // A child the completion added a node to has it last.
         let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
-        let level = &mut tdd.levels[t.idx()];
+        let level = target.read(t.idx());
 
         // On a canonical diagram every stored node is reachable and
         // deterministic, so the pairs of a level cover disjoint cells, and
@@ -267,7 +377,7 @@ fn expand_full_with(
                 #[cfg(debug_assertions)]
                 debug_assert!(missing_by_cover(eng, marked, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
                 charge_pairs(eng, pairs)?;
-                level.leave_live_pairs(pairs as usize);
+                target.write(eng, t.idx(), None)?.leave_live_pairs(pairs as usize);
                 eng.limits().check_stop()?;
                 continue;
             }
@@ -279,11 +389,13 @@ fn expand_full_with(
                     fill_lines_into(eng, lefts, rights, fill, form, cells)?;
                     #[cfg(debug_assertions)]
                     debug_assert_eq!(*cells, missing_by_cover(eng, marked, level, lefts, rights, form)?, "negate: the lines of the added nodes are not the cells no pair covers");
-                    reserve_fill(eng, level, cells.len())?;
+                    let level = target.write(eng, t.idx(), Some(cells.len()))?;
                     level.push_node(eng.limits(), cells)?;
+                    level.leave_live_pairs(pairs as usize + cells.len());
                     filled[t.idx()] = true;
+                } else {
+                    target.write(eng, t.idx(), None)?.leave_live_pairs(pairs as usize);
                 }
-                level.leave_live_pairs(pairs as usize + if filled[t.idx()] { cells.len() } else { 0 });
                 eng.limits().check_stop()?;
                 continue;
             }
@@ -293,15 +405,15 @@ fn expand_full_with(
         // the level's form.
         let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
         // On a canonical diagram the fill holds the cells the pairs leave,
-        // so its room is known before the cover is read. Reserved first, a
-        // level whose arena moves for it is read from its new place, which
-        // the move has just written.
-        if canonical {
+        // so its room is known before the cover is read. Written first, a
+        // level whose arena moves or is copied for it is read from its new
+        // place, which the write has just made.
+        let level = if canonical {
             let missing = cover.len.saturating_sub(pairs as usize);
-            if missing > 0 {
-                reserve_fill(eng, level, missing)?;
-            }
-        }
+            &*target.write(eng, t.idx(), (missing > 0).then_some(missing))?
+        } else {
+            level
+        };
         cover.mark_level(eng, level, pairs)?;
         cells.clear();
         cover.missing_into(eng, cells)?;
@@ -309,15 +421,24 @@ fn expand_full_with(
         debug_assert!(!canonical || cells.len() + pairs as usize == cover.len, "negate: the fill is not the cells the pairs leave");
         if !cells.is_empty() {
             charge_scan(eng, lefts, rights)?;
-            // Reserved before the cover already where the diagram is canonical.
-            reserve_fill(eng, level, cells.len())?;
+            // Written with its room before the cover where the diagram is
+            // canonical.
+            let level = if canonical { &mut target.levels[t.idx()] } else { target.write(eng, t.idx(), Some(cells.len()))? };
             level.push_node(eng.limits(), cells)?;
             filled[t.idx()] = true;
+        } else if !canonical {
+            target.write(eng, t.idx(), None)?;
         }
-        level.leave_live_pairs(pairs as usize + cells.len());
+        target.levels[t.idx()].leave_live_pairs(pairs as usize + cells.len());
         eng.limits().check_stop()?;
     }
     Ok(())
+}
+
+/// The arena pairs a fill node of `len` pairs takes: none for one pair,
+/// which its node word holds.
+fn fill_pairs(len: usize) -> usize {
+    if len > 1 { len } else { 0 }
 }
 
 /// Room on `level` for a fill node of `len` pairs, exactly: the arena grows
@@ -326,7 +447,7 @@ fn expand_full_with(
 /// would store it, so that it ends with the capacities a stored one does.
 fn reserve_fill(eng: &Engine, level: &mut TddLevel, len: usize) -> Result<(), OperationError> {
     level.store_if_implicit(eng.limits())?;
-    level.reserve_on(eng.limits(), 1, if len > 1 { len } else { 0 })
+    level.reserve_on(eng.limits(), 1, fill_pairs(len))
 }
 
 /// The leaf form `level` uses, read off its first pair: a level names a

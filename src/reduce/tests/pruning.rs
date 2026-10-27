@@ -506,7 +506,7 @@ fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) ->
                 }
                 let what = format!("{name}, case {case}");
                 let before: Vec<usize> = f.levels.iter().map(|l| l.slot_count()).collect();
-                let (complement, old) = crate::apply::negate::complement_on(eng, f).unwrap();
+                let (complement, old) = crate::apply::negate::complement_on(eng, f.into()).unwrap();
                 let Some(old) = old else { continue };
                 if !below_root_walk_applies(&complement) {
                     continue;

@@ -532,18 +532,32 @@ impl TddLevel {
     /// the host cannot serve comes back as [`OperationError::OverBudget`](crate::limits::OperationError::OverBudget) instead
     /// of aborting the process.
     pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::OperationError> {
+        self.try_clone_with_room_on(lim, 0, 0)
+    }
+
+    /// [`try_clone_on`](Self::try_clone_on) with room for `nodes` more
+    /// nodes and `pairs` more arena pairs on stored arenas, so a copy that
+    /// is about to grow is written once. An implicit pair arena keeps its
+    /// description and takes no room.
+    pub(crate) fn try_clone_with_room_on(
+        &self,
+        lim: &crate::limits::Limits,
+        nodes: usize,
+        pairs: usize,
+    ) -> Result<TddLevel, crate::limits::OperationError> {
         fn copy<T: Copy>(
             lim: &crate::limits::Limits,
             src: &[T],
+            room: usize,
         ) -> Result<Vec<T>, crate::limits::OperationError> {
             let mut out = Vec::new();
-            lim.reserve_exact(&mut out, src.len())?;
+            lim.reserve_exact(&mut out, src.len().saturating_add(room))?;
             out.extend_from_slice(src);
             Ok(out)
         }
         let state = match &self.state {
             LevelState::Counts(c) => LevelState::Counts(CountBox::new(CountState {
-                counts: copy(lim, &c.counts)?,
+                counts: copy(lim, &c.counts, 0)?,
                 big: c.big.clone(),
                 retired: c.retired,
             })),
@@ -554,8 +568,8 @@ impl TddLevel {
             lim.charge_bytes((d.nodes() as u64).saturating_mul(std::mem::size_of::<super::primitives::EncodedNode>() as u64))?;
         }
         Ok(TddLevel {
-            nodes: NodeArena::from(copy(lim, self.nodes.stored())?),
-            pairs: self.pairs.try_clone_on(lim)?,
+            nodes: NodeArena::from(copy(lim, self.nodes.stored(), nodes)?),
+            pairs: self.pairs.try_clone_on(lim, pairs)?,
             ranges: self.ranges.try_clone_on(lim)?,
             value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,

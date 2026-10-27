@@ -101,10 +101,10 @@ fn a_certified_complement_charges_what_a_cover_of_every_level_does() {
                 let mut bare = f.clone();
                 bare.levels.forget();
                 let start = eng.limits().work_units();
-                let (certified, _) = crate::apply::negate::complement_on(eng, f).unwrap();
+                let (certified, _) = crate::apply::negate::complement_on(eng, f.into()).unwrap();
                 let read = eng.limits().work_units() - start;
                 let start = eng.limits().work_units();
-                let (covered, _) = crate::apply::negate::complement_on(eng, bare).unwrap();
+                let (covered, _) = crate::apply::negate::complement_on(eng, bare.into()).unwrap();
                 assert_eq!(eng.limits().work_units() - start, read, "{what}: the two completions charged different work");
                 assert_same_shape(&certified, &covered, &what);
                 cases += 1;
