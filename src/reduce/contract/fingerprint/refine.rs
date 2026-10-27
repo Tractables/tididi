@@ -393,7 +393,13 @@ impl Partition<'_> {
         wide: &mut Vec<u64>,
     ) -> Result<(), OperationError> {
         let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
-        for (i, node) in stored.nodes().iter().enumerate() {
+        let nodes = stored.nodes();
+        let mut i = 0;
+        while self.twinable != 0 {
+            i = self.leave_run(nodes, stored.arena(), i, side);
+            let Some(node) = nodes.get(i) else {
+                break;
+            };
             if self.twinable == 0 {
                 break;
             }
@@ -406,8 +412,63 @@ impl Partition<'_> {
                 n if n <= SMALL_PAIRS => self.split_small(pairs, side),
                 n => lim.try_push(wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
             }
+            i += 1;
         }
         Ok(())
+    }
+
+    /// The parent nodes from index `i` of `nodes` on that name one child
+    /// each, an inline node or two pairs of one child on `side`, split as
+    /// [`leave`](Self::leave) splits them; returns the index of the first
+    /// other node, or the index past the node that left no node able to
+    /// have a twin, or the end. The partition is held in locals and nothing
+    /// is called, so that the loop keeps it in registers: most parent nodes
+    /// of a level with twins name one child.
+    #[inline(always)]
+    fn leave_run(&mut self, nodes: &[EncodedNode], arena: &[ChildPair], i: usize, side: ChildSide) -> usize {
+        let Partition { class, bits, classes, twinable } = self;
+        let (class, classes) = (&**class, &mut classes[..]);
+        // The first class is always there, so taking a node out of it
+        // checks no bound.
+        assert!(!classes.is_empty(), "the first class");
+        let mut left = *twinable;
+        let mut at = i;
+        while at < nodes.len() {
+            let t = match nodes[at].kind() {
+                NodeKind::Inline(pair) => split_pair(&pair, side).0,
+                NodeKind::Multi { start, len: 2 } => {
+                    let pairs = &arena[start as usize..start as usize + 2];
+                    let t = split_pair(&pairs[0], side).0;
+                    if split_pair(&pairs[1], side).0 != t {
+                        break;
+                    }
+                    t
+                }
+                _ => break,
+            };
+            at += 1;
+            let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
+            let [moved, alone] = bits[w];
+            if alone & b != 0 {
+                continue;
+            }
+            bits[w] = [moved | b, alone | b];
+            let k = if moved & b == 0 { &mut classes[0] } else { &mut classes[class[t as usize] as usize] };
+            let members = k.size;
+            k.size = members - 1;
+            // A class that keeps two members or more keeps them able to
+            // have a twin, so only a smaller one can leave none.
+            if members > 2 {
+                left -= 1;
+            } else {
+                left -= if members == 2 { 2 } else { 0 };
+                if left == 0 {
+                    break;
+                }
+            }
+        }
+        *twinable = left;
+        at
     }
 
     /// Node `t`'s class, or [`ALONE`].
