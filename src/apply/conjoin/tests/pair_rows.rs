@@ -17,8 +17,10 @@ fn conjoin(f: &Tdd, g: &Tdd) -> (Tdd, u64) {
     (out, eng.limits().work_since(mark))
 }
 
-/// Conjoined with levels read by pairs and without, and with every level
-/// of many-pair columns reading a word's columns off tables: the same
+/// Conjoined with levels read by pairs and without, with arenas grown from
+/// their seeds and the gate due every few units (so runs of rows stop at
+/// both), and with every level of many-pair columns reading a word's
+/// columns off tables: the same
 /// levels, each node's pairs in the same order, and the same work. Returns the levels
 /// read by pairs, those of them with a complete side, and those of one
 /// pair a column.
@@ -30,6 +32,9 @@ fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
     assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the levels read by pairs built another function");
     assert!(is_self_conjunction(&out, &oracle), "{what}: the levels read by pairs built other levels");
     assert_eq!(out_work, work, "{what}: the levels read by pairs took other work");
+    let (cut, cut_work) = without_ahead(|| with_dense_poll_stride(7, || conjoin(f, g)));
+    assert!(is_self_conjunction(&cut, &oracle), "{what}: the levels read by pairs, their arenas grown from their seeds and their gates due every few units, built other levels");
+    assert_eq!(cut_work, work, "{what}: the levels read by pairs, their arenas grown from their seeds and their gates due every few units, took other work");
     let (tabled, tabled_work) = reach_tables_on(|| conjoin(f, g));
     assert!(is_self_conjunction(&tabled, &oracle), "{what}: the levels reading columns off tables built other levels");
     assert_eq!(tabled_work, work, "{what}: the levels reading columns off tables took other work");

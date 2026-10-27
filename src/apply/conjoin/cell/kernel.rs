@@ -302,6 +302,107 @@ impl<'a> ArenaRow<'a> {
     }
 }
 
+impl ArenaRow<'_> {
+    /// The row's write position, for a loop that holds it in registers and
+    /// stores it back with [`set_cursor`](Self::set_cursor); no cell is
+    /// open.
+    #[inline(always)]
+    pub(crate) fn cursor(&self) -> RowCursor {
+        debug_assert_eq!(self.cell, 0, "a cell is open");
+        RowCursor {
+            out: self.out,
+            node_out: self.node_out,
+            len: self.len,
+            node_len: self.node_len,
+            pair_end: self.pair_end,
+            node_cap: self.node_cap,
+        }
+    }
+
+    /// Take the write position a loop moved from [`cursor`](Self::cursor).
+    #[inline(always)]
+    pub(crate) fn set_cursor(&mut self, cursor: RowCursor) {
+        (self.len, self.node_len) = (cursor.len, cursor.node_len);
+    }
+}
+
+/// An [`ArenaRow`]'s write position, apart from the arenas, for a loop that
+/// holds it in registers: it closes cells into nodes as the row closes
+/// them, each a whole cell, with no capacity test.
+#[derive(Clone, Copy)]
+pub(crate) struct RowCursor {
+    out: *mut ChildPair,
+    node_out: *mut EncodedNode,
+    len: usize,
+    node_len: usize,
+    pair_end: usize,
+    node_cap: usize,
+}
+
+impl RowCursor {
+    /// How many more pairs the room past the closed cells holds.
+    #[inline(always)]
+    pub(crate) fn pair_room(&self) -> usize {
+        self.pair_end - self.len
+    }
+
+    /// How many more cells the node arena has room for.
+    #[inline(always)]
+    pub(crate) fn node_room(&self) -> usize {
+        self.node_cap - self.node_len
+    }
+
+    /// A cell of the one survivor `(lc, rc)` closed into the level's next
+    /// node, as [`ArenaRow::single_node`] closes one; its index returned.
+    ///
+    /// # Safety
+    ///
+    /// The node arena has room for the node ([`node_room`](Self::node_room)).
+    #[inline(always)]
+    pub(crate) unsafe fn single_node(&mut self, lc: u32, rc: u32) -> u32 {
+        // Safety: as the caller's.
+        unsafe { self.emit(EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))) }
+    }
+
+    /// A cell of the two survivors `(l0, r0)` and `(l1, r1)`, in that order,
+    /// closed into the level's next node as two [`ArenaRow::push`]es and an
+    /// [`ArenaRow::close_node`] close one; its index returned.
+    ///
+    /// # Safety
+    ///
+    /// The room past the closed cells holds two pairs
+    /// ([`pair_room`](Self::pair_room)) and the node arena the node.
+    #[inline(always)]
+    pub(crate) unsafe fn pair_node(&mut self, l0: u32, r0: u32, l1: u32, r1: u32) -> u32 {
+        debug_assert!(self.len + 2 <= self.pair_end, "a row wrote past its room");
+        let pair = |l, r| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
+        // Safety: the arena's spare capacity holds `pair_end` past its
+        // length, and the caller writes no further.
+        unsafe {
+            self.out.add(self.len).write(pair(l0, r0));
+            self.out.add(self.len + 1).write(pair(l1, r1));
+        }
+        let node = EncodedNode::multi_pair(self.len as u32, 2);
+        self.len += 2;
+        // Safety: as the caller's.
+        unsafe { self.emit(node) }
+    }
+
+    /// Store `node` as the level's next node and return its index.
+    ///
+    /// # Safety
+    ///
+    /// The node arena has room for it.
+    #[inline(always)]
+    unsafe fn emit(&mut self, node: EncodedNode) -> u32 {
+        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
+        // Safety: as the caller's.
+        unsafe { self.node_out.add(self.node_len).write(node) };
+        self.node_len += 1;
+        (self.node_len - 1) as u32
+    }
+}
+
 impl Drop for ArenaRow<'_> {
     /// Store the lengths of the closed cells' pairs and nodes in the arenas;
     /// an open cell's survivors are left past them.

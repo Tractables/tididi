@@ -3,6 +3,7 @@
 use super::*;
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use crate::limits::PollGate;
+use crate::diagram::{NodeKind, StoredPairs};
 
 /// The f pairs a row's intersections are kept for on the stack; a longer row keeps
 /// them in a buffer of the level's.
@@ -313,6 +314,23 @@ where
     }
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
+    // A level of two one-pair columns: f's rows where they need no decoding,
+    // and what [`two_column_rows`] reads.
+    let two_rows = match f_described {
+        Some(k @ 1..=2) if W == 2 && f_scratch.len() >= f_width * k => TwoRows::Described(k),
+        None if W == 2 && !left_view.is_marginal() && !right_view.is_marginal() => match f_level.stored() {
+            Some(stored) if stored.nodes().len() >= f_width => TwoRows::Stored(stored),
+            _ => TwoRows::Neither,
+        },
+        _ => TwoRows::Neither,
+    };
+    let two = (W == 2 && !matches!(two_rows, TwoRows::Neither)).then(|| TwoColumns {
+        left_words,
+        right_words,
+        g: [g_flat[0], g_flat[1]],
+        all,
+        output_grid_base: ctx.output_grid_base,
+    });
     let mut next = 0;
     'rows: while next < f_width {
         // A row is written straight into the arenas, open across rows, where
@@ -321,6 +339,26 @@ where
         // without room goes through the sink, which grows them.
         let mut out = sink.open_row(0, 0);
         while next < f_width {
+            // On a level of two one-pair columns whose described rows have
+            // at most two f pairs each, the rows from here go in runs to a
+            // loop of their own ([`two_column_rows`]), which returns at the
+            // first row that does not fit the arenas' room or the gate. The
+            // row's write position goes by value, so that `out` stays in
+            // registers here.
+            if let Some(two) = &two
+                && let TwoRows::Described(k) = two_rows
+                && let Some(o) = out.as_mut()
+            {
+                let rows = &f_scratch[..f_width * k];
+                let (to, units, cursor) =
+                    two_column_rows(two, |j| described_two(rows, k, j), left, right, slab, o.cursor(), next, f_width, poll.due_in());
+                o.set_cursor(cursor);
+                poll.add_short(units);
+                next = to;
+                if next == f_width {
+                    break;
+                }
+            }
             let i = next;
             next += 1;
             let row_base = ctx.output_grid_base + i * width;
@@ -342,50 +380,23 @@ where
                 }
                 continue;
             }
-            // A row of two f pairs on two one-pair columns, the arenas with
-            // room for its every candidate: the loop below unrolled, each f
-            // pair's intersection held in a register.
-            if W == 2
-                && let [p0, p1] = f_pairs
-                && let Some(o) = out.as_mut().filter(|o| o.has_room(4, 2))
+            // A stored row of at most two f pairs on two one-pair columns
+            // starts a run of such rows written in a loop of their own, as
+            // above.
+            if let Some(two) = &two
+                && let TwoRows::Stored(stored) = two_rows
+                && f_pairs.len() <= 2
+                && let Some(o) = out.as_mut()
             {
-                super::super::note_pair_row_unrolled();
-                let (wl0, wr0, wl1, wr1) = (word_left(p0), word_right(p0), word_left(p1), word_right(p1));
-                let (l, r) = (wl0 | wl1, wr0 | wr1);
-                if l & r & ROW_LIVE == 0 {
-                    write_cells(slab, row_base, [NO_PRODUCT; W]);
+                let (nodes, arena) = (&stored.nodes()[..f_width], stored.arena());
+                let (to, units, cursor) =
+                    two_column_rows(two, |j| stored_two(nodes, arena, j), left, right, slab, o.cursor(), i, f_width, poll.due_in());
+                o.set_cursor(cursor);
+                if to > i {
+                    poll.add_short(units);
+                    next = to;
                     continue;
                 }
-                let entered = l & r & !ROW_LIVE;
-                // Two f pairs a column entered, of bits 0 and 1 (a count
-                // of ones without the popcount instruction is a dozen).
-                let units = 2 * ((entered & 1) + (entered >> 1)) + 2;
-                if units < poll.due_in() {
-                    poll.add_short(units);
-                } else {
-                    poll = poll_entered_due(poll, ctx, f_pairs, units, 2, entered, None)?;
-                }
-                let (a0, a1) = (wl0 & wr0, wl1 & wr1);
-                let mut row = [NO_PRODUCT; W];
-                for (j, cell) in row.iter_mut().enumerate() {
-                    if (a0 | a1) >> j & 1 == 0 {
-                        continue;
-                    }
-                    let q = &g_flat[j];
-                    for (p, and) in [(p0, a0), (p1, a1)] {
-                        if and >> j & 1 != 0 {
-                            // Safety: the arenas have room for a pair an f
-                            // pair and a g pair.
-                            unsafe { o.push(left.get(slab, p.left.0, q.left.0), right.get(slab, p.right.0, q.right.0)) };
-                        }
-                    }
-                    // Safety: the arenas have room for a node a column.
-                    if let Some(node) = unsafe { o.close_node() } {
-                        *cell = node;
-                    }
-                }
-                write_cells(slab, row_base, row);
-                continue;
             }
             // Each side's fold, the g pairs some candidate of the row survives
             // against, and each f pair's intersection.
@@ -549,4 +560,168 @@ where
     }
     poll.flush()?;
     Ok(())
+}
+
+/// What the rows of a level of two one-pair columns read in
+/// [`two_column_rows`].
+struct TwoColumns<'a> {
+    /// Each side's row columns, read where the side's lookups kill.
+    left_words: &'a [u64],
+    right_words: &'a [u64],
+    /// The two columns' g pairs.
+    g: [ChildPair; 2],
+    /// The word of a side whose lookups kill nothing.
+    all: u64,
+    output_grid_base: usize,
+}
+
+/// Where [`two_column_rows`] reads f's rows: the scratch rows of `k` pairs
+/// a described level was decoded into, the stored nodes, or neither.
+#[derive(Clone, Copy)]
+enum TwoRows<'a> {
+    Described(usize),
+    Stored(StoredPairs<'a>),
+    Neither,
+}
+
+/// Row `i` of `rows`, rows of `k` pairs, one or two, as its first and last
+/// pair and their count.
+#[inline(always)]
+fn described_two(rows: &[ChildPair], k: usize, i: usize) -> Option<(ChildPair, ChildPair, u64)> {
+    debug_assert!((i + 1) * k <= rows.len());
+    // Safety: the caller reads the rows below `rows.len() / k`.
+    unsafe { Some((*rows.get_unchecked(i * k), *rows.get_unchecked(i * k + k - 1), k as u64)) }
+}
+
+/// Node `i` of a stored level's `nodes`, whose pairs are in `arena`, as
+/// [`described_two`] gives a row, `None` for a node of more than two pairs.
+#[inline(always)]
+fn stored_two(nodes: &[EncodedNode], arena: &[ChildPair], i: usize) -> Option<(ChildPair, ChildPair, u64)> {
+    debug_assert!(i < nodes.len());
+    // Safety: the caller reads the nodes below `nodes.len()`.
+    match unsafe { nodes.get_unchecked(i) }.kind() {
+        NodeKind::Inline(p) => Some((p, p, 1)),
+        NodeKind::Multi { start, len: 2 } => match arena[start as usize..][..2] {
+            [p, q] => Some((p, q, 2)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The rows of a level of two one-pair columns from `next` on, `f_row(i)`
+/// row `i`'s f pairs where there are at most two of them, while its cells
+/// fit `out`'s room and its units fit under `due_in` with those of the rows
+/// before it, written at `c`. Rows, cells, pairs, nodes and units are those
+/// the row loop of [`pair_rows_of`] writes and charges. Returns the first
+/// row left to that loop, the units of the rows written, which the caller
+/// adds to its gate, and the write position past them.
+///
+/// The rows are taken in runs that fit the room and the gate at their most,
+/// four pairs, two nodes and six units a row, so a row tests neither, and
+/// their cells are written past the slab's length, which is set once.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn two_column_rows<L, R>(
+    two: &TwoColumns<'_>,
+    f_row: impl Fn(usize) -> Option<(ChildPair, ChildPair, u64)>,
+    left: &L,
+    right: &R,
+    slab: &mut Vec<u32>,
+    mut c: RowCursor,
+    mut next: usize,
+    end: usize,
+    due_in: u64,
+) -> (usize, u64, RowCursor)
+where
+    L: ChildLookup,
+    R: ChildLookup,
+{
+    let [q0, q1] = two.g;
+    let word_left = |p: ChildPair| {
+        if left.kills() {
+            debug_assert!((p.left.raw() as usize) < two.left_words.len());
+            // Safety: an f pair's left child is a row of the left child grid,
+            // which has a row column each.
+            unsafe { *two.left_words.get_unchecked(p.left.raw() as usize) }
+        } else {
+            two.all
+        }
+    };
+    let word_right = |p: ChildPair| {
+        if right.kills() {
+            debug_assert!((p.right.raw() as usize) < two.right_words.len());
+            // Safety: as on the left.
+            unsafe { *two.right_words.get_unchecked(p.right.raw() as usize) }
+        } else {
+            two.all
+        }
+    };
+    // The grid's rows from `next` on are written past the slab's length,
+    // into the capacity its claim reserved, a gap before them filled dead
+    // as `write_cells` fills one.
+    let first = two.output_grid_base + 2 * next;
+    if slab.len() < first {
+        slab.resize(first, NO_PRODUCT);
+    }
+    assert!(slab.capacity() >= two.output_grid_base + 2 * end, "a grid's claim reserves its cells");
+    let filled = slab.len();
+    let cells = slab.as_mut_ptr();
+    let mut added = 0u64;
+    'runs: loop {
+        let rows = (c.pair_room() / 4).min(c.node_room() / 2).min(((due_in - added).saturating_sub(1) / 6) as usize);
+        let stop = end.min(next + rows);
+        if stop == next {
+            break;
+        }
+        while next < stop {
+            let Some((p0, p1, n)) = f_row(next) else {
+                break 'runs;
+            };
+            // A row of one pair has no second intersection.
+            let second = 0u64.wrapping_sub(n - 1);
+            let (wl0, wr0) = (word_left(p0), word_right(p0));
+            let (wl1, wr1) = (word_left(p1) & second, word_right(p1) & second);
+            let both = (wl0 | wl1) & (wr0 | wr1);
+            let mut row = [NO_PRODUCT; 2];
+            if both & ROW_LIVE != 0 {
+                // The row's f pairs against each column entered, and its
+                // width.
+                let entered = both & 3;
+                added += n * ((entered & 1) + (entered >> 1)) + 2;
+                if n == 2 {
+                    super::super::note_pair_row_unrolled();
+                }
+                let (a0, a1) = (wl0 & wr0, wl1 & wr1);
+                // Safety: the child grids are below the slab's length, and
+                // no cell is written while this view is read.
+                let grid = unsafe { std::slice::from_raw_parts(cells, filled) };
+                for (j, (cell, q)) in row.iter_mut().zip([q0, q1]).enumerate() {
+                    let (b0, b1) = (a0 >> j & 1 != 0, a1 >> j & 1 != 0);
+                    let get = |p: ChildPair| (left.get(grid, p.left.0, q.left.0), right.get(grid, p.right.0, q.right.0));
+                    // Safety: the run's rows fit the room, four pairs and two
+                    // nodes a row.
+                    unsafe {
+                        if b0 && b1 {
+                            let ((l0, r0), (l1, r1)) = (get(p0), get(p1));
+                            *cell = c.pair_node(l0, r0, l1, r1);
+                        } else if b0 || b1 {
+                            let (l, r) = get(if b0 { p0 } else { p1 });
+                            *cell = c.single_node(l, r);
+                        }
+                    }
+                }
+            }
+            // Safety: the claim reserved the grid's cells to `end`.
+            unsafe { cells.add(two.output_grid_base + 2 * next).cast::<[u32; 2]>().write_unaligned(row) };
+            next += 1;
+        }
+    }
+    let written = two.output_grid_base + 2 * next;
+    if slab.len() < written {
+        // Safety: the cells below `written` past the length were written
+        // above.
+        unsafe { slab.set_len(written) };
+    }
+    (next, added, c)
 }
