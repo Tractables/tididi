@@ -788,6 +788,19 @@ pub(crate) fn weight_key(v: &WeightValue) -> WeightKey {
     }
 }
 
+/// The [`WeightKey`] of a bounded-precision value as two words, equal where
+/// the keys are equal, for a merge map whose entries a big rational would
+/// otherwise size; `None` for an exact value. One store's values are all
+/// logs or all scaled floats, so the two forms never meet in one map.
+#[inline]
+pub(crate) fn bounded_key(v: &WeightValue) -> Option<(u64, i64)> {
+    match v {
+        WeightValue::Log(s) => Some((s.ln_abs.to_bits(), i64::from(s.sign))),
+        WeightValue::Scaled(s) => Some((s.mantissa.to_bits(), s.exponent)),
+        WeightValue::ExactSmall(_) | WeightValue::Exact(_) => None,
+    }
+}
+
 /// Whether `a` and `b` would share one [`WeightKey`]: the same exact value,
 /// bit-identical logs, or the same scaled float. For a comparison, this is
 /// `weight_key(a) == weight_key(b)` without building either key, which

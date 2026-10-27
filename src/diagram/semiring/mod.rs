@@ -13,7 +13,7 @@ mod weight;
 
 pub use rational::{LiteralWeights, RationalWeights};
 pub use weight::{ScaledFloat, SignedLog, WeightValue};
-pub(crate) use weight::{same_value, weight_key, ScaledSum, WeightKey};
+pub(crate) use weight::{bounded_key, same_value, weight_key, ScaledSum, WeightKey};
 
 use num_bigint::BigUint;
 

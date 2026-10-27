@@ -93,15 +93,32 @@ impl<'a> MarginalStorage<'a> {
             self.level.set_weight_width(0);
             return Ok(0);
         }
-        let mut by_key = key_map(lim, referenced.len())?;
-        let values = self.weights.as_mut().expect("weighted compaction requires its store")
-            .level_vals_mut(self.index).expect("a nonempty weighted store has a column");
-        let (new_len, merged) = compact_slots(
-            values, kept, &mut by_key,
-            |values, old| super::semiring::weight_key(&values[old]),
-            |values, dst, src| values.swap(dst, src), remap,
-        );
-        release_key_map(lim, by_key);
+        let weights = self.weights.as_mut().expect("weighted compaction requires its store");
+        let bounded = weights.is_bounded();
+        let values = weights.level_vals_mut(self.index).expect("a nonempty weighted store has a column");
+        let (new_len, merged) = match bounded {
+            // Two words a key, where a `WeightKey` can hold a big rational.
+            true => {
+                let mut by_key = key_map(lim, referenced.len())?;
+                let compacted = compact_slots(
+                    values, kept, &mut by_key,
+                    |values, old| super::bounded_key(&values[old]).expect("a bounded store holds no exact value"),
+                    |values, dst, src| values.swap(dst, src), remap,
+                );
+                release_key_map(lim, by_key);
+                compacted
+            }
+            false => {
+                let mut by_key = key_map(lim, referenced.len())?;
+                let compacted = compact_slots(
+                    values, kept, &mut by_key,
+                    |values, old| super::semiring::weight_key(&values[old]),
+                    |values, dst, src| values.swap(dst, src), remap,
+                );
+                release_key_map(lim, by_key);
+                compacted
+            }
+        };
         truncate_with_slack(values, new_len);
         self.level.set_weight_width(new_len as u32);
         Ok(merged)
