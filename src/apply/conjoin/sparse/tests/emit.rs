@@ -68,15 +68,19 @@ fn gathering_by_product_is_a_stable_sort() {
     use crate::apply::conjoin::sparse::scatter::gather_by_product;
     use crate::diagram::{ChildPair, EncodedChildRef};
     let mut rng = crate::test_helpers::Lcg::new(11);
-    for products in 2..=4u32 {
+    for (products, alone) in (2..=4u32).flat_map(|p| [(p, true), (p, false)]) {
         for n in [64usize, 65, 100, 301] {
-            // Product 0 holds one candidate, the others the rest at random,
-            // each at least one.
+            // Product 0 holds one candidate where `alone`, the others the
+            // rest at random, each at least one.
             let lone = rng.below(n as u64) as usize;
-            let mut owners: Vec<u32> = (0..n).map(|i| if i == lone { 0 } else { 1 + rng.below(u64::from(products - 1)) as u32 }).collect();
-            for k in 1..products {
+            let rest = if alone { products - 1 } else { products };
+            let first = products - rest;
+            let mut owners: Vec<u32> = (0..n)
+                .map(|i| if alone && i == lone { 0 } else { first + rng.below(u64::from(rest)) as u32 })
+                .collect();
+            for k in first..products {
                 if !owners.contains(&k) {
-                    owners[(lone + k as usize) % n] = k;
+                    owners[(lone + 1 + k as usize) % n] = k;
                 }
             }
             let pairs: Vec<ChildPair> = (0..n as u32)

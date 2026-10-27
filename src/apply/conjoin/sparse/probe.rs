@@ -404,6 +404,44 @@ struct OneSide<'a> {
     direct: bool,
 }
 
+/// The pairs a [`OneSide`] walk reads the products and `g` pairs of before
+/// it reads any: a group's misses on the product list and the index then
+/// overlap.
+const SIDE_GROUP: usize = 16;
+
+impl OneSide<'_> {
+    /// The direct walk of a node's pairs, the other child's product read by
+    /// `other` (the walk's [`CellLookup`], one case of it): a group of
+    /// pairs' products is read, the cache asked for the `g` pair under each,
+    /// and then each is read.
+    #[inline(always)]
+    fn direct_node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        other: impl Fn(u32, u32) -> u32,
+        push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        let mut group = [(0u32, 0u32, 0u32); SIDE_GROUP];
+        for chunk in pairs.chunks(SIDE_GROUP) {
+            for (looked, pair) in group.iter_mut().zip(chunk) {
+                let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
+                let e = &self.list[a as usize];
+                prefetch_at(self.index.entries, e.g_idx.idx());
+                *looked = (e.g_idx.0, e.prod_idx.0, b);
+            }
+            for &(g, through, b) in &group[..chunk.len()] {
+                let r = &self.index.entries[g as usize];
+                let across = other(b, r.other);
+                if across != NO_PRODUCT {
+                    let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
+                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl NodeWalk for OneSide<'_> {
     #[inline(always)]
     fn node<const SWAPPED: bool>(
@@ -415,16 +453,10 @@ impl NodeWalk for OneSide<'_> {
         if self.direct {
             // A bucket of one product over one `g` pair: two units a pair,
             // as below.
-            for pair in pairs {
-                let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
-                let e = &self.list[a as usize];
-                let r = &self.index.entries[e.g_idx.idx()];
-                let across = self.other.get(b, r.other);
-                if across != NO_PRODUCT {
-                    let through = e.prod_idx.0;
-                    let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
-                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
-                }
+            match self.other {
+                CellLookup::GIdentity => self.direct_node::<SWAPPED>(pairs, |a, _| a, &mut push)?,
+                CellLookup::FIdentity => self.direct_node::<SWAPPED>(pairs, |_, b| b, &mut push)?,
+                other => self.direct_node::<SWAPPED>(pairs, |a, b| other.get(a, b), &mut push)?,
             }
             return ticker.poll(2 * pairs.len() as u64 + 1);
         }

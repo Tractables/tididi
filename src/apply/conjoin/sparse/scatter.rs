@@ -3119,7 +3119,8 @@ fn emit_walked(
         let pair = level.pop_pair().expect("the walk wrote the candidate's pair");
         return emit_single_pair(eng, level, pair);
     }
-    if owners.iter().all(|&g| g == g_parent) {
+    // A block of owners at a time, each block's test without a branch.
+    if owners.chunks(16).all(|block| block.iter().fold(true, |same, &g| same & (g == g_parent))) {
         lim.try_push(pl_output, product)?;
         reserve_room(lim, level.nodes.stored_mut(), 1)?;
         let node = finish_node(eng, level, base)?.expect("the walk wrote the candidates' pairs");
@@ -3375,9 +3376,24 @@ const GATHERED_CANDIDATES: usize = 64;
 /// the product's cursor whatever its product, and the cursor steps past it
 /// only for the product's own, so the next pair overwrites any other. The
 /// last write of a pass lands at the range's end, one place past the last
-/// range's, which `into` holds.
+/// range's, which `into` holds. Two products of more than one pair each
+/// share one pass, each pair written at the cursor of its own.
 #[inline(always)]
 pub(super) fn gather_by_product(pairs: &[ChildPair], owners: &[u32], cursors: &mut [u32], singles: &mut [ChildPair], into: &mut [ChildPair]) {
+    if let [first, second] = cursors
+        && *first != INLINE
+        && *second != INLINE
+    {
+        let (mut a, mut b) = (*first as usize, *second as usize);
+        for (&o, &pair) in owners.iter().zip(pairs) {
+            let second = o != 0;
+            into[if second { b } else { a }] = pair;
+            a += usize::from(!second);
+            b += usize::from(second);
+        }
+        (*first, *second) = (a as u32, b as u32);
+        return;
+    }
     for (k, cursor) in cursors.iter_mut().enumerate() {
         let k = k as u32;
         if *cursor == INLINE {
