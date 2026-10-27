@@ -40,6 +40,9 @@ const PACKED_LIMIT: usize = 1 << 31;
 /// order ([`MergeBuffers::words`]).
 const PAIRS_AHEAD: usize = 16;
 
+/// The group of a member [`rebuild_in_order`] drops.
+const NO_GROUP: u32 = u32::MAX;
+
 /// Ask the cache for the line holding `at`. A hint only: a prefetch reads
 /// nothing the program sees and never faults, so any address is sound. A
 /// no-op off `x86_64` and under Miri, which lacks the intrinsic.
@@ -465,10 +468,15 @@ pub(super) fn rebuild_in_order(
     let mut keeps = group_starts.iter().map(|&s| flat_groups[s as usize] as usize);
     let mut next = keeps.next().unwrap_or(usize::MAX);
     // The group of the next survivor met, and where the next member's
-    // group is listed, as the members are put and as they are read.
-    let (mut group, mut member, mut ahead) = (0usize, 0usize, 0usize);
-    let mut held = [EncodedNode::multi_pair(0, 0); 64];
+    // group is listed.
+    let (mut group, mut ahead) = (0usize, 0usize);
+    // The members of 64 nodes, each with its group, or `NO_GROUP` where
+    // the merge drops it.
+    let mut held = [(EncodedNode::multi_pair(0, 0), NO_GROUP); 64];
     let len = nodes.len();
+    // Slices of the one length, so that a node's index is checked against
+    // it once and neither length is read again.
+    let (slots, remapped) = (&mut nodes[..], &mut final_remap[..len]);
     for (w, &word) in bits[..len.div_ceil(64)].iter().enumerate() {
         let base = w * 64;
         let valid = if len - base < 64 { (1u64 << (len - base)) - 1 } else { u64::MAX };
@@ -482,20 +490,54 @@ pub(super) fn rebuild_in_order(
         let mut h = 0;
         while m != 0 {
             let t = base + m.trailing_zeros() as usize;
-            held[h] = nodes[t];
             m &= m - 1;
-            h += 1;
-            if !(unnamed && final_remap[t].0 == DISCARDED) {
-                prefetch_line(fresh.as_ptr().wrapping_add(rooms[member_groups[ahead] as usize] as usize));
+            // A node no pair names is dropped with its pairs.
+            let g = if unnamed && remapped[t].0 == DISCARDED {
+                NO_GROUP
+            } else {
+                let g = member_groups[ahead];
                 ahead += 1;
-            }
+                prefetch_line(fresh.as_ptr().wrapping_add(rooms[g as usize] as usize));
+                g
+            };
+            held[h] = (slots[t], g);
+            h += 1;
         }
         let mut live = !word & valid;
-        while live != 0 {
+        loop {
+            // A run of the nodes kept that are no group's survivor and
+            // whose pairs, if in the arena, follow the run's: each takes
+            // its word or its new offset, and nothing is appended, so the
+            // loop holds no more than it reads.
+            let delta = fresh.len().wrapping_sub(run.start);
+            let mut end = run.end;
+            while live != 0 {
+                let read = base + live.trailing_zeros() as usize;
+                if read == next {
+                    break;
+                }
+                let node = slots[read];
+                let rebuilt = match node.kind() {
+                    NodeKind::Inline(_) => node,
+                    NodeKind::Multi { start, len } if start as usize == end => {
+                        end += len as usize;
+                        EncodedNode::multi_pair((start as usize).wrapping_add(delta) as u32, len)
+                    }
+                    _ => break,
+                };
+                live &= live - 1;
+                remapped[read] = NodeIdx(write as u32);
+                slots[write] = rebuilt;
+                write += 1;
+            }
+            run.end = end;
+            if live == 0 {
+                break;
+            }
             let read = base + live.trailing_zeros() as usize;
             live &= live - 1;
-            final_remap[read] = NodeIdx(write as u32);
-            let node = nodes[read];
+            remapped[read] = NodeIdx(write as u32);
+            let node = slots[read];
             let rebuilt = if read == next {
                 next = keeps.next().unwrap_or(usize::MAX);
                 append(&mut fresh, &old[run.clone()]);
@@ -529,19 +571,14 @@ pub(super) fn rebuild_in_order(
                     NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
                 }
             };
-            nodes[write] = rebuilt;
+            slots[write] = rebuilt;
             write += 1;
         }
-        let mut m = merged;
-        for &node in &held[..h] {
-            let t = base + m.trailing_zeros() as usize;
-            m &= m - 1;
-            // A node no pair names is dropped with its pairs.
-            if unnamed && final_remap[t].0 == DISCARDED {
+        for &(node, g) in &held[..h] {
+            if g == NO_GROUP {
                 continue;
             }
-            let room = &mut rooms[member_groups[member] as usize];
-            member += 1;
+            let room = &mut rooms[g as usize];
             let at = *room as usize;
             *room += match node.kind() {
                 NodeKind::Inline(pair) => {
@@ -556,7 +593,7 @@ pub(super) fn rebuild_in_order(
     fresh.extend_from_slice(&old[run]);
     debug_assert_eq!(next, usize::MAX, "every group met its survivor");
     if cfg!(debug_assertions) {
-        debug_assert_eq!(member, member_groups.len(), "every member met");
+        debug_assert_eq!(ahead, member_groups.len(), "every member met");
         for (g, &s) in group_starts.iter().enumerate() {
             let keep = flat_groups[s as usize];
             let NodeKind::Multi { start, len } = nodes[final_remap[keep as usize].idx()].kind() else {
