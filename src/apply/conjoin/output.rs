@@ -2,18 +2,19 @@
 
 use super::*;
 
-/// Drop the arenas of a level's four operand children before the level's own
-/// reserve fires, so the allocator can reuse their slabs.
+/// Drop the arenas of a level's operand children before the level's own
+/// reserve fires, so the allocator can reuse their slabs: an owned
+/// operand's; a borrowed one is the caller's.
 ///
 /// Sound because the sweep reads finished children only through the width
 /// snapshots taken at setup, never through their arenas; the drop keeps
 /// `marginal_counts`, so `is_marginal()` stays accurate.
-pub(super) fn drop_dead_children(f: &mut Tdd, g: &mut Tdd, shape: LevelShape) {
+pub(super) fn drop_dead_children(f: &mut Held<'_>, g: &mut Held<'_>, shape: LevelShape) {
     let (li, ri) = (shape.left.idx(), shape.right.idx());
-    drop_dead_operand_level(&mut f.levels[li]);
-    drop_dead_operand_level(&mut f.levels[ri]);
-    drop_dead_operand_level(&mut g.levels[li]);
-    drop_dead_operand_level(&mut g.levels[ri]);
+    for operand in [f.owned(), g.owned()].into_iter().flatten() {
+        drop_dead_operand_level(&mut operand.levels[li]);
+        drop_dead_operand_level(&mut operand.levels[ri]);
+    }
 }
 
 /// Drop the `nodes`, `pairs` and `ranges` arenas of one operand level.

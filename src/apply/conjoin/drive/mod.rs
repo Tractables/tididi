@@ -99,8 +99,8 @@ pub(super) struct Sweep<'a, 'filter> {
 fn sweep_levels(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
     sweep: &mut Sweep<'_, '_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
@@ -171,8 +171,8 @@ fn sweep_levels(
 fn build_level(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
     sweep: &mut Sweep<'_, '_>,
     t: VtreeIdx,
     left: VtreeIdx,
@@ -364,21 +364,35 @@ pub(crate) enum ConjoinMode {
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
 /// with each operand's free levels ([`ApplyRun::cone`]) in `free`.
-pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
+pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
     debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
-    apply_and_core(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
+    apply_and_held(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
         .map(Conjoined::diagram)
 }
 
-/// Move identity levels back to their operands, latest first, and the
-/// nodes and arenas of the levels `lent` names back to f.
-fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, bool)], lent: &[usize]) {
+/// [`apply_and_held`] of a plain conjunction ([`ConjoinMode::Build`]) of
+/// structural, unweighted operands, each owned or borrowed, without free
+/// levels: an owned operand's levels are dropped as the sweep reads them.
+pub(crate) fn apply_and_plain(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>) -> Result<Tdd, OperationError> {
+    debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
+    apply_and_held(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Build, Operands::default())
+        .map(Conjoined::diagram)
+}
+
+/// Move identity levels back to their owned operands, latest first, and
+/// the nodes and arenas of the levels `lent` names back to f, which lends
+/// only where it is owned.
+fn give_back(levels: &mut [TddLevel], f: &mut Held<'_>, g: &mut Held<'_>, kept: &[(usize, bool)], lent: &[usize]) {
     for &(t, from_f) in kept.iter().rev() {
-        let carrier = if from_f { &mut f.levels } else { &mut g.levels };
-        std::mem::swap(&mut levels[t], &mut carrier[t]);
+        match from_f {
+            true => f.uncarry(t, &mut levels[t]),
+            false => g.uncarry(t, &mut levels[t]),
+        }
     }
-    for &t in lent {
-        f.levels.swap_arenas(t, &mut levels[t]);
+    if let Some(f) = f.owned() {
+        for &t in lent {
+            f.levels.swap_arenas(t, &mut levels[t]);
+        }
     }
 }
 
@@ -430,6 +444,30 @@ pub(crate) fn apply_and_core(
     mode: ConjoinMode,
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
+    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), targets, quantified, filter, mode, free)
+}
+
+/// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
+/// borrowed operand has no weights and no marginal level, and is on the
+/// operands' vtree as it is, with no free level: the caller copies one that
+/// is not so first.
+#[expect(clippy::too_many_arguments)]
+fn apply_and_held(
+    eng: &Engine,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+    mode: ConjoinMode,
+    free: Operands<VtreeMask<'_>>,
+) -> Result<Conjoined, OperationError> {
+    debug_assert!(
+        [(&*f, free.f), (&*g, free.g)].into_iter().all(|(op, free)| {
+            !op.is_borrowed() || (op.weights.is_none() && !op.has_marginal_level() && free.is_empty())
+        }),
+        "a borrowed operand is structural, unweighted and has no free level",
+    );
     let count_root = matches!(mode, ConjoinMode::Count);
     let keep = matches!(mode, ConjoinMode::Restore);
     let sum_child = match mode {
@@ -445,8 +483,9 @@ pub(crate) fn apply_and_core(
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
+    let take_weights = |op: &mut Held<'_>| op.owned().and_then(|op| op.weights.take());
     let ws: Option<crate::diagram::WeightStore> =
-        match (f.weights.take(), g.weights.take()) {
+        match (take_weights(f), take_weights(g)) {
             (Some(mut a), Some(b)) => {
                 a.absorb(b);
                 Some(a)
@@ -522,7 +561,7 @@ pub(crate) fn apply_and_core(
     // or drop any operand level: an access that changed a level would have
     // dropped them.
     let kept = Operands { f: f.levels.counts().cloned(), g: g.levels.counts().cloned() };
-    region::take_regions(&vtree, &mut run, f, g);
+    region::take_regions(&vtree, lim, &mut run, f, g)?;
     let mut sweep = Sweep {
         vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
         sum_child, summed: None, kept,

@@ -9,6 +9,7 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::OperationError;
+use super::held::Held;
 use super::setup::{ApplyRun, LevelShape};
 use super::products::Products;
 use crate::value::CountRead;
@@ -219,17 +220,17 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
     }
 }
 
-/// Shared body of the two identity fast paths: swap the carrier's level into
-/// the output and propagate the identity flags. The caller has already
-/// checked the guards (identity-operand width 1, identity children, marginal
-/// checks).
+/// Shared body of the two identity fast paths: carry the carrier's level
+/// into the output ([`Held::carry`]) and propagate the identity flags. The
+/// caller has already checked the guards (identity-operand width 1, identity
+/// children, marginal checks).
 ///
 /// `F_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
-/// `false`: the reverse. `carrier_levels` is the carrier's `levels`.
+/// `false`: the reverse.
 fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     eng: &Engine,
     shape: LevelShape,
-    carrier_levels: &mut [TddLevel],
+    carrier: &mut Held<'_>,
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
@@ -249,8 +250,9 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
         carrier_identity[t_idx] = true;
     }
 
-    std::mem::swap(&mut levels[t_idx], &mut carrier_levels[t_idx]);
+    carrier.carry(eng.limits(), t_idx, &mut levels[t_idx])?;
     run.carried.push((t_idx, F_IS_CARRIER));
+    let carrier_levels = &carrier.levels;
 
     // When a source-marginal child remains marginal in the output, re-resolve the
     // swapped-in carrier level's marginal refs into the output child
@@ -337,8 +339,8 @@ fn try_zero_width_marginal(
 pub(super) fn take_level_fast_path(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
     shape: LevelShape,
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
@@ -385,9 +387,10 @@ pub(super) fn take_level_fast_path(
         // FP1: f is the carrier, g is the identity operand. A free level
         // carried is built first: the level it stands for.
         if cone.free_in_f(t_idx) {
+            let f = f.owned().expect("only a placed operand, which is owned, has free levels");
             crate::restructure::placement::push_free_level(&mut f.levels[t_idx], &f.vtree, shape.t);
         }
-        apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
+        apply_identity_fast_path::<true>(eng, shape, f, run)?;
         return Ok(true);
     }
 
@@ -402,9 +405,10 @@ pub(super) fn take_level_fast_path(
     {
         // FP2: g is the carrier, f is the identity operand.
         if cone.free_in_g(t_idx) {
+            let g = g.owned().expect("only a placed operand, which is owned, has free levels");
             crate::restructure::placement::push_free_level(&mut g.levels[t_idx], &g.vtree, shape.t);
         }
-        apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;
+        apply_identity_fast_path::<false>(eng, shape, g, run)?;
         return Ok(true);
     }
 

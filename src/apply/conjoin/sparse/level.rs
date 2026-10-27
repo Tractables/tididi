@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::apply::conjoin::marginal_plan::{Carrier, SidePlan};
+use crate::apply::conjoin::held::Held;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::{ChildSide, Sides};
 
@@ -216,7 +217,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    f: &mut Tdd,
+    f: &mut Held<'_>,
     g: &Tdd,
     levels: &mut [TddLevel],
     lists: ProductLists<'_>,
@@ -310,18 +311,30 @@ pub(crate) fn apply_sparse_level(
     }
 
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds };
-    let made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    let mut made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
     let held = ws.outer_held;
     if made == Made::F {
-        // The level's nodes and arena are f's, kept within the room the
-        // level's own had, which the copy would have filled; f's level holds
-        // none while the caller may give them back.
         let level = &mut levels[t_idx];
-        let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
-        (level.nodes, level.pairs) = Default::default();
-        f.levels.swap_arenas(t_idx, level);
-        level.nodes.stored_mut().shrink_to(room.0);
-        level.pairs.stored_mut().shrink_to(room.1);
+        match f.owned() {
+            // The level's nodes and arena are f's, kept within the room the
+            // level's own had, which the copy would have filled; f's level
+            // holds none while the caller may give them back.
+            Some(f) => {
+                let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
+                (level.nodes, level.pairs) = Default::default();
+                f.levels.swap_arenas(t_idx, level);
+                level.nodes.stored_mut().shrink_to(room.0);
+                level.pairs.stored_mut().shrink_to(room.1);
+            }
+            // A borrowed f's are copied into the level's room, which holds
+            // them, as the walk's writes of them would have.
+            None => {
+                let stored = f.levels[t_idx].stored().expect("a level the walk made f's is stored");
+                level.pairs.stored_mut().extend_from_slice(stored.arena());
+                level.nodes.stored_mut().extend_from_slice(stored.nodes());
+                made = Made::CopiedF;
+            }
+        }
     }
 
     #[cfg(debug_assertions)]

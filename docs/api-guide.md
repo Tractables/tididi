@@ -32,8 +32,8 @@ without building a complement. [`Tdd::and_clause`](crate::Tdd::and_clause)
 conjoins a clause and [`Tdd::or_cube`](crate::Tdd::or_cube) disjoins a cube
 without building a second circuit. [`add`](crate::add) sums two count diagrams,
 such as results of [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels).
-These operations consume their operands; [`Tdd`](crate::Tdd) explains when to
-clone.
+These operations consume their operands, except that [`and`](crate::and) also
+reads a borrowed operand in place; [`Tdd`](crate::Tdd) explains when to clone.
 
 ## Query solutions
 

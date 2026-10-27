@@ -61,8 +61,9 @@ Follow one conjunction, [`and(f, g)`]:
    as a dense grid or as sparse lists, together with the metadata that makes
    each form readable. An `Assembly` owns the unfinished output levels and
    their weights and returns the arenas to the pool if the operation fails.
-4. **Recycle.** The operands' level arenas, which the conjunction consumed,
-   return to the engine's pools for the next operation.
+4. **Recycle.** The level arenas of owned operands, which the conjunction
+   consumed, return to the engine's pools for the next operation. A borrowed
+   operand is read in place; a level the result would take from it is copied.
 5. **Reduce.** The result already has the right function and count, but it
    may hold nodes the output no longer reaches and *twins*: nodes that every
    parent uses with exactly the same siblings. A full reduction prunes the

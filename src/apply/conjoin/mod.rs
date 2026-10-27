@@ -5,10 +5,11 @@
 //! at each vtree level, computes the conjunction of their input pairs, and
 //! omits dead nodes (compaction). See `docs/tdd.md` for details.
 
+use std::borrow::{Borrow, Cow};
 use std::sync::Arc;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx};
-use crate::restructure::{EmbedError, EmbedRefused};
+use crate::restructure::EmbedError;
 use crate::restructure::embed::{place_moving, Free, Plan};
 use crate::restructure::placement::push_free_level;
 use super::CONJOIN_GRID;
@@ -32,6 +33,10 @@ use cell::{
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
 use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Complete, Made, Passthrough};
+
+// An operand as the sweep holds it, owned or borrowed.
+mod held;
+use held::Held;
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -180,6 +185,72 @@ fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
     }
 }
 
+/// [`fill_free`] of an owned operand; a borrowed one has no free level.
+fn fill_free_cow(tdd: &mut Cow<'_, Tdd>, free: VtreeMask<'_>) {
+    match tdd {
+        Cow::Owned(tdd) => fill_free(tdd, free),
+        Cow::Borrowed(_) => debug_assert!(free.is_empty(), "a borrowed operand has no free level"),
+    }
+}
+
+/// Hand an owned operand's level array back to the pool once the sweep is
+/// done with it; a borrowed operand is the caller's.
+fn recycle(eng: &Engine, tdd: Cow<'_, Tdd>) {
+    if let Cow::Owned(mut tdd) = tdd {
+        diagram::return_levels(eng, std::mem::take(&mut tdd.levels).into_vec());
+    }
+}
+
+/// Whether a conjunction reads its borrowed operands in place: where
+/// neither operand has a weight table or a marginal level. Otherwise it
+/// consumes copies of them.
+fn reads_in_place(f: &Tdd, g: &Tdd) -> bool {
+    f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level()
+}
+
+/// `tdd` to consume: itself where owned, a copy where borrowed
+/// ([`Engine::try_clone`](crate::Engine::try_clone)).
+fn into_owned(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+    match tdd {
+        Cow::Owned(tdd) => Ok(tdd),
+        Cow::Borrowed(tdd) => tdd.try_clone_on(eng),
+    }
+}
+
+/// [`Engine::and`] after its entry, for operands each owned or borrowed.
+/// Two owned operands take [`conjoin_on`]; a borrowed one is read in place
+/// where [`reads_in_place`] holds and copied first where it does not.
+fn conjoin_either(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+    let (f, g) = match (f, g) {
+        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_on(eng, f, g, VtreeMask::default()).map(|(out, _)| out),
+        operands => operands,
+    };
+    crate::apply::check_vtree(&f, &g)?;
+    if !reads_in_place(&f, &g) {
+        let (f, g) = (into_owned(eng, f)?, into_owned(eng, g)?);
+        return conjoin_on(eng, f, g, VtreeMask::default()).map(|(out, _)| out);
+    }
+    // The swap and the self-conjunction shortcut of `conjoin_checked_as`.
+    let (mut f, mut g) = (f, g);
+    let widths = Operands { f: f.max_width(), g: g.max_width() };
+    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
+    if is_self_conjunction(&f, &g) {
+        // f ∧ f = f, as two owned operands return it: f itself where owned,
+        // a copy of it where borrowed.
+        let _op = eng.limits().enter()?;
+        let out = match f {
+            Cow::Owned(out) => out,
+            Cow::Borrowed(f) => f.try_clone_on(eng)?,
+        };
+        recycle(eng, g);
+        return Ok(out);
+    }
+    let result = drive::apply_and_plain(eng, &mut Held::of(&mut f), &mut Held::of(&mut g));
+    recycle(eng, f);
+    recycle(eng, g);
+    result
+}
+
 /// Make `g` the narrower operand, and say whether the two were swapped; the
 /// free levels in `free` ([`ApplyRun::cone`]) follow their operands and are
 /// one node wide.
@@ -190,12 +261,12 @@ fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
 /// track operands by side.
 ///
 /// `widths` holds each operand's [`Tdd::max_width`].
-fn narrower_right(f: &mut Tdd, g: &mut Tdd, free: &mut Operands<VtreeMask<'_>>, widths: Operands<usize>) -> bool {
+fn narrower_right<T: Borrow<Tdd>>(f: &mut T, g: &mut T, free: &mut Operands<VtreeMask<'_>>, widths: Operands<usize>) -> bool {
     let width = |d: &Tdd, free: VtreeMask<'_>, built: usize| match built {
         0 => usize::from(!free.is_empty() && d.vtree.internal_bottomup().any(|(t, _, _)| free.contains(t.idx()))),
         built => built,
     };
-    let swap = width(g, free.g, widths.g) > width(f, free.f, widths.f);
+    let swap = width((*g).borrow(), free.g, widths.g) > width((*f).borrow(), free.f, widths.f);
     if swap {
         std::mem::swap(f, g);
         std::mem::swap(&mut free.f, &mut free.g);
@@ -278,10 +349,16 @@ fn conjoin_recycling_as(
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
-/// Both operands are consumed on success and on error; clone an operand first
-/// if it is needed afterward. The result is correct for counting but may retain
-/// unreachable nodes and twins; [`Tdd::minimize`]
-/// establishes canonical form when required.
+/// Each operand is a [`Tdd`], consumed on success and on error, or a
+/// `&Tdd`, read in place and left as it is. Where the result takes a level
+/// of an operand as it stands, such as one the other operand is constant
+/// true under, an owned operand's level is moved and a borrowed one's
+/// copied: borrowing costs those levels, where cloning first copies every
+/// level. Where either operand has a weight table or a marginal level, a
+/// borrowed operand is copied whole first. Owned or borrowed, the result is
+/// the same diagram for the same work. It is correct for counting but may
+/// retain unreachable nodes and twins; [`Tdd::minimize`] establishes
+/// canonical form when required.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -290,8 +367,9 @@ fn conjoin_recycling_as(
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let either = Tdd::clause(&vtree, [1, 2])?;
 /// let not_third = literal(&vtree, -3)?;
-/// let f = and(either, not_third)?;
+/// let f = and(&either, not_third)?;
 /// assert_eq!(f.model_count()?, 3u32.into());
+/// assert_eq!(either.model_count()?, 6u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
@@ -315,34 +393,37 @@ fn conjoin_recycling_as(
 /// Allocation refusal is reported as [`OperationError::OverBudget`].
 /// For explicit resource limits, use [`Context::with_limits`](crate::Context::with_limits)
 /// and the supplied engine's operations.
-pub fn and(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+pub fn and<'f, 'g>(f: impl Into<Cow<'f, Tdd>>, g: impl Into<Cow<'g, Tdd>>) -> Result<Tdd, OperationError> {
+    let (f, g) = (f.into(), g.into());
     let context = std::sync::Arc::clone(f.context());
     context.run(|eng| eng.and(f, g))
 }
 
 /// A conjunction [`Engine::and_restoring`](crate::Engine::and_restoring)
-/// refused, with both operands as they were given.
+/// refused, with both operands as they were given: an owned one unchanged,
+/// a borrowed one as the borrow.
 #[derive(Debug)]
-pub struct AndRefused {
+pub struct AndRefused<'a> {
     /// Why the conjunction was refused.
     pub error: OperationError,
     /// The first operand, unchanged.
-    pub f: Tdd,
+    pub f: Cow<'a, Tdd>,
     /// The second operand, unchanged.
-    pub g: Tdd,
+    pub g: Cow<'a, Tdd>,
 }
 
 /// A conjunction [`Engine::and_onto`](crate::Engine::and_onto) refused, with
-/// each operand on the destination where it was placed there before the
-/// refusal and as it was given otherwise.
+/// each owned operand on the destination where it was placed there before
+/// the refusal and as it was given otherwise, and each borrowed one as the
+/// borrow.
 #[derive(Debug)]
-pub struct AndOntoRefused {
+pub struct AndOntoRefused<'a> {
     /// Why the placement or the conjunction was refused.
     pub error: EmbedError,
     /// The first operand.
-    pub f: Tdd,
+    pub f: Cow<'a, Tdd>,
     /// The second operand.
-    pub g: Tdd,
+    pub g: Cow<'a, Tdd>,
 }
 
 /// [`Engine::and_restoring`](crate::Engine::and_restoring) after its entry
@@ -350,102 +431,144 @@ pub struct AndOntoRefused {
 /// in `free`: refused, both come back as they were given, every free level
 /// built.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn conjoin_kept(eng: &Engine, mut f: Tdd, mut g: Tdd, mut free: Operands<VtreeMask<'_>>) -> Result<Tdd, AndRefused> {
+fn conjoin_kept<'a>(
+    eng: &Engine,
+    mut f: Cow<'a, Tdd>,
+    mut g: Cow<'a, Tdd>,
+    mut free: Operands<VtreeMask<'_>>,
+) -> Result<Tdd, AndRefused<'a>> {
     // Whether a level is marginal, and the widest level, in one pass.
     let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
         (marginal | l.is_marginal(), width.max(l.slot_count()))
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
-        fill_free(&mut f, free.f);
-        fill_free(&mut g, free.g);
-        return eng.and(f.clone(), g.clone()).map_err(|error| AndRefused { error, f, g });
+        fill_free_cow(&mut f, free.f);
+        fill_free_cow(&mut g, free.g);
+        return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
     }
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
+    let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
+        fill_free_cow(&mut f, free.f);
+        fill_free_cow(&mut g, free.g);
+        if swapped {
+            std::mem::swap(&mut f, &mut g);
+        }
+        AndRefused { error, f, g }
+    };
     if same_structure(&f, &g, free) {
-        fill_free(&mut f, free.f);
-        diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
-        return Ok(f);
+        // f ∧ f = f, as two owned operands return it: f itself where owned,
+        // its free levels built, a copy of it where borrowed.
+        let out = match f {
+            Cow::Owned(mut out) => {
+                fill_free(&mut out, free.f);
+                out
+            }
+            Cow::Borrowed(borrowed) => match borrowed.try_clone_on(eng) {
+                Ok(out) => out,
+                Err(error) => return Err(give_back(error, Cow::Borrowed(borrowed), g)),
+            },
+        };
+        recycle(eng, g);
+        return Ok(out);
     }
-    match drive::apply_and_kept(eng, &mut f, &mut g, free) {
+    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
         Ok(out) => {
-            diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
-            diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
+            recycle(eng, f);
+            recycle(eng, g);
             Ok(out)
         }
-        Err(error) => {
-            fill_free(&mut f, free.f);
-            fill_free(&mut g, free.g);
-            if swapped {
-                std::mem::swap(&mut f, &mut g);
-            }
-            Err(AndRefused { error, f, g })
-        }
+        Err(error) => Err(give_back(error, f, g)),
     }
 }
 
+/// An operand [`place_onto`] placed, with the plan it was placed by, or why
+/// it was refused, with the operand as it was given.
+type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>), (EmbedError, Cow<'a, Tdd>)>;
+
 /// Place `tdd` on `into` for [`Engine::and_onto`](crate::Engine::and_onto),
 /// free levels left empty, with the plan it was placed by; as it is, with no
-/// plan, when it is on `into` already. `begun` says whether a phase of the
+/// plan, when it is on `into` already. A borrowed operand not on `into` is
+/// copied and the copy placed. `begun` says whether a phase of the
 /// operation has begun, and is set. With `mirror`, up to mirrors
 /// ([`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored)).
+/// Refused, the operand comes back as it was given.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn place_onto(
+fn place_onto<'a>(
     eng: &Engine,
-    tdd: Tdd,
+    tdd: Cow<'a, Tdd>,
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     begun: &mut bool,
     mirror: bool,
-) -> Result<(Tdd, Option<Plan>), EmbedRefused> {
+) -> Placed<'a> {
     if Arc::ptr_eq(tdd.vtree(), into) {
         return Ok((tdd, None));
     }
     if let Err(error) = begin_phase(eng, *begun) {
-        return Err(EmbedRefused { error: error.into(), tdd });
+        return Err((error.into(), tdd));
     }
     *begun = true;
-    place_moving(eng, tdd, into, map, Free::Leave, mirror).map(|(tdd, plan)| (tdd, Some(plan)))
+    let (owned, borrowed) = match tdd {
+        Cow::Owned(tdd) => (tdd, None),
+        Cow::Borrowed(tdd) => match tdd.try_clone_on(eng) {
+            Ok(copy) => (copy, Some(tdd)),
+            Err(error) => return Err((error.into(), Cow::Borrowed(tdd))),
+        },
+    };
+    match place_moving(eng, owned, into, map, Free::Leave, mirror) {
+        Ok((tdd, plan)) => Ok((Cow::Owned(tdd), Some(plan))),
+        Err(refused) => Err((refused.error, borrowed.map_or(Cow::Owned(refused.tdd), Cow::Borrowed))),
+    }
 }
 
 /// [`Engine::and_onto`](crate::Engine::and_onto), and with `mirror`
 /// [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored).
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn conjoin_onto(
+fn conjoin_onto<'a>(
     eng: &Engine,
-    f: Tdd,
+    f: Cow<'a, Tdd>,
     f_map: impl Fn(VarId) -> VarId,
-    g: Tdd,
+    g: Cow<'a, Tdd>,
     g_map: impl Fn(VarId) -> VarId,
     into: &Arc<Vtree>,
     mirror: bool,
-) -> Result<Tdd, AndOntoRefused> {
+) -> Result<Tdd, AndOntoRefused<'a>> {
     let _op = match eng.limits().enter() {
         Ok(op) => op,
         Err(error) => return Err(AndOntoRefused { error: error.into(), f, g }),
     };
+    // A borrowed operand comes back as the borrow, whatever its placed
+    // copy went through.
+    let given = |tdd: &Cow<'a, Tdd>| match tdd {
+        Cow::Borrowed(tdd) => Some(*tdd),
+        Cow::Owned(_) => None,
+    };
+    let (f_given, g_given) = (given(&f), given(&g));
+    let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
     let mut begun = false;
     let (f, f_plan) = match place_onto(eng, f, into, f_map, &mut begun, mirror) {
         Ok(placed) => placed,
-        Err(refused) => return Err(AndOntoRefused { error: refused.error, f: refused.tdd, g }),
+        Err((error, f)) => return Err(AndOntoRefused { error, f, g }),
     };
     let free_f = free_levels(&f, f_plan.as_ref());
     let (g, g_plan) = match place_onto(eng, g, into, g_map, &mut begun, mirror) {
         Ok(placed) => placed,
-        Err(refused) => {
+        Err((error, g)) => {
             let mut f = f;
-            fill_free(&mut f, free_f);
-            return Err(AndOntoRefused { error: refused.error, f, g: refused.tdd });
+            fill_free_cow(&mut f, free_f);
+            return Err(AndOntoRefused { error, f: back(f, f_given), g });
         }
     };
     let free = Operands { f: free_f, g: free_levels(&g, g_plan.as_ref()) };
     let (mut f, mut g) = (f, g);
     if let Err(error) = begin_phase(eng, begun) {
-        fill_free(&mut f, free.f);
-        fill_free(&mut g, free.g);
-        return Err(AndOntoRefused { error: error.into(), f, g });
+        fill_free_cow(&mut f, free.f);
+        fill_free_cow(&mut g, free.g);
+        return Err(AndOntoRefused { error: error.into(), f: back(f, f_given), g: back(g, g_given) });
     }
-    let conjoined = conjoin_kept(eng, f, g, free).map_err(|r| AndOntoRefused { error: r.error.into(), f: r.f, g: r.g });
+    let conjoined = conjoin_kept(eng, f, g, free)
+        .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) });
     for plan in [f_plan, g_plan].into_iter().flatten() {
         plan.recycle(eng);
     }
@@ -469,15 +592,20 @@ fn free_levels<'a>(tdd: &Tdd, plan: Option<&'a Plan>) -> VtreeMask<'a> {
 }
 
 impl crate::Engine {
-    /// Run [`and`] using this batch's scratch and resource limits.
+    /// Run [`and`] using this batch's scratch and resource limits; each
+    /// operand owned or borrowed, as [`and`] says.
+    ///
+    /// A copy that a borrowed operand costs (a level the result takes from
+    /// it, or the whole operand where weights or a marginal level require
+    /// it) is charged to the memory budget, not to the work clock.
     ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
-    pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    pub fn and<'f, 'g>(&self, f: impl Into<Cow<'f, Tdd>>, g: impl Into<Cow<'g, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        conjoin_on(self, f, g, VtreeMask::default()).map(|(out, _)| out)
+        conjoin_either(self, f.into(), g.into())
     }
 
     /// Run [`Engine::and`], giving both operands back unchanged when it is
@@ -487,7 +615,8 @@ impl crate::Engine {
     /// before each conjunction. Here the sweep keeps the operands whole until
     /// the result exists, which holds their storage as long as a clone would,
     /// without the copy. Operands with a weight table or a marginal level are
-    /// cloned first.
+    /// cloned first. Each operand is owned or borrowed, at the costs
+    /// [`and`] states; a borrowed one comes back as the borrow.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -513,7 +642,12 @@ impl crate::Engine {
     ///
     /// The errors of [`Engine::and`], each with both operands.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn and_restoring(&self, f: Tdd, g: Tdd) -> Result<Tdd, AndRefused> {
+    pub fn and_restoring<'a>(
+        &self,
+        f: impl Into<Cow<'a, Tdd>>,
+        g: impl Into<Cow<'a, Tdd>>,
+    ) -> Result<Tdd, AndRefused<'a>> {
+        let (f, g) = (f.into(), g.into());
         let _op = match self.limits().enter() {
             Ok(op) => op,
             Err(error) => return Err(AndRefused { error, f, g }),
@@ -534,7 +668,9 @@ impl crate::Engine {
     /// one only where the other operand is the constant true level too. The
     /// result is the diagram `and_restoring` returns on the two embeddings,
     /// node for node. An operand already on `into` is taken as it is, and
-    /// its map is not read.
+    /// its map is not read. Each operand is owned or borrowed, at the costs
+    /// [`and`] states; a borrowed operand on `into` is read in place, and
+    /// one that is not is copied whole and the copy placed.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -556,8 +692,9 @@ impl crate::Engine {
     /// # Errors
     ///
     /// Those of [`Engine::embed_moving`] and [`Engine::and_restoring`]. Each
-    /// operand comes back on `into` when it was placed there before the
-    /// refusal and as it was given otherwise; its [`Tdd::vtree`] tells which.
+    /// owned operand comes back on `into` when it was placed there before
+    /// the refusal and as it was given otherwise; its [`Tdd::vtree`] tells
+    /// which. A borrowed operand comes back as the borrow.
     /// The placements and the conjunction are metered as the operations they
     /// stand for are, each from zero, with the stop tested as each begins.
     /// The work clock is charged as for the two embeddings and the
@@ -565,15 +702,15 @@ impl crate::Engine {
     /// the conjunction builds such a level only where it carries it as an
     /// identity level, which it charges nothing.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn and_onto(
+    pub fn and_onto<'a>(
         &self,
-        f: Tdd,
+        f: impl Into<Cow<'a, Tdd>>,
         f_map: impl Fn(VarId) -> VarId,
-        g: Tdd,
+        g: impl Into<Cow<'a, Tdd>>,
         g_map: impl Fn(VarId) -> VarId,
         into: &Arc<Vtree>,
-    ) -> Result<Tdd, AndOntoRefused> {
-        conjoin_onto(self, f, f_map, g, g_map, into, false)
+    ) -> Result<Tdd, AndOntoRefused<'a>> {
+        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into, false)
     }
 
     /// [`Engine::and_onto`], where `into` may hold either operand's vtree
@@ -606,15 +743,15 @@ impl crate::Engine {
     /// As [`Engine::and_onto`], with [`Engine::embed_moving_mirrored`]'s for
     /// the placements.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn and_onto_mirrored(
+    pub fn and_onto_mirrored<'a>(
         &self,
-        f: Tdd,
+        f: impl Into<Cow<'a, Tdd>>,
         f_map: impl Fn(VarId) -> VarId,
-        g: Tdd,
+        g: impl Into<Cow<'a, Tdd>>,
         g_map: impl Fn(VarId) -> VarId,
         into: &Arc<Vtree>,
-    ) -> Result<Tdd, AndOntoRefused> {
-        conjoin_onto(self, f, f_map, g, g_map, into, true)
+    ) -> Result<Tdd, AndOntoRefused<'a>> {
+        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into, true)
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.

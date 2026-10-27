@@ -42,7 +42,7 @@ fn by_embeddings(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Ma
 
 /// `and_onto`, or with `mirror` `and_onto_mirrored`.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn onto(eng: &Engine, f: Tdd, f_map: impl Map, g: Tdd, g_map: impl Map, into: &Arc<Vtree>, mirror: bool) -> Result<Tdd, crate::apply::AndOntoRefused> {
+fn onto(eng: &Engine, f: Tdd, f_map: impl Map, g: Tdd, g_map: impl Map, into: &Arc<Vtree>, mirror: bool) -> Result<Tdd, crate::apply::AndOntoRefused<'static>> {
     match mirror {
         true => eng.and_onto_mirrored(f, f_map, g, g_map, into),
         false => eng.and_onto(f, f_map, g, g_map, into),

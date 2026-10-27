@@ -373,8 +373,9 @@ omits the literal comparison and represents an empty maximum by zero pairs.
 ## Ownership
 
 Circuits own their diagram storage and share their vtree. Queries borrow;
-transformations whose inputs are owned consume them. Copies duplicate storage
-and share the vtree. Introduce copying as providing an operand while retaining
+transformations whose inputs are owned consume them. Rust's conjunction also
+takes a borrowed circuit and reads it in place; Python and C copy instead.
+Copies duplicate storage and share the vtree. Introduce copying as providing an operand while retaining
 the original; do not suggest that assignment creates a copy.
 
 Rust enforces moves statically and documents in-place methods through mutable
@@ -391,9 +392,9 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: b8b72e68275b7bdf6d785e0439d14e3b75289f769f5fd071259f36e63ceb177f -->
-- [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 49e98fe18f2ea5b0d769f3b2301737e040ae22238e00b4dd9ac5296e493e94a0 -->
-- [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 6fa3921cd9c76acae60b9bb7d58e71544dd85f15c8a54c55815cf910628e80c4 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: a72c7b355a09fa23d4edd509c60ba60d41849652b2600c2a98692ff89a37cd1d -->
+- [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
+- [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
 ## API overview
 
@@ -412,7 +413,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 46c4d9dcdd6029e3009d77a21bfa529f0cfa261c3e365140c499326840d4c152 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: b44c34fa760b2e1bf98bc8d8b80b896bca66e33d7b0aed825c849e9ac293a5a8 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -459,7 +460,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: adc9aee5a66c5528d6da2aac7e9ff5abb582121422e552b14df0da38d8098864 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: dd32cdc436210c68b17738434902b8464974508aa01d37583984231aeab1347f -->
 
 ## Reusable components
 

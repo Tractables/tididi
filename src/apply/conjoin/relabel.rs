@@ -116,8 +116,8 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 pub(super) fn take_relabel_level(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
     shape: LevelShape,
     sweep: &Sweep<'_, '_>,
 ) -> Result<bool, OperationError> {
@@ -179,8 +179,10 @@ pub(super) fn take_relabel_level(
 
     if lm.is_identity() && rm.is_identity() {
         // Every pair is its own product: the carrier's level is the output.
-        let carrier = if carrier_f { &mut f.levels } else { &mut g.levels };
-        std::mem::swap(&mut run.levels[ti], &mut carrier[ti]);
+        match carrier_f {
+            true => f.carry(eng.limits(), ti, &mut run.levels[ti])?,
+            false => g.carry(eng.limits(), ti, &mut run.levels[ti])?,
+        }
         run.carried.push((ti, carrier_f));
         run.relabel_moved.push(ti);
         publish_identity_level(run.products, ti, width);

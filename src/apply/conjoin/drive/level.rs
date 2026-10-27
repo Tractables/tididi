@@ -35,8 +35,8 @@ pub(super) struct LevelBuild {
 pub(super) fn run_sparse_level(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &mut Held<'_>,
+    g: &Tdd,
     shape: LevelShape,
     plan: &MarginalPlan,
     filtered: bool,
@@ -1105,8 +1105,8 @@ fn complete_level_size(f_level: &TddLevel, g_level: &TddLevel) -> Result<(usize,
 pub(super) fn build_level_dense(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
+    f: &Tdd,
+    g: &Tdd,
     level: LevelBuild,
     sweep: &mut Sweep<'_, '_>,
 ) -> Result<(), OperationError> {

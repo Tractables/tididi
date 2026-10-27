@@ -56,7 +56,8 @@ use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
 ///
 /// Queries borrow diagrams. Transformations taking `Tdd` consume it; clone a
 /// diagram when several transformations need the original. Cloning copies its
-/// storage, so prefer borrowing for queries.
+/// storage, so prefer borrowing for queries, and pass a conjunction
+/// ([`and`](crate::and)) a borrowed operand, which it reads in place.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -113,6 +114,22 @@ pub struct Tdd {
     ///
     /// [`set_weights`]: Self::set_weights
     pub(crate) weights: Option<WeightStore>,
+}
+
+/// An owned operand of a conjunction that takes each operand owned or
+/// borrowed ([`and`](crate::and)), which consumes it.
+impl From<Tdd> for std::borrow::Cow<'_, Tdd> {
+    fn from(tdd: Tdd) -> Self {
+        std::borrow::Cow::Owned(tdd)
+    }
+}
+
+/// A borrowed operand of a conjunction that takes each operand owned or
+/// borrowed ([`and`](crate::and)), which reads it in place.
+impl<'a> From<&'a Tdd> for std::borrow::Cow<'a, Tdd> {
+    fn from(tdd: &'a Tdd) -> Self {
+        std::borrow::Cow::Borrowed(tdd)
+    }
 }
 
 impl Tdd {

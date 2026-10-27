@@ -14,9 +14,11 @@
 use std::sync::Arc;
 
 use crate::diagram::{Tdd, TddLevel, ONE_LEAF_IDX};
+use crate::limits::{Limits, OperationError};
 use crate::restructure::placement::push_free_level;
 use crate::vtree::{Vtree, VtreeIdx};
 
+use super::super::held::Held;
 use super::super::identity::publish_identity_level;
 use super::super::setup::{ApplyRun, Cone};
 
@@ -29,13 +31,26 @@ pub(super) fn carried_from_f(cone: Cone<'_>, t: usize) -> bool {
 }
 
 /// Take every region into the result: set each top's identity flags as the
-/// sweep would have accreted them, publish its products, and move the
-/// carrier's levels of every free internal node into the output, building a
-/// free level where both operands are free.
+/// sweep would have accreted them, publish its products, and carry the
+/// carrier's levels of every free internal node into the output
+/// ([`Held::carry`]), building a free level where both operands are free.
 ///
 /// The tops are read before any level moves: a top's flag reads the
-/// carrier's levels under it.
-pub(super) fn take_regions(vtree: &Arc<Vtree>, run: &mut ApplyRun, f: &mut Tdd, g: &mut Tdd) {
+/// carrier's levels under it. A borrowed carrier's levels are copied before
+/// any owned carrier's level moves, so that a refused copy leaves both
+/// operands as they were.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] where a borrowed carrier's copy is
+/// refused.
+pub(super) fn take_regions(
+    vtree: &Arc<Vtree>,
+    lim: &Limits,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+) -> Result<(), OperationError> {
     let cone = run.cone;
     for &t in cone.tops {
         let at = t.idx();
@@ -51,23 +66,50 @@ pub(super) fn take_regions(vtree: &Arc<Vtree>, run: &mut ApplyRun, f: &mut Tdd, 
         publish_identity_level(run.products, at, width);
         run.products.note_complete(at);
     }
-    for &t in cone.free {
-        let at = t.idx();
-        let carrier = if carried_from_f(cone, at) { &mut *f } else { &mut *g };
-        if cone.free_in_f(at) && cone.free_in_g(at) {
-            push_free_level(&mut carrier.levels[at], vtree, t);
+    // The copies first, then the moves.
+    for borrowed in [true, false] {
+        for &t in cone.free {
+            let at = t.idx();
+            let out = &mut run.levels[at];
+            match carried_from_f(cone, at) {
+                true => carry_free(lim, vtree, cone, t, f, borrowed, out)?,
+                false => carry_free(lim, vtree, cone, t, g, borrowed, out)?,
+            }
         }
-        std::mem::swap(&mut run.levels[at], &mut carrier.levels[at]);
     }
+    Ok(())
 }
 
-/// Move the levels [`take_regions`] took back to their operands, for a
-/// refused conjunction that restores them.
-pub(super) fn give_back_regions(levels: &mut [TddLevel], cone: Cone<'_>, f: &mut Tdd, g: &mut Tdd) {
+/// [`take_regions`]' carry of the free level `t` into `out` from `carrier`,
+/// where it is borrowed as `borrowed` says.
+fn carry_free(
+    lim: &Limits,
+    vtree: &Arc<Vtree>,
+    cone: Cone<'_>,
+    t: VtreeIdx,
+    carrier: &mut Held<'_>,
+    borrowed: bool,
+    out: &mut TddLevel,
+) -> Result<(), OperationError> {
+    let at = t.idx();
+    if carrier.is_borrowed() != borrowed {
+        return Ok(());
+    }
+    if let Some(owned) = carrier.owned().filter(|_| cone.free_in_f(at) && cone.free_in_g(at)) {
+        push_free_level(&mut owned.levels[at], vtree, t);
+    }
+    carrier.carry(lim, at, out)
+}
+
+/// Move the levels [`take_regions`] took back to their owned operands, for
+/// a refused conjunction that restores them ([`Held::uncarry`]).
+pub(super) fn give_back_regions(levels: &mut [TddLevel], cone: Cone<'_>, f: &mut Held<'_>, g: &mut Held<'_>) {
     for &t in cone.free {
         let at = t.idx();
-        let carrier = if carried_from_f(cone, at) { &mut *f } else { &mut *g };
-        std::mem::swap(&mut levels[at], &mut carrier.levels[at]);
+        match carried_from_f(cone, at) {
+            true => f.uncarry(at, &mut levels[at]),
+            false => g.uncarry(at, &mut levels[at]),
+        }
     }
 }
 
