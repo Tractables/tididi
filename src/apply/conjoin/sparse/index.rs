@@ -736,12 +736,16 @@ pub(super) fn gather_owned_products(
     // leaves it; no branch waits on where one f index's products stop,
     // nor on the slots' read.
     let (mut kept, mut held, mut last_f, mut descents) = (0usize, 0usize, 0usize, 0usize);
+    let owned = &mut owned[..list.len()];
     for e in list {
         let f = e.f_idx.idx();
         let slots = owners[e.g_idx.idx()];
         // Written whether kept or not: the next product overwrites one not
         // kept.
-        owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
+        debug_assert!(kept < owned.len(), "kept counts the entries before this one");
+        // Safety: `kept` counts kept entries before this one, so it is below
+        // this entry's index in `list`, whose length `owned` has.
+        unsafe { *owned.get_unchecked_mut(kept) = OwnedProduct { prod: e.prod_idx.0, slots } };
         // Some slot is filled: a node index is below 2^31, so the slots'
         // and is all ones only where all three are empty.
         kept += usize::from(slots[0] & slots[1] & slots[2] != NO_PRODUCT);
