@@ -745,7 +745,9 @@ pub(super) fn gather_owned_products(
         // Written whether kept or not: the next product overwrites one not
         // kept.
         owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
-        kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
+        // Some slot is filled: a node index is below 2^31, so the slots'
+        // and is all ones only where all three are empty.
+        kept += usize::from(slots[0] & slots[1] & slots[2] != NO_PRODUCT);
         held += usize::from(holds_every_label(slots));
         bounds[f + 1] = kept as u32;
         descents += usize::from(f < last_f);

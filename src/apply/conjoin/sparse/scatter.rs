@@ -1494,24 +1494,35 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
             // The labels One, Pos, Neg (0, 1, 2) to their slots 1, 0, 2,
             // with no branch: a One pair meets all three of g's labels, and
-            // reads the One slot, empty on a plain level.
+            // reads the One slot, empty on a plain level. The slot is read
+            // in place, not from a copy of the entry.
             let slot = (inner1 ^ u32::from(inner1 <= POS)) as usize;
-            u64::from(entries.entry(outer1).slots.get(slot).copied().unwrap_or(NO_PRODUCT))
+            match entries.owned.get(outer1 as usize) {
+                Some(e) if slot < OWNER_SLOTS => u64::from(e.slots[slot]),
+                _ => u64::from(NO_PRODUCT),
+            }
         } else {
             copy_code::<SWAPPED, ONES>(pair, entries)
         }
     };
     let (arena_room, node_room) = room;
     let f_arena = stored.arena();
+    // A node's pairs end within the arena's capacity and below 2^31, where
+    // the node words hold their place, and, where in the arena, within f's
+    // arena: one test bounds a node's end for all three.
+    let pair_room = arena_room.min((1 << 31) - 1);
+    let range_room = pair_room.min(f_arena.len());
     let mut prods = Tail::of(out);
     let mut taken = 0;
     for node in &stored.nodes()[..f_nodes.min(node_room)] {
         // The node's code, its pairs, and its pairs in the arena.
         let (code, count, end) = match node.kind() {
-            NodeKind::Inline(pair) if n < arena_room => (code(pair), 1, n),
-            NodeKind::Multi { start, len } if start as usize == n && len != 0 && n + len as usize <= arena_room => {
+            NodeKind::Inline(pair) if n < pair_room => (code(pair), 1, n),
+            NodeKind::Multi { start, len } if start as usize == n && len != 0 && n + len as usize <= range_room => {
                 let end = n + len as usize;
-                let (first, rest) = f_arena[n..end].split_first().expect("a multi-pair node holds pairs");
+                // Safety: `end` is within f's arena (`range_room`) and the
+                // node holds a pair.
+                let (first, rest) = unsafe { f_arena.get_unchecked(n..end).split_first().unwrap_unchecked() };
                 let mut sum = code(*first);
                 let mut copies = true;
                 for &pair in rest {
@@ -1526,7 +1537,7 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
             _ => break,
         };
         let owner = code as u32;
-        if owner == NO_PRODUCT || n + count >= 1 << 31 {
+        if owner == NO_PRODUCT {
             break;
         }
         let poll = ticker.poll(if PLAIN { 2 * count as u64 } else { code >> 32 });
