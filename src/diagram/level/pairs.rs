@@ -642,27 +642,6 @@ impl TddLevel {
         &mut self.pairs.stored_mut()[range]
     }
 
-    /// Index-remap a stored multi-pair node's pairs in place: each side is
-    /// rewritten through its lookup slice and [`ChildDecoder::remap`], which
-    /// leaves a marginal side's inline values alone.
-    ///
-    /// Precondition (debug-asserted): `self.node(idx).kind().pairs_in_arena()`; every
-    /// structural coordinate looked up is within its remap slice.
-    #[inline]
-    pub(crate) fn pairs_remap_indexed(
-        &mut self,
-        idx: usize,
-        left_remap: &[u32],
-        right_remap: &[u32],
-        left: ChildDecoder,
-        right: ChildDecoder,
-    ) {
-        for pair in self.pairs_mut(idx) {
-            pair.left = left.remap(pair.left, left_remap);
-            pair.right = right.remap(pair.right, right_remap);
-        }
-    }
-
     /// [`multi_range`](Self::multi_range) of the node at `idx`.
     #[inline]
     pub(crate) fn pair_range_at(&self, idx: usize) -> std::ops::Range<usize> {
