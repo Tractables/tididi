@@ -197,12 +197,10 @@ impl Tdd {
         &self.levels
     }
 
-    /// Clone the diagram with every level arena reserved through `eng`, so a
-    /// copy the host cannot serve comes back as
+    /// Clone the diagram with every level arena and weight column reserved
+    /// through `eng`, so a copy the host cannot serve comes back as
     /// [`OperationError::OverBudget`](crate::OperationError::OverBudget) rather than
     /// aborting the process. `Clone` is the same copy without that guard.
-    ///
-    /// The weight store, when there is one, is copied by its own `Clone`.
     pub(crate) fn try_clone_on(
         &self,
         eng: &crate::Engine,
@@ -222,15 +220,15 @@ impl Tdd {
             levels,
             output: self.output,
             dirty: self.dirty.clone(),
-            weights: self.weights.clone(),
+            weights: self.weights.as_ref().map(|w| w.try_clone_on(lim)).transpose()?,
         })
     }
 }
 
 impl crate::Engine {
-    /// A copy of `f`, as `Clone` makes it, with every level's storage
-    /// reserved through this engine's limits: a copy that the byte budget
-    /// does not cover, or that the allocator cannot serve, comes back as
+    /// A copy of `f`, as `Clone` makes it, with every level's storage and
+    /// weight column reserved through this engine's limits: a copy that the
+    /// byte budget does not cover, or that the allocator cannot serve, comes back as
     /// [`OperationError::OverBudget`](crate::OperationError::OverBudget)
     /// instead of aborting the process. Operations consume their operands,
     /// so a caller that keeps a diagram and hands copies of it to them

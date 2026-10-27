@@ -392,9 +392,11 @@ impl Engine {
     /// a diagram with a marginal level needs one, whose table must give
     /// each renamed variable the weights the source's gives the original.
     ///
-    /// Copies the levels into storage the engine supplies without charging
-    /// its limits, as [`Tdd::graft_over`] does; the reduction that seats a
-    /// marginal level under a new parent runs under them.
+    /// Copies the levels and their weight columns into storage reserved
+    /// through the engine's limits, so a copy the budget or the allocator
+    /// refuses comes back as [`OperationError::OverBudget`] instead of
+    /// aborting; the reduction that seats a marginal level under a new
+    /// parent runs under them as well.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -430,7 +432,8 @@ impl Engine {
     /// [`EmbedError::SourceWeights`] for a weight-marginal level without
     /// `weights` or a table that disagrees with the source's under the
     /// renaming; [`EmbedError::DestinationWeights`] for a table that does
-    /// not cover `into`'s variables.
+    /// not cover `into`'s variables; [`OperationError::OverBudget`] where
+    /// the copy is refused.
     pub fn embed_over(
         &self,
         tdd: &Tdd,
@@ -1013,7 +1016,9 @@ fn assemble_marginal(
         result.weights = Some(weights.empty_like());
         return Ok(result);
     }
-    let mut source = tdd.clone();
+    // The levels move out of a copy, reserved through the limits so a
+    // source too large to copy refuses the embed instead of aborting.
+    let mut source = tdd.try_clone_on(eng)?;
     let mut placement = MovePlacement::new(eng, into, Some(weights.empty_like()))?;
     placement.move_part(&mut source, &plan.embedding.levels);
     // The destination nodes strictly below the image of a marginal level,

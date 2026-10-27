@@ -5,6 +5,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore, WeightValue};
+use crate::limits::LimitConfig;
 use crate::restructure::EmbedError;
 use crate::test_helpers::{assert_canonical, bounded_log10};
 use crate::vtree::{VarId, Vtree};
@@ -229,4 +230,26 @@ fn weighted_values_need_a_destination_store_that_agrees_with_the_source() {
         engine.embed_over(&f, &big, spread, Some(short)).unwrap_err(),
         EmbedError::DestinationWeights(TddBuildError::MissingVariableWeight(VarId(7))),
     );
+}
+
+#[test]
+fn a_source_the_budget_cannot_copy_refuses_the_embed() {
+    let (small, f, _) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
+    let value = exact(&f);
+    let engine = Engine::new();
+    let store = || WeightStore::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
+    engine.try_clone(&f).unwrap();
+    let copy = engine.limits().meters().in_flight_bytes;
+    {
+        let _budget = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(copy - 1)));
+        assert_eq!(
+            engine.embed_over(&f, &small, |v| v, Some(store())).unwrap_err(),
+            EmbedError::Operation(OperationError::OverBudget),
+        );
+    }
+    assert_canonical(&f);
+    assert_eq!(exact(&f), value);
+    let (g, _) = engine.embed_over(&f, &small, |v| v, Some(store())).unwrap();
+    assert_canonical(&g);
+    assert_eq!(exact(&g), value);
 }

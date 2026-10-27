@@ -392,7 +392,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: a72c7b355a09fa23d4edd509c60ba60d41849652b2600c2a98692ff89a37cd1d -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: ea0d76ed4ad332a156e84a037954d5ce06ee13390261e40c80554ee838d03abd -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
