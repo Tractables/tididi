@@ -1892,7 +1892,7 @@ impl RoutedWalk<'_> {
             }
             for e in self.inner.bucket(inner1 as usize) {
                 let key = e.g_idx.0;
-                prefetch_at(self.routes.slots, segment.first_slot(key));
+                self.routes.touch(segment, key);
                 group[n] = Lookup { segment, key, prod: e.prod_idx.0 };
                 n += 1;
                 if n == LOOK_GROUP {
@@ -1913,17 +1913,17 @@ impl RoutedWalk<'_> {
         ticker: &mut crate::limits::PollGate,
         push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
-        let mut hits = [(RouteSlot::EMPTY, 0u32); LOOK_GROUP];
+        let mut hits: [(&[(u32, u32)], u32); LOOK_GROUP] = [(&[], 0); LOOK_GROUP];
         let mut m = 0;
         for l in group {
-            if let Some(slot) = self.routes.slot(l.segment, l.key) {
-                prefetch_at(self.routes.entries, slot.start as usize);
-                hits[m] = (slot, l.prod);
+            let under = self.routes.find(l.segment, l.key);
+            if !under.is_empty() {
+                prefetch_at(under, 0);
+                hits[m] = (under, l.prod);
                 m += 1;
             }
         }
-        for &(slot, inner_prod) in &hits[..m] {
-            let under = &self.routes.entries[slot.start as usize..(slot.start + slot.len) as usize];
+        for &(under, inner_prod) in &hits[..m] {
             for &(g_parent, attached) in under {
                 let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
                 push(ParEntry { g_parent, left_prod, right_prod })?;
@@ -1985,7 +1985,9 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     let walk = RoutedWalk {
         inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
         routes: routes.view(),
-        pipelined: std::mem::size_of_val(&routes.slots[..]) + std::mem::size_of_val(&routes.entries[..])
+        pipelined: std::mem::size_of_val(&routes.slots[..])
+            + std::mem::size_of_val(&routes.bounds[..])
+            + std::mem::size_of_val(&routes.entries[..])
             >= emit.thresholds.pipelined_bytes,
     };
     let nodes = if marked {
@@ -2631,19 +2633,21 @@ impl ScatterSides<'_> {
     /// would bucket, written into `routes` as runs, without the buckets.
     fn route_outer(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
         match self.build_plan(outer) {
-            BuildFrom::Keys => self.route_by_key::<false>(lim, outer)?,
-            BuildFrom::WantedKeys => self.route_by_key::<true>(lim, outer)?,
-            BuildFrom::Inner => self.route_by_inner(lim, outer)?,
+            BuildFrom::Keys => self.route_by_key::<false>(lim, outer),
+            BuildFrom::WantedKeys => self.route_by_key::<true>(lim, outer),
+            BuildFrom::Inner => self.route_by_inner(lim, outer),
         }
-        self.routes.place(lim, outer, self.inner_g)
     }
 
     /// [`ScatterSides::build_filtered_for_outer`] into `routes`: the entries
     /// come by the outer's g keys, so a first walk counts each inner-g
-    /// child's and a second writes each into its run.
+    /// child's and a second writes each into its run, the runs in key order
+    /// where the outer's table is indexed by key.
     fn route_by_key<const FILTER: bool>(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        let width = self.inner_g;
         let ScatterSides { outer: outer_products, g_by_outer, wanted, routes, .. } = self;
-        let Routes { entries, pending, cursor, .. } = &mut **routes;
+        let routes = &mut **routes;
+        let Routes { entries, pending, cursor, .. } = routes;
         pending.clear();
         let mut total = 0usize;
         for e in outer_products.bucket(outer) {
@@ -2663,12 +2667,30 @@ impl ScatterSides<'_> {
         if at + total > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
-        for slot in pending.iter_mut() {
-            slot.start = at as u32;
-            slot.len = cursor[slot.key as usize];
-            cursor[slot.key as usize] = at as u32;
-            at += slot.len as usize;
+        if total == 0 {
+            return Ok(());
         }
+        let dense = Routes::dense(pending.len(), width);
+        if dense {
+            routes.open(lim, outer, width)?;
+            for key in 0..width {
+                routes.bound(at);
+                let count = routes.cursor[key];
+                if count != 0 {
+                    routes.cursor[key] = at as u32;
+                    at += count as usize;
+                }
+            }
+            routes.bound(at);
+        } else {
+            for slot in routes.pending.iter_mut() {
+                slot.start = at as u32;
+                slot.len = routes.cursor[slot.key as usize];
+                routes.cursor[slot.key as usize] = at as u32;
+                at += slot.len as usize;
+            }
+        }
+        let Routes { entries, pending, cursor, .. } = routes;
         reserve_room(lim, entries, total)?;
         entries.resize(at, (0, 0));
         for e in outer_products.bucket(outer) {
@@ -2685,21 +2707,44 @@ impl ScatterSides<'_> {
         for slot in pending.iter() {
             cursor[slot.key as usize] = 0;
         }
+        if !dense {
+            routes.place(lim, outer)?;
+        }
         Ok(())
     }
 
     /// [`ScatterSides::build_filtered_by_inner`] into `routes`: the entries
-    /// come by wanted inner-g child, each child's as one run.
+    /// come by wanted inner-g child, each child's as one run. Where the
+    /// wanted children are enough for a table indexed by key, they are
+    /// visited in key order and each run's start is its key's bound.
     fn route_by_inner(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
         let most = self.build_cost_by_inner();
         self.mark_outer_keys(outer);
-        let ScatterSides { outer_keys, outer_attached, wanted_keys, g_by_inner, routes, .. } = self;
-        let Routes { entries, pending, .. } = &mut **routes;
-        pending.clear();
-        if entries.len() + most > u32::MAX as usize {
+        let width = self.inner_g;
+        let ScatterSides { outer_keys, outer_attached, wanted, wanted_keys, g_by_inner, routes, .. } = self;
+        let routes = &mut **routes;
+        routes.pending.clear();
+        if routes.entries.len() + most > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
-        reserve_room(lim, entries, most)?;
+        reserve_room(lim, &mut routes.entries, most)?;
+        if Routes::dense(wanted_keys.len(), width) {
+            routes.open(lim, outer, width)?;
+            for key in 0..width {
+                routes.bound(routes.entries.len());
+                if !wanted.is_set(key as u32) {
+                    continue;
+                }
+                for &RevEntry { parent: p2, other: right_key } in g_by_inner.bucket(key) {
+                    if outer_keys.is_set(right_key) {
+                        routes.entries.push((p2, outer_attached[right_key as usize]));
+                    }
+                }
+            }
+            routes.close(outer, routes.entries.len());
+            return Ok(());
+        }
+        let Routes { entries, pending, .. } = routes;
         for &key in wanted_keys.iter() {
             let start = entries.len();
             for &RevEntry { parent: p2, other: right_key } in g_by_inner.bucket(key as usize) {
@@ -2711,7 +2756,7 @@ impl ScatterSides<'_> {
                 pending.push(RouteSlot { key, start: start as u32, len: (entries.len() - start) as u32 });
             }
         }
-        Ok(())
+        routes.place(lim, outer)
     }
 
     /// Mark the outer's live g keys, each with its product, for the walks by

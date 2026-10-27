@@ -142,13 +142,18 @@ impl Buffers for EmitScratch {
 /// outer's keys are a table of their own, its `segment`: an open-addressed
 /// `slots[base..base + 2^bits]`, probed linearly from the key's hash and at
 /// most half full, or, where the outer holds at least one key in
-/// [`DENSE_SPAN`] of the inner-g children, `slots[base..base + width]`
-/// indexed by the key itself ([`Segment::DENSE`]), so a key is found or
-/// missed in one read. An outer with no key has `bits` 0 and no slot.
+/// [`DENSE_SPAN`] of the inner-g children, the run bounds
+/// `bounds[base..base + width + 1]` indexed by the key itself
+/// ([`Segment::DENSE`]), the runs laid out in key order: key `k`'s run is
+/// `entries[bounds[base + k]..bounds[base + k + 1]]`, so a key is found or
+/// missed in one read of four bytes a key. An outer with no key has `bits`
+/// 0 and no table.
 #[derive(Default)]
 pub(super) struct Routes {
     pub(super) segments: Vec<Segment>,
     pub(super) slots: Vec<RouteSlot>,
+    /// The dense outers' run bounds, `width + 1` an outer.
+    pub(super) bounds: Vec<u32>,
     pub(super) entries: Vec<(u32, u32)>,
     /// A bit per f node holding a pair under an outer with a route
     /// ([`Routes::mark_parents`]).
@@ -163,8 +168,8 @@ pub(super) struct Routes {
 }
 
 /// One outer key's table in [`Routes`]: its first slot, and log2 of its
-/// slot count, 0 for an outer with no key, [`Segment::DENSE`] for a table
-/// indexed by key.
+/// slot count, 0 for an outer with no key; or, with `bits`
+/// [`Segment::DENSE`], its first run bound, the table indexed by key.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Segment {
     pub(super) base: u32,
@@ -172,19 +177,15 @@ pub(super) struct Segment {
 }
 
 impl Segment {
-    /// `bits` of a table with a slot for every inner-g child, at the key.
+    /// `bits` of a table indexed by key: a run bound for every inner-g
+    /// child, and one past the last.
     pub(super) const DENSE: u32 = 32;
-
-    /// The slot of `slots` a lookup of `key` reads first.
-    #[inline(always)]
-    pub(super) fn first_slot(self, key: u32) -> usize {
-        self.base as usize + if self.bits == Self::DENSE { key as usize } else { route_slot(key, self.bits) }
-    }
 }
 
 /// An outer's keys take a table indexed by key where they are at least one
-/// in this many of the inner-g children: at most twice the slots of the
-/// open-addressed table, which holds two to four a key.
+/// in this many of the inner-g children: at most 16 bytes a key, against
+/// 24 to 48 in the open-addressed table, which holds two to four 12-byte
+/// slots a key.
 pub(super) const DENSE_SPAN: usize = 4;
 
 /// One slot of a [`Routes`] table: an inner-g child and its run of
@@ -216,23 +217,62 @@ impl Routes {
         self.segments.clear();
         lim.try_resize(&mut self.segments, outers, Segment::default())?;
         self.slots.clear();
+        self.bounds.clear();
         self.entries.clear();
         self.pending.clear();
         self.cursor.clear();
         lim.try_resize(&mut self.cursor, width, 0)
     }
 
-    /// Give outer `outer` a table of the `pending` keys, the keys being
-    /// `width` inner-g children.
-    pub(super) fn place(&mut self, lim: &Limits, outer: usize, width: usize) -> Result<(), OperationError> {
+    /// Whether an outer of `keys` keys, of `width` inner-g children, takes
+    /// a table indexed by key, its runs laid out in key order.
+    pub(super) fn dense(keys: usize, width: usize) -> bool {
+        width <= DENSE_SPAN * keys
+    }
+
+    /// Start outer `outer`'s table indexed by key, before its runs are
+    /// written: the bounds that follow, [`Routes::bound`] at each of the
+    /// `width` keys in order and [`Routes::close`] after the last, are its.
+    pub(super) fn open(&mut self, lim: &Limits, outer: usize, width: usize) -> Result<(), OperationError> {
+        let base = self.bounds.len();
+        if base + width + 1 > u32::MAX as usize {
+            return Err(OperationError::IndexOverflow);
+        }
+        // Grown by doubling, as `slots`.
+        reserve_room(lim, &mut self.bounds, width + 1)?;
+        self.segments[outer] = Segment { base: base as u32, bits: Segment::DENSE };
+        Ok(())
+    }
+
+    /// The next key's run starts at `start` of `entries`. Within the room
+    /// [`Routes::open`] reserved.
+    #[inline(always)]
+    pub(super) fn bound(&mut self, start: usize) {
+        debug_assert!(self.bounds.len() < self.bounds.capacity(), "a bound past the room opened");
+        self.bounds.push(start as u32);
+    }
+
+    /// End outer `outer`'s table indexed by key at `end` of `entries`; an
+    /// outer whose runs are all empty has no table.
+    pub(super) fn close(&mut self, outer: usize, end: usize) {
+        let base = self.segments[outer].base as usize;
+        if self.bounds[base] as usize == end {
+            self.bounds.truncate(base);
+            self.segments[outer] = Segment::default();
+        } else {
+            self.bound(end);
+        }
+    }
+
+    /// Give outer `outer` an open-addressed table of the `pending` keys.
+    pub(super) fn place(&mut self, lim: &Limits, outer: usize) -> Result<(), OperationError> {
         let keys = self.pending.len();
         if keys == 0 {
             return Ok(());
         }
-        let dense = width <= DENSE_SPAN * keys;
-        let bits = if dense { Segment::DENSE } else { (2 * keys).next_power_of_two().trailing_zeros() };
+        let bits = (2 * keys).next_power_of_two().trailing_zeros();
         let base = self.slots.len();
-        let size = if dense { width } else { 1usize << bits };
+        let size = 1usize << bits;
         if base + size > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
@@ -242,9 +282,8 @@ impl Routes {
         self.slots.resize(base + size, RouteSlot::EMPTY);
         let table = &mut self.slots[base..];
         for &slot in &self.pending {
-            let mut at = if dense { slot.key as usize } else { route_slot(slot.key, bits) };
+            let mut at = route_slot(slot.key, bits);
             while table[at].key != u32::MAX {
-                debug_assert!(!dense, "a key indexes its own slot");
                 at = (at + 1) & (size - 1);
             }
             table[at] = slot;
@@ -255,7 +294,7 @@ impl Routes {
 
     /// The tables and runs, for reading.
     pub(super) fn view(&self) -> RoutesView<'_> {
-        RoutesView { segments: &self.segments, slots: &self.slots, entries: &self.entries }
+        RoutesView { segments: &self.segments, slots: &self.slots, bounds: &self.bounds, entries: &self.entries }
     }
 
     /// Set `walked`'s bit for each of the first `parents` nodes of `f_level`
@@ -287,6 +326,7 @@ impl Buffers for Routes {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.segments);
         visit(&mut self.slots);
+        visit(&mut self.bounds);
         visit(&mut self.entries);
         visit(&mut self.walked);
         visit(&mut self.pending);
@@ -299,6 +339,7 @@ impl Buffers for Routes {
 pub(super) struct RoutesView<'a> {
     pub(super) segments: &'a [Segment],
     pub(super) slots: &'a [RouteSlot],
+    pub(super) bounds: &'a [u32],
     pub(super) entries: &'a [(u32, u32)],
 }
 
@@ -307,21 +348,12 @@ impl<'a> RoutesView<'a> {
     /// where it has none.
     #[inline(always)]
     pub(super) fn find(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
-        match self.slot(segment, key) {
-            Some(slot) => &self.entries[slot.start as usize..(slot.start + slot.len) as usize],
-            None => &[],
-        }
-    }
-
-    /// The slot of inner-g child `key` under the outer of `segment`, if it
-    /// has one.
-    #[inline(always)]
-    pub(super) fn slot(self, segment: Segment, key: u32) -> Option<RouteSlot> {
         if segment.bits == Segment::DENSE {
             // Keys are the level's inner-g children, below the width the
-            // table was placed with.
-            let slot = self.slots[segment.first_slot(key)];
-            return (slot.key == key).then_some(slot);
+            // table was opened with; an empty run has equal bounds.
+            let at = segment.base as usize + key as usize;
+            let bounds = &self.bounds[at..at + 2];
+            return &self.entries[bounds[0] as usize..bounds[1] as usize];
         }
         let size = 1usize << segment.bits;
         let table = &self.slots[segment.base as usize..segment.base as usize + size];
@@ -329,12 +361,23 @@ impl<'a> RoutesView<'a> {
         loop {
             let slot = table[at];
             if slot.key == key {
-                return Some(slot);
+                return &self.entries[slot.start as usize..(slot.start + slot.len) as usize];
             }
             if slot.key == u32::MAX {
-                return None;
+                return &[];
             }
             at = (at + 1) & (size - 1);
+        }
+    }
+
+    /// Ask the cache for the place a lookup of `key` under the outer of
+    /// `segment` reads first.
+    #[inline(always)]
+    pub(super) fn touch(self, segment: Segment, key: u32) {
+        if segment.bits == Segment::DENSE {
+            prefetch_at(self.bounds, segment.base as usize + key as usize);
+        } else {
+            prefetch_at(self.slots, segment.base as usize + route_slot(key, segment.bits));
         }
     }
 }
