@@ -424,9 +424,9 @@ impl SkipForm {
             depth[l as usize] = depth[t as usize] + 1;
             depth[r as usize] = depth[t as usize] + 1;
         }
-        for t in 0..n {
+        for (t, v) in nv.iter_mut().enumerate() {
             if sh.is_leaf(t as u32) {
-                nv[t] = 1;
+                *v = 1;
             }
         }
         for &t in &sh.bottomup {

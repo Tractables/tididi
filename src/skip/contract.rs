@@ -200,10 +200,8 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
             return target(lvs, h);
         }
         let e = at[d as usize];
-        if e != NONE {
-            if let Some(&k) = lvs[e as usize].chainmap.get(&h) {
-                return lvs[e as usize].res[k as usize];
-            }
+        if e != NONE && let Some(&k) = lvs[e as usize].chainmap.get(&h) {
+            return lvs[e as usize].res[k as usize];
         }
         target(lvs, h)
     };

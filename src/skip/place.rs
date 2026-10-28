@@ -17,9 +17,9 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
     let sh = &**ish;
     let n = fsh.num_nodes();
     let mut img = vec![0u32; n];
-    for i in 0..n {
+    for (i, m) in img.iter_mut().enumerate() {
         if fsh.is_leaf(i as u32) {
-            img[i] = into.leaf_of(map(VarId(fsh.var[i])))?.0;
+            *m = into.leaf_of(map(VarId(fsh.var[i])))?.0;
         }
     }
     for &t in &fsh.bottomup {

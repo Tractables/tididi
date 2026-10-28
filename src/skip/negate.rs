@@ -93,10 +93,10 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 // The 2 x 2 grid.
                 let mut owned = [[false; 2]; 2];
                 let mut own = |a: u8, b: u8| {
-                    for i in 0..2 {
-                        for j in 0..2 {
+                    for (i, row) in owned.iter_mut().enumerate() {
+                        for (j, cell) in row.iter_mut().enumerate() {
                             if a >> i & 1 != 0 && b >> j & 1 != 0 {
-                                owned[i][j] = true;
+                                *cell = true;
                             }
                         }
                     }
@@ -190,8 +190,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
             // The sibling's classes each entity's true cells cover.
             let mut cov: FxHashMap<Ref, (u8, Vec<Ref>)> = FxHashMap::default();
             let mut all_sib: FxHashSet<Ref> = FxHashSet::default();
-            for i in 0..lvl.width() {
-                let is_top = top[t as usize][i];
+            for (i, &is_top) in top[t as usize].iter().enumerate() {
                 for &(a, b) in lvl.node(i as u32) {
                     let (e, s) = if left { (a, b) } else { (b, a) };
                     if !sh.is_leaf(sib) {

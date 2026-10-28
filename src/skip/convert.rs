@@ -108,9 +108,7 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
         }
     }
     let raw = |c: u32, x: Ref| -> u32 {
-        if sh.is_leaf(c) {
-            ix(x)
-        } else if vt(x) == c {
+        if sh.is_leaf(c) || vt(x) == c {
             ix(x)
         } else {
             s.levels[c as usize].width() as u32 + pt_index[c as usize][&x]
