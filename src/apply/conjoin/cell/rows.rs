@@ -1412,7 +1412,10 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
 ) -> Result<usize, OperationError> {
     let WholeRow { row_base, f_pairs, node_idx, left, right, gate, .. } = row;
     let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(0) };
-    let Some(mut out) = sink.open_row(lone.len() * K, lone.len()) else { return Ok(0) };
+    // A row of one f pair writes nodes held inline, and no pair to the
+    // pair arena.
+    let pairs = if K == 1 { 0 } else { lone.len() * K };
+    let Some(mut out) = sink.open_row(pairs, lone.len()) else { return Ok(0) };
     super::super::note_whole_row();
     let rows: [(L::Row, R::Row); K] = std::array::from_fn(|t| (left.row(f[t].left.0), right.row(f[t].right.0)));
     let units = K as u64;
@@ -1426,6 +1429,20 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
             due -= units;
         }
         let (c, d) = (q.left.0, q.right.0);
+        if K == 1 {
+            let (l, r) = rows[0];
+            let lc = left.get_in_row(node_idx, l, c);
+            if left.kills() && lc == NO_PRODUCT {
+                continue;
+            }
+            let rc = right.get_in_row(node_idx, r, d);
+            if right.kills() && rc == NO_PRODUCT {
+                continue;
+            }
+            // Safety: the row was opened for a node a column.
+            unsafe { out.single(node_idx, row_base + j, lc, rc) };
+            continue;
+        }
         for &(l, r) in &rows {
             let lc = left.get_in_row(node_idx, l, c);
             if left.kills() && lc == NO_PRODUCT {
@@ -1484,7 +1501,9 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             j += 1;
             continue;
         }
-        if (k > 1 && m > 1) || !out.fits(k * m) {
+        // A cell of one pair against one is a node held inline, which
+        // takes no room in the pair arena.
+        if (k > 1 && m > 1) || (k * m > 1 && !out.fits(k * m)) {
             break;
         }
         let units = (k * m) as u64;
@@ -1494,6 +1513,19 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             (due_at, due) = (gate.due_in(), gate.due_in());
         } else {
             due -= units;
+        }
+        if k * m == 1 {
+            let ((l, r), q) = (rows[0], &g_pairs[0]);
+            let lc = left.get_in_row(node_idx, l, q.left.0);
+            if !left.kills() || lc != NO_PRODUCT {
+                let rc = right.get_in_row(node_idx, r, q.right.0);
+                if !right.kills() || rc != NO_PRODUCT {
+                    // Safety: the row was opened for a node a column.
+                    unsafe { out.single(node_idx, row_base + j, lc, rc) };
+                }
+            }
+            j += 1;
+            continue;
         }
         let mut cand = |(l, r): (L::Row, R::Row), q: &ChildPair| {
             let lc = left.get_in_row(node_idx, l, q.left.0);
