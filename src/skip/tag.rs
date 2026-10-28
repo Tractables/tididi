@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::build::Land;
+use super::build::{Land, Levels};
 use super::{ix, mk, vt, Ref, Shape, SkipForm, SkipSize, ONE, POS, NEG, ZREF};
 use crate::limits::Limits;
 use crate::OperationError;
@@ -108,15 +108,9 @@ pub(crate) fn normalize(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Resu
     let (l, r) = sh.kids[u as usize];
     if pairs.len() == 1 {
         let (a, b) = pairs[0];
-        if sh.is_leaf(l) {
-            if let Some(x) = extend(sh, u, ix(a), r, b) {
-                return Err(x);
-            }
-        }
-        if sh.is_leaf(r) {
-            if let Some(x) = extend(sh, u, ix(b), l, a) {
-                return Err(x);
-            }
+        let left = if sh.is_leaf(l) { extend(sh, u, ix(a), r, b) } else { None };
+        if let Some(x) = left.or_else(|| if sh.is_leaf(r) { extend(sh, u, ix(b), l, a) } else { None }) {
+            return Err(x);
         }
     }
     Ok(())
@@ -198,7 +192,7 @@ impl Bounds {
         let u = sh.parent[w as usize];
         let (l, rr) = sh.kids[u as usize];
         let pair = if l == w { (r, mk(rr, t)) } else { (mk(l, t), r) };
-        let idx = *self.memo.entry((u, pair.0, pair.1)).or_insert_with(|| form.levels[u as usize].push(&[pair]));
+        let idx = *self.memo.entry((u, pair.0, pair.1)).or_insert_with(|| form.push_node(u, &[pair]));
         let node = mk(u, idx);
         if u == c { node } else { with_tag(node, t) }
     }
@@ -224,46 +218,36 @@ fn construct<K: Copy + Eq + Hash>(
     lim: &Limits,
 ) -> Result<SkipForm, OperationError> {
     let sh = &**shape;
-    let n = sh.num_nodes();
     let mut form = SkipForm::zero(Arc::clone(shape));
-    let mut maps: Vec<FxHashMap<K, u32>> = (0..n).map(|_| FxHashMap::default()).collect();
-    let mut keys: Vec<Vec<K>> = vec![Vec::new(); n];
-    let mut cstart: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut combos: Vec<Vec<(u64, u64)>> = vec![Vec::new(); n];
-    let insert = |maps: &mut Vec<FxHashMap<K, u32>>, keys: &mut Vec<Vec<K>>, u: u32, k: K, t: u32| -> u64 {
-        let m = &mut maps[u as usize];
-        let next = keys[u as usize].len() as u32;
-        let slot = *m.entry(k).or_insert_with(|| {
-            keys[u as usize].push(k);
-            next
-        });
-        debug_assert!(u < 1 << 26);
-        PENDING | (t as u64) << 58 | (u as u64) << 32 | slot as u64
-    };
-    let handle = |maps: &mut Vec<FxHashMap<K, u32>>, keys: &mut Vec<Vec<K>>, l: (Land, K, u32)| -> u64 {
+    let mut lv: Levels<K> = Levels::new(sh.num_nodes());
+    let handle = |lv: &mut Levels<K>, l: (Land, K, u32)| -> u64 {
         match l {
             (Land::Done(r), _, _) => r,
-            (Land::At(w), k, t) => insert(maps, keys, w, k, t),
+            (Land::At(w), k, t) => {
+                debug_assert!(w < 1 << 26);
+                PENDING | (t as u64) << 58 | (w as u64) << 32 | lv.slot(sh, w, k) as u64
+            }
         }
     };
     let root_l = land(sh.root, root);
     if let (Land::Done(r), _, _) = root_l {
         form.out = r;
+        form.collect_pushed();
         return Ok(form);
     }
-    let root_h = handle(&mut maps, &mut keys, root_l);
+    let root_h = handle(&mut lv, root_l);
     let mut buf = Vec::new();
-    for &u in &sh.topdown {
-        if keys[u as usize].is_empty() {
-            continue;
-        }
+    let mut order: Vec<u32> = Vec::new();
+    while let Some(std::cmp::Reverse((_, u))) = lv.heap.pop() {
+        let e = lv.at[u as usize] as usize;
+        order.push(e as u32);
         let (l, r) = sh.kids[u as usize];
-        let mut cs = Vec::with_capacity(keys[u as usize].len() + 1);
+        let mut cs = Vec::with_capacity(lv.lv[e].keys.len() + 1);
         let mut out = Vec::new();
         cs.push(0u32);
         let mut slot = 0;
-        while slot < keys[u as usize].len() {
-            let key = keys[u as usize][slot];
+        while slot < lv.lv[e].keys.len() {
+            let key = lv.lv[e].keys[slot];
             buf.clear();
             expand(u, key, &mut buf);
             for &(kl, kr) in &buf {
@@ -275,47 +259,44 @@ fn construct<K: Copy + Eq + Hash>(
                 if matches!(lr.0, Land::Done(ZREF)) {
                     continue;
                 }
-                let hl = handle(&mut maps, &mut keys, ll);
-                let hr = handle(&mut maps, &mut keys, lr);
+                let hl = handle(&mut lv, ll);
+                let hr = handle(&mut lv, lr);
                 out.push((hl, hr));
             }
             cs.push(out.len() as u32);
             slot += 1;
         }
-        lim.charge_work(out.len() as u64 + keys[u as usize].len() as u64);
+        lim.charge_work(out.len() as u64 + lv.lv[e].keys.len() as u64);
         lim.check_stop()?;
-        maps[u as usize] = FxHashMap::default();
-        cstart[u as usize] = cs;
-        combos[u as usize] = out;
+        let le = &mut lv.lv[e];
+        le.cstart = cs;
+        le.combos = out;
     }
-    drop(maps);
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
     let mut bounds = Bounds::default();
-    let get = |res: &Vec<Vec<Ref>>, bounds: &mut Bounds, form: &mut SkipForm, c: u32, h: u64| -> Ref {
+    let get = |lv: &Levels<K>, bounds: &mut Bounds, form: &mut SkipForm, c: u32, h: u64| -> Ref {
         if is_pending(h) {
             let (t, w, slot) = (((h >> 58) & 3) as u32, ((h >> 32) & 0x03ff_ffff) as u32, h as u32);
-            bounds.cross(sh, form, c, t, w, res[w as usize][slot as usize])
+            bounds.cross(sh, form, c, t, w, lv.res(w, slot))
         } else {
             h
         }
     };
     let mut pairs = Vec::new();
-    for &u in &sh.bottomup {
-        let cs = std::mem::take(&mut cstart[u as usize]);
-        if cs.is_empty() {
-            continue;
-        }
+    for &e in order.iter().rev() {
+        let e = e as usize;
+        let u = lv.lv[e].level;
         let (l, r) = sh.kids[u as usize];
-        let out = std::mem::take(&mut combos[u as usize]);
+        let cs = std::mem::take(&mut lv.lv[e].cstart);
+        let out = std::mem::take(&mut lv.lv[e].combos);
         let mut rv = Vec::with_capacity(cs.len() - 1);
         for s in 0..cs.len() - 1 {
             pairs.clear();
             for &(hl, hr) in &out[cs[s] as usize..cs[s + 1] as usize] {
-                let a = get(&res, &mut bounds, &mut form, l, hl);
+                let a = get(&lv, &mut bounds, &mut form, l, hl);
                 if a == ZREF {
                     continue;
                 }
-                let b = get(&res, &mut bounds, &mut form, r, hr);
+                let b = get(&lv, &mut bounds, &mut form, r, hr);
                 if b != ZREF {
                     pairs.push((a, b));
                 }
@@ -325,15 +306,15 @@ fn construct<K: Copy + Eq + Hash>(
             } else {
                 match normalize(sh, u, &mut pairs) {
                     Err(target) => target,
-                    Ok(()) => mk(u, form.levels[u as usize].push(&pairs)),
+                    Ok(()) => mk(u, form.push_node(u, &pairs)),
                 }
             });
         }
-        res[u as usize] = rv;
-        keys[u as usize] = Vec::new();
+        lv.lv[e].res = rv;
+        lv.lv[e].keys = Vec::new();
     }
-    form.out = get(&res, &mut bounds, &mut form, sh.root, root_h);
-    form.collect();
+    form.out = get(&lv, &mut bounds, &mut form, sh.root, root_h);
+    form.collect_pushed();
     Ok(form)
 }
 
@@ -365,41 +346,82 @@ const NONE: u32 = u32::MAX;
 /// takes in is a class of one pair at each level it crosses, and what it
 /// continues to below is no twin of anything: it is kept apart.
 pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    use std::hash::Hasher;
     let sh = &*s.shape;
     let n = sh.num_nodes();
     if s.out == ZREF {
-        return Ok(SkipForm::zero(s.shape.clone()));
+        let mut z = SkipForm::zero(s.shape.clone());
+        z.collect_pushed();
+        return Ok(z);
     }
-    let mut classes: Vec<Vec<Vec<(Ref, Ref)>>> = vec![Vec::new(); n];
-    let mut classmap: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut chainmap: Vec<FxHashMap<Ref, u32>> = (0..n).map(|_| FxHashMap::default()).collect();
-    let mut occ: Vec<(Ref, u32, Ref)> = Vec::new();
-    let mut buf1 = [(0, 0); 1];
-    // Per level: the skips through it no merge took in.
-    let mut lone: Vec<Vec<Ref>> = vec![Vec::new(); n];
-    if vt(s.out) != sh.root {
-        lone[sh.root as usize].push(s.out);
+    struct CLv {
+        level: u32,
+        start: Vec<u32>,
+        pairs: Vec<(Ref, Ref)>,
+        classmap: Vec<u32>,
+        chainmap: FxHashMap<Ref, u32>,
+        res: Vec<Ref>,
     }
-    for &c in &sh.topdown {
-        let lvl = &s.levels[c as usize];
-        let mut cmap = vec![NONE; lvl.width()];
-        let mut cls: Vec<Vec<(Ref, Ref)>> = Vec::new();
-        let p = sh.parent[c as usize];
-        if p != NONE {
-            // What the parent level's lone skips continue to here.
-            let mut pinned: rustc_hash::FxHashSet<Ref> = rustc_hash::FxHashSet::default();
-            for &x in &lone[p as usize] {
-                if sh.within(vt(x), c) {
-                    pinned.insert(if vt(x) == c { strip(x) } else { at_level(sh, c, x) });
-                }
+    impl CLv {
+        fn push_class(&mut self, pairs: &[(Ref, Ref)]) -> u32 {
+            if self.start.is_empty() {
+                self.start.push(0);
             }
+            self.pairs.extend_from_slice(pairs);
+            self.start.push(self.pairs.len() as u32);
+            (self.start.len() - 2) as u32
+        }
+        fn width(&self) -> usize {
+            self.start.len().saturating_sub(1)
+        }
+        fn class(&self, k: usize) -> &[(Ref, Ref)] {
+            &self.pairs[self.start[k] as usize..self.start[k + 1] as usize]
+        }
+    }
+    // Skips no merge took in, as each level they cross reads them, and the
+    // nodes they land on.
+    let mut lone: rustc_hash::FxHashSet<Ref> = rustc_hash::FxHashSet::default();
+    let mut landed: rustc_hash::FxHashSet<Ref> = rustc_hash::FxHashSet::default();
+    // A skip's reference value names one chain, so `lone` holds it once for
+    // every level it crosses; a landing is read at one level only.
+    let note_lone = |lone: &mut rustc_hash::FxHashSet<Ref>, landed: &mut rustc_hash::FxHashSet<Ref>, x: Ref| {
+        lone.insert(x);
+        let w = vt(x);
+        landed.insert(if sh.is_leaf(w) { at_level(sh, sh.parent[w as usize], x) } else { strip(x) });
+    };
+    if vt(s.out) != sh.root {
+        note_lone(&mut lone, &mut landed, s.out);
+    }
+    let mut at = vec![NONE; n];
+    let mut lvs: Vec<CLv> = Vec::new();
+    let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+    let mut queued = vec![false; n];
+    for &t in &s.active {
+        queued[t as usize] = true;
+        heap.push(Reverse((sh.pre[t as usize], t)));
+    }
+    let mut occ: Vec<(Ref, u32, Ref)> = Vec::new();
+    let mut keyed: FxHashMap<u64, smallvec::SmallVec<[u32; 1]>> = FxHashMap::default();
+    let mut members: Vec<(u32, Ref)> = Vec::new();
+    let mut firsts: Vec<(usize, usize)> = Vec::new();
+    let mut buf1 = [(0, 0); 1];
+    let mut buf = Vec::new();
+    while let Some(Reverse((_, c))) = heap.pop() {
+        let lvl = &s.levels[c as usize];
+        let mut cl = CLv { level: c, start: Vec::new(), pairs: Vec::new(), classmap: vec![NONE; lvl.width()], chainmap: FxHashMap::default(), res: Vec::new() };
+        let p = sh.parent[c as usize];
+        let pe = if p == NONE { NONE } else { at[p as usize] };
+        if pe != NONE {
+            let pcl = &lvs[pe as usize];
             let (pl, pr) = sh.kids[p as usize];
             let left = pl == c;
             let sib = if left { pr } else { pl };
             let sib_leaf = sh.is_leaf(sib);
             occ.clear();
-            for (k, pairs) in classes[p as usize].iter().enumerate() {
-                for &(a, b) in pairs {
+            for k in 0..pcl.width() {
+                for &(a, b) in pcl.class(k) {
                     let (e, partner) = if left { (a, b) } else { (b, a) };
                     let e = at_level(sh, c, e);
                     if sib_leaf && ix(partner) == ONE {
@@ -411,102 +433,131 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
                 }
             }
             occ.sort_unstable();
-            let mut keyed: FxHashMap<Vec<(u32, Ref)>, u32> = FxHashMap::default();
-            let mut members: Vec<Vec<Ref>> = Vec::new();
+            keyed.clear();
+            members.clear();
+            firsts.clear();
+            let ctx = |a: (usize, usize), b: (usize, usize)| -> bool {
+                a.1 - a.0 == b.1 - b.0 && occ[a.0..a.1].iter().zip(&occ[b.0..b.1]).all(|(x, y)| (x.1, x.2) == (y.1, y.2))
+            };
             let mut i = 0;
             while i < occ.len() {
                 let mut j = i;
+                let mut h = rustc_hash::FxHasher::default();
                 while j < occ.len() && occ[j].0 == occ[i].0 {
+                    (occ[j].1, occ[j].2).hash(&mut h);
                     j += 1;
                 }
                 let e = occ[i].0;
-                if pinned.contains(&e) {
-                    members.push(vec![e]);
+                let lands = vt(e) == c || (sh.is_leaf(vt(e)) && sh.parent[vt(e) as usize] == c);
+                let pinned = if lands { landed.contains(&e) } else { lone.contains(&e) };
+                let g = if pinned {
+                    firsts.push((i, j));
+                    (firsts.len() - 1) as u32
                 } else {
-                    let key: Vec<(u32, Ref)> = occ[i..j].iter().map(|o| (o.1, o.2)).collect();
-                    let g = *keyed.entry(key).or_insert_with(|| {
-                        members.push(Vec::new());
-                        (members.len() - 1) as u32
-                    });
-                    members[g as usize].push(e);
-                }
+                    let bucket = keyed.entry(h.finish()).or_default();
+                    match bucket.iter().find(|&&g| ctx(firsts[g as usize], (i, j))) {
+                        Some(&g) => g,
+                        None => {
+                            firsts.push((i, j));
+                            let g = (firsts.len() - 1) as u32;
+                            bucket.push(g);
+                            g
+                        }
+                    }
+                };
+                members.push((g, e));
                 i = j;
             }
-            for &e in &pinned {
-                if vt(e) != c && occ.binary_search_by_key(&e, |o| o.0).is_err() {
-                    lone[c as usize].push(e);
-                }
-            }
-            for m in members {
-                if m.len() == 1 && vt(m[0]) != c {
-                    lone[c as usize].push(m[0]);
+            members.sort_unstable();
+            for m in members.chunk_by(|x, y| x.0 == y.0) {
+                if m.len() == 1 && vt(m[0].1) != c {
+                    if !lone.contains(&m[0].1) {
+                        note_lone(&mut lone, &mut landed, m[0].1);
+                    }
                     continue;
                 }
-                let k = cls.len() as u32;
-                let mut pairs = Vec::new();
-                for &e in &m {
+                buf.clear();
+                for &(_, e) in m {
                     if vt(e) == c {
-                        cmap[ix(e) as usize] = k;
-                        pairs.extend_from_slice(lvl.node(ix(e)));
+                        buf.extend_from_slice(lvl.node(ix(e)));
                     } else {
-                        chainmap[c as usize].insert(e, k);
-                        pairs.extend_from_slice(pairs_at(s, c, e, &mut buf1));
+                        buf.extend_from_slice(pairs_at(s, c, e, &mut buf1));
                     }
                 }
-                cls.push(pairs);
+                let k = cl.push_class(&buf);
+                for &(_, e) in m {
+                    if vt(e) == c {
+                        cl.classmap[ix(e) as usize] = k;
+                    } else {
+                        cl.chainmap.insert(e, k);
+                    }
+                }
             }
         }
         for i in 0..lvl.width() {
-            if cmap[i] == NONE {
-                cmap[i] = cls.len() as u32;
-                cls.push(lvl.node(i as u32).to_vec());
+            if cl.classmap[i] == NONE {
+                cl.classmap[i] = cl.push_class(lvl.node(i as u32));
             }
         }
         lim.charge_work(lvl.pairs.len() as u64);
-        classes[c as usize] = cls;
-        classmap[c as usize] = cmap;
+        if cl.width() > 0 {
+            for ch in [sh.kids[c as usize].0, sh.kids[c as usize].1] {
+                if !sh.is_leaf(ch) && !queued[ch as usize] {
+                    queued[ch as usize] = true;
+                    heap.push(Reverse((sh.pre[ch as usize], ch)));
+                }
+            }
+        }
+        at[c as usize] = lvs.len() as u32;
+        lvs.push(cl);
     }
     lim.check_stop()?;
     let mut out = SkipForm::zero(s.shape.clone());
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
     let mut bounds = Bounds::default();
-    let side = |res: &Vec<Vec<Ref>>, bounds: &mut Bounds, out: &mut SkipForm, d: u32, h: Ref| -> Ref {
+    let side = |lvs: &Vec<CLv>, bounds: &mut Bounds, out: &mut SkipForm, d: u32, h: Ref| -> Ref {
         if sh.is_leaf(d) {
             return h;
         }
+        let res_of = |w: u32, i: u32| -> Ref {
+            let cl = &lvs[at[w as usize] as usize];
+            cl.res[cl.classmap[i as usize] as usize]
+        };
         if vt(h) == d {
-            return res[d as usize][classmap[d as usize][ix(h) as usize] as usize];
+            return res_of(d, ix(h));
         }
-        if let Some(&k) = chainmap[d as usize].get(&at_level(sh, d, h)) {
-            return res[d as usize][k as usize];
+        let e = at[d as usize];
+        if e != NONE {
+            if let Some(&k) = lvs[e as usize].chainmap.get(&at_level(sh, d, h)) {
+                return lvs[e as usize].res[k as usize];
+            }
         }
         let w = vt(h);
-        let target = if sh.is_leaf(w) { strip(h) } else { res[w as usize][classmap[w as usize][ix(h) as usize] as usize] };
+        let target = if sh.is_leaf(w) { strip(h) } else { res_of(w, ix(h)) };
         bounds.cross(sh, out, d, tag(h), w, target)
     };
-    let mut buf = Vec::new();
-    for &c in &sh.bottomup {
+    for e in (0..lvs.len()).rev() {
+        let c = lvs[e].level;
         let (l, r) = sh.kids[c as usize];
-        let cls = std::mem::take(&mut classes[c as usize]);
-        let mut rc = Vec::with_capacity(cls.len());
-        for pairs in &cls {
+        let mut rc = Vec::with_capacity(lvs[e].width());
+        for k in 0..lvs[e].width() {
             buf.clear();
-            for &(a, b) in pairs {
-                let a = side(&res, &mut bounds, &mut out, l, a);
-                let b = side(&res, &mut bounds, &mut out, r, b);
+            for i in lvs[e].start[k] as usize..lvs[e].start[k + 1] as usize {
+                let (a, b) = lvs[e].pairs[i];
+                let a = side(&lvs, &mut bounds, &mut out, l, a);
+                let b = side(&lvs, &mut bounds, &mut out, r, b);
                 buf.push((a, b));
             }
             buf.sort_unstable();
             buf.dedup();
             rc.push(match normalize(sh, c, &mut buf) {
                 Err(t) => t,
-                Ok(()) => mk(c, out.levels[c as usize].push(&buf)),
+                Ok(()) => mk(c, out.push_node(c, &buf)),
             });
         }
-        res[c as usize] = rc;
+        lvs[e].res = rc;
     }
-    out.out = side(&res, &mut bounds, &mut out, sh.root, s.out);
-    out.collect();
+    out.out = side(&lvs, &mut bounds, &mut out, sh.root, s.out);
+    out.collect_pushed();
     Ok(out)
 }
 

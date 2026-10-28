@@ -188,11 +188,56 @@ impl SLevel {
     }
 }
 
+/// Per vtree node its [`SLevel`], stored only for levels that were written:
+/// reading an unwritten level gives the empty one.
+#[derive(Clone, Debug)]
+pub(crate) struct LevelMap {
+    idx: Vec<u32>,
+    lv: Vec<SLevel>,
+}
+
+static EMPTY: SLevel = SLevel { start: Vec::new(), pairs: Vec::new() };
+
+impl LevelMap {
+    fn new(n: usize) -> LevelMap {
+        LevelMap { idx: vec![NONE; n], lv: Vec::new() }
+    }
+    /// Every vtree node's level, in vtree index order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SLevel> + '_ {
+        self.idx.iter().map(|&i| if i == NONE { &EMPTY } else { &self.lv[i as usize] })
+    }
+}
+
+impl std::ops::Index<usize> for LevelMap {
+    type Output = SLevel;
+    #[inline]
+    fn index(&self, u: usize) -> &SLevel {
+        let i = self.idx[u];
+        if i == NONE { &EMPTY } else { &self.lv[i as usize] }
+    }
+}
+
+impl std::ops::IndexMut<usize> for LevelMap {
+    #[inline]
+    fn index_mut(&mut self, u: usize) -> &mut SLevel {
+        let mut i = self.idx[u];
+        if i == NONE {
+            i = self.lv.len() as u32;
+            self.idx[u] = i;
+            self.lv.push(SLevel::default());
+        }
+        &mut self.lv[i as usize]
+    }
+}
+
 /// A diagram in skip form over [`Shape`]: every reference resolved.
 #[derive(Clone, Debug)]
 pub(crate) struct SkipForm {
     pub(crate) shape: Arc<Shape>,
-    pub(crate) levels: Vec<SLevel>,
+    pub(crate) levels: LevelMap,
+    /// The levels that hold nodes, parents first (by preorder), once
+    /// [`SkipForm::collect`] has run.
+    pub(crate) active: Vec<u32>,
     /// The function, as a reference from the root.
     pub(crate) out: Ref,
 }
@@ -210,7 +255,23 @@ pub(crate) struct SkipSize {
 impl SkipForm {
     pub(crate) fn zero(shape: Arc<Shape>) -> SkipForm {
         let n = shape.num_nodes();
-        SkipForm { shape, levels: vec![SLevel::default(); n], out: ZREF }
+        SkipForm { shape, levels: LevelMap::new(n), active: Vec::new(), out: ZREF }
+    }
+
+    /// Append a node at level `u`, noting the level among those that hold
+    /// nodes ([`SkipForm::collect_in`] orders them), and return its index.
+    pub(crate) fn push_node(&mut self, u: u32, pairs: &[(Ref, Ref)]) -> u32 {
+        if self.levels[u as usize].width() == 0 {
+            self.active.push(u);
+        }
+        self.levels[u as usize].push(pairs)
+    }
+
+    /// [`SkipForm::collect_in`] over the levels [`SkipForm::push_node`]
+    /// noted.
+    pub(crate) fn collect_pushed(&mut self) {
+        let cand = std::mem::take(&mut self.active);
+        self.collect_in(cand);
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -241,7 +302,7 @@ impl SkipForm {
         let sh = &self.shape;
         let mut s = SkipSize::default();
         let mut seen = rustc_hash::FxHashSet::default();
-        for &t in &sh.topdown {
+        for &t in &self.active {
             let lvl = &self.levels[t as usize];
             s.nodes += lvl.width() as u64;
             s.pairs += lvl.pairs.len() as u64;
@@ -265,58 +326,86 @@ impl SkipForm {
 
     /// Drop nodes the output does not reach and number the rest in order.
     pub(crate) fn collect(&mut self) {
+        let all = self.shape.topdown.clone();
+        self.collect_in(all);
+    }
+
+    /// [`SkipForm::collect`] where only the levels in `cand` may hold nodes.
+    pub(crate) fn collect_in(&mut self, mut cand: Vec<u32>) {
         let sh = Arc::clone(&self.shape);
-        let n = sh.num_nodes();
+        cand.retain(|&t| self.levels[t as usize].width() > 0);
+        cand.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+        cand.dedup();
         if self.out == ZREF {
-            self.levels = vec![SLevel::default(); n];
+            for &t in &cand {
+                self.levels[t as usize] = SLevel::default();
+            }
+            self.active.clear();
             return;
         }
-        let mut live: Vec<Vec<bool>> = self.levels.iter().map(|l| vec![false; l.width()]).collect();
-        let mark = |live: &mut Vec<Vec<bool>>, r: Ref| {
-            if !sh.is_leaf(vt(r)) {
-                live[vt(r) as usize][ix(r) as usize] = true;
+        // Per candidate level (by its position in `cand`): which nodes are
+        // live, then their new numbers.
+        let mut pos = vec![NONE; sh.num_nodes()];
+        for (i, &t) in cand.iter().enumerate() {
+            pos[t as usize] = i as u32;
+        }
+        let mut live: Vec<Vec<u32>> = cand.iter().map(|&t| vec![0; self.levels[t as usize].width()]).collect();
+        let mark = |live: &mut Vec<Vec<u32>>, r: Ref| {
+            let p = pos[vt(r) as usize];
+            if p != NONE && !sh.is_leaf(vt(r)) {
+                live[p as usize][ix(r) as usize] = 1;
             }
         };
         mark(&mut live, self.out);
-        for &t in &sh.topdown {
+        for (i, &t) in cand.iter().enumerate() {
             let lvl = &self.levels[t as usize];
-            for i in 0..lvl.width() {
-                if live[t as usize][i] {
-                    for &(a, b) in lvl.node(i as u32) {
+            for k in 0..lvl.width() {
+                if live[i][k] != 0 {
+                    for &(a, b) in lvl.node(k as u32) {
                         mark(&mut live, a);
                         mark(&mut live, b);
                     }
                 }
             }
         }
-        let mut remap: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for &t in &sh.bottomup {
+        for v in live.iter_mut() {
             let mut next = 0u32;
-            remap[t as usize] = live[t as usize].iter().map(|&k| if k { next += 1; next - 1 } else { NONE }).collect();
+            for x in v.iter_mut() {
+                *x = if *x != 0 {
+                    next += 1;
+                    next - 1
+                } else {
+                    NONE
+                };
+            }
         }
         // A tagged reference keeps its tag.
-        let fix = |remap: &Vec<Vec<u32>>, r: Ref| -> Ref {
-            if sh.is_leaf(vt(r)) { r } else { (r & tag::TAG_MASK) | mk(vt(r), remap[vt(r) as usize][ix(r) as usize]) }
+        let fix = |live: &Vec<Vec<u32>>, r: Ref| -> Ref {
+            let p = pos[vt(r) as usize];
+            if p == NONE || sh.is_leaf(vt(r)) { r } else { (r & tag::TAG_MASK) | mk(vt(r), live[p as usize][ix(r) as usize]) }
         };
-        for &t in &sh.bottomup {
+        let mut active = Vec::with_capacity(cand.len());
+        for (i, &t) in cand.iter().enumerate() {
             let old = std::mem::take(&mut self.levels[t as usize]);
             let mut lvl = SLevel::default();
-            for i in 0..old.width() {
-                if live[t as usize][i] {
-                    let start = lvl.pairs.len();
+            for k in 0..old.width() {
+                if live[i][k] != NONE {
                     if lvl.start.is_empty() {
                         lvl.start.push(0);
                     }
-                    for &(a, b) in old.node(i as u32) {
-                        lvl.pairs.push((fix(&remap, a), fix(&remap, b)));
+                    for &(a, b) in old.node(k as u32) {
+                        lvl.pairs.push((fix(&live, a), fix(&live, b)));
                     }
-                    debug_assert!(lvl.pairs.len() > start);
                     lvl.start.push(lvl.pairs.len() as u32);
                 }
             }
+            if lvl.width() > 0 {
+                active.push(t);
+            }
             self.levels[t as usize] = lvl;
         }
-        self.out = fix(&remap, self.out);
+        self.active = active;
+        self.out = fix(&live, self.out);
     }
 
     /// The model count over the vtree's variables.
@@ -402,19 +491,21 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
     let (ll, rl) = (sh.is_leaf(l), sh.is_leaf(r));
     // Cells: every One against a leaf child as both literals.
     if (ll && pairs.iter().any(|p| ix(p.0) == ONE)) || (rl && pairs.iter().any(|p| ix(p.1) == ONE)) {
-        let mut cells = Vec::with_capacity(pairs.len() * 2);
-        for &(a, b) in pairs.iter() {
+        // Expanded behind the input, which is then dropped from the front.
+        let m = pairs.len();
+        for i in 0..m {
+            let (a, b) = pairs[i];
             let lefts: &[Ref] = if ll && ix(a) == ONE { &[mk(l, POS), mk(l, NEG)] } else { &[a] };
             for &x in lefts {
                 if rl && ix(b) == ONE {
-                    cells.push((x, mk(r, POS)));
-                    cells.push((x, mk(r, NEG)));
+                    pairs.push((x, mk(r, POS)));
+                    pairs.push((x, mk(r, NEG)));
                 } else {
-                    cells.push((x, b));
+                    pairs.push((x, b));
                 }
             }
         }
-        *pairs = cells;
+        pairs.drain(..m);
     }
     if ll {
         // Both literals with the same right side: One.

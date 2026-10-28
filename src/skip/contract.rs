@@ -13,6 +13,10 @@
 //! the leaves up, so that a class that became `true` on one side resolves
 //! to the reference it skips to.
 
+use std::cmp::Reverse;
+use std::hash::{Hash, Hasher};
+use std::collections::BinaryHeap;
+
 use rustc_hash::FxHashMap;
 
 use super::{ix, mk, normalize, vt, Ref, SkipForm, NEG, ONE, POS, ZREF};
@@ -22,27 +26,68 @@ use crate::OperationError;
 
 const NONE: u32 = u32::MAX;
 
+/// One level's classes while the contraction runs.
+#[derive(Default)]
+struct CLv {
+    level: u32,
+    /// Class `k`'s pairs are `pairs[start[k]..start[k + 1]]`, sides as the
+    /// input's references.
+    start: Vec<u32>,
+    pairs: Vec<(Ref, Ref)>,
+    /// The class of each stored node, and of each skip a merge took in.
+    classmap: Vec<u32>,
+    chainmap: FxHashMap<Ref, u32>,
+    res: Vec<Ref>,
+}
+
+impl CLv {
+    fn push_class(&mut self, pairs: &[(Ref, Ref)]) -> u32 {
+        if self.start.is_empty() {
+            self.start.push(0);
+        }
+        self.pairs.extend_from_slice(pairs);
+        self.start.push(self.pairs.len() as u32);
+        (self.start.len() - 2) as u32
+    }
+    fn width(&self) -> usize {
+        self.start.len().saturating_sub(1)
+    }
+    fn class(&self, k: usize) -> &[(Ref, Ref)] {
+        &self.pairs[self.start[k] as usize..self.start[k + 1] as usize]
+    }
+}
+
 /// `s` contracted to the canonical skip form of its function. `s` holds no
 /// false side and no unreachable node.
 pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
     let sh = &*s.shape;
     let n = sh.num_nodes();
     if s.out == ZREF {
-        return Ok(SkipForm::zero(s.shape.clone()));
+        let mut z = SkipForm::zero(s.shape.clone());
+        z.collect_in(Vec::new());
+        return Ok(z);
     }
-    // Per level: the merged classes' pairs (sides as the input's
-    // references), the class of each stored node, and the class of each
-    // skip a merge took in.
-    let mut classes: Vec<Vec<Vec<(Ref, Ref)>>> = vec![Vec::new(); n];
-    let mut classmap: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut chainmap: Vec<FxHashMap<Ref, u32>> = (0..n).map(|_| FxHashMap::default()).collect();
+    // The levels visited, parents first: those holding nodes, and the
+    // inner children of a level with classes, where skips it names may merge.
+    let mut at = vec![NONE; n];
+    let mut lvs: Vec<CLv> = Vec::new();
+    let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+    let mut queued = vec![false; n];
+    for &t in &s.active {
+        queued[t as usize] = true;
+        heap.push(Reverse((sh.pre[t as usize], t)));
+    }
     let mut occ: Vec<(Ref, u32, Ref)> = Vec::new();
-    for &c in &sh.topdown {
+    let mut keyed: FxHashMap<u64, smallvec::SmallVec<[u32; 1]>> = FxHashMap::default();
+    let mut members: Vec<(u32, Ref)> = Vec::new();
+    let mut firsts: Vec<(usize, usize)> = Vec::new();
+    while let Some(Reverse((_, c))) = heap.pop() {
         let lvl = &s.levels[c as usize];
-        let mut cmap = vec![NONE; lvl.width()];
-        let mut cls: Vec<Vec<(Ref, Ref)>> = Vec::new();
+        let mut cl = CLv { level: c, classmap: vec![NONE; lvl.width()], ..CLv::default() };
         let p = sh.parent[c as usize];
-        if p != NONE {
+        let pe = if p == NONE { NONE } else { at[p as usize] };
+        if pe != NONE {
+            let pcl = &lvs[pe as usize];
             let (pl, pr) = sh.kids[p as usize];
             let left = pl == c;
             let sib = if left { pr } else { pl };
@@ -50,8 +95,8 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
             // Each class of the parent that names an entity of this level,
             // with the partner it names it with (One as both literals).
             occ.clear();
-            for (k, pairs) in classes[p as usize].iter().enumerate() {
-                for &(a, b) in pairs {
+            for k in 0..pcl.width() {
+                for &(a, b) in pcl.class(k) {
                     let (e, partner) = if left { (a, b) } else { (b, a) };
                     if sib_leaf && ix(partner) == ONE {
                         occ.push((e, k as u32, mk(sib, POS)));
@@ -62,89 +107,115 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
                 }
             }
             occ.sort_unstable();
-            // Group entities by their sorted context list.
-            let mut sigs: Vec<(Ref, usize, usize)> = Vec::new();
+            // Group entities by their sorted context list: a group is keyed
+            // by the hash of its first member's list, compared in full.
+            keyed.clear();
+            members.clear();
+            firsts.clear();
+            let ctx = |a: (usize, usize), b: (usize, usize)| -> bool {
+                a.1 - a.0 == b.1 - b.0 && occ[a.0..a.1].iter().zip(&occ[b.0..b.1]).all(|(x, y)| (x.1, x.2) == (y.1, y.2))
+            };
             let mut i = 0;
             while i < occ.len() {
                 let mut j = i;
+                let mut h = rustc_hash::FxHasher::default();
                 while j < occ.len() && occ[j].0 == occ[i].0 {
+                    (occ[j].1, occ[j].2).hash(&mut h);
                     j += 1;
                 }
-                sigs.push((occ[i].0, i, j));
+                let bucket = keyed.entry(h.finish()).or_default();
+                let g = match bucket.iter().find(|&&g| ctx(firsts[g as usize], (i, j))) {
+                    Some(&g) => g,
+                    None => {
+                        firsts.push((i, j));
+                        let g = (firsts.len() - 1) as u32;
+                        bucket.push(g);
+                        g
+                    }
+                };
+                members.push((g, occ[i].0));
                 i = j;
             }
-            // The context list without the entity itself, as a key.
-            let mut keyed: FxHashMap<Vec<(u32, Ref)>, u32> = FxHashMap::default();
-            let mut members: Vec<Vec<Ref>> = Vec::new();
-            for &(e, i, j) in &sigs {
-                let key: Vec<(u32, Ref)> = occ[i..j].iter().map(|o| (o.1, o.2)).collect();
-                let g = *keyed.entry(key).or_insert_with(|| {
-                    members.push(Vec::new());
-                    (members.len() - 1) as u32
-                });
-                members[g as usize].push(e);
-            }
+            members.sort_unstable();
             let (l, r) = sh.kids[c as usize];
-            for m in members {
-                if m.len() == 1 && vt(m[0]) != c {
+            let mut buf = Vec::new();
+            for m in members.chunk_by(|x, y| x.0 == y.0) {
+                if m.len() == 1 && vt(m[0].1) != c {
                     // A lone skip stays a skip.
                     continue;
                 }
-                let k = cls.len() as u32;
-                let mut pairs = Vec::new();
-                for &e in &m {
+                buf.clear();
+                let mut skips = Vec::new();
+                for &(_, e) in m {
                     if vt(e) == c {
-                        cmap[ix(e) as usize] = k;
-                        pairs.extend_from_slice(lvl.node(ix(e)));
+                        buf.extend_from_slice(lvl.node(ix(e)));
                     } else {
-                        chainmap[c as usize].insert(e, k);
-                        pairs.push(if sh.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) });
+                        skips.push(e);
+                        buf.push(if sh.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) });
                     }
                 }
-                cls.push(pairs);
+                let k = cl.push_class(&buf);
+                for &(_, e) in m {
+                    if vt(e) == c {
+                        cl.classmap[ix(e) as usize] = k;
+                    }
+                }
+                for e in skips {
+                    cl.chainmap.insert(e, k);
+                }
             }
         }
         // Stored nodes no class of the parent names directly: the output,
         // and nodes skips reach. Each is its own class.
         for i in 0..lvl.width() {
-            if cmap[i] == NONE {
-                cmap[i] = cls.len() as u32;
-                cls.push(lvl.node(i as u32).to_vec());
+            if cl.classmap[i] == NONE {
+                cl.classmap[i] = cl.push_class(lvl.node(i as u32));
             }
         }
         lim.charge_work(lvl.pairs.len() as u64);
-        classes[c as usize] = cls;
-        classmap[c as usize] = cmap;
+        if cl.width() > 0 {
+            for ch in [sh.kids[c as usize].0, sh.kids[c as usize].1] {
+                if !sh.is_leaf(ch) && !queued[ch as usize] {
+                    queued[ch as usize] = true;
+                    heap.push(Reverse((sh.pre[ch as usize], ch)));
+                }
+            }
+        }
+        at[c as usize] = lvs.len() as u32;
+        lvs.push(cl);
     }
     lim.check_stop()?;
     // Rebuild from the leaves up.
     let mut out = SkipForm::zero(s.shape.clone());
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
-    let target = |res: &Vec<Vec<Ref>>, classmap: &Vec<Vec<u32>>, h: Ref| -> Ref {
+    let target = |lvs: &Vec<CLv>, h: Ref| -> Ref {
         if sh.is_leaf(vt(h)) {
             h
         } else {
-            res[vt(h) as usize][classmap[vt(h) as usize][ix(h) as usize] as usize]
+            let cl = &lvs[at[vt(h) as usize] as usize];
+            cl.res[cl.classmap[ix(h) as usize] as usize]
         }
     };
-    let side = |res: &Vec<Vec<Ref>>, classmap: &Vec<Vec<u32>>, chainmap: &Vec<FxHashMap<Ref, u32>>, d: u32, h: Ref| -> Ref {
+    let side = |lvs: &Vec<CLv>, d: u32, h: Ref| -> Ref {
         if sh.is_leaf(d) || vt(h) == d {
-            target(res, classmap, h)
-        } else if let Some(&k) = chainmap[d as usize].get(&h) {
-            res[d as usize][k as usize]
-        } else {
-            target(res, classmap, h)
+            return target(lvs, h);
         }
+        let e = at[d as usize];
+        if e != NONE {
+            if let Some(&k) = lvs[e as usize].chainmap.get(&h) {
+                return lvs[e as usize].res[k as usize];
+            }
+        }
+        target(lvs, h)
     };
     let mut buf = Vec::new();
-    for &c in &sh.bottomup {
+    for e in (0..lvs.len()).rev() {
+        let c = lvs[e].level;
         let (l, r) = sh.kids[c as usize];
-        let cls = std::mem::take(&mut classes[c as usize]);
-        let mut rc = Vec::with_capacity(cls.len());
-        for pairs in &cls {
+        let mut rc = Vec::with_capacity(lvs[e].width());
+        for k in 0..lvs[e].width() {
             buf.clear();
-            for &(a, b) in pairs {
-                buf.push((side(&res, &classmap, &chainmap, l, a), side(&res, &classmap, &chainmap, r, b)));
+            for &(a, b) in lvs[e].class(k) {
+                buf.push((side(&lvs, l, a), side(&lvs, r, b)));
             }
             // Merged children can repeat a pair.
             buf.sort_unstable();
@@ -154,9 +225,10 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
                 Ok(()) => mk(c, out.levels[c as usize].push(&buf)),
             });
         }
-        res[c as usize] = rc;
+        lvs[e].res = rc;
     }
-    out.out = side(&res, &classmap, &chainmap, sh.root, s.out);
-    out.collect();
+    out.out = side(&lvs, sh.root, s.out);
+    let cand = lvs.iter().map(|l| l.level).collect();
+    out.collect_in(cand);
     Ok(out)
 }

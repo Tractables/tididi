@@ -38,6 +38,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
     let _ = from;
     let mut out = SkipForm::zero(Arc::clone(ish));
     if s.out == ZREF {
+        out.collect_pushed();
         return Some(out);
     }
     // `true` over a subtree of `into`, as a reference read at its root.
@@ -54,7 +55,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
             let mut pair = vec![(a, b)];
             match normalize(sh, t, &mut pair) {
                 Err(x) => x,
-                Ok(()) => mk(t, out.levels[t as usize].push(&pair)),
+                Ok(()) => mk(t, out.push_node(t, &pair)),
             }
         };
         tops.insert(t, r);
@@ -64,7 +65,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
     // whether a level of `from` names each leaf child by its literals.
     let mut of_img = vec![u32::MAX; sh.num_nodes()];
     let mut lits = vec![(false, false); n];
-    for &t in &fsh.topdown {
+    for &t in &s.active {
         of_img[img[t as usize] as usize] = t;
         let (fl, fr) = fsh.kids[t as usize];
         let pairs = &s.levels[t as usize].pairs;
@@ -95,7 +96,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
                         let mut pair = vec![if pl == at { (cur, top(sh, out, tops, pr)) } else { (top(sh, out, tops, pl), cur) }];
                         cur = match normalize(sh, p, &mut pair) {
                             Err(x) => x,
-                            Ok(()) => *memo.entry(pair.clone()).or_insert_with(|| mk(p, out.levels[p as usize].push(&pair))),
+                            Ok(()) => *memo.entry(pair.clone()).or_insert_with(|| mk(p, out.push_node(p, &pair))),
                         };
                         at = p;
                     }
@@ -120,7 +121,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
             let mut p: Vec<(Ref, Ref)> = sides.iter().map(|&o| if left { (cur, o) } else { (o, cur) }).collect();
             cur = match normalize(sh, u, &mut p) {
                 Err(t) => t,
-                Ok(()) => *memo.entry(p.clone()).or_insert_with(|| mk(u, out.levels[u as usize].push(&p))),
+                Ok(()) => *memo.entry(p.clone()).or_insert_with(|| mk(u, out.push_node(u, &p))),
             };
             at = u;
         }
@@ -133,7 +134,7 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
     };
     let mut buf = Vec::new();
     let mut cells = Vec::new();
-    for &t in &fsh.bottomup {
+    for &t in s.active.iter().rev() {
         let u = img[t as usize];
         let (l, r) = sh.kids[u as usize];
         let (fl, fr) = fsh.kids[t as usize];
@@ -169,13 +170,13 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
             }
             rt.push(match normalize(sh, u, &mut buf) {
                 Err(x) => x,
-                Ok(()) => mk(u, out.levels[u as usize].push(&buf)),
+                Ok(()) => mk(u, out.push_node(u, &buf)),
             });
         }
         res[t as usize] = rt;
     }
     let (w, x) = image(&res, s.out);
     out.out = lift(&mut out, &mut tops, sh.root, w, x);
-    out.collect();
+    out.collect_pushed();
     Some(out)
 }

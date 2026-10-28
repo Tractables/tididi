@@ -7,6 +7,8 @@
 //! dropped, a node with no pairs is false, and a node that is `true` on a
 //! single-variable side resolves to the reference it skips to.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -36,6 +38,75 @@ pub(crate) trait Rule {
 /// bit clear, or [`ZREF`]) or a pending key, `PENDING | level << 32 | slot`.
 const PENDING: u64 = 1 << 63;
 
+const NONE: u32 = u32::MAX;
+
+/// One level's keys while the construction runs.
+pub(crate) struct Lv<K> {
+    pub(crate) level: u32,
+    map: FxHashMap<K, u32>,
+    pub(crate) keys: Vec<K>,
+    /// Key `s`'s pairs are `combos[cstart[s]..cstart[s + 1]]`.
+    pub(crate) cstart: Vec<u32>,
+    pub(crate) combos: Vec<(u64, u64)>,
+    pub(crate) res: Vec<Ref>,
+}
+
+/// The levels keys land on, visited parents first: a level is taken in
+/// preorder once every level above it is done, which is when all its keys
+/// are in (a key's pairs land strictly below it).
+pub(crate) struct Levels<K> {
+    /// Per vtree node, its entry in `lv`.
+    pub(crate) at: Vec<u32>,
+    pub(crate) lv: Vec<Lv<K>>,
+    pub(crate) heap: BinaryHeap<Reverse<(u32, u32)>>,
+}
+
+impl<K: Copy + Eq + Hash> Levels<K> {
+    pub(crate) fn new(n: usize) -> Self {
+        Levels { at: vec![NONE; n], lv: Vec::new(), heap: BinaryHeap::new() }
+    }
+
+    /// The handle of key `k` at level `u`.
+    #[inline]
+    pub(crate) fn insert(&mut self, sh: &Shape, u: u32, k: K) -> u64 {
+        PENDING | (u as u64) << 32 | self.slot(sh, u, k) as u64
+    }
+
+    /// The slot of key `k` at level `u`.
+    #[inline]
+    pub(crate) fn slot(&mut self, sh: &Shape, u: u32, k: K) -> u32 {
+        let mut e = self.at[u as usize];
+        if e == NONE {
+            e = self.lv.len() as u32;
+            self.at[u as usize] = e;
+            self.lv.push(Lv { level: u, map: FxHashMap::default(), keys: Vec::new(), cstart: Vec::new(), combos: Vec::new(), res: Vec::new() });
+            self.heap.push(Reverse((sh.pre[u as usize], u)));
+        }
+        let lv = &mut self.lv[e as usize];
+        let next = lv.keys.len() as u32;
+        *lv.map.entry(k).or_insert_with(|| {
+            lv.keys.push(k);
+            next
+        })
+    }
+
+    /// The finished reference of key slot `slot` at level `u`.
+    #[inline]
+    pub(crate) fn res(&self, u: u32, slot: u32) -> Ref {
+        self.lv[self.at[u as usize] as usize].res[slot as usize]
+    }
+
+    /// The finished reference of handle `h`.
+    #[inline]
+    pub(crate) fn get(&self, h: u64) -> Ref {
+        if h != ZREF && h & PENDING != 0 {
+            self.lv[self.at[((h >> 32) & 0x7fff_ffff) as usize] as usize].res[h as u32 as usize]
+        } else {
+            h
+        }
+    }
+}
+
 pub(crate) fn construct<R: Rule>(
     shape: &Arc<Shape>,
     rule: &mut R,
@@ -43,39 +114,27 @@ pub(crate) fn construct<R: Rule>(
     lim: &Limits,
 ) -> Result<SkipForm, OperationError> {
     let sh = &**shape;
-    let n = sh.num_nodes();
     let mut form = SkipForm::zero(Arc::clone(shape));
-    let mut maps: Vec<FxHashMap<R::Key, u32>> = (0..n).map(|_| FxHashMap::default()).collect();
-    let mut keys: Vec<Vec<R::Key>> = vec![Vec::new(); n];
-    let mut cstart: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut combos: Vec<Vec<(u64, u64)>> = vec![Vec::new(); n];
-    let insert = |maps: &mut Vec<FxHashMap<R::Key, u32>>, keys: &mut Vec<Vec<R::Key>>, u: u32, k: R::Key| -> u64 {
-        let m = &mut maps[u as usize];
-        let next = keys[u as usize].len() as u32;
-        let slot = *m.entry(k).or_insert_with(|| {
-            keys[u as usize].push(k);
-            next
-        });
-        PENDING | (u as u64) << 32 | slot as u64
-    };
+    let mut lv: Levels<R::Key> = Levels::new(sh.num_nodes());
     let root_h = match rule.land(root) {
         Land::Done(r) => {
             form.out = r;
+            form.collect_in(Vec::new());
             return Ok(form);
         }
-        Land::At(u) => insert(&mut maps, &mut keys, u, root),
+        Land::At(u) => lv.insert(sh, u, root),
     };
     let mut buf = Vec::new();
-    for &u in &sh.topdown {
-        if keys[u as usize].is_empty() {
-            continue;
-        }
-        let mut cs = Vec::with_capacity(keys[u as usize].len() + 1);
+    let mut order: Vec<u32> = Vec::new();
+    while let Some(Reverse((_, u))) = lv.heap.pop() {
+        let e = lv.at[u as usize] as usize;
+        order.push(e as u32);
+        let mut cs = Vec::with_capacity(lv.lv[e].keys.len() + 1);
         let mut out = Vec::new();
         cs.push(0u32);
         let mut slot = 0;
-        while slot < keys[u as usize].len() {
-            let key = keys[u as usize][slot];
+        while slot < lv.lv[e].keys.len() {
+            let key = lv.lv[e].keys[slot];
             buf.clear();
             rule.expand(u, key, &mut buf);
             for &(kl, kr) in &buf {
@@ -89,44 +148,35 @@ pub(crate) fn construct<R: Rule>(
                 }
                 let hl = match ll {
                     Land::Done(r) => r,
-                    Land::At(w) => insert(&mut maps, &mut keys, w, kl),
+                    Land::At(w) => lv.insert(sh, w, kl),
                 };
                 let hr = match lr {
                     Land::Done(r) => r,
-                    Land::At(w) => insert(&mut maps, &mut keys, w, kr),
+                    Land::At(w) => lv.insert(sh, w, kr),
                 };
                 out.push((hl, hr));
             }
             cs.push(out.len() as u32);
             slot += 1;
         }
-        lim.charge_work(out.len() as u64 + keys[u as usize].len() as u64);
+        lim.charge_work(out.len() as u64 + lv.lv[e].keys.len() as u64);
         lim.check_stop()?;
-        maps[u as usize] = FxHashMap::default();
-        cstart[u as usize] = cs;
-        combos[u as usize] = out;
+        let l = &mut lv.lv[e];
+        l.map = FxHashMap::default();
+        l.cstart = cs;
+        l.combos = out;
     }
-    drop(maps);
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
-    let get = |res: &Vec<Vec<Ref>>, h: u64| -> Ref {
-        if h != ZREF && h & PENDING != 0 {
-            res[((h >> 32) & 0x7fff_ffff) as usize][h as u32 as usize]
-        } else {
-            h
-        }
-    };
     let mut pairs = Vec::new();
-    for &u in &sh.bottomup {
-        let cs = std::mem::take(&mut cstart[u as usize]);
-        if cs.is_empty() {
-            continue;
-        }
-        let out = std::mem::take(&mut combos[u as usize]);
+    for &e in order.iter().rev() {
+        let e = e as usize;
+        let u = lv.lv[e].level;
+        let cs = std::mem::take(&mut lv.lv[e].cstart);
+        let out = std::mem::take(&mut lv.lv[e].combos);
         let mut r = Vec::with_capacity(cs.len() - 1);
         for s in 0..cs.len() - 1 {
             pairs.clear();
             for &(hl, hr) in &out[cs[s] as usize..cs[s + 1] as usize] {
-                let (a, b) = (get(&res, hl), get(&res, hr));
+                let (a, b) = (lv.get(hl), lv.get(hr));
                 if a != ZREF && b != ZREF {
                     pairs.push((a, b));
                 }
@@ -140,10 +190,11 @@ pub(crate) fn construct<R: Rule>(
                 }
             });
         }
-        res[u as usize] = r;
-        keys[u as usize] = Vec::new();
+        lv.lv[e].res = r;
+        lv.lv[e].keys = Vec::new();
     }
-    form.out = get(&res, root_h);
-    form.collect();
+    form.out = lv.get(root_h);
+    let cand = order.iter().map(|&e| lv.lv[e as usize].level).collect();
+    form.collect_in(cand);
     Ok(form)
 }

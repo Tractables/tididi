@@ -305,5 +305,6 @@ fn top_at(f: &SkipForm, t: u32) -> SkipForm {
         mk(t, ONE)
     }
     out.out = build(sh, &mut out, t);
+    out.collect();
     out
 }
