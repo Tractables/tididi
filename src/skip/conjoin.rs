@@ -193,6 +193,9 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     let mut keys: Vec<(Ref, Ref)> = Vec::new();
     let mut combos: Vec<(u32, Ref, Ref)> = Vec::new();
     let mut ends: Vec<(Ref, Ref)> = Vec::new();
+    let (mut start, mut fill): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+    let mut pairs: Vec<(Ref, Ref)> = Vec::new();
+    let mut buf: Vec<(Ref, Ref)> = Vec::new();
     let mut fb = [(0, 0); 1];
     let mut gb = [(0, 0); 1];
     for &u in &todo {
@@ -358,21 +361,23 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
             continue;
         }
         // Each product's pairs, grouped by product.
-        let mut start = vec![0u32; keys.len() + 1];
+        start.clear();
+        start.resize(keys.len() + 1, 0);
         for &(k, _, _) in &combos {
             start[k as usize + 1] += 1;
         }
         for k in 0..keys.len() {
             start[k + 1] += start[k];
         }
-        let mut at = start.clone();
-        let mut pairs = vec![(0, 0); combos.len()];
+        fill.clear();
+        fill.extend_from_slice(&start);
+        pairs.clear();
+        pairs.resize(combos.len(), (0, 0));
         for &(k, a, b) in &combos {
-            pairs[at[k as usize] as usize] = (a, b);
-            at[k as usize] += 1;
+            pairs[fill[k as usize] as usize] = (a, b);
+            fill[k as usize] += 1;
         }
         let lookup = sh.looked_up[u as usize];
-        let mut buf = Vec::new();
         for (k, &(a, b)) in keys.iter().enumerate() {
             buf.clear();
             buf.extend_from_slice(&pairs[start[k] as usize..start[k + 1] as usize]);
