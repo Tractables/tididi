@@ -817,20 +817,17 @@ fn side_reads(
     slots: &mut Vec<u32>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<(Sides<SideReads>, usize), OperationError> {
-    let (lview, rview) = (rows.ctx.sides.left.plan.view, rows.ctx.sides.right.plan.view);
     let mut reads = Sides { left: SideReads::default(), right: SideReads::default() };
     let (mut last, mut f_pairs) = ((NO_SLOT, NO_SLOT), 0);
-    for i in 0..rows.f_width {
-        for p in rows.f_level.pairs_view_decoded(i, scratch, lview, rview) {
-            let (a, b) = (p.left.0, p.right.0);
-            reads.left.changes += usize::from(a != last.0);
-            reads.right.changes += usize::from(b != last.1);
-            reads.left.rows = reads.left.rows.max(a as usize + 1);
-            reads.right.rows = reads.right.rows.max(b as usize + 1);
-            last = (a, b);
-            f_pairs += 1;
-        }
-    }
+    each_f_pair(rows, scratch, |p| {
+        let (a, b) = (p.left.0, p.right.0);
+        reads.left.changes += usize::from(a != last.0);
+        reads.right.changes += usize::from(b != last.1);
+        reads.left.rows = reads.left.rows.max(a as usize + 1);
+        reads.right.rows = reads.right.rows.max(b as usize + 1);
+        last = (a, b);
+        f_pairs += 1;
+    });
     // The rows read, counted where a side changes rows often enough to
     // keep them.
     let count = |r: &SideReads| r.changes >= 4 || (eager() && r.changes >= 2);
@@ -841,20 +838,18 @@ fn side_reads(
         lim.reserve(slots, nl + nr)?;
         slots.resize(nl + nr, 0);
         let (ml, mr) = slots.split_at_mut(nl);
-        for i in 0..rows.f_width {
-            for p in rows.f_level.pairs_view_decoded(i, scratch, lview, rview) {
-                if cl {
-                    let m = &mut ml[p.left.0 as usize];
-                    reads.left.distinct += usize::from(*m == 0);
-                    *m = 1;
-                }
-                if cr {
-                    let m = &mut mr[p.right.0 as usize];
-                    reads.right.distinct += usize::from(*m == 0);
-                    *m = 1;
-                }
+        each_f_pair(rows, scratch, |p| {
+            if cl {
+                let m = &mut ml[p.left.0 as usize];
+                reads.left.distinct += usize::from(*m == 0);
+                *m = 1;
             }
-        }
+            if cr {
+                let m = &mut mr[p.right.0 as usize];
+                reads.right.distinct += usize::from(*m == 0);
+                *m = 1;
+            }
+        });
     }
     for (c, r) in [(cl, &mut reads.left), (cr, &mut reads.right)] {
         if !c {
@@ -862,6 +857,27 @@ fn side_reads(
         }
     }
     Ok((reads, f_pairs))
+}
+
+/// `each` on the pairs of the level's f rows in order, as the rows'
+/// [`pairs_view_decoded`](TddLevel::pairs_view_decoded) gives them, read
+/// with one cursor along an implicit level, which a read by index finds
+/// each node's first pair for afresh. Pairs are decoded only where a child
+/// is marginal.
+fn each_f_pair(rows: RowLoop<'_>, scratch: &mut Vec<ChildPair>, mut each: impl FnMut(ChildPair)) {
+    let (lview, rview) = (rows.ctx.sides.left.plan.view, rows.ctx.sides.right.plan.view);
+    let mut cursor = None;
+    if !lview.is_marginal() && !rview.is_marginal() {
+        for i in 0..rows.f_width {
+            rows.f_level.pairs_read_next(&mut cursor, i, scratch).iter().for_each(|&p| each(p));
+        }
+    } else {
+        for i in 0..rows.f_width {
+            for &p in rows.f_level.pairs_read_next(&mut cursor, i, scratch) {
+                each(crate::diagram::decoded(p, lview, rview));
+            }
+        }
+    }
 }
 
 /// How [`sum_row`] forms a cell's products and appends its sum, and the
