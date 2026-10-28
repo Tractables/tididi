@@ -83,3 +83,46 @@ fn a_prune_only_negation_leaves_no_unreachable_node() {
         }
     }
 }
+
+/// A negation of a contracted operand that is not certified canonical owes
+/// the contraction what its prune changed and the levels whose fill named
+/// a node no pair named before, not every level: the next contraction finds
+/// no twin anywhere else (debug builds check each negation), and minimizing
+/// from those worklists reaches the canonical negation.
+#[test]
+fn a_negation_owes_the_contraction_only_what_it_changed() {
+    use crate::diagram::Pass;
+    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf};
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x51ab_0e1d);
+    let (mut cases, mut fewer) = (0usize, 0usize);
+    for num_vars in [5u32, 8, 11] {
+        for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
+            for _ in 0..10 {
+                let f = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 }));
+                let g = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 2 }));
+                let mut conj = eng.and(f, g).unwrap();
+                eng.reduce(&mut conj, ReductionPlan::Contract).unwrap();
+                if conj.is_zero() || conj.levels.is_canonical(conj.output) {
+                    continue;
+                }
+                cases += 1;
+                let full = eng.negate(&conj).unwrap();
+                for borrowed in [true, false] {
+                    let mut neg = if borrowed {
+                        eng.negate_with(&conj, ReductionPlan::Prune).unwrap()
+                    } else {
+                        eng.negate_with(conj.clone(), ReductionPlan::Prune).unwrap()
+                    };
+                    let mut owed = neg.dirty.levels(Pass::Contract).to_vec();
+                    owed.sort_unstable();
+                    owed.dedup();
+                    fewer += usize::from(owed.len() < vtree.internal_bottomup().count());
+                    eng.minimize(&mut neg).unwrap();
+                    assert_eq!(shape(&neg), shape(&full), "minimizing from the negation's worklists did not agree");
+                }
+            }
+        }
+    }
+    assert!(cases > 0 && fewer > 0, "cases {cases}, owing fewer levels {fewer}");
+}

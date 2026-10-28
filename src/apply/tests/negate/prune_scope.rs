@@ -106,6 +106,8 @@ fn an_operand_with_unreachable_nodes_negates_the_same_under_either_scope() {
                         continue;
                     }
                     f.levels[t].push_node(eng.limits(), &pairs).unwrap();
+                    // As an edit that leaves a node no pair names records it.
+                    f.dirty.add_loose(t as u32);
                     orphaned = true;
                     break;
                 }

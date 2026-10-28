@@ -116,14 +116,17 @@ pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Opt
     // Read before the first change to a level, which drops both.
     let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
     let (zero, output) = (tdd.is_zero(), tdd.output.local);
-    let (mut levels, source, weights) = match tdd {
+    let at_root = tdd.output.vtree == vtree.root();
+    let (mut levels, source, weights, owed) = match tdd {
         Cow::Owned(mut tdd) => {
             let weights = tdd.weights.take();
-            (tdd.levels.into_vec(), None, weights)
+            let owed = tdd.take_worklists();
+            (tdd.levels.into_vec(), None, weights, owed)
         }
         Cow::Borrowed(tdd) => {
             let weights = tdd.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?;
-            (Target::empty_levels(eng, &tdd.levels)?, Some(&tdd.levels[..]), weights)
+            let owed = tdd.dirty.clone_on(eng)?;
+            (Target::empty_levels(eng, &tdd.levels)?, Some(&tdd.levels[..]), weights, owed)
         }
     };
     let (mut result, old) = if zero {
@@ -132,10 +135,57 @@ pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Opt
         let mut filled = Vec::new();
         eng.limits().try_resize(&mut filled, vtree.num_nodes(), false)?;
         expand_full(eng, &vtree, &mut Target { levels: &mut levels, source }, canonical, closed, &mut filled)?;
-        complement_full_at_root(eng, &vtree, levels, source, output, &filled, closed)?
+        let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
+        complement_full_at_root(eng, &vtree, levels, source, output, &filled, closed, owed)?
     };
+    #[cfg(debug_assertions)]
+    if at_root && !zero && result.output.vtree == vtree.root() {
+        let parents: Vec<_> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
+        crate::reduce::contract::debug_assert_no_twins_under(eng, &result, &parents);
+    }
     result.weights = weights;
     Ok((result, old))
+}
+
+/// What a complement owes the reduction passes, where its operand's output
+/// is the root's: the operand's own worklists, the root, and each level
+/// `expand_full` filled that may have given two nodes of a child equal
+/// contexts. Every other level is the operand's, with at most a fill node
+/// added, and the fill node gives a child's nodes contexts in itself only:
+/// two nodes with equal contexts after it had equal contexts before it,
+/// which the operand, not owing the level, has only for nodes no pair of
+/// the level names. Those are on a child the operand lists loose (any
+/// child, where it does not know them), and the fill names each with every
+/// node of the other child. A level the operand had no node at is owed
+/// too: its fill alone decides its leaf form.
+struct Owed {
+    carried: crate::diagram::Dirty,
+    rebuilt: Vec<crate::vtree::VtreeIdx>,
+}
+
+impl Owed {
+    fn of(
+        vtree: &crate::vtree::Vtree,
+        mut carried: crate::diagram::Dirty,
+        canonical: bool,
+        filled: &[bool],
+        levels: &[TddLevel],
+    ) -> Self {
+        // A canonical operand has every node named; otherwise the operand's
+        // loose levels, read before the seeding forgets them.
+        let loose = if canonical { Some(Vec::new()) } else { carried.take_loose() };
+        let may_be_loose = |c: crate::vtree::VtreeIdx| {
+            !vtree.node(c).is_leaf() && loose.as_ref().is_none_or(|l| l.contains(&c.0))
+        };
+        let root = vtree.root();
+        let mut rebuilt = vec![root];
+        for (t, left, right) in vtree.internal_bottomup() {
+            if t != root && filled[t.idx()] && (may_be_loose(left) || may_be_loose(right) || levels[t.idx()].node_count() == 1) {
+                rebuilt.push(t);
+            }
+        }
+        Self { carried, rebuilt }
+    }
 }
 
 /// The levels a negation writes: the operand's own, or, for a borrowed
@@ -203,6 +253,7 @@ impl Target<'_, '_> {
 /// output's slot when the complement is a node beside it. `levels` and
 /// `source` are an [`expand_full`] target's. `closed` says the levels were
 /// closed before [`expand_full`], which left the root as it was.
+#[expect(clippy::too_many_arguments)]
 fn complement_full_at_root(
     eng: &Engine,
     vtree: &Arc<crate::vtree::Vtree>,
@@ -211,6 +262,7 @@ fn complement_full_at_root(
     out_local: NodeIdx,
     filled: &[bool],
     closed: bool,
+    owed: Option<Owed>,
 ) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     let root = vtree.root();
     let root_idx = root.idx();
@@ -288,7 +340,21 @@ fn complement_full_at_root(
         let neg_idx = root_level.push_node(eng.limits(), &neg_pairs)?;
         root_level.leave_live_pairs(pairs + neg_pairs.len());
 
-        Ok((assembly.finish(TddNodeId { vtree: root, local: neg_idx })?, Some(out_local)))
+        let output = TddNodeId { vtree: root, local: neg_idx };
+        let result = match owed {
+            Some(owed) => {
+                let mut result = assembly.finish_with(output, owed.carried, &owed.rebuilt, None)?;
+                // Each level under the root's children covers its children's
+                // whole basis, every cell a pair, so names each of their
+                // nodes. The complement drops the cells of an empty node, so
+                // the root's children may hold one no pair names.
+                let loose = [(left, left_is_leaf), (right, right_is_leaf)].into_iter().filter(|&(_, leaf)| !leaf);
+                result.dirty.set_loose(Some(loose.map(|(c, _)| c.0).collect()));
+                result
+            }
+            None => assembly.finish(output)?,
+        };
+        Ok((result, Some(out_local)))
     }
 }
 
