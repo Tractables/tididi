@@ -13,7 +13,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{ix, mk, normalize, vt, Ref, SkipForm, NEG, ONE, POS, ZREF};
+use super::{ix, mk, normalize, vt, Ref, SkipForm, NEG, NONE, ONE, POS, ZREF};
 use crate::limits::Limits;
 use crate::OperationError;
 
@@ -63,28 +63,58 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
         return Ok(top_at(f, t));
     }
     // Skips that end on a leaf label, by the level they end below.
-    let mut leaf_skips: Vec<Vec<Ref>> = vec![Vec::new(); n];
+    let mut leaf_skips: FxHashMap<u32, Vec<Ref>> = FxHashMap::default();
     let mut note = |c: u32, x: Ref| {
         if vt(x) != c && sh.is_leaf(vt(x)) {
-            leaf_skips[sh.parent[vt(x) as usize] as usize].push(x);
+            leaf_skips.entry(sh.parent[vt(x) as usize]).or_default().push(x);
         }
     };
     note(sh.root, f.out);
-    for &t in &sh.topdown {
+    for &t in &f.active {
         let (l, r) = sh.kids[t as usize];
         for &(a, b) in &f.levels[t as usize].pairs {
             note(l, a);
             note(r, b);
         }
     }
-    // Pass 1, bottom-up: each level's Z, as pairs over f's references and
-    // the children's Z (a pending reference, resolved in pass 3), and
+    // The levels with classes to complement, children first: those holding
+    // nodes and those skips end on a leaf label below. A level between
+    // them that a skip crosses has the complement of the level it lands
+    // on, behind `true` on its single variable.
+    let mut lv: Vec<u32> = f.active.iter().copied().chain(leaf_skips.keys().copied()).collect();
+    lv.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
+    lv.dedup();
+    let mut pos = vec![NONE; n];
+    for (i, &t) in lv.iter().enumerate() {
+        pos[t as usize] = i as u32;
+    }
+    // The level whose complement child level `c` reads, or NONE where
+    // nothing is read at `c`.
+    let zlev = |c: u32| -> u32 {
+        let mut c = c;
+        while !sh.is_leaf(c) && pos[c as usize] == NONE {
+            let (l, r) = sh.kids[c as usize];
+            c = if sh.is_leaf(l) {
+                r
+            } else if sh.is_leaf(r) {
+                l
+            } else {
+                return NONE;
+            };
+        }
+        if sh.is_leaf(c) { NONE } else { c }
+    };
+    // Pass 1, children first: each level's Z, as pairs over f's references
+    // and the children's Z (a pending reference, resolved in pass 3), and
     // whether it is empty.
-    let mut zpairs: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); n];
-    let zl = |zpairs: &Vec<Vec<(Ref, Ref)>>, c: u32| !sh.is_leaf(c) && !zpairs[c as usize].is_empty();
-    // A child's Z as a side: `ZTAG | level`.
+    let mut zpairs: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); lv.len()];
+    // A child's Z as a side: `ZTAG | level`, the level `zlev` names.
     const ZTAG: Ref = 1 << 62;
-    for &t in &sh.bottomup {
+    let zof = |zpairs: &Vec<Vec<(Ref, Ref)>>, c: u32| -> Option<Ref> {
+        let w = zlev(c);
+        (w != NONE && !zpairs[pos[w as usize] as usize].is_empty()).then_some(ZTAG | w as u64)
+    };
+    for (k, &t) in lv.iter().enumerate() {
         let (l, r) = sh.kids[t as usize];
         let lvl = &f.levels[t as usize];
         let mut z = Vec::new();
@@ -104,7 +134,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 for &(a, b) in &lvl.pairs {
                     own(cells(ix(a)), cells(ix(b)));
                 }
-                for &x in &leaf_skips[t as usize] {
+                for &x in leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
                     if vt(x) == l { own(cells(ix(x)), 3) } else { own(3, cells(ix(x))) }
                 }
                 for i in 0..2u32 {
@@ -129,8 +159,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                     let lab = mk(leaf, label_of(3 & !c));
                     z.push(if left_leaf { (lab, e) } else { (e, lab) });
                 }
-                if zl(&zpairs, inner) {
-                    let zi = ZTAG | inner as u64;
+                if let Some(zi) = zof(&zpairs, inner) {
                     z.push(if left_leaf { (mk(leaf, ONE), zi) } else { (zi, mk(leaf, ONE)) });
                 }
             }
@@ -146,51 +175,55 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 aa.dedup();
                 bb.sort_unstable();
                 bb.dedup();
-                let (zlh, zrh) = (zl(&zpairs, l), zl(&zpairs, r));
+                let (zlh, zrh) = (zof(&zpairs, l), zof(&zpairs, r));
                 for &a in &aa {
                     for &b in &bb {
                         if !owned.contains(&(a, b)) {
                             z.push((a, b));
                         }
                     }
-                    if zrh {
-                        z.push((a, ZTAG | r as u64));
+                    if let Some(zr) = zrh {
+                        z.push((a, zr));
                     }
                 }
-                if zlh {
+                if let Some(zl) = zlh {
                     for &b in &bb {
-                        z.push((ZTAG | l as u64, b));
+                        z.push((zl, b));
                     }
-                    if zrh {
-                        z.push((ZTAG | l as u64, ZTAG | r as u64));
+                    if let Some(zr) = zrh {
+                        z.push((zl, zr));
                     }
                 }
                 lim.charge_work((aa.len() * bb.len()) as u64);
             }
         }
-        zpairs[t as usize] = z;
+        zpairs[k] = z;
     }
     lim.check_stop()?;
-    // Pass 2, top-down: the classes on which f is true whatever lies
+    // Pass 2, parents first: the classes on which f is true whatever lies
     // outside them. At the root, the output.
-    let mut top: Vec<Vec<bool>> = f.levels.iter().map(|l| vec![false; l.width()]).collect();
+    let mut top: Vec<Vec<bool>> = lv.iter().map(|&t| vec![false; f.levels[t as usize].width()]).collect();
     let mark = |top: &mut Vec<Vec<bool>>, x: Ref| {
-        if !sh.is_leaf(vt(x)) {
-            top[vt(x) as usize][ix(x) as usize] = true;
+        let p = pos[vt(x) as usize];
+        if !sh.is_leaf(vt(x)) && p != NONE {
+            top[p as usize][ix(x) as usize] = true;
         }
     };
     mark(&mut top, f.out);
-    for &t in &sh.topdown {
+    for (k, &t) in lv.iter().enumerate().rev() {
         let (l, r) = sh.kids[t as usize];
         let lvl = &f.levels[t as usize];
+        if lvl.width() == 0 {
+            continue;
+        }
         for (c, sib, left) in [(l, r, true), (r, l, false)] {
-            if sh.is_leaf(c) || zl(&zpairs, sib) {
+            if sh.is_leaf(c) || zof(&zpairs, sib).is_some() {
                 continue;
             }
             // The sibling's classes each entity's true cells cover.
             let mut cov: FxHashMap<Ref, (u8, Vec<Ref>)> = FxHashMap::default();
             let mut all_sib: FxHashSet<Ref> = FxHashSet::default();
-            for (i, &is_top) in top[t as usize].iter().enumerate() {
+            for (i, &is_top) in top[k].iter().enumerate() {
                 for &(a, b) in lvl.node(i as u32) {
                     let (e, s) = if left { (a, b) } else { (b, a) };
                     if !sh.is_leaf(sib) {
@@ -220,24 +253,25 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
             }
         }
     }
-    // Pass 3, bottom-up: the kept classes and Z, renumbered and resolved.
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
-    let mut zres: Vec<Ref> = vec![ZREF; n];
+    // Pass 3, children first: the kept classes and Z, renumbered and
+    // resolved.
+    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); lv.len()];
+    let mut zres: Vec<Ref> = vec![ZREF; lv.len()];
     let fix = |res: &Vec<Vec<Ref>>, zres: &Vec<Ref>, x: Ref| -> Ref {
         if x & ZTAG != 0 && x != ZREF {
-            zres[(x & !ZTAG) as usize]
+            zres[pos[(x & !ZTAG) as usize] as usize]
         } else if sh.is_leaf(vt(x)) {
             x
         } else {
-            res[vt(x) as usize][ix(x) as usize]
+            res[pos[vt(x) as usize] as usize][ix(x) as usize]
         }
     };
     let mut buf = Vec::new();
-    for &t in &sh.bottomup {
+    for (k, &t) in lv.iter().enumerate() {
         let lvl = &f.levels[t as usize];
         let mut rt = vec![ZREF; lvl.width()];
-        for i in 0..lvl.width() {
-            if top[t as usize][i] {
+        for (i, slot) in rt.iter_mut().enumerate() {
+            if top[k][i] {
                 continue;
             }
             buf.clear();
@@ -245,13 +279,13 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 buf.push((fix(&res, &zres, a), fix(&res, &zres, b)));
             }
             debug_assert!(buf.iter().all(|&(a, b)| a != ZREF && b != ZREF), "a kept class names no true class");
-            rt[i] = match normalize(sh, t, &mut buf) {
+            *slot = match normalize(sh, t, &mut buf) {
                 Err(x) => x,
-                Ok(()) => mk(t, out.levels[t as usize].push(&buf)),
+                Ok(()) => mk(t, out.push_node(t, &buf)),
             };
         }
-        res[t as usize] = rt;
-        let z = std::mem::take(&mut zpairs[t as usize]);
+        res[k] = rt;
+        let z = std::mem::take(&mut zpairs[k]);
         if !z.is_empty() {
             buf.clear();
             for &(a, b) in &z {
@@ -260,26 +294,27 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                     buf.push((a, b));
                 }
             }
-            zres[t as usize] = if buf.is_empty() {
+            zres[k] = if buf.is_empty() {
                 ZREF
             } else {
                 match normalize(sh, t, &mut buf) {
                     Err(x) => x,
-                    Ok(()) => mk(t, out.levels[t as usize].push(&buf)),
+                    Ok(()) => mk(t, out.push_node(t, &buf)),
                 }
             };
         }
     }
-    // The root's Z, read from the root; a root below which f skips has no
-    // Z of its own: its Z is the skip's level's, behind `true` on the
-    // skipped variables.
+    // The root's Z, read from the root: where f skips below the root, the
+    // Z of the level the skip lands on, behind `true` on the skipped
+    // variables.
     out.out = if sh.is_leaf(sh.root) {
         let c = 3 & !cells(ix(f.out));
         if c == 0 { ZREF } else { mk(sh.root, label_of(c)) }
     } else {
-        zres[sh.root as usize]
+        let w = zlev(sh.root);
+        if w == NONE { ZREF } else { zres[pos[w as usize] as usize] }
     };
-    out.collect();
+    out.collect_pushed();
     Ok(out)
 }
 
@@ -298,12 +333,12 @@ fn top_at(f: &SkipForm, t: u32) -> SkipForm {
                 t = l;
             } else {
                 let (a, b) = (build(sh, out, l), build(sh, out, r));
-                return mk(t, out.levels[t as usize].push(&[(a, b)]));
+                return mk(t, out.push_node(t, &[(a, b)]));
             }
         }
         mk(t, ONE)
     }
     out.out = build(sh, &mut out, t);
-    out.collect();
+    out.collect_pushed();
     out
 }
