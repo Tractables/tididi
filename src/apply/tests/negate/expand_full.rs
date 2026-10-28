@@ -150,7 +150,8 @@ fn negate_matches_the_truth_table_on_random_formulas() {
     }
 }
 
-/// A cover's missing cells, read four words at a time, are the unmarked
+/// A cover's missing cells, kept in a word for a basis of fewer than 64
+/// cells and read four words at a time for a larger one, are the unmarked
 /// cells in order, on bases of every length up to past a few groups of
 /// thirty-two cells and with covers from empty to full.
 #[test]
