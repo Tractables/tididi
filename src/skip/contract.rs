@@ -12,65 +12,112 @@
 //! the next level compares. Skips that merge stay twins down to the first
 //! level where one of them is stored, is named by another pair, or where
 //! they part, so their merged class is made just above it; the levels
-//! between resolve to it. After the merges the levels are rebuilt from
-//! the leaves up, so that a class that became `true` on one side resolves
-//! to the reference it skips to.
+//! between resolve to it.
+//!
+//! Twins are found by a hash of each entity's partners, summed so that
+//! order does not matter, and confirmed by comparing the partner lists of
+//! entities whose hashes agree. The diagram is then patched from the
+//! leaves up: a stored node keeps its number, a merged class is appended,
+//! and only nodes whose sides changed are rewritten.
 
 use std::cmp::Reverse;
-use std::hash::{Hash, Hasher};
 use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
-use super::{ix, mk, normalize, vt, Ref, SkipForm, NEG, ONE, POS, ZREF};
+use super::{ix, mk, normalize, vt, Ref, SLevel, SkipForm, NEG, ONE, POS, ZREF};
 
 use crate::limits::Limits;
 use crate::OperationError;
 
 const NONE: u32 = u32::MAX;
+/// A node's result where it is unchanged.
+const KEEP: Ref = ZREF;
 
-/// One level's classes while the contraction runs.
-#[derive(Default)]
+/// A visited level while the contraction runs.
 struct CLv {
     level: u32,
-    /// Class `k`'s pairs are `pairs[start[k]..start[k + 1]]`, sides as the
-    /// input's references.
-    start: Vec<u32>,
-    pairs: Vec<(Ref, Ref)>,
-    /// The class of each stored node; and for each skip a merge took in,
-    /// the entry (in the visited levels) and class it went to.
-    classmap: Vec<u32>,
+    /// The input level's width: class `k < width` is stored node `k`, class
+    /// `width + g` is merged group `g`.
+    width: u32,
+    /// Per stored node, the group it merged into (empty where none did).
+    group_of: Vec<u32>,
+    /// Group `g`'s pairs, as the input's references: its stored members'
+    /// pairs, and `true` beside each skip it took in.
+    gstart: Vec<u32>,
+    gpairs: Vec<(Ref, Ref)>,
+    /// Per skip a group took in (here, or sent down from here), the entry
+    /// and group it went to.
     chainmap: FxHashMap<Ref, (u32, u32)>,
-    res: Vec<Ref>,
+    /// Per group, its result.
+    gres: Vec<Ref>,
+    /// Per stored node, its result where it no longer names itself (empty
+    /// where none changed).
+    rm: Vec<Ref>,
 }
 
 impl CLv {
-    fn push_class(&mut self, pairs: &[(Ref, Ref)]) -> u32 {
-        if self.start.is_empty() {
-            self.start.push(0);
+    fn new(level: u32, width: u32) -> CLv {
+        CLv {
+            level,
+            width,
+            group_of: Vec::new(),
+            gstart: vec![0],
+            gpairs: Vec::new(),
+            chainmap: FxHashMap::default(),
+            gres: Vec::new(),
+            rm: Vec::new(),
         }
-        self.pairs.extend_from_slice(pairs);
-        self.start.push(self.pairs.len() as u32);
-        (self.start.len() - 2) as u32
     }
-    fn width(&self) -> usize {
-        self.start.len().saturating_sub(1)
+    fn groups(&self) -> usize {
+        self.gstart.len() - 1
     }
-    fn class(&self, k: usize) -> &[(Ref, Ref)] {
-        &self.pairs[self.start[k] as usize..self.start[k + 1] as usize]
+    fn group(&self, g: usize) -> &[(Ref, Ref)] {
+        &self.gpairs[self.gstart[g] as usize..self.gstart[g + 1] as usize]
     }
+    /// Add a group of the stored nodes and skips `members` (`sh`'s level
+    /// `c`, whose children are `l` and `r`), returning its number.
+    fn push_group(&mut self, s: &SkipForm, members: &[Ref], l: u32, r: u32) -> u32 {
+        let g = self.groups() as u32;
+        for &e in members {
+            if vt(e) == self.level {
+                if self.group_of.is_empty() {
+                    self.group_of = vec![NONE; self.width as usize];
+                }
+                self.group_of[ix(e) as usize] = g;
+                self.gpairs.extend_from_slice(s.levels[self.level as usize].node(ix(e)));
+            } else {
+                self.gpairs.push(if s.shape.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) });
+            }
+        }
+        self.gstart.push(self.gpairs.len() as u32);
+        g
+    }
+}
+
+/// An order-free hash of one (class, partner) occurrence.
+#[inline]
+fn mix(k: u32, p: Ref) -> u64 {
+    let mut x = p.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (k as u64 + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 29;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 32)
 }
 
 /// `s` contracted to the canonical skip form of its function. `s` holds no
 /// false side and no unreachable node.
-pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
-    let sh = &*s.shape;
+pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
+    let shape = s.shape.clone();
+    let sh = &*shape;
     let n = sh.num_nodes();
     if s.out == ZREF {
         let mut z = SkipForm::zero(s.shape.clone());
         z.collect_in(Vec::new());
         return Ok(z);
     }
+    let ids = Ids::of(&s);
     // The levels visited, parents first: those holding nodes, and the
     // inner children of a level with classes, where skips it names may merge.
     let mut at = vec![NONE; n];
@@ -81,202 +128,279 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
         queued[t as usize] = true;
         heap.push(Reverse((sh.pre[t as usize], t)));
     }
-    let mut occ: Vec<(Ref, u32, Ref)> = Vec::new();
-    let mut keyed: FxHashMap<u64, smallvec::SmallVec<[u32; 1]>> = FxHashMap::default();
-    let mut members: Vec<(u32, Ref)> = Vec::new();
-    let mut firsts: Vec<(usize, usize)> = Vec::new();
+    // Per entity of the current level (a stored node or a skip the parent
+    // names): its reference, partner hash and partner count.
+    let (mut sstamp, mut sslot) = (vec![0u32; ids.len()], vec![0u32; ids.len()]);
+    let mut epoch = 0u32;
+    let mut ent: Vec<(Ref, u64, u32)> = Vec::new();
+    let mut order: Vec<u32> = Vec::new();
+    let mut cand: Vec<bool> = Vec::new();
+    let mut occ: Vec<(u32, u32, Ref)> = Vec::new();
+    let mut ctx: Vec<(u32, u32)> = Vec::new();
+    let mut firsts: Vec<u32> = Vec::new();
+    let mut members: Vec<Ref> = Vec::new();
     // Merged skips sent down to the level where they part: per level, the
     // groups (entry they merged at, members).
     let mut pending: FxHashMap<u32, Vec<(u32, Vec<Ref>)>> = FxHashMap::default();
     let mut names: Option<Names> = None;
+    let mut merged = false;
     while let Some(Reverse((_, c))) = heap.pop() {
-        let lvl = &s.levels[c as usize];
-        let mut cl = CLv { level: c, classmap: vec![NONE; lvl.width()], ..CLv::default() };
+        let width = s.levels[c as usize].width() as u32;
+        let mut cl = CLv::new(c, width);
+        let here = lvs.len() as u32;
+        let (l, r) = sh.kids[c as usize];
         let p = sh.parent[c as usize];
         let pe = if p == NONE { NONE } else { at[p as usize] };
         if pe != NONE {
             let pcl = &lvs[pe as usize];
+            let plvl = &s.levels[p as usize];
             let (pl, pr) = sh.kids[p as usize];
             let left = pl == c;
             let sib = if left { pr } else { pl };
             let sib_leaf = sh.is_leaf(sib);
-            // Each class of the parent that names an entity of this level,
-            // with the partner it names it with (One as both literals).
-            occ.clear();
-            for k in 0..pcl.width() {
-                for &(a, b) in pcl.class(k) {
-                    let (e, partner) = if left { (a, b) } else { (b, a) };
-                    if sib_leaf && ix(partner) == ONE {
-                        occ.push((e, k as u32, mk(sib, POS)));
-                        occ.push((e, k as u32, mk(sib, NEG)));
-                    } else {
-                        occ.push((e, k as u32, partner));
-                    }
-                }
-            }
-            occ.sort_unstable();
-            // Group entities by their sorted context list: a group is keyed
-            // by the hash of its first member's list, compared in full.
-            keyed.clear();
-            members.clear();
-            firsts.clear();
-            let ctx = |a: (usize, usize), b: (usize, usize)| -> bool {
-                a.1 - a.0 == b.1 - b.0 && occ[a.0..a.1].iter().zip(&occ[b.0..b.1]).all(|(x, y)| (x.1, x.2) == (y.1, y.2))
+            // Every class of the parent with its pairs.
+            let classes = || {
+                (0..pcl.width)
+                    .filter(|&i| pcl.group_of.is_empty() || pcl.group_of[i as usize] == NONE)
+                    .map(|i| (i, plvl.node(i)))
+                    .chain((0..pcl.groups()).map(|g| (pcl.width + g as u32, pcl.group(g))))
             };
-            let mut i = 0;
-            while i < occ.len() {
-                let mut j = i;
-                let mut h = rustc_hash::FxHasher::default();
-                while j < occ.len() && occ[j].0 == occ[i].0 {
-                    (occ[j].1, occ[j].2).hash(&mut h);
-                    j += 1;
-                }
-                let bucket = keyed.entry(h.finish()).or_default();
-                let g = match bucket.iter().find(|&&g| ctx(firsts[g as usize], (i, j))) {
-                    Some(&g) => g,
-                    None => {
-                        firsts.push((i, j));
-                        let g = (firsts.len() - 1) as u32;
-                        bucket.push(g);
-                        g
+            // Partners (One as both literals against a leaf sibling).
+            let partners = |b: Ref| -> [Ref; 2] {
+                if sib_leaf && ix(b) == ONE { [mk(sib, POS), mk(sib, NEG)] } else { [b, ZREF] }
+            };
+            epoch += 1;
+            ent.clear();
+            for (k, pairs) in classes() {
+                for &(a, b) in pairs {
+                    let (e, partner) = if left { (a, b) } else { (b, a) };
+                    let id = ids.id(e);
+                    if sstamp[id] != epoch {
+                        sstamp[id] = epoch;
+                        sslot[id] = ent.len() as u32;
+                        ent.push((e, 0, 0));
                     }
-                };
-                members.push((g, occ[i].0));
-                i = j;
-            }
-            members.sort_unstable();
-            let (l, r) = sh.kids[c as usize];
-            let mut buf = Vec::new();
-            for m in members.chunk_by(|x, y| x.0 == y.0) {
-                if m.len() == 1 && vt(m[0].1) != c {
-                    // A lone skip stays a skip.
-                    continue;
-                }
-                if m.iter().all(|&(_, e)| vt(e) != c) {
-                    let nm = names.get_or_insert_with(|| Names::of(s));
-                    let v = parts(sh, nm, c, m.iter().map(|&(_, e)| e));
-                    if v != c {
-                        pending.entry(v).or_default().push((lvs.len() as u32, m.iter().map(|&(_, e)| e).collect()));
-                        if !queued[v as usize] {
-                            queued[v as usize] = true;
-                            heap.push(Reverse((sh.pre[v as usize], v)));
+                    let x = &mut ent[sslot[id] as usize];
+                    for q in partners(partner) {
+                        if q != ZREF {
+                            x.1 = x.1.wrapping_add(mix(k, q));
+                            x.2 += 1;
                         }
+                    }
+                }
+            }
+            // Entities whose hashes agree, confirmed by their partner lists.
+            order.clear();
+            order.extend(0..ent.len() as u32);
+            order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
+            cand.clear();
+            cand.resize(ent.len(), false);
+            let mut any = false;
+            for run in order.chunk_by(|&x, &y| (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)) {
+                if run.len() > 1 {
+                    any = true;
+                    for &i in run {
+                        cand[i as usize] = true;
+                    }
+                }
+            }
+            if any {
+                occ.clear();
+                for (k, pairs) in classes() {
+                    for &(a, b) in pairs {
+                        let (e, partner) = if left { (a, b) } else { (b, a) };
+                        let i = sslot[ids.id(e)];
+                        if cand[i as usize] {
+                            for q in partners(partner) {
+                                if q != ZREF {
+                                    occ.push((i, k, q));
+                                }
+                            }
+                        }
+                    }
+                }
+                occ.sort_unstable();
+                // Each candidate's partner list.
+                ctx.clear();
+                ctx.resize(ent.len(), (0, 0));
+                for (j, w) in occ.chunk_by(|x, y| x.0 == y.0).scan(0u32, |o, w| {
+                    let start = *o;
+                    *o += w.len() as u32;
+                    Some((start, w))
+                }) {
+                    ctx[w[0].0 as usize] = (j, j + w.len() as u32);
+                }
+                let list = |i: u32| {
+                    let (a, b) = ctx[i as usize];
+                    occ[a as usize..b as usize].iter().map(|x| (x.1, x.2))
+                };
+                for run in order.chunk_by(|&x, &y| (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)) {
+                    if run.len() < 2 {
                         continue;
                     }
-                }
-                buf.clear();
-                let mut skips = Vec::new();
-                for &(_, e) in m {
-                    if vt(e) == c {
-                        buf.extend_from_slice(lvl.node(ix(e)));
-                    } else {
-                        skips.push(e);
-                        buf.push(if sh.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) });
+                    // Split the run into groups of equal lists.
+                    firsts.clear();
+                    let mut of: Vec<u32> = Vec::with_capacity(run.len());
+                    for &i in run {
+                        let g = firsts.iter().position(|&f| list(f).eq(list(i)));
+                        of.push(match g {
+                            Some(g) => g as u32,
+                            None => {
+                                firsts.push(i);
+                                (firsts.len() - 1) as u32
+                            }
+                        });
                     }
-                }
-                let k = cl.push_class(&buf);
-                for &(_, e) in m {
-                    if vt(e) == c {
-                        cl.classmap[ix(e) as usize] = k;
+                    for g in 0..firsts.len() as u32 {
+                        members.clear();
+                        members.extend(run.iter().zip(&of).filter(|x| *x.1 == g).map(|x| ent[*x.0 as usize].0));
+                        if members.len() < 2 {
+                            continue;
+                        }
+                        merged = true;
+                        if members.iter().all(|&e| vt(e) != c) {
+                            let nm = names.get_or_insert_with(|| Names::of(&s, &ids));
+                            let v = parts(sh, nm, &ids, c, members.iter().copied());
+                            if v != c {
+                                pending.entry(v).or_default().push((here, members.clone()));
+                                if !queued[v as usize] {
+                                    queued[v as usize] = true;
+                                    heap.push(Reverse((sh.pre[v as usize], v)));
+                                }
+                                continue;
+                            }
+                        }
+                        let g = cl.push_group(&s, &members, l, r);
+                        for &e in &members {
+                            if vt(e) != c {
+                                cl.chainmap.insert(e, (here, g));
+                            }
+                        }
                     }
-                }
-                for e in skips {
-                    cl.chainmap.insert(e, (lvs.len() as u32, k));
                 }
             }
+            lim.charge_work(ent.len() as u64 + occ.len() as u64);
         }
         // Merged skips sent down here: each group is a class of its own,
         // since only the levels above name its members.
         if let Some(groups) = pending.remove(&c) {
-            let (l, r) = sh.kids[c as usize];
             for (from, group) in groups {
-                let pairs: Vec<(Ref, Ref)> =
-                    group.iter().map(|&e| if sh.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) }).collect();
-                let k = cl.push_class(&pairs);
-                let here = lvs.len() as u32;
+                let g = cl.push_group(&s, &group, l, r);
                 let origin = &mut lvs[from as usize].chainmap;
                 for e in group {
-                    origin.insert(e, (here, k));
+                    origin.insert(e, (here, g));
                 }
             }
         }
-        // Stored nodes no class of the parent names directly: the output,
-        // and nodes skips reach. Each is its own class.
-        for i in 0..lvl.width() {
-            if cl.classmap[i] == NONE {
-                cl.classmap[i] = cl.push_class(lvl.node(i as u32));
-            }
-        }
-        lim.charge_work(lvl.pairs.len() as u64);
-        if cl.width() > 0 {
-            for ch in [sh.kids[c as usize].0, sh.kids[c as usize].1] {
+        lim.charge_work(s.levels[c as usize].pairs.len() as u64);
+        if width > 0 || cl.groups() > 0 {
+            for ch in [l, r] {
                 if !sh.is_leaf(ch) && !queued[ch as usize] {
                     queued[ch as usize] = true;
                     heap.push(Reverse((sh.pre[ch as usize], ch)));
                 }
             }
         }
-        at[c as usize] = lvs.len() as u32;
+        at[c as usize] = here;
         lvs.push(cl);
     }
     lim.check_stop()?;
-    // Rebuild from the leaves up.
-    let mut out = SkipForm::zero(s.shape.clone());
-    let target = |lvs: &Vec<CLv>, h: Ref| -> Ref {
-        if sh.is_leaf(vt(h)) {
-            h
-        } else {
-            let cl = &lvs[at[vt(h) as usize] as usize];
-            cl.res[cl.classmap[ix(h) as usize] as usize]
+    // Patch from the leaves up. A side read at `d` resolves through a
+    // group a skip joined there, else through its node's result.
+    let resolve = |lvs: &Vec<CLv>, d: u32, x: Ref| -> Ref {
+        if !sh.is_leaf(d) && vt(x) != d {
+            let e = at[d as usize];
+            if e != NONE && !lvs[e as usize].chainmap.is_empty() && let Some(&(to, g)) = lvs[e as usize].chainmap.get(&x) {
+                return lvs[to as usize].gres[g as usize];
+            }
         }
+        let v = vt(x);
+        if !sh.is_leaf(v) {
+            let e = at[v as usize];
+            if e != NONE {
+                let rm = &lvs[e as usize].rm;
+                if !rm.is_empty() && rm[ix(x) as usize] != KEEP {
+                    return rm[ix(x) as usize];
+                }
+            }
+        }
+        x
     };
-    let side = |lvs: &Vec<CLv>, d: u32, h: Ref| -> Ref {
-        if sh.is_leaf(d) || vt(h) == d {
-            return target(lvs, h);
-        }
-        let e = at[d as usize];
-        if e != NONE && let Some(&(to, k)) = lvs[e as usize].chainmap.get(&h) {
-            return lvs[to as usize].res[k as usize];
-        }
-        target(lvs, h)
-    };
-    let mut buf = Vec::new();
+    let mut buf: Vec<(Ref, Ref)> = Vec::new();
     for e in (0..lvs.len()).rev() {
         let c = lvs[e].level;
         let (l, r) = sh.kids[c as usize];
-        let mut rc = Vec::with_capacity(lvs[e].width());
-        for k in 0..lvs[e].width() {
-            buf.clear();
-            for &(a, b) in lvs[e].class(k) {
-                buf.push((side(&lvs, l, a), side(&lvs, r, b)));
+        let width = lvs[e].width as usize;
+        let changes = |lvs: &Vec<CLv>, lvl: &SLevel, i: usize| {
+            lvl.node(i as u32).iter().any(|&(a, b)| resolve(lvs, l, a) != a || resolve(lvs, r, b) != b)
+        };
+        let lvl = &s.levels[c as usize];
+        let grouped = |i: usize| !lvs[e].group_of.is_empty() && lvs[e].group_of[i] != NONE;
+        if lvs[e].groups() == 0 && !(0..width).any(|i| changes(&lvs, lvl, i)) {
+            continue;
+        }
+        // Stored nodes keep their numbers; those merged into a group, or
+        // that now resolve to another reference, stay behind unreachable.
+        let mut out = SLevel::default();
+        let mut rm = vec![KEEP; width];
+        for (i, x) in rm.iter_mut().enumerate() {
+            let node = lvl.node(i as u32);
+            if !grouped(i) && changes(&lvs, lvl, i) {
+                buf.clear();
+                buf.extend(node.iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
+                match normalize(sh, c, &mut buf) {
+                    Err(t) => {
+                        *x = t;
+                        merged = true;
+                    }
+                    Ok(()) => {
+                        out.push(&buf);
+                        continue;
+                    }
+                }
             }
-            // Merged children can repeat a pair.
+            out.push(node);
+        }
+        let mut gres = Vec::with_capacity(lvs[e].groups());
+        for g in 0..lvs[e].groups() {
+            buf.clear();
+            buf.extend(lvs[e].group(g).iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
+            // Merged members can repeat a pair.
             buf.sort_unstable();
             buf.dedup();
-            rc.push(match normalize(sh, c, &mut buf) {
+            gres.push(match normalize(sh, c, &mut buf) {
                 Err(t) => t,
-                Ok(()) => mk(c, out.levels[c as usize].push(&buf)),
+                Ok(()) => mk(c, out.push(&buf)),
             });
         }
-        lvs[e].res = rc;
+        for (x, &g) in rm.iter_mut().zip(&lvs[e].group_of) {
+            if g != NONE {
+                *x = gres[g as usize];
+            }
+        }
+        lvs[e].rm = rm;
+        lvs[e].gres = gres;
+        s.levels[c as usize] = out;
     }
-    out.out = side(&lvs, sh.root, s.out);
-    let cand = lvs.iter().map(|l| l.level).collect();
-    out.collect_in(cand);
-    Ok(out)
+    s.out = resolve(&lvs, sh.root, s.out);
+    if merged {
+        let cand = s.active.iter().copied().chain(lvs.iter().map(|l| l.level)).collect();
+        s.collect_in(cand);
+    } else {
+        s.active.retain(|&t| s.levels[t as usize].width() > 0);
+    }
+    Ok(s)
 }
 
-/// Per reference of a diagram, the levels whose pairs name it, parents
-/// first.
-struct Names {
-    /// Per vtree node, the number of its first stored node or leaf label.
+/// Dense numbers for a diagram's references: stored node `i` of level `t`
+/// is `base[t] + i`, leaf label `k` of leaf `c` is `base[c] + k`.
+struct Ids {
     base: Vec<u32>,
-    start: Vec<u32>,
-    levels: Vec<u32>,
+    n: u32,
 }
 
-impl Names {
-    fn of(s: &SkipForm) -> Names {
+impl Ids {
+    fn of(s: &SkipForm) -> Ids {
         let sh = &*s.shape;
         let mut base = vec![NONE; sh.num_nodes()];
         let mut n = 0u32;
@@ -290,7 +414,28 @@ impl Names {
                 n += 3;
             }
         }
-        let id = |x: Ref| (base[vt(x) as usize] + ix(x)) as usize;
+        Ids { base, n }
+    }
+    fn len(&self) -> usize {
+        self.n as usize
+    }
+    #[inline]
+    fn id(&self, x: Ref) -> usize {
+        (self.base[vt(x) as usize] + ix(x)) as usize
+    }
+}
+
+/// Per reference of a diagram, the levels whose pairs name it, parents
+/// first.
+struct Names {
+    start: Vec<u32>,
+    levels: Vec<u32>,
+}
+
+impl Names {
+    fn of(s: &SkipForm, ids: &Ids) -> Names {
+        let n = ids.n;
+        let id = |x: Ref| ids.id(x);
         let mut start = vec![0u32; n as usize + 1];
         for &u in &s.active {
             for &(a, b) in &s.levels[u as usize].pairs {
@@ -313,11 +458,11 @@ impl Names {
                 }
             }
         }
-        Names { base, start, levels }
+        Names { start, levels }
     }
 
-    fn of_ref(&self, x: Ref) -> &[u32] {
-        let i = (self.base[vt(x) as usize] + ix(x)) as usize;
+    fn of_ref(&self, ids: &Ids, x: Ref) -> &[u32] {
+        let i = ids.id(x);
         &self.levels[self.start[i] as usize..self.start[i + 1] as usize]
     }
 }
@@ -326,7 +471,7 @@ impl Names {
 /// of the highest level below `c` where the members stop being twins (one
 /// is stored there, a pair of the level above names one, or they part).
 /// `c` itself when that level is `c`'s child.
-fn parts(sh: &super::Shape, nm: &Names, c: u32, members: impl Iterator<Item = Ref> + Clone) -> u32 {
+fn parts(sh: &super::Shape, nm: &Names, ids: &Ids, c: u32, members: impl Iterator<Item = Ref> + Clone) -> u32 {
     // The highest member, and where the members part.
     let mut h = NONE;
     for e in members.clone() {
@@ -337,7 +482,7 @@ fn parts(sh: &super::Shape, nm: &Names, c: u32, members: impl Iterator<Item = Re
     let mut w = if members.clone().all(|e| sh.within(vt(e), h)) { h } else { sh.parent[h as usize] };
     for e in members {
         // The highest level at or below `c` naming `e`.
-        let ls = nm.of_ref(e);
+        let ls = nm.of_ref(ids, e);
         let i = ls.partition_point(|&u| sh.pre[u as usize] < sh.pre[c as usize]);
         if let Some(&u) = ls.get(i) {
             let x = sh.toward(u, vt(e));

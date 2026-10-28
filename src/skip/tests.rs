@@ -92,7 +92,7 @@ fn contracted_conjunction_is_the_canonical_skip_form() {
     for (eng, f, g) in cases(3, 300) {
         let (sf, sg) = (skip(&f), skip(&g));
         let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let h = contract(&conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+        let h = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
         let mut fun = eng.and(&f, &g).unwrap();
         eng.minimize(&mut fun).unwrap();
         let want = skip(&fun);
@@ -108,7 +108,7 @@ fn contracted_conjunction_is_the_canonical_skip_form() {
         }
         assert_eq!(fingerprint(&h), fingerprint(&want));
         // Contracting a canonical form changes nothing.
-        assert_eq!(fingerprint(&contract(&want, eng.limits()).unwrap()), fingerprint(&want));
+        assert_eq!(fingerprint(&contract(want.clone(), eng.limits()).unwrap()), fingerprint(&want));
     }
 }
 
@@ -172,7 +172,7 @@ fn tagged_conjunction_matches_the_untagged_one() {
     for (eng, f, g) in cases(7, 300) {
         let (sf, sg) = (skip(&f), skip(&g));
         let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let want = contract(&conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+        let want = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
         let (tf, tg) = (tag_form(&sf), tag_form(&sg));
         let raw = tag::and(&tf, &tg, eng.limits()).unwrap();
         // Before contraction: the same function.
@@ -306,7 +306,7 @@ fn conjunction_of_placed_projections_is_canonical() {
             if placed.len() < 2 {
                 continue;
             }
-            let h = contract(&conjoin::and(&placed[0], &placed[1], eng.limits()).unwrap(), eng.limits()).unwrap();
+            let h = contract(conjoin::and(&placed[0], &placed[1], eng.limits()).unwrap(), eng.limits()).unwrap();
             let mut want = eng.and(&embedded[0], &embedded[1]).unwrap();
             eng.minimize(&mut want).unwrap();
             assert_eq!(fingerprint(&h), fingerprint(&skip(&want)));
@@ -334,10 +334,10 @@ fn contraction_of_raw_stored_conjunctions_is_canonical() {
             let mut fun = raw.clone();
             eng.minimize(&mut fun).unwrap();
             let want = skip(&fun);
-            assert_eq!(fingerprint(&contract(&skip(&raw), eng.limits()).unwrap()), fingerprint(&want));
+            assert_eq!(fingerprint(&contract(skip(&raw), eng.limits()).unwrap()), fingerprint(&want));
             let (sf, sg) = (skip(&f), skip(&g));
             let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-            let h = contract(&conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+            let h = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
             assert_eq!(fingerprint(&h), fingerprint(&want));
             done += 1;
         }
