@@ -879,18 +879,38 @@ impl<'a> Cover<'a> {
         };
         // Eight cells a word: a marked cell's byte is 1, so the low bit of
         // each byte of the word's complement is set where a cell is missing.
-        let (body, tail) = self.marked[..self.len].split_at(self.len & !7);
-        for (w, chunk) in body.chunks_exact(8).enumerate() {
-            let word = u64::from_le_bytes(chunk.try_into().expect("a chunk of eight"));
-            let mut missing = !word & 0x0101_0101_0101_0101;
+        const MARKED: u64 = 0x0101_0101_0101_0101;
+        let word = |chunk: &[u8]| u64::from_le_bytes(chunk.try_into().expect("a chunk of eight"));
+        let mut word_into = |at: usize, word: u64| -> Result<(), OperationError> {
+            let mut missing = !word & MARKED;
             while missing != 0 {
-                push(w * 8 + (missing.trailing_zeros() >> 3) as usize)?;
+                push(at + (missing.trailing_zeros() >> 3) as usize)?;
                 missing &= missing - 1;
             }
+            Ok(())
+        };
+        // Four words at a time, which a cover nearly every cell of which is
+        // marked passes with one test: four words of marked cells have
+        // every byte 1.
+        let mut groups = self.marked[..self.len].chunks_exact(32);
+        for (g, group) in groups.by_ref().enumerate() {
+            let words: [u64; 4] = std::array::from_fn(|k| word(&group[8 * k..8 * k + 8]));
+            if words[0] & words[1] & words[2] & words[3] == MARKED {
+                continue;
+            }
+            for (k, w) in words.into_iter().enumerate() {
+                word_into(32 * g + 8 * k, w)?;
+            }
+        }
+        let rest = groups.remainder();
+        let start = self.len - rest.len();
+        let (body, tail) = rest.split_at(rest.len() & !7);
+        for (k, chunk) in body.chunks_exact(8).enumerate() {
+            word_into(start + 8 * k, word(chunk))?;
         }
         for (i, &byte) in tail.iter().enumerate() {
             if byte == 0 {
-                push(body.len() + i)?;
+                push(start + body.len() + i)?;
             }
         }
         Ok(())

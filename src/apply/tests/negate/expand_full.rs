@@ -149,3 +149,37 @@ fn negate_matches_the_truth_table_on_random_formulas() {
         }
     }
 }
+
+/// A cover's missing cells, read four words at a time, are the unmarked
+/// cells in order, on bases of every length up to past a few groups of
+/// thirty-two cells and with covers from empty to full.
+#[test]
+fn a_cover_reads_its_missing_cells_in_order() {
+    use crate::apply::negate::{ChildBasis, Cover, LeafForm};
+    let eng = crate::Engine::new();
+    let mut state = 0x5eed_u64;
+    let mut next = move || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 33) as u32
+    };
+    let mut marked = Vec::new();
+    for rights_len in [1u32, 3, 8, 32, 33] {
+        for lefts_len in 1..12u32 {
+            for density in [0, 1, 7, 8] {
+                let (lefts, rights) = (ChildBasis { start: 0, end: lefts_len }, ChildBasis { start: 0, end: rights_len });
+                let mut cover = Cover::reset(&eng, &mut marked, lefts, rights, LeafForm::LITERAL).unwrap();
+                let cells: Vec<(u32, u32)> = (0..lefts_len).flat_map(|l| (0..rights_len).map(move |r| (l, r))).collect();
+                let kept: Vec<_> = cells.iter().copied().filter(|_| next() % 8 < density).collect();
+                cover.mark_pairs(kept.iter().map(|&(l, r)| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r))));
+                let mut missing = Vec::new();
+                cover.missing_into(&eng, &mut missing).unwrap();
+                let expected: Vec<_> = cells
+                    .iter()
+                    .filter(|cell| !kept.contains(cell))
+                    .map(|&(l, r)| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))
+                    .collect();
+                assert_eq!(missing, expected, "{lefts_len} x {rights_len}, density {density}/8");
+            }
+        }
+    }
+}
