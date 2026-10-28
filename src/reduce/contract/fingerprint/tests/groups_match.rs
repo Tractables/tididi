@@ -990,3 +990,213 @@ fn wide_nodes_split_by_the_siblings_of_their_nodes_not_alone() {
         "wide parent nodes of few and of more siblings of nodes not alone: {few_live}, {many_live}"
     );
 }
+
+/// The screen against a reading of every parent node: a level whose parent
+/// nodes repeat no sibling is `Apart`; one where a parent node names two
+/// nodes with the same siblings, or one of more than
+/// [`refine::SMALL_PAIRS`] pairs repeats a sibling, is `Alike`; any other
+/// is `Named` and has no twin, and [`mark_named`] then marks exactly the
+/// nodes some pair names.
+#[test]
+fn the_screen_marks_the_named_nodes_of_a_level_with_no_two_alike() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(31);
+    let mut scratch = ContractScratch::default();
+    let mut seen = [0usize; 3];
+    for round in 0..rounds(600, 30) {
+        let width = 1 + rng.below(40) as u32;
+        let siblings = 3 + rng.below(if round % 2 == 0 { 4 } else { 60 }) as u32;
+        let side = if round % 4 < 2 { ChildSide::Left } else { ChildSide::Right };
+        let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+        for (v, w) in [(target, width), (other, siblings)] {
+            for _ in 0..w {
+                levels[v.idx()].push_internal_node(&[filler]);
+            }
+        }
+        let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+        let mut nodes: Vec<Vec<(u32, u32)>> = Vec::new();
+        for _ in 0..1 + rng.below(8) {
+            let mut used: HashSet<(u32, u32)> = HashSet::new();
+            let mut pairs: Vec<(u32, u32)> = Vec::new();
+            let mut add = |t: u32, s: u32| {
+                if used.insert((t, s)) {
+                    pairs.push((t, s));
+                }
+            };
+            if round % 3 == 2 {
+                // A staircase: the i-th node it names has i + 1 siblings
+                // from one start, so its nodes repeat a sibling and no two
+                // are alike, unless the stray pair makes two so.
+                let start = rng.below(siblings as u64) as u32;
+                for i in 0..1 + rng.below(3) as u32 {
+                    let t = rng.below(width as u64) as u32;
+                    for j in 0..=i {
+                        add(t, (start + j) % siblings);
+                    }
+                }
+                if rng.below(4) == 0 {
+                    add(rng.below(width as u64) as u32, rng.below(siblings as u64) as u32);
+                }
+            } else {
+                for _ in 0..1 + rng.below(12) {
+                    add(rng.below(width as u64) as u32, rng.below(siblings as u64) as u32);
+                }
+            }
+            pairs.sort_unstable();
+            nodes.push(pairs);
+        }
+        for pairs in &nodes {
+            let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+            levels[root.idx()].push_internal_node(&node[..]);
+        }
+        let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+        let repeats = |pairs: &[(u32, u32)]| pairs.iter().any(|a| pairs.iter().any(|b| a.1 == b.1 && a.0 != b.0));
+        let alike = |pairs: &[(u32, u32)]| {
+            if 2 * pairs.len() > TWIN_TABLE_START_CELLS {
+                return true;
+            }
+            if pairs.len() > refine::SMALL_PAIRS {
+                return repeats(pairs);
+            }
+            let mut sets: HashMap<u32, Vec<u32>> = HashMap::new();
+            for &(t, s) in pairs {
+                sets.entry(t).or_default().push(s);
+            }
+            let sets: Vec<Vec<u32>> = sets.into_values().map(|mut v| {
+                v.sort_unstable();
+                v
+            }).collect();
+            (0..sets.len()).any(|i| (i + 1..sets.len()).any(|j| sets[i] == sets[j]))
+        };
+        let want = if !nodes.iter().any(|p| repeats(p)) {
+            Screen::Apart
+        } else if nodes.iter().any(|p| alike(p)) {
+            Screen::Alike
+        } else {
+            Screen::Named
+        };
+        let got = screen_twins(&tdd.levels[root.idx()], side, eng.limits(), &mut scratch).expect("screen_twins");
+        assert_eq!(got, want, "round {round}, {side:?}: {nodes:?}");
+        if got == Screen::Named {
+            let stored = tdd.levels[root.idx()].stored().expect("a stored level");
+            mark_named(stored, side, width as usize, eng.limits(), &mut scratch.twin_named).expect("mark_named");
+            let named: HashSet<u32> = nodes.iter().flatten().map(|&(t, _)| t).collect();
+            for t in 0..width {
+                let bit = scratch.twin_named[(t / 64) as usize] >> (t % 64) & 1 == 1;
+                assert_eq!(bit, named.contains(&t), "round {round}: node {t}");
+            }
+            assert!(listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side).is_empty(), "round {round}: twins in a Named level");
+        }
+        seen[got as usize] += 1;
+    }
+    assert!(cfg!(miri) || seen.iter().all(|&n| n > 20), "every outcome occurs: {seen:?}");
+}
+
+/// A screened search of a level the screen finds twin-free after a parent
+/// node repeats a sibling ends as a refinement of the whole level does:
+/// two or more nodes no pair names are listed, and every other node is
+/// known named unless exactly one is not. A level whose parent nodes
+/// repeat no sibling lists nothing.
+#[test]
+#[cfg_attr(miri, ignore = "the screened route starts at a width Miri takes long to interpret")]
+fn a_screened_twin_free_level_lists_its_unnamed_nodes() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut scratch = ContractScratch::default();
+    let width = NARROW_SCREENED_WIDTH as u32;
+    for side in [ChildSide::Left, ChildSide::Right] {
+        let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+        let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+        // The parent node of three pairs: nodes 0 and 1 share sibling 0,
+        // and node 1 has sibling 1 too, unless they are alike; with
+        // distinct siblings no parent node repeats one. One wider than the
+        // sibling table's first size is taken to name two nodes alike, and
+        // the level is refined.
+        let wide: Vec<ChildPair> = [pair(0, 0), pair(1, 0), pair(1, 1)]
+            .into_iter()
+            .chain((2..TWIN_TABLE_START_CELLS as u32 / 2).map(|t| pair(t, t)))
+            .collect();
+        for (shape, middle) in [
+            ("named", vec![pair(0, 0), pair(1, 0), pair(1, 1)]),
+            ("alike", vec![pair(0, 0), pair(1, 0)]),
+            ("apart", vec![pair(0, 0), pair(1, 1)]),
+            ("wide", wide.clone()),
+        ] {
+            for unnamed in [0u32, 1, 3] {
+                let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+                for v in [target, other] {
+                    for _ in 0..width {
+                        levels[v.idx()].push_internal_node(&[filler]);
+                    }
+                }
+                // Every other node named once, by a sibling of its own; the
+                // last `unnamed` nodes named by none.
+                for t in 2..width - unnamed {
+                    if t == width / 2 {
+                        levels[root.idx()].push_internal_node(&middle[..]);
+                    }
+                    levels[root.idx()].push_internal_node(&[pair(t, t)]);
+                }
+                let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+                let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+                let at = format!("{side:?}, {shape}, {unnamed} unnamed");
+                let screened = screen_twins(&tdd.levels[root.idx()], side, eng.limits(), &mut scratch).expect("screen_twins");
+                let screens = [("named", Screen::Named), ("alike", Screen::Alike), ("apart", Screen::Apart), ("wide", Screen::Alike)];
+                assert_eq!(Some(screened), screens.iter().find(|s| s.0 == shape).map(|s| s.1), "{at}");
+                if shape == "named" {
+                    // Listed loose, the level is searched as where its
+                    // loose levels are not known; listed tight, it has every
+                    // node named, which the screen reads off the list.
+                    let tight = unnamed == 0;
+                    for loose in [vec![target.0], Vec::new()].into_iter().filter(|l| tight || !l.is_empty()) {
+                        tdd.dirty.set_loose(Some(loose.clone()));
+                        scratch.prepare();
+                        assert!(!twin_groups(&eng, &tdd, target, root, side, &mut scratch, true), "{at}, loose {loose:?}");
+                        let listed: Vec<u32> = if unnamed >= 2 { (width - unnamed..width).collect() } else { Vec::new() };
+                        assert_eq!(scratch.unnamed, listed, "{at}, loose {loose:?}");
+                        assert_eq!(scratch.unnamed_exact, unnamed != 1, "{at}, loose {loose:?}");
+                    }
+                    tdd.dirty.set_loose(None);
+                }
+                scratch.prepare();
+                let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, true);
+                assert_eq!(found, shape == "alike", "{at}");
+                assert_eq!(found, !want.is_empty(), "{at}");
+                // The refinement of the alike level lists them too.
+                let listed: Vec<u32> = if shape != "apart" && unnamed >= 2 { (width - unnamed..width).collect() } else { Vec::new() };
+                assert_eq!(scratch.unnamed, listed, "{at}");
+                if shape == "named" {
+                    assert_eq!(scratch.unnamed_exact, unnamed != 1, "{at}");
+                    // A refinement of the whole level lists the same nodes,
+                    // and knows the rest named only where the screen does.
+                    let (screened, exact) = (std::mem::take(&mut scratch.unnamed), scratch.unnamed_exact);
+                    scratch.prepare();
+                    let child = tdd.levels[target.idx()].stored().map(|stored| stored.nodes());
+                    let found = refine::refine_context_groups(
+                        &tdd.levels[root.idx()],
+                        side,
+                        eng.limits(),
+                        &mut scratch,
+                        width as usize,
+                        refine::Start::Whole { hand_off: true },
+                        child,
+                    )
+                    .expect("refine_context_groups");
+                    assert_eq!(found, Some(false), "{at}");
+                    assert_eq!(scratch.unnamed, screened, "{at}");
+                    assert!(!scratch.unnamed_exact || exact, "{at}");
+                } else if shape == "apart" {
+                    assert!(!scratch.unnamed_exact, "{at}");
+                }
+            }
+        }
+    }
+}

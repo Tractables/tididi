@@ -1,5 +1,5 @@
 use crate::Engine;
-use crate::diagram::{ChildPair, ChildSide, StoredPairs, Tdd, TddLevel};
+use crate::diagram::{ChildPair, ChildSide, NodeIdx, StoredPairs, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::limits::{Limits, OperationError};
@@ -226,7 +226,7 @@ pub(super) fn repeats_a_sibling(
             let (mut buf, mut cursor) = (Vec::new(), None);
             for i in 0..level.node_count() {
                 let pairs = level.described_read_next(&mut cursor, i, &mut buf);
-                if node_repeats_a_sibling(pairs, side, lim, twin_local, twin_generation)? {
+                if node_repeats_a_sibling::<false>(pairs, side, lim, twin_local, twin_generation)? {
                     return Ok(true);
                 }
             }
@@ -249,7 +249,7 @@ fn stored_repeats_a_sibling<const LEFT: bool>(
         ChildSide::Right
     };
     for node in stored.nodes() {
-        if node_repeats_a_sibling(stored.of(node), side, lim, twin_local, twin_generation)? {
+        if node_repeats_a_sibling::<false>(stored.of(node), side, lim, twin_local, twin_generation)? {
             return Ok(true);
         }
     }
@@ -271,8 +271,14 @@ fn stored_repeats_a_sibling<const LEFT: bool>(
 /// with, so its size follows the pairs read, not the node's width. A wide
 /// node that repeats a pair, which only a marginal level allows, counts as
 /// one that pairs two nodes with its sibling.
+///
+/// With `SETS`, a node of up to [`refine::SMALL_PAIRS`] pairs is tested for
+/// the stronger condition [`screen_twins`] needs: two nodes it names with
+/// the same siblings. A wider node is tested for a repeated sibling still,
+/// up to half [`TWIN_TABLE_START_CELLS`] pairs; a node wider than that
+/// counts as one that repeats a sibling.
 #[inline(always)]
-fn node_repeats_a_sibling(
+fn node_repeats_a_sibling<const SETS: bool>(
     pairs: &[ChildPair],
     side: ChildSide,
     lim: &Limits,
@@ -284,7 +290,7 @@ fn node_repeats_a_sibling(
     match *pairs {
         [] | [_] => return Ok(false),
         [p, q] => return Ok(repeat(split_pair(&p, side), split_pair(&q, side))),
-        [p, q, r] => {
+        [p, q, r] if !SETS => {
             let (p, q, r) = (
                 split_pair(&p, side),
                 split_pair(&q, side),
@@ -292,7 +298,7 @@ fn node_repeats_a_sibling(
             );
             return Ok(repeat(p, q) | repeat(p, r) | repeat(q, r));
         }
-        [p, q, r, u] => {
+        [p, q, r, u] if !SETS => {
             let (p, q, r, u) = (
                 split_pair(&p, side),
                 split_pair(&q, side),
@@ -306,19 +312,48 @@ fn node_repeats_a_sibling(
                 | repeat(q, u)
                 | repeat(r, u));
         }
+        [p, q, r] => {
+            // Two pairs of one node give it two siblings, the third node one.
+            let (p, q, r) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side));
+            let apart = (p.0 != q.0) & (p.0 != r.0) & (q.0 != r.0);
+            return Ok(apart & ((p.1 == q.1) | (p.1 == r.1) | (q.1 == r.1)));
+        }
+        [p, q, r, u] => {
+            let (a, b, c, d) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side), split_pair(&u, side));
+            // A node named once, by one sibling.
+            let one = |x: (u32, u32), o: (u32, u32), v: (u32, u32), w: (u32, u32)| (x.0 != o.0) & (x.0 != v.0) & (x.0 != w.0);
+            let (oa, ob, oc, od) = (one(a, b, c, d), one(b, a, c, d), one(c, a, b, d), one(d, a, b, c));
+            let ones = (oa & ob & (a.1 == b.1))
+                | (oa & oc & (a.1 == c.1))
+                | (oa & od & (a.1 == d.1))
+                | (ob & oc & (b.1 == c.1))
+                | (ob & od & (b.1 == d.1))
+                | (oc & od & (c.1 == d.1));
+            // Two nodes named twice each, by the same two siblings.
+            let two = |x: (u32, u32), y: (u32, u32), v: (u32, u32), w: (u32, u32)| {
+                (x.0 == y.0) & (v.0 == w.0) & (x.0 != v.0) & (((x.1 == v.1) & (y.1 == w.1)) | ((x.1 == w.1) & (y.1 == v.1)))
+            };
+            return Ok(ones | two(a, b, c, d) | two(a, c, b, d) | two(a, d, b, c));
+        }
         _ if pairs.len() <= refine::SMALL_PAIRS => {
             let n = pairs.len();
             let mut key = [0u64; refine::SMALL_PAIRS];
             for (k, pair) in pairs.iter().enumerate() {
                 let (t, s) = split_pair(pair, side);
-                key[k] = pack(s, t);
+                key[k] = if SETS { pack(t, s) } else { pack(s, t) };
             }
             let key = &mut key[..n];
             key.sort_unstable();
-            return Ok(key
-                .windows(2)
-                .any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]));
+            if !SETS {
+                return Ok(key.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]));
+            }
+            return Ok(runs_alike(key));
         }
+        // Past what the table holds at its first size, a node is taken to
+        // name two nodes alike unread: its siblings would grow the table
+        // to twice its pairs, where the refinement it leaves the level to
+        // reads them for less.
+        _ if SETS && 2 * pairs.len() > TWIN_TABLE_START_CELLS => return Ok(true),
         _ => {}
     }
     let mut cells = (2 * pairs.len())
@@ -344,6 +379,151 @@ fn node_repeats_a_sibling(
         }
     }
     Ok(false)
+}
+
+/// Whether two of the runs of `key`, sorted node-high, one run a node,
+/// hold the same siblings.
+fn runs_alike(key: &[u64]) -> bool {
+    let mut start = [0usize; refine::SMALL_PAIRS + 1];
+    let mut runs = 0;
+    for k in 0..key.len() {
+        if k == 0 || key[k] >> 32 != key[k - 1] >> 32 {
+            start[runs] = k;
+            runs += 1;
+        }
+    }
+    start[runs] = key.len();
+    for i in 0..runs {
+        let a = &key[start[i]..start[i + 1]];
+        for j in i + 1..runs {
+            let b = &key[start[j]..start[j + 1]];
+            if a.len() == b.len() && a.iter().zip(b).all(|(x, y)| *x as u32 == *y as u32) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// What [`screen_twins`] tells of a whole child level from its parent level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Screen {
+    /// No parent node pairs two nodes with one sibling: no node has a twin.
+    Apart,
+    /// Parent nodes pair two nodes with one sibling, but none names two
+    /// nodes with the same siblings: no node has a twin.
+    Named,
+    /// A parent node names two nodes with the same siblings, or, past
+    /// [`refine::SMALL_PAIRS`] pairs, pairs two with one or is wider than
+    /// the sibling table's first size: the level may hold twins.
+    Alike,
+}
+
+/// Screen the child level on `side` of `level` for twins.
+///
+/// Two nodes are twins only where every parent node that names one names
+/// the other with the same siblings, so a level where no parent node names
+/// two nodes with the same siblings has none. The parent nodes are first
+/// tested for a repeated sibling ([`repeats_a_sibling`]); from the first
+/// that repeats one on, each is tested for two nodes with the same
+/// siblings ([`node_repeats_a_sibling`] with `SETS`). An implicit level is
+/// tested for a repeated sibling only, and is `Apart` or `Alike`.
+pub(super) fn screen_twins(
+    level: &TddLevel,
+    side: ChildSide,
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+) -> Result<Screen, OperationError> {
+    let Some(stored) = level.stored() else {
+        return Ok(if repeats_a_sibling(level, side, lim, scratch)? { Screen::Alike } else { Screen::Apart });
+    };
+    let ContractScratch { twin_local, twin_generation, .. } = scratch;
+    match side {
+        ChildSide::Left => stored_screen::<true>(stored, lim, twin_local, twin_generation),
+        ChildSide::Right => stored_screen::<false>(stored, lim, twin_local, twin_generation),
+    }
+}
+
+/// [`screen_twins`] of a stored level, `LEFT` saying whether the child
+/// level is the left one.
+fn stored_screen<const LEFT: bool>(
+    stored: StoredPairs<'_>,
+    lim: &Limits,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
+) -> Result<Screen, OperationError> {
+    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    let nodes = stored.nodes();
+    let mut first = None;
+    for (i, node) in nodes.iter().enumerate() {
+        if node_repeats_a_sibling::<false>(stored.of(node), side, lim, twin_local, twin_generation)? {
+            first = Some(i);
+            break;
+        }
+    }
+    let Some(first) = first else {
+        return Ok(Screen::Apart);
+    };
+    for node in &nodes[first..] {
+        if node_repeats_a_sibling::<true>(stored.of(node), side, lim, twin_local, twin_generation)? {
+            return Ok(Screen::Alike);
+        }
+    }
+    Ok(Screen::Named)
+}
+
+/// Set a bit in `scratch.twin_named` for each node of the child level of
+/// `width` nodes on `side` that a pair of `stored` names. Where the nodes'
+/// pairs cover the arena, the arena is read whole, in one pass with no
+/// node's bounds ([`StoredPairs::for_each_pair_whole`]); the nodes that
+/// hold their pairs there then mark a node one past the level's.
+fn mark_named(stored: StoredPairs<'_>, side: ChildSide, width: usize, lim: &Limits, twin_named: &mut Vec<u64>) -> Result<(), OperationError> {
+    let words = width / 64 + 1;
+    lim.try_resize(twin_named, words, 0u64)?;
+    let named = &mut twin_named[..words];
+    named.fill(0);
+    let mut mark = |pair: &ChildPair| {
+        let t = split_pair(pair, side).0 as usize;
+        named[t / 64] |= 1 << (t % 64);
+    };
+    let past = NodeIdx(width as u32);
+    let none = match side {
+        ChildSide::Left => ChildPair::new(past, NodeIdx(0)),
+        ChildSide::Right => ChildPair::new(NodeIdx(0), past),
+    };
+    if !stored.for_each_pair_whole(none, |pair| mark(&pair)) {
+        for node in stored.nodes() {
+            stored.of(node).iter().for_each(&mut mark);
+        }
+    }
+    Ok(())
+}
+
+/// After a [`Screen::Named`] screen of a level of `width` nodes: list the
+/// nodes no pair names in `scratch.unnamed`, ascending, where there are two
+/// or more, and record whether every other node is named, as a refinement
+/// of the whole level does at its end.
+fn list_unnamed(width: usize, lim: &Limits, scratch: &mut ContractScratch) -> Result<(), OperationError> {
+    let ContractScratch { twin_named, unnamed, unnamed_exact, .. } = scratch;
+    let clear = |w: usize| {
+        let word = !twin_named[w];
+        if (w + 1) * 64 > width { word & ((1u64 << (width % 64)) - 1) } else { word }
+    };
+    let words = width.div_ceil(64);
+    let count: usize = (0..words).map(|w| clear(w).count_ones() as usize).sum();
+    *unnamed_exact = count != 1;
+    if count < 2 {
+        return Ok(());
+    }
+    lim.reserve_exact(unnamed, count)?;
+    for w in 0..words {
+        let mut word = clear(w);
+        while word != 0 {
+            unnamed.push((w * 64) as u32 + word.trailing_zeros());
+            word &= word - 1;
+        }
+    }
+    Ok(())
 }
 
 /// The next stamp of the sibling table, with `twin_local` at least `cells`
@@ -429,13 +609,18 @@ const NARROW_SCREENED_WIDTH: usize = 1 << 12;
 /// against the fingerprint search over the same contexts. Where a parent
 /// node of [`refine::HAND_OFF_PAIRS`] pairs or more has them in no order,
 /// the refinement gives up before its wide parent nodes, and the level goes
-/// by fingerprints. With `screen`,
-/// the parent level is first tested for a parent node that pairs two nodes
-/// with one sibling ([`repeats_a_sibling`]), without which no node has a
-/// twin: worth it where few nodes are expected to have one, as under a
-/// parent level no merge has changed. Such a search of a level narrower
-/// than [`NARROW_SCREENED_WIDTH`] goes by fingerprints instead, and debug
-/// builds check it against the refinement.
+/// by fingerprints. With `screen`, the parent level is first tested for a
+/// parent node that names two nodes with the same siblings
+/// ([`screen_twins`]), without which no node has a twin: worth it where few
+/// nodes are expected to have one, as under a parent level no merge has
+/// changed. A level the test finds twin-free after a parent node repeats a
+/// sibling lists its unnamed nodes as the refinement would: where the
+/// diagram lists the level loose, or does not know
+/// ([`Dirty::loose`](crate::diagram::Dirty::loose)), a pass over the parent
+/// level marks the named nodes ([`mark_named`]), and otherwise every node
+/// is named. Such a search
+/// of a level narrower than [`NARROW_SCREENED_WIDTH`] goes by fingerprints
+/// instead, and debug builds check it against the refinement.
 ///
 /// With a marginal level the contexts are multisets, which the
 /// refinement's sibling and degree splits do not count, and the level is
@@ -482,9 +667,27 @@ pub(super) fn find_twin_groups(
     // of the groups it lists as the merge would.
     let child = level.stored().map(|stored| stored.nodes());
     let mut by_fingerprints = screen && width < NARROW_SCREENED_WIDTH;
+    // A level the diagram does not list loose has every node named.
+    let loose = tdd.dirty.loose().is_none_or(|loose| loose.contains(&t1.0));
+    let refines = !by_fingerprints
+        && (!screen
+            || match screen_twins(parent_level, t1_side, lim, scratch)? {
+                Screen::Alike => true,
+                Screen::Named => {
+                    match (loose, parent_level.stored()) {
+                        (true, Some(stored)) => {
+                            mark_named(stored, t1_side, width, lim, &mut scratch.twin_named)?;
+                            list_unnamed(width, lim, scratch)?;
+                        }
+                        _ => scratch.unnamed_exact = !loose,
+                    }
+                    false
+                }
+                Screen::Apart => false,
+            });
     let found = if by_fingerprints {
         group_twins_by_entries(eng, &entries, width, scratch)?
-    } else if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
+    } else if refines {
         match refine::refine_context_groups(
             parent_level,
             t1_side,
@@ -532,8 +735,9 @@ pub(super) fn find_twin_groups(
             (other, &scratch.group_starts, &scratch.flat_groups),
             "the refined twin groups differ from the fingerprinted ones",
         );
-        // Each lists the nodes no pair names where it read every pair.
-        if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
+        // Each lists the nodes no pair names where it read every pair, and a
+        // search that knows every node it did not list named lists them all.
+        if (exact || !unnamed.is_empty()) && !scratch.unnamed.is_empty() {
             assert_eq!(
                 unnamed, scratch.unnamed,
                 "the refinement and the fingerprints list different unnamed nodes"
