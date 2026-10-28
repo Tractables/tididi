@@ -71,9 +71,9 @@ pub struct TddLevel {
     /// Approximate: it only triggers the sweep, which derives liveness from
     /// `nodes`/`ranges`. Reset to 0 wherever the pair arena is replaced.
     pub(crate) dead_pairs: u32,
-    /// A node that held a different number of pairs from node 0 when
-    /// [`close`](Self::close) last read a fit of this level, or 0 for none
-    /// or one past 16 bits: the next fit reads that node's count first, and
+    /// A node that held a different number of pairs from node 0 when a
+    /// [`close`](Self::close) last looked for one, or 0 for none or one
+    /// past 16 bits: the next fit reads that node's count first, and
     /// fails at once while it still differs. A hint, read again before it is
     /// trusted, so any value is safe and nothing that changes the level has
     /// to update it. Sixteen bits keep the level in its size.

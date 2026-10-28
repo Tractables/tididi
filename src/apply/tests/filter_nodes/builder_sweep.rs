@@ -75,10 +75,14 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
 /// Everything a later operation reads of `f`: its levels, its output and the
 /// levels its reduction still has to visit. The live pairs a level keeps
 /// are left out: a count that knows them reads what one that does not
-/// counts.
+/// counts. So is the node a close found uneven (`TddLevel::uneven`), a
+/// hint that a close with a count left for it does not look for.
 pub(super) fn image(f: &Tdd) -> String {
     let mut g = f.clone();
-    for level in g.levels.iter_mut() { level.forget_held_pairs(); }
+    for level in g.levels.iter_mut() {
+        level.forget_held_pairs();
+        level.uneven = 0;
+    }
     format!("{:?}\n{:?}\n{:?}", &*g.levels, g.output, g.dirty)
 }
 

@@ -305,7 +305,8 @@ impl ImplicitLevel {
 
     /// [`fit`](Self::fit), or why there is none: `Err(Some(i))` when node
     /// `i` holds a different number of pairs from node 0, `Err(None)` for
-    /// any other reason.
+    /// any other reason, as when the count of live pairs left for the close
+    /// shows that some node does.
     fn fit_or_uneven(level: &TddLevel) -> Result<ImplicitLevel, Option<usize>> {
         if !matches!(level.state, LevelState::Structural(_)) {
             return Err(None);
@@ -322,6 +323,15 @@ impl ImplicitLevel {
         // holds one pair and the arena none, no node holds more, and one of
         // none fails the compare of the words below.
         if per_node == 0 {
+            return Err(None);
+        }
+        // The live pairs an operation left for the close are the pairs of
+        // every node: other than node 0's a node, some node holds another
+        // number, and no node is read for it. A level written whole is
+        // closed with that count left.
+        if let LevelState::Structural(held) = &level.state
+            && held.left().is_some_and(|n| n != nodes as u64 * per_node as u64)
+        {
             return Err(None);
         }
         if (per_node >= 2 || level.pairs.stored_vec_len() != 0)

@@ -194,6 +194,38 @@ fn a_level_that_is_not_affine_does_not_fit() {
     assert!(ImplicitLevel::fit(&level_of(&pairs)).is_none());
 }
 
+/// A level whose nodes hold different numbers of pairs closes stored. Where
+/// the count left for the close is not node 0's pairs at every node, no
+/// node is read, and the node a scan would find is not kept as the hint;
+/// where it is, or no count is left, the scan finds the node.
+#[test]
+fn an_uneven_level_closes_stored_off_the_count_left_for_it() {
+    // 100 nodes of 2 pairs, but for nodes of 3 and of 1 pairs at `other`.
+    let uneven = |other: &[(usize, i64)]| -> TddLevel {
+        let pairs: Pairs = (0..100i64)
+            .map(|i| {
+                let k = other.iter().find(|&&(at, _)| at as i64 == i).map_or(2, |&(_, k)| k);
+                (0..k).map(|j| (i, j)).collect()
+            })
+            .collect();
+        level_of(&pairs)
+    };
+    let close = |mut level: TddLevel, leave: bool| -> u16 {
+        if leave {
+            level.leave_live_pairs(level.live_pairs());
+        }
+        assert!(level.closes_by_fit());
+        level.close();
+        assert!(level.implicit().is_none());
+        level.uneven
+    };
+    // 201 pairs where node 0's count gives 200.
+    assert_eq!(close(uneven(&[(50, 3)]), true), 0);
+    assert_eq!(close(uneven(&[(50, 3)]), false), 50);
+    // 200 pairs, node 50 of 3 and node 70 of 1.
+    assert_eq!(close(uneven(&[(50, 3), (70, 1)]), true), 50);
+}
+
 #[test]
 fn a_product_is_the_row_loops_pairs() {
     let mut rng = Lcg::new(0x1d1e_0002);
