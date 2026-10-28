@@ -1425,8 +1425,9 @@ impl Partition<'_> {
     /// of their own, so the classes made still nest and hold two or more
     /// nodes each. Each class's `hits` is zero on entry and on return;
     /// `seen` keeps each node's class as the count read it, [`ALONE`] for a
-    /// node that cannot have a twin, so the second pass reads no class.
-    /// Where every class met is named whole and none is the first, as when
+    /// node that cannot have a twin, so the second pass reads no class. A
+    /// node read as the last of its class is marked alone. Where every
+    /// class met is named whole and none is the first, as when
     /// a node's second context confirms the class its first one made, no
     /// node changes class and the second pass is left out.
     #[inline]
@@ -1440,6 +1441,11 @@ impl Partition<'_> {
             }
             let k = &mut self.classes[c as usize];
             if k.size < 2 {
+                // The last node of its class, marked alone: a later split
+                // reads that from its word, without its class.
+                let word = &mut self.bits[(t / 64) as usize];
+                word[0] |= 1 << (t % 64);
+                word[1] |= 1 << (t % 64);
                 continue;
             }
             if k.hits == 0 {
