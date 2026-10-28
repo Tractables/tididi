@@ -46,13 +46,21 @@ pub(crate) enum FloatRows {
     /// row at a time give each cell bit for bit.
     Cells,
     /// A row at a time, reading child rows as floats wherever the column
-    /// pairs name grid cells, and keeping every row a side comes back to.
+    /// pairs name grid cells, keeping every row a side comes back to, and
+    /// adding a row's f pairs to one-pair columns a block at a time.
     Eager,
 }
 
 thread_local! {
     /// The way this test thread sums its streamed float levels.
     pub(crate) static FLOAT_ROWS: std::cell::Cell<FloatRows> = const { std::cell::Cell::new(FloatRows::Sum) };
+    /// The blocks of f pairs this thread has added ([`note_block`]).
+    pub(crate) static BLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Count a block of f pairs added on this thread.
+pub(crate) fn note_block() {
+    BLOCKS.with(|b| b.set(b.get() + 1));
 }
 
 /// Whether this thread sums streamed float levels a cell at a time.
