@@ -931,3 +931,71 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
     assert!(cfg!(miri) || seen_groups > 100, "the fixtures hold twins: {seen_groups}");
     assert!(cfg!(miri) || two_two > 300, "parent nodes of two nodes of two siblings each: {two_two}");
 }
+
+/// A parent node of [`refine::HAND_OFF_PAIRS`] pairs or more in no order,
+/// naming many siblings, ends a refinement allowed to give up; the twin
+/// search then finds the groups by fingerprints, on either side.
+#[test]
+#[cfg_attr(miri, ignore = "the hand-off takes no path the smaller fixtures miss, at a size Miri takes hours to interpret")]
+fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(29);
+    let mut scratch = ContractScratch::default();
+    let (width, siblings) = (4096u32, 80u32);
+    // Each node pairs every sibling but two drawn at random: nodes that
+    // draw the same two are twins.
+    let skips: Vec<(u32, u32)> = (0..width).map(|_| (rng.below(siblings as u64) as u32, rng.below(siblings as u64) as u32)).collect();
+    for side in [ChildSide::Left, ChildSide::Right] {
+        let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+        for (v, w) in [(target, width), (other, siblings)] {
+            for _ in 0..w {
+                levels[v.idx()].push_internal_node(&[filler]);
+            }
+        }
+        let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for (t, &(a, b)) in skips.iter().enumerate() {
+            pairs.extend((0..siblings).filter(|&s| s != a && s != b).map(|s| (t as u32, s)));
+        }
+        assert!(pairs.len() >= refine::HAND_OFF_PAIRS, "the parent node is large: {}", pairs.len());
+        reorder(&mut pairs, 2, &mut rng);
+        let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+        levels[root.idx()].push_internal_node(&node[..]);
+        // A narrow parent node in node order splits some groups first.
+        let few: Vec<ChildPair> = (0..width).step_by(3).map(|t| pair(t, 0)).collect();
+        levels[root.idx()].push_internal_node(&few[..]);
+        let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+        let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+        assert!(want.len() > 100, "the fixture holds twins: {}", want.len());
+        let child = tdd.levels[target.idx()].stored().map(|stored| stored.nodes());
+        for hand_off in [true, false] {
+            scratch.prepare();
+            let found = refine::refine_context_groups(
+                &tdd.levels[root.idx()],
+                side,
+                eng.limits(),
+                &mut scratch,
+                width as usize,
+                refine::Start::Whole,
+                child,
+                hand_off,
+            )
+            .expect("refine_context_groups");
+            assert_eq!(found, if hand_off { None } else { Some(true) }, "{side:?}, hand_off {hand_off}");
+        }
+        scratch.prepare();
+        let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
+        let mut got: Vec<Vec<u32>> = Vec::new();
+        for (g, &start) in scratch.group_starts.iter().enumerate() {
+            let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+            got.push(scratch.flat_groups[start as usize..end].to_vec());
+        }
+        assert!(found, "{side:?}");
+        assert_eq!(got, want, "{side:?}");
+    }
+}

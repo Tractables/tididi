@@ -41,6 +41,13 @@ struct Wide<'a> {
 /// stack, by comparing every two; a wider one sorts them in scratch.
 pub(super) const SMALL_PAIRS: usize = 8;
 
+/// The fewest pairs of a scattered parent node, one whose pairs come in no
+/// order of their siblings and name more than [`FEW_SIBLINGS`] of them, at
+/// which a refinement allowed to give up leaves the level to the
+/// fingerprints ([`refine_context_groups`]). The sibling split of such a
+/// node costs several times the fingerprints' work a pair.
+pub(super) const HAND_OFF_PAIRS: usize = 1 << 18;
+
 /// The nodes a refinement starts with in its first class
 /// ([`refine_context_groups`]).
 pub(super) enum Start<'a> {
@@ -98,6 +105,13 @@ pub(super) enum Start<'a> {
 /// counted. It writes only each group's lowest member to `flat_groups`, at
 /// the group's start, which is all a merge in node order reads of the
 /// groups; [`list_members`] writes the rest.
+///
+/// With `hand_off`, a refinement of a stored level that would split a
+/// scattered parent node of [`HAND_OFF_PAIRS`] pairs or more gives up
+/// before its wide parent nodes, which it splits last, and returns `None`
+/// with no groups listed; else it returns whether some group holds two
+/// nodes or more.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn refine_context_groups(
     level: &TddLevel,
     side: ChildSide,
@@ -106,7 +120,8 @@ pub(super) fn refine_context_groups(
     width: usize,
     start: Start<'_>,
     child: Option<&[EncodedNode]>,
-) -> Result<bool, OperationError> {
+    hand_off: bool,
+) -> Result<Option<bool>, OperationError> {
     scratch.marked = None;
     let ContractScratch {
         twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
@@ -191,6 +206,15 @@ pub(super) fn refine_context_groups(
     }
     if let Some(stored) = stored {
         refine_wide.sort_unstable();
+        // The widest come last, past every node of fewer than
+        // `HAND_OFF_PAIRS` pairs.
+        if hand_off
+            && refine_wide.last().is_some_and(|&w| w >= LARGE_WIDE)
+            && part.twinable != 0
+            && any_scattered(stored, refine_wide, side)
+        {
+            return Ok(None);
+        }
         for &w in refine_wide.iter() {
             if part.twinable == 0 {
                 break;
@@ -209,7 +233,7 @@ pub(super) fn refine_context_groups(
         "the count of nodes that can have a twin"
     );
     if part.twinable == 0 {
-        return Ok(false);
+        return Ok(Some(false));
     }
     let Partition { class, bits, classes, twinable } = part;
     lim.try_resize(flat_groups, twinable, 0u32)?;
@@ -229,7 +253,55 @@ pub(super) fn refine_context_groups(
             list.list::<false>(&mut [], &mut [], &mut Vec::new(), &[]);
         }
     }
-    Ok(true)
+    Ok(Some(true))
+}
+
+/// The least entry in the list of wide parent nodes
+/// ([`Partition::split_narrow`]) of a node of [`HAND_OFF_PAIRS`] pairs or
+/// more. An entry holds the bit length of the node's pair count above its
+/// index.
+const LARGE_WIDE: u64 = ((usize::BITS - HAND_OFF_PAIRS.leading_zeros()) as u64) << 32;
+
+/// Whether a node of [`HAND_OFF_PAIRS`] pairs or more in the sorted list of
+/// wide parent nodes `wide` is [`scattered`]. Out of line: a refinement
+/// calls it only on a level that holds such a node.
+#[inline(never)]
+fn any_scattered(stored: StoredPairs<'_>, wide: &[u64], side: ChildSide) -> bool {
+    wide.iter()
+        .rev()
+        .take_while(|&&w| w >= LARGE_WIDE)
+        .any(|&w| scattered(stored.of_idx(w as u32 as usize), side))
+}
+
+/// Whether a parent node's pairs come in no order of their siblings and
+/// name more than [`FEW_SIBLINGS`] siblings: the pairs the sibling split
+/// sorts ([`Partition::split_by_siblings`]). Reads the pairs until it has
+/// seen both.
+fn scattered(pairs: &[ChildPair], side: ChildSide) -> bool {
+    let Some(first) = pairs.first() else {
+        return false;
+    };
+    let mut last = split_pair(first, side).1;
+    let mut met = [last; FEW_SIBLINGS];
+    let (mut ordered, mut many) = (true, false);
+    let mut n = 1;
+    for pair in &pairs[1..] {
+        let s = split_pair(pair, side).1;
+        ordered &= s >= last;
+        last = s;
+        if !many && !met[..n].contains(&s) {
+            if n == FEW_SIBLINGS {
+                many = true;
+            } else {
+                met[n] = s;
+                n += 1;
+            }
+        }
+        if !ordered && many {
+            return true;
+        }
+    }
+    false
 }
 
 /// The partition a refinement leaves, and the lists of its groups.

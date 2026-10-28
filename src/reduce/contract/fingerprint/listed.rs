@@ -114,5 +114,15 @@ pub(in crate::reduce::contract) fn find_listed_twin_groups(
     debug_assert!(!super::super::sweep::diagram_marginal(tdd, scratch), "the sweep lists only without a marginal level");
     let level = &tdd.levels[t1.idx()];
     let child = level.stored().map(|stored| stored.nodes());
-    refine_context_groups(&tdd.levels[parent.idx()], t1_side, eng.limits(), scratch, level.slot_count(), Start::Listed(listed), child)
+    let found = refine_context_groups(
+        &tdd.levels[parent.idx()],
+        t1_side,
+        eng.limits(),
+        scratch,
+        level.slot_count(),
+        Start::Listed(listed),
+        child,
+        false,
+    )?;
+    Ok(found.expect("a refinement that may not give up does not"))
 }
