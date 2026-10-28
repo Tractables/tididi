@@ -631,6 +631,7 @@ struct ValueRows<'b> {
     sums: &'b mut [f64],
     flags: &'b mut [u8],
     ahead: Ahead<'b>,
+    gather: Gather<'b>,
 }
 
 /// The f pairs of a row against one-pair columns [`ones_row_values`] adds
@@ -656,9 +657,67 @@ const LANE_COLUMN_PAIRS: usize = 8;
 /// most the pairs over this.
 const LANE_ROW_SHARE: usize = 6;
 
-/// The bytes a level's blocks of rows may take: the sums held ahead and
-/// each side's rows laid side by side.
+/// The bytes a level's blocks of rows may take: the sums held ahead,
+/// each side's rows laid side by side, and a [`Gather`].
 const LANE_MAX_BYTES: usize = 64 << 20;
+
+/// The floats of a side's rows from which a level's blocks of rows read
+/// that side's row gathered ([`Gather`]): about what a core's second-level
+/// cache holds, past which reading a float of the row a pair is a miss.
+const GATHER_MIN_FLOATS: usize = 1 << 15;
+
+/// The row every row of a block reads on a side that does not lay its
+/// rows, gathered in the order a block's walk of the level's column pairs
+/// reads it: pair `w` of the walk reads float `w`, so a wide row is read
+/// in order rather than at each pair's field. Gathered for the second
+/// block in a row that reads the same row, and kept while blocks read it.
+struct Gather<'b> {
+    /// Each column pair's float and dead mark, empty on a level that
+    /// gathers no row.
+    vals: &'b mut [f64],
+    dead: &'b mut [u8],
+    /// The side gathered: the right one where true.
+    right: bool,
+    /// The row gathered, and the row the last block read on that side.
+    held: Option<u32>,
+    last: Option<u32>,
+}
+
+impl Gather<'_> {
+    /// Row `at` of `row`'s floats on side `right` gathered, where the
+    /// level gathers that side and the last block read the same row;
+    /// `None` otherwise. The level's columns are walked as
+    /// [`lane_values`] walks them.
+    #[inline(always)]
+    fn rows(&mut self, right: bool, at: u32, row: RowFloats<'_>, ctx: &CellCtx<'_>, level: &TddLevel, scratch: &mut Vec<ChildPair>) -> Option<Gathered<'_>> {
+        if self.vals.is_empty() || self.right != right {
+            return None;
+        }
+        if self.held != Some(at) {
+            if self.last != Some(at) {
+                self.last = Some(at);
+                return None;
+            }
+            self.gather(right, row, ctx, level, scratch);
+            self.held = Some(at);
+        }
+        Some(Gathered { vals: self.vals, dead: self.dead })
+    }
+
+    /// Gather `row` on side `right` along the level's column pairs.
+    #[inline(never)]
+    fn gather(&mut self, right: bool, row: RowFloats<'_>, ctx: &CellCtx<'_>, level: &TddLevel, scratch: &mut Vec<ChildPair>) {
+        let mut w = 0;
+        for j in 0..ctx.right_width {
+            for q in column_pairs(ctx, level, j, scratch) {
+                let i = if right { q.right.0 } else { q.left.0 } as usize;
+                (self.vals[w], self.dead[w]) = (row.vals[i], row.dead[i]);
+                w += 1;
+            }
+        }
+        debug_assert_eq!(w, self.vals.len(), "a gather holds a float for each column pair");
+    }
+}
 
 /// The cell sums and flags of the rows after the first of a block of
 /// rows, a row's width each, empty on a level that sums no such blocks:
@@ -788,14 +847,25 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         let r = lays(sr, rfixed);
         (lays(sl, lfixed), r)
     };
+    // A side that does not lay its rows, where the other does, reads the
+    // same row for every row of a block: a wide one is gathered.
+    let shared = match (ll, rl) {
+        (true, false) => Some((true, sr)),
+        (false, true) => Some((false, sl)),
+        _ => None,
+    };
+    let (gright, gw) = match shared {
+        Some((right, n)) if (n >= GATHER_MIN_FLOATS || eager()) && 9 * pairs <= budget => (right, pairs),
+        _ => (false, 0),
+    };
     let aw = if ll || rl { (LANES - 1) * width } else { 0 };
     let (ml, mr) = (if ll { sl + 1 } else { 0 }, if rl { sr + 1 } else { 0 });
     let (ls, rs) = (kl + spares, kr + spares);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
-    let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr);
+    let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr) + gw;
     lim.reserve(floats, nf)?;
     floats.resize(nf, 0.0);
-    let nd = wl + wr + ones + aw + ml + mr;
+    let nd = wl + wr + ones + aw + ml + mr + gw;
     lim.reserve(flags, nd)?;
     flags.resize(nd, 0);
     let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
@@ -809,18 +879,21 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let (rst, rest) = rest.split_at_mut(3 * rs);
     let (sums, rest) = rest.split_at_mut(ones);
     let (ahead_sums, rest) = rest.split_at_mut(aw);
-    let (llanes, rlanes) = rest.split_at_mut(LANES * ml);
+    let (llanes, rest) = rest.split_at_mut(LANES * ml);
+    let (rlanes, gvals) = rest.split_at_mut(LANES * mr);
     let (ld, rest) = flags.split_at_mut(wl);
     let (rd, rest) = rest.split_at_mut(wr);
     let (flags, rest) = rest.split_at_mut(ones);
     let (ahead_flags, rest) = rest.split_at_mut(aw);
-    let (lmarks, rmarks) = rest.split_at_mut(ml);
+    let (lmarks, rest) = rest.split_at_mut(ml);
+    let (rmarks, gdead) = rest.split_at_mut(mr);
     let (lmap, rmap) = slots.split_at_mut(nl);
     let left = ValueSide::new(sl, lfixed, spares, lv, ld, lst, lmap, (llanes, lmarks));
     let right = ValueSide::new(sr, rfixed, spares, rv, rd, rst, rmap, (rlanes, rmarks));
     let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
     let ahead = Ahead { sums: ahead_sums, flags: ahead_flags, rows: [(0, none); LANES - 1], got: 0, held: 0 };
-    Ok(Some(ValueRows { left, right, sums, flags, ahead }))
+    let gather = Gather { vals: gvals, dead: gdead, right: gright, held: None, last: None };
+    Ok(Some(ValueRows { left, right, sums, flags, ahead, gather }))
 }
 
 /// Each child side's [`SideReads`] over the level's f pairs, its rows
@@ -1407,7 +1480,7 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     note_lanes();
-    let ValueRows { left: lside, right: rside, ahead, .. } = vr;
+    let ValueRows { left: lside, right: rside, ahead, gather, .. } = vr;
     let m = 1 + next.len();
     let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
     for (k, p) in next.iter().enumerate() {
@@ -1429,9 +1502,16 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     let (lone, rone) = (Shared { vals: lrow.vals, dead: lrow.dead }, Shared { vals: rrow.vals, dead: rrow.dead });
     let (llaid, rlaid) = (Laid { vals: &*lside.lanes, marks: &*lside.marks }, Laid { vals: &*rside.lanes, marks: &*rside.marks });
     let out = (m, sums, flags);
+    let (ctx, level) = (row.ctx, row.right_level_t);
     match lay {
-        Lay::Left => lanes_by(track, check, sum, llaid, rone, out, eng, row),
-        Lay::Right => lanes_by(track, check, sum, lone, rlaid, out, eng, row),
+        Lay::Left => match gather.rows(true, if rside.fixed { 0 } else { ra[0] }, rrow, ctx, level, &mut *row.g_pairs_scratch) {
+            Some(rg) => lanes_by(track, check, sum, llaid, rg, out, eng, row),
+            None => lanes_by(track, check, sum, llaid, rone, out, eng, row),
+        },
+        Lay::Right => match gather.rows(false, if lside.fixed { 0 } else { la[0] }, lrow, ctx, level, &mut *row.g_pairs_scratch) {
+            Some(lg) => lanes_by(track, check, sum, lg, rlaid, out, eng, row),
+            None => lanes_by(track, check, sum, lone, rlaid, out, eng, row),
+        },
         Lay::Both => lanes_by(track, check, sum, llaid, rlaid, out, eng, row),
     }
 }
@@ -1440,8 +1520,9 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
 /// reads them.
 trait Lanes: Copy {
     /// Cell `i`'s floats, one a lane, and its dead marks, bit `k` for
-    /// lane `k`. Every pair field of the level is a cell.
-    fn at(self, i: usize) -> ([f64; LANES], u8);
+    /// lane `k`, read by pair `w` of the walk of the level's column pairs.
+    /// Every pair field of the level is a cell.
+    fn at(self, i: usize, w: usize) -> ([f64; LANES], u8);
 }
 
 /// One row every lane reads.
@@ -1460,7 +1541,7 @@ struct Laid<'r> {
 
 impl Lanes for Shared<'_> {
     #[inline(always)]
-    fn at(self, i: usize) -> ([f64; LANES], u8) {
+    fn at(self, i: usize, _w: usize) -> ([f64; LANES], u8) {
         // Safety: every pair field is below its side's row width
         // (`row_width`), and a row holds a float and a mark for each.
         let (v, d) = unsafe { (*self.vals.get_unchecked(i), *self.dead.get_unchecked(i)) };
@@ -1470,10 +1551,27 @@ impl Lanes for Shared<'_> {
 
 impl Lanes for Laid<'_> {
     #[inline(always)]
-    fn at(self, i: usize) -> ([f64; LANES], u8) {
+    fn at(self, i: usize, _w: usize) -> ([f64; LANES], u8) {
         // Safety: as for `Shared`; laid rows hold `LANES` floats and one
         // mark for each cell of a row.
         unsafe { (self.vals.as_ptr().add(i * LANES).cast::<[f64; LANES]>().read(), *self.marks.get_unchecked(i)) }
+    }
+}
+
+/// One row every lane reads, gathered ([`Gather`]).
+#[derive(Clone, Copy)]
+struct Gathered<'r> {
+    vals: &'r [f64],
+    dead: &'r [u8],
+}
+
+impl Lanes for Gathered<'_> {
+    #[inline(always)]
+    fn at(self, _i: usize, w: usize) -> ([f64; LANES], u8) {
+        // Safety: the walk reads as many pairs as the gather holds floats
+        // and marks, the level's column pairs.
+        let (v, d) = unsafe { (*self.vals.get_unchecked(w), *self.dead.get_unchecked(w)) };
+        ([v; LANES], 0u8.wrapping_sub(d))
     }
 }
 
@@ -1517,6 +1615,7 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
     let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    let mut w = 0;
     for j in 0..width {
         let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
         if g.is_empty() {
@@ -1526,8 +1625,9 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
         charge(gate, &mut due_at, &mut due, g.len() as u64)?;
         let (mut acc, mut live, mut bad) = ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
         for q in g {
-            let (a, da) = l.at(q.left.0 as usize);
-            let (b, db) = r.at(q.right.0 as usize);
+            let (a, da) = l.at(q.left.0 as usize, w);
+            let (b, db) = r.at(q.right.0 as usize, w);
+            w += 1;
             for k in 0..LANES {
                 let (p, ok) = S::times(a[k], b[k]);
                 acc[k] += p;
