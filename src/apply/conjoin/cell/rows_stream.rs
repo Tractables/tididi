@@ -407,8 +407,9 @@ struct ValueSide<'b> {
     /// The slots' floats and marks, `n + 1` a slot.
     vals: &'b mut [f64],
     dead: &'b mut [u8],
-    /// Each slot's least nonzero float (infinite where none is), its
-    /// greatest, and one where a cell of it is dead.
+    /// Each slot's least nonzero float (infinite where none is or the
+    /// read finds none, [`read`](Self::read)), its greatest, and one where
+    /// a cell of it is dead.
     stats: &'b mut [f64],
     /// Each child row's kept slot, [`NO_SLOT`] where it has none, where
     /// the side keeps rows; empty where it keeps none.
@@ -477,26 +478,26 @@ impl<'b> ValueSide<'b> {
     /// Read child rows `at`, the rows of a block's lanes, for
     /// [`lane_values`]: into one slot, returned, where the side keeps the
     /// same row for every lane, else each read and laid as its lane. Also
-    /// each lane's least and greatest nonzero floats and whether a cell of
-    /// its row is dead.
+    /// each lane's least and greatest nonzero floats, read where `stats`,
+    /// and whether a cell of its row is dead.
     #[inline(always)]
-    fn read_lanes<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: &[u32], lay: bool, factor: impl Fn(u32) -> Option<f64>) -> (usize, [(f64, f64, bool); LANES]) {
-        let mut stats = [(f64::INFINITY, 0.0, false); LANES];
+    fn read_lanes<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: &[u32], lay: bool, stats: bool, factor: impl Fn(u32) -> Option<f64>) -> (usize, [(f64, f64, bool); LANES]) {
+        let mut found = [(f64::INFINITY, 0.0, false); LANES];
         let mut s = 0;
         for (k, &a) in at.iter().enumerate() {
             if k == 0 || lay {
                 self.unpin();
-                s = self.read(side, node_idx, a, &factor);
+                s = self.read(side, node_idx, a, stats, &factor);
                 let r = self.row(s);
-                stats[k] = (r.lo, r.hi, r.any_dead);
+                found[k] = (r.lo, r.hi, r.any_dead);
                 if lay {
                     self.lay(s, k);
                 }
             } else {
-                stats[k] = stats[0];
+                found[k] = found[0];
             }
         }
-        (s, stats)
+        (s, found)
     }
 
     /// Whether row `at` has a kept slot or would get one.
@@ -528,11 +529,13 @@ impl<'b> ValueSide<'b> {
 
     /// The slot of child row `at` of `side`, read first where the side
     /// does not hold it, each cell as `factor` reads its node. A cell
-    /// `factor` names no float for is marked dead: no pair reads it. A row
-    /// read into a last slot holds it until [`unpin`](Self::unpin); at
-    /// most `spares` rows are read between.
+    /// `factor` names no float for is marked dead: no pair reads it. Where
+    /// `stats`, also the row's least and greatest nonzero floats, which
+    /// only a checked sum reads ([`rows_exact`]). A row read into a last
+    /// slot holds it until [`unpin`](Self::unpin); at most `spares` rows
+    /// are read between.
     #[inline(always)]
-    fn read<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: u32, factor: impl Fn(u32) -> Option<f64>) -> usize {
+    fn read<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: u32, stats: bool, factor: impl Fn(u32) -> Option<f64>) -> usize {
         let at = if self.fixed { 0 } else { at };
         let s = if self.kept(at) {
             let s = self.slot_of[at as usize];
@@ -568,7 +571,7 @@ impl<'b> ValueSide<'b> {
             *v = f;
             *d = u8::from(x.is_none());
             any |= *d;
-            if f != 0.0 {
+            if stats && f != 0.0 {
                 (lo, hi) = (lo.min(f), hi.max(f));
             }
         }
@@ -1249,8 +1252,8 @@ fn sum_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             }
             vr.left.unpin();
             vr.right.unpin();
-            let ls = vr.left.read(row.left, row.node_idx, p1.left.0, |c| sum.left_factor(c));
-            let rs = vr.right.read(row.right, row.node_idx, p1.right.0, |c| sum.right_factor(c));
+            let ls = vr.left.read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| sum.left_factor(c));
+            let rs = vr.right.read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| sum.right_factor(c));
             let (l, r) = (vr.left.row(ls), vr.right.row(rs));
             return match (l.any_dead || r.any_dead, !rows_exact::<S>(l, r)) {
                 (true, true) => one_pair_row_values::<true, true, _, _, _>(sum, l, r, eng, row),
@@ -1399,8 +1402,8 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         Lay::Right => (false, true),
         Lay::Both => (true, true),
     };
-    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, |c| sum.left_factor(c));
-    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, |c| sum.right_factor(c));
+    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| sum.left_factor(c));
+    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| sum.right_factor(c));
     let track = (0..m).any(|k| lst[k].2 || rst[k].2);
     let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
     let (sums, flags) = (&mut *ahead.sums, &mut *ahead.flags);
@@ -1648,8 +1651,8 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
             rside.unpin();
             let (mut ls, mut rs) = ([0usize; BLOCK], [0usize; BLOCK]);
             for (x, p) in block.iter().enumerate() {
-                ls[x] = lside.read(left, node_idx, p.left.0, |c| sum.left_factor(c));
-                rs[x] = rside.read(right, node_idx, p.right.0, |c| sum.right_factor(c));
+                ls[x] = lside.read(left, node_idx, p.left.0, S::CHECKED, |c| sum.left_factor(c));
+                rs[x] = rside.read(right, node_idx, p.right.0, S::CHECKED, |c| sum.right_factor(c));
             }
             let (l, r) = (ls.map(|s| lside.row(s)), rs.map(|s| rside.row(s)));
             let track = l.iter().chain(&r).any(|x| x.any_dead);
@@ -1672,8 +1675,8 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
         lside.unpin();
         rside.unpin();
-        let ls = lside.read(left, node_idx, a, |c| sum.left_factor(c));
-        let rs = rside.read(right, node_idx, b, |c| sum.right_factor(c));
+        let ls = lside.read(left, node_idx, a, S::CHECKED, |c| sum.left_factor(c));
+        let rs = rside.read(right, node_idx, b, S::CHECKED, |c| sum.right_factor(c));
         let (l, r) = (lside.row(ls), rside.row(rs));
         match (l.any_dead || r.any_dead, !rows_exact::<S>(l, r)) {
             (true, true) => add_values::<true, true, S>(sums, flags, ones, l, r),
