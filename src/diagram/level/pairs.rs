@@ -694,13 +694,35 @@ impl TddLevel {
     /// A node of this stored level holding other than `k` pairs, when one
     /// does: the node the last close found ([`uneven`](Self::uneven)) when
     /// it still does, else the first.
+    ///
+    /// On a level without a side table every node's words hold its count
+    /// ([`EncodedNode::held_count`]). The first few nodes are read one at a
+    /// time, where many levels of another count differ already, and the
+    /// rest compared a run at a time without a branch, which vectorizes;
+    /// the run that holds another count is then read node by node.
     pub(crate) fn uneven_node(&self, k: usize) -> Option<usize> {
+        /// Nodes read one at a time before the runs.
+        const HEAD: usize = 16;
+        /// Nodes compared at a time.
+        const RUN: usize = 64;
         let nodes = self.nodes.stored();
         let hint = self.uneven as usize;
         if nodes.get(hint).is_some_and(|n| self.held_pairs(n) != k) {
             return Some(hint);
         }
-        nodes.iter().skip(1).position(|n| self.held_pairs(n) != k).map(|i| i + 1)
+        let rest = nodes.get(1..).unwrap_or_default();
+        match u32::try_from(k) {
+            Ok(k) if self.ranges.is_empty() => {
+                let head = rest.len().min(HEAD);
+                if let Some(i) = rest[..head].iter().position(|n| n.held_count() != k) {
+                    return Some(i + 1);
+                }
+                let run = rest[head..].chunks(RUN).position(|run| run.iter().fold(false, |differ, n| differ | (n.held_count() != k)))?;
+                let at = head + run * RUN;
+                rest[at..].iter().position(|n| n.held_count() != k).map(|i| at + i + 1)
+            }
+            _ => rest.iter().position(|n| self.held_pairs(n) != k).map(|i| i + 1),
+        }
     }
 
     /// The pair count of every node in index order. Empty on a marginal
