@@ -1409,25 +1409,30 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
     }
 }
 
-/// [`EmitLoneColumns`] on a row of `K` f pairs whose every cell the
-/// arenas have room for ([`ArenaRow`]): each f pair's child rows read once
-/// for the row, each cell's survivors written straight into the arena and
-/// closed into its node, and the gate counted down a cell at a time and
-/// polled at the cell that brings it due, as a poll a cell would charge it.
+/// [`EmitLoneColumns`] on a row of `K`, one or two, f pairs whose every
+/// cell the arenas have room for ([`ArenaRow`]): each f pair's child rows
+/// read once for the row, each cell's survivors written straight into the
+/// arena through a [`RowCursor`] held in registers and closed into its
+/// node, and the gate counted down a cell at a time and polled at the cell
+/// that brings it due, as a poll a cell would charge it.
 #[inline(always)]
 fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     sink: &mut ReservedEmitSink<'_>,
     lone: &[ChildPair],
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
+    const { assert!(K == 1 || K == 2, "a whole row holds one or two f pairs") };
     let WholeRow { row_base, f_pairs, node_idx, left, right, gate, .. } = row;
     let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(0) };
-    // A row of one f pair writes nodes held inline, and no pair to the
+    let width = lone.len();
+    // A cell of one f pair is a node held inline: it writes no pair to the
     // pair arena.
-    let pairs = if K == 1 { 0 } else { lone.len() * K };
-    let Some(mut out) = sink.open_row(pairs, lone.len()) else { return Ok(0) };
+    let Some(mut out) = sink.open_row(if K == 1 { 0 } else { width * K }, width) else { return Ok(0) };
     super::super::note_whole_row();
-    let rows: [(L::Row, R::Row); K] = std::array::from_fn(|t| (left.row(f[t].left.0), right.row(f[t].right.0)));
+    let (l0, r0) = (left.row(f[0].left.0), right.row(f[0].right.0));
+    let (l1, r1) = (left.row(f[K - 1].left.0), right.row(f[K - 1].right.0));
+    // The row's write position held in registers across its cells.
+    let mut cursor = out.cursor();
     let units = K as u64;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     for (j, q) in lone.iter().enumerate() {
@@ -1439,37 +1444,37 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
             due -= units;
         }
         let (c, d) = (q.left.0, q.right.0);
-        if K == 1 {
-            let (l, r) = rows[0];
+        // An f pair's product with the column's pair: `None` where a side
+        // has none.
+        let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
             let lc = left.get_in_row(node_idx, l, c);
             if left.kills() && lc == NO_PRODUCT {
-                continue;
+                return None;
             }
             let rc = right.get_in_row(node_idx, r, d);
-            if right.kills() && rc == NO_PRODUCT {
-                continue;
+            (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
+        };
+        let first = product(node_idx, l0, r0);
+        // Safety: the row was opened for a node a column and, with two f
+        // pairs, for two pairs a column.
+        let node = unsafe {
+            if K == 1 {
+                first.map(|(lc, rc)| cursor.single_node(lc, rc))
+            } else {
+                match (first, product(node_idx, l1, r1)) {
+                    (Some((a, b)), Some((c, d))) => Some(cursor.pair_node(a, b, c, d)),
+                    (Some((a, b)), None) | (None, Some((a, b))) => Some(cursor.single_node(a, b)),
+                    (None, None) => None,
+                }
             }
-            // Safety: the row was opened for a node a column.
-            unsafe { out.single(node_idx, row_base + j, lc, rc) };
-            continue;
+        };
+        if let Some(node) = node {
+            node_idx[row_base + j] = node;
         }
-        for &(l, r) in &rows {
-            let lc = left.get_in_row(node_idx, l, c);
-            if left.kills() && lc == NO_PRODUCT {
-                continue;
-            }
-            let rc = right.get_in_row(node_idx, r, d);
-            if right.kills() && rc == NO_PRODUCT {
-                continue;
-            }
-            // Safety: the row was opened for `K` pairs a column.
-            unsafe { out.push(lc, rc) };
-        }
-        // Safety: the row was opened for a node a column.
-        unsafe { out.close(node_idx, row_base + j) };
     }
+    out.set_cursor(cursor);
     gate.add_short(due_at - due);
-    Ok(lone.len())
+    Ok(width)
 }
 
 /// The most f pairs a row [`emit_row`] writes holds.
