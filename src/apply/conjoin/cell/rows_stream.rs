@@ -339,6 +339,18 @@ impl PairSink for PlainSink<'_> {
 /// grid reads has bit 31 set.
 const DEAD_COLUMN: u32 = u32::MAX;
 
+/// Column `j`'s pairs: where `ONES`, its one pair off `ones`, the level's
+/// columns as [`read_columns`] reads them, and none for a [`DEAD_COLUMN`];
+/// else as [`column_pairs`] reads them.
+#[inline(always)]
+fn pairs_at<'a, const ONES: bool>(ones: &'a [ChildPair], ctx: &'a CellCtx<'_>, level: &'a TddLevel, j: usize, scratch: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
+    if ONES {
+        let q = &ones[j];
+        return if q.left.0 == DEAD_COLUMN { &[] } else { std::slice::from_ref(q) };
+    }
+    column_pairs(ctx, level, j, scratch)
+}
+
 /// The level's columns as [`sum_row`] reads them: into `ones` each column's
 /// one pair, [`DEAD_COLUMN`] on both sides for a column without pairs, where
 /// no column has two pairs or more and the level has two columns or more
@@ -1255,11 +1267,15 @@ fn sum_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             let ls = vr.left.read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| sum.left_factor(c));
             let rs = vr.right.read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| sum.right_factor(c));
             let (l, r) = (vr.left.row(ls), vr.right.row(rs));
-            return match (l.any_dead || r.any_dead, !rows_exact::<S>(l, r)) {
-                (true, true) => one_pair_row_values::<true, true, _, _, _>(sum, l, r, eng, row),
-                (true, false) => one_pair_row_values::<true, false, _, _, _>(sum, l, r, eng, row),
-                (false, true) => one_pair_row_values::<false, true, _, _, _>(sum, l, r, eng, row),
-                (false, false) => one_pair_row_values::<false, false, _, _, _>(sum, l, r, eng, row),
+            return match (l.any_dead || r.any_dead, !rows_exact::<S>(l, r), ones.is_empty()) {
+                (true, true, true) => one_pair_row_values::<true, true, false, _, _, _>(sum, ones, l, r, eng, row),
+                (true, false, true) => one_pair_row_values::<true, false, false, _, _, _>(sum, ones, l, r, eng, row),
+                (false, true, true) => one_pair_row_values::<false, true, false, _, _, _>(sum, ones, l, r, eng, row),
+                (false, false, true) => one_pair_row_values::<false, false, false, _, _, _>(sum, ones, l, r, eng, row),
+                (true, true, false) => one_pair_row_values::<true, true, true, _, _, _>(sum, ones, l, r, eng, row),
+                (true, false, false) => one_pair_row_values::<true, false, true, _, _, _>(sum, ones, l, r, eng, row),
+                (false, true, false) => one_pair_row_values::<false, true, true, _, _, _>(sum, ones, l, r, eng, row),
+                (false, false, false) => one_pair_row_values::<false, false, true, _, _, _>(sum, ones, l, r, eng, row),
             };
         }
         return one_pair_row(sum, eng, row);
@@ -1321,11 +1337,13 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
 }
 
 /// [`sum_row`] on a row of one f pair whose child rows are `l` and `r`;
-/// `TRACK` where a cell of them is dead, and `CHECK` where a product of
-/// them may not be its float ([`rows_exact`]).
+/// `TRACK` where a cell of them is dead, `CHECK` where a product of them
+/// may not be its float ([`rows_exact`]), and `ONES` where each column's
+/// pairs are read off `ones` ([`pairs_at`]).
 #[inline(always)]
-fn one_pair_row_values<const TRACK: bool, const CHECK: bool, L: ChildLookup, R: ChildLookup, S: RowSum>(
+fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
+    ones: &[ChildPair],
     l: RowFloats<'_>,
     r: RowFloats<'_>,
     eng: &Engine,
@@ -1336,7 +1354,7 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, L: ChildLookup, R: 
     let (lv, ld, rv, rd) = (l.vals, l.dead, r.vals, r.dead);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     for j in 0..width {
-        let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        let g = pairs_at::<ONES>(ones, ctx, right_level_t, j, g_pairs_scratch);
         if g.is_empty() {
             node_idx[row_base + j] = NO_PRODUCT;
             continue;
