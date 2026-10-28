@@ -16,7 +16,7 @@ use crate::Engine;
 use crate::diagram::{return_levels, ChildSide, LeafLabel, NodeIdx, Tdd, WeightStore, WeightValue, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::execution::pool::{Buffers, Drain, Pool, PooledScratch, Pools, Scratch};
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 /// A validated placement of a source vtree into a destination vtree.
 ///
@@ -687,23 +687,24 @@ impl Plan {
         // so the stack holds one entry at most for each source leaf.
         lim.reserve_exact(stack, source.num_nodes() / 2 + 1)?;
         lim.try_push(stack, (into.root(), source.root()))?;
-        while let Some((d, s)) = stack.pop() {
-            *visited += 1;
-            if !into.node(d).is_leaf() {
-                let (left, right) = into.children(d);
-                if free[left.idx()] || free[right.idx()] {
-                    let carries = if free[left.idx()] { right } else { left };
-                    lim.try_push(stack, (carries, s))?;
-                    lim.try_push(pass_throughs, d)?;
-                    continue;
+        while let Some((mut d, s)) = stack.pop() {
+            // Down the chain of pass-throughs at `d` to the node `s` maps
+            // to, each visited at `s`.
+            let image = loop {
+                *visited += 1;
+                match into.node(d) {
+                    &VtreeNode::Internal { left, right, .. } if free[left.idx()] || free[right.idx()] => {
+                        lim.try_push(pass_throughs, d)?;
+                        d = if free[left.idx()] { right } else { left };
+                    }
+                    node => break node,
                 }
-            }
-            match (into.node(d).is_leaf(), source.node(s).is_leaf()) {
+            };
+            match (image, source.node(s)) {
                 // A source leaf meets the destination leaf carrying its image.
-                (true, true) if embedding[s.idx()] == d => {}
-                (false, false) => {
-                    let (left, right) = into.children(d);
-                    let (mut source_left, mut source_right) = source.children(s);
+                (VtreeNode::Leaf { .. }, VtreeNode::Leaf { .. }) if embedding[s.idx()] == d => {}
+                (&VtreeNode::Internal { left, right, .. }, &VtreeNode::Internal { left: source_left, right: source_right, .. }) => {
+                    let (mut source_left, mut source_right) = (source_left, source_right);
                     if *mirror && lies_under(into, embedding[some_leaf[source_left.idx()].idx()], right, d) {
                         mirrored[s.idx()] = true;
                         std::mem::swap(&mut source_left, &mut source_right);
