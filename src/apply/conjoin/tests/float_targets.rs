@@ -8,6 +8,7 @@ use num_rational::BigRational;
 
 use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightStore};
+use super::{FloatRows, FLOAT_ROWS};
 use crate::test_helpers::{assert_canonical, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -139,6 +140,51 @@ fn values_beyond_one_scale_match_the_exact_value() {
         }
     }
     assert!(crate::value::float_col::tests::widenings() > widened, "no column widened");
+}
+
+/// The value `walk` gives with this thread's streamed float levels summed
+/// the way `rows` says, as its mantissa's bits and its exponent.
+fn walk_bits(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &WeightStore, rows: FloatRows) -> (u64, i64) {
+    FLOAT_ROWS.with(|m| m.set(rows));
+    let d = walk(eng, tree, clauses, store);
+    FLOAT_ROWS.with(|m| m.set(FloatRows::Sum));
+    let v = *value(eng, &d).as_scaled().expect("a scaled value");
+    (v.mantissa().to_bits(), v.exponent())
+}
+
+/// A streamed level summed a row at a time, its child rows read as floats
+/// or kept, gives the value the cell-at-a-time sums give, bit for bit:
+/// positive weights, signed ones (which fold the scaled way), and weights
+/// hundreds of binades apart (which check products).
+#[test]
+fn row_sums_match_the_cell_sums_bit_for_bit() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x5e1d);
+    for num_vars in [5u32, 8, 11] {
+        for (shape, tree) in vtree_shapes(num_vars) {
+            for round in 0..3 {
+                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: num_vars as usize + 2, width: 3 });
+                let weights = if round < 2 {
+                    draw_weights(&mut rng, num_vars, round == 1)
+                } else {
+                    RationalWeights::from_literals(
+                        &(0..num_vars)
+                            .map(|v| LiteralWeights {
+                                negative: power_of_two(500 * ((v % 3) as i32 - 1)),
+                                positive: power_of_two(-450 * (v % 2) as i32) * rat(3, 1 + v as i64),
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                let store = WeightStore::new(weights, Arithmetic::ScaledFloat);
+                let want = walk_bits(&eng, &tree, &clauses, &store, FloatRows::Cells);
+                for rows in [FloatRows::Sum, FloatRows::Eager] {
+                    let got = walk_bits(&eng, &tree, &clauses, &store, rows);
+                    assert_eq!(got, want, "{shape}, {num_vars} vars, round {round}, {rows:?}");
+                }
+            }
+        }
+    }
 }
 
 /// A conjunction refused at any reserve, the conversion of its kept columns

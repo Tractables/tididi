@@ -262,6 +262,125 @@ impl<'a> PlainProducts<'a> {
         let r = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
         (l * self.by.0) * (r * self.by.1)
     }
+
+    /// The left factor of [`product`](Self::product) for the value `lc`
+    /// names, `None` where it names no value of the column: the product is
+    /// the two factors' product.
+    #[inline(always)]
+    pub(crate) fn left_factor(&self, lc: u32) -> Option<f64> {
+        self.lview.child(EncodedChildRef::from_raw(lc)).index().and_then(|i| self.left.get(i)).map(|&l| l * self.by.0)
+    }
+
+    /// The right factor of [`product`](Self::product), as
+    /// [`left_factor`](Self::left_factor).
+    #[inline(always)]
+    pub(crate) fn right_factor(&self, rc: u32) -> Option<f64> {
+        self.rview.child(EncodedChildRef::from_raw(rc)).index().and_then(|i| self.right.get(i)).map(|&r| r * self.by.1)
+    }
+}
+
+/// The products of two narrow child columns with no float negative, each
+/// float times the other as the columns hold them, standing under the sum
+/// of the columns' scales: where every product of a cell is a normal float
+/// or a product with a zero factor, and the cell's sum stays finite, the
+/// float sum in pair order is [`FloatFold::fold`]'s value bit for bit, as
+/// [`plain_fold`] argues for a level whose offsets keep every product so.
+pub(crate) struct CheckedProducts<'a> {
+    left: &'a [f64],
+    lview: ChildDecoder,
+    right: &'a [f64],
+    rview: ChildDecoder,
+    scale: i64,
+}
+
+impl<'a> CheckedProducts<'a> {
+    /// The products of the floats `left.0` under the scale `left.1`, read
+    /// through `lview`, and the floats `right.0` under `right.1`, read
+    /// through `rview`: each a child column's [`plain_floats`].
+    pub(crate) fn new(left: (&'a [f64], i64), lview: ChildDecoder, right: (&'a [f64], i64), rview: ChildDecoder) -> Self {
+        CheckedProducts { left: left.0, lview, right: right.0, rview, scale: left.1 + right.1 }
+    }
+
+    /// The product of the left value `lc` names and the right value `rc`
+    /// names, and whether the float is the product: a normal float above
+    /// the least one (a product rounded up to it from below may not be),
+    /// or a zero factor's.
+    #[inline(always)]
+    pub(crate) fn product(&self, lc: u32, rc: u32) -> (f64, bool) {
+        let a = self.left[self.lview.index(EncodedChildRef::from_raw(lc))];
+        let b = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
+        Self::times(a, b)
+    }
+
+    /// The product of the floats `a` and `b`, and whether it is their
+    /// product, as [`product`](Self::product) forms it.
+    #[inline(always)]
+    pub(crate) fn times(a: f64, b: f64) -> (f64, bool) {
+        let p = a * b;
+        (p, (p > f64::MIN_POSITIVE && p < f64::INFINITY) || a == 0.0 || b == 0.0)
+    }
+
+    /// The left float of [`product`](Self::product) for the value `lc`
+    /// names, `None` where it names no value of the column.
+    #[inline(always)]
+    pub(crate) fn left_factor(&self, lc: u32) -> Option<f64> {
+        self.lview.child(EncodedChildRef::from_raw(lc)).index().and_then(|i| self.left.get(i)).copied()
+    }
+
+    /// The right float of [`product`](Self::product), as
+    /// [`left_factor`](Self::left_factor).
+    #[inline(always)]
+    pub(crate) fn right_factor(&self, rc: u32) -> Option<f64> {
+        self.rview.child(EncodedChildRef::from_raw(rc)).index().and_then(|i| self.right.get(i)).copied()
+    }
+
+    /// The value of a cell's float sum of such products.
+    #[inline(always)]
+    pub(crate) fn value(&self, sum: f64) -> ScaledFloat {
+        ScaledFloat::at_offset(sum, self.scale)
+    }
+}
+
+/// A child column's values as floats `x` standing for `x · 2^scale`, none
+/// negative: a narrow column's own floats, and any other column's values
+/// each [`ScaledFloat::offset_from`] the middle of their exponents, written
+/// into `buf`; `None` where a value is negative or lies too far from that
+/// middle for a normal float.
+pub(crate) fn plain_floats<'b>(
+    eng: &Engine,
+    child: &'b StreamChild<'_, FloatFold>,
+    buf: &'b mut Vec<f64>,
+) -> Result<Option<(&'b [f64], i64)>, OperationError> {
+    let col = &child.col;
+    if let Some(p) = col.plain() {
+        return Ok((!p.at.neg).then_some((p.vals, p.at.scale)));
+    }
+    let n = match col {
+        FloatColumn::Folded(FloatSlice::Wide(vals)) => vals.len(),
+        FloatColumn::Stored(vals) => vals.len(),
+        FloatColumn::Leaf(vals) => vals.len(),
+        _ => return Ok(None),
+    };
+    let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+    for i in 0..n {
+        let v = col.get(i);
+        if v.mantissa().is_sign_negative() {
+            return Ok(None);
+        }
+        if !v.is_zero() {
+            (lo, hi) = (lo.min(v.exponent()), hi.max(v.exponent()));
+        }
+    }
+    let scale = if lo <= hi { lo / 2 + hi / 2 } else { 0 };
+    buf.clear();
+    eng.limits().reserve(buf, n)?;
+    for i in 0..n {
+        match col.get(i).offset_from(scale) {
+            Some(x) => buf.push(x),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some((&buf[..], scale)))
 }
 
 /// Resolve a child reference of level `level_idx` for the ensure walk, as

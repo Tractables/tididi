@@ -37,6 +37,35 @@ thread_local! {
     static SUMMED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// How a test thread sums its streamed float levels ([`FLOAT_ROWS`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FloatRows {
+    /// As the library sums them.
+    Sum,
+    /// A cell at a time, as the row loop's cells are summed: the sums a
+    /// row at a time give each cell bit for bit.
+    Cells,
+    /// A row at a time, reading child rows as floats wherever the column
+    /// pairs name grid cells, and keeping every row a side comes back to.
+    Eager,
+}
+
+thread_local! {
+    /// The way this test thread sums its streamed float levels.
+    pub(crate) static FLOAT_ROWS: std::cell::Cell<FloatRows> = const { std::cell::Cell::new(FloatRows::Sum) };
+}
+
+/// Whether this thread sums streamed float levels a cell at a time.
+pub(crate) fn cells_only() -> bool {
+    FLOAT_ROWS.with(|m| m.get() == FloatRows::Cells)
+}
+
+/// Whether this thread reads child rows as floats and keeps them wherever
+/// it can.
+pub(crate) fn eager() -> bool {
+    FLOAT_ROWS.with(|m| m.get() == FloatRows::Eager)
+}
+
 pub(super) fn two_step_forced() -> bool {
     TWO_STEP.with(std::cell::Cell::get)
 }

@@ -241,5 +241,5 @@ pub(crate) trait ValueDomain: Sized {
 
 mod count;
 mod float;
-pub(crate) use float::PlainProducts;
+pub(crate) use float::{plain_floats, CheckedProducts, PlainProducts};
 mod weight;

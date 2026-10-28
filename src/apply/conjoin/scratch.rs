@@ -17,6 +17,15 @@ pub(crate) struct ApplyScratch {
     pub(crate) relabel_left: Pool<Vec<u32>>,
     pub(crate) relabel_right: Pool<Vec<u32>>,
     pub(crate) relabel_map: Pool<Vec<u32>>,
+    /// A streamed level's child rows read as floats, and its row sums.
+    pub(crate) sum_floats: Pool<Vec<f64>>,
+    /// Their dead cells, and the row sums' flags.
+    pub(crate) sum_flags: Pool<Vec<u8>>,
+    /// A summed level's child columns as floats under one scale.
+    pub(crate) left_floats: Pool<Vec<f64>>,
+    pub(crate) right_floats: Pool<Vec<f64>>,
+    /// The slots of the child rows a streamed level keeps as floats.
+    pub(crate) row_slots: Pool<Vec<u32>>,
 }
 
 impl Pools for ApplyScratch {
@@ -31,6 +40,11 @@ impl Pools for ApplyScratch {
         visit(&self.relabel_left);
         visit(&self.relabel_right);
         visit(&self.relabel_map);
+        visit(&self.sum_floats);
+        visit(&self.sum_flags);
+        visit(&self.left_floats);
+        visit(&self.right_floats);
+        visit(&self.row_slots);
     }
 }
 
