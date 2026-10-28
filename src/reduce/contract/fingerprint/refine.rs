@@ -1020,8 +1020,8 @@ impl Partition<'_> {
     /// with no sort, hash or compare. The nodes not alone are first
     /// bucketed by sibling in `bucket`: where the pairs come in sibling
     /// order, each run's as it is read, in one pass that also finds the
-    /// order; else in two passes over the pairs that read only siblings,
-    /// after that one stops, unless the pairs name at most
+    /// order; else in two passes over the pairs after that one stops
+    /// ([`Self::split_scattered`]), unless the pairs name at most
     /// [`FEW_SIBLINGS`] siblings and the nodes are split by their codes
     /// instead ([`Self::split_by_codes`]). `column` is zero between calls,
     /// as [`Self::split_by_degree`] reads it.
@@ -1092,11 +1092,41 @@ impl Partition<'_> {
         if self.split_by_codes(lim, pairs, side, bucket, seen, met, code, touched, rows)? {
             return Ok(());
         }
+        // Where most of the level's nodes are alone, the pairs of those
+        // already alone are left out; elsewhere reading every pair's alone
+        // bit costs more than the pairs it leaves out.
+        if self.twinable * 2 < self.class.len() {
+            self.split_scattered::<true>(lim, pairs, side, column, touched, bucket, met, seen)
+        } else {
+            self.split_scattered::<false>(lim, pairs, side, column, touched, bucket, met, seen)
+        }
+    }
+
+    /// The nodes of a wide parent node whose pairs come in no order of
+    /// their siblings bucketed by sibling in `bucket`, in two passes over
+    /// the pairs: one counts each sibling's nodes and one puts them. Each
+    /// bucket is then split ([`Self::split_sibling`]). With `SKIP_ALONE`
+    /// both passes leave out the pairs of nodes already alone.
+    #[allow(clippy::too_many_arguments)]
+    fn split_scattered<const SKIP_ALONE: bool>(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        column: &mut Vec<u32>,
+        touched: &mut Vec<u32>,
+        bucket: &mut [u32],
+        met: &mut Vec<u32>,
+        seen: &mut [u32],
+    ) -> Result<(), OperationError> {
         touched.clear();
         // `column` grows to the siblings as they are counted; on a refusal
         // the counts made are cleared first.
         for pair in pairs {
-            let s = split_pair(pair, side).1;
+            let (t, s) = split_pair(pair, side);
+            if SKIP_ALONE && (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 != 0 {
+                continue;
+            }
             if s as usize >= column.len()
                 && let Err(e) = lim.try_resize(column, (s as usize + 1).next_power_of_two(), 0u32)
             {
@@ -1120,6 +1150,9 @@ impl Partition<'_> {
         }
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
+            if SKIP_ALONE && (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 != 0 {
+                continue;
+            }
             let e = &mut column[s as usize];
             bucket[*e as usize] = t;
             *e += 1;
