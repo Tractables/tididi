@@ -9,10 +9,10 @@ use crate::diagram::{EncodedChildRef, ScaledFloat, WeightStore};
 use crate::value::{plain_floats, CheckedProducts, FloatCol, PlainProducts, StreamChild};
 
 // A test sums its streamed float levels a cell at a time, as the oracle
-// for the row sums, or reads and keeps child rows and adds blocks of f
-// pairs wherever it can, and counts the blocks.
+// for the row sums, or reads and keeps child rows and sums blocks of f
+// pairs and of rows wherever it can, and counts the blocks.
 #[cfg(test)]
-use crate::apply::conjoin::tests::{cells_only, eager, note_block};
+use crate::apply::conjoin::tests::{cells_only, eager, note_block, note_lanes};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -29,6 +29,10 @@ fn eager() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_block() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_lanes() {}
 
 impl<F: ValueDomain> StreamState<'_, F> {
     /// Fold one cell into the output column and record its slot in the grid,
@@ -98,7 +102,8 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
         }
         let pools = &eng.scratch.apply;
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots };
+        let mut next = pools.cell_pairs.checkout(eng);
+        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
         let mut action = sum_rows(eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
@@ -115,7 +120,8 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
         let sum = CheckedSum { products, left: lchild, right: rchild, counts, store, cell: &mut cell_pairs };
         let pools = &eng.scratch.apply;
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots };
+        let mut next = pools.cell_pairs.checkout(eng);
+        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
         let mut action = sum_rows(eng, rows, left, right, sum, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
@@ -389,7 +395,9 @@ const NO_SLOT: u32 = u32::MAX;
 /// level, as many as it has room for; the last slots, one for each f pair
 /// of a [`BLOCK`] or one, hold the other rows read last. A side that carries
 /// the g pair's field through has no grid: one row, the value of each of
-/// its fields, serves the whole level.
+/// its fields, serves the whole level. A side whose rows are narrow against
+/// the level's pairs also lays the rows of a block of [`LANES`] rows side by
+/// side ([`lay`](Self::lay)).
 struct ValueSide<'b> {
     /// The floats a row holds.
     n: usize,
@@ -415,6 +423,11 @@ struct ValueSide<'b> {
     spares: usize,
     pinned: u8,
     next: usize,
+    /// The rows of a block laid side by side, float `q` of lane `k` at
+    /// `q * LANES + k`, and bit `k` of mark `q` set where that cell is
+    /// dead; empty where the side lays none.
+    lanes: &'b mut [f64],
+    marks: &'b mut [u8],
 }
 
 /// A child row as a [`ValueSide`] holds it.
@@ -428,9 +441,62 @@ struct RowFloats<'r> {
 }
 
 impl<'b> ValueSide<'b> {
-    fn new(n: usize, fixed: bool, spares: usize, vals: &'b mut [f64], dead: &'b mut [u8], stats: &'b mut [f64], slot_of: &'b mut [u32]) -> Self {
+    #[expect(clippy::too_many_arguments)]
+    fn new(
+        n: usize,
+        fixed: bool,
+        spares: usize,
+        vals: &'b mut [f64],
+        dead: &'b mut [u8],
+        stats: &'b mut [f64],
+        slot_of: &'b mut [u32],
+        (lanes, marks): (&'b mut [f64], &'b mut [u8]),
+    ) -> Self {
         let cap = (stats.len() / 3 - spares) as u32;
-        ValueSide { n, fixed, vals, dead, stats, slot_of, cap, used: 0, at: [NO_SLOT; BLOCK], spares, pinned: 0, next: 0 }
+        ValueSide { n, fixed, vals, dead, stats, slot_of, cap, used: 0, at: [NO_SLOT; BLOCK], spares, pinned: 0, next: 0, lanes, marks }
+    }
+
+    /// Whether the side lays rows side by side.
+    #[inline(always)]
+    fn lays(&self) -> bool {
+        !self.marks.is_empty()
+    }
+
+    /// Lay the row slot `s` holds as lane `k`.
+    #[inline(always)]
+    fn lay(&mut self, s: usize, k: usize) {
+        let w = self.n + 1;
+        let (vals, dead) = (&self.vals[s * w..s * w + w], &self.dead[s * w..s * w + w]);
+        let bit = 1u8 << k;
+        for ((lane, mark), (&v, &d)) in self.lanes.chunks_exact_mut(LANES).zip(self.marks.iter_mut()).zip(vals.iter().zip(dead)) {
+            lane[k] = v;
+            *mark = (*mark & !bit) | (d << k);
+        }
+    }
+
+    /// Read child rows `at`, the rows of a block's lanes, for
+    /// [`lane_values`]: into one slot, returned, where the side keeps the
+    /// same row for every lane, else each read and laid as its lane. Also
+    /// each lane's least and greatest nonzero floats and whether a cell of
+    /// its row is dead.
+    #[inline(always)]
+    fn read_lanes<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: &[u32], lay: bool, factor: impl Fn(u32) -> Option<f64>) -> (usize, [(f64, f64, bool); LANES]) {
+        let mut stats = [(f64::INFINITY, 0.0, false); LANES];
+        let mut s = 0;
+        for (k, &a) in at.iter().enumerate() {
+            if k == 0 || lay {
+                self.unpin();
+                s = self.read(side, node_idx, a, &factor);
+                let r = self.row(s);
+                stats[k] = (r.lo, r.hi, r.any_dead);
+                if lay {
+                    self.lay(s, k);
+                }
+            } else {
+                stats[k] = stats[0];
+            }
+        }
+        (s, stats)
     }
 
     /// Whether row `at` has a kept slot or would get one.
@@ -526,7 +592,14 @@ impl<'b> ValueSide<'b> {
 /// nonnegative floats.
 #[inline(always)]
 fn rows_exact<S: RowSum>(l: RowFloats<'_>, r: RowFloats<'_>) -> bool {
-    !S::CHECKED || l.lo == f64::INFINITY || r.lo == f64::INFINITY || (S::times(l.lo, r.lo).1 && S::times(l.hi, r.hi).1)
+    spans_exact::<S>((l.lo, l.hi), (r.lo, r.hi))
+}
+
+/// [`rows_exact`] for rows whose least and greatest nonzero floats are
+/// `l` and `r`.
+#[inline(always)]
+fn spans_exact<S: RowSum>(l: (f64, f64), r: (f64, f64)) -> bool {
+    !S::CHECKED || l.0 == f64::INFINITY || r.0 == f64::INFINITY || (S::times(l.0, r.0).1 && S::times(l.1, r.1).1)
 }
 
 /// A row sum's flag: a pair of the cell lives.
@@ -534,22 +607,68 @@ const LIVE: u8 = 1;
 /// A row sum's flag: a product of the cell is not its float.
 const INEXACT: u8 = 2;
 
-/// [`sum_row`]'s child rows read as floats, and a row's sums against
-/// one-pair columns with their flags ([`LIVE`], [`INEXACT`]).
+/// [`sum_row`]'s child rows read as floats, a row's sums against one-pair
+/// columns with their flags ([`LIVE`], [`INEXACT`]), and the sums of rows
+/// a block of rows summed ahead of their turn.
 struct ValueRows<'b> {
     left: ValueSide<'b>,
     right: ValueSide<'b>,
     sums: &'b mut [f64],
     flags: &'b mut [u8],
+    ahead: Ahead<'b>,
 }
 
-/// The f pairs of a row against one-pair columns [`sum_row`] adds at a
-/// time, loading and storing each column's sum once for them.
+/// The f pairs of a row against one-pair columns [`ones_row_values`] adds
+/// at a time, loading and storing each column's sum once for them.
 const BLOCK: usize = 4;
 
-/// The column pairs a level has where [`sum_row`] adds f pairs a
-/// [`BLOCK`] at a time.
+/// The column pairs a level has where [`sum_row`] sums blocks of f pairs
+/// or of rows.
 const BLOCK_MIN_PAIRS: usize = 256;
+
+/// The rows of one f pair [`sum_row`] sums at a time ([`block_rows`]),
+/// walking each column's pairs once for all of them, and the fewest it
+/// sums so.
+const LANES: usize = 8;
+const LANES_MIN: usize = 4;
+
+/// The pairs a level's columns hold on average where [`sum_row`] sums
+/// blocks of rows: fewer, and a cell's own work outweighs its pairs'.
+const LANE_COLUMN_PAIRS: usize = 8;
+
+/// The share of the level's column pairs up to which a side's rows are
+/// narrow enough to lay side by side ([`ValueSide::lay`]): its floats at
+/// most the pairs over this.
+const LANE_ROW_SHARE: usize = 6;
+
+/// The bytes a level's blocks of rows may take: the sums held ahead and
+/// each side's rows laid side by side.
+const LANE_MAX_BYTES: usize = 64 << 20;
+
+/// The cell sums and flags of the rows after the first of a block of
+/// rows, a row's width each, empty on a level that sums no such blocks:
+/// rows `rows`, of which the first `got` have been appended, `held` in all.
+struct Ahead<'b> {
+    sums: &'b mut [f64],
+    flags: &'b mut [u8],
+    rows: [(usize, ChildPair); LANES - 1],
+    got: usize,
+    held: usize,
+}
+
+impl Ahead<'_> {
+    /// Where the sums of row `i` of f pair `p` are held, as the next held
+    /// row; none held after it otherwise.
+    #[inline(always)]
+    fn take(&mut self, i: usize, p: ChildPair) -> Option<usize> {
+        if self.got < self.held && self.rows[self.got] == (i, p) {
+            self.got += 1;
+            return Some(self.got - 1);
+        }
+        (self.got, self.held) = (0, 0);
+        None
+    }
+}
 
 /// How a level's f pairs read one child side's rows, in the order the row
 /// loop reaches them: one past the greatest row, the reads of a side
@@ -623,15 +742,45 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         kept
     };
     let (kl, kr) = (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed));
-    // A level of wide enough rows adds a block of f pairs at a time: a
-    // side holds a row for each.
-    let spares = if ones > 0 && (pairs >= BLOCK_MIN_PAIRS || eager()) { BLOCK } else { 1 };
+    // A level of wide enough rows sums a block of f pairs at a time, a
+    // side holding a row for each. A level of rows of one f pair whose
+    // columns hold enough pairs sums a block of rows at a time: a side
+    // whose rows are narrow against the level's pairs lays the block's
+    // rows side by side, the narrower side first, and the level holds the
+    // sums of the block's rows after the first, all within
+    // [`LANE_MAX_BYTES`].
+    let width = rows.ctx.right_width;
+    let spares = if pairs >= BLOCK_MIN_PAIRS || eager() { BLOCK } else { 1 };
+    let ahead_bytes = 9 * (LANES - 1) * width;
+    let blocks = spares == BLOCK
+        && rows.f_width >= 2
+        && width > 0
+        && (pairs >= LANE_COLUMN_PAIRS * width || eager())
+        && ahead_bytes <= LANE_MAX_BYTES;
+    let mut budget = if blocks { LANE_MAX_BYTES - ahead_bytes } else { 0 };
+    let mut lays = |n: usize, fixed: bool| {
+        let bytes = (n + 1) * (8 * LANES + 1);
+        let on = !fixed && (n.saturating_mul(LANE_ROW_SHARE) <= pairs || eager()) && bytes <= budget;
+        if on {
+            budget -= bytes;
+        }
+        on
+    };
+    let (ll, rl) = if sl <= sr {
+        let l = lays(sl, lfixed);
+        (l, lays(sr, rfixed))
+    } else {
+        let r = lays(sr, rfixed);
+        (lays(sl, lfixed), r)
+    };
+    let aw = if ll || rl { (LANES - 1) * width } else { 0 };
+    let (ml, mr) = (if ll { sl + 1 } else { 0 }, if rl { sr + 1 } else { 0 });
     let (ls, rs) = (kl + spares, kr + spares);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
-    let nf = wl + 3 * ls + wr + 3 * rs + ones;
+    let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr);
     lim.reserve(floats, nf)?;
     floats.resize(nf, 0.0);
-    let nd = wl + wr + ones;
+    let nd = wl + wr + ones + aw + ml + mr;
     lim.reserve(flags, nd)?;
     flags.resize(nd, 0);
     let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
@@ -642,12 +791,21 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let (lv, rest) = floats.split_at_mut(wl);
     let (lst, rest) = rest.split_at_mut(3 * ls);
     let (rv, rest) = rest.split_at_mut(wr);
-    let (rst, sums) = rest.split_at_mut(3 * rs);
+    let (rst, rest) = rest.split_at_mut(3 * rs);
+    let (sums, rest) = rest.split_at_mut(ones);
+    let (ahead_sums, rest) = rest.split_at_mut(aw);
+    let (llanes, rlanes) = rest.split_at_mut(LANES * ml);
     let (ld, rest) = flags.split_at_mut(wl);
-    let (rd, flags) = rest.split_at_mut(wr);
+    let (rd, rest) = rest.split_at_mut(wr);
+    let (flags, rest) = rest.split_at_mut(ones);
+    let (ahead_flags, rest) = rest.split_at_mut(aw);
+    let (lmarks, rmarks) = rest.split_at_mut(ml);
     let (lmap, rmap) = slots.split_at_mut(nl);
-    let (left, right) = (ValueSide::new(sl, lfixed, spares, lv, ld, lst, lmap), ValueSide::new(sr, rfixed, spares, rv, rd, rst, rmap));
-    Ok(Some(ValueRows { left, right, sums, flags }))
+    let left = ValueSide::new(sl, lfixed, spares, lv, ld, lst, lmap, (llanes, lmarks));
+    let right = ValueSide::new(sr, rfixed, spares, rv, rd, rst, rmap, (rlanes, rmarks));
+    let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
+    let ahead = Ahead { sums: ahead_sums, flags: ahead_flags, rows: [(0, none); LANES - 1], got: 0, held: 0 };
+    Ok(Some(ValueRows { left, right, sums, flags, ahead }))
 }
 
 /// Each child side's [`SideReads`] over the level's f pairs, its rows
@@ -882,31 +1040,104 @@ struct SumRows<'o, S> {
     /// The pairs of all the level's columns.
     pairs: usize,
     values: Option<ValueRows<'o>>,
+    peek: Peek<'o>,
 }
 
-/// The pooled buffers a [`SumRows`] holds: its one-pair columns, and its
-/// [`ValueRows`]' floats, marks and slots.
+/// The pooled buffers a [`SumRows`] holds: its one-pair columns, its
+/// [`ValueRows`]' floats, marks and slots, and the f pairs of the rows
+/// after a row.
 struct SumBuffers<'o> {
     ones: &'o mut Vec<ChildPair>,
     floats: &'o mut Vec<f64>,
     flags: &'o mut Vec<u8>,
     slots: &'o mut Vec<u32>,
+    next: &'o mut Vec<ChildPair>,
+}
+
+/// The level's rows as [`sum_row`] reads those after a row: the f pairs
+/// of a block's rows after its first, and the first row a block may
+/// start at.
+struct Peek<'o> {
+    f_level: &'o TddLevel,
+    f_width: usize,
+    scratch: &'o mut Vec<ChildPair>,
+    next: [ChildPair; LANES - 1],
+    from: usize,
+}
+
+/// The sides of a block of rows that lay its rows side by side; a side
+/// that does not reads the same row for all of them.
+#[derive(Clone, Copy)]
+enum Lay {
+    Left,
+    Right,
+    Both,
+}
+
+impl Peek<'_> {
+    /// The rows of a block starting at row `i` of f pair `p1`, at most
+    /// [`LANES`] and at least [`LANES_MIN`], their f pairs after `p1` in
+    /// `next`, and the sides that lay them: each row is one of one f pair
+    /// the row loop hands to [`sum_row`], reading its child rows reads at
+    /// most [`VALUE_ROW_READS`] cells a pair, and a side whose rows differ
+    /// lays them.
+    #[inline(never)]
+    fn block(&mut self, ctx: &CellCtx<'_>, i: usize, p1: ChildPair, vr: &ValueRows<'_>, pairs: usize) -> Option<(usize, Lay)> {
+        if i < self.from {
+            return None;
+        }
+        let (lview, rview) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+        let (lside, rside) = (&vr.left, &vr.right);
+        let (mut lsame, mut rsame) = (true, true);
+        let mut m = 1;
+        while m < LANES && i + m < self.f_width {
+            let f = self.f_level.pairs_view_decoded(i + m, self.scratch, lview, rview);
+            let &[p] = f else {
+                break;
+            };
+            if row_alive_masks(ctx, f).is_none() || (lside.cost(p.left.0) + rside.cost(p.right.0) > VALUE_ROW_READS * pairs && !eager()) {
+                break;
+            }
+            let (l, r) = (lsame && (lside.fixed || p.left == p1.left), rsame && (rside.fixed || p.right == p1.right));
+            if (!l && !lside.lays()) || (!r && !rside.lays()) {
+                break;
+            }
+            (lsame, rsame) = (l, r);
+            self.next[m - 1] = p;
+            m += 1;
+        }
+        let lay = match (lsame, rsame) {
+            (true, false) => Some(Lay::Right),
+            (false, true) => Some(Lay::Left),
+            (false, false) => Some(Lay::Both),
+            (true, true) => None,
+        };
+        match lay {
+            Some(lay) if m >= LANES_MIN || (eager() && m >= 2) => Some((m, lay)),
+            _ => {
+                self.from = i + m;
+                None
+            }
+        }
+    }
 }
 
 /// The [`SumRows`] of a level summed by `sum`.
-fn sum_rows<'o, S: RowSum, L: ChildLookup, R: ChildLookup>(
+fn sum_rows<'o, 'r: 'o, S: RowSum, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
-    rows: RowLoop<'_>,
+    rows: RowLoop<'r>,
     left: &L,
     right: &R,
     sum: S,
     bufs: SumBuffers<'o>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<SumRows<'o, S>, OperationError> {
-    let SumBuffers { ones, floats, flags, slots } = bufs;
+    let SumBuffers { ones, floats, flags, slots, next } = bufs;
     let (ones, pairs, bound) = read_columns(eng, rows, ones, scratch)?;
     let values = value_rows(eng, rows, left, right, (bound, ones.len(), pairs), floats, flags, slots, scratch)?;
-    Ok(SumRows { sum, ones, pairs, values })
+    let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
+    let peek = Peek { f_level: rows.f_level, f_width: rows.f_width, scratch: next, next: [none; LANES - 1], from: 0 };
+    Ok(SumRows { sum, ones, pairs, values, peek })
 }
 
 impl<L: ChildLookup, R: ChildLookup, S: RowSum> CellAction<L, R> for SumRows<'_, S> {
@@ -938,7 +1169,7 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum> CellAction<L, R> for SumRows<'_,
 
     #[inline(always)]
     fn whole_row(&mut self, eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
-        sum_row(&mut self.sum, self.ones, self.pairs, self.values.as_mut(), eng, row)
+        sum_row(&mut self.sum, self.ones, self.pairs, self.values.as_mut(), &mut self.peek, eng, row)
     }
 }
 
@@ -966,7 +1197,9 @@ fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, u
 /// one-pair columns ([`read_columns`]) f pair after f pair. Where `values`
 /// holds the level's [`ValueRows`] and reading an f pair's child rows reads
 /// at most [`VALUE_ROW_READS`] cells a pair it sums, the pairs read their
-/// floats off those rows. A cell a checked sum cannot hold goes through its
+/// floats off those rows, and a row of one f pair followed by such rows
+/// sums with them up to [`LANES`] at a time ([`block_rows`]), on a level
+/// with room for their sums. A cell a checked sum cannot hold goes through its
 /// cell sink, its pairs in the same order. Any other row is left to the
 /// cells (0 columns written).
 #[inline(always)]
@@ -975,14 +1208,29 @@ fn sum_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     ones: &[ChildPair],
     pairs: usize,
     values: Option<&mut ValueRows<'_>>,
+    peek: &mut Peek<'_>,
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     if row.f_pairs.len() == 1 {
         let p1 = row.f_pairs[0];
-        if let Some(vr) = values
-            && (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs || eager())
-        {
+        if let Some(vr) = values {
+            if !vr.ahead.sums.is_empty() {
+                let width = row.ctx.right_width;
+                let i = (row.row_base - row.ctx.output_grid_base) / width;
+                if let Some(k) = vr.ahead.take(i, p1) {
+                    let at = k * width..(k + 1) * width;
+                    return ahead_row(sum, &vr.ahead.sums[at.clone()], &vr.ahead.flags[at], eng, row);
+                }
+                if (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs || eager())
+                    && let Some((m, lay)) = peek.block(row.ctx, i, p1, vr, pairs)
+                {
+                    return block_rows(sum, i, p1, &peek.next[..m - 1], lay, vr, eng, row);
+                }
+            }
+            if vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) > VALUE_ROW_READS * pairs && !eager() {
+                return one_pair_row(sum, eng, row);
+            }
             vr.left.unpin();
             vr.right.unpin();
             let ls = vr.left.read(row.left, row.node_idx, p1.left.0, |c| sum.left_factor(c));
@@ -1104,6 +1352,208 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, L: ChildLookup, R: 
     Ok(width)
 }
 
+/// [`sum_row`] on row `i` of f pair `p1` and the rows of f pairs `next`
+/// after it, a block of at most [`LANES`]: their child rows read as
+/// floats, those of a side `lay` names laid side by side, each column's
+/// pairs walked once for the block, row `i`'s cells appended and the
+/// others' sums held until the row loop reaches their rows.
+#[expect(clippy::too_many_arguments)]
+#[inline(never)]
+fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    i: usize,
+    p1: ChildPair,
+    next: &[ChildPair],
+    lay: Lay,
+    vr: &mut ValueRows<'_>,
+    eng: &Engine,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    note_lanes();
+    let ValueRows { left: lside, right: rside, ahead, .. } = vr;
+    let m = 1 + next.len();
+    let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
+    for (k, p) in next.iter().enumerate() {
+        (la[k + 1], ra[k + 1]) = (p.left.0, p.right.0);
+        ahead.rows[k] = (i + 1 + k, *p);
+    }
+    (ahead.got, ahead.held) = (0, m - 1);
+    let (lays, rays) = match lay {
+        Lay::Left => (true, false),
+        Lay::Right => (false, true),
+        Lay::Both => (true, true),
+    };
+    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, |c| sum.left_factor(c));
+    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, |c| sum.right_factor(c));
+    let track = (0..m).any(|k| lst[k].2 || rst[k].2);
+    let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
+    let (sums, flags) = (&mut *ahead.sums, &mut *ahead.flags);
+    let (lrow, rrow) = (lside.row(ls), rside.row(rs));
+    let (lone, rone) = (Shared { vals: lrow.vals, dead: lrow.dead }, Shared { vals: rrow.vals, dead: rrow.dead });
+    let (llaid, rlaid) = (Laid { vals: &*lside.lanes, marks: &*lside.marks }, Laid { vals: &*rside.lanes, marks: &*rside.marks });
+    let out = (m, sums, flags);
+    match lay {
+        Lay::Left => lanes_by(track, check, sum, llaid, rone, out, eng, row),
+        Lay::Right => lanes_by(track, check, sum, lone, rlaid, out, eng, row),
+        Lay::Both => lanes_by(track, check, sum, llaid, rlaid, out, eng, row),
+    }
+}
+
+/// A side's floats for the [`LANES`] rows of a block, as [`lane_values`]
+/// reads them.
+trait Lanes: Copy {
+    /// Cell `i`'s floats, one a lane, and its dead marks, bit `k` for
+    /// lane `k`. Every pair field of the level is a cell.
+    fn at(self, i: usize) -> ([f64; LANES], u8);
+}
+
+/// One row every lane reads.
+#[derive(Clone, Copy)]
+struct Shared<'r> {
+    vals: &'r [f64],
+    dead: &'r [u8],
+}
+
+/// Rows laid side by side ([`ValueSide::lay`]).
+#[derive(Clone, Copy)]
+struct Laid<'r> {
+    vals: &'r [f64],
+    marks: &'r [u8],
+}
+
+impl Lanes for Shared<'_> {
+    #[inline(always)]
+    fn at(self, i: usize) -> ([f64; LANES], u8) {
+        // Safety: every pair field is below its side's row width
+        // (`row_width`), and a row holds a float and a mark for each.
+        let (v, d) = unsafe { (*self.vals.get_unchecked(i), *self.dead.get_unchecked(i)) };
+        ([v; LANES], 0u8.wrapping_sub(d))
+    }
+}
+
+impl Lanes for Laid<'_> {
+    #[inline(always)]
+    fn at(self, i: usize) -> ([f64; LANES], u8) {
+        // Safety: as for `Shared`; laid rows hold `LANES` floats and one
+        // mark for each cell of a row.
+        unsafe { (self.vals.as_ptr().add(i * LANES).cast::<[f64; LANES]>().read(), *self.marks.get_unchecked(i)) }
+    }
+}
+
+/// [`lane_values`] where a cell of the rows is dead (`track`) and where a
+/// product of them may not be its float (`check`).
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn lanes_by<A: Lanes, B: Lanes, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    track: bool,
+    check: bool,
+    sum: &mut S,
+    l: A,
+    r: B,
+    out: (usize, &mut [f64], &mut [u8]),
+    eng: &Engine,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    match (track, check) {
+        (true, true) => lane_values::<true, true, _, _, _, _, _>(sum, l, r, out, eng, row),
+        (true, false) => lane_values::<true, false, _, _, _, _, _>(sum, l, r, out, eng, row),
+        (false, true) => lane_values::<false, true, _, _, _, _, _>(sum, l, r, out, eng, row),
+        (false, false) => lane_values::<false, false, _, _, _, _, _>(sum, l, r, out, eng, row),
+    }
+}
+
+/// [`block_rows`]' sums: the block's `m` rows, the lanes of `l` and `r`,
+/// summed column by column, each cell's products in the order
+/// [`one_pair_row_values`] adds them; the first row's cells appended, the
+/// others' sums and flags held in `sums` and `flags`, a row's width each.
+/// `TRACK` where a cell of the rows is dead, and `CHECK` where a product
+/// of them may not be its float.
+#[inline(always)]
+fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    l: A,
+    r: B,
+    (m, sums, flags): (usize, &mut [f64], &mut [u8]),
+    eng: &Engine,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let width = ctx.right_width;
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    for j in 0..width {
+        let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        if g.is_empty() {
+            node_idx[row_base + j] = NO_PRODUCT;
+            continue;
+        }
+        charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+        let (mut acc, mut live, mut bad) = ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
+        for q in g {
+            let (a, da) = l.at(q.left.0 as usize);
+            let (b, db) = r.at(q.right.0 as usize);
+            for k in 0..LANES {
+                let (p, ok) = S::times(a[k], b[k]);
+                acc[k] += p;
+                if CHECK {
+                    bad |= u8::from(!ok) << k;
+                }
+            }
+            if TRACK {
+                live |= !(da | db);
+            }
+        }
+        for k in 1..m {
+            sums[(k - 1) * width + j] = acc[k];
+            flags[(k - 1) * width + j] = (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
+        }
+        if live & 1 == 0 {
+            continue;
+        }
+        if !S::CHECKED || (bad & 1 == 0 && acc[0] < f64::INFINITY) {
+            sum.push(eng, node_idx, row_base + j, acc[0])?;
+            continue;
+        }
+        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+    }
+    gate.add_short(due_at - due);
+    Ok(width)
+}
+
+/// [`sum_row`] on a row a block summed ahead ([`block_rows`]): its cells'
+/// sums and flags `sums` and `flags` appended in column order, charged as
+/// [`one_pair_row_values`] charges them.
+#[inline(never)]
+fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    sums: &[f64],
+    flags: &[u8],
+    eng: &Engine,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let width = ctx.right_width;
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    for j in 0..width {
+        let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        if g.is_empty() {
+            node_idx[row_base + j] = NO_PRODUCT;
+            continue;
+        }
+        charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+        let (acc, fl) = (sums[j], flags[j]);
+        if fl & LIVE == 0 {
+            continue;
+        }
+        if !S::CHECKED || (fl & INEXACT == 0 && acc < f64::INFINITY) {
+            sum.push(eng, node_idx, row_base + j, acc)?;
+            continue;
+        }
+        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+    }
+    gate.add_short(due_at - due);
+    Ok(width)
+}
+
 /// [`sum_row`] on a row of f pairs against one-pair columns, its products
 /// read off the grids, [`SUM_COLUMNS`] columns at a time.
 #[inline(always)]
@@ -1168,7 +1618,7 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     let width = ctx.right_width;
     let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
-    let ValueRows { left: lside, right: rside, sums, flags } = vr;
+    let ValueRows { left: lside, right: rside, sums, flags, .. } = vr;
     let (sums, flags) = (&mut sums[..width], &mut flags[..width]);
     sums.fill(0.0);
     flags.fill(0);

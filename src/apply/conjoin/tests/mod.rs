@@ -46,21 +46,30 @@ pub(crate) enum FloatRows {
     /// row at a time give each cell bit for bit.
     Cells,
     /// A row at a time, reading child rows as floats wherever the column
-    /// pairs name grid cells, keeping every row a side comes back to, and
-    /// adding a row's f pairs to one-pair columns a block at a time.
+    /// pairs name grid cells, keeping every row a side comes back to,
+    /// adding a row's f pairs to one-pair columns a block at a time, and
+    /// summing rows of one f pair a block at a time wherever two or more
+    /// follow each other, laying each side's rows side by side.
     Eager,
 }
 
 thread_local! {
     /// The way this test thread sums its streamed float levels.
     pub(crate) static FLOAT_ROWS: std::cell::Cell<FloatRows> = const { std::cell::Cell::new(FloatRows::Sum) };
-    /// The blocks of f pairs this thread has added ([`note_block`]).
+    /// The blocks of f pairs ([`note_block`]) and of rows ([`note_lanes`])
+    /// this thread has summed.
     pub(crate) static BLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static LANE_BLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Count a block of f pairs added on this thread.
+/// Count a block of f pairs summed on this thread.
 pub(crate) fn note_block() {
     BLOCKS.with(|b| b.set(b.get() + 1));
+}
+
+/// Count a block of rows summed on this thread.
+pub(crate) fn note_lanes() {
+    LANE_BLOCKS.with(|b| b.set(b.get() + 1));
 }
 
 /// Whether this thread sums streamed float levels a cell at a time.

@@ -8,7 +8,7 @@ use num_rational::BigRational;
 
 use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightStore};
-use super::{FloatRows, BLOCKS, FLOAT_ROWS};
+use super::{FloatRows, BLOCKS, FLOAT_ROWS, LANE_BLOCKS};
 use crate::test_helpers::{assert_canonical, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -186,6 +186,7 @@ fn row_sums_match_the_cell_sums_bit_for_bit() {
         }
     }
     assert!(BLOCKS.with(std::cell::Cell::get) > 0, "the walks added no block of f pairs");
+    assert!(LANE_BLOCKS.with(std::cell::Cell::get) > 0, "the walks summed no block of rows");
 }
 
 /// A conjunction refused at any reserve, the conversion of its kept columns
