@@ -10,9 +10,11 @@ use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, ChildSide, Dirty, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
-    TddLevel, TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
+    Assembly, ChildPair, ChildSide, Dirty, EncodedNode, ImplicitLevel, LevelView, MarginalStorage, NodeIdx, Tdd,
+    TddBuildError, TddLevel, TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, floor,
+    stored_levels_forced, try_take_levels,
 };
+use crate::limits::Limits;
 use crate::execution::pool::PoolGuard;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -60,6 +62,37 @@ impl PassThrough {
             let child = NodeIdx(i as u32);
             if self.free_side == ChildSide::Left { (self.one, child) } else { (child, self.one) }
         })
+    }
+
+    /// Make `level`, empty, the joins' level over an internal carried
+    /// child, as one join a slot leaves it: a node a slot, each holding its
+    /// pair inline, grown and charged as the joins grow and charge it.
+    /// Where nothing bounds memory, a level the seat's close would hold as
+    /// the description of its pairs is held so here, its node arena's
+    /// growth charged and nothing stored.
+    fn build(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
+        debug_assert!(!self.carries_leaf && level.nodes().is_empty() && level.pairs.is_empty());
+        let width = self.width;
+        let pair = |i: usize| {
+            let child = NodeIdx(i as u32);
+            if self.free_side == ChildSide::Left { ChildPair::new(self.one, child) } else { ChildPair::new(child, self.one) }
+        };
+        if width >= floor().max(2) && lim.memory_unbounded() && !stored_levels_forced() {
+            let first = pair(0);
+            let first = (i64::from(first.left.raw()), i64::from(first.right.raw()));
+            let step = if self.free_side == ChildSide::Left { (0, 1) } else { (1, 0) };
+            if let Some(described) = ImplicitLevel::one_step(width, first, step) {
+                let held = level.nodes.imply();
+                let node_capacity = lim.charge_as_pushed::<EncodedNode>(held, width)?;
+                let capacity = level.pairs.capacity();
+                level.pairs.describe(described, capacity, node_capacity);
+                return Ok(());
+            }
+        }
+        let nodes = level.nodes.stored_mut();
+        lim.reserve_as_pushed(nodes, width)?;
+        nodes.extend((0..width).map(|i| EncodedNode::inline(pair(i))));
+        Ok(())
     }
 }
 
@@ -277,10 +310,19 @@ impl<'a> MovePlacement<'a> {
         let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
         self.prune |= through.carries_leaf;
         self.contract |= self.assembly.level(through.carries).is_marginal();
-        for (left, right) in through.pairs() {
-            self.join(at, left, right)?;
+        let (l, r) = self.vtree.children(at);
+        if through.carries_leaf
+            || through.width == 0
+            || self.assembly.level(l).is_marginal()
+            || self.assembly.level(r).is_marginal()
+        {
+            for (left, right) in through.pairs() {
+                self.join(at, left, right)?;
+            }
+            return Ok(());
         }
-        Ok(())
+        self.changed.push(at);
+        through.build(self.eng.limits(), &mut self.assembly.parts_mut().0[at.idx()])
     }
 
     /// Lift a leaf child through a join with a free sibling, one node per

@@ -85,3 +85,30 @@ fn a_charge_as_reserved_is_an_exact_reserve_without_the_buffer() {
         }
     }
 }
+
+/// What `reserve_as_pushed` gives and charges is what as many pushes give
+/// and charge, from an empty buffer or one partly filled.
+#[test]
+fn a_reserve_as_pushed_is_a_run_of_pushes() {
+    for capacity in [0usize, 1, 4, 7, 100] {
+        for len in [0usize, 1, 4] {
+            for additional in [0usize, 1, 3, 4, 5, 64, 3000] {
+                let by_push = Limits::new();
+                let _op = by_push.begin_operation();
+                let mut pushed: Vec<u64> = Vec::with_capacity(capacity.max(len));
+                pushed.extend(0..len as u64);
+                let mut reserved: Vec<u64> = Vec::with_capacity(capacity.max(len));
+                reserved.extend(0..len as u64);
+                assert_eq!(reserved.capacity(), pushed.capacity());
+                for x in 0..additional as u64 {
+                    by_push.try_push(&mut pushed, x).unwrap();
+                }
+                let by_reserve = Limits::new();
+                let _op = by_reserve.begin_operation();
+                by_reserve.reserve_as_pushed(&mut reserved, additional).unwrap();
+                assert_eq!(reserved.capacity(), pushed.capacity(), "{capacity} {len} {additional}");
+                assert_eq!(in_flight(&by_reserve), in_flight(&by_push), "{capacity} {len} {additional}");
+            }
+        }
+    }
+}

@@ -402,3 +402,59 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
     }
     outs
 }
+
+/// A spine over x1..x12 that carries a diagram on a spine over x1..x6 on
+/// the even variables, with a free odd variable joined to every source
+/// node below the root, on the right and on the left by turns: each such
+/// join a pass-through over the source level under it.
+fn interleaved_spine() -> Arc<Vtree> {
+    let text = "vtree 21\n\
+        L 0 10\nL 1 12\nI 2 0 1\n\
+        L 3 9\nI 4 2 3\nL 5 8\nI 6 5 4\n\
+        L 7 7\nI 8 7 6\nL 9 6\nI 10 9 8\n\
+        L 11 5\nI 12 10 11\nL 13 4\nI 14 13 12\n\
+        L 15 3\nI 16 15 14\nL 17 2\nI 18 17 16\n\
+        L 19 1\nI 20 18 19\n";
+    Arc::new(Vtree::from_text(text).unwrap())
+}
+
+/// Pass-throughs over levels of several nodes, free on either side, build
+/// the levels their joins build: held as the description of their pairs
+/// where a close would describe them, node for node the stored run's
+/// ([`same_as_stored`](crate::test_helpers::same_as_stored)), and the
+/// diagram the copying embedding builds.
+#[test]
+fn wide_pass_throughs_build_the_levels_their_joins_build() {
+    let into = interleaved_spine();
+    let map = |v: VarId| VarId(2 * v.0);
+    let cases = [
+        vec![vec![1, 2, -5], vec![-1, 3], vec![2, -3, 6], vec![4, -6]],
+        vec![vec![1, 4, -6], vec![-2, 5], vec![3, -4, 6], vec![-1, -5, 6], vec![2, 3, -6]],
+    ];
+    let outs = crate::test_helpers::same_as_stored(|| {
+        let eng = Engine::new();
+        let small = Arc::new(Vtree::linear(6));
+        cases
+            .iter()
+            .map(|clauses| {
+                let mut f = compile_clauses(&small, clauses);
+                f.minimize().unwrap();
+                check_against_copy(&eng, &f, &into, map, "interleaved");
+                eng.embed_moving(f, &into, map).map_err(|r| r.error).unwrap().0
+            })
+            .collect()
+    });
+    let wide = outs.iter().flat_map(|t| {
+        t.vtree.internal_bottomup().filter(move |&(at, l, r)| {
+            let free = |c| t.vtree.node(c).is_leaf() && t.vtree.leaf_var(c).0 % 2 == 1;
+            let carried = if free(l) { r } else { l };
+            (free(l) || free(r)) && !t.vtree.node(carried).is_leaf() && t.levels[at.idx()].nodes().len() >= 2
+        }).map(move |(at, _, _)| t.levels[at.idx()].implicit().is_some())
+    });
+    let (mut described, mut all) = (0, 0);
+    for implicit in wide {
+        all += 1;
+        described += usize::from(implicit);
+    }
+    assert!(all > 0 && described == all, "{described} of {all} wide pass-throughs held as descriptions");
+}

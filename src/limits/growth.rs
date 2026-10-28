@@ -277,6 +277,22 @@ impl Limits {
         self.charge_as_reserved::<T>(capacity, grown)
     }
 
+    /// Room for `additional` more elements in `v`, reserved at once at the
+    /// capacity that many [`try_push`](Self::try_push) calls grow it to,
+    /// and charged as they charge it.
+    #[inline]
+    pub(crate) fn reserve_as_pushed<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        let len = v.len().saturating_add(additional);
+        if len <= v.capacity() {
+            return Ok(());
+        }
+        let mut grown = v.capacity();
+        while grown < len {
+            grown = amortized_capacity::<T>(grown, grown + 1);
+        }
+        self.reserve_exact(v, grown - v.len())
+    }
+
     /// Tracked `try_reserve`, with `Vec`'s doubling growth. Use when the caller
     /// is amortizing many small pushes.
     #[inline(always)]
