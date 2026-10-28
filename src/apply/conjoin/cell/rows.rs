@@ -1240,7 +1240,8 @@ pub(crate) enum PlainLookups {
 /// so the loop runs without the per-row mask fold (`DENSE`), with no
 /// `NO_PRODUCT` test, and writes through a [`ReservedEmitSink`]; where the g
 /// side is one node of one pair, every cell reads that pair
-/// ([`EmitBesideOne`]) and no column is read. With one
+/// ([`EmitBesideOne`]) and no column is read, and where every g node has
+/// one pair, a cell reads its column's ([`EmitLoneColumns`]). With one
 /// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
 /// with that side's lookup replaced: the fold and the culls on the grid side
 /// stay; on a level that built no masks they find nothing, as on
@@ -1265,11 +1266,20 @@ pub(crate) fn run_level_rows_complete(
                 &complete(&sides.left), &complete(&sides.right),
                 &mut EmitBesideOne { sink: ReservedEmitSink { level, charged, inline: &mut inline }, g: [g] },
             ),
-            None => run_level_rows::<true, _, _, _>(
-                eng, rows, scratch,
-                &complete(&sides.left), &complete(&sides.right),
-                &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
-            ),
+            None => {
+                let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
+                let (left, right) = (complete(&sides.left), complete(&sides.right));
+                match &lone {
+                    Some(lone) => run_level_rows::<true, _, _, _>(
+                        eng, rows, scratch, &left, &right,
+                        &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
+                    ),
+                    None => run_level_rows::<true, _, _, _>(
+                        eng, rows, scratch, &left, &right,
+                        &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
+                    ),
+                }
+            }
         },
         PlainLookups::CompleteLeft { charged } => {
             let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
