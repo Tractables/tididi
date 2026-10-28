@@ -1084,7 +1084,7 @@ impl Partition<'_> {
             }
             let mut from = 0;
             for &to in touched.iter() {
-                self.split_sibling(bucket[from..to as usize].iter().copied(), met, seen);
+                self.split_bucket(&bucket[from..to as usize], met, seen);
                 from = to as usize;
             }
             return Ok(());
@@ -1105,7 +1105,7 @@ impl Partition<'_> {
     /// The nodes of a wide parent node whose pairs come in no order of
     /// their siblings bucketed by sibling in `bucket`, in two passes over
     /// the pairs: one counts each sibling's nodes and one puts them. Each
-    /// bucket is then split ([`Self::split_sibling`]). With `SKIP_ALONE`
+    /// bucket is then split ([`Self::split_bucket`]). With `SKIP_ALONE`
     /// both passes leave out the pairs of nodes already alone.
     #[allow(clippy::too_many_arguments)]
     fn split_scattered<const SKIP_ALONE: bool>(
@@ -1160,7 +1160,7 @@ impl Partition<'_> {
         let mut from = 0;
         for &s in touched.iter() {
             let to = std::mem::take(&mut column[s as usize]) as usize;
-            self.split_sibling(bucket[from..to].iter().copied(), met, seen);
+            self.split_bucket(&bucket[from..to], met, seen);
             from = to;
         }
         Ok(())
@@ -1450,6 +1450,19 @@ impl Partition<'_> {
             self.classes[c as usize].hits = 0;
         }
         Ok(())
+    }
+
+    /// [`Self::split_sibling`] by the `nodes` one sibling is paired with,
+    /// one or two of them without its lists: one node leaves its class
+    /// alone, as a parent node of one pair leaves it, and two split as the
+    /// two nodes of a parent node with one sibling ([`Self::split_nodes`]).
+    #[inline(always)]
+    fn split_bucket(&mut self, nodes: &[u32], met: &mut Vec<u32>, seen: &mut [u32]) {
+        match *nodes {
+            [t] => self.leave(t),
+            [t0, t1] => self.split_nodes(t0, t1, true),
+            _ => self.split_sibling(nodes.iter().copied(), met, seen),
+        }
     }
 
     /// Split every class by the `nodes` one sibling is paired with: a class
