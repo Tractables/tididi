@@ -43,3 +43,34 @@ fn a_node_pushed_from_an_iterator_is_the_node_pushed_from_a_slice() {
         assert_eq!(eng.limits().meters().in_flight_bytes, other.limits().meters().in_flight_bytes);
     }
 }
+
+/// A stored level copied over a level with room keeps that level's
+/// allocations and charges nothing, and reads as the clone does.
+#[test]
+fn a_copy_over_a_level_with_room_reuses_its_arenas() {
+    let eng = crate::Engine::new();
+    let pair = |l: u32, r: u32| ChildPair::new(crate::diagram::NodeIdx(l), crate::diagram::NodeIdx(r));
+    let mut from = TddLevel::new();
+    from.push_node(eng.limits(), &[pair(0, 1)]).unwrap();
+    from.push_node(eng.limits(), &[pair(0, 2), pair(1, 0), pair(2, 2)]).unwrap();
+    from.push_node(eng.limits(), &[pair(1, 1), pair(2, 0)]).unwrap();
+    let mut out = TddLevel::new();
+    for k in 0..8 {
+        out.push_node(eng.limits(), &[pair(k, 0), pair(k, 1), pair(k, 2)]).unwrap();
+    }
+    out.clear();
+    let (nodes, pairs) = (out.nodes.stored().as_ptr(), out.pairs.stored().unwrap().as_ptr());
+    let charged = eng.limits().meters().in_flight_bytes;
+    from.try_copy_over(eng.limits(), &mut out).unwrap();
+    assert_eq!(eng.limits().meters().in_flight_bytes, charged);
+    assert_eq!((out.nodes.stored().as_ptr(), out.pairs.stored().unwrap().as_ptr()), (nodes, pairs));
+    let mut clone = TddLevel::new();
+    from.try_clone_over(eng.limits(), 0, 0, &mut clone).unwrap();
+    assert_eq!(out.node_count(), clone.node_count());
+    for i in 0..clone.node_count() {
+        assert_eq!(out.pairs_vec(i), clone.pairs_vec(i));
+    }
+    assert_eq!(out.live_pairs(), clone.live_pairs());
+    assert_eq!(out.nodes.stored(), clone.nodes.stored());
+    assert_eq!(out.pairs.stored(), clone.pairs.stored());
+}

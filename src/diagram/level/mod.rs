@@ -277,6 +277,20 @@ fn copy_reserved<T: Copy>(
     Ok(out)
 }
 
+/// `src` written over `out`, which keeps its allocation where it holds
+/// `src` and grows through `lim` where it does not.
+#[inline(always)]
+fn copy_into<T: Copy>(
+    lim: &crate::limits::Limits,
+    src: &[T],
+    out: &mut Vec<T>,
+) -> Result<(), crate::limits::OperationError> {
+    out.clear();
+    lim.reserve_exact(out, src.len())?;
+    out.extend_from_slice(src);
+    Ok(())
+}
+
 impl Default for TddLevel {
     /// Returns an empty level: no nodes, no pairs, no marginal values.
     fn default() -> Self {
@@ -583,6 +597,38 @@ impl TddLevel {
             None => self.try_clone_held(lim, nodes, pairs)?,
         };
         drop(std::mem::replace(out, copy));
+        Ok(())
+    }
+
+    /// [`try_clone_over`](Self::try_clone_over) with no room, written into
+    /// `out`'s own node and pair arenas where this level stores its nodes
+    /// and pairs and keeps no range table, and `out` stores its pairs: the
+    /// arenas keep their allocations and grow through `lim` only where they
+    /// are too small, so a level taken from the pool is filled without an
+    /// allocation. Any other level is cloned over `out`. Refused, `out` is
+    /// an empty level.
+    pub(crate) fn try_copy_over(
+        &self,
+        lim: &crate::limits::Limits,
+        out: &mut TddLevel,
+    ) -> Result<(), crate::limits::OperationError> {
+        let (LevelState::Structural(held), Some(pairs)) = (&self.state, self.pairs.stored()) else {
+            return self.try_clone_over(lim, 0, 0, out);
+        };
+        if !self.ranges.is_empty() || out.pairs.stored().is_none() {
+            return self.try_clone_over(lim, 0, 0, out);
+        }
+        let copied = copy_into(lim, self.nodes.stored(), out.nodes.stored_mut())
+            .and_then(|()| copy_into(lim, pairs, out.pairs.stored_mut()));
+        if let Err(e) = copied {
+            *out = TddLevel::new();
+            return Err(e);
+        }
+        out.ranges.clear();
+        out.value_ref_sides = self.value_ref_sides;
+        out.dead_pairs = self.dead_pairs;
+        out.uneven = self.uneven;
+        out.state = LevelState::Structural(held.clone());
         Ok(())
     }
 
