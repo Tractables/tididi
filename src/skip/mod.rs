@@ -71,6 +71,10 @@ pub(crate) struct Shape {
     pub(crate) var: Vec<u32>,
     /// Edges from the root.
     pub(crate) depth: Vec<u32>,
+    /// Whether a node or one of its ancestors is the left child of a level
+    /// whose children are both internal: a conjunction looks the products
+    /// read there up by both references.
+    pub(crate) looked_up: Vec<bool>,
 }
 
 impl Shape {
@@ -119,7 +123,14 @@ impl Shape {
                 depth[t as usize] = depth[parent[t as usize] as usize] + 1;
             }
         }
-        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth }
+        let mut looked_up = vec![false; n];
+        for &t in &topdown {
+            let (l, r) = kids[t as usize];
+            let both = kids[l as usize].0 != NONE && kids[r as usize].0 != NONE;
+            looked_up[l as usize] = looked_up[t as usize] || both;
+            looked_up[r as usize] = looked_up[t as usize];
+        }
+        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up }
     }
 
     #[inline]

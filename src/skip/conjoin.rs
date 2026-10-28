@@ -13,7 +13,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 
 use super::build::Land;
-use super::{ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, ONE, POS, ZREF};
+use super::{ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
 use crate::limits::Limits;
 use crate::OperationError;
 
@@ -53,44 +53,89 @@ fn leaf_and(v: u32, a: u32, b: u32) -> Ref {
     }
 }
 
-/// Per reference of an operand, the highest level it is read at: the child
-/// level of the highest level whose pairs name it, or the root for the
-/// output. A reference is read at every level from there down to its own.
-fn reads(s: &SkipForm) -> FxHashMap<Ref, u32> {
-    let sh = &*s.shape;
-    let mut top: FxHashMap<Ref, u32> = FxHashMap::default();
-    let mut note = |x: Ref, c: u32| {
-        let t = top.entry(x).or_insert(c);
-        if sh.pre[c as usize] < sh.pre[*t as usize] {
+const NIL: u32 = u32::MAX;
+
+/// An operand's references numbered densely: stored node `i` of level `t`
+/// is `base[t] + i`, leaf label `k` of leaf `c` is `base[c] + k`; with, per
+/// number, the highest level the reference is read at: the child level of
+/// the highest level whose pairs name it, or the root for the output. A
+/// reference is read at every level from there down to its own.
+struct Numbered {
+    base: Vec<u32>,
+    top: Vec<u32>,
+    /// The leaves whose labels are numbered.
+    leaves: Vec<u32>,
+}
+
+impl Numbered {
+    fn of(s: &SkipForm) -> Numbered {
+        let sh = &*s.shape;
+        let mut base = vec![NONE; sh.num_nodes()];
+        let mut n = 0u32;
+        for &t in &s.active {
+            base[t as usize] = n;
+            n += s.levels[t as usize].width() as u32;
+        }
+        let mut nb = Numbered { base, top: vec![NONE; n as usize], leaves: Vec::new() };
+        nb.note(sh, s.out, sh.root);
+        for &u in &s.active {
+            let (l, r) = sh.kids[u as usize];
+            for &(a, b) in &s.levels[u as usize].pairs {
+                nb.note(sh, a, l);
+                nb.note(sh, b, r);
+            }
+        }
+        nb
+    }
+
+    #[inline]
+    fn note(&mut self, sh: &Shape, x: Ref, c: u32) {
+        let v = vt(x) as usize;
+        if self.base[v] == NONE {
+            debug_assert!(sh.is_leaf(v as u32), "a stored node's level is numbered");
+            self.base[v] = self.top.len() as u32;
+            self.top.extend([NONE; 3]);
+            self.leaves.push(v as u32);
+        }
+        let t = &mut self.top[(self.base[v] + ix(x)) as usize];
+        if *t == NONE || sh.pre[c as usize] < sh.pre[*t as usize] {
             *t = c;
         }
-    };
-    note(s.out, sh.root);
-    for &u in &s.active {
-        let (l, r) = sh.kids[u as usize];
-        for &(a, b) in &s.levels[u as usize].pairs {
-            note(a, l);
-            note(b, r);
-        }
     }
-    top
-}
 
-/// Whether `x` (with read map `top`) is read at level `c`.
-#[inline]
-fn read_at(sh: &Shape, top: &FxHashMap<Ref, u32>, x: Ref, c: u32) -> bool {
-    sh.within(vt(x), c) && top.get(&x).is_some_and(|&t| sh.within(c, t))
-}
+    fn len(&self) -> usize {
+        self.top.len()
+    }
 
-/// Whether `x` (with read map `top`) skips through level `u`.
-#[inline]
-fn crosses(sh: &Shape, top: &FxHashMap<Ref, u32>, x: Ref, u: u32) -> bool {
-    vt(x) != u && read_at(sh, top, x, u)
-}
+    /// The number of `x`, a reference of the operand.
+    #[inline]
+    fn id(&self, x: Ref) -> usize {
+        (self.base[vt(x) as usize] + ix(x)) as usize
+    }
 
-/// The leaf references on leaf `c` an operand reads at level `u` above it.
-fn leaf_refs<'a>(sh: &'a Shape, top: &'a FxHashMap<Ref, u32>, c: u32, u: u32) -> impl Iterator<Item = Ref> + 'a {
-    [ONE, POS, NEG].into_iter().map(move |lab| mk(c, lab)).filter(move |&x| read_at(sh, top, x, u))
+    /// Whether `x` is read at level `c`.
+    #[inline]
+    fn read_at(&self, sh: &Shape, x: Ref, c: u32) -> bool {
+        let b = self.base[vt(x) as usize];
+        if b == NONE || !sh.within(vt(x), c) {
+            return false;
+        }
+        let t = self.top[(b + ix(x)) as usize];
+        t != NONE && sh.within(c, t)
+    }
+
+    /// Whether `x`, read at a child of `u`, is read at `u` too: it skips
+    /// through `u`.
+    #[inline]
+    fn above(&self, sh: &Shape, x: Ref, u: u32) -> bool {
+        let t = self.top[self.id(x)];
+        t != NONE && sh.within(u, t)
+    }
+
+    /// The leaf references on leaf `c` the operand reads at level `u` above it.
+    fn leaf_refs<'a>(&'a self, sh: &'a Shape, c: u32, u: u32) -> impl Iterator<Item = Ref> + 'a {
+        [ONE, POS, NEG].into_iter().map(move |lab| mk(c, lab)).filter(move |&x| self.read_at(sh, x, u))
+    }
 }
 
 /// `f ∧ g`, pruned, in skip form; not contracted.
@@ -103,7 +148,9 @@ fn leaf_refs<'a>(sh: &'a Shape, top: &'a FxHashMap<Ref, u32>, c: u32, u: u32) ->
 /// `y` the level also reads gives the products of the level's nodes of `g`
 /// naming `y` there, and of `y` itself where it skips through the level;
 /// the products of skips of `f` with nodes of `g` come the same way from
-/// `g`'s pairs. Products no output path reaches are dropped at the end.
+/// `g`'s pairs. A product whose other reference is no longer read is
+/// dropped from its reference's list when a scan meets it. Products no
+/// output path reaches are dropped at the end.
 pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
     debug_assert!(Arc::ptr_eq(&f.shape, &g.shape));
     let shape = Arc::clone(&f.shape);
@@ -117,71 +164,68 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
         }
         Land::At(_) => {}
     }
-    let (tf, tg) = (reads(f), reads(g));
+    let (nf, ng) = (Numbered::of(f), Numbered::of(g));
     // The levels products can land on, children first.
     let mut todo: Vec<u32> = f.active.iter().chain(&g.active).copied().collect();
-    for top in [&tf, &tg] {
-        for (&x, _) in top.iter() {
-            let c = vt(x);
-            if sh.is_leaf(c) && c != sh.root {
-                let p = sh.parent[c as usize];
-                if read_at(sh, top, x, p) {
-                    todo.push(p);
-                }
+    for nb in [&nf, &ng] {
+        for &c in &nb.leaves {
+            let p = sh.parent[c as usize];
+            if p != NONE && nb.leaf_refs(sh, c, p).next().is_some() {
+                todo.push(p);
             }
         }
     }
     todo.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
     todo.dedup();
-    // True products: result, and per side the other side's references.
-    let mut live: FxHashMap<(Ref, Ref), Ref> = FxHashMap::default();
-    let mut by_f: FxHashMap<Ref, Vec<(Ref, Ref)>> = FxHashMap::default();
-    let mut by_g: FxHashMap<Ref, Vec<(Ref, Ref)>> = FxHashMap::default();
-    let product = |live: &FxHashMap<(Ref, Ref), Ref>, a: Ref, b: Ref| -> Ref {
-        match land_pair(sh, a, b) {
-            Land::Done(r) => r,
-            Land::At(_) => live.get(&(a, b)).copied().unwrap_or(ZREF),
-        }
-    };
-    let mut cells: FxHashMap<(Ref, Ref), u32> = FxHashMap::default();
+    // True products, per reference of each side: the other side's
+    // reference and the result.
+    let mut pf: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); nf.len()];
+    let mut pg: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); ng.len()];
+    // Both references to the result, where a level looks products up so.
+    let mut live: FxHashMap<u64, Ref> = FxHashMap::default();
+    let key = |a: usize, b: usize| ((a as u64) << 32) | b as u64;
+    // `g`'s pairs of the current level by their anchor-side reference.
+    let (mut gmark, mut ghead) = (vec![0u32; ng.len()], vec![NIL; ng.len()]);
+    let mut gent: Vec<(u32, Ref, u32)> = Vec::new();
+    // The current node's products, by the other side's reference.
+    let (mut cg, mut cf) = (vec![(0u32, 0u32); ng.len()], vec![(0u32, 0u32); nf.len()]);
+    let (mut lstamp, mut cstamp) = (0u32, 0u32);
     let mut keys: Vec<(Ref, Ref)> = Vec::new();
     let mut combos: Vec<(u32, Ref, Ref)> = Vec::new();
-    let mut gpar: FxHashMap<Ref, smallvec::SmallVec<[(u32, Ref); 2]>> = FxHashMap::default();
-    let mut ends: Vec<Ref> = Vec::new();
+    let mut ends: Vec<(Ref, Ref)> = Vec::new();
     let mut fb = [(0, 0); 1];
     let mut gb = [(0, 0); 1];
     for &u in &todo {
         let (l, r) = sh.kids[u as usize];
-        cells.clear();
         keys.clear();
         combos.clear();
-        let cell = |cells: &mut FxHashMap<(Ref, Ref), u32>, keys: &mut Vec<(Ref, Ref)>, k: (Ref, Ref)| -> u32 {
-            *cells.entry(k).or_insert_with(|| {
-                keys.push(k);
-                (keys.len() - 1) as u32
-            })
-        };
         let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
         if sh.is_leaf(l) && sh.is_leaf(r) {
             // Every reference each side reads here, against every other.
-            let refs = |s: &SkipForm, top: &FxHashMap<Ref, u32>| -> Vec<Ref> {
+            let refs = |s: &SkipForm, nb: &Numbered| -> Vec<Ref> {
                 let mut v: Vec<Ref> = (0..s.levels[u as usize].width() as u32).map(|i| mk(u, i)).collect();
-                v.extend(leaf_refs(sh, top, l, u));
-                v.extend(leaf_refs(sh, top, r, u));
+                v.extend(nb.leaf_refs(sh, l, u));
+                v.extend(nb.leaf_refs(sh, r, u));
                 v
             };
-            let (fr, gr) = (refs(f, &tf), refs(g, &tg));
+            let (fr, gr) = (refs(f, &nf), refs(g, &ng));
             for &a in &fr {
                 for &b in &gr {
                     if vt(a) != u && vt(a) == vt(b) {
                         continue;
                     }
+                    let mut cell = NIL;
                     for &(la, ra) in f.pairs_at(u, a, &mut fb) {
                         for &(lb, rb) in g.pairs_at(u, b, &mut gb) {
-                            let (x, y) = (product(&live, la, lb), product(&live, ra, rb));
+                            let (Land::Done(x), Land::Done(y)) = (land_pair(sh, la, lb), land_pair(sh, ra, rb)) else {
+                                unreachable!("leaf products are known")
+                            };
                             if x != ZREF && y != ZREF {
-                                let k = cell(&mut cells, &mut keys, (a, b));
-                                combos.push((k, x, y));
+                                if cell == NIL {
+                                    keys.push((a, b));
+                                    cell = (keys.len() - 1) as u32;
+                                }
+                                combos.push((cell, x, y));
                             }
                         }
                     }
@@ -194,58 +238,79 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
             let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
             let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
             let skips = sh.is_leaf(co);
-            // `g`'s nodes here by the reference they name at the anchor.
-            gpar.clear();
+            let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
+                match land_pair(sh, oa, ob) {
+                    Land::Done(x) => x,
+                    Land::At(_) => live.get(&key(nf.id(oa), ng.id(ob))).copied().unwrap_or(ZREF),
+                }
+            };
+            lstamp += 1;
+            gent.clear();
             for j in 0..gl.width() as u32 {
                 for &p in gl.node(j) {
                     let (y, ob) = split(p);
-                    gpar.entry(y).or_default().push((j, ob));
+                    let gy = ng.id(y);
+                    if gmark[gy] != lstamp {
+                        gmark[gy] = lstamp;
+                        ghead[gy] = NIL;
+                    }
+                    gent.push((j, ob, ghead[gy]));
+                    ghead[gy] = (gent.len() - 1) as u32;
                 }
             }
-            // The true products of anchor-side references `x` (of f) and
-            // `y` (of g, read at the anchor), with their results.
-            let with_f = |x: Ref, ends: &mut Vec<Ref>| {
-                ends.clear();
-                if let Some(v) = by_f.get(&x) {
-                    for &(y, res) in v {
-                        if read_at(sh, &tg, y, cs) {
-                            ends.push(y);
-                            ends.push(res);
-                        }
-                    }
-                }
-                if sh.is_leaf(vt(x)) {
-                    for y in leaf_refs(sh, &tg, vt(x), cs) {
-                        let res = leaf_and(vt(x), ix(x), ix(y));
-                        if res != ZREF {
-                            ends.push(y);
-                            ends.push(res);
-                        }
-                    }
-                }
-            };
+            let gbase = ng.base[u as usize];
             for i in 0..fl.width() as u32 {
                 let a = mk(u, i);
+                cstamp += 1;
                 for &p in fl.node(i) {
                     let (x, oa) = split(p);
-                    with_f(x, &mut ends);
-                    for e in ends.chunks_exact(2) {
-                        let (y, res) = (e[0], e[1]);
-                        if let Some(ps) = gpar.get(&y) {
-                            for &(j, ob) in ps {
-                                let o = product(&live, oa, ob);
+                    // The true products of `x` with references of `g` read
+                    // at the anchor.
+                    ends.clear();
+                    let list = &mut pf[nf.id(x)];
+                    list.retain(|&(y, res)| {
+                        let keep = ng.read_at(sh, y, cs);
+                        if keep {
+                            ends.push((y, res));
+                        }
+                        keep
+                    });
+                    if sh.is_leaf(vt(x)) {
+                        for y in ng.leaf_refs(sh, vt(x), cs) {
+                            let res = leaf_and(vt(x), ix(x), ix(y));
+                            if res != ZREF {
+                                ends.push((y, res));
+                            }
+                        }
+                    }
+                    for &(y, res) in &ends {
+                        let gy = ng.id(y);
+                        if gmark[gy] == lstamp {
+                            let mut e = ghead[gy];
+                            while e != NIL {
+                                let (j, ob, next) = gent[e as usize];
+                                e = next;
+                                let o = other(&live, oa, ob);
                                 if o != ZREF {
-                                    let k = cell(&mut cells, &mut keys, (a, mk(u, j)));
+                                    let c = &mut cg[(gbase + j) as usize];
+                                    if c.0 != cstamp {
+                                        keys.push((a, mk(u, j)));
+                                        *c = (cstamp, (keys.len() - 1) as u32);
+                                    }
                                     let (pl, pr) = join(res, o);
-                                    combos.push((k, pl, pr));
+                                    combos.push((c.1, pl, pr));
                                 }
                             }
                         }
-                        if skips && crosses(sh, &tg, y, u) {
+                        if skips && ng.above(sh, y, u) {
                             // `y` is `true` on the other side here.
-                            let k = cell(&mut cells, &mut keys, (a, y));
+                            let c = &mut cg[gy];
+                            if c.0 != cstamp {
+                                keys.push((a, y));
+                                *c = (cstamp, (keys.len() - 1) as u32);
+                            }
                             let (pl, pr) = join(res, oa);
-                            combos.push((k, pl, pr));
+                            combos.push((c.1, pl, pr));
                         }
                     }
                 }
@@ -254,30 +319,34 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                 // Skips of `f` through this level against `g`'s nodes.
                 for j in 0..gl.width() as u32 {
                     let b = mk(u, j);
+                    cstamp += 1;
                     for &p in gl.node(j) {
                         let (y, ob) = split(p);
                         ends.clear();
-                        if let Some(v) = by_g.get(&y) {
-                            for &(x, res) in v {
-                                if sh.within(vt(x), cs) && crosses(sh, &tf, x, u) {
-                                    ends.push(x);
-                                    ends.push(res);
-                                }
+                        let list = &mut pg[ng.id(y)];
+                        list.retain(|&(x, res)| {
+                            let keep = nf.read_at(sh, x, cs);
+                            if keep && nf.above(sh, x, u) {
+                                ends.push((x, res));
                             }
-                        }
+                            keep
+                        });
                         if sh.is_leaf(vt(y)) {
-                            for x in leaf_refs(sh, &tf, vt(y), u) {
+                            for x in nf.leaf_refs(sh, vt(y), u) {
                                 let res = leaf_and(vt(y), ix(x), ix(y));
                                 if res != ZREF {
-                                    ends.push(x);
-                                    ends.push(res);
+                                    ends.push((x, res));
                                 }
                             }
                         }
-                        for e in ends.chunks_exact(2) {
-                            let k = cell(&mut cells, &mut keys, (e[0], b));
-                            let (pl, pr) = join(e[1], ob);
-                            combos.push((k, pl, pr));
+                        for &(x, res) in &ends {
+                            let c = &mut cf[nf.id(x)];
+                            if c.0 != cstamp {
+                                keys.push((x, b));
+                                *c = (cstamp, (keys.len() - 1) as u32);
+                            }
+                            let (pl, pr) = join(res, ob);
+                            combos.push((c.1, pl, pr));
                         }
                     }
                 }
@@ -302,6 +371,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
             pairs[at[k as usize] as usize] = (a, b);
             at[k as usize] += 1;
         }
+        let lookup = sh.looked_up[u as usize];
         let mut buf = Vec::new();
         for (k, &(a, b)) in keys.iter().enumerate() {
             buf.clear();
@@ -310,12 +380,18 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                 Err(t) => t,
                 Ok(()) => mk(u, out.push_node(u, &buf)),
             };
-            live.insert((a, b), res);
-            by_f.entry(a).or_default().push((b, res));
-            by_g.entry(b).or_default().push((a, res));
+            let (fa, gb) = (nf.id(a), ng.id(b));
+            pf[fa].push((b, res));
+            pg[gb].push((a, res));
+            if lookup {
+                live.insert(key(fa, gb), res);
+            }
         }
     }
-    out.out = product(&live, f.out, g.out);
+    out.out = match land_pair(sh, f.out, g.out) {
+        Land::Done(r) => r,
+        Land::At(_) => pf[nf.id(f.out)].iter().find(|e| e.0 == g.out).map_or(ZREF, |e| e.1),
+    };
     out.collect_pushed();
     Ok(out)
 }

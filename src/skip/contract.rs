@@ -9,7 +9,10 @@
 //! the parent level's pairs start can be. Merging a skip into a class makes
 //! the skipped level's node explicit: `true` on the skipped variable paired
 //! with the rest of the skip, whose own continuation below is then a class
-//! the next level compares. After the merges the levels are rebuilt from
+//! the next level compares. Skips that merge stay twins down to the first
+//! level where one of them is stored, is named by another pair, or where
+//! they part, so their merged class is made just above it; the levels
+//! between resolve to it. After the merges the levels are rebuilt from
 //! the leaves up, so that a class that became `true` on one side resolves
 //! to the reference it skips to.
 
@@ -34,9 +37,10 @@ struct CLv {
     /// input's references.
     start: Vec<u32>,
     pairs: Vec<(Ref, Ref)>,
-    /// The class of each stored node, and of each skip a merge took in.
+    /// The class of each stored node; and for each skip a merge took in,
+    /// the entry (in the visited levels) and class it went to.
     classmap: Vec<u32>,
-    chainmap: FxHashMap<Ref, u32>,
+    chainmap: FxHashMap<Ref, (u32, u32)>,
     res: Vec<Ref>,
 }
 
@@ -81,6 +85,10 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
     let mut keyed: FxHashMap<u64, smallvec::SmallVec<[u32; 1]>> = FxHashMap::default();
     let mut members: Vec<(u32, Ref)> = Vec::new();
     let mut firsts: Vec<(usize, usize)> = Vec::new();
+    // Merged skips sent down to the level where they part: per level, the
+    // groups (entry they merged at, members).
+    let mut pending: FxHashMap<u32, Vec<(u32, Vec<Ref>)>> = FxHashMap::default();
+    let mut names: Option<Names> = None;
     while let Some(Reverse((_, c))) = heap.pop() {
         let lvl = &s.levels[c as usize];
         let mut cl = CLv { level: c, classmap: vec![NONE; lvl.width()], ..CLv::default() };
@@ -144,6 +152,18 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
                     // A lone skip stays a skip.
                     continue;
                 }
+                if m.iter().all(|&(_, e)| vt(e) != c) {
+                    let nm = names.get_or_insert_with(|| Names::of(s));
+                    let v = parts(sh, nm, c, m.iter().map(|&(_, e)| e));
+                    if v != c {
+                        pending.entry(v).or_default().push((lvs.len() as u32, m.iter().map(|&(_, e)| e).collect()));
+                        if !queued[v as usize] {
+                            queued[v as usize] = true;
+                            heap.push(Reverse((sh.pre[v as usize], v)));
+                        }
+                        continue;
+                    }
+                }
                 buf.clear();
                 let mut skips = Vec::new();
                 for &(_, e) in m {
@@ -161,7 +181,22 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
                     }
                 }
                 for e in skips {
-                    cl.chainmap.insert(e, k);
+                    cl.chainmap.insert(e, (lvs.len() as u32, k));
+                }
+            }
+        }
+        // Merged skips sent down here: each group is a class of its own,
+        // since only the levels above name its members.
+        if let Some(groups) = pending.remove(&c) {
+            let (l, r) = sh.kids[c as usize];
+            for (from, group) in groups {
+                let pairs: Vec<(Ref, Ref)> =
+                    group.iter().map(|&e| if sh.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) }).collect();
+                let k = cl.push_class(&pairs);
+                let here = lvs.len() as u32;
+                let origin = &mut lvs[from as usize].chainmap;
+                for e in group {
+                    origin.insert(e, (here, k));
                 }
             }
         }
@@ -200,8 +235,8 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
             return target(lvs, h);
         }
         let e = at[d as usize];
-        if e != NONE && let Some(&k) = lvs[e as usize].chainmap.get(&h) {
-            return lvs[e as usize].res[k as usize];
+        if e != NONE && let Some(&(to, k)) = lvs[e as usize].chainmap.get(&h) {
+            return lvs[to as usize].res[k as usize];
         }
         target(lvs, h)
     };
@@ -229,4 +264,92 @@ pub(crate) fn contract(s: &SkipForm, lim: &Limits) -> Result<SkipForm, Operation
     let cand = lvs.iter().map(|l| l.level).collect();
     out.collect_in(cand);
     Ok(out)
+}
+
+/// Per reference of a diagram, the levels whose pairs name it, parents
+/// first.
+struct Names {
+    /// Per vtree node, the number of its first stored node or leaf label.
+    base: Vec<u32>,
+    start: Vec<u32>,
+    levels: Vec<u32>,
+}
+
+impl Names {
+    fn of(s: &SkipForm) -> Names {
+        let sh = &*s.shape;
+        let mut base = vec![NONE; sh.num_nodes()];
+        let mut n = 0u32;
+        for &t in &s.active {
+            base[t as usize] = n;
+            n += s.levels[t as usize].width() as u32;
+        }
+        for (c, b) in base.iter_mut().enumerate() {
+            if sh.is_leaf(c as u32) {
+                *b = n;
+                n += 3;
+            }
+        }
+        let id = |x: Ref| (base[vt(x) as usize] + ix(x)) as usize;
+        let mut start = vec![0u32; n as usize + 1];
+        for &u in &s.active {
+            for &(a, b) in &s.levels[u as usize].pairs {
+                start[id(a) + 1] += 1;
+                start[id(b) + 1] += 1;
+            }
+        }
+        for i in 0..n as usize {
+            start[i + 1] += start[i];
+        }
+        let mut fill = start.clone();
+        let mut levels = vec![0u32; start[n as usize] as usize];
+        // `active` is in preorder, so each list is too.
+        for &u in &s.active {
+            for &(a, b) in &s.levels[u as usize].pairs {
+                for x in [a, b] {
+                    let i = id(x);
+                    levels[fill[i] as usize] = u;
+                    fill[i] += 1;
+                }
+            }
+        }
+        Names { base, start, levels }
+    }
+
+    fn of_ref(&self, x: Ref) -> &[u32] {
+        let i = (self.base[vt(x) as usize] + ix(x)) as usize;
+        &self.levels[self.start[i] as usize..self.start[i + 1] as usize]
+    }
+}
+
+/// The level whose class a group of skips that merge at `c` is: the parent
+/// of the highest level below `c` where the members stop being twins (one
+/// is stored there, a pair of the level above names one, or they part).
+/// `c` itself when that level is `c`'s child.
+fn parts(sh: &super::Shape, nm: &Names, c: u32, members: impl Iterator<Item = Ref> + Clone) -> u32 {
+    // The highest member, and where the members part.
+    let mut h = NONE;
+    for e in members.clone() {
+        if h == NONE || sh.pre[vt(e) as usize] < sh.pre[h as usize] {
+            h = vt(e);
+        }
+    }
+    let mut w = if members.clone().all(|e| sh.within(vt(e), h)) { h } else { sh.parent[h as usize] };
+    for e in members {
+        // The highest level at or below `c` naming `e`.
+        let ls = nm.of_ref(e);
+        let i = ls.partition_point(|&u| sh.pre[u as usize] < sh.pre[c as usize]);
+        if let Some(&u) = ls.get(i) {
+            let x = sh.toward(u, vt(e));
+            if sh.pre[x as usize] < sh.pre[w as usize] {
+                w = x;
+            }
+        }
+    }
+    // Members on both leaves under `c` part at `c` itself.
+    if w == c {
+        return c;
+    }
+    debug_assert!(sh.within(w, c));
+    sh.parent[w as usize]
 }

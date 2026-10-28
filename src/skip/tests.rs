@@ -314,3 +314,32 @@ fn conjunction_of_placed_projections_is_canonical() {
         }
     }
 }
+
+/// Wide sparse functions, whose stored conjunctions hold long chains of
+/// twins: the skip form of the raw stored result, contracted, is the
+/// canonical skip form; and so is the contracted skip conjunction.
+#[test]
+fn contraction_of_raw_stored_conjunctions_is_canonical() {
+    let mut rng = Lcg::new(14);
+    let mut done = 0;
+    while done < 400 {
+        let n = 8 + rng.below(11) as u32;
+        let shape = CnfShape { clauses: 1 + rng.below(6) as usize, width: 3 };
+        for (_, vtree) in vtree_shapes(n) {
+            let eng = Engine::new();
+            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
+            let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
+            let mut raw = eng.and(&f, &g).unwrap();
+            eng.reduce(&mut raw, crate::reduce::ReductionPlan::Prune).unwrap();
+            let mut fun = raw.clone();
+            eng.minimize(&mut fun).unwrap();
+            let want = skip(&fun);
+            assert_eq!(fingerprint(&contract(&skip(&raw), eng.limits()).unwrap()), fingerprint(&want));
+            let (sf, sg) = (skip(&f), skip(&g));
+            let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
+            let h = contract(&conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+            assert_eq!(fingerprint(&h), fingerprint(&want));
+            done += 1;
+        }
+    }
+}
