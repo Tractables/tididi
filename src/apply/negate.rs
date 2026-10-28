@@ -238,7 +238,7 @@ impl Target<'_, '_> {
                 Some(len) if from.stored().is_some() => (1, fill_pairs(len)),
                 _ => (0, 0),
             };
-            self.levels[t] = from.try_clone_with_room_on(eng.limits(), nodes, pairs)?;
+            from.try_clone_over(eng.limits(), nodes, pairs, &mut self.levels[t])?;
         }
         let level = &mut self.levels[t];
         if let Some(len) = fill {

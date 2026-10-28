@@ -260,6 +260,23 @@ const _: () = assert!(
     "TddLevel grew past 88 B"
 );
 
+/// The node and pair arenas of a level's copy, and the live pairs its
+/// level keeps ([`TddLevel::try_clone_to`]).
+type CopiedArenas<'a> = (Vec<EncodedNode>, Vec<ChildPair>, &'a HeldPairs);
+
+/// A copy of `src` reserved through `lim` with room for `room` more.
+#[inline(always)]
+fn copy_reserved<T: Copy>(
+    lim: &crate::limits::Limits,
+    src: &[T],
+    room: usize,
+) -> Result<Vec<T>, crate::limits::OperationError> {
+    let mut out = Vec::new();
+    lim.reserve_exact(&mut out, src.len().saturating_add(room))?;
+    out.extend_from_slice(src);
+    Ok(out)
+}
+
 impl Default for TddLevel {
     /// Returns an empty level: no nodes, no pairs, no marginal values.
     fn default() -> Self {
@@ -539,25 +556,106 @@ impl TddLevel {
     /// nodes and `pairs` more arena pairs on stored arenas, so a copy that
     /// is about to grow is written once. An implicit pair arena keeps its
     /// description and takes no room.
+    #[inline]
     pub(crate) fn try_clone_with_room_on(
         &self,
         lim: &crate::limits::Limits,
         nodes: usize,
         pairs: usize,
     ) -> Result<TddLevel, crate::limits::OperationError> {
-        fn copy<T: Copy>(
-            lim: &crate::limits::Limits,
-            src: &[T],
-            room: usize,
-        ) -> Result<Vec<T>, crate::limits::OperationError> {
-            let mut out = Vec::new();
-            lim.reserve_exact(&mut out, src.len().saturating_add(room))?;
-            out.extend_from_slice(src);
-            Ok(out)
+        match self.try_copy_arenas(lim, nodes, pairs)? {
+            Some(arenas) => Ok(self.with_arenas(arenas)),
+            None => self.try_clone_held(lim, nodes, pairs),
         }
+    }
+
+    /// [`try_clone_on`](Self::try_clone_on) written to `out`, as a
+    /// diagram's copy writes its levels to their places. A copy returned by
+    /// value is built beside its place and moved there, and on a diagram of
+    /// many small levels that move costs about what the copy does: the
+    /// move reads wide what the copy has just written narrow.
+    #[inline]
+    pub(crate) fn try_clone_to<'a>(
+        &self,
+        lim: &crate::limits::Limits,
+        out: &'a mut std::mem::MaybeUninit<TddLevel>,
+    ) -> Result<&'a mut TddLevel, crate::limits::OperationError> {
+        Ok(match self.try_copy_arenas(lim, 0, 0)? {
+            Some(arenas) => out.write(self.with_arenas(arenas)),
+            None => out.write(self.try_clone_held(lim, 0, 0)?),
+        })
+    }
+
+    /// [`try_clone_with_room_on`](Self::try_clone_with_room_on) written
+    /// over `out`, whose storage is dropped, for the reason
+    /// [`try_clone_to`](Self::try_clone_to) writes in place. Refused, `out`
+    /// is as it was.
+    #[inline]
+    pub(crate) fn try_clone_over(
+        &self,
+        lim: &crate::limits::Limits,
+        nodes: usize,
+        pairs: usize,
+        out: &mut TddLevel,
+    ) -> Result<(), crate::limits::OperationError> {
+        let copy = match self.try_copy_arenas(lim, nodes, pairs)? {
+            Some(arenas) => self.with_arenas(arenas),
+            None => self.try_clone_held(lim, nodes, pairs)?,
+        };
+        drop(std::mem::replace(out, copy));
+        Ok(())
+    }
+
+    /// The arenas of a copy of a structural level that stores its nodes and
+    /// pairs and keeps no range table, with room for `nodes` more nodes and
+    /// `pairs` more pairs, and the live pairs it keeps; `None` for any other
+    /// level, which [`try_clone_held`](Self::try_clone_held) copies.
+    #[inline(always)]
+    fn try_copy_arenas(
+        &self,
+        lim: &crate::limits::Limits,
+        nodes: usize,
+        pairs: usize,
+    ) -> Result<Option<CopiedArenas<'_>>, crate::limits::OperationError> {
+        let (LevelState::Structural(held), Some(stored)) = (&self.state, self.pairs.stored()) else {
+            return Ok(None);
+        };
+        if !self.ranges.is_empty() {
+            return Ok(None);
+        }
+        let n = copy_reserved(lim, self.nodes.stored(), nodes)?;
+        let p = copy_reserved(lim, stored, pairs)?;
+        Ok(Some((n, p, held)))
+    }
+
+    /// The copy of this level whose arenas
+    /// [`try_copy_arenas`](Self::try_copy_arenas) made.
+    #[inline(always)]
+    fn with_arenas(&self, (nodes, pairs, held): CopiedArenas<'_>) -> TddLevel {
+        TddLevel {
+            nodes: NodeArena::from(nodes),
+            pairs: PairArena::from(pairs),
+            ranges: RangeTable::default(),
+            value_ref_sides: self.value_ref_sides,
+            dead_pairs: self.dead_pairs,
+            uneven: self.uneven,
+            state: LevelState::Structural(held.clone()),
+        }
+    }
+
+    /// [`try_clone_with_room_on`](Self::try_clone_with_room_on) of a level
+    /// that [`try_copy_arenas`](Self::try_copy_arenas) does not copy: a
+    /// marginal or implicit one, or one with a range table.
+    #[inline(never)]
+    fn try_clone_held(
+        &self,
+        lim: &crate::limits::Limits,
+        nodes: usize,
+        pairs: usize,
+    ) -> Result<TddLevel, crate::limits::OperationError> {
         let state = match &self.state {
             LevelState::Counts(c) => LevelState::Counts(CountBox::new(CountState {
-                counts: copy(lim, &c.counts, 0)?,
+                counts: copy_reserved(lim, &c.counts, 0)?,
                 big: c.big.clone(),
                 retired: c.retired,
             })),
@@ -568,7 +666,7 @@ impl TddLevel {
             lim.charge_bytes((d.nodes() as u64).saturating_mul(std::mem::size_of::<super::primitives::EncodedNode>() as u64))?;
         }
         Ok(TddLevel {
-            nodes: NodeArena::from(copy(lim, self.nodes.stored(), nodes)?),
+            nodes: NodeArena::from(copy_reserved(lim, self.nodes.stored(), nodes)?),
             pairs: self.pairs.try_clone_on(lim, pairs)?,
             ranges: self.ranges.try_clone_on(lim)?,
             value_ref_sides: self.value_ref_sides,

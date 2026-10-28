@@ -78,7 +78,7 @@ impl Held<'_> {
     pub(crate) fn carry(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
         match self {
             Held::Owned(tdd) => std::mem::swap(out, &mut tdd.levels[t]),
-            Held::Borrowed(tdd) => *out = tdd.levels[t].try_clone_on(lim)?,
+            Held::Borrowed(tdd) => tdd.levels[t].try_clone_over(lim, 0, 0, out)?,
         }
         Ok(())
     }

@@ -209,7 +209,10 @@ impl Tdd {
         let mut levels = Vec::new();
         lim.reserve_exact(&mut levels, self.levels.len())?;
         for level in &self.levels {
-            levels.push(level.try_clone_on(lim)?);
+            // Each level is written in its place (`TddLevel::try_clone_to`).
+            level.try_clone_to(lim, &mut levels.spare_capacity_mut()[0])?;
+            // Safety: the slot past the length was just written.
+            unsafe { levels.set_len(levels.len() + 1) };
         }
         let mut levels = state::LevelStorage::from(levels);
         if self.levels.is_canonical(self.output) { levels.certify(self.output); }
