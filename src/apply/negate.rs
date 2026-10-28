@@ -819,21 +819,29 @@ impl<'a> Cover<'a> {
     /// Mark the cells of every pair of `level`'s nodes, `pairs` of them,
     /// and charge the work clock a unit a pair.
     ///
-    /// A stored level whose nodes' ranges cover its arena is read node by
-    /// node and then the arena whole, with no branch on a node's kind
-    /// ([`StoredPairs::for_each_pair_whole`]): a node whose pairs are in the
-    /// arena marks the cell past the basis, which the cover keeps for it and
-    /// [`missing_into`](Self::missing_into) never reads. On a level whose
-    /// arena holds dead pairs, that read has marked the pairs held in node
-    /// words, and the other nodes' pairs are read as slices of the arena. An
-    /// implicit level's nodes are generated into a buffer a node at a time.
+    /// A stored level is read node by node and then its arena whole, with
+    /// no branch on a node's kind ([`StoredPairs::for_each_pair_whole`]): a
+    /// node whose pairs are in the arena marks the cell past the basis,
+    /// which the cover keeps for it and [`missing_into`](Self::missing_into)
+    /// never reads. A level that notes dead pairs in its arena, or whose
+    /// nodes' ranges do not cover it, has its nodes' arena pairs read as
+    /// slices of it instead, in the first case in the same pass as the pairs
+    /// held in node words. An implicit level's nodes are generated into a
+    /// buffer a node at a time.
     ///
     /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
     fn mark_level(&mut self, eng: &Engine, level: &TddLevel, pairs: u64) -> Result<(), OperationError> {
         let mut marks = self.marks();
         if let Some(stored) = level.stored() {
             let past = ChildPair::new(EncodedChildRef::from_raw(marks.lefts.end), EncodedChildRef::from_raw(marks.rights.start));
-            if !stored.for_each_pair_whole(past, |pair| marks.pair(pair)) {
+            if level.dead_pairs != 0 {
+                for node in stored.nodes() {
+                    match node.kind() {
+                        crate::diagram::NodeKind::Inline(pair) => marks.pair(pair),
+                        _ => stored.of(node).iter().for_each(|&pair| marks.pair(pair)),
+                    }
+                }
+            } else if !stored.for_each_pair_whole(past, |pair| marks.pair(pair)) {
                 for node in stored.nodes().iter().filter(|node| node.kind().pairs_in_arena()) {
                     stored.of(node).iter().for_each(|&pair| marks.pair(pair));
                 }
