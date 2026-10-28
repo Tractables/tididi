@@ -3380,12 +3380,12 @@ fn emit_alternating(
 /// parent's products, and each pair is written into its product's range;
 /// the ranges take no more of the arena than the walk gave the pairs.
 ///
-/// A node of up to [`FEW_PRODUCTS`] products and at least
-/// [`GATHERED_CANDIDATES`] candidates has each product's pairs counted and
-/// then gathered by a pass of their own over the candidates, whose cursor
-/// stays in a register ([`gather_by_product`]). Otherwise one pass counts
-/// them all and one writes each pair at its product's cursor, read from and
-/// written back to memory.
+/// The keying pass counts each product's pairs. A node of up to
+/// [`FEW_PRODUCTS`] products and at least [`GATHERED_CANDIDATES`]
+/// candidates then has each product's pairs gathered by a pass of their
+/// own over the candidates, whose cursor stays in a register
+/// ([`gather_by_product`]); otherwise one pass writes each pair at its
+/// product's cursor, read from and written back to memory.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn emit_owned(
     eng: &Engine,
@@ -3412,10 +3412,12 @@ pub(super) fn emit_owned(
                 g_idx: GNodeIdx(g_parent),
                 prod_idx: ProductNodeIdx(idx),
             })?;
-            lim.try_push(pair_counts, 0)?;
+            lim.try_push(pair_counts, 1)?;
             idx - first as u32
         } else {
-            slot - first as u32
+            let k = slot - first as u32;
+            pair_counts[k as usize] += 1;
+            k
         };
         Ok(())
     });
@@ -3434,15 +3436,6 @@ pub(super) fn emit_owned(
             return Ok(());
         }
         let few = products <= FEW_PRODUCTS && n >= GATHERED_CANDIDATES;
-        if few {
-            for (k, count) in pair_counts.iter_mut().enumerate() {
-                *count = owners.iter().filter(|&&o| o == k as u32).count() as u32;
-            }
-        } else {
-            for &k in owners.iter() {
-                pair_counts[k as usize] += 1;
-            }
-        }
         let total = prefix_offsets(pair_counts, true)? as usize;
         single_pairs.clear();
         lim.try_resize(single_pairs, products, arena[base])?;
