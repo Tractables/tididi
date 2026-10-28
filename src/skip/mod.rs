@@ -75,6 +75,10 @@ pub(crate) struct Shape {
     /// whose children are both internal: a conjunction looks the products
     /// read there up by both references.
     pub(crate) looked_up: Vec<bool>,
+    /// The highest ancestor a node reaches through parents whose other
+    /// child is a leaf (the node itself where its sibling is internal or it
+    /// is the root): a reference read there skips every level between.
+    pub(crate) chain_up: Vec<u32>,
 }
 
 impl Shape {
@@ -130,7 +134,17 @@ impl Shape {
             looked_up[l as usize] = looked_up[t as usize] || both;
             looked_up[r as usize] = looked_up[t as usize];
         }
-        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up }
+        let mut chain_up: Vec<u32> = (0..n as u32).collect();
+        for &t in &topdown {
+            let (l, r) = kids[t as usize];
+            if kids[r as usize].0 == NONE {
+                chain_up[l as usize] = chain_up[t as usize];
+            }
+            if kids[l as usize].0 == NONE {
+                chain_up[r as usize] = chain_up[t as usize];
+            }
+        }
+        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up, chain_up }
     }
 
     #[inline]

@@ -113,20 +113,25 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
     let mut lift = |out: &mut SkipForm, tops: &mut FxHashMap<u32, Ref>, c: u32, w: u32, x: Ref| -> Ref {
         let mut cur = x;
         let mut at = w;
+        if at != c && sh.is_leaf(at) && cur == mk(at, ONE) {
+            // `true` on both leaves of a level is read through the right one.
+            let (l, r) = sh.kids[sh.parent[at as usize] as usize];
+            if l == at && sh.is_leaf(r) {
+                cur = mk(r, ONE);
+            }
+        }
         while at != c {
+            // Levels whose other side is a single variable hold `true`
+            // there: the reference skips them.
+            let up = sh.chain_up[at as usize];
+            if sh.depth[up as usize] <= sh.depth[c as usize] {
+                break;
+            }
+            at = up;
             let u = sh.parent[at as usize];
             let (l, r) = sh.kids[u as usize];
             let left = l == at;
             let o = if left { r } else { l };
-            if sh.is_leaf(o) {
-                // `true` on a single variable: the reference skips `u`
-                // (`true` on both leaves is read through the right one).
-                if left && sh.is_leaf(at) && cur == mk(at, ONE) {
-                    cur = mk(o, ONE);
-                }
-                at = u;
-                continue;
-            }
             off(out, tops, &mut memo, u, o, &mut sides);
             let mut p: Vec<(Ref, Ref)> = sides.iter().map(|&o| if left { (cur, o) } else { (o, cur) }).collect();
             cur = match normalize(sh, u, &mut p) {
