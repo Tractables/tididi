@@ -275,3 +275,42 @@ fn tagged_forms_keep_their_invariants() {
         check_tagged(&tag::contract(&raw, eng.limits()).unwrap()).map_err(|e| format!("contract: {e}")).unwrap();
     }
 }
+
+#[test]
+fn conjunction_of_placed_projections_is_canonical() {
+    use crate::vtree::VarId;
+    let mut rng = Lcg::new(10);
+    let mut done = 0;
+    while done < 300 {
+        let n = 3 + rng.below(8) as u32;
+        for (_, vtree) in vtree_shapes(n) {
+            let eng = Engine::new();
+            let ish = Arc::new(Shape::of(&vtree));
+            let mut placed = Vec::new();
+            let mut embedded = Vec::new();
+            for _ in 0..2 {
+                // A random subset of the variables, and a function over it.
+                let keep: Vec<u32> = (1..=n).filter(|_| rng.below(3) != 0).collect();
+                if keep.is_empty() {
+                    break;
+                }
+                let local = |v: VarId| keep.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
+                let Some(small) = vtree.project_to_vars(local, keep.len() as u32) else { break };
+                let small = eng.bind_vtree(small);
+                let m = keep.len() as u32;
+                let f = compile_clauses_on(&eng, &small, &rand_cnf(&mut rng, m, CnfShape { clauses: m as usize, width: 3 }));
+                let map = |v: VarId| VarId(keep[v.0 as usize - 1]);
+                placed.push(super::place::place(&skip(&f), &small, map, &vtree, &ish).expect("a projection places"));
+                embedded.push(eng.embed(&f, &vtree, map).unwrap().0);
+            }
+            if placed.len() < 2 {
+                continue;
+            }
+            let h = contract(&conjoin::and(&placed[0], &placed[1], eng.limits()).unwrap(), eng.limits()).unwrap();
+            let mut want = eng.and(&embedded[0], &embedded[1]).unwrap();
+            eng.minimize(&mut want).unwrap();
+            assert_eq!(fingerprint(&h), fingerprint(&skip(&want)));
+            done += 1;
+        }
+    }
+}

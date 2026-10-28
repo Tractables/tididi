@@ -117,7 +117,17 @@ pub(crate) fn place(s: &SkipForm, from: &Vtree, map: impl Fn(VarId) -> VarId, in
             let u = sh.parent[at as usize];
             let (l, r) = sh.kids[u as usize];
             let left = l == at;
-            off(out, tops, &mut memo, u, if left { r } else { l }, &mut sides);
+            let o = if left { r } else { l };
+            if sh.is_leaf(o) {
+                // `true` on a single variable: the reference skips `u`
+                // (`true` on both leaves is read through the right one).
+                if left && sh.is_leaf(at) && cur == mk(at, ONE) {
+                    cur = mk(o, ONE);
+                }
+                at = u;
+                continue;
+            }
+            off(out, tops, &mut memo, u, o, &mut sides);
             let mut p: Vec<(Ref, Ref)> = sides.iter().map(|&o| if left { (cur, o) } else { (o, cur) }).collect();
             cur = match normalize(sh, u, &mut p) {
                 Err(t) => t,
