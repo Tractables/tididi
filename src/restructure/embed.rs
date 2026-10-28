@@ -748,19 +748,44 @@ pub(crate) fn place_moving(
     free: Free,
     mirror: bool,
 ) -> Result<(Tdd, Plan), EmbedRefused> {
+    place(eng, std::borrow::Cow::Owned(tdd), into, map, free, mirror)
+        .map_err(|(error, tdd)| EmbedRefused { error, tdd: tdd.into_owned() })
+}
+
+/// [`place_moving`] of an owned or borrowed diagram: a borrowed one without
+/// weights has its levels copied into the destination's, and one with
+/// weights is copied whole and the copy moved. Refused, the diagram comes
+/// back as it was given.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+pub(crate) fn place<'a>(
+    eng: &Engine,
+    tdd: std::borrow::Cow<'a, Tdd>,
+    into: &Arc<Vtree>,
+    map: impl Fn(VarId) -> VarId,
+    free: Free,
+    mirror: bool,
+) -> Result<(Tdd, Plan), (EmbedError, std::borrow::Cow<'a, Tdd>)> {
+    use std::borrow::Cow;
     if let Err(e) = tdd.require_structure() {
-        return Err(EmbedRefused { error: e.into(), tdd });
+        return Err((e.into(), tdd));
     }
     let plan = match Plan::build(eng, tdd.vtree(), into, map, mirror) {
         Ok(plan) => plan,
-        Err(error) => return Err(EmbedRefused { error, tdd }),
+        Err(error) => return Err((error, tdd)),
     };
     if tdd.is_zero() {
         return Ok((crate::build::constant_zero(eng, into), plan));
     }
-    match assemble_moving(eng, tdd, into, &plan, free) {
+    let placed = match tdd {
+        Cow::Borrowed(source) if source.weights.is_some() => match source.try_clone_on(eng) {
+            Ok(copy) => assemble_moving(eng, Cow::Owned(copy), into, &plan, free).map_err(|(e, _)| (e, Cow::Borrowed(source))),
+            Err(e) => Err((e, Cow::Borrowed(source))),
+        },
+        tdd => assemble_moving(eng, tdd, into, &plan, free),
+    };
+    match placed {
         Ok(result) => Ok((result, plan)),
-        Err((e, tdd)) => Err(EmbedRefused { error: e.into(), tdd }),
+        Err((e, tdd)) => Err((e.into(), tdd)),
     }
 }
 
@@ -818,15 +843,18 @@ fn assemble(
 
 /// Move the levels of a structural diagram onto the destination and build
 /// what it adds, as [`assemble`] does with copies; the diagram comes back,
-/// levels in place, when the result's storage is refused.
+/// levels in place, when the result's storage is refused. A borrowed
+/// diagram, which has no weights, has its levels copied into the
+/// destination's instead, and a refusal drops the copies.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn assemble_moving(
+fn assemble_moving<'a>(
     eng: &Engine,
-    mut tdd: Tdd,
+    mut tdd: std::borrow::Cow<'a, Tdd>,
     into: &Arc<Vtree>,
     plan: &Plan,
     free: Free,
-) -> Result<Tdd, (OperationError, Tdd)> {
+) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
+    use std::borrow::Cow;
     // A moved level keeps its nodes and, through the pass-throughs and the
     // renumbered literal chains, the identities of its children's, so it
     // owes the contraction passes what it owed in `tdd`. New pass-through
@@ -847,9 +875,30 @@ fn assemble_moving(
         Err(e) => return Err((e, tdd)),
     };
     // Moving the levels out and back forgets what `tdd` is known to be: a
-    // refusal takes it back with them.
-    let known = tdd.levels.known();
-    placement.move_part(&mut tdd, &plan.embedding.levels);
+    // refusal takes it back with them. A copy leaves `tdd` as it is.
+    let known = match &mut tdd {
+        Cow::Owned(tdd) => {
+            let known = tdd.levels.known();
+            placement.move_part(tdd, &plan.embedding.levels);
+            Some(known)
+        }
+        Cow::Borrowed(source) => {
+            debug_assert!(source.weights.is_none(), "a weighted diagram is moved");
+            if let Err(e) = placement.copy_part(source, &plan.embedding.levels) {
+                return Err((e, tdd));
+            }
+            None
+        }
+    };
+    // Undo a refused placement: a moved diagram takes its levels back.
+    let refuse = |e: OperationError, mut placement: MovePlacement<'_>, mut tdd: Cow<'a, Tdd>| {
+        if let (Cow::Owned(source), Some(known)) = (&mut tdd, known) {
+            placement.mirror(plan);
+            placement.move_back(source, &plan.embedding.levels);
+            source.levels.reinstate_known(known);
+        }
+        (e, tdd)
+    };
     // A mirrored image reads its pairs the other way round, before anything
     // reads its sides (`literal_chain`). A refusal undoes it by the same
     // call, so anything that reorders a mirrored level's pairs belongs on
@@ -902,23 +951,17 @@ fn assemble_moving(
         }
     }
     if let Err(e) = stopped.and_then(|()| gate.flush()) {
-        placement.mirror(plan);
-        placement.move_back(&mut tdd, &plan.embedding.levels);
-        tdd.levels.reinstate_known(known);
-        return Err((e, tdd));
+        return Err(refuse(e, placement, tdd));
     }
     let mut result = match placement.seat(tdd.output().local, carried) {
         Ok(result) => result,
-        Err((e, mut placement)) => {
-            placement.mirror(plan);
-            placement.move_back(&mut tdd, &plan.embedding.levels);
-            tdd.levels.reinstate_known(known);
-            return Err((e, tdd));
-        }
+        Err((e, placement)) => return Err(refuse(e, placement, tdd)),
     };
-    // Every level of `tdd` is now one the placement took from the pool,
-    // empty: they go back for the takes that follow.
-    return_levels(eng, std::mem::take(&mut tdd.levels).into_vec());
+    // Every level of a moved `tdd` is now one the placement took from the
+    // pool, empty: they go back for the takes that follow.
+    if let Cow::Owned(moved) = &mut tdd {
+        return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
+    }
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
     let closed = result.levels.is_closed();
     for &top in &literal_tops {

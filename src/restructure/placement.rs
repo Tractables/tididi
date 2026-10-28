@@ -253,7 +253,25 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
-    /// Exchange the two sides of every pair of each moved level `plan`
+    /// Copy every level of `source`, a diagram without weights, through a
+    /// checked placement map, each over the level the placement took from
+    /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
+    /// Hands back a refusal, for the caller to drop the placement.
+    ///
+    /// [`TddLevel::try_copy_over`]: crate::diagram::TddLevel
+    pub(super) fn copy_part(&mut self, source: &Tdd, map: &[VtreeIdx]) -> Result<(), OperationError> {
+        debug_assert_eq!(source.vtree().num_nodes(), map.len());
+        debug_assert!(source.weights.is_none(), "a weighted part is moved with its columns");
+        self.changed.take_from(source);
+        let (levels, _) = self.assembly.parts_mut();
+        let lim = self.eng.limits();
+        for (from, &to) in map.iter().enumerate() {
+            source.levels[from].try_copy_over(lim, &mut levels[to.idx()])?;
+        }
+        Ok(())
+    }
+
+    /// Exchange the two sides of every pair of each placed level `plan`
     /// mirrors ([`TddLevel::swap_sides`]): the level of the same functions
     /// over its image, whose children are the source node's swapped. Its own
     /// inverse, so a refused placement undoes it before

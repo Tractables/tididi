@@ -241,8 +241,9 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
 /// [`Engine::and_onto`] with each operand borrowed in turn and both, one on
 /// the destination and one placed there, against the same call with both
 /// owned; refused at each unit of work, it is refused where the owned one
-/// is and hands back what it was given: a borrowed operand as the borrow,
-/// an owned one as it was or placed.
+/// is, and refused there or at any reserve, it hands back what it was
+/// given: a borrowed operand as the borrow, an owned one as it was or
+/// placed.
 #[test]
 fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
     let eng = Engine::new();
@@ -284,6 +285,18 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
                         refused.is_some()
                     };
                     assert_eq!(refused_at((borrow_a, borrow_b)), refused_at((false, false)), "{at}: at work {n}, refused unlike the owned one");
+                }
+                // Refused at each reserve in turn, it hands back what it was given.
+                for n in 0u32.. {
+                    let eng = Engine::new();
+                    let _scope = eng.limits().scope(LimitConfig::none());
+                    eng.limits().refuse_nth_reserve(n);
+                    let Err(r) = eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into) else { break };
+                    for (back, t, borrowed) in [(&r.f, a, borrow_a), (&r.g, b, borrow_b)] {
+                        let as_placed = !borrowed && matches!(back, Cow::Owned(back) if same_storage(back, &placed(t)));
+                        assert!(handed_back(back, t, borrowed) || as_placed, "{at}: refused at reserve {n}, an operand handed back neither as given nor placed");
+                    }
+                    assert!(n < 100_000, "{at}: never granted");
                 }
                 checked += 1;
             }

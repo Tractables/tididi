@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::restructure::EmbedError;
-use crate::restructure::embed::{place_moving, Free, Plan};
+use crate::restructure::embed::{place, Free, Plan};
 use crate::restructure::placement::push_free_level;
 use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
@@ -520,8 +520,8 @@ type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>), (EmbedError, Cow<'a, Tdd>
 /// Place `tdd` on `into` for [`Engine::and_onto`](crate::Engine::and_onto),
 /// free levels left empty, with the plan it was placed by; as it is, with no
 /// plan, when it is on `into` already. A borrowed operand not on `into` is
-/// copied and the copy placed. `begun` says whether a phase of the
-/// operation has begun, and is set. With `mirror`, up to mirrors
+/// copied into the placement ([`place`]). `begun` says whether a phase of
+/// the operation has begun, and is set. With `mirror`, up to mirrors
 /// ([`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored)).
 /// Refused, the operand comes back as it was given.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
@@ -540,17 +540,7 @@ fn place_onto<'a>(
         return Err((error.into(), tdd));
     }
     *begun = true;
-    let (owned, borrowed) = match tdd {
-        Cow::Owned(tdd) => (tdd, None),
-        Cow::Borrowed(tdd) => match tdd.try_clone_on(eng) {
-            Ok(copy) => (copy, Some(tdd)),
-            Err(error) => return Err((error.into(), Cow::Borrowed(tdd))),
-        },
-    };
-    match place_moving(eng, owned, into, map, Free::Leave, mirror) {
-        Ok((tdd, plan)) => Ok((Cow::Owned(tdd), Some(plan))),
-        Err(refused) => Err((refused.error, borrowed.map_or(Cow::Owned(refused.tdd), Cow::Borrowed))),
-    }
+    place(eng, tdd, into, map, Free::Leave, mirror).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan)))
 }
 
 /// [`Engine::and_onto`](crate::Engine::and_onto), and with `mirror`
