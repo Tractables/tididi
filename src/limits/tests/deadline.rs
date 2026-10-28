@@ -44,7 +44,7 @@ fn the_earlier_of_two_deadlines_is_kept() {
 fn the_other_settings_survive_a_tightened_deadline() {
     let (callback, calls) = counting();
     let at = Instant::now() + Duration::from_secs(60);
-    let conditional = StopRules::default().after_pairs(7, StopAt::WorkUnits(100));
+    let conditional = StopRules::default().with_after_pairs(Some((7, StopAt::WorkUnits(100))));
     let config = LimitConfig::none()
         .with_memory_budget_bytes(Some(4096))
         .with_output_node_cap(Some(42))

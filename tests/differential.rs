@@ -460,7 +460,7 @@ fn operations_match_enumeration(case: &Case) {
 
 /// A sparse route every level takes: the sparse conjunction's own arms run on
 /// diagrams too small to reach them by default.
-const EVERY_LEVEL_SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 1 };
+const EVERY_LEVEL_SPARSE: SparseRoute = SparseRoute::new(1, 1);
 
 /// Borrow a case's vtree and variable count into a fresh case over other
 /// clauses, so the halves of `operations_match_enumeration` compile the same
@@ -1482,7 +1482,7 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
     right_case.clauses = case.clauses[split..].to_vec();
     let (f, g) = (compile(&left_case), compile(&right_case));
     let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
-    let routes = [SparseRoute::DEFAULT, SparseRoute { sparsity: 1, min_grid: 1 }];
+    let routes = [SparseRoute::DEFAULT, SparseRoute::new(1, 1)];
     let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.level(t).nodes().len() == 1;
     let below = vtree.bottomup().rfind(|&t| t != vtree.root() && !vtree.node(t).is_leaf() && one(&f, t) && one(&g, t));
     let children = [Some(vtree.root()), below].into_iter().flatten().filter_map(|t| match *vtree.node(t) {

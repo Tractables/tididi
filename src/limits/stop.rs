@@ -38,7 +38,20 @@ impl StopAt {
 /// which is reset at operation entry and records the current or last pairwise
 /// conjunction within that operation. Other phases of a compound operation
 /// may therefore observe its last conjunction's count.
+///
+/// Build the rules from [`StopRules::default`], which arms nothing, or
+/// [`StopRules::by_time`], and the `with_*` setters:
+///
+/// ```
+/// use tididi::limits::{StopAt, StopRules};
+///
+/// let rules = StopRules::default()
+///     .with_unconditional(Some(StopAt::WorkUnits(1_000_000)))
+///     .with_after_pairs(Some((50_000, StopAt::WorkUnits(0))));
+/// assert_eq!(rules.after_pairs, Some((50_000, StopAt::WorkUnits(0))));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct StopRules {
     /// The unconditional bound, or `None` to disable it.
     pub unconditional: Option<StopAt>,
@@ -58,11 +71,18 @@ impl StopRules {
         StopRules { unconditional: Some(StopAt::Time(deadline)), after_pairs: None }
     }
 
-    /// Add the size-conditional bound `at`, in force once the operation has
-    /// built `pairs` output pairs.
+    /// Set the unconditional bound, or clear it with `None`.
     #[must_use]
-    pub fn after_pairs(mut self, pairs: u64, at: StopAt) -> StopRules {
-        self.after_pairs = Some((pairs, at));
+    pub const fn with_unconditional(mut self, at: Option<StopAt>) -> StopRules {
+        self.unconditional = at;
+        self
+    }
+
+    /// Set the size-conditional bound `(pairs, at)`, in force once the
+    /// operation has built `pairs` output pairs, or clear it with `None`.
+    #[must_use]
+    pub const fn with_after_pairs(mut self, after: Option<(u64, StopAt)>) -> StopRules {
+        self.after_pairs = after;
         self
     }
 

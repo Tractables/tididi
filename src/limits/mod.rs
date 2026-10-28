@@ -81,8 +81,9 @@ impl std::fmt::Debug for StopCallback {
 /// pairs make more than `min_grid` combinations, takes the sparse route when
 /// its live pairs, multiplied together and by `sparsity`, fall short of the
 /// grid. Lower values send more levels down the sparse route. The route
-/// changes the work, never the result.
+/// changes the work, never the result. Build one with [`SparseRoute::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SparseRoute {
     /// How much sparser than its grid a level must be.
     pub sparsity: u32,
@@ -93,7 +94,21 @@ pub struct SparseRoute {
 
 impl SparseRoute {
     /// The route every engine starts with.
-    pub const DEFAULT: SparseRoute = SparseRoute { sparsity: 64, min_grid: 4096 };
+    pub const DEFAULT: SparseRoute = SparseRoute::new(64, 4096);
+
+    /// The route with these two thresholds.
+    ///
+    /// ```
+    /// use tididi::limits::{LimitConfig, SparseRoute};
+    ///
+    /// const EVERY_LEVEL: SparseRoute = SparseRoute::new(1, 0);
+    /// let config = LimitConfig::none().with_sparse_route(EVERY_LEVEL);
+    /// assert_eq!(config.sparse_route().min_grid, 0);
+    /// ```
+    #[must_use]
+    pub const fn new(sparsity: u32, min_grid: usize) -> SparseRoute {
+        SparseRoute { sparsity, min_grid }
+    }
 }
 
 impl Default for SparseRoute {
@@ -299,7 +314,7 @@ impl LimitConfig {
     /// The installed stop bounds, independently of the callback.
     ///
     /// Read them to change one bound while preserving the other:
-    /// `let stop = s.stop_rules().after_pairs(n, at); s.with_stop_rules(stop)`.
+    /// `let stop = s.stop_rules().with_after_pairs(Some((n, at))); s.with_stop_rules(stop)`.
     #[must_use]
     #[inline]
     pub fn stop_rules(&self) -> StopRules {

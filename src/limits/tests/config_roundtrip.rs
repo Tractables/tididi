@@ -22,7 +22,7 @@ fn distinctive() -> (LimitConfig, Arc<AtomicU32>) {
     let config = LimitConfig::none()
         .with_memory_budget_bytes(Some(4096))
         .with_output_node_cap(Some(77))
-        .with_stop_rules(StopRules::default().after_pairs(9, StopAt::WorkUnits(11)))
+        .with_stop_rules(StopRules::default().with_after_pairs(Some((9, StopAt::WorkUnits(11)))))
         .with_deadline(Some(Instant::now() + Duration::from_secs(600)))
         .with_stop_callback(Some(StopCallback::new(move |_, _| {
             seen.fetch_add(1, Ordering::Relaxed);

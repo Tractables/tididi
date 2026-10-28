@@ -64,8 +64,11 @@ impl PoolProbe<'_> {
     }
 }
 
-/// Bounds of a [`pool_search`](Engine::pool_search).
+/// Bounds of a [`pool_search`](Engine::pool_search). Start from
+/// [`PoolSearchConfig::default`] and change what the search needs with the
+/// `with_*` setters.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct PoolSearchConfig {
     /// Sweeps over the internal nodes; a sweep that keeps nothing ends the
     /// search earlier.
@@ -92,6 +95,43 @@ impl Default for PoolSearchConfig {
             max_work_units: u64::MAX,
             restarts: PoolRestarts::default(),
         }
+    }
+}
+
+impl PoolSearchConfig {
+    /// Set [`max_sweeps`](Self::max_sweeps).
+    #[must_use]
+    pub fn with_max_sweeps(mut self, sweeps: usize) -> PoolSearchConfig {
+        self.max_sweeps = sweeps;
+        self
+    }
+
+    /// Set [`max_inner_pairs`](Self::max_inner_pairs).
+    #[must_use]
+    pub fn with_max_inner_pairs(mut self, pairs: usize) -> PoolSearchConfig {
+        self.max_inner_pairs = pairs;
+        self
+    }
+
+    /// Set [`crossed`](Self::crossed).
+    #[must_use]
+    pub fn with_crossed(mut self, crossed: bool) -> PoolSearchConfig {
+        self.crossed = crossed;
+        self
+    }
+
+    /// Set [`max_work_units`](Self::max_work_units).
+    #[must_use]
+    pub fn with_max_work_units(mut self, units: u64) -> PoolSearchConfig {
+        self.max_work_units = units;
+        self
+    }
+
+    /// Set [`restarts`](Self::restarts).
+    #[must_use]
+    pub fn with_restarts(mut self, restarts: PoolRestarts) -> PoolSearchConfig {
+        self.restarts = restarts;
+        self
     }
 }
 
@@ -123,11 +163,9 @@ impl Default for PoolSearchConfig {
 /// let mut f = engine.or(engine.cube(&vtree, [1, 4])?, engine.cube(&vtree, [2, 5])?)?;
 /// let mut g = engine.or(engine.cube(&vtree, [3, 6])?, engine.cube(&vtree, [-1, -4])?)?;
 /// let (f_models, g_models) = (engine.model_count(&f)?, engine.model_count(&g)?);
-/// let config = PoolSearchConfig {
-///     max_sweeps: usize::MAX,
-///     restarts: PoolRestarts { count: 2, min_gain_permille: 20, seed: 7, ..PoolRestarts::default() },
-///     ..PoolSearchConfig::default()
-/// };
+/// let config = PoolSearchConfig::default()
+///     .with_max_sweeps(usize::MAX)
+///     .with_restarts(PoolRestarts::default().with_count(2).with_min_gain_permille(20).with_seed(7));
 /// let stats = engine.pool_search(&mut [&mut f, &mut g], &config)?;
 /// // The descent ran until a sweep kept nothing, so both restarts ran.
 /// assert_eq!(stats.restarts, 2);
@@ -137,6 +175,7 @@ impl Default for PoolSearchConfig {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PoolRestarts {
     /// Restarts to run. Zero, the default, ends the search at the descent's
     /// local minimum.
@@ -165,8 +204,46 @@ impl Default for PoolRestarts {
     }
 }
 
+impl PoolRestarts {
+    /// Set [`count`](Self::count).
+    #[must_use]
+    pub fn with_count(mut self, count: usize) -> PoolRestarts {
+        self.count = count;
+        self
+    }
+
+    /// Set [`kick`](Self::kick).
+    #[must_use]
+    pub fn with_kick(mut self, kick: usize) -> PoolRestarts {
+        self.kick = kick;
+        self
+    }
+
+    /// Set [`slack_permille`](Self::slack_permille).
+    #[must_use]
+    pub fn with_slack_permille(mut self, slack: u32) -> PoolRestarts {
+        self.slack_permille = slack;
+        self
+    }
+
+    /// Set [`seed`](Self::seed).
+    #[must_use]
+    pub fn with_seed(mut self, seed: u64) -> PoolRestarts {
+        self.seed = seed;
+        self
+    }
+
+    /// Set [`min_gain_permille`](Self::min_gain_permille).
+    #[must_use]
+    pub fn with_min_gain_permille(mut self, gain: u32) -> PoolRestarts {
+        self.min_gain_permille = gain;
+        self
+    }
+}
+
 /// What a [`pool_search`](Engine::pool_search) did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PoolSearchStats {
     /// Sweeps started.
     pub sweeps: usize,

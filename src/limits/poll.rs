@@ -214,7 +214,7 @@ impl Limits {
     /// let engine = Engine::new();
     /// let limits = engine.limits();
     /// let start = limits.work_units();
-    /// let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + 100)), after_pairs: None };
+    /// let rules = StopRules::default().with_unconditional(Some(StopAt::WorkUnits(start + 100)));
     /// let _scope = limits.scope(LimitConfig::none().with_stop_rules(rules));
     /// assert!(limits.poll_host_work(60).is_ok());
     /// assert_eq!(limits.poll_host_work(60), Err(tididi::OperationError::Stopped));

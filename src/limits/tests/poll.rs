@@ -41,7 +41,7 @@ fn a_flushed_gate_is_not_charged_again_when_it_drops() {
 fn only_the_flush_reports_a_stop() {
     let lim = Limits::new();
     let _prior = lim.install(
-        LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(0, StopAt::WorkUnits(1))),
+        LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(1))))),
     );
     let mut gate = lim.gate_with(1000);
     gate.poll(7).expect("under the stride, so nothing is read");
@@ -61,7 +61,7 @@ fn finish_tests_the_stop_without_adding_work() {
     gate.finish().expect("no stop armed");
     assert_eq!(lim.work_units(), before + 7, "the residue is charged once");
     let _prior = lim.install(LimitConfig::none().with_stop_rules(
-        StopRules::default().after_pairs(0, StopAt::WorkUnits(before + 7)),
+        StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(before + 7)))),
     ));
     assert!(matches!(lim.gate_with(1000).finish(), Err(OperationError::Stopped)));
     assert_eq!(lim.work_units(), before + 7);
@@ -74,7 +74,7 @@ fn poll_each_charges_and_stops_as_single_polls_do() {
     fn run(stride: u64, held: u64, units: u64, stop_at: u64, each: bool) -> (Result<(), OperationError>, u64, u64) {
         let lim = Limits::new();
         let _prior = lim.install(
-            LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(0, StopAt::WorkUnits(stop_at))),
+            LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(stop_at))))),
         );
         let mut gate = lim.gate_with(stride);
         let mut result = gate.poll(held);
@@ -110,7 +110,7 @@ fn poll_times_charges_and_stops_as_repeated_polls_do() {
     fn run(stride: u64, held: u64, work: u64, times: u64, stop_at: u64, once: bool) -> (Result<(), OperationError>, u64, u64) {
         let lim = Limits::new();
         let _prior = lim.install(
-            LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(0, StopAt::WorkUnits(stop_at))),
+            LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(stop_at))))),
         );
         let mut gate = lim.gate_with(stride);
         let mut result = gate.poll(held);

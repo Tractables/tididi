@@ -42,7 +42,7 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
 
     let eng = Engine::new();
     let lim = eng.limits();
-    let armed = StopRules::default().after_pairs(1_000, spent());
+    let armed = StopRules::default().with_after_pairs(Some((1_000, spent())));
     let _prior = lim.install(LimitConfig::none().with_stop_rules(armed));
     assert_eq!(lim.armed().stop_rules(), armed);
     // Share spent, output still under the floor: this is a step whose long run
@@ -62,7 +62,7 @@ fn a_conditional_bound_cuts_at_the_intra_level_poll_once_built_and_out_of_time()
     // the floor moves who is ELIGIBLE, never when the bound falls.
     let eng = Engine::new();
     let lim = eng.limits();
-    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(1_000, unspent())));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((1_000, unspent())))));
     lim.charge_output_pairs(2_000);
     assert!(!lim.should_stop());
 
@@ -110,7 +110,7 @@ fn a_finished_level_contributes_its_pairs_not_its_capacity() {
 fn bytes_are_not_pairs_a_big_operation_that_built_little_is_not_cut() {
     let eng = Engine::new();
     let lim = eng.limits();
-    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(1_000_000, spent())));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((1_000_000, spent())))));
     // A gigabyte of charged memory, and a diagram of 999_999 pairs.
     lim.charge_in_flight(1 << 30);
     lim.charge_output_pairs(999_999);
@@ -130,7 +130,7 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
     let lim = eng.limits();
     let stride = 1u64 << 20;
     let at = lim.meters().work_units.saturating_add(4 * stride);
-    let armed = StopRules::default().after_pairs(0, StopAt::WorkUnits(at));
+    let armed = StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(at))));
     let _prior = lim.install(LimitConfig::none().with_stop_rules(armed));
     assert_eq!(lim.armed().stop_rules(), armed);
     // Nothing has a wall here, and the floor is zero, so what holds the bound
@@ -157,7 +157,7 @@ fn a_work_bound_falls_on_the_work_clock_and_not_on_the_wall() {
 #[test]
 fn clearing_the_wall_leaves_a_conditional_bound_armed_and_uncut_removes_it() {
     let roped = LimitConfig::none()
-        .with_stop_rules(StopRules::default().after_pairs(0, spent()))
+        .with_stop_rules(StopRules::default().with_after_pairs(Some((0, spent()))))
         .with_stop_callback(Some(crate::limits::StopCallback::new(|_: &OperationMetrics, _: Instant| StopDecision::Stop)));
 
     let shielded = roped.clone().with_deadline(None);
@@ -215,7 +215,7 @@ fn arming_the_size_conditional_bound_leaves_the_unconditional_one_alone() {
     let wall = unspent();
     let floor = spent();
     let armed = LimitConfig::none().with_deadline(wall.time());
-    let stop = armed.stop_rules().after_pairs(4, floor);
+    let stop = armed.stop_rules().with_after_pairs(Some((4, floor)));
     let both = armed.with_stop_rules(stop);
     assert_eq!(both.stop_rules().unconditional, Some(wall));
     assert_eq!(both.stop_rules().after_pairs, Some((4, floor)));
