@@ -284,7 +284,7 @@ impl EncodedNode {
     ///
     /// This, [`held_count`](Self::held_count),
     /// [`inline_or`](Self::inline_or) and
-    /// [`renumber_past`](Self::renumber_past) are the only readers of the
+    /// [`move_past`](Self::move_past) are the only readers of the
     /// bit layout; everything else matches on what comes back, so a new case
     /// has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
@@ -330,17 +330,31 @@ impl EncodedNode {
         (pair, std::hint::select_unpredictable(multi, self.b, 0))
     }
 
-    /// Move the child slot the left side (`left`) or the right side of an
-    /// inline node names one down where it is past `k`, for a child level
-    /// that dropped slot `k`; a node whose pairs are in the arena keeps its
-    /// words. Without a branch on the node's kind, so a loop over a level's
-    /// nodes vectorizes.
+    /// Move the child slots an inline node names past the slots their child
+    /// levels dropped, on the left side when `LEFT` and on the right when
+    /// `RIGHT`: each down by the count of the slots of `left`, or `right`,
+    /// below it, `u32::MAX` padding none ([`slots_below`]). A node whose
+    /// pairs are in the arena keeps its words. Without a branch on the
+    /// node's kind, so a loop over a level's nodes vectorizes.
     #[inline(always)]
-    pub(crate) fn renumber_past(&mut self, left: bool, k: u32) {
-        let inline = self.a & MULTI_BIT == 0;
-        let side = if left { &mut self.a } else { &mut self.b };
-        *side -= u32::from(inline & (*side > k));
+    pub(crate) fn move_past<const N: usize, const LEFT: bool, const RIGHT: bool>(&mut self, left: &[u32; N], right: &[u32; N]) {
+        let inline = u32::from(self.a & MULTI_BIT == 0);
+        if LEFT {
+            self.a -= inline * slots_below(self.a, left);
+        }
+        if RIGHT {
+            self.b -= inline * slots_below(self.b, right);
+        }
     }
+}
+
+/// How many of the slots `dropped` holds lie below `slot`: how far a child
+/// slot moves down when its level drops them. `dropped` holds distinct
+/// slots, padded with `u32::MAX`, which lies below none; at most `slot` of
+/// them lie below `slot`, so the move never passes zero.
+#[inline(always)]
+pub(crate) fn slots_below<const N: usize>(slot: u32, dropped: &[u32; N]) -> u32 {
+    dropped.iter().fold(0, |below, &k| below + u32::from(slot > k))
 }
 
 impl std::fmt::Debug for EncodedNode {

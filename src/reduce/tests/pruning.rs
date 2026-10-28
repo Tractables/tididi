@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, keep_marked, new_indices, prune_below_root, prune_complement, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_below_root, prune_complement, prune_unreachable, settle_loose, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
 use crate::vtree::Vtree;
@@ -627,6 +627,17 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
         let words = 1 + (next() % 5) as usize;
         blocks.push((0..words).map(|_| match next() % 4 { 0 => 0, 1 => u64::MAX, _ => next() & next() }).collect());
     }
+    // A few slots dropped, up to past the most a parent moves its
+    // references past in one pass.
+    for dropped in 1..=FEW_DROPPED + 2 {
+        let words = 1 + (next() % 4) as usize;
+        let mut block = vec![u64::MAX; words];
+        for _ in 0..dropped {
+            let s = (next() % (64 * words as u64)) as usize;
+            block[s >> 6] &= !(1u64 << (s & 63));
+        }
+        blocks.push(block);
+    }
     for block in &blocks {
         let marked = |s: usize| block[s >> 6] >> (s & 63) & 1 != 0;
         for span in [block.len() * 64, block.len() * 64 - 1, block.len() * 64 - 63, 1] {
@@ -638,6 +649,18 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
             let mut got = vec![7u32; span];
             new_indices(block, span, &mut got);
             assert_eq!(got, want, "span {span} of {block:x?}");
+            // A few dropped slots move every marked slot to its new index
+            // by the count of those below it.
+            let dropped = (0..span).filter(|&s| !marked(s)).count();
+            match few_dropped(block, span) {
+                Some(few) => {
+                    assert_eq!(few.len, dropped, "span {span} of {block:x?}");
+                    for s in (0..span).filter(|&s| marked(s)) {
+                        assert_eq!(s as u32 - crate::diagram::slots_below(s as u32, &few.slots), want[s], "slot {s} of span {span} of {block:x?}");
+                    }
+                }
+                None => assert!(dropped > FEW_DROPPED, "span {span} of {block:x?}: {dropped} dropped"),
+            }
 
             let node = |i: usize| EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(i as u32), EncodedChildRef::from_raw(1)));
             let mut nodes: Vec<EncodedNode> = (0..span).map(node).collect();

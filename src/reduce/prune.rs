@@ -18,7 +18,7 @@
 //! nothing reads its marks. The read that settles a loose level
 //! ([`settle_loose`]) marks a byte per slot instead, one level at a time.
 
-use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel};
+use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below};
 
 use crate::Engine;
 
@@ -1082,8 +1082,19 @@ fn compact_one_level(
             None
         }
         None if left.dirty || right.dirty => {
-            let (lm, rm) = child_remaps(marks, remap, left, right);
-            rewrite_child_refs(tdd, t, own, lm, rm);
+            // A level that keeps most of its nodes, over children that each
+            // dropped few slots, moves its references in one pass over its
+            // words; otherwise its kept nodes' references are read through
+            // the children's new indices.
+            let kept = own.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+            let dropped = |c: Child| if c.dirty { few_dropped(&marks[c.base..], c.span) } else { Some(Dropped::NONE) };
+            match (2 * kept >= width).then(|| (dropped(left), dropped(right))) {
+                Some((Some(l), Some(r))) => move_past_dropped(&mut tdd.levels[t_idx], &l, &r),
+                _ => {
+                    let (lm, rm) = child_remaps(marks, remap, left, right);
+                    rewrite_child_refs(tdd, t, own, lm, rm);
+                }
+            }
             None
         }
         None => None,
@@ -2173,22 +2184,93 @@ fn retire(level: &mut TddLevel, k: usize) {
 }
 
 /// Move every reference of the stored `level` on its left side when
-/// `on_left`, else its right, past child slot `k` one slot down: the child
-/// dropped slot `k`. The child is structural, so a side is the slot it
-/// names. The node words and the arena are each read whole, without a
-/// branch on a node's kind ([`EncodedNode::renumber_past`]); the arena's
-/// dead pairs move too, which nothing reads.
-fn renumber_past(level: &mut TddLevel, on_left: bool, k: u32) {
+/// `LEFT` and on its right when `RIGHT` past the slots its child there
+/// dropped, `left` or `right`, each one slot down for each dropped slot
+/// below it ([`slots_below`]). The children are structural, so a side is
+/// the slot it names. The node words and the arena are each read whole,
+/// without a branch on a node's kind ([`EncodedNode::move_past`]); the
+/// arena's dead pairs and the nodes the compaction drops move too, which
+/// nothing reads.
+#[inline(never)]
+fn move_past<const N: usize, const LEFT: bool, const RIGHT: bool>(level: &mut TddLevel, left: &[u32; N], right: &[u32; N]) {
     debug_assert!(level.pairs.implicit().is_none());
     for node in level.nodes.stored_mut() {
-        node.renumber_past(on_left, k);
+        node.move_past::<N, LEFT, RIGHT>(left, right);
     }
-    let past = |side: EncodedChildRef| EncodedChildRef::from_raw(side.0 - u32::from(side.0 > k));
-    let arena = level.pairs.stored_mut();
-    if on_left {
-        arena.iter_mut().for_each(|pair| pair.left = past(pair.left));
-    } else {
-        arena.iter_mut().for_each(|pair| pair.right = past(pair.right));
+    let past = |side: EncodedChildRef, dropped: &[u32; N]| EncodedChildRef::from_raw(side.0 - slots_below(side.0, dropped));
+    for pair in level.pairs.stored_mut() {
+        if LEFT {
+            pair.left = past(pair.left, left);
+        }
+        if RIGHT {
+            pair.right = past(pair.right, right);
+        }
+    }
+}
+
+/// [`move_past`] on the slot `k` a child dropped, on the left side when
+/// `on_left`, else the right.
+fn renumber_past(level: &mut TddLevel, on_left: bool, k: u32) {
+    match on_left {
+        true => move_past::<1, true, false>(level, &[k], &[u32::MAX]),
+        false => move_past::<1, false, true>(level, &[u32::MAX], &[k]),
+    }
+}
+
+/// The most slots a child may drop for its parent to move its references
+/// past them in one pass ([`move_past`]) rather than read each through the
+/// child's new indices.
+pub(super) const FEW_DROPPED: usize = 8;
+
+/// The slots a child dropped, ascending and padded with `u32::MAX`, and
+/// how many.
+pub(super) struct Dropped {
+    pub(super) slots: [u32; FEW_DROPPED],
+    pub(super) len: usize,
+}
+
+impl Dropped {
+    /// A child that kept every slot.
+    const NONE: Dropped = Dropped { slots: [u32::MAX; FEW_DROPPED], len: 0 };
+}
+
+/// The unmarked slots among the first `span` of `block`, the slots a child
+/// dropped, where they are [`FEW_DROPPED`] or fewer.
+pub(super) fn few_dropped(block: &[u64], span: usize) -> Option<Dropped> {
+    let mut dropped = Dropped::NONE;
+    for (w, &word) in block[..words(span)].iter().enumerate() {
+        let slots = (span - 64 * w).min(64);
+        let mut lost = !word & if slots == 64 { u64::MAX } else { (1u64 << slots) - 1 };
+        if dropped.len + lost.count_ones() as usize > FEW_DROPPED {
+            return None;
+        }
+        while lost != 0 {
+            dropped.slots[dropped.len] = (64 * w) as u32 + lost.trailing_zeros();
+            dropped.len += 1;
+            lost &= lost - 1;
+        }
+    }
+    Some(dropped)
+}
+
+/// [`move_past`] on the slots each child dropped, `left` and `right`, at
+/// the fewest compares a reference that cover them.
+fn move_past_dropped(level: &mut TddLevel, left: &Dropped, right: &Dropped) {
+    fn on<const N: usize>(level: &mut TddLevel, left: &Dropped, right: &Dropped) {
+        let (l, r) = (left.slots[..N].try_into().expect("N slots"), right.slots[..N].try_into().expect("N slots"));
+        match (left.len > 0, right.len > 0) {
+            (true, true) => move_past::<N, true, true>(level, l, r),
+            (true, false) => move_past::<N, true, false>(level, l, r),
+            (false, true) => move_past::<N, false, true>(level, l, r),
+            (false, false) => {}
+        }
+    }
+    match left.len.max(right.len) {
+        0 => {}
+        1 => on::<1>(level, left, right),
+        2 => on::<2>(level, left, right),
+        3 | 4 => on::<4>(level, left, right),
+        _ => on::<FEW_DROPPED>(level, left, right),
     }
 }
 
