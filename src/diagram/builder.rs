@@ -415,13 +415,12 @@ impl TddBuilder {
             copy.extend_from_slice(column);
             Some(copy)
         } else { None };
-        let level = from.level.try_clone_on(lim)?;
+        from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
         if self.weights.is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
         if let Some(ws) = self.weights.as_mut() {
             ws.take_level(t.idx());
             if let Some(column) = column { ws.set_level(t.idx(), column); }
         }
-        self.levels[t.idx()] = level;
         if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
         Ok(())
     }

@@ -251,7 +251,7 @@ impl PairArena {
     }
 
     /// A copy of the arena, reserved through `lim` as
-    /// [`TddLevel::try_clone_on`] reserves the others: a stored arena is
+    /// [`TddLevel::try_clone_to`] reserves the others: a stored arena is
     /// copied at its length plus `room`, an implicit one keeps its
     /// description, its length as its capacity and its nodes as their
     /// capacity, and has that length charged.

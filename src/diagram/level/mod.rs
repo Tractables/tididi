@@ -545,35 +545,14 @@ impl TddLevel {
         }
     }
 
-    /// Clone the level, reserving every arena through `lim` so an allocation
-    /// the host cannot serve comes back as [`OperationError::OverBudget`](crate::limits::OperationError::OverBudget) instead
-    /// of aborting the process.
-    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<TddLevel, crate::limits::OperationError> {
-        self.try_clone_with_room_on(lim, 0, 0)
-    }
-
-    /// [`try_clone_on`](Self::try_clone_on) with room for `nodes` more
-    /// nodes and `pairs` more arena pairs on stored arenas, so a copy that
-    /// is about to grow is written once. An implicit pair arena keeps its
-    /// description and takes no room.
-    #[inline]
-    pub(crate) fn try_clone_with_room_on(
-        &self,
-        lim: &crate::limits::Limits,
-        nodes: usize,
-        pairs: usize,
-    ) -> Result<TddLevel, crate::limits::OperationError> {
-        match self.try_copy_arenas(lim, nodes, pairs)? {
-            Some(arenas) => Ok(self.with_arenas(arenas)),
-            None => self.try_clone_held(lim, nodes, pairs),
-        }
-    }
-
-    /// [`try_clone_on`](Self::try_clone_on) written to `out`, as a
-    /// diagram's copy writes its levels to their places. A copy returned by
-    /// value is built beside its place and moved there, and on a diagram of
-    /// many small levels that move costs about what the copy does: the
-    /// move reads wide what the copy has just written narrow.
+    /// Clone the level into `out`, reserving every arena through `lim` so
+    /// an allocation the host cannot serve comes back as
+    /// [`OperationError::OverBudget`](crate::limits::OperationError::OverBudget)
+    /// instead of aborting the process. A diagram's copy writes its levels
+    /// to their places: a copy returned by value is built beside its place
+    /// and moved there, and on a diagram of many small levels that move
+    /// costs about what the copy does, reading wide what the copy has just
+    /// written narrow.
     #[inline]
     pub(crate) fn try_clone_to<'a>(
         &self,
@@ -586,10 +565,11 @@ impl TddLevel {
         })
     }
 
-    /// [`try_clone_with_room_on`](Self::try_clone_with_room_on) written
-    /// over `out`, whose storage is dropped, for the reason
-    /// [`try_clone_to`](Self::try_clone_to) writes in place. Refused, `out`
-    /// is as it was.
+    /// [`try_clone_to`](Self::try_clone_to) written over `out`, whose
+    /// storage is dropped, with room for `nodes` more nodes and `pairs`
+    /// more arena pairs on stored arenas, so a copy that is about to grow is
+    /// written once. An implicit pair arena keeps its description and takes
+    /// no room. Refused, `out` is as it was.
     #[inline]
     pub(crate) fn try_clone_over(
         &self,
@@ -643,9 +623,9 @@ impl TddLevel {
         }
     }
 
-    /// [`try_clone_with_room_on`](Self::try_clone_with_room_on) of a level
-    /// that [`try_copy_arenas`](Self::try_copy_arenas) does not copy: a
-    /// marginal or implicit one, or one with a range table.
+    /// The copy, with room as [`try_clone_over`](Self::try_clone_over)
+    /// gives it, of a level that [`try_copy_arenas`](Self::try_copy_arenas)
+    /// does not copy: a marginal or implicit one, or one with a range table.
     #[inline(never)]
     fn try_clone_held(
         &self,
