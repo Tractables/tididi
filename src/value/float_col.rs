@@ -148,6 +148,33 @@ impl FloatCol {
         Ok(())
     }
 
+    /// Append [`ScaledFloat::at_offset`] of `x` and `scale`, for a float
+    /// `x` that is zero or normal, and return its slot, checked as
+    /// [`next_slot`](crate::limits::Limits::next_slot) checks it before the
+    /// column grows. A narrow column under a set scale with room for it
+    /// takes `x` times the power of two between the scales where that
+    /// float is normal, the float [`push`](Self::push) appends, without
+    /// forming the value.
+    #[inline(always)]
+    pub(crate) fn push_offset(&mut self, eng: &Engine, x: f64, scale: i64) -> Result<u32, OperationError> {
+        if let Repr::Narrow { vals, scale: Some(at) } = &mut self.repr {
+            let (len, bits) = (vals.len(), x.to_bits());
+            // A positive normal float's biased exponent, sign bit clear.
+            let e = (bits >> 52) as i64;
+            let d = scale.wrapping_sub(*at);
+            if len < vals.capacity() && (1..=2046).contains(&e) && (1 - e..=2046 - e).contains(&d) {
+                let slot = eng.limits().next_slot(len)?;
+                // The biased exponent becomes `e + d`, within 1..=2046: as
+                // `offset_from` adds the difference of exponents.
+                vals.push(f64::from_bits(bits.wrapping_add((d as u64) << 52)));
+                return Ok(slot);
+            }
+        }
+        let slot = eng.limits().next_slot(self.len())?;
+        self.push(eng, ScaledFloat::at_offset(x, scale))?;
+        Ok(slot)
+    }
+
     /// Set slot `i`, which exists, to `v`.
     pub(crate) fn set(&mut self, eng: &Engine, i: usize, v: ScaledFloat) -> Result<(), OperationError> {
         if let Repr::Narrow { vals, scale } = &mut self.repr {

@@ -1055,8 +1055,8 @@ impl<'a, 'data> RowSum for CheckedSum<'a, 'data> {
 
     #[inline(always)]
     fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
-        let v = self.products.value(v);
-        self.append(eng, v, node_idx, grid_pos)
+        node_idx[grid_pos] = self.counts.push_offset(eng, v, self.products.scale())?;
+        Ok(())
     }
 }
 

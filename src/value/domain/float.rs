@@ -334,10 +334,11 @@ impl<'a> CheckedProducts<'a> {
         self.rview.child(EncodedChildRef::from_raw(rc)).index().and_then(|i| self.right.get(i)).copied()
     }
 
-    /// The value of a cell's float sum of such products.
+    /// The power of two a cell's float sum of such products stands under:
+    /// its value is [`ScaledFloat::at_offset`] of the sum and this scale.
     #[inline(always)]
-    pub(crate) fn value(&self, sum: f64) -> ScaledFloat {
-        ScaledFloat::at_offset(sum, self.scale)
+    pub(crate) fn scale(&self) -> i64 {
+        self.scale
     }
 }
 
