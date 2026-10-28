@@ -3,6 +3,7 @@
 
 use super::rows::{Emit, run_level_rows};
 use super::word_cells::WordScratch;
+use super::super::marginal_plan::Carrier;
 use super::*;
 use crate::diagram::{EncodedChildRef, ScaledFloat, WeightStore};
 use crate::value::{plain_floats, CheckedProducts, FloatCol, PlainProducts, StreamChild};
@@ -330,27 +331,29 @@ const DEAD_COLUMN: u32 = u32::MAX;
 /// The level's columns as [`sum_row`] reads them: into `ones` each column's
 /// one pair, [`DEAD_COLUMN`] on both sides for a column without pairs, where
 /// no column has two pairs or more and the level has two columns or more
-/// (empty otherwise); the pairs of all the columns; and whether every pair
-/// names a cell of the two child grids.
+/// (empty otherwise); the pairs of all the columns; and one past the
+/// greatest field of each side of a pair.
 fn read_columns<'a>(
     eng: &Engine,
     rows: RowLoop<'_>,
     ones: &'a mut Vec<ChildPair>,
     scratch: &mut Vec<ChildPair>,
-) -> Result<(&'a [ChildPair], usize, bool), OperationError> {
+) -> Result<(&'a [ChildPair], usize, Sides<usize>), OperationError> {
     ones.clear();
     let width = rows.ctx.right_width;
-    let (sl, sr) = (rows.ctx.sides.left.stride, rows.ctx.sides.right.stride);
     let mut one = width >= 2;
     if one {
         eng.limits().reserve(ones, width)?;
     }
     let dead = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
-    let (mut pairs, mut fits) = (0, true);
+    let (mut pairs, mut bound) = (0, Sides { left: 0, right: 0 });
     for j in 0..width {
         let g = column_pairs(rows.ctx, rows.g_level, j, scratch);
         pairs += g.len();
-        fits &= g.iter().all(|q| q.left.0 < sl && q.right.0 < sr);
+        for q in g {
+            bound.left = bound.left.max(q.left.0 as usize + 1);
+            bound.right = bound.right.max(q.right.0 as usize + 1);
+        }
         if one {
             match g {
                 [] => ones.push(dead),
@@ -362,7 +365,7 @@ fn read_columns<'a>(
             }
         }
     }
-    Ok((&ones[..], pairs, fits))
+    Ok((&ones[..], pairs, bound))
 }
 
 /// A row reads its child rows as floats ([`ValueSide`]) where that reads at
@@ -379,10 +382,14 @@ const NO_SLOT: u32 = u32::MAX;
 /// dead. Where the level's f pairs come back to child rows they have left
 /// ([`value_rows`]), the rows read first keep a slot of their own for the
 /// level, as many as it has room for; a last slot holds the other row read
-/// last.
+/// last. A side that carries the g pair's field through has no grid: one
+/// row, the value of each of its fields, serves the whole level.
 struct ValueSide<'b> {
-    /// The child grid's columns.
+    /// The floats a row holds.
     n: usize,
+    /// Whether every f pair reads the same row: the side carries the g
+    /// pair's field.
+    fixed: bool,
     /// The slots' floats and marks, `n + 1` a slot.
     vals: &'b mut [f64],
     dead: &'b mut [u8],
@@ -410,9 +417,9 @@ struct RowFloats<'r> {
 }
 
 impl<'b> ValueSide<'b> {
-    fn new(n: usize, vals: &'b mut [f64], dead: &'b mut [u8], stats: &'b mut [f64], slot_of: &'b mut [u32]) -> Self {
+    fn new(n: usize, fixed: bool, vals: &'b mut [f64], dead: &'b mut [u8], stats: &'b mut [f64], slot_of: &'b mut [u32]) -> Self {
         let cap = (stats.len() / 3 - 1) as u32;
-        ValueSide { n, vals, dead, stats, slot_of, cap, used: 0, at: NO_SLOT }
+        ValueSide { n, fixed, vals, dead, stats, slot_of, cap, used: 0, at: NO_SLOT }
     }
 
     /// Whether row `at` has a kept slot or would get one.
@@ -426,6 +433,7 @@ impl<'b> ValueSide<'b> {
     /// keeps it.
     #[inline(always)]
     fn cost(&self, at: u32) -> usize {
+        let at = if self.fixed { 0 } else { at };
         if self.at == at || self.kept(at) { 0 } else { self.n }
     }
 
@@ -434,6 +442,7 @@ impl<'b> ValueSide<'b> {
     /// `factor` names no float for is marked dead: no pair reads it.
     #[inline(always)]
     fn read<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: u32, factor: impl Fn(u32) -> Option<f64>) -> usize {
+        let at = if self.fixed { 0 } else { at };
         let s = if self.kept(at) {
             let s = self.slot_of[at as usize];
             if s != NO_SLOT {
@@ -518,44 +527,62 @@ struct SideReads {
 const KEEP_MIN_BYTES: usize = 64 << 20;
 const KEEP_GRID_SHARE: usize = 1;
 
-/// The level's [`ValueRows`], where both child sides are read from grids
-/// and every column pair names a cell of them (`fits`), with sums for
-/// `ones` columns and `pairs` column pairs in all. A side keeps the rows
-/// it reads where its f pairs read each of its rows twice or more on
-/// average, coming back to it after leaving it: as many as fit
-/// [`KEEP_MIN_BYTES`] or the output grid's bytes, the left side first.
+/// The floats a row of a child side holds, where the side's pair fields
+/// `bound` allows value rows: a grid side's columns, where every field
+/// names one of them, and the fields of a side carrying the g pair's field,
+/// where reading them reads at most [`VALUE_ROW_READS`] times the level's
+/// `pairs`. Also whether every f pair reads the same row.
+fn row_width(side: &ChildPlan<'_>, passthrough: bool, bound: usize, pairs: usize) -> Option<(usize, bool)> {
+    let n = side.stride as usize;
+    match side.plan.carrier {
+        None if !passthrough && n > 0 && bound <= n => Some((n, false)),
+        Some(Carrier::G) if passthrough && bound <= pairs.saturating_mul(VALUE_ROW_READS) => Some((bound.max(1), true)),
+        _ => None,
+    }
+}
+
+/// The level's [`ValueRows`], where each child side's pair fields allow
+/// them ([`row_width`]), with sums for `ones` columns and `pairs` column
+/// pairs in all. A side read from its grid keeps the rows it reads where
+/// its f pairs read each of its rows twice or more on average, coming back
+/// to it after leaving it: as many as fit [`KEEP_MIN_BYTES`] or the output
+/// grid's bytes, the left side first.
 #[expect(clippy::too_many_arguments)]
 fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
     left: &L,
     right: &R,
-    (fits, ones, pairs): (bool, usize, usize),
+    (bound, ones, pairs): (Sides<usize>, usize, usize),
     floats: &'b mut Vec<f64>,
     flags: &'b mut Vec<u8>,
     slots: &'b mut Vec<u32>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<Option<ValueRows<'b>>, OperationError> {
-    let (sl, sr) = (rows.ctx.sides.left.stride as usize, rows.ctx.sides.right.stride as usize);
-    if !fits || left.passthrough() || right.passthrough() || sl == 0 || sr == 0 {
+    let sides = &rows.ctx.sides;
+    let (Some((sl, lfixed)), Some((sr, rfixed))) = (
+        row_width(&sides.left, left.passthrough(), bound.left, pairs),
+        row_width(&sides.right, right.passthrough(), bound.right, pairs),
+    ) else {
         return Ok(None);
-    }
+    };
     let lim = eng.limits();
-    let (reads, f_pairs) = side_reads(lim, rows, slots, scratch)?;
+    let (reads, f_pairs) = side_reads(lim, rows, Sides { left: !lfixed, right: !rfixed }, slots, scratch)?;
     let grid = rows.f_width.saturating_mul(rows.ctx.right_width).saturating_mul(4);
     let mut room = KEEP_MIN_BYTES.max(grid.saturating_mul(KEEP_GRID_SHARE)).min((lim.headroom() / 4) as usize);
     // The rows a side keeps, out of the room left: a kept row costs its
     // floats, marks and statistics, and the side a slot index a row.
-    let mut keep = |r: SideReads, n: usize| {
-        let pays = (r.changes >= 2 * r.distinct && r.distinct * n <= f_pairs.saturating_mul(pairs).saturating_mul(VALUE_ROW_READS))
-            || (eager() && r.changes > r.distinct);
+    let mut keep = |r: SideReads, n: usize, fixed: bool| {
+        let pays = !fixed
+            && ((r.changes >= 2 * r.distinct && r.distinct * n <= f_pairs.saturating_mul(pairs).saturating_mul(VALUE_ROW_READS))
+                || (eager() && r.changes > r.distinct));
         let kept = if pays && 4 * r.rows < room { r.distinct.min((room - 4 * r.rows) / (9 * n + 33)) } else { 0 };
         if kept > 0 {
             room -= 4 * r.rows + kept * (9 * n + 33);
         }
         kept
     };
-    let (kl, kr) = (keep(reads.left, sl), keep(reads.right, sr));
+    let (kl, kr) = (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed));
     let (ls, rs) = (kl + 1, kr + 1);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
     let nf = wl + 3 * ls + wr + 3 * rs + ones;
@@ -576,14 +603,16 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let (ld, rest) = flags.split_at_mut(wl);
     let (rd, flags) = rest.split_at_mut(wr);
     let (lmap, rmap) = slots.split_at_mut(nl);
-    Ok(Some(ValueRows { left: ValueSide::new(sl, lv, ld, lst, lmap), right: ValueSide::new(sr, rv, rd, rst, rmap), sums, flags }))
+    let (left, right) = (ValueSide::new(sl, lfixed, lv, ld, lst, lmap), ValueSide::new(sr, rfixed, rv, rd, rst, rmap));
+    Ok(Some(ValueRows { left, right, sums, flags }))
 }
 
-/// Each child side's [`SideReads`] over the level's f pairs, and the f
-/// pairs. `slots` is scratch.
+/// Each child side's [`SideReads`] over the level's f pairs, its rows
+/// counted where it `may` keep them, and the f pairs. `slots` is scratch.
 fn side_reads(
     lim: &crate::limits::Limits,
     rows: RowLoop<'_>,
+    may: Sides<bool>,
     slots: &mut Vec<u32>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<(Sides<SideReads>, usize), OperationError> {
@@ -604,7 +633,7 @@ fn side_reads(
     // The rows read, counted where a side changes rows often enough to
     // keep them.
     let count = |r: &SideReads| r.changes >= 4 || (eager() && r.changes >= 2);
-    let (cl, cr) = (count(&reads.left), count(&reads.right));
+    let (cl, cr) = (may.left && count(&reads.left), may.right && count(&reads.right));
     if cl || cr {
         let (nl, nr) = (if cl { reads.left.rows } else { 0 }, if cr { reads.right.rows } else { 0 });
         slots.clear();
@@ -832,8 +861,8 @@ fn sum_rows<'o, S: RowSum, L: ChildLookup, R: ChildLookup>(
     scratch: &mut Vec<ChildPair>,
 ) -> Result<SumRows<'o, S>, OperationError> {
     let SumBuffers { ones, floats, flags, slots } = bufs;
-    let (ones, pairs, fits) = read_columns(eng, rows, ones, scratch)?;
-    let values = value_rows(eng, rows, left, right, (fits, ones.len(), pairs), floats, flags, slots, scratch)?;
+    let (ones, pairs, bound) = read_columns(eng, rows, ones, scratch)?;
+    let values = value_rows(eng, rows, left, right, (bound, ones.len(), pairs), floats, flags, slots, scratch)?;
     Ok(SumRows { sum, ones, pairs, values })
 }
 
@@ -1004,9 +1033,8 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, L: ChildLookup, R: 
         let (mut acc, mut flags) = (0.0f64, 0u8);
         for q in g {
             let (i, t) = (q.left.0 as usize, q.right.0 as usize);
-            // Safety: every column pair names a cell of the two child grids
-            // (`read_columns`), and a row holds a float and a mark for each
-            // cell of its child row.
+            // Safety: every pair field is below its side's row width
+            // (`row_width`), and a row holds a float and a mark for each.
             let (a, b) = unsafe { (*lv.get_unchecked(i), *rv.get_unchecked(t)) };
             let (p, ok) = S::times(a, b);
             acc += p;
