@@ -203,7 +203,7 @@ impl Products {
     /// over the `f_width × g_width` cells of level `t`'s product: the level
     /// is complete when every cell produced one.
     pub(super) fn note_built(&mut self, t: usize, f_width: usize, g_width: usize, nodes: usize) {
-        self.complete[t] = nodes == f_width * g_width;
+        self.complete[t] = f_width.checked_mul(g_width) == Some(nodes);
         #[cfg(debug_assertions)]
         if self.complete[t] {
             self.debug_assert_complete(t, f_width, g_width);
@@ -405,14 +405,14 @@ impl Products {
     pub(super) fn note_sparse_built(&mut self, t: usize, f_width: usize, g_width: usize) {
         let list = &self.product_lists[t];
         self.complete[t] = self.has_pl[t]
-            && list.len() == f_width * g_width
+            && f_width.checked_mul(g_width) == Some(list.len())
             && list.iter().enumerate().all(|(c, e)| {
                 e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c
             });
     }
 
-    pub(super) fn reclaim_child(&mut self, level: usize, cells: usize) {
-        self.arena.free_child(level, cells);
+    pub(super) fn reclaim_child(&mut self, level: usize, f_width: usize, g_width: usize) {
+        self.arena.free_child(level, f_width, g_width);
     }
 
     /// Build level `ci`'s product list if it is not built yet: from the

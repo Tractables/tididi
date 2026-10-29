@@ -10,6 +10,7 @@ use super::Sweep;
 use crate::diagram::ChildSide;
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::price::{built_pairs, price_sparse_level};
+use crate::apply::conjoin::grid_arena::grid_cells;
 use crate::apply::conjoin::sparse::stream::{
     candidate_bound, choose_pivot, count as stream_count, Built, StreamInput, StreamWidths,
 };
@@ -693,7 +694,7 @@ fn materialize_children_and_grid(
     // g-width row, records live products separately, and remains ungridded
     // until its parent needs a dense view. Only a bump arena uses that route;
     // a preplanned arena already owns the full slab.
-    let cells = if use_sparse_marginal { gw.here } else { fw.here * gw.here };
+    let cells = if use_sparse_marginal { gw.here } else { grid_cells(fw.here, gw.here)? };
     let base = run.products.arena.claim(eng, ti, cells)?;
     if use_sparse_marginal {
         run.products.arena.set_sparse(ti);

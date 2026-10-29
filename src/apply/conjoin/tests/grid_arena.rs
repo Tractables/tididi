@@ -41,3 +41,14 @@ fn frontier_growth_near_the_cap_is_exact() {
     assert!(lim.meters().in_flight_bytes < MIB);
     assert!(arena.cells[cap0..].iter().all(|&cell| cell == NO_PRODUCT));
 }
+
+#[test]
+fn a_grid_of_a_word_of_cells_is_over_budget() {
+    // 65 536 by 65 536 cells is 2^32, which a 32-bit `usize` wraps to an
+    // empty grid; the product in cell (1, 1) was then written past the slab.
+    let eng = Engine::new();
+    eng.limits().set_budget(Some(16 * MIB));
+    let mut arena = full_bump_arena(0);
+    let entry = ProductEntry { f_idx: FNodeIdx(1), g_idx: GNodeIdx(1), prod_idx: ProductNodeIdx(0) };
+    assert_eq!(arena.ensure_grid(&eng, 1, 1 << 16, 1 << 16, &[entry]), Err(OperationError::OverBudget));
+}

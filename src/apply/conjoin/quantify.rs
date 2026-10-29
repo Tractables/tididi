@@ -45,6 +45,7 @@ use crate::diagram::{ChildPair, ONE_LEAF_IDX, Tdd};
 use crate::limits::{OperationError, PollGate};
 
 use super::{ApplyRun, LevelShape, NO_PRODUCT};
+use super::grid_arena::grid_cells;
 use crate::apply::TRUE_PAIR;
 use super::child_lookup::{ChildLookup, DenseLookup};
 use crate::diagram::Sides;
@@ -71,7 +72,7 @@ pub(super) fn build_level_quantified(
     let lim = eng.limits();
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let cells = fw.here * gw.here;
+    let cells = grid_cells(fw.here, gw.here)?;
     let grid = run.products.arena.alloc(eng, ti, cells)?;
     run.products.arena.set_dense(ti, grid);
     let base = grid.idx();

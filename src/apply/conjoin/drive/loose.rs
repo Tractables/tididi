@@ -121,7 +121,7 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
             loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
         };
         let kills_none = |s: VtreeIdx| match internal(s) {
-            true => run.levels[s.idx()].nodes().len() == run.f_widths[s.idx()] * run.g_widths[s.idx()],
+            true => run.f_widths[s.idx()].checked_mul(run.g_widths[s.idx()]) == Some(run.levels[s.idx()].nodes().len()),
             false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
         };
         // The operand the conjunction built `p` as, if any.

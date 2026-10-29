@@ -46,6 +46,7 @@ use crate::limits::{Charged, Limits, OperationError};
 use crate::diagram::{ChildPair, ChildSide, EncodedNode, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 use super::{Complete, Passthrough, NO_PRODUCT};
+use super::grid_arena::grid_cells;
 use super::products::{ProductEntry, Products};
 use super::route::Route;
 use super::setup::{ApplyRun, LevelShape};
@@ -419,7 +420,7 @@ fn cross(
     // Rows are f's nodes at the second child, columns g's at the first. A
     // cell counts g pairs over one g node, which a `u32` holds.
     let columns = first.g_width;
-    let cells = second.f_width * columns;
+    let cells = grid_cells(second.f_width, columns)?;
     let mut y = Column::new(lim, cells, 0u32)?;
     {
         let (g_starts, g_others) = grouped(lim, g_level, first_child.other(), hg)?;

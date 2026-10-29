@@ -271,8 +271,9 @@ impl ApplyRun<'_, '_> {
     /// Whether the sparse routes are open at this level, and whether the
     /// children's live products are sparse enough for the scatter walk.
     ///
-    /// The density test is exact arithmetic on `u128`: the two maxima are
-    /// products of widths and overflow `u64` on wide levels.
+    /// The widths are multiplied in `u64`, so that a 32-bit target routes a
+    /// level as a 64-bit one does, and the density test is exact arithmetic
+    /// on `u128`: the two maxima's product overflows `u64` on wide levels.
     ///
     /// The two routes also differ in what they do to the children first. A
     /// child the sparse pipeline built has a product list and no grid, and a
@@ -299,26 +300,27 @@ impl ApplyRun<'_, '_> {
     /// and run neither.
     pub(super) fn sparse_gate(&self, shape: LevelShape, f_level: &TddLevel, g_level: &TddLevel) -> SparseGate {
         let LevelShape { left, right, f, g, .. } = shape;
-        let (max_left, max_right) = (f.left * g.left, f.right * g.right);
+        let cells = |f_width: usize, g_width: usize| f_width as u64 * g_width as u64;
+        let (max_left, max_right) = (cells(f.left, g.left), cells(f.right, g.right));
+        let min_grid = self.thresholds.min_grid as u64;
         let live = |child: VtreeIdx| self.products.live(child.idx()) as u128;
         let factor = self.thresholds.sparsity_factor;
-        let min_grid = self.thresholds.min_grid;
         let ungridded = |child: VtreeIdx| self.products.arena.is_sparse(child.idx());
         let child_grids = || {
-            let wide_and_sparse = |child: VtreeIdx, max: usize| {
+            let wide_and_sparse = |child: VtreeIdx, max: u64| {
                 ungridded(child) && max > min_grid && factor * live(child) < max as u128
             };
             if !(wide_and_sparse(left, max_left) || wide_and_sparse(right, max_right)) {
                 return false;
             }
-            let split = |child: VtreeIdx, max: usize| {
+            let split = |child: VtreeIdx, max: u64| {
                 if ungridded(child) { (max as u128, 0) } else { (0, max as u128) }
             };
             let ((fill_l, scan_l), (fill_r, scan_r)) = (split(left, max_left), split(right, max_right));
             fill_l + fill_r > scan_l + scan_r
         };
         let available = self.products.arena.is_bump();
-        let big = f.here * g.here > min_grid || combinations_bound(f_level, g_level) > min_grid as u128;
+        let big = cells(f.here, g.here) > min_grid || combinations_bound(f_level, g_level) > min_grid as u128;
         let child_grid_wins = available && !big && child_grids();
         SparseGate {
             available,
@@ -339,7 +341,7 @@ impl ApplyRun<'_, '_> {
     pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize, output: VtreeIdx) {
         for child in [left, right] {
             if child != output.idx() {
-                self.products.reclaim_child(child, self.f_widths[child] * self.g_widths[child]);
+                self.products.reclaim_child(child, self.f_widths[child], self.g_widths[child]);
             }
         }
     }

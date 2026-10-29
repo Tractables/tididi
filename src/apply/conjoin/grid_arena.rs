@@ -37,6 +37,14 @@ use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
 /// Bytes per slab cell.
 const CELL_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
+/// The cells of an `f_width` by `g_width` grid, or `OverBudget` where the
+/// count passes `usize`, which no slab holds. On a 32-bit target two widths
+/// of 65 536 reach it, and the wrapped product claimed a grid too small for
+/// the cells written into it.
+pub(super) fn grid_cells(f_width: usize, g_width: usize) -> Result<usize, OperationError> {
+    f_width.checked_mul(g_width).ok_or(OperationError::OverBudget)
+}
+
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct GridBase(usize);
@@ -91,10 +99,11 @@ impl GridArena {
             }
             self.bump = Some(bump);
         } else {
-            let mut cursor = 0;
+            let mut cursor: usize = 0;
             for i in cone.nodes() {
                 self.grids[i] = Some(GridBase(cursor));
-                cursor += f_widths[i] * g_widths[i];
+                let cells = grid_cells(f_widths[i], g_widths[i])?;
+                cursor = cursor.checked_add(cells).ok_or(OperationError::OverBudget)?;
             }
             try_resize_dead(eng, &mut self.cells, cursor)?;
         }
@@ -213,7 +222,7 @@ impl GridArena {
             return Ok(base);
         }
         let base = bump.end;
-        bump.end += cells;
+        bump.end = base.checked_add(cells).ok_or(OperationError::OverBudget)?;
         // The frontier grows a level at a time, so the slab doubles.
         // Reserved exactly, it was reallocated at every level that missed the
         // free list, and the allocator copied the whole slab each time: tens
@@ -278,10 +287,11 @@ impl GridArena {
 
     /// Release child level `v`'s grid (if it has one) and mark it ungridded, so
     /// its region can be reused and no dangling base remains.
-    pub(super) fn free_child(&mut self, v: usize, cells: usize) {
+    pub(super) fn free_child(&mut self, v: usize, f_width: usize, g_width: usize) {
         if !self.is_bump() { return; }
         if let Some(base) = self.materialized(v) {
-            self.free(base, cells);
+            // A materialized grid was claimed at this size, which fits.
+            self.free(base, f_width * g_width);
             self.set_sparse(v);
         }
     }
@@ -295,7 +305,7 @@ impl GridArena {
         product_list: &[ProductEntry],
     ) -> Result<(), OperationError> {
         if !self.is_sparse(ti) { return Ok(()); }
-        let cells = f_width * g_width;
+        let cells = grid_cells(f_width, g_width)?;
         let base = self.alloc(eng, ti, cells)?.idx();
         self.set_dense(ti, GridBase(base));
         let slab = self.slab_mut();
