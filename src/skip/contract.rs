@@ -134,6 +134,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
     let mut epoch = 0u32;
     let mut ent: Vec<(Ref, u64, u32)> = Vec::new();
     let mut order: Vec<u32> = Vec::new();
+    let mut seen: FxHashMap<(u64, u32), u32> = FxHashMap::default();
     let mut cand: Vec<bool> = Vec::new();
     let mut occ: Vec<(u32, u32, Ref)> = Vec::new();
     let mut ctx: Vec<(u32, u32)> = Vec::new();
@@ -190,21 +191,26 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                 }
             }
             // Entities whose hashes agree, confirmed by their partner lists.
-            order.clear();
-            order.extend(0..ent.len() as u32);
-            order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
+            seen.clear();
             cand.clear();
             cand.resize(ent.len(), false);
             let mut any = false;
-            for run in order.chunk_by(|&x, &y| (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)) {
-                if run.len() > 1 {
-                    any = true;
-                    for &i in run {
-                        cand[i as usize] = true;
+            for (i, x) in ent.iter().enumerate() {
+                match seen.entry((x.1, x.2)) {
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                        cand[*o.get() as usize] = true;
+                        cand[i] = true;
+                        any = true;
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(i as u32);
                     }
                 }
             }
             if any {
+                order.clear();
+                order.extend((0..ent.len() as u32).filter(|&i| cand[i as usize]));
+                order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
                 occ.clear();
                 for (k, pairs) in classes() {
                     for &(a, b) in pairs {

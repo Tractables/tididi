@@ -411,23 +411,29 @@ impl SkipForm {
         };
         let mut active = Vec::with_capacity(cand.len());
         for (i, &t) in cand.iter().enumerate() {
-            let old = std::mem::take(&mut self.levels[t as usize]);
-            let mut lvl = SLevel::default();
-            for k in 0..old.width() {
+            // Compacted in place: a kept node moves down to its new number.
+            let lvl = &mut self.levels[t as usize];
+            let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
+            for k in 0..lvl.width() {
+                let hi = lvl.start[k + 1] as usize;
                 if live[i][k] != NONE {
-                    if lvl.start.is_empty() {
-                        lvl.start.push(0);
+                    for q in lo..hi {
+                        let (a, b) = lvl.pairs[q];
+                        lvl.pairs[w] = (fix(&live, a), fix(&live, b));
+                        w += 1;
                     }
-                    for &(a, b) in old.node(k as u32) {
-                        lvl.pairs.push((fix(&live, a), fix(&live, b)));
-                    }
-                    lvl.start.push(lvl.pairs.len() as u32);
+                    j += 1;
+                    lvl.start[j] = w as u32;
                 }
+                lo = hi;
             }
-            if lvl.width() > 0 {
+            if j == 0 {
+                *lvl = SLevel::default();
+            } else {
+                lvl.pairs.truncate(w);
+                lvl.start.truncate(j + 1);
                 active.push(t);
             }
-            self.levels[t as usize] = lvl;
         }
         self.active = active;
         self.out = fix(&live, self.out);
@@ -514,6 +520,32 @@ pub(crate) fn normalize(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Resu
 pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
     let (l, r) = sh.kids[u as usize];
     let (ll, rl) = (sh.is_leaf(l), sh.is_leaf(r));
+    if ll != rl {
+        // One leaf side: per other side, the literals its pairs cover.
+        let lit = |p: &(Ref, Ref)| if ll { p.0 } else { p.1 };
+        let other = |p: &(Ref, Ref)| if ll { p.1 } else { p.0 };
+        let leaf = if ll { l } else { r };
+        if pairs.len() > 1 {
+            pairs.sort_unstable_by_key(|p| (other(p), lit(p)));
+        }
+        let (mut w, mut i) = (0, 0);
+        while i < pairs.len() {
+            let o = other(&pairs[i]);
+            let mut m = 0u8;
+            while i < pairs.len() && other(&pairs[i]) == o {
+                m |= literal_cells(ix(lit(&pairs[i])));
+                i += 1;
+            }
+            let x = mk(leaf, cells_label(m));
+            pairs[w] = if ll { (x, o) } else { (o, x) };
+            w += 1;
+        }
+        pairs.truncate(w);
+        if ll && w > 1 {
+            pairs.sort_unstable();
+        }
+        return;
+    }
     // Cells: every One against a leaf child as both literals.
     if (ll && pairs.iter().any(|p| ix(p.0) == ONE)) || (rl && pairs.iter().any(|p| ix(p.1) == ONE)) {
         // Expanded behind the input, which is then dropped from the front.
@@ -566,5 +598,25 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
             w += 1;
         }
         pairs.truncate(w);
+    }
+}
+
+/// The literal cells a leaf label covers: bit 0 positive, bit 1 negative.
+#[inline]
+pub(crate) fn literal_cells(label: u32) -> u8 {
+    match label {
+        ONE => 3,
+        POS => 1,
+        _ => 2,
+    }
+}
+
+/// The leaf label of a nonempty set of literal cells.
+#[inline]
+pub(crate) fn cells_label(cells: u8) -> u32 {
+    match cells {
+        3 => ONE,
+        1 => POS,
+        _ => NEG,
     }
 }
