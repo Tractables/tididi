@@ -151,7 +151,7 @@ fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
 /// children's nodes and `e` two or four; the root holds one node, with the
 /// pairs `(x, x)`. Distinct nodes of a level are disjoint, so the pairs of a
 /// node are, and no two slots of a child share their contexts.
-fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, rng: &mut Lcg) -> Tdd {
+pub(super) fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, rng: &mut Lcg) -> Tdd {
     use crate::diagram::{TddBuilder, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
     let mut b: TddBuilder = Tdd::builder(eng, vtree).unwrap();
     let mut nodes: Vec<Vec<NodeIdx>> = vec![Vec::new(); vtree.num_nodes()];

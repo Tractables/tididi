@@ -1165,17 +1165,58 @@ pub(super) fn build_level_dense(
                 right: matches!(lookups, PlainLookups::CompleteRight { .. }),
             },
         );
+    let mut stream_state: Option<StreamLevelState> =
+        build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
+
+    let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
+    // A summed level of two affine operand levels over complete child grids
+    // is summed off the description of its pairs, where its child columns
+    // keep every product a float; the row loop sums any other. The
+    // description's words are the operands' pair words, which the row loop
+    // reads as they are through a structural view, and through the
+    // marginal view of a child summed in this apply with bit 30 cleared
+    // (`ChildDecoder::coord`), which leaves the words of operand levels
+    // structural at entry and narrower than 2^30 as they are.
+    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
+        !view.is_marginal() || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
+    };
+    if let Some(StreamLevelState::Float(values)) = &mut stream_state
+        && sweep.filter.is_none()
+        && !passthrough.left
+        && !passthrough.right
+        && as_they_are(li, (fw.left, gw.left), sides.left.view)
+        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
+        && !crate::diagram::stored_levels_forced()
+        && let Some((product, work)) =
+            super::compose::plan_sums(lim, f.level(t), g.level(t), shape, grouped, run.products.arena.slab(), bases)
+    {
+        let [level, left_level, right_level] = run.levels
+            .get_disjoint_mut([ti, li, ri])
+            .expect("a vtree node and its two children are distinct level indices");
+        open_level_arenas(lim, f, g, shape, level, route)?;
+        let env = StreamEnv {
+            left_idx: li,
+            right_idx: ri,
+            vtree: sweep.vtree,
+            cache: run.stream_cache,
+            ws: sweep.ws.as_deref(),
+        };
+        let children = Sides { left: &*left_level, right: &*right_level };
+        let slab = run.products.arena.slab_vec();
+        if run_level_described_stream(eng, &product, children, slab, output_grid_base.idx(), values, env)? {
+            lim.charge_work(work);
+            lim.check_stop()?;
+            finalize_level(eng, stream_state, shape, output_grid_base, passthrough, run, sweep);
+            return Ok(());
+        }
+    }
+
     if masked {
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups, pairs)?;
     }
-
-    let mut stream_state: Option<StreamLevelState> =
-        build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
-
-    let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route; any other reads its operands' pairs, an implicit
     // operand's generated from its description.

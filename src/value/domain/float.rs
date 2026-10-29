@@ -296,7 +296,21 @@ impl<'a> PlainProducts<'a> {
     pub(crate) fn product(&self, lc: u32, rc: u32) -> f64 {
         let l = self.left[self.lview.index(EncodedChildRef::from_raw(lc))];
         let r = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
+        self.times(l, r)
+    }
+
+    /// The product of a left float `l` and a right float `r` of the
+    /// columns, as [`product`](Self::product) forms it.
+    #[inline(always)]
+    pub(crate) fn times(&self, l: f64, r: f64) -> f64 {
         (l * self.by.0) * (r * self.by.1)
+    }
+
+    /// The floats of the left and the right column, at the indices the
+    /// child views read off a slot ([`ChildDecoder::index`]).
+    #[inline(always)]
+    pub(crate) fn floats(&self) -> (&'a [f64], &'a [f64]) {
+        (self.left, self.right)
     }
 
     /// The left factor of [`product`](Self::product) for the value `lc`

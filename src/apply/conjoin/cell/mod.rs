@@ -10,7 +10,7 @@ use crate::value::{FloatFold, IntFold, WeightFold};
 use crate::Engine;
 
 mod rows_stream;
-pub(crate) use rows_stream::{run_level_rows_stream_count, run_level_rows_stream_words};
+pub(crate) use rows_stream::{run_level_described_stream, run_level_rows_stream_count, run_level_rows_stream_words};
 use super::{OperationError, NO_PRODUCT, doubled_pairs_capacity, finish_node, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamEnv, StreamLevelState, StreamState};
 use crate::value::ValueDomain;

@@ -4,6 +4,7 @@ use super::identity::level_marginal_is_constant_true;
 mod borrowed;
 mod complete;
 mod conjunction;
+mod described_sums;
 mod float_targets;
 mod implicit;
 mod kept_counts;
@@ -43,9 +44,10 @@ pub(crate) enum FloatRows {
     /// As the library sums them.
     Sum,
     /// A cell at a time, as the row loop's cells are summed: the sums a
-    /// row at a time give each cell bit for bit.
+    /// row at a time and those off a level's description give each cell
+    /// bit for bit.
     Cells,
-    /// A row at a time, reading child rows as floats wherever the column
+    /// A row at a time, never off a level's description, reading child rows as floats wherever the column
     /// pairs name grid cells, keeping every row a side comes back to,
     /// adding a row's f pairs to one-pair columns a block at a time, and
     /// summing rows of one f pair a block at a time wherever two or more
@@ -60,6 +62,9 @@ thread_local! {
     /// this thread has summed.
     pub(crate) static BLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static LANE_BLOCKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The streamed float levels this thread has summed off the
+    /// description of their pairs ([`note_described_sums`]).
+    pub(crate) static DESCRIBED_SUMS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Count a block of f pairs summed on this thread.
@@ -70,6 +75,12 @@ pub(crate) fn note_block() {
 /// Count a block of rows summed on this thread.
 pub(crate) fn note_lanes() {
     LANE_BLOCKS.with(|b| b.set(b.get() + 1));
+}
+
+/// Count a streamed float level summed off the description of its pairs
+/// on this thread.
+pub(crate) fn note_described_sums() {
+    DESCRIBED_SUMS.with(|b| b.set(b.get() + 1));
 }
 
 /// Whether this thread sums streamed float levels a cell at a time.
