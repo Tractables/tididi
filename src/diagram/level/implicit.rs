@@ -196,10 +196,37 @@ impl ImplicitLevel {
         self.within
     }
 
+    /// Calls `f(first, step, len)` for the rows of the nodes along the
+    /// fastest node digit, in node order where the node digits count the
+    /// nodes ([`counts_nodes`](Self::counts_nodes)): the slots of the first
+    /// pair of the row's first node, what one node along the row adds to
+    /// them, and the row's nodes; one row of the one node where no digit
+    /// numbers the nodes.
+    pub(crate) fn each_row(&self, mut f: impl FnMut((i64, i64), (i64, i64), usize)) {
+        debug_assert!(self.counts_nodes(), "rows in node order");
+        match self.digits[self.within..].split_first() {
+            None => f(self.first, (0, 0), self.nodes),
+            Some((row, outer)) => each_place(outer, self.first, |l, r| f((l, r), (row.left, row.right), row.radix)),
+        }
+    }
+
+    /// The least and the greatest child slot the pairs name, each a pair
+    /// of the left and the right side's.
+    pub(crate) fn slot_range(&self) -> ((i64, i64), (i64, i64)) {
+        let (mut lo, mut hi) = (self.first, self.first);
+        for d in &self.digits {
+            let span = d.radix as i64 - 1;
+            let (l, r) = (d.left * span, d.right * span);
+            (lo.0, hi.0) = (lo.0 + l.min(0), hi.0 + l.max(0));
+            (lo.1, hi.1) = (lo.1 + r.min(0), hi.1 + r.max(0));
+        }
+        (lo, hi)
+    }
+
     /// Whether the node digits count the node index in a mixed radix, each
     /// a unit of the product of the radices before it, as the numbering of
     /// the pairs makes them: what reading a node off them assumes.
-    fn counts_nodes(&self) -> bool {
+    pub(crate) fn counts_nodes(&self) -> bool {
         self.digits[self.within..].iter().scan(1, |period, d| {
             let counts = *period == d.node;
             *period *= d.radix as i64;
@@ -542,7 +569,7 @@ impl ImplicitLevel {
     ///
     /// `Err(OperationError::OverBudget)` when the list is refused: it takes
     /// sixteen bytes a pair of a node, which may have billions.
-    fn offsets<'l>(&self, lim: &'l Limits) -> Result<Transient<'l, Vec<(i64, i64)>>, OperationError> {
+    pub(crate) fn offsets<'l>(&self, lim: &'l Limits) -> Result<Transient<'l, Vec<(i64, i64)>>, OperationError> {
         let mut offsets = Transient::new(lim, Vec::new());
         lim.reserve_exact(&mut offsets, self.per_node)?;
         each_place(&self.digits[..self.within], (0, 0), |l, r| offsets.push((l, r)));

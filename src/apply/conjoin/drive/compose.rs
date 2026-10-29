@@ -11,6 +11,9 @@
 //! [`ImplicitLevel::product`] gives, in the row loop's order. This route
 //! charges the work clock and the meters what the row loop would, and keeps
 //! the level as the description of its pairs, which implies its nodes.
+//!
+//! A summed level whose operand levels are affine and whose child grids are
+//! complete is summed off the same description ([`plan_sums`]).
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
@@ -66,13 +69,45 @@ pub(super) fn plan(
         .filter(|p| p.pairs() >= floor())
 }
 
-/// What the row loop charges a level of `product`'s shape: the work clock,
-/// one unit per pair of every cell and one per cell for its row, and the
-/// output-pair meter, the doublings of the reserved capacity `charged`
-/// that the level's pairs pass, with their count.
+/// The description of a summed level's pairs and the work the row loop
+/// charges for them, where the level can be summed off the description
+/// (`run_level_described_stream`): the implicit route's description
+/// ([`plan`]), a level no stop can fire within, and two complete child
+/// grids, each cell holding the slot its index names. A summed level's
+/// grid is complete where every cell of it is live, its cells' slots
+/// taken in cell order. No pair dies on such a level, so the row loop
+/// would charge every cell all its pairs ([`work`]).
+pub(super) fn plan_sums(
+    lim: &crate::limits::Limits,
+    f: &TddLevel,
+    g: &TddLevel,
+    shape: LevelShape,
+    grouped: bool,
+    slab: &[u32],
+    bases: Sides<GridBase>,
+) -> Option<(ImplicitLevel, u64)> {
+    let product = plan(lim, f, g, shape, grouped)?;
+    let work = work((shape.f.here, shape.g.here), &product);
+    let complete = |base: GridBase, cells: usize| slab[base.idx()..][..cells].iter().enumerate().all(|(c, &s)| s as usize == c);
+    let (fw, gw) = (shape.f, shape.g);
+    (lim.cannot_stop_within(work, 0)
+        && complete(bases.left, fw.left * gw.left)
+        && complete(bases.right, fw.right * gw.right))
+    .then_some((product, work))
+}
+
+/// The work the row loop charges a level of `product`'s shape on which no
+/// candidate dies: one unit per pair of every cell and one per cell for
+/// its row.
+fn work(nodes: (usize, usize), product: &ImplicitLevel) -> u64 {
+    (nodes.0 as u64) * (nodes.1 as u64) * (product.pairs_per_node() as u64 + 1)
+}
+
+/// What the row loop charges a level of `product`'s shape: the work clock
+/// ([`work`]), and the output-pair meter, the doublings of the reserved
+/// capacity `charged` that the level's pairs pass, with their count.
 pub(super) fn charges(nodes: (usize, usize), product: &ImplicitLevel, charged: usize) -> (u64, usize, u32) {
-    let cells = (nodes.0 as u64) * (nodes.1 as u64);
-    let work = cells * (product.pairs_per_node() as u64 + 1);
+    let work = work(nodes, product);
     let exact = product.arena_len();
     let (mut c, mut doublings) = (charged, 0);
     while exact > c {

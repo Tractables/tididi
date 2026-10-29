@@ -5,17 +5,18 @@ use super::rows::{Emit, run_level_rows};
 use super::word_cells::WordScratch;
 use super::super::marginal_plan::Carrier;
 use super::*;
-use crate::diagram::{EncodedChildRef, ScaledFloat, WeightStore};
+use crate::diagram::{EncodedChildRef, ImplicitLevel, ScaledFloat, WeightStore};
 use crate::value::{plain_floats, CheckedProducts, FloatCol, PlainProducts, StreamChild};
 use crate::isa::avx2_fn;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use crate::isa::Avx2;
 
 // A test sums its streamed float levels a cell at a time, as the oracle
-// for the row sums, or reads and keeps child rows and sums blocks of f
-// pairs and of rows wherever it can, and counts the blocks.
+// for the row sums and for the sums off a description, or reads and keeps
+// child rows and sums blocks of f pairs and of rows wherever it can, and
+// counts the blocks and the levels summed off a description.
 #[cfg(test)]
-use crate::apply::conjoin::tests::{cells_only, eager, note_block, note_lanes};
+use crate::apply::conjoin::tests::{cells_only, eager, note_block, note_described_sums, note_lanes};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -36,6 +37,10 @@ fn note_block() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_lanes() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_described_sums() {}
 
 impl<F: ValueDomain> StreamState<'_, F> {
     /// Fold one cell into the output column and record its slot in the grid,
@@ -171,6 +176,121 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
     }
     let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
+}
+
+/// Sum a streamed scaled-float level whose pairs are those `product`
+/// describes, off the description, without the row loop: node `n` of the
+/// description is the level's cell `n`, and its pairs are the row loop's
+/// for that cell, in its order ([`ImplicitLevel::product`]). Both child
+/// grids are complete, every cell holding the slot its index names, so a
+/// pair's sides are its slots and no pair dies. Each cell is the sum of
+/// its products in pair order, as [`PlainSink`] sums the row loop's cells
+/// ([`described_rows`]), appended to `values` with the next slot, written
+/// at `grid_base + n` of the slab, which is extended over the level's grid
+/// as the row loop extends it: the same values, bit for bit, and the same
+/// grid. Returns `false`, having summed nothing, where the child columns
+/// do not keep every product a float or do not hold every slot a pair
+/// names, where the description does not count its nodes in order, and
+/// where a test sums the level as the row loop does.
+pub(crate) fn run_level_described_stream(
+    eng: &Engine,
+    product: &ImplicitLevel,
+    children: Sides<&TddLevel>,
+    slab: &mut Vec<u32>,
+    grid_base: usize,
+    values: &mut FloatCol,
+    env: StreamEnv<'_>,
+) -> Result<bool, OperationError> {
+    if cells_only() || eager() || product.pairs() == 0 || !product.counts_nodes() {
+        return Ok(false);
+    }
+    let st = attach_children::<FloatFold>(env, children, values);
+    let Some(products) = PlainProducts::of(&st.left, &st.right) else {
+        return Ok(false);
+    };
+    // A slot below 2^30 is the index of its float under either child view
+    // (`ChildDecoder::index`), and a column holds fewer floats.
+    let (lo, hi) = product.slot_range();
+    let (left, right) = products.floats();
+    if lo.0 < 0 || lo.1 < 0 || hi.0 >= left.len() as i64 || hi.1 >= right.len() as i64 {
+        return Ok(false);
+    }
+    let Some(out) = st.counts.narrow_under(products.scale) else {
+        return Ok(false);
+    };
+    let lim = eng.limits();
+    let places = product.offsets(lim)?;
+    let nodes = product.nodes();
+    lim.next_slot(out.len() + nodes - 1)?;
+    lim.reserve(out, nodes)?;
+    extend_slab(slab, grid_base, grid_base + nodes);
+    let grid = &mut slab[grid_base..grid_base + nodes];
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if let Some(avx2) = Avx2::detect() {
+        // Safety: an `Avx2` exists only where the processor has the
+        // features `avx2_described_rows` enables.
+        unsafe { avx2_described_rows(avx2, product, &places, &products, out, grid) };
+        note_described_sums();
+        return Ok(true);
+    }
+    described_rows(product, &places, &products, out, grid);
+    note_described_sums();
+    Ok(true)
+}
+
+/// The cells of a row [`described_rows`] sums at once, each in its own
+/// float.
+const DESCRIBED_BLOCK: usize = 256;
+
+avx2_fn! {
+    /// [`described_rows`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_described_rows(_avx2: Avx2, product: &ImplicitLevel, places: &[(i64, i64)], products: &PlainProducts<'_>, out: &mut Vec<f64>, grid: &mut [u32]) {
+        described_rows(product, places, products, out, grid);
+    }
+}
+
+/// Sum every cell of `product` for [`run_level_described_stream`], which
+/// made room for them in `out`: cell `n` appended with the next slot,
+/// written at `grid[n]`. A row of the description is summed a block of
+/// cells at a time, the block's first product of every cell, then its
+/// second, and so on, so that each cell takes its products in pair order
+/// into a sum that starts at zero, as [`PlainSink`] sums a cell, and a
+/// one-pair cell is its product. `places` are what the places of a node
+/// add to its first pair's slots, every slot a pair names in its column.
+#[inline(always)]
+fn described_rows(product: &ImplicitLevel, places: &[(i64, i64)], products: &PlainProducts<'_>, out: &mut Vec<f64>, grid: &mut [u32]) {
+    let (left, right) = products.floats();
+    let one = places.len() == 1;
+    let mut acc = [0.0f64; DESCRIBED_BLOCK];
+    let mut cell = 0usize;
+    product.each_row(|first, step, len| {
+        let mut j = 0;
+        while j < len {
+            let m = (len - j).min(DESCRIBED_BLOCK);
+            let acc = &mut acc[..m];
+            if !one {
+                acc.fill(0.0);
+            }
+            let at = (first.0 + j as i64 * step.0, first.1 + j as i64 * step.1);
+            for &(pl, pr) in places {
+                let (mut l, mut r) = (at.0 + pl, at.1 + pr);
+                for a in acc.iter_mut() {
+                    // Safety: every slot a pair names lies in its column
+                    // (`slot_range`, checked by the caller).
+                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe { *right.get_unchecked(r as usize) });
+                    *a = if one { v } else { *a + v };
+                    (l, r) = (l + step.0, r + step.1);
+                }
+            }
+            let slot = out.len() as u32;
+            out.extend_from_slice(acc);
+            for (k, g) in grid[cell..cell + m].iter_mut().enumerate() {
+                *g = slot + k as u32;
+            }
+            (cell, j) = (cell + m, j + m);
+        }
+    });
 }
 
 /// Bind the child columns and collapse this level into its value column.
