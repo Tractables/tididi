@@ -15,18 +15,18 @@
 #![allow(dead_code)]
 
 pub(crate) mod api;
-pub(crate) mod build;
 pub(crate) mod conjoin;
 pub(crate) mod contract;
 pub(crate) mod convert;
 pub(crate) mod negate;
-pub(crate) mod place;
 #[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
 
+use crate::limits::Limits;
 use crate::vtree::{Vtree, VtreeNode};
+use crate::OperationError;
 
 /// A resolved reference: the vtree node in bits 32 to 61, the index in the
 /// low word. [`ZREF`] is the constant false.
@@ -201,14 +201,20 @@ impl SLevel {
     pub(crate) fn node(&self, i: u32) -> &[(Ref, Ref)] {
         &self.pairs[self.start[i as usize] as usize..self.start[i as usize + 1] as usize]
     }
-    /// Append a node and return its index.
-    pub(crate) fn push(&mut self, pairs: &[(Ref, Ref)]) -> u32 {
+    /// Append a node and return its index; the growth is charged to `lim`.
+    pub(crate) fn push(&mut self, pairs: &[(Ref, Ref)], lim: &Limits) -> Result<u32, OperationError> {
         if self.start.is_empty() {
-            self.start.push(0);
+            lim.try_push(&mut self.start, 0)?;
         }
+        lim.reserve(&mut self.pairs, pairs.len())?;
         self.pairs.extend_from_slice(pairs);
-        self.start.push(self.pairs.len() as u32);
-        (self.start.len() - 2) as u32
+        lim.try_push(&mut self.start, self.pairs.len() as u32)?;
+        Ok((self.start.len() - 2) as u32)
+    }
+
+    /// The bytes the level's arenas hold.
+    pub(crate) fn bytes(&self) -> u64 {
+        (self.start.capacity() * 4 + self.pairs.capacity() * 16) as u64
     }
 }
 
@@ -284,18 +290,28 @@ impl SkipForm {
 
     /// Append a node at level `u`, noting the level among those that hold
     /// nodes ([`SkipForm::collect_in`] orders them), and return its index.
-    pub(crate) fn push_node(&mut self, u: u32, pairs: &[(Ref, Ref)]) -> u32 {
+    pub(crate) fn push_node(&mut self, u: u32, pairs: &[(Ref, Ref)], lim: &Limits) -> Result<u32, OperationError> {
         if self.levels[u as usize].width() == 0 {
             self.active.push(u);
         }
-        self.levels[u as usize].push(pairs)
+        self.levels[u as usize].push(pairs, lim)
     }
 
     /// [`SkipForm::collect_in`] over the levels [`SkipForm::push_node`]
     /// noted.
-    pub(crate) fn collect_pushed(&mut self) {
+    pub(crate) fn collect_pushed(&mut self, lim: &Limits) -> Result<(), OperationError> {
         let cand = std::mem::take(&mut self.active);
-        self.collect_in(cand);
+        self.collect_in(cand, lim)
+    }
+
+    /// The bytes the levels' arenas hold.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.active.iter().map(|&t| self.levels[t as usize].bytes()).sum()
+    }
+
+    /// Drop the diagram, handing the charge for its levels back to `lim`.
+    pub(crate) fn discard(self, lim: &Limits) {
+        lim.release_bytes(self.bytes());
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -349,23 +365,24 @@ impl SkipForm {
     }
 
     /// Drop nodes the output does not reach and number the rest in order.
-    pub(crate) fn collect(&mut self) {
+    pub(crate) fn collect(&mut self, lim: &Limits) -> Result<(), OperationError> {
         let all = self.shape.topdown.clone();
-        self.collect_in(all);
+        self.collect_in(all, lim)
     }
 
     /// [`SkipForm::collect`] where only the levels in `cand` may hold nodes.
-    pub(crate) fn collect_in(&mut self, mut cand: Vec<u32>) {
+    pub(crate) fn collect_in(&mut self, mut cand: Vec<u32>, lim: &Limits) -> Result<(), OperationError> {
         let sh = Arc::clone(&self.shape);
         cand.retain(|&t| self.levels[t as usize].width() > 0);
         cand.sort_unstable_by_key(|&t| sh.pre[t as usize]);
         cand.dedup();
         if self.out == ZREF {
             for &t in &cand {
+                lim.release_bytes(self.levels[t as usize].bytes());
                 self.levels[t as usize] = SLevel::default();
             }
             self.active.clear();
-            return;
+            return Ok(());
         }
         // Per candidate level (by its position in `cand`): which nodes are
         // live, then their new numbers.
@@ -373,7 +390,10 @@ impl SkipForm {
         for (i, &t) in cand.iter().enumerate() {
             pos[t as usize] = i as u32;
         }
-        let mut live: Vec<Vec<u32>> = cand.iter().map(|&t| vec![0; self.levels[t as usize].width()]).collect();
+        let mut live: Vec<Vec<u32>> = Vec::with_capacity(cand.len());
+        for &t in &cand {
+            live.push(filled(lim, self.levels[t as usize].width(), 0)?);
+        }
         let mark = |live: &mut Vec<Vec<u32>>, r: Ref| {
             let p = pos[vt(r) as usize];
             if p != NONE && !sh.is_leaf(vt(r)) {
@@ -426,6 +446,7 @@ impl SkipForm {
                 lo = hi;
             }
             if j == 0 {
+                lim.release_bytes(lvl.bytes());
                 *lvl = SLevel::default();
             } else {
                 lvl.pairs.truncate(w);
@@ -435,14 +456,18 @@ impl SkipForm {
         }
         self.active = active;
         self.out = fix(&live, self.out);
+        for v in live {
+            lim.discard(v);
+        }
+        Ok(())
     }
 
     /// The model count over the vtree's variables.
-    pub(crate) fn model_count(&self) -> num_bigint::BigUint {
+    pub(crate) fn model_count(&self, lim: &Limits) -> Result<num_bigint::BigUint, OperationError> {
         use num_bigint::BigUint;
         let sh = &self.shape;
         if self.out == ZREF {
-            return BigUint::from(0u32);
+            return Ok(BigUint::from(0u32));
         }
         // Variables below each node, and depth, for the skipped count.
         let n = sh.num_nodes();
@@ -476,7 +501,8 @@ impl SkipForm {
         for &t in &sh.bottomup {
             let (l, r) = sh.kids[t as usize];
             let lvl = &self.levels[t as usize];
-            let mut out = Vec::with_capacity(lvl.width());
+            let mut out = Vec::new();
+            lim.reserve_exact(&mut out, lvl.width())?;
             for i in 0..lvl.width() {
                 let mut s = BigUint::from(0u32);
                 for &(a, b) in lvl.node(i as u32) {
@@ -486,8 +512,19 @@ impl SkipForm {
             }
             val[t as usize] = out;
         }
-        value(&val, sh.root, self.out)
+        let count = value(&val, sh.root, self.out);
+        for v in val {
+            lim.discard(v);
+        }
+        Ok(count)
     }
+}
+
+/// `vec![x; n]` with its allocation charged to `lim`.
+pub(crate) fn filled<T: Clone>(lim: &Limits, n: usize, x: T) -> Result<Vec<T>, OperationError> {
+    let mut v = Vec::new();
+    lim.try_resize(&mut v, n, x)?;
+    Ok(v)
 }
 
 /// Normalize the pairs of a node at internal `u` (sorted, sides resolved,

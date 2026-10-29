@@ -6,7 +6,7 @@ use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, 
 use crate::{Engine, Tdd};
 
 fn skip(f: &Tdd) -> SkipForm {
-    from_tdd(f, Arc::new(Shape::of(f.vtree()))).expect("structural")
+    from_tdd(f, Arc::new(Shape::of(f.vtree())), Engine::new().limits()).expect("structural")
 }
 
 /// Random canonical diagrams over every vtree shape, with their vtree.
@@ -30,7 +30,7 @@ fn cases(seed: u64, count: usize) -> Vec<(Engine, Tdd, Tdd)> {
 fn skip_form_expands_to_the_same_function() {
     for (eng, f, _) in cases(1, 200) {
         let s = skip(&f);
-        assert_eq!(s.model_count(), eng.model_count(&f).unwrap());
+        assert_eq!(s.model_count(eng.limits()).unwrap(), eng.model_count(&f).unwrap());
         let mut back = to_tdd(&s, &eng, f.vtree()).unwrap();
         // The stored form of a canonical skip form is canonical.
         let (pairs, nodes) = (back.pair_count(), back.node_count());
@@ -49,7 +49,7 @@ fn conjunction_matches_the_stored_form() {
         let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
         let h = conjoin::and(&sf, &sg, eng.limits()).unwrap();
         let want = eng.and(&f, &g).unwrap();
-        assert_eq!(h.model_count(), eng.model_count(&want).unwrap());
+        assert_eq!(h.model_count(eng.limits()).unwrap(), eng.model_count(&want).unwrap());
         let mut back = to_tdd(&h, &eng, f.vtree()).unwrap();
         eng.minimize(&mut back).unwrap();
         assert!(eng.equivalent(&back, &want).unwrap());
@@ -124,7 +124,7 @@ fn negation_is_the_canonical_skip_form() {
             let mut fun = eng.negate(x).unwrap();
             eng.minimize(&mut fun).unwrap();
             let want = skip(&fun);
-            assert_eq!(h.model_count(), eng.model_count(&fun).unwrap());
+            assert_eq!(h.model_count(eng.limits()).unwrap(), eng.model_count(&fun).unwrap());
             if fingerprint(&h) != fingerprint(&want) {
                 eprintln!("vtree {:?}", s.shape.kids);
                 eprintln!("f {:?} out {:?}", dump(&s), (vt(s.out), ix(s.out)));
@@ -141,7 +141,7 @@ fn negation_is_the_canonical_skip_form() {
     let s = skip(&f);
     let zero = SkipForm::zero(Arc::clone(&s.shape));
     let one = super::negate::negate(&zero, eng.limits()).unwrap();
-    assert_eq!(one.model_count(), num_bigint::BigUint::from(1u32) << f.vtree().num_vars());
+    assert_eq!(one.model_count(eng.limits()).unwrap(), num_bigint::BigUint::from(1u32) << f.vtree().num_vars());
     assert!(super::negate::negate(&one, eng.limits()).unwrap().is_zero());
 }
 
@@ -157,46 +157,7 @@ fn dump(s: &SkipForm) -> Dump {
 }
 
 #[test]
-fn placement_matches_the_stored_embedding() {
-    use crate::vtree::VarId;
-    let mut rng = Lcg::new(8);
-    let mut done = 0;
-    while done < 300 {
-        let n = 3 + rng.below(8) as u32;
-        for (_, vtree) in vtree_shapes(n) {
-            // A random subset of at least one variable, and its projection.
-            let keep: Vec<u32> = (1..=n).filter(|_| rng.below(3) != 0).collect();
-            if keep.is_empty() {
-                continue;
-            }
-            let local = |v: VarId| keep.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
-            let Some(small) = vtree.project_to_vars(local, keep.len() as u32) else { continue };
-            let eng = Engine::new();
-            let small = eng.bind_vtree(small);
-            let m = keep.len() as u32;
-            let f = compile_clauses_on(&eng, &small, &rand_cnf(&mut rng, m, CnfShape { clauses: m as usize, width: 3 }));
-            let map = |v: VarId| VarId(keep[v.0 as usize - 1]);
-            let ish = Arc::new(Shape::of(&vtree));
-            let placed = super::place::place(&skip(&f), &small, map, &vtree, &ish).expect("a projection places");
-            let (mut want, _) = eng.embed(&f, &vtree, map).unwrap();
-            eng.minimize(&mut want).unwrap();
-            if fingerprint(&placed) != fingerprint(&skip(&want)) {
-                eprintln!("keep {keep:?} big {:?}", ish.kids);
-                eprintln!("small {:?}", Shape::of(&small).kids);
-                let s = skip(&f);
-                eprintln!("f {:?} out {:x}", dump(&s), s.out);
-                eprintln!("placed {:?} out {:x}", dump(&placed), placed.out);
-                let w = skip(&want);
-                eprintln!("want {:?} out {:x}", dump(&w), w.out);
-            }
-            assert_eq!(fingerprint(&placed), fingerprint(&skip(&want)));
-            done += 1;
-        }
-    }
-}
-
-#[test]
-fn conjunction_of_placed_projections_is_canonical() {
+fn conjunction_of_projections_is_canonical() {
     use crate::vtree::VarId;
     let mut rng = Lcg::new(10);
     let mut done = 0;
@@ -205,7 +166,7 @@ fn conjunction_of_placed_projections_is_canonical() {
         for (_, vtree) in vtree_shapes(n) {
             let eng = Engine::new();
             let ish = Arc::new(Shape::of(&vtree));
-            let mut placed = Vec::new();
+            let mut placed: Vec<SkipForm> = Vec::new();
             let mut embedded = Vec::new();
             for _ in 0..2 {
                 // A random subset of the variables, and a function over it.
@@ -219,8 +180,10 @@ fn conjunction_of_placed_projections_is_canonical() {
                 let m = keep.len() as u32;
                 let f = compile_clauses_on(&eng, &small, &rand_cnf(&mut rng, m, CnfShape { clauses: m as usize, width: 3 }));
                 let map = |v: VarId| VarId(keep[v.0 as usize - 1]);
-                placed.push(super::place::place(&skip(&f), &small, map, &vtree, &ish).expect("a projection places"));
-                embedded.push(eng.embed(&f, &vtree, map).unwrap().0);
+                let (mut e, _) = eng.embed(&f, &vtree, map).unwrap();
+                eng.minimize(&mut e).unwrap();
+                placed.push(from_tdd(&e, Arc::clone(&ish), eng.limits()).unwrap());
+                embedded.push(e);
             }
             if placed.len() < 2 {
                 continue;
@@ -314,4 +277,17 @@ fn skip_operands_must_share_a_vtree() {
     let f = eng.to_skip(&Tdd::one(&a)).unwrap();
     let g = eng.to_skip(&Tdd::one(&b)).unwrap();
     assert_eq!(eng.skip_and(&f, &g).unwrap_err(), crate::OperationError::VtreeMismatch);
+}
+
+#[test]
+fn skip_operations_stop_at_the_memory_budget() {
+    use crate::limits::LimitConfig;
+    use crate::OperationError;
+    let (eng, f, g) = cases(11, 40).into_iter().max_by_key(|c| c.1.pair_count() + c.2.pair_count()).unwrap();
+    let (sf, sg) = (eng.to_skip(&f).unwrap(), eng.to_skip(&g).unwrap());
+    let _guard = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(64)));
+    assert_eq!(eng.skip_and(&sf, &sg).err(), Some(OperationError::OverBudget));
+    assert_eq!(eng.skip_negate(&sf).err(), Some(OperationError::OverBudget));
+    assert_eq!(eng.to_skip(&f).err(), Some(OperationError::OverBudget));
+    assert_eq!(eng.to_stored(&sf).err(), Some(OperationError::OverBudget));
 }

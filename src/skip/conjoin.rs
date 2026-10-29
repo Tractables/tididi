@@ -12,10 +12,18 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::build::Land;
-use super::{ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
+use super::{filled, ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
 use crate::limits::Limits;
 use crate::OperationError;
+
+/// Where a product's node is.
+pub(crate) enum Land {
+    /// Known without building: a reference into the result (a leaf label or
+    /// false).
+    Done(Ref),
+    /// Built at this internal level.
+    At(u32),
+}
 
 /// Where the product of `a` and `b` (references read from one child level)
 /// is built: `Done` for a false or leaf result.
@@ -65,12 +73,12 @@ struct Lists {
 }
 
 impl Lists {
-    fn new(n: usize) -> Lists {
-        Lists { head: vec![NIL; n], ent: Vec::new(), free: NIL }
+    fn new(n: usize, lim: &Limits) -> Result<Lists, OperationError> {
+        Ok(Lists { head: filled(lim, n, NIL)?, ent: Vec::new(), free: NIL })
     }
 
     #[inline]
-    fn push(&mut self, i: usize, other: Ref, res: Ref) {
+    fn push(&mut self, i: usize, other: Ref, res: Ref, lim: &Limits) -> Result<(), OperationError> {
         let e = (other, res, self.head[i]);
         let at = if self.free != NIL {
             let at = self.free;
@@ -78,24 +86,30 @@ impl Lists {
             self.ent[at as usize] = e;
             at
         } else {
-            self.ent.push(e);
+            lim.try_push(&mut self.ent, e)?;
             (self.ent.len() - 1) as u32
         };
         self.head[i] = at;
+        Ok(())
+    }
+
+    fn discard(self, lim: &Limits) {
+        lim.discard(self.head);
+        lim.discard(self.ent);
     }
 
     /// The entries of list `i` that `judge` takes, into `ends`: `judge`
     /// gives, for the other reference, whether the entry stays listed and
     /// whether it is taken. Entries that do not stay are freed.
     #[inline]
-    fn scan(&mut self, i: usize, ends: &mut Vec<(Ref, Ref)>, judge: impl Fn(Ref) -> (bool, bool)) {
+    fn scan(&mut self, i: usize, ends: &mut Vec<(Ref, Ref)>, lim: &Limits, judge: impl Fn(Ref) -> (bool, bool)) -> Result<(), OperationError> {
         let (mut prev, mut e) = (NIL, self.head[i]);
         while e != NIL {
             let (other, res, next) = self.ent[e as usize];
             let (stay, take) = judge(other);
             if stay {
                 if take {
-                    ends.push((other, res));
+                    lim.try_push(ends, (other, res))?;
                 }
                 prev = e;
             } else {
@@ -109,6 +123,7 @@ impl Lists {
             }
             e = next;
         }
+        Ok(())
     }
 
     /// The result of the product of reference `i` with `other`, if listed.
@@ -129,6 +144,7 @@ impl Lists {
 /// by key) at internal `u` into `out`, noting each with its result in
 /// `made`; empties `keys` and `combos`. The work units they took.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn emit(
     sh: &Shape,
     u: u32,
@@ -137,9 +153,10 @@ fn emit(
     combos: &mut Vec<(u32, Ref, Ref)>,
     buf: &mut Vec<(Ref, Ref)>,
     made: &mut Vec<(Ref, Ref, Ref)>,
-) -> u64 {
+    lim: &Limits,
+) -> Result<u64, OperationError> {
     if keys.is_empty() {
-        return 0;
+        return Ok(0);
     }
     let work = (keys.len() + combos.len()) as u64;
     if keys.len() > 1 {
@@ -149,18 +166,18 @@ fn emit(
     for (k, &(a, b)) in keys.iter().enumerate() {
         buf.clear();
         while i < combos.len() && combos[i].0 == k as u32 {
-            buf.push((combos[i].1, combos[i].2));
+            lim.try_push(buf, (combos[i].1, combos[i].2))?;
             i += 1;
         }
         let res = match normalize(sh, u, buf) {
             Err(t) => t,
-            Ok(()) => mk(u, out.push_node(u, buf)),
+            Ok(()) => mk(u, out.push_node(u, buf, lim)?),
         };
-        made.push((a, b, res));
+        lim.try_push(made, (a, b, res))?;
     }
     keys.clear();
     combos.clear();
-    work
+    Ok(work)
 }
 
 /// An operand's references numbered densely: stored node `i` of level `t`
@@ -176,7 +193,7 @@ pub(super) struct Numbered {
 }
 
 impl Numbered {
-    pub(super) fn of(s: &SkipForm) -> Numbered {
+    pub(super) fn of(s: &SkipForm, lim: &Limits) -> Result<Numbered, OperationError> {
         let sh = &*s.shape;
         let mut base = vec![NONE; sh.num_nodes()];
         let mut n = 0u32;
@@ -184,7 +201,11 @@ impl Numbered {
             base[t as usize] = n;
             n += s.levels[t as usize].width() as u32;
         }
-        let mut nb = Numbered { base, top: vec![NONE; n as usize], leaves: Vec::new() };
+        // Room for the leaf labels too, which `note` numbers after the nodes.
+        let mut top = Vec::new();
+        lim.reserve_exact(&mut top, n as usize + 3 * sh.num_nodes().div_ceil(2))?;
+        top.resize(n as usize, NONE);
+        let mut nb = Numbered { base, top, leaves: Vec::new() };
         nb.note(sh, s.out, sh.root);
         for &u in &s.active {
             let (l, r) = sh.kids[u as usize];
@@ -193,7 +214,11 @@ impl Numbered {
                 nb.note(sh, b, r);
             }
         }
-        nb
+        Ok(nb)
+    }
+
+    pub(super) fn discard(self, lim: &Limits) {
+        lim.discard(self.top);
     }
 
     #[inline]
@@ -268,12 +293,11 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     match land_pair(sh, f.out, g.out) {
         Land::Done(r) => {
             out.out = r;
-            out.collect_pushed();
             return Ok(out);
         }
         Land::At(_) => {}
     }
-    let (nf, ng) = (Numbered::of(f), Numbered::of(g));
+    let (nf, ng) = (Numbered::of(f, lim)?, Numbered::of(g, lim)?);
     // The levels products can land on, children first.
     let mut todo: Vec<u32> = f.active.iter().chain(&g.active).copied().collect();
     for nb in [&nf, &ng] {
@@ -288,15 +312,15 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     todo.dedup();
     // True products, per reference of each side: the other side's
     // reference and the result.
-    let (mut pf, mut pg) = (Lists::new(nf.len()), Lists::new(ng.len()));
+    let (mut pf, mut pg) = (Lists::new(nf.len(), lim)?, Lists::new(ng.len(), lim)?);
     // Both references to the result, where a level looks products up so.
     let mut live: FxHashMap<u64, Ref> = FxHashMap::default();
     let key = |a: usize, b: usize| ((a as u64) << 32) | b as u64;
     // `g`'s pairs of the current level by their anchor-side reference.
-    let (mut gmark, mut ghead) = (vec![0u32; ng.len()], vec![NIL; ng.len()]);
+    let (mut gmark, mut ghead) = (filled(lim, ng.len(), 0u32)?, filled(lim, ng.len(), NIL)?);
     let mut gent: Vec<(u32, Ref, u32)> = Vec::new();
     // The current node's products, by the other side's reference.
-    let (mut cg, mut cf) = (vec![(0u32, 0u32); ng.len()], vec![(0u32, 0u32); nf.len()]);
+    let (mut cg, mut cf) = (filled(lim, ng.len(), (0u32, 0u32))?, filled(lim, nf.len(), (0u32, 0u32))?);
     let (mut lstamp, mut cstamp) = (0u32, 0u32);
     // One node's products against the other side and their pair
     // combinations, built as soon as the node is done; the level's
@@ -315,13 +339,15 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
         let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
         if sh.is_leaf(l) && sh.is_leaf(r) {
             // Every reference each side reads here, against every other.
-            let refs = |s: &SkipForm, nb: &Numbered| -> Vec<Ref> {
-                let mut v: Vec<Ref> = (0..s.levels[u as usize].width() as u32).map(|i| mk(u, i)).collect();
+            let refs = |s: &SkipForm, nb: &Numbered| -> Result<Vec<Ref>, OperationError> {
+                let mut v: Vec<Ref> = Vec::new();
+                lim.reserve_exact(&mut v, s.levels[u as usize].width() + 6)?;
+                v.extend((0..s.levels[u as usize].width() as u32).map(|i| mk(u, i)));
                 v.extend(nb.leaf_refs(sh, l, u));
                 v.extend(nb.leaf_refs(sh, r, u));
-                v
+                Ok(v)
             };
-            let (fr, gr) = (refs(f, &nf), refs(g, &ng));
+            let (fr, gr) = (refs(f, &nf)?, refs(g, &ng)?);
             for &a in &fr {
                 for &b in &gr {
                     if vt(a) != u && vt(a) == vt(b) {
@@ -335,16 +361,18 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                             };
                             if x != ZREF && y != ZREF {
                                 if cell == NIL {
-                                    keys.push((a, b));
+                                    lim.try_push(&mut keys, (a, b))?;
                                     cell = (keys.len() - 1) as u32;
                                 }
-                                combos.push((cell, x, y));
+                                lim.try_push(&mut combos, (cell, x, y))?;
                             }
                         }
                     }
-                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
+                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
                 }
             }
+            lim.discard(fr);
+            lim.discard(gr);
         } else {
             // The anchor: the right child unless it is a leaf.
             let right = !sh.is_leaf(r);
@@ -368,7 +396,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                         gmark[gy] = lstamp;
                         ghead[gy] = NIL;
                     }
-                    gent.push((j, ob, ghead[gy]));
+                    lim.try_push(&mut gent, (j, ob, ghead[gy]))?;
                     ghead[gy] = (gent.len() - 1) as u32;
                 }
             }
@@ -381,15 +409,15 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                     // The true products of `x` with references of `g` read
                     // at the anchor.
                     ends.clear();
-                    pf.scan(nf.id(x), &mut ends, |y| {
+                    pf.scan(nf.id(x), &mut ends, lim, |y| {
                         let keep = ng.read_at(sh, y, cs);
                         (keep, keep)
-                    });
+                    })?;
                     if sh.is_leaf(vt(x)) {
                         for y in ng.leaf_refs(sh, vt(x), cs) {
                             let res = leaf_and(vt(x), ix(x), ix(y));
                             if res != ZREF {
-                                ends.push((y, res));
+                                lim.try_push(&mut ends, (y, res))?;
                             }
                         }
                     }
@@ -404,11 +432,11 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                                 if o != ZREF {
                                     let c = &mut cg[(gbase + j) as usize];
                                     if c.0 != cstamp {
-                                        keys.push((a, mk(u, j)));
+                                        lim.try_push(&mut keys, (a, mk(u, j)))?;
                                         *c = (cstamp, (keys.len() - 1) as u32);
                                     }
                                     let (pl, pr) = join(res, o);
-                                    combos.push((c.1, pl, pr));
+                                    lim.try_push(&mut combos, (c.1, pl, pr))?;
                                 }
                             }
                         }
@@ -416,15 +444,15 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                             // `y` is `true` on the other side here.
                             let c = &mut cg[gy];
                             if c.0 != cstamp {
-                                keys.push((a, y));
+                                lim.try_push(&mut keys, (a, y))?;
                                 *c = (cstamp, (keys.len() - 1) as u32);
                             }
                             let (pl, pr) = join(res, oa);
-                            combos.push((c.1, pl, pr));
+                            lim.try_push(&mut combos, (c.1, pl, pr))?;
                         }
                     }
                 }
-                work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
+                work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
             }
             if skips {
                 // Skips of `f` through this level against `g`'s nodes.
@@ -434,39 +462,42 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                     for &p in gl.node(j) {
                         let (y, ob) = split(p);
                         ends.clear();
-                        pg.scan(ng.id(y), &mut ends, |x| {
+                        pg.scan(ng.id(y), &mut ends, lim, |x| {
                             let keep = nf.read_at(sh, x, cs);
                             (keep, keep && nf.above(sh, x, u))
-                        });
+                        })?;
                         if sh.is_leaf(vt(y)) {
                             for x in nf.leaf_refs(sh, vt(y), u) {
                                 let res = leaf_and(vt(y), ix(x), ix(y));
                                 if res != ZREF {
-                                    ends.push((x, res));
+                                    lim.try_push(&mut ends, (x, res))?;
                                 }
                             }
                         }
                         for &(x, res) in &ends {
                             let c = &mut cf[nf.id(x)];
                             if c.0 != cstamp {
-                                keys.push((x, b));
+                                lim.try_push(&mut keys, (x, b))?;
                                 *c = (cstamp, (keys.len() - 1) as u32);
                             }
                             let (pl, pr) = join(res, ob);
-                            combos.push((c.1, pl, pr));
+                            lim.try_push(&mut combos, (c.1, pl, pr))?;
                         }
                     }
-                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
+                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
                 }
             }
         }
         lim.charge_work(work);
         lim.check_stop()?;
         let lookup = sh.looked_up[u as usize];
+        if lookup {
+            lim.reserve_map(&mut live, made.len())?;
+        }
         for &(a, b, res) in &made {
             let (fa, gb) = (nf.id(a), ng.id(b));
-            pf.push(fa, b, res);
-            pg.push(gb, a, res);
+            pf.push(fa, b, res, lim)?;
+            pg.push(gb, a, res, lim)?;
             if lookup {
                 live.insert(key(fa, gb), res);
             }
@@ -476,6 +507,23 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
         Land::Done(r) => r,
         Land::At(_) => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
     };
-    out.collect_pushed();
+    pf.discard(lim);
+    pg.discard(lim);
+    lim.discard(live);
+    for v in [gmark, ghead] {
+        lim.discard(v);
+    }
+    for v in [cg, cf] {
+        lim.discard(v);
+    }
+    lim.discard(gent);
+    lim.discard(keys);
+    lim.discard(combos);
+    lim.discard(made);
+    lim.discard(ends);
+    lim.discard(buf);
+    nf.discard(lim);
+    ng.discard(lim);
+    out.collect_pushed(lim)?;
     Ok(out)
 }

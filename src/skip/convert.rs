@@ -4,23 +4,32 @@
 use std::sync::Arc;
 
 use super::conjoin::Numbered;
-use super::{ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
+use super::{filled, ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
 use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ZERO};
 use crate::vtree::{Vtree, VtreeIdx};
+use crate::limits::Limits;
 use crate::{Engine, OperationError};
 
-/// The skip form of `f`, `None` where a level is marginal or the diagram
-/// carries weights. Any valid diagram converts; a canonical one converts to
-/// the canonical skip form.
-pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>) -> Option<SkipForm> {
-    if f.weights.is_some() || f.levels.iter().any(|l| l.is_marginal()) {
-        return None;
+/// The skip form of `f`. Any valid diagram converts; a canonical one
+/// converts to the canonical skip form.
+///
+/// # Errors
+///
+/// [`OperationError::IncompatibleWeights`] where `f` carries weights,
+/// [`OperationError::MarginalLevel`] where a level is summed out, and
+/// [`OperationError::OverBudget`] where the skip form does not fit.
+pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipForm, OperationError> {
+    if f.weights.is_some() {
+        return Err(OperationError::IncompatibleWeights);
+    }
+    if let Some(t) = f.levels.iter().position(|l| l.is_marginal()) {
+        return Err(OperationError::MarginalLevel(VtreeIdx(t as u32)));
     }
     let sh = &*shape;
     let n = sh.num_nodes();
     let mut form = SkipForm::zero(Arc::clone(&shape));
     if f.is_zero() {
-        return Some(form);
+        return Ok(form);
     }
     let root = sh.root;
     let levels = &f.levels;
@@ -28,9 +37,10 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>) -> Option<SkipForm> {
     // form only nodes their referrers name.
     let canonical = levels.is_canonical(f.output);
     // The nodes the output reaches, top-down.
-    let mut reach: Vec<Vec<bool>> = (0..n)
-        .map(|i| if sh.is_leaf(i as u32) || canonical { Vec::new() } else { vec![false; levels[i].slot_count()] })
-        .collect();
+    let mut reach: Vec<Vec<bool>> = Vec::with_capacity(n);
+    for i in 0..n {
+        reach.push(if sh.is_leaf(i as u32) || canonical { Vec::new() } else { filled(lim, levels[i].slot_count(), false)? });
+    }
     if !sh.is_leaf(root) && !canonical {
         reach[root as usize][f.output().local.idx()] = true;
     }
@@ -56,7 +66,7 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>) -> Option<SkipForm> {
     for &t in &sh.bottomup {
         let (l, r) = sh.kids[t as usize];
         let width = if sh.is_leaf(t) { 0 } else { levels[t as usize].slot_count() };
-        let mut out = vec![ZREF; width];
+        let mut out = filled(lim, width, ZREF)?;
         for i in 0..out.len() {
             if !canonical && !reach[t as usize][i] {
                 continue;
@@ -64,23 +74,30 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>) -> Option<SkipForm> {
             buf.clear();
             for pair in levels[t as usize].pairs_iter_of_idx(i) {
                 let side = |c: u32, raw: u32| if sh.is_leaf(c) { mk(c, raw) } else { res[c as usize][raw as usize] };
-                buf.push((side(l, pair.left.raw()), side(r, pair.right.raw())));
+                lim.try_push(&mut buf, (side(l, pair.left.raw()), side(r, pair.right.raw())))?;
             }
             out[i] = match normalize(sh, t, &mut buf) {
                 Err(target) => target,
-                Ok(()) => mk(t, form.levels[t as usize].push(&buf)),
+                Ok(()) => mk(t, form.levels[t as usize].push(&buf, lim)?),
             };
         }
         res[t as usize] = out;
     }
     let o = f.output().local.0;
     form.out = if sh.is_leaf(root) { mk(root, o) } else { res[root as usize][o as usize] };
+    for v in reach {
+        lim.discard(v);
+    }
+    for v in res {
+        lim.discard(v);
+    }
+    lim.discard(buf);
     if canonical {
         form.active = sh.topdown.iter().copied().filter(|&t| form.levels[t as usize].width() > 0).collect();
     } else {
-        form.collect();
+        form.collect(lim)?;
     }
-    Some(form)
+    Ok(form)
 }
 
 /// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
@@ -98,9 +115,10 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
             .finish(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(ix(s.out)) })
             .map_err(|_| OperationError::IndexOverflow);
     }
-    let nb = Numbered::of(s);
+    let lim = eng.limits();
+    let nb = Numbered::of(s, lim)?;
     // Every reference, by number.
-    let mut refs = vec![ZREF; nb.len()];
+    let mut refs = filled(lim, nb.len(), ZREF)?;
     for &t in &s.active {
         let b = nb.base[t as usize];
         for i in 0..s.levels[t as usize].width() as u32 {
@@ -134,7 +152,7 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
         start[t + 1] += start[t];
     }
     let mut fill = start.clone();
-    let mut pts = vec![0u32; start[n] as usize];
+    let mut pts = filled(lim, start[n] as usize, 0u32)?;
     for (id, &x) in refs.iter().enumerate() {
         let top = nb.top[id];
         if x != ZREF && top != NONE {
@@ -147,7 +165,7 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
     // Per reference, its pass-through's index at the last level of its
     // chain written: the levels are written children first, and a
     // reference's next level up its chain is the parent of the last.
-    let mut cur = vec![0u32; nb.len()];
+    let mut cur = filled(lim, nb.len(), 0u32)?;
     let width = |c: u32| if sh.is_leaf(c) { 0 } else { s.levels[c as usize].width() as u32 };
     let mut b = Tdd::builder(eng, vtree)?;
     let mut node: Vec<ChildPair> = Vec::new();
@@ -206,5 +224,9 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
     // (pass-through nodes before their parents), or a leaf label.
     let tdd = unsafe { b.finish_unchecked(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(o) }) };
     debug_assert!(o != ZERO.0);
+    lim.discard(refs);
+    lim.discard(pts);
+    lim.discard(cur);
+    nb.discard(lim);
     Ok(tdd)
 }

@@ -25,7 +25,7 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
-use super::{ix, mk, normalize, vt, Ref, SLevel, SkipForm, NEG, ONE, POS, ZREF};
+use super::{filled, ix, mk, normalize, vt, Ref, SLevel, SkipForm, NEG, ONE, POS, ZREF};
 
 use crate::limits::Limits;
 use crate::OperationError;
@@ -77,21 +77,33 @@ impl CLv {
     }
     /// Add a group of the stored nodes and skips `members` (`sh`'s level
     /// `c`, whose children are `l` and `r`), returning its number.
-    fn push_group(&mut self, s: &SkipForm, members: &[Ref], l: u32, r: u32) -> u32 {
+    fn push_group(&mut self, s: &SkipForm, members: &[Ref], l: u32, r: u32, lim: &Limits) -> Result<u32, OperationError> {
         let g = self.groups() as u32;
         for &e in members {
             if vt(e) == self.level {
                 if self.group_of.is_empty() {
-                    self.group_of = vec![NONE; self.width as usize];
+                    self.group_of = filled(lim, self.width as usize, NONE)?;
                 }
                 self.group_of[ix(e) as usize] = g;
-                self.gpairs.extend_from_slice(s.levels[self.level as usize].node(ix(e)));
+                let node = s.levels[self.level as usize].node(ix(e));
+                lim.reserve(&mut self.gpairs, node.len())?;
+                self.gpairs.extend_from_slice(node);
             } else {
-                self.gpairs.push(if s.shape.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) });
+                lim.try_push(&mut self.gpairs, if s.shape.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) })?;
             }
         }
-        self.gstart.push(self.gpairs.len() as u32);
-        g
+        lim.try_push(&mut self.gstart, self.gpairs.len() as u32)?;
+        Ok(g)
+    }
+
+    /// Hand the charge for the level's buffers back to `lim`.
+    fn discard(self, lim: &Limits) {
+        lim.discard(self.group_of);
+        lim.discard(self.gstart);
+        lim.discard(self.gpairs);
+        lim.discard(self.chainmap);
+        lim.discard(self.gres);
+        lim.discard(self.rm);
     }
 }
 
@@ -113,8 +125,8 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
     let sh = &*shape;
     let n = sh.num_nodes();
     if s.out == ZREF {
-        let mut z = SkipForm::zero(s.shape.clone());
-        z.collect_in(Vec::new());
+        let z = SkipForm::zero(s.shape.clone());
+        s.discard(lim);
         return Ok(z);
     }
     let ids = Ids::of(&s);
@@ -130,7 +142,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
     }
     // Per entity of the current level (a stored node or a skip the parent
     // names): its reference, partner hash and partner count.
-    let (mut sstamp, mut sslot) = (vec![0u32; ids.len()], vec![0u32; ids.len()]);
+    let (mut sstamp, mut sslot) = (filled(lim, ids.len(), 0u32)?, filled(lim, ids.len(), 0u32)?);
     let mut epoch = 0u32;
     let mut ent: Vec<(Ref, u64, u32)> = Vec::new();
     let mut order: Vec<u32> = Vec::new();
@@ -179,7 +191,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                     if sstamp[id] != epoch {
                         sstamp[id] = epoch;
                         sslot[id] = ent.len() as u32;
-                        ent.push((e, 0, 0));
+                        lim.try_push(&mut ent, (e, 0, 0))?;
                     }
                     let x = &mut ent[sslot[id] as usize];
                     for q in partners(partner) {
@@ -193,7 +205,8 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
             // Entities whose hashes agree, confirmed by their partner lists.
             seen.clear();
             cand.clear();
-            cand.resize(ent.len(), false);
+            lim.try_resize(&mut cand, ent.len(), false)?;
+            lim.reserve_map(&mut seen, ent.len())?;
             let mut any = false;
             for (i, x) in ent.iter().enumerate() {
                 match seen.entry((x.1, x.2)) {
@@ -209,6 +222,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
             }
             if any {
                 order.clear();
+                lim.reserve(&mut order, ent.len())?;
                 order.extend((0..ent.len() as u32).filter(|&i| cand[i as usize]));
                 order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
                 occ.clear();
@@ -219,7 +233,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                         if cand[i as usize] {
                             for q in partners(partner) {
                                 if q != ZREF {
-                                    occ.push((i, k, q));
+                                    lim.try_push(&mut occ, (i, k, q))?;
                                 }
                             }
                         }
@@ -228,7 +242,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                 occ.sort_unstable();
                 // Each candidate's partner list.
                 ctx.clear();
-                ctx.resize(ent.len(), (0, 0));
+                lim.try_resize(&mut ctx, ent.len(), (0, 0))?;
                 for (j, w) in occ.chunk_by(|x, y| x.0 == y.0).scan(0u32, |o, w| {
                     let start = *o;
                     *o += w.len() as u32;
@@ -252,23 +266,30 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                         of.push(match g {
                             Some(g) => g as u32,
                             None => {
-                                firsts.push(i);
+                                lim.try_push(&mut firsts, i)?;
                                 (firsts.len() - 1) as u32
                             }
                         });
                     }
                     for g in 0..firsts.len() as u32 {
                         members.clear();
+                        lim.reserve(&mut members, run.len())?;
                         members.extend(run.iter().zip(&of).filter(|x| *x.1 == g).map(|x| ent[*x.0 as usize].0));
                         if members.len() < 2 {
                             continue;
                         }
                         merged = true;
                         if members.iter().all(|&e| vt(e) != c) {
-                            let nm = names.get_or_insert_with(|| Names::of(&s, &ids));
+                            if names.is_none() {
+                                names = Some(Names::of(&s, &ids, lim)?);
+                            }
+                            let nm = names.as_ref().expect("names were just read");
                             let v = parts(sh, nm, &ids, c, members.iter().copied());
                             if v != c {
-                                pending.entry(v).or_default().push((here, members.clone()));
+                                let mut group = Vec::new();
+                                lim.reserve_exact(&mut group, members.len())?;
+                                group.extend_from_slice(&members);
+                                pending.entry(v).or_default().push((here, group));
                                 if !queued[v as usize] {
                                     queued[v as usize] = true;
                                     heap.push(Reverse((sh.pre[v as usize], v)));
@@ -276,7 +297,8 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                                 continue;
                             }
                         }
-                        let g = cl.push_group(&s, &members, l, r);
+                        let g = cl.push_group(&s, &members, l, r, lim)?;
+                        lim.reserve_map(&mut cl.chainmap, members.len())?;
                         for &e in &members {
                             if vt(e) != c {
                                 cl.chainmap.insert(e, (here, g));
@@ -291,11 +313,13 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         // since only the levels above name its members.
         if let Some(groups) = pending.remove(&c) {
             for (from, group) in groups {
-                let g = cl.push_group(&s, &group, l, r);
+                let g = cl.push_group(&s, &group, l, r, lim)?;
                 let origin = &mut lvs[from as usize].chainmap;
-                for e in group {
+                lim.reserve_map(origin, group.len())?;
+                for &e in &group {
                     origin.insert(e, (here, g));
                 }
+                lim.discard(group);
             }
         }
         lim.charge_work(s.levels[c as usize].pairs.len() as u64);
@@ -348,11 +372,12 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         // Stored nodes keep their numbers; those merged into a group, or
         // that now resolve to another reference, stay behind unreachable.
         let mut out = SLevel::default();
-        let mut rm = vec![KEEP; width];
+        let mut rm = filled(lim, width, KEEP)?;
         for (i, x) in rm.iter_mut().enumerate() {
             let node = lvl.node(i as u32);
             if !grouped(i) && changes(&lvs, lvl, i) {
                 buf.clear();
+                lim.reserve(&mut buf, node.len())?;
                 buf.extend(node.iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
                 match normalize(sh, c, &mut buf) {
                     Err(t) => {
@@ -360,23 +385,26 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                         merged = true;
                     }
                     Ok(()) => {
-                        out.push(&buf);
+                        out.push(&buf, lim)?;
                         continue;
                     }
                 }
             }
-            out.push(node);
+            out.push(node, lim)?;
         }
-        let mut gres = Vec::with_capacity(lvs[e].groups());
+        let mut gres = Vec::new();
+        lim.reserve_exact(&mut gres, lvs[e].groups())?;
         for g in 0..lvs[e].groups() {
             buf.clear();
-            buf.extend(lvs[e].group(g).iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
+            let group = lvs[e].group(g);
+            lim.reserve(&mut buf, 2 * group.len())?;
+            buf.extend(group.iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
             // Merged members can repeat a pair.
             buf.sort_unstable();
             buf.dedup();
             gres.push(match normalize(sh, c, &mut buf) {
                 Err(t) => t,
-                Ok(()) => mk(c, out.push(&buf)),
+                Ok(()) => mk(c, out.push(&buf, lim)?),
             });
         }
         for (x, &g) in rm.iter_mut().zip(&lvs[e].group_of) {
@@ -386,12 +414,31 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         }
         lvs[e].rm = rm;
         lvs[e].gres = gres;
+        lim.release_bytes(s.levels[c as usize].bytes());
         s.levels[c as usize] = out;
     }
     s.out = resolve(&lvs, sh.root, s.out);
+    for v in [sstamp, sslot, order, firsts] {
+        lim.discard(v);
+    }
+    lim.discard(cand);
+    lim.discard(ent);
+    lim.discard(seen);
+    lim.discard(occ);
+    lim.discard(ctx);
+    lim.discard(members);
+    lim.discard(buf);
+    if let Some(nm) = names {
+        lim.discard(nm.start);
+        lim.discard(nm.levels);
+    }
+    let visited: Vec<u32> = lvs.iter().map(|l| l.level).collect();
+    for cl in lvs {
+        cl.discard(lim);
+    }
     if merged {
-        let cand = s.active.iter().copied().chain(lvs.iter().map(|l| l.level)).collect();
-        s.collect_in(cand);
+        let cand = s.active.iter().copied().chain(visited).collect();
+        s.collect_in(cand, lim)?;
     } else {
         s.active.retain(|&t| s.levels[t as usize].width() > 0);
     }
@@ -439,10 +486,10 @@ struct Names {
 }
 
 impl Names {
-    fn of(s: &SkipForm, ids: &Ids) -> Names {
+    fn of(s: &SkipForm, ids: &Ids, lim: &Limits) -> Result<Names, OperationError> {
         let n = ids.n;
         let id = |x: Ref| ids.id(x);
-        let mut start = vec![0u32; n as usize + 1];
+        let mut start = filled(lim, n as usize + 1, 0u32)?;
         for &u in &s.active {
             for &(a, b) in &s.levels[u as usize].pairs {
                 start[id(a) + 1] += 1;
@@ -452,8 +499,9 @@ impl Names {
         for i in 0..n as usize {
             start[i + 1] += start[i];
         }
-        let mut fill = start.clone();
-        let mut levels = vec![0u32; start[n as usize] as usize];
+        let mut fill = filled(lim, start.len(), 0u32)?;
+        fill.copy_from_slice(&start);
+        let mut levels = filled(lim, start[n as usize] as usize, 0u32)?;
         // `active` is in preorder, so each list is too.
         for &u in &s.active {
             for &(a, b) in &s.levels[u as usize].pairs {
@@ -464,7 +512,8 @@ impl Names {
                 }
             }
         }
-        Names { start, levels }
+        lim.discard(fill);
+        Ok(Names { start, levels })
     }
 
     fn of_ref(&self, ids: &Ids, x: Ref) -> &[u32] {

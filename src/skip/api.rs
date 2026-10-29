@@ -91,20 +91,15 @@ impl Engine {
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`] when `f` has a summed-out level,
-    /// [`OperationError::IncompatibleWeights`] when it carries weights, and
+    /// [`OperationError::IncompatibleWeights`] when it carries weights,
+    /// [`OperationError::OverBudget`] when the skip form does not fit, and
     /// [`OperationError::Stopped`] for an armed stop.
     pub fn to_skip(&self, f: &Tdd) -> Result<SkipTdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        if f.weights.is_some() {
-            return Err(OperationError::IncompatibleWeights);
-        }
-        if let Some(t) = f.levels.iter().position(|l| l.is_marginal()) {
-            return Err(OperationError::MarginalLevel(crate::vtree::VtreeIdx(t as u32)));
-        }
         let canonical = f.levels.is_canonical(f.output);
         let shape = Arc::new(Shape::of(f.vtree()));
-        let form = from_tdd(f, shape).expect("a Boolean diagram without weights converts");
+        let form = from_tdd(f, shape, lim)?;
         let form = if canonical { form } else { contract(form, lim)? };
         Ok(SkipTdd { vtree: Arc::clone(f.vtree()), form })
     }
@@ -126,7 +121,8 @@ impl Engine {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when the operands do not share a
-    /// vtree allocation, and [`OperationError::Stopped`] for an armed stop.
+    /// vtree allocation, [`OperationError::OverBudget`] when the result does
+    /// not fit, and [`OperationError::Stopped`] for an armed stop.
     pub fn skip_and(&self, f: &SkipTdd, g: &SkipTdd) -> Result<SkipTdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
@@ -148,7 +144,7 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         let c = self.and_clause(Tdd::one(&f.vtree), clause)?;
-        let c = from_tdd(&c, Arc::clone(&f.form.shape)).expect("a clause converts");
+        let c = from_tdd(&c, Arc::clone(&f.form.shape), lim)?;
         let c = contract(c, lim)?;
         let raw = conjoin::and(&f.form, &c, lim)?;
         Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: contract(raw, lim)? })
@@ -158,6 +154,7 @@ impl Engine {
     ///
     /// # Errors
     ///
+    /// [`OperationError::OverBudget`] when the result does not fit, and
     /// [`OperationError::Stopped`] for an armed stop.
     pub fn skip_negate(&self, f: &SkipTdd) -> Result<SkipTdd, OperationError> {
         let lim = self.limits();
@@ -180,9 +177,10 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::Stopped`] for an armed stop.
+    /// [`OperationError::OverBudget`] where the counts do not fit.
     pub fn skip_model_count(&self, f: &SkipTdd) -> Result<BigUint, OperationError> {
-        let _op = self.limits().enter()?;
-        Ok(f.form.model_count())
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        f.form.model_count(lim)
     }
 }
