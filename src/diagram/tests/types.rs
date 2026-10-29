@@ -189,8 +189,9 @@
         assert_eq!(levels[0].nodes().len(), 1);
         assert!(levels[1].has_multi_pair());
         // Reset and verify clean
+        let mut room = u64::MAX;
         for level in &mut levels {
-            reset_level(level);
+            reset_level(level, &mut room);
         }
         for level in &levels {
             assert_eq!(level.nodes().len(), 0);
@@ -233,15 +234,15 @@
              (pre-bloat {}), expected shrink",
             kept_cap, bloated_cap,
         );
-        // Belt-and-suspenders: cap is bounded by the per-arena threshold
-        // (no hardcoded number — assert against the threshold the
+        // Belt-and-suspenders: cap is bounded by the parked array's arena
+        // budget (no hardcoded number — assert against the budget the
         // implementation uses).
         use std::mem::size_of;
         assert!(
-            kept_cap.saturating_mul(size_of::<ChildPair>()) <= super::pool::MAX_LEVEL_ARENA_BYTES,
-            "pairs.capacity() = {} ({} bytes) exceeds MAX_LEVEL_ARENA_BYTES = {}",
+            (kept_cap.saturating_mul(size_of::<ChildPair>()) as u64) <= super::pool::PARKED_LEVEL_ARENA_BYTES,
+            "pairs.capacity() = {} ({} bytes) exceeds PARKED_LEVEL_ARENA_BYTES = {}",
             kept_cap, kept_cap.saturating_mul(size_of::<ChildPair>()),
-            super::pool::MAX_LEVEL_ARENA_BYTES,
+            super::pool::PARKED_LEVEL_ARENA_BYTES,
         );
     }
 
@@ -440,8 +441,9 @@
         level.nodes.stored_mut().push(data);
         assert_eq!(level.ranges.len(), 1);
         let mut levels = vec![level];
+        let mut room = u64::MAX;
         for level in &mut levels {
-            reset_level(level);
+            reset_level(level, &mut room);
         }
         assert_eq!(levels[0].ranges.len(), 0);
         assert_eq!(levels[0].nodes().len(), 0);

@@ -13,7 +13,7 @@ use crate::limits::{Charged, Limits};
 /// released so an unusually large operation does not permanently retain them.
 /// Sized so a repeated wide conjunction keeps the buffers it fills — a
 /// smaller cap re-grows them, and pays their page faults, on every call.
-/// Level arenas have a separate limit, `diagram::MAX_LEVEL_ARENA_BYTES`.
+/// Level arenas have a separate limit, `diagram::PARKED_LEVEL_ARENA_BYTES`.
 pub(crate) const SCRATCH_RETAIN_BYTES: usize = 128 * 1024 * 1024;
 
 /// Combined capacity estimate parked in one engine, including recycled diagram levels.
