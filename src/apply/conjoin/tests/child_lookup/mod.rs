@@ -1,5 +1,7 @@
 use super::*;
 
+// Its products pass 2^32, which a 32-bit `usize` does not hold.
+#[cfg(target_pointer_width = "64")]
 mod child_grid_mul;
 
 /// Read both ends of each row, including a slab offset and the final cell.

@@ -338,6 +338,22 @@ fn a_key_too_wide_for_a_word_leaves_the_single_atom_split() {
 }
 
 #[test]
+fn a_low_part_of_32_bits_is_too_wide_for_the_hashed_split() {
+    // Its table would take 2^32 slots, more than eight values pay for, on a
+    // 32-bit target as on a 64-bit one.
+    let lim = Limits::new();
+    let low_width = 32;
+    let data: Vec<u64> = (0..4u64).flat_map(|h| [h << low_width | 65, h << low_width | 0xffff_ffff]).collect();
+    for atoms in [1u32, 2] {
+        let atom = (0..data.len() as u32).map(|i| i % atoms).collect();
+        let parent = Values { words: 1, data: data.clone().into(), atom, atoms };
+        let mut s = Scratch::default();
+        assert!(split_hashed(&lim, &mut s, &parent, low_width).unwrap().is_none(), "{atoms} atoms");
+        check_split(&lim, &parent, (low_width, 2), &format!("{atoms} atoms"));
+    }
+}
+
+#[test]
 fn a_leading_zero_key_changes_a_runs_hash() {
     // Runs that differ in a leading zero key hash apart, so those two tell
     // apart without reading the runs.

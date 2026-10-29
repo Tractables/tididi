@@ -287,6 +287,6 @@ fn the_quiet_bounds_answer_as_the_rules_do() {
     assert!(lim.should_stop());
     let _ = lim.install(prior);
     lim.charge_work(1 << 40);
-    lim.charge_output_pairs(1 << 40);
+    lim.charge_output_pairs(usize::try_from(1u64 << 40).unwrap_or(usize::MAX));
     assert!(!lim.should_stop());
 }

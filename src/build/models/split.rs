@@ -1081,7 +1081,10 @@ fn split_hashed(
     low_width: usize,
 ) -> Result<Option<(Decomposition, Values<'static>, Values<'static>)>, OperationError> {
     let n = parent.len();
-    if parent.words != 1 || low_width > 32 || 1usize << low_width > (2 * n).max(DIRECT_LOWS) {
+    // The table's size is compared in 64 bits: on a 32-bit target
+    // `1usize << 32` wraps to 1, which let a 32-bit low part through to a
+    // table of one slot.
+    if parent.words != 1 || low_width > 32 || 1u64 << low_width > (2 * n).max(DIRECT_LOWS) as u64 {
         return Ok(None);
     }
     let single = parent.atoms == 1;
