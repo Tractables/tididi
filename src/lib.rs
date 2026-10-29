@@ -111,6 +111,7 @@ pub mod guide;
 pub mod test_helpers;
 
 pub use diagram::{Literal, LiteralInput, Tdd};
+pub use skip::api::SkipTdd;
 pub use vtree::Vtree;
 pub use limits::OperationError;
 pub use execution::{Context, Engine};

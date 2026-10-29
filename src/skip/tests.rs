@@ -346,3 +346,56 @@ fn contraction_of_raw_stored_conjunctions_is_canonical() {
         }
     }
 }
+
+/// The public operations against the stored ones: a fold of clauses with
+/// `skip_and_clause`, conjunctions, disjunctions and negations of the
+/// results, each the canonical skip form of the stored result, on every
+/// vtree shape (a forwarder at the root included).
+#[test]
+fn public_operations_match_the_stored_ones() {
+    let mut rng = Lcg::new(11);
+    for round in 0..120 {
+        let n = 2 + rng.below(8) as u32;
+        let shape = CnfShape { clauses: 2 + n as usize, width: 3 };
+        for (_, vtree) in vtree_shapes(n) {
+            let eng = Engine::new();
+            let canon = |s: &crate::SkipTdd, t: &Tdd| {
+                let want = eng.to_skip(t).unwrap();
+                assert_eq!(fingerprint(&s.form), fingerprint(&want.form), "round {round}");
+                assert_eq!(eng.skip_model_count(s).unwrap(), eng.model_count(t).unwrap());
+                let back = eng.to_stored(s).unwrap();
+                assert!(eng.equivalent(&back, t).unwrap());
+                assert_eq!(s.pair_count(), want.pair_count());
+            };
+            let fold = |cnf: &[Vec<i32>]| {
+                let mut stored = Tdd::one(&vtree);
+                let mut s = eng.to_skip(&stored).unwrap();
+                for c in cnf {
+                    stored = eng.and_clause(stored, c).unwrap();
+                    s = eng.skip_and_clause(&s, c).unwrap();
+                    canon(&s, &stored);
+                }
+                (s, stored)
+            };
+            let (f, ft) = fold(&rand_cnf(&mut rng, n, shape));
+            let (g, gt) = fold(&rand_cnf(&mut rng, n, shape));
+            canon(&eng.skip_and(&f, &g).unwrap(), &eng.and(&ft, &gt).unwrap());
+            canon(&eng.skip_or(&f, &g).unwrap(), &eng.or(ft.clone(), gt.clone()).unwrap());
+            canon(&eng.skip_negate(&f).unwrap(), &eng.negate(&ft).unwrap());
+            // An operand converted on its own is accepted.
+            let h = eng.to_skip(&gt).unwrap();
+            canon(&eng.skip_and(&f, &h).unwrap(), &eng.and(&ft, &gt).unwrap());
+            canon(&eng.skip_and_clause::<i32>(&f, &[]).unwrap(), &Tdd::zero(&vtree));
+        }
+    }
+}
+
+#[test]
+fn skip_operands_must_share_a_vtree() {
+    let eng = Engine::new();
+    let a = Arc::new(crate::Vtree::linear(3));
+    let b = Arc::new(crate::Vtree::linear(3));
+    let f = eng.to_skip(&Tdd::one(&a)).unwrap();
+    let g = eng.to_skip(&Tdd::one(&b)).unwrap();
+    assert_eq!(eng.skip_and(&f, &g).unwrap_err(), crate::OperationError::VtreeMismatch);
+}

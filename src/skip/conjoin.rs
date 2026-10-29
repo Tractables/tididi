@@ -260,7 +260,8 @@ impl Numbered {
 /// dropped from its reference's list when a scan meets it. Products no
 /// output path reaches are dropped at the end.
 pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
-    debug_assert!(Arc::ptr_eq(&f.shape, &g.shape));
+    // Shapes read from one vtree are equal; `f`'s serves both.
+    debug_assert_eq!(f.shape.kids, g.shape.kids);
     let shape = Arc::clone(&f.shape);
     let sh = &*shape;
     let mut out = SkipForm::zero(Arc::clone(&shape));

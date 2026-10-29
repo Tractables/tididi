@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod api;
 pub(crate) mod build;
 pub(crate) mod conjoin;
 pub(crate) mod contract;
