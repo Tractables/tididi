@@ -61,6 +61,100 @@ fn leaf_and(v: u32, a: u32, b: u32) -> Ref {
     }
 }
 
+/// Whether `r` is `true` (`One` on a leaf, `true` wherever it is read).
+#[inline]
+fn is_one(sh: &Shape, r: Ref) -> bool {
+    r != ZREF && sh.is_leaf(vt(r)) && ix(r) == ONE
+}
+
+/// Per vtree node, whether it is in `g`'s cone: an ancestor (or itself) of
+/// a level holding a node of `g` or of a leaf `g` reads a literal on. Below
+/// the cone every reference of `g` is `true`; the cone holds every ancestor
+/// of its levels.
+fn cone_of(sh: &Shape, g: &SkipForm, ng: &Numbered, lim: &Limits) -> Result<Vec<bool>, OperationError> {
+    let mut cone = filled(lim, sh.num_nodes(), false)?;
+    let mut up = |mut t: u32| {
+        while t != NONE && !cone[t as usize] {
+            cone[t as usize] = true;
+            t = sh.parent[t as usize];
+        }
+    };
+    for &t in &g.active {
+        up(t);
+    }
+    for &c in &ng.leaves {
+        let b = ng.base[c as usize];
+        if [POS, NEG].iter().any(|&k| ng.top[(b + k) as usize] != NONE) {
+            up(c);
+        }
+    }
+    Ok(cone)
+}
+
+/// The products with `true` of `g` that the conjunction's scans may meet,
+/// of `f`'s references outside the cone that a pair in the cone, or the
+/// output, names: `(preorder position of the level the product would be
+/// built at, the reference, g's true)`, latest built first. The product is
+/// the reference itself. A product built at a level in the cone (two leaves
+/// under one, a literal of `g` on one of them) is built there instead.
+fn identity_seeds(
+    sh: &Shape,
+    f: &SkipForm,
+    nf: &Numbered,
+    ng: &Numbered,
+    cone: &[bool],
+    lim: &Limits,
+) -> Result<Vec<(u32, Ref, Ref)>, OperationError> {
+    let mut seeds: Vec<(u32, Ref, Ref)> = Vec::new();
+    let mut tops: Vec<Ref> = Vec::new();
+    for &c in &ng.leaves {
+        let t = mk(c, ONE);
+        if ng.top[ng.id(t)] != NONE {
+            lim.try_push(&mut tops, t)?;
+        }
+    }
+    if tops.is_empty() {
+        return Ok(seeds);
+    }
+    let mut seen = filled(lim, nf.len(), false)?;
+    let mut note = |x: Ref, seeds: &mut Vec<(u32, Ref, Ref)>| -> Result<(), OperationError> {
+        if cone[vt(x) as usize] || std::mem::replace(&mut seen[nf.id(x)], true) {
+            return Ok(());
+        }
+        for &t in &tops {
+            let p = if !sh.is_leaf(vt(x)) {
+                if !sh.within(vt(t), vt(x)) {
+                    continue;
+                }
+                vt(x)
+            } else {
+                let p = sh.parent[vt(x) as usize];
+                if vt(t) == vt(x) || p == NONE || sh.parent[vt(t) as usize] != p || cone[p as usize] {
+                    continue;
+                }
+                p
+            };
+            if nf.read_at(sh, x, p) && ng.read_at(sh, t, p) {
+                lim.try_push(seeds, (sh.pre[p as usize], x, t))?;
+            }
+        }
+        Ok(())
+    };
+    note(f.out, &mut seeds)?;
+    for &u in &f.active {
+        if cone[u as usize] {
+            for &(a, b) in &f.levels[u as usize].pairs {
+                note(a, &mut seeds)?;
+                note(b, &mut seeds)?;
+            }
+        }
+    }
+    lim.discard(seen);
+    lim.discard(tops);
+    seeds.sort_unstable_by_key(|s| std::cmp::Reverse(s.0));
+    Ok(seeds)
+}
+
 const NIL: u32 = u32::MAX;
 
 /// Per reference of one operand, its true products: linked entries of the
@@ -194,24 +288,35 @@ pub(super) struct Numbered {
 
 impl Numbered {
     pub(super) fn of(s: &SkipForm, lim: &Limits) -> Result<Numbered, OperationError> {
+        let all = vec![true; s.shape.num_nodes()];
+        Self::of_cone(s, &all, lim)
+    }
+
+    /// Number only the references of `s` at levels in `cone`, and those
+    /// named from `s.out` or `s`'s levels in `cone`: since `cone` holds every
+    /// ancestor of its levels, the highest level where any such reference is
+    /// read in `s` is attained at `s.out` or at a level in `cone`.
+    pub(super) fn of_cone(s: &SkipForm, cone: &[bool], lim: &Limits) -> Result<Numbered, OperationError> {
         let sh = &*s.shape;
         let mut base = vec![NONE; sh.num_nodes()];
         let mut n = 0u32;
         for &t in &s.active {
-            base[t as usize] = n;
-            n += s.levels[t as usize].width() as u32;
+            if cone[t as usize] {
+                base[t as usize] = n;
+                n += s.levels[t as usize].width() as u32;
+            }
         }
-        // Room for the leaf labels too, which `note` numbers after the nodes.
         let mut top = Vec::new();
-        lim.reserve_exact(&mut top, n as usize + 3 * sh.num_nodes().div_ceil(2))?;
-        top.resize(n as usize, NONE);
+        lim.try_resize(&mut top, n as usize, NONE)?;
         let mut nb = Numbered { base, top, leaves: Vec::new() };
-        nb.note(sh, s.out, sh.root);
+        nb.note(s, s.out, sh.root, lim)?;
         for &u in &s.active {
-            let (l, r) = sh.kids[u as usize];
-            for &(a, b) in &s.levels[u as usize].pairs {
-                nb.note(sh, a, l);
-                nb.note(sh, b, r);
+            if cone[u as usize] {
+                let (l, r) = sh.kids[u as usize];
+                for &(a, b) in &s.levels[u as usize].pairs {
+                    nb.note(s, a, l, lim)?;
+                    nb.note(s, b, r, lim)?;
+                }
             }
         }
         Ok(nb)
@@ -222,18 +327,25 @@ impl Numbered {
     }
 
     #[inline]
-    fn note(&mut self, sh: &Shape, x: Ref, c: u32) {
+    fn note(&mut self, s: &SkipForm, x: Ref, c: u32, lim: &Limits) -> Result<(), OperationError> {
+        let sh = &*s.shape;
         let v = vt(x) as usize;
         if self.base[v] == NONE {
-            debug_assert!(sh.is_leaf(v as u32), "a stored node's level is numbered");
             self.base[v] = self.top.len() as u32;
-            self.top.extend([NONE; 3]);
-            self.leaves.push(v as u32);
+            let w = if sh.is_leaf(v as u32) {
+                self.leaves.push(v as u32);
+                3
+            } else {
+                s.levels[v].width()
+            };
+            let new_len = self.top.len() + w;
+            lim.try_resize(&mut self.top, new_len, NONE)?;
         }
         let t = &mut self.top[(self.base[v] + ix(x)) as usize];
         if *t == NONE || sh.pre[c as usize] < sh.pre[*t as usize] {
             *t = c;
         }
+        Ok(())
     }
 
     pub(super) fn len(&self) -> usize {
@@ -285,6 +397,15 @@ impl Numbered {
 /// dropped from its reference's list when a scan meets it. Products no
 /// output path reaches are dropped at the end.
 pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
+    let (out, cone) = and_scoped(f, g, lim)?;
+    lim.discard(cone);
+    Ok(out)
+}
+
+/// [`and`] returning the upward-closed cone of levels that changed (those in
+/// `g`'s cone and any level outside it that lost a node when unreachable
+/// branches were dropped).
+pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipForm, Vec<bool>), OperationError> {
     // Shapes read from one vtree are equal; `f`'s serves both.
     debug_assert_eq!(f.shape.kids, g.shape.kids);
     let shape = Arc::clone(&f.shape);
@@ -293,23 +414,33 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     match land_pair(sh, f.out, g.out) {
         Land::Done(r) => {
             out.out = r;
-            return Ok(out);
+            let cone = filled(lim, sh.num_nodes(), false)?;
+            return Ok((out, cone));
         }
         Land::At(_) => {}
     }
-    let (nf, ng) = (Numbered::of(f, lim)?, Numbered::of(g, lim)?);
-    // The levels products can land on, children first.
-    let mut todo: Vec<u32> = f.active.iter().chain(&g.active).copied().collect();
+    let ng = Numbered::of(g, lim)?;
+    // Outside `g`'s cone `g` is `true`: there the result is `f`'s own levels,
+    // and a product of a reference of `f` with `true` is that reference.
+    let mut cone = cone_of(sh, g, &ng, lim)?;
+    let nf = Numbered::of_cone(f, &cone, lim)?;
+    let free = |x: Ref| !cone[vt(x) as usize];
+    let seeds = identity_seeds(sh, f, &nf, &ng, &cone, lim)?;
+    // The levels in the cone products can land on, children first.
+    let mut todo: Vec<u32> = Vec::new();
+    lim.reserve(&mut todo, f.active.len() + g.active.len() + nf.leaves.len() + ng.leaves.len())?;
+    todo.extend(f.active.iter().chain(&g.active).copied().filter(|&t| cone[t as usize]));
     for nb in [&nf, &ng] {
         for &c in &nb.leaves {
             let p = sh.parent[c as usize];
-            if p != NONE && nb.leaf_refs(sh, c, p).next().is_some() {
+            if p != NONE && cone[p as usize] && nb.leaf_refs(sh, c, p).next().is_some() {
                 todo.push(p);
             }
         }
     }
     todo.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
     todo.dedup();
+    let mut next_seed = 0;
     // True products, per reference of each side: the other side's
     // reference and the result.
     let (mut pf, mut pg) = (Lists::new(nf.len(), lim)?, Lists::new(ng.len(), lim)?);
@@ -333,6 +464,13 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     let mut fb = [(0, 0); 1];
     let mut gb = [(0, 0); 1];
     for &u in &todo {
+        // The products with `true` the levels below would have listed.
+        while next_seed < seeds.len() && seeds[next_seed].0 > sh.pre[u as usize] {
+            let (_, x, t) = seeds[next_seed];
+            pf.push(nf.id(x), t, x, lim)?;
+            pg.push(ng.id(t), x, x, lim)?;
+            next_seed += 1;
+        }
         let (l, r) = sh.kids[u as usize];
         made.clear();
         let mut work = 0u64;
@@ -381,6 +519,9 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
             let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
             let skips = sh.is_leaf(co);
             let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
+                if is_one(sh, ob) && free(oa) {
+                    return oa;
+                }
                 match land_pair(sh, oa, ob) {
                     Land::Done(x) => x,
                     Land::At(_) => live.get(&key(nf.id(oa), ng.id(ob))).copied().unwrap_or(ZREF),
@@ -505,8 +646,11 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     }
     out.out = match land_pair(sh, f.out, g.out) {
         Land::Done(r) => r,
+        Land::At(_) if is_one(sh, g.out) && free(f.out) => f.out,
         Land::At(_) => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
     };
+    lim.discard(seeds);
+    lim.discard(todo);
     pf.discard(lim);
     pg.discard(lim);
     lim.discard(live);
@@ -522,8 +666,104 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     lim.discard(made);
     lim.discard(ends);
     lim.discard(buf);
-    nf.discard(lim);
     ng.discard(lim);
     out.collect_pushed(lim)?;
-    Ok(out)
+    if out.out == ZREF {
+        nf.discard(lim);
+        return Ok((out, cone));
+    }
+    let mut mark_out = filled(lim, nf.len(), 0u8)?;
+    let mut boundary: Vec<Ref> = Vec::new();
+    let mut note_f = |x: Ref, boundary: &mut Vec<Ref>| -> Result<(), OperationError> {
+        if x != ZREF && !cone[vt(x) as usize] && !sh.is_leaf(vt(x)) {
+            let id = nf.id(x);
+            if mark_out[id] == 0 {
+                mark_out[id] = 1;
+                lim.try_push(boundary, x)?;
+            }
+        }
+        Ok(())
+    };
+    note_f(f.out, &mut boundary)?;
+    for &u in &f.active {
+        if cone[u as usize] {
+            for &(a, b) in &f.levels[u as usize].pairs {
+                note_f(a, &mut boundary)?;
+                note_f(b, &mut boundary)?;
+            }
+        }
+    }
+    let f_outside = boundary.len();
+    let mut out_outside = 0usize;
+    let mut note_o = |x: Ref| {
+        if x != ZREF && !cone[vt(x) as usize] && !sh.is_leaf(vt(x)) {
+            let id = nf.id(x);
+            if mark_out[id] == 1 {
+                mark_out[id] = 2;
+                out_outside += 1;
+            }
+        }
+    };
+    note_o(out.out);
+    for &u in &out.active {
+        for &(a, b) in &out.levels[u as usize].pairs {
+            note_o(a);
+            note_o(b);
+        }
+    }
+    if out_outside > 0 {
+        for &t in &f.active {
+            if !cone[t as usize] {
+                out.levels[t as usize] = f.levels[t as usize].copy(lim)?;
+                out.active.push(t);
+            }
+        }
+        if out_outside == f_outside {
+            out.active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+        } else {
+            let mut dirty = filled(lim, sh.num_nodes(), false)?;
+            dirty.copy_from_slice(&cone);
+            let mut dropped_roots = filled(lim, sh.num_nodes(), false)?;
+            for &x in &boundary {
+                if mark_out[nf.id(x)] == 1 {
+                    let v = vt(x);
+                    dropped_roots[v as usize] = true;
+                    let mut u = v;
+                    while u != NONE && !dirty[u as usize] {
+                        dirty[u as usize] = true;
+                        u = sh.parent[u as usize];
+                    }
+                }
+            }
+            for &t in &f.active {
+                if !dirty[t as usize] {
+                    let mut u = t;
+                    while u != NONE && !cone[u as usize] {
+                        if dropped_roots[u as usize] {
+                            dirty[t as usize] = true;
+                            break;
+                        }
+                        u = sh.parent[u as usize];
+                    }
+                }
+            }
+            lim.discard(dropped_roots);
+            let cand: Vec<u32> = out.active.iter().copied().filter(|&t| dirty[t as usize]).collect();
+            out.collect_in(cand, lim)?;
+            for &t in &f.active {
+                if !cone[t as usize] && dirty[t as usize] && out.levels[t as usize].width() < f.levels[t as usize].width() {
+                    let mut u = t;
+                    while u != NONE && !cone[u as usize] {
+                        cone[u as usize] = true;
+                        u = sh.parent[u as usize];
+                    }
+                }
+            }
+            lim.discard(dirty);
+        }
+    }
+    lim.discard(boundary);
+    lim.discard(mark_out);
+    nf.discard(lim);
+    Ok((out, cone))
 }

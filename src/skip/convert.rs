@@ -220,7 +220,7 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
         }
     }
     let o = if vt(s.out) == sh.root { ix(s.out) } else { width(sh.root) + cur[nb.id(s.out)] };
-    // SAFETY: every pair side names a node written at its child level
+    // Safety: every pair side names a node written at its child level
     // (pass-through nodes before their parents), or a leaf label.
     let tdd = unsafe { b.finish_unchecked(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(o) }) };
     debug_assert!(o != ZERO.0);

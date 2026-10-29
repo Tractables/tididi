@@ -212,6 +212,16 @@ impl SLevel {
         Ok((self.start.len() - 2) as u32)
     }
 
+    /// A copy of the level, charged to `lim`.
+    pub(crate) fn copy(&self, lim: &Limits) -> Result<SLevel, OperationError> {
+        let mut c = SLevel::default();
+        lim.reserve_exact(&mut c.start, self.start.len())?;
+        c.start.extend_from_slice(&self.start);
+        lim.reserve_exact(&mut c.pairs, self.pairs.len())?;
+        c.pairs.extend_from_slice(&self.pairs);
+        Ok(c)
+    }
+
     /// The bytes the level's arenas hold.
     pub(crate) fn bytes(&self) -> u64 {
         (self.start.capacity() * 4 + self.pairs.capacity() * 16) as u64
@@ -370,18 +380,23 @@ impl SkipForm {
         self.collect_in(all, lim)
     }
 
-    /// [`SkipForm::collect`] where only the levels in `cand` may hold nodes.
+    /// [`SkipForm::collect`] where only the upward-closed levels in `cand` may
+    /// hold unreachable or renumbered nodes; active levels outside `cand` stay
+    /// as they are.
     pub(crate) fn collect_in(&mut self, mut cand: Vec<u32>, lim: &Limits) -> Result<(), OperationError> {
         let sh = Arc::clone(&self.shape);
         cand.retain(|&t| self.levels[t as usize].width() > 0);
         cand.sort_unstable_by_key(|&t| sh.pre[t as usize]);
         cand.dedup();
         if self.out == ZREF {
-            for &t in &cand {
+            let mut drop_all = std::mem::take(&mut self.active);
+            drop_all.extend(cand);
+            drop_all.sort_unstable();
+            drop_all.dedup();
+            for &t in &drop_all {
                 lim.release_bytes(self.levels[t as usize].bytes());
                 self.levels[t as usize] = SLevel::default();
             }
-            self.active.clear();
             return Ok(());
         }
         // Per candidate level (by its position in `cand`): which nodes are
@@ -427,7 +442,12 @@ impl SkipForm {
             let p = pos[vt(r) as usize];
             if p == NONE || sh.is_leaf(vt(r)) { r } else { mk(vt(r), live[p as usize][ix(r) as usize]) }
         };
-        let mut active = Vec::with_capacity(cand.len());
+        let mut active = Vec::with_capacity(cand.len() + self.active.len());
+        for &t in &self.active {
+            if pos[t as usize] == NONE && self.levels[t as usize].width() > 0 {
+                active.push(t);
+            }
+        }
         for (i, &t) in cand.iter().enumerate() {
             // Compacted in place: a kept node moves down to its new number.
             let lvl = &mut self.levels[t as usize];
@@ -454,6 +474,8 @@ impl SkipForm {
                 active.push(t);
             }
         }
+        active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+        active.dedup();
         self.active = active;
         self.out = fix(&live, self.out);
         for v in live {

@@ -89,7 +89,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     for (i, &t) in lv.iter().enumerate() {
         pos[t as usize] = i as u32;
     }
-    // The level whose complement child level `c` reads, or NONE where
+    // The level whose complement child level `c` reads, or `NONE` where
     // nothing is read at `c`.
     let zlev = |c: u32| -> u32 {
         let mut c = c;

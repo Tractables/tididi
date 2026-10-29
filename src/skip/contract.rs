@@ -120,7 +120,18 @@ fn mix(k: u32, p: Ref) -> u64 {
 
 /// `s` contracted to the canonical skip form of its function. `s` holds no
 /// false side and no unreachable node.
-pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
+pub(crate) fn contract(s: SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
+    contract_in(s, None, lim)
+}
+
+/// [`contract`] scoped to the upward-closed `cone` of changed levels when
+/// `scope` is `Some(cone)`: levels outside `cone` whose parent had no merge
+/// and lost no node are already canonical and are not walked.
+pub(crate) fn contract_in(
+    mut s: SkipForm,
+    scope: Option<&[bool]>,
+    lim: &Limits,
+) -> Result<SkipForm, OperationError> {
     let shape = s.shape.clone();
     let sh = &*shape;
     let n = sh.num_nodes();
@@ -129,7 +140,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         s.discard(lim);
         return Ok(z);
     }
-    let ids = Ids::of(&s);
+    let mut ids = Ids::new(n);
     // The levels visited, parents first: those holding nodes, and the
     // inner children of a level with classes, where skips it names may merge.
     let mut at = vec![NONE; n];
@@ -137,12 +148,14 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
     let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
     let mut queued = vec![false; n];
     for &t in &s.active {
-        queued[t as usize] = true;
-        heap.push(Reverse((sh.pre[t as usize], t)));
+        if scope.is_none_or(|cone| cone[t as usize]) {
+            queued[t as usize] = true;
+            heap.push(Reverse((sh.pre[t as usize], t)));
+        }
     }
     // Per entity of the current level (a stored node or a skip the parent
     // names): its reference, partner hash and partner count.
-    let (mut sstamp, mut sslot) = (filled(lim, ids.len(), 0u32)?, filled(lim, ids.len(), 0u32)?);
+    let (mut sstamp, mut sslot) = (Vec::new(), Vec::new());
     let mut epoch = 0u32;
     let mut ent: Vec<(Ref, u64, u32)> = Vec::new();
     let mut order: Vec<u32> = Vec::new();
@@ -187,7 +200,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
             for (k, pairs) in classes() {
                 for &(a, b) in pairs {
                     let (e, partner) = if left { (a, b) } else { (b, a) };
-                    let id = ids.id(e);
+                    let id = ids.id_alloc(&s, e, &mut sstamp, &mut sslot, lim)?;
                     if sstamp[id] != epoch {
                         sstamp[id] = epoch;
                         sslot[id] = ent.len() as u32;
@@ -281,6 +294,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                         merged = true;
                         if members.iter().all(|&e| vt(e) != c) {
                             if names.is_none() {
+                                ids.ensure_all(&s);
                                 names = Some(Names::of(&s, &ids, lim)?);
                             }
                             let nm = names.as_ref().expect("names were just read");
@@ -290,9 +304,11 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
                                 lim.reserve_exact(&mut group, members.len())?;
                                 group.extend_from_slice(&members);
                                 pending.entry(v).or_default().push((here, group));
-                                if !queued[v as usize] {
-                                    queued[v as usize] = true;
-                                    heap.push(Reverse((sh.pre[v as usize], v)));
+                                let mut u = v;
+                                while u != c && !queued[u as usize] {
+                                    queued[u as usize] = true;
+                                    heap.push(Reverse((sh.pre[u as usize], u)));
+                                    u = sh.parent[u as usize];
                                 }
                                 continue;
                             }
@@ -324,10 +340,13 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         }
         lim.charge_work(s.levels[c as usize].pairs.len() as u64);
         if width > 0 || cl.groups() > 0 {
-            for ch in [l, r] {
-                if !sh.is_leaf(ch) && !queued[ch as usize] {
-                    queued[ch as usize] = true;
-                    heap.push(Reverse((sh.pre[ch as usize], ch)));
+            let descend = scope.is_none_or(|cone| cone[c as usize] || cl.groups() > 0);
+            if descend {
+                for ch in [l, r] {
+                    if !sh.is_leaf(ch) && !queued[ch as usize] {
+                        queued[ch as usize] = true;
+                        heap.push(Reverse((sh.pre[ch as usize], ch)));
+                    }
                 }
             }
         }
@@ -437,8 +456,7 @@ pub(crate) fn contract(mut s: SkipForm, lim: &Limits) -> Result<SkipForm, Operat
         cl.discard(lim);
     }
     if merged {
-        let cand = s.active.iter().copied().chain(visited).collect();
-        s.collect_in(cand, lim)?;
+        s.collect_in(visited, lim)?;
     } else {
         s.active.retain(|&t| s.levels[t as usize].width() > 0);
     }
@@ -453,24 +471,47 @@ struct Ids {
 }
 
 impl Ids {
-    fn of(s: &SkipForm) -> Ids {
-        let sh = &*s.shape;
-        let mut base = vec![NONE; sh.num_nodes()];
-        let mut n = 0u32;
-        for &t in &s.active {
-            base[t as usize] = n;
-            n += s.levels[t as usize].width() as u32;
+    fn new(num_nodes: usize) -> Ids {
+        Ids { base: vec![NONE; num_nodes], n: 0 }
+    }
+    #[inline]
+    fn id_alloc(
+        &mut self,
+        s: &SkipForm,
+        x: Ref,
+        sstamp: &mut Vec<u32>,
+        sslot: &mut Vec<u32>,
+        lim: &Limits,
+    ) -> Result<usize, OperationError> {
+        let v = vt(x) as usize;
+        let mut b = self.base[v];
+        if b == NONE {
+            b = self.n;
+            self.base[v] = b;
+            let add = if s.shape.is_leaf(v as u32) { 3 } else { s.levels[v].width() as u32 };
+            self.n += add;
         }
-        for (c, b) in base.iter_mut().enumerate() {
-            if sh.is_leaf(c as u32) {
-                *b = n;
-                n += 3;
+        let id = (b + ix(x)) as usize;
+        if id >= sstamp.len() {
+            lim.try_resize(sstamp, self.n as usize, 0u32)?;
+            lim.try_resize(sslot, self.n as usize, 0u32)?;
+        }
+        Ok(id)
+    }
+    fn ensure_all(&mut self, s: &SkipForm) {
+        let sh = &*s.shape;
+        for &t in &s.active {
+            if self.base[t as usize] == NONE {
+                self.base[t as usize] = self.n;
+                self.n += s.levels[t as usize].width() as u32;
             }
         }
-        Ids { base, n }
-    }
-    fn len(&self) -> usize {
-        self.n as usize
+        for (c, b) in self.base.iter_mut().enumerate() {
+            if *b == NONE && sh.is_leaf(c as u32) {
+                *b = self.n;
+                self.n += 3;
+            }
+        }
     }
     #[inline]
     fn id(&self, x: Ref) -> usize {

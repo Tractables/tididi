@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::convert::{from_tdd, to_tdd};
-use super::{conjoin, contract::contract, ix, vt, Ref, Shape, SkipForm, ZREF};
+use super::{conjoin, contract::{contract, contract_in}, ix, vt, Ref, Shape, SkipForm, ZREF};
 use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
 use crate::{Engine, Tdd};
 
@@ -95,7 +95,9 @@ fn contracted_conjunction_is_the_canonical_skip_form() {
     for (eng, f, g) in cases(3, 300) {
         let (sf, sg) = (skip(&f), skip(&g));
         let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let h = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+        let (raw, cone) = conjoin::and_scoped(&sf, &sg, eng.limits()).unwrap();
+        let h = contract_in(raw, Some(&cone), eng.limits()).unwrap();
+        eng.limits().discard(cone);
         let mut fun = eng.and(&f, &g).unwrap();
         eng.minimize(&mut fun).unwrap();
         let want = skip(&fun);
@@ -188,7 +190,9 @@ fn conjunction_of_projections_is_canonical() {
             if placed.len() < 2 {
                 continue;
             }
-            let h = contract(conjoin::and(&placed[0], &placed[1], eng.limits()).unwrap(), eng.limits()).unwrap();
+            let (raw, cone) = conjoin::and_scoped(&placed[0], &placed[1], eng.limits()).unwrap();
+            let h = contract_in(raw, Some(&cone), eng.limits()).unwrap();
+            eng.limits().discard(cone);
             let mut want = eng.and(&embedded[0], &embedded[1]).unwrap();
             eng.minimize(&mut want).unwrap();
             assert_eq!(fingerprint(&h), fingerprint(&skip(&want)));
@@ -219,7 +223,9 @@ fn contraction_of_raw_stored_conjunctions_is_canonical() {
             assert_eq!(fingerprint(&contract(skip(&raw), eng.limits()).unwrap()), fingerprint(&want));
             let (sf, sg) = (skip(&f), skip(&g));
             let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-            let h = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
+            let (raw, cone) = conjoin::and_scoped(&sf, &sg, eng.limits()).unwrap();
+            let h = contract_in(raw, Some(&cone), eng.limits()).unwrap();
+            eng.limits().discard(cone);
             assert_eq!(fingerprint(&h), fingerprint(&want));
             done += 1;
         }
@@ -277,6 +283,46 @@ fn skip_operands_must_share_a_vtree() {
     let f = eng.to_skip(&Tdd::one(&a)).unwrap();
     let g = eng.to_skip(&Tdd::one(&b)).unwrap();
     assert_eq!(eng.skip_and(&f, &g).unwrap_err(), crate::OperationError::VtreeMismatch);
+}
+
+/// A fold of small batches as a compile merges them, each a few clauses
+/// over a window of variables, so that the accumulator is `true`-free over
+/// most of the levels a batch is `true` at: every step is the canonical
+/// skip form of the stored fold, from either side.
+#[test]
+fn fold_of_small_batches_is_canonical() {
+    let mut rng = Lcg::new(15);
+    for round in 0..60 {
+        let n = 4 + rng.below(10) as u32;
+        for (_, vtree) in vtree_shapes(n) {
+            let eng = Engine::new();
+            let mut stored = Tdd::one(&vtree);
+            let mut acc = eng.to_skip(&stored).unwrap();
+            for _ in 0..5 {
+                let lo = 1 + rng.below(n as u64) as i32;
+                let hi = (lo + rng.below(3) as i32).min(n as i32);
+                let clauses: Vec<Vec<i32>> = (0..1 + rng.below(3))
+                    .map(|_| {
+                        (0..1 + rng.below(3))
+                            .map(|_| {
+                                let v = lo + rng.below((hi - lo + 1) as u64) as i32;
+                                if rng.below(2) == 0 { v } else { -v }
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let batch = compile_clauses_on(&eng, &vtree, &clauses);
+                let sb = eng.to_skip(&batch).unwrap();
+                stored = eng.and(&stored, &batch).unwrap();
+                eng.minimize(&mut stored).unwrap();
+                let want = eng.to_skip(&stored).unwrap();
+                let (ab, ba) = (eng.skip_and(&acc, &sb).unwrap(), eng.skip_and(&sb, &acc).unwrap());
+                assert_eq!(fingerprint(&ab.form), fingerprint(&want.form), "round {round}");
+                assert_eq!(fingerprint(&ba.form), fingerprint(&want.form), "round {round}");
+                acc = ab;
+            }
+        }
+    }
 }
 
 #[test]

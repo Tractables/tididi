@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::conjoin;
-use super::contract::contract;
+use super::contract::{contract, contract_in};
 use super::convert::{from_tdd, to_tdd};
 use super::negate::negate;
 use super::{Shape, SkipForm};
@@ -129,8 +129,15 @@ impl Engine {
         if !Arc::ptr_eq(&f.vtree, &g.vtree) {
             return Err(OperationError::VtreeMismatch);
         }
-        let raw = conjoin::and(&f.form, &g.form, lim)?;
-        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: contract(raw, lim)? })
+        let (a, b) = if f.form.active.len() < g.form.active.len() {
+            (&g.form, &f.form)
+        } else {
+            (&f.form, &g.form)
+        };
+        let (raw, cone) = conjoin::and_scoped(a, b, lim)?;
+        let res = contract_in(raw, Some(&cone), lim);
+        lim.discard(cone);
+        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: res? })
     }
 
     /// `f ∧ (l₁ ∨ … ∨ lₖ)` for the literals of `clause`, signed integers or
@@ -146,8 +153,10 @@ impl Engine {
         let c = self.and_clause(Tdd::one(&f.vtree), clause)?;
         let c = from_tdd(&c, Arc::clone(&f.form.shape), lim)?;
         let c = contract(c, lim)?;
-        let raw = conjoin::and(&f.form, &c, lim)?;
-        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: contract(raw, lim)? })
+        let (raw, cone) = conjoin::and_scoped(&f.form, &c, lim)?;
+        let res = contract_in(raw, Some(&cone), lim);
+        lim.discard(cone);
+        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: res? })
     }
 
     /// `¬f`.
