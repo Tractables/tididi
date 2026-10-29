@@ -21,7 +21,6 @@ pub(crate) mod contract;
 pub(crate) mod convert;
 pub(crate) mod negate;
 pub(crate) mod place;
-pub(crate) mod tag;
 #[cfg(test)]
 mod tests;
 
@@ -30,8 +29,7 @@ use std::sync::Arc;
 use crate::vtree::{Vtree, VtreeNode};
 
 /// A resolved reference: the vtree node in bits 32 to 61, the index in the
-/// low word, and in the top two bits the tagged form's tag ([`tag`]),
-/// zero elsewhere. [`ZREF`] is the constant false.
+/// low word. [`ZREF`] is the constant false.
 pub(crate) type Ref = u64;
 /// The constant false.
 pub(crate) const ZREF: Ref = u64::MAX;
@@ -405,10 +403,9 @@ impl SkipForm {
                 };
             }
         }
-        // A tagged reference keeps its tag.
         let fix = |live: &Vec<Vec<u32>>, r: Ref| -> Ref {
             let p = pos[vt(r) as usize];
-            if p == NONE || sh.is_leaf(vt(r)) { r } else { (r & tag::TAG_MASK) | mk(vt(r), live[p as usize][ix(r) as usize]) }
+            if p == NONE || sh.is_leaf(vt(r)) { r } else { mk(vt(r), live[p as usize][ix(r) as usize]) }
         };
         let mut active = Vec::with_capacity(cand.len());
         for (i, &t) in cand.iter().enumerate() {

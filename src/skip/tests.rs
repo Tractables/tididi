@@ -152,50 +152,8 @@ fn dump(s: &SkipForm) -> Dump {
         .iter()
         .enumerate()
         .filter(|l| l.1.width() > 0)
-        .map(|(i, l)| (i, (0..l.width()).map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a), (a >> 62) as u32), (vt(b), ix(b), (b >> 62) as u32))).collect()).collect()))
+        .map(|(i, l)| (i, (0..l.width()).map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a), 0), (vt(b), ix(b), 0))).collect()).collect()))
         .collect()
-}
-
-#[test]
-fn tagged_form_round_trips() {
-    use super::tag::{tag_form, untag};
-    for (eng, f, _) in cases(6, 300) {
-        let s = skip(&f);
-        let t = tag_form(&s);
-        assert!(t.size_tagged().pairs <= s.size().pairs);
-        assert_eq!(fingerprint(&untag(&t)), fingerprint(&s));
-        assert_eq!(fingerprint(&tag_form(&untag(&t))), fingerprint(&t));
-        let _ = eng;
-    }
-}
-
-#[test]
-fn tagged_conjunction_matches_the_untagged_one() {
-    use super::tag::{self, tag_form, untag};
-    for (eng, f, g) in cases(7, 300) {
-        let (sf, sg) = (skip(&f), skip(&g));
-        let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let want = contract(conjoin::and(&sf, &sg, eng.limits()).unwrap(), eng.limits()).unwrap();
-        let (tf, tg) = (tag_form(&sf), tag_form(&sg));
-        let raw = tag::and(&tf, &tg, eng.limits()).unwrap();
-        // Before contraction: the same function.
-        let ok = untag(&raw).model_count() == want.model_count();
-        let h = tag::contract(&raw, eng.limits()).unwrap();
-        if !ok || fingerprint(&untag(&h)) != fingerprint(&want) || fingerprint(&h) != fingerprint(&tag_form(&want)) {
-            eprintln!("vtree {:?}", sf.shape.kids);
-            eprintln!("untag(h) {:?} out {:x}", dump(&untag(&h)), untag(&h).out);
-            eprintln!("want(untagged) {:?} out {:x}", dump(&want), want.out);
-            eprintln!("tf {:?} out {:x}", dump(&tf), tf.out);
-            eprintln!("tg {:?} out {:x}", dump(&tg), tg.out);
-            eprintln!("raw {:?} out {:x}", dump(&raw), raw.out);
-            eprintln!("mine {:?} out {:x}", dump(&h), h.out);
-            eprintln!("want {:?} out {:x}", dump(&tag_form(&want)), tag_form(&want).out);
-        }
-        assert!(ok, "the raw conjunction's function");
-        assert_eq!(fingerprint(&untag(&h)), fingerprint(&want));
-        assert_eq!(fingerprint(&h), fingerprint(&tag_form(&want)));
-        assert_eq!(fingerprint(&tag::contract(&h, eng.limits()).unwrap()), fingerprint(&h));
-    }
 }
 
 #[test]
@@ -234,48 +192,6 @@ fn placement_matches_the_stored_embedding() {
             assert_eq!(fingerprint(&placed), fingerprint(&skip(&want)));
             done += 1;
         }
-    }
-}
-
-/// Tagged-form invariants: a reference that names its own child level has
-/// tag zero, and no stored node of one pair resolves to a reference.
-fn check_tagged(s: &SkipForm) -> Result<(), String> {
-    let sh = &*s.shape;
-    for &u in &sh.topdown {
-        let (l, r) = sh.kids[u as usize];
-        let lvl = &s.levels[u as usize];
-        for i in 0..lvl.width() {
-            let node = lvl.node(i as u32);
-            for &(a, b) in node {
-                for (c, x) in [(l, a), (r, b)] {
-                    if !sh.is_leaf(c) && vt(x) == c && x >> 62 != 0 {
-                        return Err(format!("level {u} node {i}: direct reference to {c} tagged {}", x >> 62));
-                    }
-                }
-            }
-            if node.len() == 1 {
-                let mut p = node.to_vec();
-                if super::tag::normalize(sh, u, &mut p).is_err() {
-                    return Err(format!("level {u} node {i}: {:?} resolves", ((vt(node[0].0), ix(node[0].0), node[0].0 >> 62), (vt(node[0].1), ix(node[0].1), node[0].1 >> 62))));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn tagged_forms_keep_their_invariants() {
-    use super::tag::{self, tag_form};
-    for (eng, f, g) in cases(9, 300) {
-        let (sf, sg) = (skip(&f), skip(&g));
-        let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let (tf, tg) = (tag_form(&sf), tag_form(&sg));
-        check_tagged(&tf).unwrap();
-        check_tagged(&tg).unwrap();
-        let raw = tag::and(&tf, &tg, eng.limits()).unwrap();
-        check_tagged(&raw).map_err(|e| format!("and: {e}")).unwrap();
-        check_tagged(&tag::contract(&raw, eng.limits()).unwrap()).map_err(|e| format!("contract: {e}")).unwrap();
     }
 }
 
