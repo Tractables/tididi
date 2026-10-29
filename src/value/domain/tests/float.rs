@@ -2,7 +2,7 @@
 //! column's floats centred by a power of two where the cell needs it, and
 //! the sum is the scaled-float fold's, bit for bit.
 
-use super::{plain_fold, plain_fold_centred, pow2, FloatColumn, Plain, PlainProducts, PLAIN_HI, PLAIN_LO};
+use super::{plain_fold, plain_fold_centred, pow2, FloatColumn, Offsets, Plain, PlainProducts, PLAIN_HI, PLAIN_LO};
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ScaledFloat};
 use crate::test_helpers::Lcg;
 use crate::value::{FloatCol, FloatFold, StreamChild};
@@ -183,4 +183,49 @@ fn plain_products_sum_to_the_scaled_fold_bit_for_bit() {
     assert!(raw > 300 && centred > 100 && declined > 50, "{raw} raw, {centred} centred, {declined} declined");
     let (l, r) = ([0.75, -0.5], [0.5]);
     assert!(PlainProducts::of(&child(Plain::new(&l, 0)), &child(Plain::new(&r, 0))).is_none());
+}
+
+/// A column's offsets as a branch a float finds them: the least and
+/// greatest offset of its nonzero floats, and whether a sign bit is set.
+fn offsets_by_branch(vals: &[f64]) -> (i64, i64, bool) {
+    let (mut lo, mut hi, mut neg) = (i64::MAX, i64::MIN, false);
+    for &x in vals {
+        neg |= x.is_sign_negative();
+        if x != 0.0 {
+            let d = ((x.to_bits() >> 52) & 0x7ff) as i64 - 1022;
+            (lo, hi) = (lo.min(d), hi.max(d));
+        }
+    }
+    if lo <= hi { (lo, hi, neg) } else { (0, 0, neg) }
+}
+
+/// The offsets read without a branch, compiled for the target and with
+/// `avx2` where the processor has it, are those a branch a float finds,
+/// on zeros of either sign, subnormals, the extreme floats and random
+/// columns long and short.
+#[test]
+fn offsets_match_a_branch_a_float() {
+    let edges = [0.0, -0.0, f64::MIN_POSITIVE, f64::from_bits(1), -f64::from_bits(1), f64::from_bits(1 << 51), 0.5, 1.0, -2.0, f64::MAX, f64::INFINITY, f64::NAN];
+    let mut cases: Vec<Vec<f64>> = vec![Vec::new(), vec![0.0; 40], vec![-0.0; 40]];
+    for (i, &a) in edges.iter().enumerate() {
+        cases.push(vec![a]);
+        for &b in &edges[i..] {
+            cases.push(vec![a, b]);
+            cases.push(vec![b, 0.0, a]);
+            let mut long = vec![0.0; 37];
+            (long[3], long[36]) = (a, b);
+            cases.push(long);
+        }
+    }
+    let mut rng = Lcg::new(0x0ff5);
+    for len in [1, 7, 31, 32, 64, 333] {
+        cases.push(column(&mut rng, len, -1021, 1023));
+        cases.push(column(&mut rng, len, -3, 3));
+    }
+    for vals in &cases {
+        for at in [Offsets::of(vals, 5), Offsets::read(vals, 5)] {
+            assert_eq!((at.lo, at.hi, at.neg), offsets_by_branch(vals), "{vals:?}");
+            assert_eq!(at.scale, 5);
+        }
+    }
 }

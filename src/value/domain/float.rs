@@ -18,6 +18,9 @@
 use super::*;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
 use crate::value::{FloatCol, FloatFold, FloatSlice};
+use crate::isa::avx2_fn;
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+use crate::isa::Avx2;
 use crate::vtree::{Vtree, VtreeNode};
 
 /// A value of a scaled-float store.
@@ -93,21 +96,54 @@ fn pow2(k: i64) -> f64 {
     f64::from_bits(((k + 1023) as u64) << 52)
 }
 
+/// The columns [`Offsets::of`] reads with [`avx2_fn`]'s features where
+/// the processor has them; a shorter one costs less than the call.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const AVX2_OFFSETS: usize = 32;
+
 impl Offsets {
-    /// The offsets of `vals` under `scale`.
+    /// The offsets of `vals` under `scale`, by [`Offsets::read`] compiled
+    /// with [`avx2_fn`]'s features for a column of 32 floats or more where
+    /// the processor has them.
     fn of(vals: &[f64], scale: i64) -> Offsets {
-        let (mut lo, mut hi, mut neg) = (i64::MAX, i64::MIN, false);
-        for &x in vals {
-            neg |= x.is_sign_negative();
-            if x != 0.0 {
-                let d = ((x.to_bits() >> 52) & 0x7ff) as i64 - 1022;
-                (lo, hi) = (lo.min(d), hi.max(d));
-            }
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        if vals.len() >= AVX2_OFFSETS
+            && let Some(avx2) = Avx2::detect()
+        {
+            // Safety: an `Avx2` exists only where the processor has the
+            // features `avx2_offsets` enables.
+            return unsafe { avx2_offsets(avx2, vals, scale) };
         }
-        match lo <= hi {
-            true => Offsets { scale, lo, hi, neg },
+        Offsets::read(vals, scale)
+    }
+
+    /// The offsets of `vals` under `scale`, read off the floats' exponent
+    /// fields with no branch a float: the least field over the nonzero
+    /// floats, where a zero reads as `0x800`, above every field, and the
+    /// greatest over all, where a zero's field, 0, is at most any other's.
+    #[inline(always)]
+    fn read(vals: &[f64], scale: i64) -> Offsets {
+        let (mut lo, mut hi, mut signs) = (0x800i64, 0i64, 0u64);
+        for &x in vals {
+            let bits = x.to_bits();
+            let field = ((bits >> 52) & 0x7ff) as i64;
+            signs |= bits;
+            lo = lo.min(field | i64::from(bits << 1 == 0) << 11);
+            hi = hi.max(field);
+        }
+        let neg = signs >> 63 != 0;
+        match lo < 0x800 {
+            true => Offsets { scale, lo: lo - 1022, hi: hi - 1022, neg },
             false => Offsets { scale, lo: 0, hi: 0, neg },
         }
+    }
+}
+
+avx2_fn! {
+    /// [`Offsets::read`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_offsets(_: Avx2, vals: &[f64], scale: i64) -> Offsets {
+        Offsets::read(vals, scale)
     }
 }
 

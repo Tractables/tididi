@@ -43,14 +43,15 @@ fn value(k: u64, e: i64, negative: bool) -> ScaledFloat {
 
 /// `2^e`, whatever `e`.
 fn power(e: i64) -> ScaledFloat {
+    let pow2 = |n: i64| f64::from_bits(((n + 1023) as u64) << 52);
     let mut p = ScaledFloat::from_f64(1.0);
-    let step = ScaledFloat::from_f64(if e < 0 { 2f64.powi(-512) } else { 2f64.powi(512) });
+    let step = ScaledFloat::from_f64(if e < 0 { pow2(-512) } else { pow2(512) });
     let mut left = e;
     while left.abs() >= 512 {
         p = p.mul(&step);
         left -= 512 * left.signum();
     }
-    p.mul(&ScaledFloat::from_f64(2f64.powi(left as i32)))
+    p.mul(&ScaledFloat::from_f64(pow2(left)))
 }
 
 fn bits(v: ScaledFloat) -> (u64, i64) {
