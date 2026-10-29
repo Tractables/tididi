@@ -500,8 +500,12 @@ impl SkipForm {
 /// Against a leaf child the stored form names `One` where the node holds
 /// both literals with the same other side; the left leaf is merged first,
 /// then the right, so the form is a function of the node's assignments.
+#[inline]
 pub(crate) fn normalize(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Result<(), Ref> {
-    merge_cells(sh, u, pairs);
+    // One pair is already in its stored form.
+    if pairs.len() > 1 {
+        merge_cells(sh, u, pairs);
+    }
     let (l, r) = sh.kids[u as usize];
     if pairs.len() == 1 {
         let (a, b) = pairs[0];

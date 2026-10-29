@@ -55,6 +55,114 @@ fn leaf_and(v: u32, a: u32, b: u32) -> Ref {
 
 const NIL: u32 = u32::MAX;
 
+/// Per reference of one operand, its true products: linked entries of the
+/// other operand's reference, the result and the next entry, in one arena
+/// whose freed entries are reused.
+struct Lists {
+    head: Vec<u32>,
+    ent: Vec<(Ref, Ref, u32)>,
+    free: u32,
+}
+
+impl Lists {
+    fn new(n: usize) -> Lists {
+        Lists { head: vec![NIL; n], ent: Vec::new(), free: NIL }
+    }
+
+    #[inline]
+    fn push(&mut self, i: usize, other: Ref, res: Ref) {
+        let e = (other, res, self.head[i]);
+        let at = if self.free != NIL {
+            let at = self.free;
+            self.free = self.ent[at as usize].2;
+            self.ent[at as usize] = e;
+            at
+        } else {
+            self.ent.push(e);
+            (self.ent.len() - 1) as u32
+        };
+        self.head[i] = at;
+    }
+
+    /// The entries of list `i` that `judge` takes, into `ends`: `judge`
+    /// gives, for the other reference, whether the entry stays listed and
+    /// whether it is taken. Entries that do not stay are freed.
+    #[inline]
+    fn scan(&mut self, i: usize, ends: &mut Vec<(Ref, Ref)>, judge: impl Fn(Ref) -> (bool, bool)) {
+        let (mut prev, mut e) = (NIL, self.head[i]);
+        while e != NIL {
+            let (other, res, next) = self.ent[e as usize];
+            let (stay, take) = judge(other);
+            if stay {
+                if take {
+                    ends.push((other, res));
+                }
+                prev = e;
+            } else {
+                if prev == NIL {
+                    self.head[i] = next;
+                } else {
+                    self.ent[prev as usize].2 = next;
+                }
+                self.ent[e as usize].2 = self.free;
+                self.free = e;
+            }
+            e = next;
+        }
+    }
+
+    /// The result of the product of reference `i` with `other`, if listed.
+    fn find(&self, i: usize, other: Ref) -> Option<Ref> {
+        let mut e = self.head[i];
+        while e != NIL {
+            let (o, res, next) = self.ent[e as usize];
+            if o == other {
+                return Some(res);
+            }
+            e = next;
+        }
+        None
+    }
+}
+
+/// Build one node's products (`keys`, their pair combinations in `combos`
+/// by key) at internal `u` into `out`, noting each with its result in
+/// `made`; empties `keys` and `combos`. The work units they took.
+#[inline]
+fn emit(
+    sh: &Shape,
+    u: u32,
+    out: &mut SkipForm,
+    keys: &mut Vec<(Ref, Ref)>,
+    combos: &mut Vec<(u32, Ref, Ref)>,
+    buf: &mut Vec<(Ref, Ref)>,
+    made: &mut Vec<(Ref, Ref, Ref)>,
+) -> u64 {
+    if keys.is_empty() {
+        return 0;
+    }
+    let work = (keys.len() + combos.len()) as u64;
+    if keys.len() > 1 {
+        combos.sort_unstable_by_key(|c| c.0);
+    }
+    let mut i = 0;
+    for (k, &(a, b)) in keys.iter().enumerate() {
+        buf.clear();
+        while i < combos.len() && combos[i].0 == k as u32 {
+            buf.push((combos[i].1, combos[i].2));
+            i += 1;
+        }
+        let res = match normalize(sh, u, buf) {
+            Err(t) => t,
+            Ok(()) => mk(u, out.push_node(u, buf)),
+        };
+        made.push((a, b, res));
+    }
+    keys.clear();
+    combos.clear();
+    work
+}
+
 /// An operand's references numbered densely: stored node `i` of level `t`
 /// is `base[t] + i`, leaf label `k` of leaf `c` is `base[c] + k`; with, per
 /// number, the highest level the reference is read at: the child level of
@@ -179,8 +287,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     todo.dedup();
     // True products, per reference of each side: the other side's
     // reference and the result.
-    let mut pf: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); nf.len()];
-    let mut pg: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); ng.len()];
+    let (mut pf, mut pg) = (Lists::new(nf.len()), Lists::new(ng.len()));
     // Both references to the result, where a level looks products up so.
     let mut live: FxHashMap<u64, Ref> = FxHashMap::default();
     let key = |a: usize, b: usize| ((a as u64) << 32) | b as u64;
@@ -190,18 +297,20 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     // The current node's products, by the other side's reference.
     let (mut cg, mut cf) = (vec![(0u32, 0u32); ng.len()], vec![(0u32, 0u32); nf.len()]);
     let (mut lstamp, mut cstamp) = (0u32, 0u32);
+    // One node's products against the other side and their pair
+    // combinations, built as soon as the node is done; the level's
+    // products, listed once the level is done.
     let mut keys: Vec<(Ref, Ref)> = Vec::new();
     let mut combos: Vec<(u32, Ref, Ref)> = Vec::new();
+    let mut made: Vec<(Ref, Ref, Ref)> = Vec::new();
     let mut ends: Vec<(Ref, Ref)> = Vec::new();
-    let (mut start, mut fill): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
-    let mut pairs: Vec<(Ref, Ref)> = Vec::new();
     let mut buf: Vec<(Ref, Ref)> = Vec::new();
     let mut fb = [(0, 0); 1];
     let mut gb = [(0, 0); 1];
     for &u in &todo {
         let (l, r) = sh.kids[u as usize];
-        keys.clear();
-        combos.clear();
+        made.clear();
+        let mut work = 0u64;
         let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
         if sh.is_leaf(l) && sh.is_leaf(r) {
             // Every reference each side reads here, against every other.
@@ -232,6 +341,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                             }
                         }
                     }
+                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
                 }
             }
         } else {
@@ -270,13 +380,9 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                     // The true products of `x` with references of `g` read
                     // at the anchor.
                     ends.clear();
-                    let list = &mut pf[nf.id(x)];
-                    list.retain(|&(y, res)| {
+                    pf.scan(nf.id(x), &mut ends, |y| {
                         let keep = ng.read_at(sh, y, cs);
-                        if keep {
-                            ends.push((y, res));
-                        }
-                        keep
+                        (keep, keep)
                     });
                     if sh.is_leaf(vt(x)) {
                         for y in ng.leaf_refs(sh, vt(x), cs) {
@@ -317,6 +423,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                         }
                     }
                 }
+                work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
             }
             if skips {
                 // Skips of `f` through this level against `g`'s nodes.
@@ -326,13 +433,9 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                     for &p in gl.node(j) {
                         let (y, ob) = split(p);
                         ends.clear();
-                        let list = &mut pg[ng.id(y)];
-                        list.retain(|&(x, res)| {
+                        pg.scan(ng.id(y), &mut ends, |x| {
                             let keep = nf.read_at(sh, x, cs);
-                            if keep && nf.above(sh, x, u) {
-                                ends.push((x, res));
-                            }
-                            keep
+                            (keep, keep && nf.above(sh, x, u))
                         });
                         if sh.is_leaf(vt(y)) {
                             for x in nf.leaf_refs(sh, vt(y), u) {
@@ -352,42 +455,17 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
                             combos.push((c.1, pl, pr));
                         }
                     }
+                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made);
                 }
             }
         }
-        lim.charge_work(combos.len() as u64 + keys.len() as u64);
+        lim.charge_work(work);
         lim.check_stop()?;
-        if keys.is_empty() {
-            continue;
-        }
-        // Each product's pairs, grouped by product.
-        start.clear();
-        start.resize(keys.len() + 1, 0);
-        for &(k, _, _) in &combos {
-            start[k as usize + 1] += 1;
-        }
-        for k in 0..keys.len() {
-            start[k + 1] += start[k];
-        }
-        fill.clear();
-        fill.extend_from_slice(&start);
-        pairs.clear();
-        pairs.resize(combos.len(), (0, 0));
-        for &(k, a, b) in &combos {
-            pairs[fill[k as usize] as usize] = (a, b);
-            fill[k as usize] += 1;
-        }
         let lookup = sh.looked_up[u as usize];
-        for (k, &(a, b)) in keys.iter().enumerate() {
-            buf.clear();
-            buf.extend_from_slice(&pairs[start[k] as usize..start[k + 1] as usize]);
-            let res = match normalize(sh, u, &mut buf) {
-                Err(t) => t,
-                Ok(()) => mk(u, out.push_node(u, &buf)),
-            };
+        for &(a, b, res) in &made {
             let (fa, gb) = (nf.id(a), ng.id(b));
-            pf[fa].push((b, res));
-            pg[gb].push((a, res));
+            pf.push(fa, b, res);
+            pg.push(gb, a, res);
             if lookup {
                 live.insert(key(fa, gb), res);
             }
@@ -395,7 +473,7 @@ pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, 
     }
     out.out = match land_pair(sh, f.out, g.out) {
         Land::Done(r) => r,
-        Land::At(_) => pf[nf.id(f.out)].iter().find(|e| e.0 == g.out).map_or(ZREF, |e| e.1),
+        Land::At(_) => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
     };
     out.collect_pushed();
     Ok(out)
