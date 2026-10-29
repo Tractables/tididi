@@ -168,15 +168,15 @@ fn emit(
 /// number, the highest level the reference is read at: the child level of
 /// the highest level whose pairs name it, or the root for the output. A
 /// reference is read at every level from there down to its own.
-struct Numbered {
-    base: Vec<u32>,
-    top: Vec<u32>,
+pub(super) struct Numbered {
+    pub(super) base: Vec<u32>,
+    pub(super) top: Vec<u32>,
     /// The leaves whose labels are numbered.
-    leaves: Vec<u32>,
+    pub(super) leaves: Vec<u32>,
 }
 
 impl Numbered {
-    fn of(s: &SkipForm) -> Numbered {
+    pub(super) fn of(s: &SkipForm) -> Numbered {
         let sh = &*s.shape;
         let mut base = vec![NONE; sh.num_nodes()];
         let mut n = 0u32;
@@ -211,13 +211,13 @@ impl Numbered {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.top.len()
     }
 
     /// The number of `x`, a reference of the operand.
     #[inline]
-    fn id(&self, x: Ref) -> usize {
+    pub(super) fn id(&self, x: Ref) -> usize {
         (self.base[vt(x) as usize] + ix(x)) as usize
     }
 

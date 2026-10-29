@@ -32,7 +32,10 @@ fn skip_form_expands_to_the_same_function() {
         let s = skip(&f);
         assert_eq!(s.model_count(), eng.model_count(&f).unwrap());
         let mut back = to_tdd(&s, &eng, f.vtree()).unwrap();
+        // The stored form of a canonical skip form is canonical.
+        let (pairs, nodes) = (back.pair_count(), back.node_count());
         eng.minimize(&mut back).unwrap();
+        assert_eq!((back.pair_count(), back.node_count()), (pairs, nodes));
         assert!(eng.equivalent(&back, &f).unwrap());
         // Canonical: the round trip's skip form has the same size.
         assert_eq!(skip(&back).size(), s.size());
