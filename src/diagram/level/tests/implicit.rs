@@ -477,7 +477,10 @@ fn an_implicit_arena_past_the_allocator_clears_to_an_empty_one() {
         level.pairs.describe(d.clone(), huge, huge);
         assert_eq!((level.pairs.capacity(), level.node_capacity()), (huge, huge));
         let kept = match pooled {
-            true => crate::diagram::pool::reset_level(&mut level),
+            true => {
+                let mut room = crate::diagram::pool::PARKED_LEVEL_ARENA_BYTES;
+                crate::diagram::pool::reset_level(&mut level, &mut room)
+            }
             false => {
                 level.clear();
                 0
