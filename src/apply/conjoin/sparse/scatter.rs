@@ -218,6 +218,8 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
         (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
     }
     bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
+    // This level gathers no owned products.
+    ws.owned_len = 0;
     let walked = match inner {
         None => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
             |parts| LabelWalk { g_by_outer: parts.g_by_outer, outer: parts.outer }),

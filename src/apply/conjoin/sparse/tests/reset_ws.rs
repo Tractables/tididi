@@ -30,6 +30,17 @@ fn clearing_scratch_leaves_active_workspace_independent() {
 }
 
 #[test]
+fn a_checked_out_workspace_counts_no_owned_products() {
+    // A level's owned products, counted in `owned_len`, outlive the
+    // conjunction, and the pool releases `owned` itself where it is
+    // oversized: the count goes with the checkout.
+    use crate::execution::pool::PooledScratch;
+    let mut ws = super::super::index::SparseWorkspace { owned_len: 9_457_593, ..Default::default() };
+    ws.prepare();
+    assert!(ws.owned_len <= ws.owned.len(), "{} owned products counted in {}", ws.owned_len, ws.owned.len());
+}
+
+#[test]
 fn unwinding_discards_partially_filled_sparse_workspace() {
     let eng = Engine::new();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

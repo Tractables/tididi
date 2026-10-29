@@ -971,7 +971,10 @@ impl Buffers for SparseWorkspace {
 }
 
 impl PooledScratch for SparseWorkspace {
-    fn prepare(&mut self) {}
+    // `owned` may have been released since the level that filled it.
+    fn prepare(&mut self) {
+        self.owned_len = 0;
+    }
 }
 
 /// [`Limits::reserve`](crate::limits::Limits::reserve) behind its own test
