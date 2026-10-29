@@ -9,6 +9,7 @@ use num_rational::BigRational;
 use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightStore};
 use super::{FloatRows, BLOCKS, FLOAT_ROWS, LANE_BLOCKS};
+use crate::isa::tests::BASE_ISA;
 use crate::test_helpers::{assert_canonical, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -153,9 +154,10 @@ fn walk_bits(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &Weig
 }
 
 /// A streamed level summed a row at a time, its child rows read as floats
-/// or kept, gives the value the cell-at-a-time sums give, bit for bit:
-/// positive weights, signed ones (which fold the scaled way), and weights
-/// hundreds of binades apart (which check products).
+/// or kept, gives the value the cell-at-a-time sums give, bit for bit,
+/// compiled with `avx2` where the processor has it and without: positive
+/// weights, signed ones (which fold the scaled way), and weights hundreds
+/// of binades apart (which check products).
 #[test]
 fn row_sums_match_the_cell_sums_bit_for_bit() {
     let eng = Engine::new();
@@ -179,8 +181,12 @@ fn row_sums_match_the_cell_sums_bit_for_bit() {
                 let store = WeightStore::new(weights, Arithmetic::ScaledFloat);
                 let want = walk_bits(&eng, &tree, &clauses, &store, FloatRows::Cells);
                 for rows in [FloatRows::Sum, FloatRows::Eager] {
-                    let got = walk_bits(&eng, &tree, &clauses, &store, rows);
-                    assert_eq!(got, want, "{shape}, {num_vars} vars, round {round}, {rows:?}");
+                    for base in [false, true] {
+                        BASE_ISA.with(|b| b.set(base));
+                        let got = walk_bits(&eng, &tree, &clauses, &store, rows);
+                        BASE_ISA.with(|b| b.set(false));
+                        assert_eq!(got, want, "{shape}, {num_vars} vars, round {round}, {rows:?}, base instructions {base}");
+                    }
                 }
             }
         }

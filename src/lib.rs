@@ -87,6 +87,7 @@ pub mod diagram;
 pub mod limits;
 pub(crate) mod value;
 mod sort;
+mod isa;
 
 mod build;
 pub mod apply;

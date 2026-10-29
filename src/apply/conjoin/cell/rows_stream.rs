@@ -7,6 +7,9 @@ use super::super::marginal_plan::Carrier;
 use super::*;
 use crate::diagram::{EncodedChildRef, ScaledFloat, WeightStore};
 use crate::value::{plain_floats, CheckedProducts, FloatCol, PlainProducts, StreamChild};
+use crate::isa::avx2_fn;
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+use crate::isa::Avx2;
 
 // A test sums its streamed float levels a cell at a time, as the oracle
 // for the row sums, or reads and keeps child rows and sums blocks of f
@@ -82,8 +85,49 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
 /// [`stream_level`] on a scaled-float level, each cell summed in floats as
 /// its pairs are found: [`PlainSink`] where the two child columns keep
 /// every product a float, [`CheckedSum`] where they read as floats, and
-/// [`FoldSink`] otherwise.
+/// [`FoldSink`] otherwise, compiled for the target and again with
+/// [`avx2_fn`]'s features where the processor has them ([`Isa`]).
 fn stream_float_level<L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    left: &L,
+    right: &R,
+    values: &mut FloatCol,
+    env: StreamEnv<'_>,
+) -> Result<(), OperationError> {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if let Some(avx2) = Avx2::detect() {
+        // Safety: an `Avx2` exists only where the processor has the
+        // features `avx2_float_level` enables.
+        return unsafe { avx2_float_level(avx2, eng, rows, scratch, left, right, values, env) };
+    }
+    float_level(Base, eng, rows, scratch, left, right, values, env)
+}
+
+avx2_fn! {
+    /// [`stream_float_level`] compiled with [`avx2_fn`]'s features.
+    #[expect(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn avx2_float_level<L: ChildLookup, R: ChildLookup>(
+        avx2: Avx2,
+        eng: &Engine,
+        rows: RowLoop<'_>,
+        scratch: RowScratch<'_>,
+        left: &L,
+        right: &R,
+        values: &mut FloatCol,
+        env: StreamEnv<'_>,
+    ) -> Result<(), OperationError> {
+        float_level(avx2, eng, rows, scratch, left, right, values, env)
+    }
+}
+
+/// [`stream_float_level`] for `isa`.
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
+    isa: I,
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
@@ -104,7 +148,7 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
         let mut next = pools.cell_pairs.checkout(eng);
         let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
+        let mut action = sum_rows(isa, eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
     let mut st = st;
@@ -122,7 +166,7 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
         let mut next = pools.cell_pairs.checkout(eng);
         let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(eng, rows, left, right, sum, bufs, &mut *scratch.g_pairs)?;
+        let mut action = sum_rows(isa, eng, rows, left, right, sum, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
     let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
@@ -1137,7 +1181,8 @@ impl<'a, 'data> RowSum for CheckedSum<'a, 'data> {
 /// one f pair, and a row of f pairs against columns of one pair each,
 /// summed in a loop of its own ([`sum_row`]); any other row a cell at a
 /// time, as [`Emit`] sums it.
-struct SumRows<'o, S> {
+struct SumRows<'o, S, I> {
+    isa: I,
     sum: S,
     /// Each column's one pair ([`read_columns`]), or empty.
     ones: &'o [ChildPair],
@@ -1226,8 +1271,10 @@ impl Peek<'_> {
     }
 }
 
-/// The [`SumRows`] of a level summed by `sum`.
-fn sum_rows<'o, 'r: 'o, S: RowSum, L: ChildLookup, R: ChildLookup>(
+/// The [`SumRows`] of a level summed by `sum` for `isa`.
+#[expect(clippy::too_many_arguments)]
+fn sum_rows<'o, 'r: 'o, I: Isa, S: RowSum, L: ChildLookup, R: ChildLookup>(
+    isa: I,
     eng: &Engine,
     rows: RowLoop<'r>,
     left: &L,
@@ -1235,16 +1282,16 @@ fn sum_rows<'o, 'r: 'o, S: RowSum, L: ChildLookup, R: ChildLookup>(
     sum: S,
     bufs: SumBuffers<'o>,
     scratch: &mut Vec<ChildPair>,
-) -> Result<SumRows<'o, S>, OperationError> {
+) -> Result<SumRows<'o, S, I>, OperationError> {
     let SumBuffers { ones, floats, flags, slots, next } = bufs;
     let (ones, pairs, bound) = read_columns(eng, rows, ones, scratch)?;
     let values = value_rows(eng, rows, left, right, (bound, ones.len(), pairs), floats, flags, slots, scratch)?;
     let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
     let peek = Peek { f_level: rows.f_level, f_width: rows.f_width, scratch: next, next: [none; LANES - 1], from: 0 };
-    Ok(SumRows { sum, ones, pairs, values, peek })
+    Ok(SumRows { isa, sum, ones, pairs, values, peek })
 }
 
-impl<L: ChildLookup, R: ChildLookup, S: RowSum> CellAction<L, R> for SumRows<'_, S> {
+impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for SumRows<'_, S, I> {
     const DENSE_SLAB: bool = true;
     const WHOLE_ROWS: bool = true;
 
@@ -1273,7 +1320,104 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum> CellAction<L, R> for SumRows<'_,
 
     #[inline(always)]
     fn whole_row(&mut self, eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
-        sum_row(&mut self.sum, self.ones, self.pairs, self.values.as_mut(), &mut self.peek, eng, row)
+        sum_row(self.isa, &mut self.sum, self.ones, self.pairs, self.values.as_mut(), &mut self.peek, eng, row)
+    }
+}
+
+/// An instruction set the streamed float sums are compiled for; its
+/// methods run [`block_rows`] and [`ahead_row`] compiled for it.
+trait Isa: Copy {
+    #[expect(clippy::too_many_arguments)]
+    fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        i: usize,
+        p1: ChildPair,
+        next: &[ChildPair],
+        lay: Lay,
+        vr: &mut ValueRows<'_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError>;
+
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError>;
+}
+
+/// The target's own instruction set.
+#[derive(Clone, Copy)]
+struct Base;
+
+impl Isa for Base {
+    #[inline(never)]
+    fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        i: usize,
+        p1: ChildPair,
+        next: &[ChildPair],
+        lay: Lay,
+        vr: &mut ValueRows<'_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        block_rows(sum, i, p1, next, lay, vr, eng, row)
+    }
+
+    #[inline(never)]
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+        ahead_row(sum, sums, flags, eng, row)
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+impl Isa for Avx2 {
+    #[inline(always)]
+    fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        i: usize,
+        p1: ChildPair,
+        next: &[ChildPair],
+        lay: Lay,
+        vr: &mut ValueRows<'_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        // Safety: an `Avx2` exists only where the processor has the
+        // features `avx2_block_rows` enables.
+        unsafe { avx2_block_rows(sum, i, p1, next, lay, vr, eng, row) }
+    }
+
+    #[inline(always)]
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+        // Safety: as above.
+        unsafe { avx2_ahead_row(sum, sums, flags, eng, row) }
+    }
+}
+
+avx2_fn! {
+    /// [`block_rows`] compiled with [`avx2_fn`]'s features.
+    #[expect(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn avx2_block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        sum: &mut S,
+        i: usize,
+        p1: ChildPair,
+        next: &[ChildPair],
+        lay: Lay,
+        vr: &mut ValueRows<'_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        block_rows(sum, i, p1, next, lay, vr, eng, row)
+    }
+}
+
+avx2_fn! {
+    /// [`ahead_row`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+        ahead_row(sum, sums, flags, eng, row)
     }
 }
 
@@ -1306,8 +1450,10 @@ fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, u
 /// with room for their sums. A cell a checked sum cannot hold goes through its
 /// cell sink, its pairs in the same order. Any other row is left to the
 /// cells (0 columns written).
+#[expect(clippy::too_many_arguments)]
 #[inline(always)]
-fn sum_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    isa: I,
     sum: &mut S,
     ones: &[ChildPair],
     pairs: usize,
@@ -1324,12 +1470,12 @@ fn sum_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 let i = (row.row_base - row.ctx.output_grid_base) / width;
                 if let Some(k) = vr.ahead.take(i, p1) {
                     let at = k * width..(k + 1) * width;
-                    return ahead_row(sum, &vr.ahead.sums[at.clone()], &vr.ahead.flags[at], eng, row);
+                    return isa.ahead_row(sum, &vr.ahead.sums[at.clone()], &vr.ahead.flags[at], eng, row);
                 }
                 if (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs || eager())
                     && let Some((m, lay)) = peek.block(row.ctx, i, p1, vr, pairs)
                 {
-                    return block_rows(sum, i, p1, &peek.next[..m - 1], lay, vr, eng, row);
+                    return isa.block_rows(sum, i, p1, &peek.next[..m - 1], lay, vr, eng, row);
                 }
             }
             if vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) > VALUE_ROW_READS * pairs && !eager() {
@@ -1468,7 +1614,7 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
 /// pairs walked once for the block, row `i`'s cells appended and the
 /// others' sums held until the row loop reaches their rows.
 #[expect(clippy::too_many_arguments)]
-#[inline(never)]
+#[inline(always)]
 fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
     i: usize,
@@ -1659,7 +1805,7 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
 /// [`sum_row`] on a row a block summed ahead ([`block_rows`]): its cells'
 /// sums and flags `sums` and `flags` appended in column order, charged as
 /// [`one_pair_row_values`] charges them.
-#[inline(never)]
+#[inline(always)]
 fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
     sums: &[f64],
