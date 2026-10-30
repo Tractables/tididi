@@ -764,6 +764,12 @@ impl TddLevel {
         (pairs, live, single)
     }
 
+    /// Number of pairs across all live nodes at this level, or 0 when marginal.
+    #[inline]
+    pub fn pair_count(&self) -> usize {
+        self.live_pairs_closed()
+    }
+
     /// The pairs held by this level's live nodes: an implicit level's off
     /// its description, every node of which holds its `k` pairs, a stored
     /// one's off its nodes ([`pair_census`](Self::pair_census)).
@@ -784,7 +790,7 @@ impl TddLevel {
             return d.pairs();
         }
         let LevelState::Structural(held) = &self.state else {
-            return self.pair_census().0 as usize;
+            return 0;
         };
         match held.get() {
             Some(n) => n as usize,
