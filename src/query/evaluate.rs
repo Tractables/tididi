@@ -471,14 +471,34 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
         return Ok(ws.leaf_val(var, LeafLabel::from_idx(out_i)));
     }
-    let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
-    eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     // Only the root value is read, so child columns are released as their
     // parent completes (`Retention::Frontier`). The "already stored" test
     // is this diagram's own marginality rather than `WeightStore::is_set`: the
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();
+    if ws.arithmetic() == crate::diagram::Arithmetic::ScaledFloat {
+        let mut computed: Vec<Option<crate::value::FloatCol>> = Vec::new();
+        eng.limits().reserve_exact(&mut computed, vtree.num_nodes())?;
+        computed.resize_with(vtree.num_nodes(), || None);
+        crate::value::FloatFold::ensure(
+            eng,
+            VtreeIdx(out_t as u32),
+            FoldInput { vtree, levels: &tdd.levels, store: ws },
+            &mut computed,
+            &marginal,
+            Retention::Frontier,
+            |work| gate.poll(work),
+        )?;
+        return Ok(WeightValue::scaled(
+            computed[out_t]
+                .as_ref()
+                .expect("output level weights ensured")
+                .get(out_i),
+        ));
+    }
+    let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
+    eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     WeightFold::ensure(
         eng,
         VtreeIdx(out_t as u32),

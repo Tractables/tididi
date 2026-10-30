@@ -229,3 +229,81 @@ fn offsets_match_a_branch_a_float() {
         }
     }
 }
+
+/// [`FloatFold::fold_column`] on stored and described levels, and over child
+/// levels already in the [`WeightStore`](crate::diagram::WeightStore), matches
+/// [`WeightFold::ensure`](crate::value::WeightFold::ensure) bit for bit.
+#[test]
+fn fold_column_matches_weight_fold_on_stored_and_described_levels() {
+    use std::sync::Arc;
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::test_helpers::{compile_clauses, rat, with_floor};
+    use crate::value::{FoldInput, Retention, ValueDomain, WeightFold};
+    use crate::vtree::Vtree;
+    use crate::Engine;
+
+    with_floor(4, || {
+        let eng = Engine::new();
+        let vtree = Arc::new(Vtree::balanced(6));
+        let clauses = [
+            vec![1, 2, -5],
+            vec![-2, 3, 6],
+            vec![4, -5, 6],
+            vec![-1, 3, -4],
+        ];
+        let mut tdd = compile_clauses(&vtree, &clauses);
+        let weights = RationalWeights::from_literals(&[
+            LiteralWeights { negative: rat(1, 3), positive: rat(2, 5) },
+            LiteralWeights { negative: rat(3, 7), positive: rat(4, 9) },
+            LiteralWeights { negative: rat(5, 11), positive: rat(1, 6) },
+            LiteralWeights { negative: rat(2, 9), positive: rat(7, 13) },
+            LiteralWeights { negative: rat(3, 8), positive: rat(5, 12) },
+            LiteralWeights { negative: rat(4, 15), positive: rat(9, 14) },
+        ]);
+        tdd.set_weights(WeightStore::new(weights, Arithmetic::ScaledFloat)).unwrap();
+        let (left, _) = vtree.children(vtree.root());
+        eng.marginalize_levels(&mut tdd, &[left]).unwrap();
+        let ws = tdd.weights().unwrap();
+        let marginal = |i: usize| tdd.levels[i].is_marginal();
+        let mut w_cols = vec![None; vtree.num_nodes()];
+        WeightFold::ensure(
+            &eng,
+            vtree.root(),
+            FoldInput { vtree: &vtree, levels: &tdd.levels, store: ws },
+            &mut w_cols,
+            &marginal,
+            Retention::All,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut f_cols: Vec<Option<FloatCol>> = (0..vtree.num_nodes()).map(|_| None).collect();
+        FloatFold::ensure(
+            &eng,
+            vtree.root(),
+            FoldInput { vtree: &vtree, levels: &tdd.levels, store: ws },
+            &mut f_cols,
+            &marginal,
+            Retention::All,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut saw_described = false;
+        for (lvl, (w, f)) in w_cols.iter().zip(&f_cols).enumerate() {
+            if tdd.levels[lvl].implicit().is_some() {
+                saw_described = true;
+            }
+            let (Some(w), Some(f)) = (w, f) else {
+                assert!(w.is_none() && f.is_none());
+                continue;
+            };
+            assert_eq!(w.len(), f.len());
+            for (i, wv) in w.iter().enumerate() {
+                assert_eq!(bits(*wv.as_scaled().unwrap()), bits(f.get(i)), "level {lvl} slot {i}");
+            }
+        }
+        assert!(saw_described, "expected at least one described level with floor 4");
+        let wv = eng.weighted_value(&tdd).unwrap().unwrap();
+        let root_f = f_cols[vtree.root().idx()].as_ref().unwrap().get(tdd.output.local.idx());
+        assert_eq!(bits(*wv.as_scaled().unwrap()), bits(root_f));
+    });
+}
