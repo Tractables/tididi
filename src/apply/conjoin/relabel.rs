@@ -90,21 +90,22 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 ///
 /// Declines, leaving everything as it was, on any level the general routes
 /// must see: a marginal level on either operand, a marginal child other
-/// than one the output carries from the carrier, a target, a weighted
-/// sweep, a one-product level with a target child ([`fuses_target_child`]),
-/// and a root the count mode counts instead of building. So in a sweep that
-/// sums levels out (`and_marginalizing`) it takes the levels beside and
-/// above the targets: each is structure whose children's products are one
+/// than one the output carries from the carrier, a target, a one-product
+/// level with a target child ([`fuses_target_child`]), and a root the count
+/// mode counts instead of building. So in a sweep that sums levels out
+/// (`and_marginalizing`), weighted or unweighted, it takes the levels beside
+/// and above the targets: each is structure whose children's products are one
 /// node per live cell, as in a plain conjunction. And on an operand an
 /// earlier sum left marginal levels in, it reads through each one the other
-/// operand is constant-true over, whose counts the output keeps as they
-/// are. The caller has already excluded a filtered sweep, and only that: a
-/// sweep that quantifies ([`Quantification::FusedSubtrees`]) reaches the
-/// route on every level outside the subtrees it collapses. At the parent of
-/// one, the collapsed child's products are one `⊤` for every satisfiable
-/// cell, so two carrier pairs can meet in one and the level holds that pair
-/// twice; the quantification that follows the sweep regroups every such
-/// parent, which merges them, as it merges the general routes' pairs there.
+/// operand is constant-true over, whose counts or weight slots the output
+/// keeps as they are. The caller has already excluded a filtered sweep, and
+/// only that: a sweep that quantifies ([`Quantification::FusedSubtrees`])
+/// reaches the route on every level outside the subtrees it collapses. At the
+/// parent of one, the collapsed child's products are one `⊤` for every
+/// satisfiable cell, so two carrier pairs can meet in one and the level holds
+/// that pair twice; the quantification that follows the sweep regroups every
+/// such parent, which merges them, as it merges the general routes' pairs
+/// there.
 ///
 /// [`Quantification::FusedSubtrees`]: crate::Quantification::FusedSubtrees
 ///
@@ -128,7 +129,6 @@ pub(super) fn take_relabel_level(
         return Ok(false);
     }
     if relabel_forced_off()
-        || sweep.ws.is_some()
         || sweep.targets.contains(ti)
         || fuses_target_child(sweep, t, shape.f.here, shape.g.here)
         || (sweep.count_root && t == sweep.vtree.root())
@@ -148,11 +148,21 @@ pub(super) fn take_relabel_level(
         return Ok(false);
     }
     // A marginal child is read through only where the output's level there
-    // is the carrier's own, which an identity fast path moved because the
-    // narrow operand is constant-true over it: each carrier reference to
-    // it, a slot or an inline count, is then its own product, as the
-    // general routes pass that side through.
-    let carried = |c: VtreeIdx| run.carried.iter().any(|&(x, from_f)| x == c.idx() && from_f == carrier_f);
+    // is the carrier's own, which an identity fast path moved (or leaf
+    // seeding kept) because the narrow operand is constant-true over it:
+    // each carrier reference to it, a slot or an inline count, is then its
+    // own product, as the general routes pass that side through.
+    let carried = |c: VtreeIdx| {
+        if sweep.vtree.node(c).is_leaf() {
+            if carrier_f {
+                f.levels[c.idx()].is_marginal() && run.g_identity[c.idx()]
+            } else {
+                g.levels[c.idx()].is_marginal() && run.f_identity[c.idx()]
+            }
+        } else {
+            run.carried.iter().any(|&(x, from_f)| x == c.idx() && from_f == carrier_f)
+        }
+    };
     if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
         return Ok(false);
     }
@@ -173,12 +183,23 @@ pub(super) fn take_relabel_level(
     };
     let left_filled = side_map(left, one.left.raw(), &mut left_buf)?;
     let right_filled = side_map(right, one.right.raw(), &mut right_buf)?;
-    let lm = SideMap::of(vtree.node(left).is_leaf(), one.left.raw(), left_filled, &left_buf);
-    let rm = SideMap::of(vtree.node(right).is_leaf(), one.right.raw(), right_filled, &right_buf);
+    let lm = SideMap::of(!marginal.left_any && vtree.node(left).is_leaf(), one.left.raw(), left_filled, &left_buf);
+    let rm = SideMap::of(!marginal.right_any && vtree.node(right).is_leaf(), one.right.raw(), right_filled, &right_buf);
     let width = if carrier_f { shape.f.here } else { shape.g.here };
 
     if lm.is_identity() && rm.is_identity() {
         // Every pair is its own product: the carrier's level is the output.
+        let (carrier_id, narrow_id) = if carrier_f {
+            (&mut run.f_identity[..], &mut run.g_identity[..])
+        } else {
+            (&mut run.g_identity[..], &mut run.f_identity[..])
+        };
+        if narrow_id[left.idx()] && narrow_id[right.idx()] {
+            narrow_id[ti] = true;
+            if width == 1 && carrier_id[left.idx()] && carrier_id[right.idx()] {
+                carrier_id[ti] = true;
+            }
+        }
         match carrier_f {
             true => f.carry(eng.limits(), ti, &mut run.levels[ti])?,
             false => g.carry(eng.limits(), ti, &mut run.levels[ti])?,
@@ -189,6 +210,9 @@ pub(super) fn take_relabel_level(
         run.products.note_complete(ti);
         note_relabelled(true);
         return Ok(true);
+    }
+    if sweep.ws.is_some() {
+        return Ok(false);
     }
 
     let mut map = pools.relabel_map.checkout(eng);

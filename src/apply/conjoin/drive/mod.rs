@@ -597,7 +597,8 @@ fn apply_and_held(
     }
     let summed = sweep.summed.take();
     let kept = Operands { f: sweep.kept.f.take(), g: sweep.kept.g.take() };
-    let fused = if sweep.filter.is_none() && sweep.ws.is_none() {
+    let unfiltered = sweep.filter.is_none();
+    let fused = if unfiltered && sweep.ws.is_none() {
         fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
     } else {
         Vec::new()
@@ -694,6 +695,30 @@ fn apply_and_held(
             carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
             out
         })
+    } else if quantified.is_empty() && unfiltered {
+        let mut carrier = vec![0u8; num_nodes];
+        for &(t, from_f) in &carried {
+            carrier[t] = if from_f { 1 } else { 2 };
+        }
+        for &t in &relabel_moved {
+            carrier[t] = 0;
+        }
+        if ws.as_ref().is_some_and(|w| !w.is_bounded()) {
+            let levels = assembly.parts_mut().0;
+            for &leaf_idx in &canon_leaves {
+                if let Some(parent) = vtree.node(VtreeIdx(leaf_idx as u32)).parent().filter(|p| !levels[p.idx()].is_marginal()) {
+                    carrier[parent.idx()] = 0;
+                    if let Some(gp) = vtree.node(parent).parent() {
+                        carrier[gp.idx()] = 0;
+                    }
+                }
+            }
+        }
+        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
+        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
+        let changed = (closed.f && closed.g && summed.is_none()).then_some(&built[..]);
+        assembly.finish_with_or_return(output, owed, &built, changed)
     } else {
         assembly.finish_or_return(output)
     };

@@ -1587,11 +1587,12 @@ fn complement_marginal_root(
         }
         return Ok(());
     }
-    if result.weights.is_some() {
-        let ws = result.weights.as_ref().expect("weighted");
+    if let Some(bar_w) = result.weights.as_ref().map(|ws| {
         let old_w = ws.level(root.idx()).expect("marginal root")[out_local.idx()].clone();
         let mut bar_w = z_weighted(vtree, ws, root);
         bar_w.add_assign(&old_w.neg());
+        bar_w
+    }) {
         if bar_w.is_zero() {
             crate::diagram::MarginalStorage::new(
                 &mut result.levels[root.idx()],

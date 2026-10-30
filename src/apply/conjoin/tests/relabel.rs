@@ -165,17 +165,33 @@ fn marginalizing_conjunctions_agree() {
 }
 
 /// An operand an earlier sum left a marginal level in is read through that
-/// level where the other operand is constant-true over it: the general
-/// routes' diagram and count, and the count of the conjunction unsummed.
+/// level where the other operand is constant-true over it, unweighted or
+/// weighted, internal or leaf: the general routes' diagram and value, and
+/// the value of the conjunction unsummed.
 #[test]
 fn a_summed_operand_is_read_through_its_marginal_level() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::test_helpers::rat;
+
     let mut read_through = 0;
+    let mut weighted_read_through = 0;
+    let weights = RationalWeights::from_literals(
+        &(1..=8)
+            .map(|v| LiteralWeights { negative: rat(1, 2 + v), positive: rat(1 + v, 2 + v) })
+            .collect::<Vec<_>>(),
+    );
+    let store = WeightStore::new(weights, Arithmetic::ExactRational);
     for (what, f, g) in cases(8, 0x5e_77) {
         let vtree = Arc::clone(f.vtree());
         let support = crate::test_helpers::support_mask(&g);
         let eng = Engine::new();
         let whole = eng.model_count(&eng.and(f.clone(), g.clone()).unwrap()).unwrap();
-        for (t, _, _) in vtree.internal_bottomup() {
+        let mut wf = f.clone();
+        wf.set_weights(store.empty_like()).unwrap();
+        let mut wg = g.clone();
+        wg.set_weights(store.empty_like()).unwrap();
+        let whole_val = eng.weighted_value(&eng.and(wf.clone(), wg.clone()).unwrap()).unwrap().unwrap().into_rational();
+        for t in vtree.bottomup() {
             if t == vtree.root() || vars_under(&vtree, t).iter().any(|&v| support[v as usize - 1]) {
                 continue;
             }
@@ -193,9 +209,23 @@ fn a_summed_operand_is_read_through_its_marginal_level() {
             assert_eq!(eng.model_count(&out).unwrap(), whole, "{what}: count");
             let counted = eng.and_model_count(summed.clone(), g.clone(), &[]).unwrap();
             assert_eq!(counted, whole, "{what}: and_model_count");
+
+            let mut wsummed = wf.clone();
+            eng.marginalize_levels(&mut wsummed, &[t]).unwrap();
+            let before = read_through_census();
+            let wout = eng.and_marginalizing(wsummed.clone(), wg.clone(), &[]).unwrap();
+            weighted_read_through += read_through_census() - before;
+            let woracle = no_relabel(|| eng.and_marginalizing(wsummed.clone(), wg.clone(), &[]).unwrap());
+            assert_same_shape(&wout, &woracle, &format!("{what} weighted"));
+            assert_eq!(
+                eng.weighted_value(&wout).unwrap().unwrap().into_rational(),
+                whole_val,
+                "{what}: weighted value"
+            );
         }
     }
     assert!(read_through > 0, "no conjunction read through a marginal level");
+    assert!(weighted_read_through > 0, "no weighted conjunction read through a marginal level");
 }
 
 /// A level of one node the route wrote in its carrier's order, each run of

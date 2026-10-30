@@ -64,12 +64,22 @@ pub(super) fn init_leaf_identity_over(
     // Nodes are stored leaves first.
     let leaves = vtree.num_leaves() as usize;
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
+    let weighted = tdd.weights.is_some();
     let mut has_any_marginal = false;
     for &t in scanned {
         let (left, right) = vtree.children(t);
-        if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
         let left_leaf = left.idx() < leaves;
         let right_leaf = right.idx() < leaves;
+        let level = &tdd.levels[t.idx()];
+        if level.is_marginal() {
+            if weighted {
+                if left_leaf { buf[left.idx()] = false; }
+                if right_leaf { buf[right.idx()] = false; }
+            } else {
+                has_any_marginal = true;
+            }
+            continue;
+        }
         // The only writes this level can make are `buf[left] = false` and
         // `buf[right] = false` — monotone true→false. So once neither flag is
         // still true there is nothing left to prove: skip the level at entry,
@@ -78,15 +88,6 @@ pub(super) fn init_leaf_identity_over(
         // already false, so the resulting `buf` is value-identical.
         let mut want = [left_leaf && buf[left.idx()], right_leaf && buf[right.idx()]];
         if !want[0] && !want[1] { continue; }
-        let level = &tdd.levels[t.idx()];
-        // Marginal levels have no structural pairs to scan — they're handled by
-        // the `has_any_marginal` block below using per-node counts (integer) or
-        // the marginal-forest walk. For integer-marginal levels `nodes` is also
-        // cleared so the loop below is a no-op; weight-marginal levels keep
-        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_read` would index an
-        // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
-        // levels, so this guard is a no-op there.)
-        if level.is_marginal() { continue; }
         // A stored level's nodes are read as slices of its arena; an
         // implicit level's are generated, out of line.
         let Some(stored) = level.stored() else {
@@ -119,7 +120,7 @@ pub(super) fn init_leaf_identity_over(
         }
         let mut stack = eng.scratch.apply.marginal_stack.checkout(eng);
         stack.clear();
-        for (t, _, _) in vtree.internal_bottomup() {
+        for &t in scanned {
             let level = &tdd.levels[t.idx()];
             if !level.is_marginal() { continue; }
             // Process only marginal-subtree roots (parent is non-marginal or

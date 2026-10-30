@@ -283,20 +283,25 @@ pub(crate) trait InstallTarget {
     /// The levels, read for the marginality test on the way down.
     fn levels(&self) -> &[TddLevel];
 
-    /// Install `col` as level `t`'s marginal store. `computed` is the
-    /// cascade's column table, for a target that keeps a column there.
+    /// Install `col` as level `t`'s marginal store. `subsumed` says whether
+    /// `t` is below the root of the cascade, so its parent is installed right
+    /// after it and frees its store. `computed` is the cascade's column table,
+    /// for a target that keeps a column there.
     fn install<K: MarginalDomain>(
         &mut self,
         vtree: &Vtree,
         t: InternalLevel,
+        subsumed: bool,
         col: K::Col,
         computed: &mut [Option<K::Col>],
         store: &mut K::Store,
     );
 }
 
-/// Installs through [`install_finished`], which dedups the column and
-/// rewrites the parent's references.
+/// Installs the cascade's root through [`install_finished`], which dedups the
+/// column and rewrites the parent's references, and levels below the root
+/// through [`install_streamed`], since their parents are installed in the same
+/// cascade and immediately free their stores.
 impl InstallTarget for Tdd {
     fn levels(&self) -> &[TddLevel] {
         &self.levels
@@ -306,10 +311,18 @@ impl InstallTarget for Tdd {
         &mut self,
         vtree: &Vtree,
         t: InternalLevel,
+        subsumed: bool,
         col: K::Col,
-        _computed: &mut [Option<K::Col>],
+        computed: &mut [Option<K::Col>],
         store: &mut K::Store,
     ) {
+        if subsumed {
+            if let Some(parent) = vtree.node(t.vtree_idx()).parent() {
+                self.invalidate(parent);
+            }
+            install_streamed::<K>(&mut self.levels, vtree, t, col, computed, store);
+            return;
+        }
         install_finished::<K>(self, vtree, t, col, store);
     }
 }
@@ -325,6 +338,7 @@ impl InstallTarget for [TddLevel] {
         &mut self,
         vtree: &Vtree,
         t: InternalLevel,
+        _subsumed: bool,
         col: K::Col,
         computed: &mut [Option<K::Col>],
         store: &mut K::Store,
@@ -347,6 +361,17 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     computed: &mut [Option<K::Col>],
     store: &mut K::Store,
 ) {
+    cascade_at::<K, S>(target, vtree, t, false, computed, store);
+}
+
+fn cascade_at<K: MarginalDomain, S: InstallTarget + ?Sized>(
+    target: &mut S,
+    vtree: &Vtree,
+    t: VtreeIdx,
+    subsumed: bool,
+    computed: &mut [Option<K::Col>],
+    store: &mut K::Store,
+) {
     let Some(level) = InternalLevel::new(vtree, t) else {
         return;
     };
@@ -354,10 +379,10 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
         return;
     }
     let (left, right) = vtree.children(t);
-    cascade::<K, S>(target, vtree, left, computed, store);
-    cascade::<K, S>(target, vtree, right, computed, store);
+    cascade_at::<K, S>(target, vtree, left, true, computed, store);
+    cascade_at::<K, S>(target, vtree, right, true, computed, store);
     if let Some(col) = computed[t.idx()].take() {
-        target.install::<K>(vtree, level, col, computed, store);
+        target.install::<K>(vtree, level, subsumed, col, computed, store);
     }
 }
 
