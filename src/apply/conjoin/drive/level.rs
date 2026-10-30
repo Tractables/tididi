@@ -658,29 +658,14 @@ impl StreamLevels {
     }
 }
 
-/// Give both children a dense grid and bump-allocate this level's own,
-/// returning the base the cell build writes into.
-///
-/// The sparse-marginal route allocates only a reused `right_width`-row scratch instead of
-/// the dense `left_width * right_width` slab: the row driver processes one structural row at a
-/// time into it and records the surviving cells in the output product list, so
-/// the slab is never materialized and the grandparent densifies the level
-/// lazily. That route's base is the scratch, not a slab base, which is why it
-/// is returned rather than read back off the grid descriptor.
-fn materialize_children_and_grid(
+/// Ensure both children of a dense level have materialized grids.
+fn materialize_dense_children(
     eng: &Engine,
     run: &mut ApplyRun,
     shape: LevelShape,
-    use_sparse_marginal: bool,
-) -> Result<GridBase, OperationError> {
-    let LevelShape { t, left, right, f: fw, g: gw } = shape;
-    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    // ── Dense path: ensure children have grids ───────────────────
-    //
-    // Only when the arena bumps: a child processed by the sparse pipeline has
-    // no grid, so materialize one. On this path the child is known ungridded —
-    // there is nothing to scan — so the identity fast path is the only way to
-    // build its product list.
+) -> Result<(), OperationError> {
+    let LevelShape { left, right, f: fw, g: gw, .. } = shape;
+    let (li, ri) = (left.idx(), right.idx());
     if run.products.arena.is_bump() {
         if run.products.arena.is_sparse(li) {
             run.materialize_dense_child(eng, li, fw.left, gw.left)?;
@@ -689,11 +674,19 @@ fn materialize_children_and_grid(
             run.materialize_dense_child(eng, ri, fw.right, gw.right)?;
         }
     }
+    Ok(())
+}
 
-    // Dense output owns an f-by-g slab. Sparse marginal output reuses one
-    // g-width row, records live products separately, and remains ungridded
-    // until its parent needs a dense view. Only a bump arena uses that route;
-    // a preplanned arena already owns the full slab.
+/// Bump-allocate this level's grid or single-row sparse-marginal scratch,
+/// returning the base the cell build writes into.
+fn claim_level_grid(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    shape: LevelShape,
+    use_sparse_marginal: bool,
+) -> Result<GridBase, OperationError> {
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let ti = t.idx();
     let cells = if use_sparse_marginal { gw.here } else { grid_cells(fw.here, gw.here)? };
     let base = run.products.arena.claim(eng, ti, cells)?;
     if use_sparse_marginal {
@@ -702,6 +695,94 @@ fn materialize_children_and_grid(
         run.products.arena.set_dense(ti, base);
     }
     Ok(base)
+}
+
+/// Stop before claiming the level's dense output slab when the rows the level
+/// enters will charge at least `rem` work units, the work left to an active
+/// [`StopAt::WorkUnits`](crate::limits::StopAt::WorkUnits) threshold.
+#[cold]
+#[inline(never)]
+#[expect(clippy::too_many_arguments)]
+fn stop_before_grid(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    plan: &MarginalPlan,
+    bases: Sides<GridBase>,
+    lookups: PlainLookups,
+    masked: bool,
+    pairs: bool,
+    rem: u64,
+    masks_built: &mut bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let _ = grid_cells(fw.here, gw.here)?;
+    if rem == 0 {
+        return lim.check_stop();
+    }
+    let f_level = f.level(t);
+    let needed = rem.div_ceil(gw.here as u64) as usize;
+    if !masked {
+        if let Some(d) = f_level.implicit() {
+            if d.pairs_per_node() > 0 && fw.here >= needed {
+                lim.charge_work(rem);
+                return lim.check_stop();
+            }
+            return Ok(());
+        }
+        let mut entered = 0usize;
+        for i in 0..fw.here {
+            if entered + (fw.here - i) < needed {
+                break;
+            }
+            if f_level.pair_count_at(i) > 0 {
+                entered += 1;
+                if entered >= needed {
+                    lim.charge_work(rem);
+                    return lim.check_stop();
+                }
+            }
+        }
+        return Ok(());
+    }
+    if !plan.both_multi_pair {
+        super::super::note_one_sided_masks();
+    }
+    build_level_prefilter_masks(eng, run, g, shape, plan, bases, lookups, pairs)?;
+    *masks_built = true;
+    let child_alive = |side: SidePlan, masks: &liveness::PrefilterSideMasks, a: usize| -> bool {
+        if side.is_passthrough() {
+            true
+        } else if !masks.row_cols.is_empty() {
+            masks.row_cols[a] & liveness::ROW_LIVE != 0
+        } else if !masks.live_cols.is_empty() {
+            masks.live_cols[a] != 0
+        } else {
+            true
+        }
+    };
+    let (lv, rv) = (plan.sides.left.view, plan.sides.right.view);
+    let mut entered = 0usize;
+    for i in 0..fw.here {
+        if entered + (fw.here - i) < needed {
+            break;
+        }
+        let f_pairs = f_level.pairs_view_decoded(i, run.f_pairs_scratch, lv, rv);
+        if !f_pairs.is_empty()
+            && f_pairs.iter().any(|p| child_alive(plan.sides.left, &run.prefilter_masks.left, p.left.raw() as usize))
+            && f_pairs.iter().any(|p| child_alive(plan.sides.right, &run.prefilter_masks.right, p.right.raw() as usize))
+        {
+            entered += 1;
+            if entered >= needed {
+                lim.charge_work(rem);
+                return lim.check_stop();
+            }
+        }
+    }
+    Ok(())
 }
 
 
@@ -1128,7 +1209,7 @@ pub(super) fn build_level_dense(
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
     // for a sparse child on a level that will take the plain-dense emit.
-    let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
+    materialize_dense_children(eng, run, shape)?;
 
     // Child grid geometry: product `(a, b)` sits at `base + a * g_child_width + b`.
     let bases = Sides {
@@ -1165,6 +1246,16 @@ pub(super) fn build_level_dense(
                 right: matches!(lookups, PlainLookups::CompleteRight { .. }),
             },
         );
+    let mut masks_built = false;
+    if !use_sparse_marginal
+        && let Some(rem) = lim.work_stop_within((fw.here as u64).saturating_mul(gw.here as u64))
+    {
+        stop_before_grid(
+            eng, run, f, g, shape, &plan, bases, lookups, masked, pairs, rem, &mut masks_built,
+        )?;
+    }
+    let output_grid_base = claim_level_grid(eng, run, shape, use_sparse_marginal)?;
+
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
@@ -1211,7 +1302,7 @@ pub(super) fn build_level_dense(
         }
     }
 
-    if masked {
+    if masked && !masks_built {
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
