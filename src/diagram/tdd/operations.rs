@@ -19,17 +19,22 @@ impl Tdd {
         self.vtree().context()
     }
 
-    /// Return the Boolean complement of this structural diagram in minimized form.
+    /// Return the Boolean complement of this diagram in minimized form.
     ///
     /// Consumes the operand on success and error, retaining its vtree and attached
-    /// weights. Complementation can grow the diagram. If only an unweighted count
-    /// is needed, subtract the original count from `2^n`, where `n` is the number
-    /// of vtree variables.
+    /// weights. A single marginalized subtree is complemented by subtracting each
+    /// stored count or weighted value from its subtree partition function; two
+    /// disjoint marginalized subtrees separated by a structural ancestor return
+    /// [`OperationError::MarginalLevel`]. Complementation can grow the diagram.
+    /// If only an unweighted count is needed, subtract the original count from
+    /// `2^n`, where `n` is the number of vtree variables.
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::MarginalLevel`] if any level has discarded its
-    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    /// Returns [`OperationError::MarginalLevel`] if marginal levels do not form
+    /// a single closed subtree (or if an unweighted marginal count exceeds its
+    /// subtree's `2^k` assignment capacity), or [`OperationError::OverBudget`]
+    /// if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;

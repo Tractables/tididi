@@ -40,6 +40,7 @@ pub(crate) fn forall_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd
     if targets.is_empty() {
         return Ok(f);
     }
+    f.require_structure()?;
     // Minimizing the projection keeps the second make-full pass small.
     let complement = negate_on(eng, f)?;
     let projected = exists_targets_on(eng, complement, &targets, false, ReductionPlan::default())?;
