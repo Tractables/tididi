@@ -455,7 +455,14 @@ fn conjoin_kept<'a>(
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
-        return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
+        return match eng.and(&*f, &*g) {
+            Ok(out) => {
+                recycle(eng, f);
+                recycle(eng, g);
+                Ok(out)
+            }
+            Err(error) => Err(AndRefused { error, f, g }),
+        };
     }
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
     let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
@@ -636,7 +643,7 @@ impl crate::Engine {
     /// before each conjunction. Here the sweep keeps the operands whole until
     /// the result exists, which holds their storage as long as a clone would,
     /// without the copy. Operands with a weight table or a marginal level are
-    /// cloned first. Each operand is owned or borrowed, at the costs
+    /// read in place. Each operand is owned or borrowed, at the costs
     /// [`and`] states; a borrowed one comes back as the borrow. An owned one
     /// comes back as reduced as it was given and with the level counts it
     /// kept ([`Engine::attach_level_counts`]), so what is done with it next
