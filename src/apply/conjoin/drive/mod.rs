@@ -334,7 +334,7 @@ fn carry_kept_counts(
     eng: &Engine,
     out: &mut Tdd,
     carried: &[(usize, bool)],
-    relabel_moved: &[usize],
+    carrier: &[u8],
     kept: &Operands<Option<LevelCounts>>,
 ) {
     if kept.f.is_none() && kept.g.is_none() {
@@ -346,7 +346,7 @@ fn carry_kept_counts(
         let side = if from_f { kept.f.as_ref() } else { kept.g.as_ref() };
         let Some(column) = side.and_then(|counts| counts.column(t)) else { continue };
         let level = &out.levels[ti];
-        if !relabel_moved.contains(&ti) && !level.is_marginal() && column.len() == level.slot_count() {
+        if carrier[ti] != 0 && !level.is_marginal() && column.len() == level.slot_count() {
             counts.set(t, Arc::clone(column));
         }
     }
@@ -665,7 +665,7 @@ fn apply_and_held(
         // live pairs it keeps are left for the seat's close.
         let levels = assembly.parts_mut().0;
         for &(t, from_f) in &carried {
-            if (if from_f { closed.f } else { closed.g }) && relabel_moved.contains(&t) {
+            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
                 levels[t].leave_kept_pairs();
             }
         }
@@ -676,6 +676,7 @@ fn apply_and_held(
             }
             #[cfg(debug_assertions)]
             crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
+            carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
             out
         })
     } else {
@@ -703,8 +704,6 @@ fn apply_and_held(
     // levels alone keeps them known closed.
     if !plain {
         crate::diagram::inline_small_marginal_refs(&mut out, None);
-    } else {
-        carry_kept_counts(eng, &mut out, &carried, &relabel_moved, &kept);
     }
     // Recorded where the level's marginal child is still its only one.
     for &t in &fused {
