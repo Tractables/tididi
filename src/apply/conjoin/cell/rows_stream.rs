@@ -128,6 +128,36 @@ avx2_fn! {
     }
 }
 
+/// Run [`sum_rows`] over `rows` with pooled [`SumBuffers`].
+#[inline(always)]
+fn run_sum_rows<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    isa: I,
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    left: &L,
+    right: &R,
+    sink: S,
+) -> Result<(), OperationError> {
+    let pools = &eng.scratch.apply;
+    let (mut ones, mut floats, mut flags, mut slots) = (
+        pools.cell_pairs.checkout(eng),
+        pools.sum_floats.checkout(eng),
+        pools.sum_flags.checkout(eng),
+        pools.row_slots.checkout(eng),
+    );
+    let mut next = pools.cell_pairs.checkout(eng);
+    let bufs = SumBuffers {
+        ones: &mut ones,
+        floats: &mut floats,
+        flags: &mut flags,
+        slots: &mut slots,
+        next: &mut next,
+    };
+    let mut action = sum_rows(isa, eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
+    run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
+}
+
 /// [`stream_float_level`] for `isa`.
 #[expect(clippy::too_many_arguments)]
 #[inline(always)]
@@ -149,12 +179,7 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         if cells_only() {
             return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink });
         }
-        let pools = &eng.scratch.apply;
-        let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let mut next = pools.cell_pairs.checkout(eng);
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
-        return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
+        return run_sum_rows(isa, eng, rows, scratch, left, right, sink);
     }
     let mut st = st;
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
@@ -165,14 +190,15 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         && let Some(l) = plain_floats(eng, lchild, &mut lbuf)?
         && let Some(r) = plain_floats(eng, rchild, &mut rbuf)?
     {
+        if let Some(products) = PlainProducts::from_floats(l, lchild.view, r, rchild.view)
+            && let Some(out) = counts.narrow_under(products.scale)
+        {
+            let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
+            return run_sum_rows(isa, eng, rows, scratch, left, right, sink);
+        }
         let products = CheckedProducts::new(l, lchild.view, r, rchild.view);
         let sum = CheckedSum { products, left: lchild, right: rchild, counts, store, cell: &mut cell_pairs };
-        let pools = &eng.scratch.apply;
-        let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let mut next = pools.cell_pairs.checkout(eng);
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, left, right, sum, bufs, &mut *scratch.g_pairs)?;
-        return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
+        return run_sum_rows(isa, eng, rows, scratch, left, right, sum);
     }
     let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
@@ -185,9 +211,9 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
 /// grids are complete, every cell holding the slot its index names, so a
 /// pair's sides are its slots and no pair dies. Each cell is the sum of
 /// its products in pair order, as [`PlainSink`] sums the row loop's cells
-/// ([`described_rows`]), appended to `values` with the next slot, written
-/// at `grid_base + n` of the slab, which is extended over the level's grid
-/// as the row loop extends it: the same values, bit for bit, and the same
+/// ([`PlainProducts::sum_described`]), appended to `values` with the next slot,
+/// written at `grid_base + n` of the slab, which is extended over the level's
+/// grid as the row loop extends it: the same values, bit for bit, and the same
 /// grid. Returns `false`, having summed nothing, where the child columns
 /// do not keep every product a float or do not hold every slot a pair
 /// names, where the description does not count its nodes in order, and
@@ -205,14 +231,14 @@ pub(crate) fn run_level_described_stream(
         return Ok(false);
     }
     let st = attach_children::<FloatFold>(env, children, values);
-    let Some(products) = PlainProducts::of(&st.left, &st.right) else {
+    let pools = &eng.scratch.apply;
+    let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+    let Some(products) = PlainProducts::try_of(eng, &st.left, &st.right, &mut lbuf, &mut rbuf)? else {
         return Ok(false);
     };
     // A slot below 2^30 is the index of its float under either child view
     // (`ChildDecoder::index`), and a column holds fewer floats.
-    let (lo, hi) = product.slot_range();
-    let (left, right) = products.floats();
-    if lo.0 < 0 || lo.1 < 0 || hi.0 >= left.len() as i64 || hi.1 >= right.len() as i64 {
+    if !products.fits_described(product) {
         return Ok(false);
     }
     let Some(out) = st.counts.narrow_under(products.scale) else {
@@ -221,76 +247,16 @@ pub(crate) fn run_level_described_stream(
     let lim = eng.limits();
     let places = product.offsets(lim)?;
     let nodes = product.nodes();
+    let slot = out.len() as u32;
     lim.next_slot(out.len() + nodes - 1)?;
     lim.reserve(out, nodes)?;
     extend_slab(slab, grid_base, grid_base + nodes);
-    let grid = &mut slab[grid_base..grid_base + nodes];
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    if let Some(avx2) = Avx2::detect() {
-        // Safety: an `Avx2` exists only where the processor has the
-        // features `avx2_described_rows` enables.
-        unsafe { avx2_described_rows(avx2, product, &places, &products, out, grid) };
-        note_described_sums();
-        return Ok(true);
+    products.sum_described(product, &places, out);
+    for (k, g) in slab[grid_base..grid_base + nodes].iter_mut().enumerate() {
+        *g = slot + k as u32;
     }
-    described_rows(product, &places, &products, out, grid);
     note_described_sums();
     Ok(true)
-}
-
-/// The cells of a row [`described_rows`] sums at once, each in its own
-/// float.
-const DESCRIBED_BLOCK: usize = 256;
-
-avx2_fn! {
-    /// [`described_rows`] compiled with [`avx2_fn`]'s features.
-    #[inline(never)]
-    fn avx2_described_rows(_avx2: Avx2, product: &ImplicitLevel, places: &[(i64, i64)], products: &PlainProducts<'_>, out: &mut Vec<f64>, grid: &mut [u32]) {
-        described_rows(product, places, products, out, grid);
-    }
-}
-
-/// Sum every cell of `product` for [`run_level_described_stream`], which
-/// made room for them in `out`: cell `n` appended with the next slot,
-/// written at `grid[n]`. A row of the description is summed a block of
-/// cells at a time, the block's first product of every cell, then its
-/// second, and so on, so that each cell takes its products in pair order
-/// into a sum that starts at zero, as [`PlainSink`] sums a cell, and a
-/// one-pair cell is its product. `places` are what the places of a node
-/// add to its first pair's slots, every slot a pair names in its column.
-#[inline(always)]
-fn described_rows(product: &ImplicitLevel, places: &[(i64, i64)], products: &PlainProducts<'_>, out: &mut Vec<f64>, grid: &mut [u32]) {
-    let (left, right) = products.floats();
-    let one = places.len() == 1;
-    let mut acc = [0.0f64; DESCRIBED_BLOCK];
-    let mut cell = 0usize;
-    product.each_row(|first, step, len| {
-        let mut j = 0;
-        while j < len {
-            let m = (len - j).min(DESCRIBED_BLOCK);
-            let acc = &mut acc[..m];
-            if !one {
-                acc.fill(0.0);
-            }
-            let at = (first.0 + j as i64 * step.0, first.1 + j as i64 * step.1);
-            for &(pl, pr) in places {
-                let (mut l, mut r) = (at.0 + pl, at.1 + pr);
-                for a in acc.iter_mut() {
-                    // Safety: every slot a pair names lies in its column
-                    // (`slot_range`, checked by the caller).
-                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe { *right.get_unchecked(r as usize) });
-                    *a = if one { v } else { *a + v };
-                    (l, r) = (l + step.0, r + step.1);
-                }
-            }
-            let slot = out.len() as u32;
-            out.extend_from_slice(acc);
-            for (k, g) in grid[cell..cell + m].iter_mut().enumerate() {
-                *g = slot + k as u32;
-            }
-            (cell, j) = (cell + m, j + m);
-        }
-    });
 }
 
 /// Bind the child columns and collapse this level into its value column.
@@ -359,7 +325,9 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
-            if let Some(products) = PlainProducts::of(&st.left, &st.right)
+            let pools = &eng.scratch.apply;
+            let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+            if let Some(products) = PlainProducts::try_of(eng, &st.left, &st.right, &mut lbuf, &mut rbuf)?
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
                 let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
@@ -1662,14 +1630,8 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             live = true;
             exact &= ok;
         }
-        if !live {
-            continue;
-        }
-        if !S::CHECKED || (exact && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        let fl = (u8::from(live) * LIVE) | (u8::from(!exact) * INEXACT);
+        finish_cell::<true, _, _, _>(sum, eng, node_idx, row_base + j, acc, fl, f_pairs, g, left, right)?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1715,14 +1677,7 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
                 flags |= INEXACT;
             }
         }
-        if TRACK && flags & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (flags & INEXACT == 0 && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        finish_cell::<TRACK, _, _, _>(sum, eng, node_idx, row_base + j, acc, flags, f_pairs, g, left, right)?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1909,14 +1864,8 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
             sums[(k - 1) * width + j] = acc[k];
             flags[(k - 1) * width + j] = (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
         }
-        if live & 1 == 0 {
-            continue;
-        }
-        if !S::CHECKED || (bad & 1 == 0 && acc[0] < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc[0])?;
-            continue;
-        }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        let fl0 = ((live & 1) * LIVE) | ((bad & 1) * INEXACT);
+        finish_cell::<true, _, _, _>(sum, eng, node_idx, row_base + j, acc[0], fl0, f_pairs, g, left, right)?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1943,15 +1892,7 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             continue;
         }
         charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-        let (acc, fl) = (sums[j], flags[j]);
-        if fl & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (fl & INEXACT == 0 && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        finish_cell::<true, _, _, _>(sum, eng, node_idx, row_base + j, sums[j], flags[j], f_pairs, g, left, right)?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1989,14 +1930,7 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 continue;
             }
             charge(gate, &mut due_at, &mut due, k as u64)?;
-            if flags[x] & LIVE == 0 {
-                continue;
-            }
-            if !S::CHECKED || (flags[x] & INEXACT == 0 && sums[x] < f64::INFINITY) {
-                sum.push(eng, node_idx, row_base + j, sums[x])?;
-                continue;
-            }
-            refold(sum, eng, node_idx, row_base + j, f_pairs, std::slice::from_ref(q), left, right)?;
+            finish_cell::<true, _, _, _>(sum, eng, node_idx, row_base + j, sums[x], flags[x], f_pairs, std::slice::from_ref(q), left, right)?;
         }
         j0 += n;
     }
@@ -2076,17 +2010,34 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
             continue;
         }
         charge(gate, &mut due_at, &mut due, k as u64)?;
-        if flags[j] & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (flags[j] & INEXACT == 0 && sums[j] < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, sums[j])?;
-            continue;
-        }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, std::slice::from_ref(q), left, right)?;
+        finish_cell::<true, _, _, _>(sum, eng, node_idx, row_base + j, sums[j], flags[j], f_pairs, std::slice::from_ref(q), left, right)?;
     }
     gate.add_short(due_at - due);
     Ok(width)
+}
+
+/// Commit a summed cell at `pos` when live and exact, or refold it through `sum`'s cell sink.
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn finish_cell<const TRACK: bool, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    eng: &Engine,
+    node_idx: &mut [u32],
+    pos: usize,
+    acc: f64,
+    flags: u8,
+    f_pairs: &[ChildPair],
+    g: &[ChildPair],
+    left: &L,
+    right: &R,
+) -> Result<(), OperationError> {
+    if TRACK && flags & LIVE == 0 {
+        return Ok(());
+    }
+    if !S::CHECKED || (flags & INEXACT == 0 && acc < f64::INFINITY) {
+        return sum.push(eng, node_idx, pos, acc);
+    }
+    refold(sum, eng, node_idx, pos, f_pairs, g, left, right)
 }
 
 /// Add f pair `(a, b)`'s product to each one-pair column's sum, read off

@@ -4,7 +4,7 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 
 use crate::value::{walk_bottom_up, CountRead, Retention, FoldInput, ValueDomain, WeightFold};
-use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
+use crate::diagram::{ChildDecoder, ChildRef, ChildSide, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
 use crate::Engine;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -337,16 +337,17 @@ fn inline_counts(tdd: &Tdd, t: VtreeIdx, root: VtreeIdx) -> Vec<u32> {
     if level.is_marginal() {
         return counts;
     }
-    let on_left = tdd.vtree.children(parent).0 == t;
+    let side = if tdd.vtree.children(parent).0 == t {
+        ChildSide::Left
+    } else {
+        ChildSide::Right
+    };
     let view = ChildDecoder::marginal();
-    for (_, pairs) in level.internal_inputs_iter() {
-        for pair in pairs {
-            let side = if on_left { pair.left } else { pair.right };
-            if let ChildRef::Value(ValueRef::Inline(c)) = view.child(side) {
-                counts.push(c);
-            }
+    level.for_each_ref_on(side, |raw| {
+        if let ChildRef::Value(ValueRef::Inline(c)) = view.child(EncodedChildRef::from_raw(raw)) {
+            counts.push(c);
         }
-    }
+    });
     counts.sort_unstable();
     counts.dedup();
     counts
@@ -471,14 +472,34 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(out_t as u32)) {
         return Ok(ws.leaf_val(var, LeafLabel::from_idx(out_i)));
     }
-    let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
-    eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     // Only the root value is read, so child columns are released as their
     // parent completes (`Retention::Frontier`). The "already stored" test
     // is this diagram's own marginality rather than `WeightStore::is_set`: the
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();
+    if ws.arithmetic() == crate::diagram::Arithmetic::ScaledFloat {
+        let mut computed: Vec<Option<crate::value::FloatCol>> = Vec::new();
+        eng.limits().reserve_exact(&mut computed, vtree.num_nodes())?;
+        computed.resize_with(vtree.num_nodes(), || None);
+        crate::value::FloatFold::ensure(
+            eng,
+            VtreeIdx(out_t as u32),
+            FoldInput { vtree, levels: &tdd.levels, store: ws },
+            &mut computed,
+            &marginal,
+            Retention::Frontier,
+            |work| gate.poll(work),
+        )?;
+        return Ok(WeightValue::scaled(
+            computed[out_t]
+                .as_ref()
+                .expect("output level weights ensured")
+                .get(out_i),
+        ));
+    }
+    let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
+    eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     WeightFold::ensure(
         eng,
         VtreeIdx(out_t as u32),
