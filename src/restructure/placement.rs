@@ -271,6 +271,33 @@ impl<'a> MovePlacement<'a> {
         Ok(())
     }
 
+    /// Copy every level of `source` and any weighted columns it carries
+    /// through a checked placement map, reusing the pooled arenas of
+    /// structural levels ([`TddLevel::try_copy_over`]).
+    ///
+    /// [`TddLevel::try_copy_over`]: crate::diagram::TddLevel
+    pub(super) fn copy_marginal_part(&mut self, source: &Tdd, map: &[VtreeIdx]) -> Result<(), OperationError> {
+        debug_assert_eq!(source.vtree().num_nodes(), map.len());
+        self.changed.take_from(source);
+        let (levels, weights) = self.assembly.parts_mut();
+        let lim = self.eng.limits();
+        for (from, &to) in map.iter().enumerate() {
+            source.levels[from].try_copy_over(lim, &mut levels[to.idx()])?;
+            if levels[to.idx()].is_weight_marginal() {
+                let src_col = source.weights.as_ref()
+                    .and_then(|w| w.level(from))
+                    .expect("a weight-marginal level has a column in its store");
+                let mut col = Vec::new();
+                lim.reserve_exact(&mut col, src_col.len())?;
+                col.extend_from_slice(src_col);
+                weights.as_mut()
+                    .expect("a weight-marginal level is copied into a weighted diagram")
+                    .set_level(to.idx(), col);
+            }
+        }
+        Ok(())
+    }
+
     /// Exchange the two sides of every pair of each placed level `plan`
     /// mirrors ([`TddLevel::swap_sides`]): the level of the same functions
     /// over its image, whose children are the source node's swapped. Its own
@@ -309,12 +336,6 @@ impl<'a> MovePlacement<'a> {
                 *value = value.mul(factor);
             }
         }
-    }
-
-    /// The true reference for an unconstrained child already placed bottom-up.
-    #[inline]
-    pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
-        true_node(self.vtree, child)
     }
 
     /// Build the level of `at`, a node no placed variable is under.
@@ -413,24 +434,44 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
+    pub(super) fn contracts(&self) -> bool {
+        self.contract
+    }
+
     /// Seat the chosen root reference and repair the boundaries introduced
     /// here. Call [`check_weights`](Self::check_weights) first.
     pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_changed(output, self.changed.to_close())?;
-        if self.prune {
-            for (leaf, _) in result.vtree.leaf_bottomup() {
-                if result.levels[leaf.idx()].is_weight_marginal() {
-                    crate::marginal::canonicalize_weighted_leaf_refs(
-                        &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref());
+        let result = self.assembly.finish_changed(output, self.changed.to_close())?;
+        Self::repair_finished(self.eng, result, self.prune, self.contract)
+    }
+
+    /// [`finish`](Self::finish) carrying `carried` and `rebuilt` into the
+    /// seated diagram's worklists instead of seeding every internal level.
+    pub(super) fn finish_from(self, local: NodeIdx, carried: Dirty, rebuilt: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+        let output = TddNodeId { vtree: self.vtree.root(), local };
+        let result = self.assembly.finish_with(output, carried, rebuilt, self.changed.to_close())?;
+        Self::repair_finished(self.eng, result, self.prune, self.contract)
+    }
+
+    fn repair_finished(eng: &Engine, mut result: Tdd, do_prune: bool, do_contract: bool) -> Result<Tdd, OperationError> {
+        if do_prune {
+            if result.weights.as_ref().is_some_and(|w| !w.is_bounded()) {
+                let closed = result.levels.is_closed();
+                for (leaf, _) in result.vtree.leaf_bottomup() {
+                    if result.levels[leaf.idx()].is_weight_marginal() {
+                        crate::marginal::canonicalize_weighted_leaf_refs(
+                            &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref());
+                    }
                 }
+                result.close_marked_levels(closed);
             }
             crate::diagram::inline_small_marginal_refs(&mut result, None);
         }
-        if self.contract {
-            self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
-        } else if self.prune {
-            prune(self.eng, &mut result)?;
+        if do_contract {
+            eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
+        } else if do_prune {
+            prune(eng, &mut result)?;
         }
         Ok(result)
     }
