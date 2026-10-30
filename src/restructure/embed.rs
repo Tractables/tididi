@@ -1060,11 +1060,11 @@ fn assemble_marginal(
         result.weights = Some(weights.empty_like());
         return Ok(result);
     }
-    // The levels move out of a copy, reserved through the limits so a
-    // source too large to copy refuses the embed instead of aborting.
-    let mut source = tdd.try_clone_on(eng)?;
+    let mut carried = tdd.dirty.clone_on(eng)?;
+    carried.remap(&plan.embedding.levels);
+    carried.set_loose(None);
     let mut placement = MovePlacement::new(eng, into, Some(weights.empty_like()))?;
-    placement.move_part(&mut source, &plan.embedding.levels);
+    placement.copy_marginal_part(tdd, &plan.embedding.levels)?;
     // The destination nodes strictly below the image of a marginal level,
     // and the highest such images, whose values the free leaves scale.
     let mut inside = vec![false; into.num_nodes()];
@@ -1091,9 +1091,9 @@ fn assemble_marginal(
             placement.subsume(t);
             continue;
         }
-        let (left, right) = into.children(t);
+        let (left, _) = into.children(t);
         if plan.free[t.idx()] {
-            placement.join(t, placement.true_node(left), placement.true_node(right))?;
+            placement.free(t);
         } else {
             placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right })?;
         }
@@ -1123,7 +1123,8 @@ fn assemble_marginal(
         }
     }
     placement.check_weights().map_err(EmbedError::DestinationWeights)?;
-    Ok(placement.finish(tdd.output().local)?)
+    let rebuilt: &[VtreeIdx] = if placement.contracts() { &plan.pass_throughs } else { &[] };
+    Ok(placement.finish_from(tdd.output().local, carried, rebuilt)?)
 }
 
 #[cfg(test)]
