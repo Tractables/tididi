@@ -1541,8 +1541,8 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     let level = &tdd.levels[t.idx()];
     let described = level.implicit();
     if let Some(d) = described
-        && !left_view.is_marginal()
-        && !right_view.is_marginal()
+        && (!LEFT || !left_view.is_marginal())
+        && (!RIGHT || !right_view.is_marginal())
     {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.

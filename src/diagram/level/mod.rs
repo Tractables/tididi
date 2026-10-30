@@ -505,6 +505,25 @@ impl TddLevel {
         }
     }
 
+    /// Call `f` with the raw child reference on `side` of the level's pairs:
+    /// once per setting of the moving digits on an implicit level, and once
+    /// per pair on a stored level.
+    pub(crate) fn for_each_ref_on(&self, side: ChildSide, mut f: impl FnMut(u32)) {
+        if let Some(d) = self.implicit() {
+            d.each_slot_on(side, |raw, _| f(raw as u32));
+        } else {
+            for (_, pairs) in self.internal_inputs_iter() {
+                for p in pairs {
+                    let raw = match side {
+                        ChildSide::Left => p.left.0,
+                        ChildSide::Right => p.right.0,
+                    };
+                    f(raw);
+                }
+            }
+        }
+    }
+
     /// How to read the pair sides of a parent that point at this level.
     ///
     /// Build it once per level visit and decode every side through it; see

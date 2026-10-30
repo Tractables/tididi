@@ -594,25 +594,18 @@ impl ImplicitLevel {
         Ok(offsets.windows(2).any(|w| w[0] == w[1]))
     }
 
-    /// Whether the place digits show that a node's pairs are distinct: the
-    /// two slots of a step packed into one number, the right one's times
-    /// one more than twice the left steps' whole range, which is one to one
-    /// on the offsets, and the packed steps each beyond what the smaller
-    /// ones reach ([`one_to_one`]). `false` says only that the digits do
-    /// not show it, and where the packed numbers do not fit.
+    /// Whether the place digits show that a node's pairs are distinct
+    /// ([`steps_distinct`]).
     fn places_distinct(&self) -> bool {
-        let place = &self.digits[..self.within];
-        let packed = || -> Option<Vec<(u128, u128)>> {
-            let reach = place.iter().try_fold(0i128, |reach, d| {
-                reach.checked_add((d.radix as i128 - 1).checked_mul(i128::from(d.left).abs())?)
-            })?;
-            let scale = reach.checked_mul(2)?.checked_add(1)?;
-            place.iter().map(|d| {
-                let gap = scale.checked_mul(i128::from(d.right))?.checked_add(i128::from(d.left))?.unsigned_abs();
-                Some((gap, gap.checked_mul((d.radix - 1) as u128)?))
-            }).collect()
-        };
-        packed().is_some_and(|steps| one_to_one(steps.into_iter()))
+        steps_distinct(&self.digits[..self.within])
+    }
+
+    /// Whether the node digits show that the nodes' first pairs are
+    /// distinct ([`steps_distinct`]): every node holds the same offsets from
+    /// its first pair, a finite non-empty multiset, so two nodes hold the
+    /// same pairs only where their first pairs are equal.
+    pub(crate) fn nodes_distinct(&self) -> bool {
+        steps_distinct(&self.digits[self.within..])
     }
 
     /// Whether `node(i)` gives the pairs of node `i` of this description,
@@ -865,6 +858,26 @@ impl ImplicitLevel {
         one_to_one(moved.iter().map(|d| place(i128::from(this(d)), d)))
             && one_to_one(moved.iter().map(|d| place(i128::from(d.node) * span + i128::from(other(d)), d)))
     }
+}
+
+/// Whether `digits` give distinct slot offsets: the two slots of a step
+/// packed into one number, the right one's times one more than twice the
+/// left steps' whole range, which is one-to-one on the offsets, and the
+/// packed steps each beyond what the smaller ones reach ([`one_to_one`]).
+/// `false` says only that the digits do not show it, and where the packed
+/// numbers do not fit.
+fn steps_distinct(digits: &[Digit]) -> bool {
+    let packed = || -> Option<Vec<(u128, u128)>> {
+        let reach = digits.iter().try_fold(0i128, |reach, d| {
+            reach.checked_add((d.radix as i128 - 1).checked_mul(i128::from(d.left).abs())?)
+        })?;
+        let scale = reach.checked_mul(2)?.checked_add(1)?;
+        digits.iter().map(|d| {
+            let gap = scale.checked_mul(i128::from(d.right))?.checked_add(i128::from(d.left))?.unsigned_abs();
+            Some((gap, gap.checked_mul((d.radix - 1) as u128)?))
+        }).collect()
+    };
+    packed().is_some_and(|steps| one_to_one(steps.into_iter()))
 }
 
 /// Whether a value that sums digits, each given by the least gap between

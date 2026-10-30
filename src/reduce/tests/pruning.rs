@@ -791,6 +791,25 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
         for below in [false, true] {
             assert_eq!(refusals(below, true), refusals(below, false) + 3, "below the root: {below}");
         }
+        // With the left child of `v` marginalized, `mark_sides` still marks
+        // the structural right child `w` off `v`'s description.
+        let marginal_refusals = |implicit: bool| {
+            let mut refused = 0;
+            loop {
+                let eng = &crate::Engine::new();
+                let (mut tdd, v, _) = two_decisions(eng, implicit, false);
+                let (left_v, _) = tdd.vtree.children(v);
+                tdd.levels[left_v.idx()].set_counts_state(vec![1, 1, 2], None);
+                eng.limits().refuse_nth_reserve(refused);
+                let pruned = prune_unreachable(eng, &mut tdd, PruneScope::Whole);
+                eng.limits().grant_every_reserve();
+                if pruned.is_ok() {
+                    return refused;
+                }
+                refused += 1;
+            }
+        };
+        assert_eq!(marginal_refusals(true), marginal_refusals(false) + 3);
     });
 }
 

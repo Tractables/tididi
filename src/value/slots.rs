@@ -499,24 +499,19 @@ pub(crate) fn referenced_marginal_slots<'a>(
 ) -> &'a [u32] {
     scratch.clear();
     let RefSlotScratch { referenced, seen } = scratch;
-    for (_, pairs) in plevel.internal_inputs_iter() {
-        for p in pairs {
-            let raw = match side {
-                ChildSide::Right => p.right.0,
-                ChildSide::Left => p.left.0,
-            };
-            if EncodedChildRef::from_raw(raw).is_reserved() {
-                continue;
-            }
-            if let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
-                let word = s as usize / 64;
-                if word >= seen.len() {
-                    seen.resize(word + 1, 0);
-                }
-                seen[word] |= 1 << (s % 64);
-            }
+    let note = |raw: u32| {
+        if EncodedChildRef::from_raw(raw).is_reserved() {
+            return;
         }
-    }
+        if let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
+            let word = s as usize / 64;
+            if word >= seen.len() {
+                seen.resize(word + 1, 0);
+            }
+            seen[word] |= 1 << (s % 64);
+        }
+    };
+    plevel.for_each_ref_on(side, note);
     for (w, word) in seen.iter_mut().enumerate() {
         let mut bits = std::mem::take(word);
         while bits != 0 {
