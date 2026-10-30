@@ -184,6 +184,22 @@ fn referenced_slots_are_sorted_and_distinct() {
     // The scratch is ready for the next level.
     let again = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
     assert_eq!(again, &refs[..]);
+
+    // An affine parent level held as its description reads the same slots
+    // off its digits as its stored form reads off its pairs.
+    let affine_pairs: Vec<Vec<(u32, u32)>> = (0..16u32)
+        .map(|i| (0..4u32).map(|j| (j, (i / 2) * 8 + j * 2)).collect())
+        .collect();
+    let affine_lists: Vec<&[(u32, u32)]> = affine_pairs.iter().map(Vec::as_slice).collect();
+    let affine_tdd = toy(vec![BIG + 1; 64], &affine_lists);
+    let (_, parent, side) = boundary_marginal_levels(&affine_tdd)[0];
+    let implicit_parent = &affine_tdd.levels[parent.idx()];
+    assert!(implicit_parent.implicit().is_some());
+    let stored_parent = crate::test_helpers::stored_copy(implicit_parent);
+    assert!(stored_parent.implicit().is_none());
+    let want = referenced_marginal_slots(&stored_parent, side, &mut buf).to_vec();
+    let got = referenced_marginal_slots(implicit_parent, side, &mut buf);
+    assert_eq!(got, &want[..]);
 }
 
 /// Boundary compaction: unreferenced slots drop, the surviving ref is
