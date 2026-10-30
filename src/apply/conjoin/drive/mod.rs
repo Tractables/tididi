@@ -522,8 +522,12 @@ fn apply_and_held(
     if f.is_zero() || g.is_zero() {
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
+        let output = TddNodeId { vtree: f.output.vtree, local: ZERO };
+        if ws.is_none() {
+            return Ok(Conjoined::Built(crate::build::seat_canonical(eng, &vtree, levels, output)));
+        }
         return diagram::Assembly::from_levels(eng, vtree, levels, ws)
-            .finish(TddNodeId { vtree: f.output.vtree, local: ZERO })
+            .finish(output)
             .map(Conjoined::Built);
     }
 
@@ -616,7 +620,18 @@ fn apply_and_held(
     // made the minimization after a join as long as the diagram. A level the
     // relabelling route moved is its carrier's, but some subtree under it is
     // a product, so it is owed as built.
-    let finished = if plain {
+    let finished = if plain && out_local == ZERO {
+        for level in assembly.parts_mut().0 {
+            level.clear();
+        }
+        assembly
+            .finish_with_or_return(output, crate::diagram::Dirty::default(), &[], Some(&[]))
+            .map(|mut out| {
+                out.levels.certify(output);
+                out.dirty.set_loose(Some(Vec::new()));
+                out
+            })
+    } else if plain {
         // Which operand each level the sweep carried came from: 1 for `f`,
         // 2 for `g`, 0 for a level the conjunction built and for every
         // level outside the cone.
