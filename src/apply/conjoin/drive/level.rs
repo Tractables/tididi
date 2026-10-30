@@ -423,7 +423,6 @@ fn install_summed(
     /// installs it and noting each level installed.
     struct Summing<'l> {
         levels: &'l mut [TddLevel],
-        c: VtreeIdx,
         installed: Vec<VtreeIdx>,
     }
     impl InstallTarget for Summing<'_> {
@@ -435,6 +434,7 @@ fn install_summed(
             &mut self,
             vtree: &crate::vtree::Vtree,
             t: InternalLevel,
+            subsumed: bool,
             col: K::Col,
             computed: &mut [Option<K::Col>],
             store: &mut K::Store,
@@ -442,7 +442,7 @@ fn install_summed(
             let v = t.vtree_idx();
             debug_assert!(self.installed.len() < self.installed.capacity(), "reserved for every internal level of the subtree");
             self.installed.push(v);
-            if v != self.c {
+            if subsumed {
                 install_streamed::<K>(self.levels, vtree, t, col, computed, store);
                 return;
             }
@@ -456,7 +456,7 @@ fn install_summed(
     let internal = vtree.subtree(c).filter(|&x| !vtree.node(x).is_leaf()).count();
     let mut installed = Vec::new();
     eng.limits().reserve_exact(&mut installed, internal)?;
-    let mut target = Summing { levels, c, installed };
+    let mut target = Summing { levels, installed };
     cascade::<crate::value::IntFold, Summing<'_>>(&mut target, vtree, c, computed, &mut ());
     debug_assert!(target.levels[c.idx()].is_marginal(), "the cascade installs the summed child");
     Ok(target.installed)

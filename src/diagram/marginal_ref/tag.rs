@@ -20,32 +20,37 @@ pub(crate) fn inline_small_marginal_refs(
     // the level's `has_value_refs` markers.
     was_marginal: Option<&[bool]>,
 ) {
+    let closed = tdd.levels.is_closed();
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
     let vtree = &tdd.vtree;
     let levels = &mut tdd.levels;
     for (t, left, right) in vtree.internal_bottomup() {
-        inline_small_marginal_refs_at_level(levels, was_marginal, t, left, right);
+        if inline_small_marginal_refs_at_level(levels, was_marginal, t, left, right) {
+            levels.mark_changed(t);
+        }
     }
+    tdd.close_marked_levels(closed);
 }
 
-/// One internal level's share of [`inline_small_marginal_refs`].
+/// One internal level's share of [`inline_small_marginal_refs`]. Returns
+/// whether any count-marginal side was inlined at `t`.
 fn inline_small_marginal_refs_at_level(
     levels: &mut [TddLevel],
     was_marginal: Option<&[bool]>,
     t: crate::vtree::VtreeIdx,
     left: crate::vtree::VtreeIdx,
     right: crate::vtree::VtreeIdx,
-) {
+) -> bool {
     let ti = t.idx();
     if levels[ti].is_marginal() {
-        return;
+        return false;
     }
     let left_idx = left.idx();
     let right_idx = right.idx();
     let tag_left = levels[left_idx].is_marginal();
     let tag_right = levels[right_idx].is_marginal();
     if !tag_left && !tag_right {
-        return;
+        return false;
     }
     // Emit a side iff its child became marginal in this batch; the
     // snapshot is preferred since a rebuild clobbers the marker.
@@ -59,7 +64,9 @@ fn inline_small_marginal_refs_at_level(
             Some(wm) => !wm[right_idx],
             None => !levels[ti].has_value_refs(ChildSide::Right),
         };
-    if do_left || do_right {
+    let has_left_counts = do_left && levels[left_idx].marginal_counts().is_some();
+    let has_right_counts = do_right && levels[right_idx].marginal_counts().is_some();
+    if has_left_counts || has_right_counts {
         let [p, l, r] = levels.get_disjoint_mut([ti, left_idx, right_idx]).expect("distinct");
         p.inline_small_refs(
             do_left.then(|| l.marginal_counts()).flatten(),
@@ -69,10 +76,11 @@ fn inline_small_marginal_refs_at_level(
     // Mark the sides now carrying inline counts. Keyed off tag_left/tag_right
     // (the marginal-child predicate), not do_*: an already-inline side stays
     // marked so a later pass still skips it.
-    if tag_left {
+    if tag_left && !levels[ti].has_value_refs(ChildSide::Left) {
         levels[ti].set_has_value_refs(ChildSide::Left, true);
     }
-    if tag_right {
+    if tag_right && !levels[ti].has_value_refs(ChildSide::Right) {
         levels[ti].set_has_value_refs(ChildSide::Right, true);
     }
+    has_left_counts || has_right_counts
 }

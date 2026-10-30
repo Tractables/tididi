@@ -57,17 +57,42 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
         return Ok(());
     }
     let lim = eng.limits();
+    let mut poll = lim.gate();
+    let active_internal = |d: VtreeIdx, tdd: &Tdd| {
+        !vtree.node(d).is_leaf()
+            && !tdd.levels[d.idx()].is_marginal()
+            && tdd.levels[d.idx()].slot_count() > 0
+    };
+    if !targets.iter().any(|&d| active_internal(d, tdd)) {
+        for &d in targets {
+            poll.poll(tdd.levels[d.idx()].slot_count() as u64 + 1)?;
+        }
+        for &d in targets {
+            if vtree.node(d).is_leaf() {
+                K::sum_out_leaf(tdd, d, vtree, store);
+            }
+        }
+        return Ok(());
+    }
     let was_marginal: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
+    let mut in_targets = vec![false; vtree.num_nodes()];
+    for &d in targets {
+        if active_internal(d, tdd) {
+            in_targets[d.idx()] = true;
+        }
+    }
     // One column per vtree level, built on demand. (`CountVec` is not `Clone`,
     // so the buffer cannot use `vec![None; n]`.)
     let mut computed: Vec<Option<K::Col>> = (0..vtree.num_nodes()).map(|_| None).collect();
-    let mut poll = lim.gate();
 
     let mut cut = None;
     for &d in targets {
         if let Err(e) = poll.poll(tdd.levels[d.idx()].slot_count() as u64 + 1) {
             cut = Some(e);
             break;
+        }
+        if vtree.node(d).parent().is_some_and(|p| in_targets[p.idx()]) {
+            continue;
         }
         if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed, &mut poll) {
             cut = Some(e);
