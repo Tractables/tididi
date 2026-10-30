@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{EvalAlgebra, RationalWeights, ScaledFloat, SignedLog, WeightValue};
+use crate::diagram::{RationalWeights, ScaledFloat, SignedLog, WeightValue};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
@@ -55,11 +55,20 @@ pub struct WeightStore {
 }
 
 /// The immutable interpretation shared by computed columns.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct WeightConfig {
     algebra: Arc<RationalWeights>,
+    leaves: Arc<[std::sync::OnceLock<[WeightValue; crate::diagram::LEAF_WIDTH]>]>,
     arithmetic: Arithmetic,
 }
+
+impl PartialEq for WeightConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.algebra == other.algebra && self.arithmetic == other.arithmetic
+    }
+}
+
+impl Eq for WeightConfig {}
 
 impl std::fmt::Debug for WeightStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -150,7 +159,11 @@ impl WeightStore {
 
     /// A store over `algebra` with no level marginal yet.
     pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
-        Self { per_level: FxHashMap::default(), config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
+        let leaves = (0..algebra.num_vars()).map(|_| std::sync::OnceLock::new()).collect();
+        Self {
+            per_level: FxHashMap::default(),
+            config: WeightConfig { algebra: Arc::new(algebra), leaves, arithmetic },
+        }
     }
 
     /// A copy whose columns are reserved through `lim`, so a copy the host
@@ -224,15 +237,24 @@ impl WeightStore {
 
     /// Leaf base value for `(var, label)` in the active mode. The exact parsed
     /// weight from [`RationalWeights`] is authoritative; in a bounded mode it
-    /// is converted exactly once here (per leaf read).
+    /// is converted once per variable and cached across derived stores.
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightValue {
-        let r = self.config.algebra.leaf(var, label);
-        match self.config.arithmetic {
-            Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&r)),
-            Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(&r)),
-            Arithmetic::ExactRational => WeightValue::exact(r),
+        if label == LeafLabel::Zero {
+            return self.wzero();
         }
+        let convert = |r: &num_rational::BigRational| match self.config.arithmetic {
+            Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(r)),
+            Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(r)),
+            Arithmetic::ExactRational => WeightValue::exact(r.clone()),
+        };
+        let triple = self.config.leaves[var.idx()].get_or_init(|| {
+            let pos = self.config.algebra.pos_weight(var);
+            let neg = self.config.algebra.neg_weight(var);
+            let one = pos + neg;
+            [convert(&one), convert(pos), convert(neg)]
+        });
+        triple[label as usize].clone()
     }
 
     /// Set the per-node values of weight-marginal level `level` (one entry per
