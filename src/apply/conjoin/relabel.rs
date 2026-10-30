@@ -135,19 +135,16 @@ pub(super) fn take_relabel_level(
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
         || (sweep.ws.is_some()
-            && !f.levels[left.idx()].is_marginal()
-            && !g.levels[left.idx()].is_marginal()
-            && !f.levels[right.idx()].is_marginal()
-            && !g.levels[right.idx()].is_marginal())
+            && !run.entry_marginality.either(left.idx())
+            && !run.entry_marginality.either(right.idx()))
     {
         return Ok(false);
     }
     // The one-pair test before the marginal state, which reads three levels.
-    let (carrier_f, one) = match (single_pair(g, ti, shape.g.here), single_pair(f, ti, shape.f.here)) {
-        (Some(pair), _) => (true, pair),
-        (None, Some(pair)) => (false, pair),
-        (None, None) => return Ok(false),
-    };
+    let (g_one, f_one) = (single_pair(g, ti, shape.g.here), single_pair(f, ti, shape.f.here));
+    if g_one.is_none() && f_one.is_none() {
+        return Ok(false);
+    }
     let marginal = run.level_marginal(f, g, shape, sweep.targets);
     if marginal.is_target {
         return Ok(false);
@@ -157,7 +154,7 @@ pub(super) fn take_relabel_level(
     // seeding kept) because the narrow operand is constant-true over it:
     // each carrier reference to it, a slot or an inline count, is then its
     // own product, as the general routes pass that side through.
-    let carried = |c: VtreeIdx| {
+    let carried = |carrier_f: bool, c: VtreeIdx| {
         if sweep.vtree.node(c).is_leaf() {
             if carrier_f {
                 f.levels[c.idx()].is_marginal() && run.g_identity[c.idx()]
@@ -168,9 +165,24 @@ pub(super) fn take_relabel_level(
             run.carried.iter().any(|&(x, from_f)| x == c.idx() && from_f == carrier_f)
         }
     };
-    if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
-        return Ok(false);
-    }
+    let can_carry = |carrier_f: bool| {
+        (!marginal.left_any || carried(carrier_f, left))
+            && (!marginal.right_any || carried(carrier_f, right))
+    };
+    let (carrier_f, one) = match (g_one.filter(|_| can_carry(true)), f_one.filter(|_| can_carry(false))) {
+        (Some(pair), None) => (true, pair),
+        (None, Some(pair)) => (false, pair),
+        (Some(g_pair), Some(f_pair)) => {
+            if run.f_identity[left.idx()] && run.f_identity[right.idx()]
+                && !(run.g_identity[left.idx()] && run.g_identity[right.idx()])
+            {
+                (false, f_pair)
+            } else {
+                (true, g_pair)
+            }
+        }
+        (None, None) => return Ok(false),
+    };
     if marginal.left_any || marginal.right_any {
         note_read_through();
     }
@@ -194,17 +206,16 @@ pub(super) fn take_relabel_level(
 
     if lm.is_identity() && rm.is_identity() {
         // Every pair is its own product: the carrier's level is the output.
-        if marginal.left_any || marginal.right_any {
-            let (carrier_id, narrow_id) = if carrier_f {
-                (&mut run.f_identity[..], &mut run.g_identity[..])
-            } else {
-                (&mut run.g_identity[..], &mut run.f_identity[..])
-            };
-            if narrow_id[left.idx()] && narrow_id[right.idx()] {
-                narrow_id[ti] = true;
-                if width == 1 && carrier_id[left.idx()] && carrier_id[right.idx()] {
-                    carrier_id[ti] = true;
-                }
+        let (carrier_id, narrow_id) = if carrier_f {
+            (&mut run.f_identity[..], &mut run.g_identity[..])
+        } else {
+            (&mut run.g_identity[..], &mut run.f_identity[..])
+        };
+        let whole_subtree = narrow_id[left.idx()] && narrow_id[right.idx()];
+        if whole_subtree {
+            narrow_id[ti] = true;
+            if width == 1 && carrier_id[left.idx()] && carrier_id[right.idx()] {
+                carrier_id[ti] = true;
             }
         }
         match carrier_f {
@@ -212,7 +223,9 @@ pub(super) fn take_relabel_level(
             false => g.carry(eng.limits(), ti, &mut run.levels[ti])?,
         }
         run.carried.push((ti, carrier_f));
-        run.relabel_moved.push(ti);
+        if !whole_subtree {
+            run.relabel_moved.push(ti);
+        }
         publish_identity_level(run.products, ti, width);
         run.products.note_complete(ti);
         note_relabelled(true);
@@ -225,8 +238,8 @@ pub(super) fn take_relabel_level(
     let mut map = pools.relabel_map.checkout(eng);
     let carrier = if carrier_f { &f.levels[ti] } else { &g.levels[ti] };
     let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
-    // A plain conjunction's seat closes the level as it stands.
-    if run.plain {
+    // An unfiltered, unquantified, unsummed conjunction's seat closes the level as it stands.
+    if run.plain || sweep.keeps_left_pairs() {
         run.levels[ti].leave_live_pairs(pairs);
     }
     let nodes = run.levels[ti].nodes().len();

@@ -97,7 +97,11 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
 /// batch may not run on them.
 fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
     if let Some(mut ws) = f.weights.take() {
-        let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws);
+        let r = if ws.arithmetic() == crate::diagram::Arithmetic::ScaledFloat {
+            fold::marginalize_targets::<crate::value::FloatFold>(eng, f, levels, vtree, &mut ws)
+        } else {
+            fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws)
+        };
         f.weights = Some(ws);
         r
     } else {

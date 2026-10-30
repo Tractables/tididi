@@ -79,6 +79,19 @@ pub(super) struct Sweep<'a, 'filter> {
     pub(super) kept: Operands<Option<LevelCounts>>,
 }
 
+impl Sweep<'_, '_> {
+    /// Whether the seat closes every built level as it stands, without a
+    /// filter, existential collapse or marginalization pass dropping levels
+    /// or rewriting references after the level build.
+    pub(super) fn keeps_left_pairs(&self) -> bool {
+        self.quantified.is_empty()
+            && self.filter.is_none()
+            && self.targets.is_empty()
+            && !self.count_root
+            && self.sum_child.is_none()
+    }
+}
+
 /// Walk the vtree bottom-up, building one level at a time.
 ///
 /// At each level the product `f[i] ∧ g[j]` is computed over all node pairs,
@@ -250,9 +263,9 @@ fn build_level(
     }
     if run.plain && !taken {
         note_operand_level(run, f, g, vtree, t);
-    } else if !taken {
-        // The live pairs the level's build left are kept by the seat of a
-        // plain conjunction only.
+    } else if !taken && !sweep.keeps_left_pairs() {
+        // The live pairs the level's build left are kept by the seat of an
+        // unfiltered, unquantified, unsummed conjunction only.
         run.levels[t.idx()].forget_left_pairs();
     }
     // Release this level's children's grid regions for a later level to
@@ -367,10 +380,9 @@ pub(crate) enum ConjoinMode {
     Sum(VtreeIdx),
 }
 
-/// Conjoin structural, unweighted operands, returning them intact on refusal,
+/// Conjoin operands, returning them intact on refusal,
 /// with each operand's free levels ([`ApplyRun::cone`]) in `free`.
 pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
-    debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
     apply_and_held(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
         .map(Conjoined::diagram)
 }
@@ -492,19 +504,43 @@ fn apply_and_held(
     // The weight store follows the diagram: the operands' stores merge into the
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
-    // so the merge loses nothing.
-    let take_weights = |op: &mut Held<'_>| match op {
-        Held::Owned(op) => Ok(op.weights.take()),
+    // so the merge loses nothing. When restoring (`keep`), owned stores stay on
+    // their operands until the conjunction succeeds so a refusal leaves them
+    // untouched.
+    let merge_weights = |a: Option<crate::diagram::WeightStore>, b: Option<crate::diagram::WeightStore>| match (a, b) {
+        (Some(mut a), Some(b)) => {
+            a.absorb(b);
+            Some(a)
+        }
+        (a, b) => a.or(b),
+    };
+    let clone_borrowed = |op: &Held<'_>| match op {
+        Held::Owned(_) => Ok(None),
         Held::Borrowed(op) => op.weights.as_ref().map(|ws| ws.try_clone_on(lim)).transpose(),
     };
-    let ws: Option<crate::diagram::WeightStore> =
-        match (take_weights(f)?, take_weights(g)?) {
-            (Some(mut a), Some(b)) => {
-                a.absorb(b);
-                Some(a)
-            }
-            (a, b) => a.or(b),
+    let (ws, f_borrowed_ws, g_borrowed_ws) = if keep {
+        let f_b = clone_borrowed(f)?;
+        let g_b = clone_borrowed(g)?;
+        let ws = f.weights.as_ref().or(g.weights.as_ref()).map(crate::diagram::WeightStore::empty_like);
+        (ws, f_b, g_b)
+    } else {
+        let take_weights = |op: &mut Held<'_>| match op {
+            Held::Owned(op) => Ok(op.weights.take()),
+            Held::Borrowed(_) => clone_borrowed(op),
         };
+        (merge_weights(take_weights(f)?, take_weights(g)?), None, None)
+    };
+    let take_kept_weights = |f: &mut Held<'_>, g: &mut Held<'_>, f_b: Option<crate::diagram::WeightStore>, g_b: Option<crate::diagram::WeightStore>| {
+        let f_ws = match f {
+            Held::Owned(op) => op.weights.take(),
+            Held::Borrowed(_) => f_b,
+        };
+        let g_ws = match g {
+            Held::Owned(op) => op.weights.take(),
+            Held::Borrowed(_) => g_b,
+        };
+        merge_weights(f_ws, g_ws)
+    };
     debug_assert!(
         ws.is_some()
             || !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_weight_marginal()),
@@ -526,9 +562,11 @@ fn apply_and_held(
         if ws.is_none() {
             return Ok(Conjoined::Built(crate::build::seat_canonical(eng, &vtree, levels, output)));
         }
-        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
-            .finish(output)
-            .map(Conjoined::Built);
+        let mut out = diagram::Assembly::from_levels(eng, vtree, levels, ws).finish(output)?;
+        if keep {
+            out.weights = take_kept_weights(f, g, f_borrowed_ws, g_borrowed_ws);
+        }
+        return Ok(Conjoined::Built(out));
     }
 
     let mut assembly = diagram::Assembly::from_levels(
@@ -614,6 +652,32 @@ fn apply_and_held(
     let restoring = run.restoring;
     let output = TddNodeId { vtree: out_vtree, local: out_local };
 
+    // Which operand each level the sweep carried came from: 1 for `f`, 2 for
+    // `g`, 0 for a level the conjunction built or the relabelling route moved
+    // and for every level outside the cone.
+    let carrier_table = || {
+        let mut carrier = vec![0u8; num_nodes];
+        for &(t, from_f) in &carried {
+            carrier[t] = if from_f { 1 } else { 2 };
+        }
+        for &t in &relabel_moved {
+            carrier[t] = 0;
+        }
+        carrier
+    };
+    let built_levels = |carrier: &[u8]| -> Vec<VtreeIdx> {
+        let mut built = Vec::with_capacity(cone.built.len());
+        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        built
+    };
+    let leave_relabel_kept = |levels: &mut [TddLevel], carrier: &[u8]| {
+        for &(t, from_f) in &carried {
+            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
+                levels[t].leave_kept_pairs();
+            }
+        }
+    };
+
     // A plain conjunction changed no level an identity fast path carried,
     // and such a level brings its whole subtree along, since the other
     // operand is the identity under it. So the result owes contraction the
@@ -633,16 +697,7 @@ fn apply_and_held(
                 out
             })
     } else if plain {
-        // Which operand each level the sweep carried came from: 1 for `f`,
-        // 2 for `g`, 0 for a level the conjunction built and for every
-        // level outside the cone.
-        let mut carrier = vec![0u8; num_nodes];
-        for &(t, from_f) in &carried {
-            carrier[t] = if from_f { 1 } else { 2 };
-        }
-        for &t in &relabel_moved {
-            carrier[t] = 0;
-        }
+        let carrier = carrier_table();
         // The result's loose levels (`loose::loose_levels`): a carried level
         // where its carrier has it loose, and a level under one the
         // conjunction built where the operands and the sibling's product
@@ -661,8 +716,7 @@ fn apply_and_held(
         // The levels it built are also all it changed, and so all the seat
         // closes: a carried level, and a free one, is as the operand's end
         // left it.
-        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
-        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        let built = built_levels(&carrier);
         // The contraction is owed the built levels under which the
         // conjunction can have given two nodes equal contexts
         // ([`adds_no_twins`]); the leaf contraction every built level. A
@@ -679,12 +733,7 @@ fn apply_and_held(
         // A level the relabelling route moved is as its carrier's last close
         // left it; where that diagram was closed when the sweep began, the
         // live pairs it keeps are left for the seat's close.
-        let levels = assembly.parts_mut().0;
-        for &(t, from_f) in &carried {
-            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
-                levels[t].leave_kept_pairs();
-            }
-        }
+        leave_relabel_kept(assembly.parts_mut().0, &carrier);
         assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));
@@ -696,13 +745,7 @@ fn apply_and_held(
             out
         })
     } else if quantified.is_empty() && unfiltered {
-        let mut carrier = vec![0u8; num_nodes];
-        for &(t, from_f) in &carried {
-            carrier[t] = if from_f { 1 } else { 2 };
-        }
-        for &t in &relabel_moved {
-            carrier[t] = 0;
-        }
+        let mut carrier = carrier_table();
         if ws.as_ref().is_some_and(|w| !w.is_bounded()) {
             let levels = assembly.parts_mut().0;
             for &leaf_idx in &canon_leaves {
@@ -714,11 +757,18 @@ fn apply_and_held(
                 }
             }
         }
-        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
-        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        let built = built_levels(&carrier);
         let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         let changed = (closed.f && closed.g && summed.is_none()).then_some(&built[..]);
-        assembly.finish_with_or_return(output, owed, &built, changed)
+        if targets.is_empty() && changed.is_some() {
+            leave_relabel_kept(assembly.parts_mut().0, &carrier);
+        }
+        assembly.finish_with_or_return(output, owed, &built, changed).map(|mut out| {
+            if targets.is_empty() {
+                carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
+            }
+            out
+        })
     } else {
         assembly.finish_or_return(output)
     };
@@ -737,6 +787,9 @@ fn apply_and_held(
             return Err(e);
         }
     };
+    if restoring && out.weights.is_some() {
+        out.weights = take_kept_weights(f, g, f_borrowed_ws, g_borrowed_ws);
+    }
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count. A plain
