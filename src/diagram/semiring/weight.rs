@@ -210,7 +210,12 @@ fn frexp_normal(x: f64) -> (f64, i64) {
 /// they stand under.
 fn top_bits(n: &num_bigint::BigUint) -> (f64, i64) {
     let shift = n.bits().saturating_sub(64);
-    ((n >> shift).to_u64().expect("64 bits fit a u64") as f64, shift as i64)
+    let top = if shift == 0 {
+        n.to_u64().expect("64 bits fit a u64")
+    } else {
+        (n >> shift).to_u64().expect("64 bits fit a u64")
+    };
+    (top as f64, shift as i64)
 }
 
 impl ScaledFloat {

@@ -134,6 +134,11 @@ pub(super) fn take_relabel_level(
         || (sweep.count_root && t == sweep.vtree.root())
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
+        || (sweep.ws.is_some()
+            && !f.levels[left.idx()].is_marginal()
+            && !g.levels[left.idx()].is_marginal()
+            && !f.levels[right.idx()].is_marginal()
+            && !g.levels[right.idx()].is_marginal())
     {
         return Ok(false);
     }
@@ -189,15 +194,17 @@ pub(super) fn take_relabel_level(
 
     if lm.is_identity() && rm.is_identity() {
         // Every pair is its own product: the carrier's level is the output.
-        let (carrier_id, narrow_id) = if carrier_f {
-            (&mut run.f_identity[..], &mut run.g_identity[..])
-        } else {
-            (&mut run.g_identity[..], &mut run.f_identity[..])
-        };
-        if narrow_id[left.idx()] && narrow_id[right.idx()] {
-            narrow_id[ti] = true;
-            if width == 1 && carrier_id[left.idx()] && carrier_id[right.idx()] {
-                carrier_id[ti] = true;
+        if marginal.left_any || marginal.right_any {
+            let (carrier_id, narrow_id) = if carrier_f {
+                (&mut run.f_identity[..], &mut run.g_identity[..])
+            } else {
+                (&mut run.g_identity[..], &mut run.f_identity[..])
+            };
+            if narrow_id[left.idx()] && narrow_id[right.idx()] {
+                narrow_id[ti] = true;
+                if width == 1 && carrier_id[left.idx()] && carrier_id[right.idx()] {
+                    carrier_id[ti] = true;
+                }
             }
         }
         match carrier_f {

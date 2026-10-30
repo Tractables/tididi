@@ -455,14 +455,7 @@ fn conjoin_kept<'a>(
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
-        return match eng.and(&*f, &*g) {
-            Ok(out) => {
-                recycle(eng, f);
-                recycle(eng, g);
-                Ok(out)
-            }
-            Err(error) => Err(AndRefused { error, f, g }),
-        };
+        return eng.and(&*f, &*g).map_err(|error| AndRefused { error, f, g });
     }
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
     let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
@@ -891,7 +884,8 @@ impl crate::Engine {
             Some(c) => ConjoinMode::Sum(c),
             None => ConjoinMode::Build,
         };
-        let (out, _) = conjoin_cow_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
+        let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
+        let (out, _) = conjoin_cow_as(self, f, g, summed, VtreeMask::default(), mode)?;
         let mut out = match out {
             // The root summed the target out as it found its pairs, leaving
             // what the pass below and its pair fusion leave but for the
