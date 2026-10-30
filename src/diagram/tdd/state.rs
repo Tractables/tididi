@@ -182,6 +182,13 @@ impl LevelStorage {
         std::mem::swap(&mut own.pairs, &mut level.pairs);
     }
 
+    /// Set or clear level `t`'s [`TddLevel::has_value_refs`] marker without
+    /// the mutable access [`DerefMut`] records: a side marker changes neither
+    /// the level's pairs nor the diagram's counts or canonical form.
+    pub(crate) fn set_has_value_refs(&mut self, t: usize, side: crate::diagram::ChildSide, v: bool) {
+        self.levels[t].set_has_value_refs(side, v);
+    }
+
     /// Record that every level is closed again: the levels are back as they
     /// were when [`is_closed`](Self::is_closed) last held, as a rollback puts
     /// them back or a renumbering moves them.

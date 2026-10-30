@@ -212,6 +212,10 @@ impl WeightStore {
     /// a pure function of the weight table and therefore already equal.
     pub(crate) fn absorb(&mut self, other: Self) {
         debug_assert!(self.compatible(&other), "merged columns must use compatible weights");
+        if self.per_level.is_empty() {
+            self.per_level = other.per_level;
+            return;
+        }
         for (level, values) in other.per_level {
             self.per_level.entry(level).or_insert(values);
         }

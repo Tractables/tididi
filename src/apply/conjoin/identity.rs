@@ -64,7 +64,6 @@ pub(super) fn init_leaf_identity_over(
     // Nodes are stored leaves first.
     let leaves = vtree.num_leaves() as usize;
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
-    let weighted = tdd.weights.is_some();
     let mut has_any_marginal = false;
     for &t in scanned {
         let (left, right) = vtree.children(t);
@@ -72,7 +71,7 @@ pub(super) fn init_leaf_identity_over(
         let right_leaf = right.idx() < leaves;
         let level = &tdd.levels[t.idx()];
         if level.is_marginal() {
-            if weighted {
+            if level.is_weight_marginal() {
                 if left_leaf { buf[left.idx()] = false; }
                 if right_leaf { buf[right.idx()] = false; }
             } else {

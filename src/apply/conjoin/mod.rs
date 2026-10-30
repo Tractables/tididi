@@ -452,11 +452,7 @@ fn conjoin_kept<'a>(
         (marginal | l.is_marginal(), width.max(l.slot_count()))
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
-    if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
-        fill_free_cow(&mut f, free.f);
-        fill_free_cow(&mut g, free.g);
-        return eng.and(&*f, &*g).map_err(|error| AndRefused { error, f, g });
-    }
+    let weighted_or_marginal = f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal;
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
     let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
         fill_free_cow(&mut f, free.f);
@@ -466,10 +462,13 @@ fn conjoin_kept<'a>(
         }
         AndRefused { error, f, g }
     };
-    if same_structure(&f, &g, free) {
+    if weighted_or_marginal && let Err(error) = crate::apply::shared_weights([&*f, &*g].into_iter()) {
+        return Err(give_back(error, f, g));
+    }
+    if !f_marginal && !g_marginal && same_structure(&f, &g, free) {
         // f ∧ f = f, as two owned operands return it: f itself where owned,
         // its free levels built, a copy of it where borrowed.
-        let out = match f {
+        let mut out = match f {
             Cow::Owned(mut out) => {
                 fill_free(&mut out, free.f);
                 out
@@ -479,6 +478,9 @@ fn conjoin_kept<'a>(
                 Err(error) => return Err(give_back(error, Cow::Borrowed(borrowed), g)),
             },
         };
+        if out.weights.is_none() {
+            out.weights = g.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
+        }
         recycle(eng, g);
         return Ok(out);
     }
@@ -491,7 +493,14 @@ fn conjoin_kept<'a>(
         _ => None,
     };
     let (f_known, g_known) = (known(&f, free.f), known(&g, free.g));
-    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
+    let cone_free = if weighted_or_marginal {
+        fill_free_cow(&mut f, free.f);
+        fill_free_cow(&mut g, free.g);
+        Operands::default()
+    } else {
+        free
+    };
+    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), cone_free) {
         Ok(out) => {
             recycle(eng, f);
             recycle(eng, g);

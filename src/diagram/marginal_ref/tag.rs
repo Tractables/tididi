@@ -1,9 +1,8 @@
 //! The end-of-apply pass that inlines small counts into the references
 //! toward a marginal child.
 
-use crate::diagram::level::TddLevel;
 use super::refs::ChildSide;
-use crate::diagram::tdd::Tdd;
+use crate::diagram::tdd::{LevelStorage, Tdd};
 
 /// Replace every bare slot reference toward a marginal child whose count is
 /// small enough with the count itself (bit 30 set); a larger count keeps
@@ -20,22 +19,29 @@ pub(crate) fn inline_small_marginal_refs(
     // the level's `has_value_refs` markers.
     was_marginal: Option<&[bool]>,
 ) {
+    if !tdd.has_marginal_level() {
+        return;
+    }
     let closed = tdd.levels.is_closed();
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
     let vtree = &tdd.vtree;
     let levels = &mut tdd.levels;
+    let mut any_changed = false;
     for (t, left, right) in vtree.internal_bottomup() {
         if inline_small_marginal_refs_at_level(levels, was_marginal, t, left, right) {
             levels.mark_changed(t);
+            any_changed = true;
         }
     }
-    tdd.close_marked_levels(closed);
+    if any_changed || !closed {
+        tdd.close_marked_levels(closed);
+    }
 }
 
 /// One internal level's share of [`inline_small_marginal_refs`]. Returns
 /// whether any count-marginal side was inlined at `t`.
 fn inline_small_marginal_refs_at_level(
-    levels: &mut [TddLevel],
+    levels: &mut LevelStorage,
     was_marginal: Option<&[bool]>,
     t: crate::vtree::VtreeIdx,
     left: crate::vtree::VtreeIdx,
@@ -77,10 +83,10 @@ fn inline_small_marginal_refs_at_level(
     // (the marginal-child predicate), not do_*: an already-inline side stays
     // marked so a later pass still skips it.
     if tag_left && !levels[ti].has_value_refs(ChildSide::Left) {
-        levels[ti].set_has_value_refs(ChildSide::Left, true);
+        levels.set_has_value_refs(ti, ChildSide::Left, true);
     }
     if tag_right && !levels[ti].has_value_refs(ChildSide::Right) {
-        levels[ti].set_has_value_refs(ChildSide::Right, true);
+        levels.set_has_value_refs(ti, ChildSide::Right, true);
     }
     has_left_counts || has_right_counts
 }
