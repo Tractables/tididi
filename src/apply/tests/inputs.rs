@@ -31,8 +31,12 @@ fn negation_and_disjunction_reject_summed_out_structure() {
     assert_canonical(&f);
     let first = f.levels.iter().position(|level| level.is_marginal()).unwrap();
     let error = OperationError::MarginalLevel(VtreeIdx(first as u32));
+    let mut disjoint = Tdd::clause(&tree, [1, 3]).unwrap();
+    let leaf1 = tree.leaf_of(VarId(1)).unwrap();
+    let leaf3 = tree.leaf_of(VarId(3)).unwrap();
+    eng.marginalize_levels(&mut disjoint, &[leaf1, leaf3]).unwrap();
     let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    assert_eq!(eng.negate(f.clone()).unwrap_err(), error);
+    assert_eq!(eng.negate(disjoint).unwrap_err(), OperationError::MarginalLevel(leaf3));
     for other in [Tdd::zero(&tree), Tdd::one(&tree)] {
         assert_canonical(&other);
         assert_eq!(eng.or(f.clone(), other.clone()).unwrap_err(), error);

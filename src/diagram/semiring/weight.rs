@@ -75,6 +75,17 @@ impl SignedLog {
         SignedLog { ln_abs, sign: self.sign * o.sign }
     }
 
+    /// Additive inverse (`-self`).
+    #[inline]
+    #[must_use]
+    pub(crate) fn neg(&self) -> SignedLog {
+        if self.is_zero() {
+            SignedLog::zero()
+        } else {
+            SignedLog { ln_abs: self.ln_abs, sign: -self.sign }
+        }
+    }
+
     /// Signed log-sum-exp accumulate: self += o.
     pub fn add_assign(&mut self, o: &SignedLog) {
         // An accumulator whose magnitude underflowed is zero; write it as the
@@ -310,6 +321,17 @@ impl ScaledFloat {
             ScaledFloat { mantissa: m * 2.0, exponent: exponent - 1 }
         } else {
             ScaledFloat { mantissa: m, exponent }
+        }
+    }
+
+    /// Additive inverse (`-self`).
+    #[inline]
+    #[must_use]
+    pub(crate) fn neg(&self) -> ScaledFloat {
+        if self.is_zero() {
+            ScaledFloat::ZERO
+        } else {
+            ScaledFloat { mantissa: -self.mantissa, exponent: self.exponent }
         }
     }
 
@@ -749,6 +771,21 @@ impl WeightValue {
             _ => WeightValue::exact(r.clone()),
         };
         self.mul(&scale)
+    }
+
+    /// Additive inverse (`-self`).
+    #[inline]
+    #[must_use]
+    pub(crate) fn neg(&self) -> WeightValue {
+        match self {
+            WeightValue::ExactSmall(n) => match n.checked_neg() {
+                Some(neg) => WeightValue::ExactSmall(neg),
+                None => WeightValue::Exact(-rational_of_small(*n)),
+            },
+            WeightValue::Exact(r) => WeightValue::exact(-r),
+            WeightValue::Log(s) => WeightValue::Log(s.neg()),
+            WeightValue::Scaled(s) => WeightValue::Scaled(s.neg()),
+        }
     }
 }
 
