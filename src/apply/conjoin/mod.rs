@@ -1022,7 +1022,8 @@ fn collapse_target_subtrees(
     g: &Tdd,
     mask: &mut [bool],
 ) {
-    if f.weights.is_some() || g.weights.is_some() {
+    let weighted = f.weights.is_some() || g.weights.is_some();
+    if weighted && mask[vtree.root().idx()] {
         return;
     }
     let min_grid = sparse::sparse_thresholds(eng.limits()).min_grid as u64;
@@ -1044,10 +1045,32 @@ fn collapse_target_subtrees(
         if c == vtree.root() || !is_scheduled(c, mask) {
             continue;
         }
+        let is_relabel = |u: VtreeIdx| {
+            single_pair(f, u.idx(), f.level(u).slot_count()).is_some()
+                || single_pair(g, u.idx(), g.level(u).slot_count()).is_some()
+        };
         let whole_structural = vtree
             .subtree(c)
             .all(|u| !f.level(u).is_marginal() && !g.level(u).is_marginal());
-        let can_sum_at_parent = whole_structural
+        let marginal_spine_relabels = whole_structural
+            || vtree.subtree(c).all(|u| {
+                f.level(u).is_marginal()
+                    || g.level(u).is_marginal()
+                    || is_relabel(u)
+                    || vtree
+                        .subtree(u)
+                        .all(|x| !f.level(x).is_marginal() && !g.level(x).is_marginal())
+            });
+        if weighted && !marginal_spine_relabels {
+            continue;
+        }
+        let sibling_marginal = vtree.node(c).parent().is_some_and(|p| {
+            let (l, r) = vtree.children(p);
+            let s = if l == c { r } else { l };
+            f.level(s).is_marginal() || g.level(s).is_marginal() || mask[s.idx()]
+        });
+        let can_sum_at_parent = !weighted
+            && whole_structural
             && vtree.node(c).parent().is_some_and(|p| {
                 f.level(p).slot_count() == 1
                     && g.level(p).slot_count() == 1
@@ -1063,16 +1086,10 @@ fn collapse_target_subtrees(
             !vtree.node(u).is_leaf()
                 && !f.level(u).is_marginal()
                 && !g.level(u).is_marginal()
+                && (!weighted || (f.level(u).implicit().is_none() && g.level(u).implicit().is_none()))
                 && is_big(u)
         });
-        let sibling_marginal = vtree.node(c).parent().is_some_and(|p| {
-            let (l, r) = vtree.children(p);
-            let s = if l == c { r } else { l };
-            f.level(s).is_marginal() || g.level(s).is_marginal() || mask[s.idx()]
-        });
-        let relabels_c = !can_sum_at_parent
-            && (single_pair(f, c.idx(), f.level(c).slot_count()).is_some()
-                || single_pair(g, c.idx(), g.level(c).slot_count()).is_some());
+        let relabels_c = !can_sum_at_parent && is_relabel(c);
         let keep_root = whole_structural && !sibling_marginal && !relabels_c;
         if has_big || can_sum_at_parent {
             for d in vtree.subtree(c) {
