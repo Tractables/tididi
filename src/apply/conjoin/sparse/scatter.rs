@@ -49,6 +49,15 @@ pub(super) struct Emit<'a> {
     pub(super) live: &'a mut Option<usize>,
 }
 
+/// A walked f parent's output arenas and candidate start.
+pub(super) struct NodeOut<'a> {
+    pub(super) level: &'a mut TddLevel,
+    pub(super) pl_output: &'a mut Vec<ProductEntry>,
+    pub(super) p1: usize,
+    pub(super) base: usize,
+    pub(super) duplicates_legal: bool,
+}
+
 /// What a walk into the level's nodes ([`Collect::Nodes`]) made of the level.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Made {
@@ -111,12 +120,10 @@ pub(super) enum Inner {
 // a measurement of one step then says what it means, instead of moving a step
 // the change never touched.
 #[inline(never)]
-#[expect(clippy::too_many_arguments)]
 pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    f_level: &TddLevel,
-    g_level: &TddLevel,
+    (f_level, g_level): (&TddLevel, &TddLevel),
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     collect: Collect<'_, '_>,
@@ -159,9 +166,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     let listed = Listed { owned: &owned[..f_outer], plain };
                     let (f, none) = (shape.f.here, GroupedView { offsets: &[], entries: &[] });
                     return if ones {
-                        walk_owned::<SWAPPED, true, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
+                        walk_owned::<SWAPPED, true, true, false>(eng, (node_owners, emit), (f_level, f), none, listed, to)
                     } else {
-                        walk_owned::<SWAPPED, false, true, false>(eng, node_owners, emit, f_level, f, none, listed, to)
+                        walk_owned::<SWAPPED, false, true, false>(eng, (node_owners, emit), (f_level, f), none, listed, to)
                     };
                 }
                 collect => collect,
@@ -189,9 +196,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     // Without One, a product held for every label is held
                     // with both literals.
                     return match (ones, held) {
-                        (true, _) => walk_owned::<SWAPPED, true, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
-                        (false, false) => walk_owned::<SWAPPED, false, false, false>(eng, node_owners, emit, f_level, f, outer, none, to),
-                        (false, true) => walk_owned::<SWAPPED, false, false, true>(eng, node_owners, emit, f_level, f, outer, none, to),
+                        (true, _) => walk_owned::<SWAPPED, true, false, false>(eng, (node_owners, emit), (f_level, f), outer, none, to),
+                        (false, false) => walk_owned::<SWAPPED, false, false, false>(eng, (node_owners, emit), (f_level, f), outer, none, to),
+                        (false, true) => walk_owned::<SWAPPED, false, false, true>(eng, (node_owners, emit), (f_level, f), outer, none, to),
                     };
                 }
                 collect => collect,
@@ -460,7 +467,7 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
                     lim.try_push(node_owners, entry.g_parent)
                 })?;
                 candidates += node_owners.len();
-                emit_walked(eng, emit, level, out, p1, base, node_owners, duplicates_legal)
+                emit_walked(eng, emit, NodeOut { level, pl_output: out, p1, base, duplicates_legal }, node_owners)
             })?;
             *live = Some(candidates);
             Ok(())
@@ -627,14 +634,11 @@ impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
 /// each product's g node holds it with both literals: each slot a pair's
 /// label meets holds a candidate, and a product's g pairs are two. Returns
 /// what the walk made of the level and the live pairs of the nodes it made.
-#[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool, N: FNodes<'f>>(
     eng: &Engine,
-    node_owners: &mut Vec<u32>,
-    emit: &mut EmitScratch,
-    f_level: N,
-    f_nodes: usize,
+    (node_owners, emit): (&mut Vec<u32>, &mut EmitScratch),
+    (f_level, f_nodes): (N, usize),
     outer: GroupedView<'_, OwnedProduct>,
     dense: Listed<'_>,
     to: Emit<'_>,
@@ -649,7 +653,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
     // The live pairs of the nodes made: the copied nodes' and then one a
     // candidate.
     let (copied, mut made_pairs) = if DENSE {
-        match copy_nodes::<SWAPPED, ONES, N>(eng, &f_level, f_nodes, dense, level, start, out, &mut ticker)? {
+        match copy_nodes::<SWAPPED, ONES, N>(eng, (&f_level, f_nodes), dense, (level, start, out), &mut ticker)? {
             Copied::Level(pairs) => return Ok((Made::F, pairs)),
             Copied::Nodes(made, pairs) if empty && made == f_level.len() => return Ok((Made::CopiedF, pairs)),
             Copied::Nodes(made, pairs) => (made, pairs),
@@ -757,7 +761,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                     // pairs and the node's candidates so far, and it is
                     // the room's end.
                     (at, first, next, room_end) =
-                        tri!(unsafe { push_past_room(eng, level.pairs.stored_mut(), at, first, next, pair, start, p1, f_nodes, &mut charged) });
+                        tri!(unsafe { push_past_room(eng, level.pairs.stored_mut(), (at, first, next), pair, (start, p1, f_nodes), &mut charged) });
                 }
                 if g_parent == owner {
                     owner ^= turn;
@@ -884,7 +888,7 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
         }
         if owner == MIXED {
             settle!();
-            emit_mixed_apart(eng, emit, level, out, p1, base, node_owners, duplicates_legal)?;
+            emit_mixed_apart(eng, emit, NodeOut { level, pl_output: out, p1, base, duplicates_legal }, node_owners)?;
             retake!();
             continue;
         }
@@ -952,10 +956,11 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 }
             } else {
                 settle!();
+                let node_out = NodeOut { level, pl_output: out, p1, base, duplicates_legal };
                 if matches!(count, 2 | 4 | 6 | 8) {
-                    emit_alternating(eng, level, out, p1, base, owner, owner ^ turn, count, duplicates_legal)?;
+                    emit_alternating(eng, node_out, owner, owner ^ turn, count)?;
                 } else {
-                    emit_turns(eng, emit, level, out, p1, base, owner, turn, node_owners, duplicates_legal)?;
+                    emit_turns(eng, emit, node_out, owner, turn, node_owners)?;
                 }
                 retake!();
             }
@@ -1047,14 +1052,11 @@ fn walkable(f_level: &TddLevel) -> bool {
 }
 
 /// [`owner_walk_nodes`] over f's nodes, stored or implied ([`walkable`]).
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn walk_owned<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool>(
     eng: &Engine,
-    node_owners: &mut Vec<u32>,
-    emit: &mut EmitScratch,
-    f_level: &TddLevel,
-    f_nodes: usize,
+    (node_owners, emit): (&mut Vec<u32>, &mut EmitScratch),
+    (f_level, f_nodes): (&TddLevel, usize),
     outer: GroupedView<'_, OwnedProduct>,
     dense: Listed<'_>,
     to: Emit<'_>,
@@ -1065,11 +1067,11 @@ fn walk_owned<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BO
     let Emit { level, out, duplicates_legal, thresholds, live } = to;
     let to = Emit { level, out, duplicates_legal, thresholds, live: &mut *live };
     let (made, pairs) = match f_level.stored() {
-        Some(stored) => owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, node_owners, emit, stored, f_nodes, outer, dense, to),
+        Some(stored) => owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, (node_owners, emit), (stored, f_nodes), outer, dense, to),
         None => {
             let nodes = ImpliedNodes::of(f_level).expect("an implicit level the walk reads has one pair a node");
             crate::apply::conjoin::note_implied_walk(DENSE);
-            owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, node_owners, emit, nodes, f_nodes, outer, dense, to)
+            owner_walk_nodes::<SWAPPED, ONES, DENSE, BOTH, _>(eng, (node_owners, emit), (nodes, f_nodes), outer, dense, to)
         }
     }?;
     *live = Some(pairs);
@@ -1226,19 +1228,14 @@ fn owned_bucket(view: GroupedView<'_, OwnedProduct>, outer: u32) -> &[OwnedProdu
 ///
 /// `at` is `arena`'s start, `first` and then `next` lie in its allocation,
 /// in that order, and the slots below `next` are initialized.
-#[expect(clippy::too_many_arguments)]
 #[cold]
 #[inline(never)]
 unsafe fn push_past_room(
     eng: &Engine,
     arena: &mut Vec<ChildPair>,
-    at: *mut ChildPair,
-    first: *mut ChildPair,
-    next: *mut ChildPair,
+    (at, first, next): (*mut ChildPair, *mut ChildPair, *mut ChildPair),
     pair: ChildPair,
-    start: usize,
-    p1: usize,
-    nodes: usize,
+    (start, p1, nodes): (usize, usize, usize),
     charged: &mut usize,
 ) -> Result<PlacesPastRoom, OperationError> {
     // Safety: as the caller's.
@@ -1494,12 +1491,10 @@ enum Copied {
 ///
 /// With `PLAIN` the entries are [`Listed::plain`]: a node's units are two a
 /// pair, and a pair of either literal is copied by the slot of its label.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     lim: &crate::limits::Limits,
-    stored: crate::diagram::StoredPairs<'_>,
-    f_nodes: usize,
+    (stored, f_nodes): (crate::diagram::StoredPairs<'_>, usize),
     entries: Listed<'_>,
     mut n: usize,
     room: (usize, usize),
@@ -1600,16 +1595,12 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
 /// [`Copied::Level`] where they are all of f's nodes and the level would
 /// hold f's nodes and arena as f holds them, which only a level f stores
 /// can hold, with the pairs those nodes hold.
-#[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     eng: &Engine,
-    f_level: &N,
-    f_nodes: usize,
+    (f_level, f_nodes): (&N, usize),
     entries: Listed<'_>,
-    level: &mut TddLevel,
-    start: usize,
-    out: &mut Vec<ProductEntry>,
+    (level, start, out): (&mut TddLevel, usize, &mut Vec<ProductEntry>),
     ticker: &mut crate::limits::PollGate<'_>,
 ) -> Result<Copied, OperationError> {
     use crate::diagram::NodeKind;
@@ -1632,9 +1623,9 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     let (mut taken, mut made_pairs) = (0, 0);
     if let (Some(n), Some(stored)) = (unwritten, lendable) {
         let lent = if entries.plain {
-            take_lent::<SWAPPED, ONES, true>(lim, stored, f_nodes, entries, n, (arena.capacity(), nodes.capacity()), out, ticker)
+            take_lent::<SWAPPED, ONES, true>(lim, (stored, f_nodes), entries, n, (arena.capacity(), nodes.capacity()), out, ticker)
         } else {
-            take_lent::<SWAPPED, ONES, false>(lim, stored, f_nodes, entries, n, (arena.capacity(), nodes.capacity()), out, ticker)
+            take_lent::<SWAPPED, ONES, false>(lim, (stored, f_nodes), entries, n, (arena.capacity(), nodes.capacity()), out, ticker)
         };
         let (lent, n, pairs) = lent?;
         (taken, unwritten, made_pairs) = (lent, Some(n), pairs);
@@ -1730,45 +1721,35 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
 
 /// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps
 /// the node of one g parent's path to itself.
-#[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn emit_mixed_apart(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owners: &mut [u32],
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
-    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+    emit_mixed(eng, emit, out, owners)
 }
 
 /// [`emit_mixed`] out of line on the candidates at `base` of a node of
 /// [`owner_walk_nodes`] whose g parents take turns, `owner` the next one's
 /// and `turn` the two's exclusive or, where [`emit_alternating`] cannot
 /// take them: the owners written out.
-#[expect(clippy::too_many_arguments)]
 #[cold]
 #[inline(never)]
 fn emit_turns(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owner: u32,
     turn: u32,
     owners: &mut Vec<u32>,
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
-    let n = level.pairs.stored_len() - base;
+    let n = out.level.pairs.stored_len() - out.base;
     // As if a candidate out of turn followed, taken back.
     spill_owners(eng.limits(), owners, owner, turn, n, owner)?;
     owners.pop();
-    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+    emit_mixed(eng, emit, out, owners)
 }
 
 /// Write out the owners of a node's candidates once its walk meets a g
@@ -3140,83 +3121,73 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 /// node's pair list may repeat a pair: some level of an operand, or of the
 /// output so far, is marginal, so pair lists are multisets feeding a sum.
 /// Read only by the debug duplicate checks.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_walked(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owners: &mut [u32],
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let Some(&g_parent) = owners.first() else {
         return Ok(());
     };
     let product = ProductEntry {
-        f_idx: FNodeIdx(p1 as u32),
+        f_idx: FNodeIdx(out.p1 as u32),
         g_idx: GNodeIdx(g_parent),
-        prod_idx: ProductNodeIdx(pl_output.len() as u32),
+        prod_idx: ProductNodeIdx(out.pl_output.len() as u32),
     };
     if owners.len() == 1 {
-        lim.try_push(pl_output, product)?;
-        let pair = level.pop_pair().expect("the walk wrote the candidate's pair");
-        return emit_single_pair(eng, level, pair);
+        lim.try_push(out.pl_output, product)?;
+        let pair = out.level.pop_pair().expect("the walk wrote the candidate's pair");
+        return emit_single_pair(eng, out.level, pair);
     }
     // A block of owners at a time, each block's test without a branch.
     if owners.chunks(16).all(|block| block.iter().fold(true, |same, &g| same & (g == g_parent))) {
-        lim.try_push(pl_output, product)?;
-        reserve_room(lim, level.nodes.stored_mut(), 1)?;
-        let node = finish_node(eng, level, base)?.expect("the walk wrote the candidates' pairs");
+        lim.try_push(out.pl_output, product)?;
+        reserve_room(lim, out.level.nodes.stored_mut(), 1)?;
+        let node = finish_node(eng, out.level, out.base)?.expect("the walk wrote the candidates' pairs");
         // As in `emit_walked`: canonical children make a node's pairs
         // distinct unless pair lists are multisets.
         debug_assert!(
-            duplicates_legal || {
+            out.duplicates_legal || {
                 let mut seen = std::collections::HashSet::new();
-                level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
+                out.level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
             },
             "sparse apply: duplicate pair emitted — canonicity violated"
         );
         return Ok(());
     }
-    emit_mixed(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+    emit_mixed(eng, emit, out, owners)
 }
 
 /// [`emit_walked`] on candidates of more than one g parent: two g parents
 /// taking turns in place ([`emit_alternating`]), a few others grouped by
 /// comparison ([`emit_few`]), many of two g parents keyed by comparison
 /// ([`emit_two`]), and others through the map ([`emit_owned`]).
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_mixed(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owners: &mut [u32],
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let n = owners.len();
     if let [a, b, ..] = *owners
         && matches!(n, 2 | 4 | 6 | 8)
         && owners.chunks_exact(2).all(|c| c[0] == a && c[1] == b)
     {
-        return emit_alternating(eng, level, pl_output, p1, base, a, b, n, duplicates_legal);
+        return emit_alternating(eng, out, a, b, n);
     }
     if owners.len() <= FEW_CANDIDATES {
         // The pairs leave the arena, so the products' ranges take no more of
         // it than the walk gave them.
         let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
-        let arena = level.pairs.stored_mut();
+        let arena = out.level.pairs.stored_mut();
         let n = owners.len();
-        pairs[..n].copy_from_slice(&arena[base..base + n]);
-        arena.truncate(base);
-        return emit_few(eng, level, pl_output, p1, owners, &pairs[..n], duplicates_legal);
+        pairs[..n].copy_from_slice(&arena[out.base..out.base + n]);
+        arena.truncate(out.base);
+        return emit_few(eng, out, owners, &pairs[..n]);
     }
     if owners.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
@@ -3224,9 +3195,9 @@ fn emit_mixed(
     if owners.len() >= GATHERED_CANDIDATES
         && let Some(b) = two_owners(owners)
     {
-        return emit_two(eng, emit, level, pl_output, p1, base, owners, b, duplicates_legal);
+        return emit_two(eng, emit, out, owners, b);
     }
-    emit_owned(eng, emit, level, pl_output, p1, base, owners, duplicates_legal)
+    emit_owned(eng, emit, out, owners)
 }
 
 /// The g parent other than the first candidate's where the candidates'
@@ -3246,18 +3217,14 @@ fn two_owners(owners: &[u32]) -> Option<u32> {
 /// parents, the first candidate's and `b`: each owner is keyed by comparing it with `b`, in the pass that
 /// counts the second product's pairs, without the map, and the pairs are
 /// gathered by product in one pass ([`gather_by_product`]).
-#[expect(clippy::too_many_arguments)]
 pub(super) fn emit_two(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owners: &mut [u32],
     b: u32,
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let NodeOut { level, pl_output, p1, base, duplicates_legal } = out;
     let lim = eng.limits();
     let EmitScratch { pair_counts, single_pairs, moved_pairs, .. } = emit;
     let (a, n) = (owners[0], owners.len());
@@ -3309,20 +3276,16 @@ pub(super) fn emit_two(
 /// node of f pairs whose leaf label meets both of g's: the products of `a`
 /// and `b`, and their nodes as [`emit_few`] makes them, the pairs of each
 /// moved into its half of the candidates' place.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn emit_alternating(
     eng: &Engine,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     a: u32,
     b: u32,
     n: usize,
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     use crate::diagram::EncodedNode;
+    let NodeOut { level, pl_output, p1, base, duplicates_legal } = out;
     debug_assert!(a != b && matches!(n, 2 | 4 | 6 | 8), "two g parents taking turns");
     let lim = eng.limits();
     let first = pl_output.len();
@@ -3388,17 +3351,13 @@ fn emit_alternating(
 /// own over the candidates, whose cursor stays in a register
 /// ([`gather_by_product`]); otherwise one pass writes each pair at its
 /// product's cursor, read from and written back to memory.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn emit_owned(
     eng: &Engine,
     emit: &mut EmitScratch,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
-    base: usize,
+    out: NodeOut<'_>,
     owners: &mut [u32],
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let NodeOut { level, pl_output, p1, base, duplicates_legal } = out;
     let lim = eng.limits();
     let EmitScratch { p2_map, pair_counts, single_pairs, moved_pairs } = emit;
     let first = pl_output.len();
@@ -3545,13 +3504,11 @@ const FEW_CANDIDATES: usize = 8;
 #[inline(always)]
 fn emit_few(
     eng: &Engine,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1: usize,
+    out: NodeOut<'_>,
     owners: &[u32],
     pairs: &[ChildPair],
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let NodeOut { level, pl_output, p1, duplicates_legal, .. } = out;
     let lim = eng.limits();
     let n = owners.len();
     debug_assert!((2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n, "a few candidates");

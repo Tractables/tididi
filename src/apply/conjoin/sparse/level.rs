@@ -61,17 +61,13 @@ pub(crate) struct Complete {
 /// ([`scatter_join`]): the level's pair arena ([`finish_direct`]), a count
 /// ([`count_sparse_level`]) or the sums of a child summed out
 /// ([`sum_sparse_level`]).
-#[expect(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    f: &Tdd,
-    g: &Tdd,
-    shape: LevelShape,
-    pl: Sides<&[ProductEntry]>,
+    (f, g): (&Tdd, &Tdd),
+    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
     collect: Collect<'_, '_>,
-    passthrough: Option<Passthrough>,
-    complete: Option<Complete>,
+    (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<Made, OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
@@ -98,9 +94,9 @@ fn scatter_level(
     if let Some(swapped) = leaf_side {
         let inner = inner.map(|(_, inner)| inner);
         return if !swapped {
-            scatter_leaf_arm::<false>(eng, ws, f_level, g_level, shape, pl, collect, inner)
+            scatter_leaf_arm::<false>(eng, ws, (f_level, g_level), shape, pl, collect, inner)
         } else {
-            scatter_leaf_arm::<true>(eng, ws, f_level, g_level, shape, pl, collect, inner)
+            scatter_leaf_arm::<true>(eng, ws, (f_level, g_level), shape, pl, collect, inner)
         };
     }
 
@@ -213,18 +209,14 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// vtree leaf with each live product of the other child held for every
 /// label ([`SparseWorkspace::outer_held`]): each f pair of that child meets
 /// a g pair under each of its products.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    f: &mut Held<'_>,
-    g: &Tdd,
+    (f, g): (&mut Held<'_>, &Tdd),
     levels: &mut [TddLevel],
-    lists: ProductLists<'_>,
-    cells: Sides<CellLookup<'_>>,
+    (lists, cells): (ProductLists<'_>, Sides<CellLookup<'_>>),
     thresholds: SparseThresholds,
-    passthrough: Option<Passthrough>,
-    complete: Option<Complete>,
+    (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<(Made, bool), OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
@@ -266,7 +258,7 @@ pub(crate) fn apply_sparse_level(
     if shape.f.here == 1 && shape.g.here == 1 {
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
-        scatter_level(eng, ws, f, g, shape, pl, Collect::Direct(&mut *level), passthrough, complete)?;
+        scatter_level(eng, ws, (f, g), (shape, pl), Collect::Direct(&mut *level), (passthrough, complete))?;
         let held = ws.outer_held;
         // The one product's node holds every candidate.
         let candidates = level.pairs.len() - base;
@@ -307,7 +299,7 @@ pub(crate) fn apply_sparse_level(
         };
         let mut live = None;
         let emit = Emit { level, out: &mut *pl_output, duplicates_legal, thresholds, live: &mut live };
-        if let Some(made) = probe_level(eng, ws, f, g, shape, pl, listed, cells, multisets, emit)? {
+        if let Some(made) = probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)? {
             let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
             if let Some(n) = live {
                 levels[t_idx].leave_live_pairs(n);
@@ -321,7 +313,7 @@ pub(crate) fn apply_sparse_level(
 
     let mut live = None;
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
-    let made = scatter_level(eng, ws, f, g, shape, pl, Collect::Nodes(emit), passthrough, complete)?;
+    let made = scatter_level(eng, ws, (f, g), (shape, pl), Collect::Nodes(emit), (passthrough, complete))?;
     let held = ws.outer_held;
     let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
     if let Some(n) = live {
@@ -410,12 +402,10 @@ fn seed_output(
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a workspace reservation is refused.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn count_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    f: &Tdd,
-    g: &Tdd,
+    (f, g): (&Tdd, &Tdd),
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
     passthrough: Option<Passthrough>,
@@ -424,7 +414,7 @@ pub(crate) fn count_sparse_level(
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, Collect::Fold(fold), passthrough, None)?;
+    scatter_level(eng, &mut guard, (f, g), (shape, pl), Collect::Fold(fold), (passthrough, None))?;
     guard.scatter_clean();
     Ok(())
 }
@@ -436,12 +426,10 @@ pub(crate) fn count_sparse_level(
 /// only once its counts are read — so the marginal-child refusal holds. A
 /// `complete` side is read by arithmetic, as [`apply_sparse_level`] reads
 /// it, so the candidates come in the order the two-step path's level has.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn sum_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    f: &Tdd,
-    g: &Tdd,
+    (f, g): (&Tdd, &Tdd),
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
     complete: Option<Complete>,
@@ -450,7 +438,7 @@ pub(crate) fn sum_sparse_level(
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, Collect::Sum(sum), None, complete)?;
+    scatter_level(eng, &mut guard, (f, g), (shape, pl), Collect::Sum(sum), (None, complete))?;
     guard.scatter_clean();
     Ok(())
 }

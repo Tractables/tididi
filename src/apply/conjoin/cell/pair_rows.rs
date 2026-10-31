@@ -354,7 +354,7 @@ where
             {
                 let rows = &f_scratch[..f_width * k];
                 let (to, units, cursor) =
-                    two_column_rows(two, |j| described_two(rows, k, j), left, right, slab, o.cursor(), next, f_width, poll.due_in());
+                    two_column_rows(two, |j| described_two(rows, k, j), (left, right), slab, o.cursor(), (next, f_width, poll.due_in()));
                 o.set_cursor(cursor);
                 poll.add_short(units);
                 next = to;
@@ -393,7 +393,7 @@ where
             {
                 let (nodes, arena) = (&stored.nodes()[..f_width], stored.arena());
                 let (to, units, cursor) =
-                    two_column_rows(two, |j| stored_two(nodes, arena, j), left, right, slab, o.cursor(), i, f_width, poll.due_in());
+                    two_column_rows(two, |j| stored_two(nodes, arena, j), (left, right), slab, o.cursor(), (i, f_width, poll.due_in()));
                 o.set_cursor(cursor);
                 if to > i {
                     poll.add_short(units);
@@ -624,17 +624,13 @@ fn stored_two(nodes: &[EncodedNode], arena: &[ChildPair], i: usize) -> Option<(C
 /// four pairs, two nodes and six units a row, so a row tests neither, and
 /// their cells are written past the slab's length, which is set once.
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
 fn two_column_rows<L, R>(
     two: &TwoColumns<'_>,
     f_row: impl Fn(usize) -> Option<(ChildPair, ChildPair, u64)>,
-    left: &L,
-    right: &R,
+    (left, right): (&L, &R),
     slab: &mut Vec<u32>,
     mut c: RowCursor,
-    mut next: usize,
-    end: usize,
-    due_in: u64,
+    (mut next, end, due_in): (usize, usize, u64),
 ) -> (usize, u64, RowCursor)
 where
     L: ChildLookup,

@@ -476,15 +476,15 @@ pub(crate) fn run_level_rows_words(
     match lookups {
         PlainLookups::Grid => {
             super::super::note_word_cells(super::super::WordNote::Grids);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&grid(&sides.left), &grid(&sides.right)), EmitSink { level, inline: &mut inline })
         }
         PlainLookups::CompleteLeft { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&complete(&sides.left), &grid(&sides.right)), ReservedEmitSink { level, charged, inline: &mut inline })
         }
         PlainLookups::CompleteRight { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&grid(&sides.left), &complete(&sides.right)), ReservedEmitSink { level, charged, inline: &mut inline })
         }
         PlainLookups::Complete { .. } => unreachable!("a level of two complete sides kills no candidate"),
     }?;
@@ -508,7 +508,7 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
     let (left, right) = (MarginalLookup::new(&rows.ctx.sides.left), MarginalLookup::new(&rows.ctx.sides.right));
     let mut inline = 0;
     let sink = ListSink { emit: EmitSink { level, inline: &mut inline }, product_list, base: rows.ctx.output_grid_base, row: 0 };
-    rows_by_words::<false, _, _, _>(eng, rows, scratch, words, f_rows, &left, &right, sink)?;
+    rows_by_words::<false, _, _, _>(eng, (rows, scratch), (words, f_rows), (&left, &right), sink)?;
     level.leave_written_pairs(inline);
     Ok(())
 }
@@ -520,15 +520,11 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
 /// due inside the row ([`poll_row_as_walked`]). With `SLAB` the rows are a dense slab, row `i`
 /// at grid row `i`; without, every row is built in grid row 0 and the
 /// sink is told each row before its cells ([`PairSink::row`]).
-#[expect(clippy::too_many_arguments)]
 pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSink>(
     eng: &Engine,
-    rows: RowLoop<'_>,
-    scratch: RowScratch<'_>,
-    words: &mut WordScratch,
-    f_rows: Sides<usize>,
-    left: &L,
-    right: &R,
+    (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
+    (words, f_rows): (&mut WordScratch, Sides<usize>),
+    (left, right): (&L, &R),
     sink: S,
 ) -> Result<(), OperationError> {
     let mut a: ByWords<'_, S, SLAB> = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, (kills(left), kills(right)), sink)?;
@@ -576,7 +572,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
             RowMode::Bits => {
                 for k in 0..a.w.live_cols.len() {
                     let j = a.w.live_cols[k] as usize;
-                    a.emit_bits(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right)?;
+                    a.emit_bits(eng, (i, j, row_base + j), f_pairs, ctx, slab, (left, right))?;
                 }
                 let col_start = &a.w.col_start;
                 poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
@@ -584,7 +580,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
             RowMode::Sorted => {
                 while let Some(j) = a.next_column() {
                     let (from, to) = a.take_column(j);
-                    a.emit_sorted(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
+                    a.emit_sorted((eng, ctx), (i, j, row_base + j), f_pairs, slab, (left, right), (from, to))?;
                 }
                 let col_start = &a.w.col_start;
                 poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
@@ -790,10 +786,10 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         }
         let strides = (ctx.sides.left.stride as usize, ctx.sides.right.stride as usize);
         if kills.0 {
-            by_child(lim, &w.g_flat, strides.0, |q| q.left.0, &mut w.child_counts, &mut w.named.left, &mut w.named_start.left, &mut w.by_child.left)?;
+            by_child(lim, &w.g_flat, strides.0, |q| q.left.0, (&mut w.child_counts, &mut w.named.left, &mut w.named_start.left, &mut w.by_child.left))?;
         }
         if kills.1 {
-            by_child(lim, &w.g_flat, strides.1, |q| q.right.0, &mut w.child_counts, &mut w.named.right, &mut w.named_start.right, &mut w.by_child.right)?;
+            by_child(lim, &w.g_flat, strides.1, |q| q.right.0, (&mut w.child_counts, &mut w.named.right, &mut w.named_start.right, &mut w.by_child.right))?;
         }
         w.vectors.left.clear();
         w.vectors.right.clear();
@@ -954,15 +950,10 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     /// the bits of the pairs naming a live one (`by_child` from
     /// `named_start`).
     #[inline(always)]
-    #[expect(clippy::too_many_arguments)]
     fn slot<K: ChildLookup>(
         lim: &Limits,
-        slots: &mut [u32],
-        vectors: &mut Vec<u64>,
-        summaries: &mut Vec<u64>,
-        named: &[u32],
-        named_start: &[u32],
-        by_child: &[u32],
+        (slots, vectors, summaries): (&mut [u32], &mut Vec<u64>, &mut Vec<u64>),
+        (named, named_start, by_child): (&[u32], &[u32], &[u32]),
         words: usize,
         lookup: &K,
         node_idx: &[u32],
@@ -1018,12 +1009,12 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         let mut live = 0u64;
         for p in f_pairs {
             let ls = if kills.0 {
-                Self::slot(lim, &mut w.slots.left, &mut w.vectors.left, &mut w.summaries.left, &w.named.left, &w.named_start.left, &w.by_child.left, words.0, left, node_idx, p.left.0)?
+                Self::slot(lim, (&mut w.slots.left, &mut w.vectors.left, &mut w.summaries.left), (&w.named.left, &w.named_start.left, &w.by_child.left), words.0, left, node_idx, p.left.0)?
             } else {
                 0
             };
             let rs = if kills.1 {
-                Self::slot(lim, &mut w.slots.right, &mut w.vectors.right, &mut w.summaries.right, &w.named.right, &w.named_start.right, &w.by_child.right, words.0, right, node_idx, p.right.0)?
+                Self::slot(lim, (&mut w.slots.right, &mut w.vectors.right, &mut w.summaries.right), (&w.named.right, &w.named_start.right, &w.by_child.right), words.0, right, node_idx, p.right.0)?
             } else {
                 0
             };
@@ -1178,18 +1169,14 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     /// in order, read off its vectors where the column has more than one
     /// pair ([`write_cell`](Self::write_cell)).
     #[inline(always)]
-    #[expect(clippy::too_many_arguments)]
     fn emit_bits<L: ChildLookup, R: ChildLookup>(
         &mut self,
         eng: &Engine,
-        i: usize,
-        j: usize,
-        grid_pos: usize,
+        (i, j, grid_pos): (usize, usize, usize),
         f_pairs: &[ChildPair],
         ctx: &CellCtx<'_>,
         node_idx: &mut [u32],
-        left: &L,
-        right: &R,
+        (left, right): (&L, &R),
     ) -> Result<(), OperationError> {
         self.written += 1;
         let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (kills(left), kills(right)));
@@ -1237,47 +1224,36 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         }
         w.entries = entries;
         grown?;
-        self.write_cell(eng, i, j, grid_pos, f_pairs, ctx, node_idx, left, right, None)
+        self.write_cell((eng, ctx), (i, j, grid_pos), f_pairs, node_idx, (left, right), None)
     }
 
     /// Write the cell at `grid_pos`, row `i` and column `j`, of the sorted
     /// live candidates `w.sorted[from..to]`, at least one
     /// ([`write_cell`](Self::write_cell)).
     #[inline(always)]
-    #[expect(clippy::too_many_arguments)]
     fn emit_sorted<L: ChildLookup, R: ChildLookup>(
         &mut self,
-        eng: &Engine,
-        i: usize,
-        j: usize,
-        grid_pos: usize,
+        (eng, ctx): (&Engine, &CellCtx<'_>),
+        (i, j, grid_pos): (usize, usize, usize),
         f_pairs: &[ChildPair],
-        ctx: &CellCtx<'_>,
         node_idx: &mut [u32],
-        left: &L,
-        right: &R,
-        from: usize,
-        to: usize,
+        (left, right): (&L, &R),
+        (from, to): (usize, usize),
     ) -> Result<(), OperationError> {
-        self.write_cell(eng, i, j, grid_pos, f_pairs, ctx, node_idx, left, right, Some((from, to)))
+        self.write_cell((eng, ctx), (i, j, grid_pos), f_pairs, node_idx, (left, right), Some((from, to)))
     }
 
     /// Write the cell at `grid_pos`, row `i` and column `j`, of its live
     /// candidates, `w.sorted[from..to]` where `sorted` names them and
     /// `w.entries` otherwise, in the order the cell's walk writes them.
     #[inline(always)]
-    #[expect(clippy::too_many_arguments)]
     fn write_cell<L: ChildLookup, R: ChildLookup>(
         &mut self,
-        eng: &Engine,
-        i: usize,
-        j: usize,
-        grid_pos: usize,
+        (eng, ctx): (&Engine, &CellCtx<'_>),
+        (i, j, grid_pos): (usize, usize, usize),
         f_pairs: &[ChildPair],
-        ctx: &CellCtx<'_>,
         node_idx: &mut [u32],
-        left: &L,
-        right: &R,
+        (left, right): (&L, &R),
         sorted: Option<(usize, usize)>,
     ) -> Result<(), OperationError> {
         let w = &mut *self.w;
@@ -1365,14 +1341,14 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
         poll_cell_as_walked(a.gate, a.ctx, a.j, a.f_pairs, n2)?;
         match self.mode {
             RowMode::Bits if self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0 => {
-                self.emit_bits(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right)
+                self.emit_bits(eng, (a.i, a.j, a.row_base + a.j), a.f_pairs, a.ctx, a.node_idx, (a.left, a.right))
             }
             RowMode::Sorted => {
                 let (from, to) = self.take_column(a.j);
                 if from == to {
                     return Ok(());
                 }
-                self.emit_sorted(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right, from, to)
+                self.emit_sorted((eng, a.ctx), (a.i, a.j, a.row_base + a.j), a.f_pairs, a.node_idx, (a.left, a.right), (from, to))
             }
             // A dead cell.
             _ => Ok(()),
@@ -1386,16 +1362,12 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
 /// child and then in order, into `by_child`. A counting sort, `counts` a
 /// child, where the children are not many more than the pairs; a
 /// comparison sort otherwise.
-#[expect(clippy::too_many_arguments)]
 fn by_child(
     lim: &Limits,
     g_flat: &[ChildPair],
     width: usize,
     field: impl Fn(&ChildPair) -> u32,
-    counts: &mut Vec<u32>,
-    named: &mut Vec<u32>,
-    named_start: &mut Vec<u32>,
-    by_child: &mut Vec<u32>,
+    (counts, named, named_start, by_child): (&mut Vec<u32>, &mut Vec<u32>, &mut Vec<u32>, &mut Vec<u32>),
 ) -> Result<(), OperationError> {
     named.clear();
     named_start.clear();

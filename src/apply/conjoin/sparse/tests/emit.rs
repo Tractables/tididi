@@ -114,7 +114,7 @@ fn gathering_by_product_is_a_stable_sort() {
 fn two_parents_emit_as_the_map_does() {
     use crate::apply::conjoin::budget::NO_PRODUCT;
     use crate::apply::conjoin::sparse::index::EmitScratch;
-    use crate::apply::conjoin::sparse::scatter::{emit_owned, emit_two};
+    use crate::apply::conjoin::sparse::scatter::{emit_owned, emit_two, NodeOut};
     use crate::diagram::{ChildPair, EncodedChildRef, TddLevel};
     let eng = Engine::new();
     let mut rng = crate::test_helpers::Lcg::new(29);
@@ -140,10 +140,11 @@ fn two_parents_emit_as_the_map_does() {
                 let mut out = Vec::new();
                 let mut emit = EmitScratch { p2_map: vec![NO_PRODUCT; 8], ..EmitScratch::default() };
                 let mut owners = owners.clone();
+                let node_out = NodeOut { level: &mut level, pl_output: &mut out, p1: 3, base: 0, duplicates_legal: false };
                 let made = if two {
-                    emit_two(&eng, &mut emit, &mut level, &mut out, 3, 0, &mut owners, b, false)
+                    emit_two(&eng, &mut emit, node_out, &mut owners, b)
                 } else {
-                    emit_owned(&eng, &mut emit, &mut level, &mut out, 3, 0, &mut owners, false)
+                    emit_owned(&eng, &mut emit, node_out, &mut owners)
                 };
                 made.unwrap();
                 assert!(emit.p2_map.iter().all(|&p| p == NO_PRODUCT), "the map is left clear");

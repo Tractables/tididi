@@ -219,16 +219,12 @@ const PLAN_SAMPLE_PAIRS: u64 = 1 << 14;
 /// not name has no product list (a complete child read by arithmetic): no
 /// probe walks through it, and [`Probe::Pairs`], which walks through both,
 /// is withheld.
-#[expect(clippy::too_many_arguments)]
 fn plan(
     eng: &Engine,
     pb: &mut ProbeBuffers,
-    f_level: &TddLevel,
-    g_level: &TddLevel,
+    (f_level, g_level): (&TddLevel, &TddLevel),
     shape: LevelShape,
-    pl: Sides<&[ProductEntry]>,
-    listed: Sides<bool>,
-    cells: Sides<CellLookup<'_>>,
+    (pl, listed, cells): (Sides<&[ProductEntry]>, Sides<bool>, Sides<CellLookup<'_>>),
     multisets: impl FnOnce() -> bool,
 ) -> Result<Option<(Probe, u64)>, OperationError> {
     let lim = eng.limits();
@@ -311,16 +307,12 @@ fn plan(
 /// [`OperationError::OverBudget`] when a buffer, the output's arenas or the
 /// product list cannot grow, [`OperationError::IndexOverflow`] past `u32`
 /// indices, and [`OperationError::Stopped`] when the stop fires on the poll.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn probe_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    f: &Tdd,
-    g: &Tdd,
+    (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
-    pl: Sides<&[ProductEntry]>,
-    listed: Sides<bool>,
-    cells: Sides<CellLookup<'_>>,
+    (pl, listed, cells): (Sides<&[ProductEntry]>, Sides<bool>, Sides<CellLookup<'_>>),
     multisets: impl FnOnce() -> bool,
     emit: Emit<'_>,
 ) -> Result<Option<Made>, OperationError> {
@@ -334,7 +326,7 @@ pub(super) fn probe_level(
     // the pool that will release it.
     let mut pb = std::mem::take(&mut ws.probe);
     let result = (|| {
-        let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, listed, cells, multisets)? else {
+        let Some((probe, level_pairs)) = plan(eng, &mut pb, (f_level, g_level), shape, (pl, listed, cells), multisets)? else {
             return Ok(None);
         };
         note_probe(probe);
@@ -342,10 +334,10 @@ pub(super) fn probe_level(
         // map as it found it, all `NO_PRODUCT`.
         eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
         let made = match probe {
-            Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.right, emit)?,
-            Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, pl, cells.left, emit)?,
+            Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, (f_level, g_level), (shape, pl), cells.right, emit)?,
+            Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, (f_level, g_level), (shape, pl), cells.left, emit)?,
             Probe::Pairs => {
-                walk_pairs(eng, ws, &mut pb, f_level, g_level, shape, pl, level_pairs, emit)?;
+                walk_pairs(eng, ws, &mut pb, (f_level, g_level), (shape, pl), level_pairs, emit)?;
                 Made::Written
             }
         };
@@ -371,15 +363,12 @@ fn walk_level<const SWAPPED: bool, W: NodeWalk>(
 
 /// The walk through one child: through the left child unswapped, the right
 /// one `SWAPPED`, the other child's product read by `other`.
-#[expect(clippy::too_many_arguments)]
 fn walk_one_side<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pb: &mut ProbeBuffers,
-    f_level: &TddLevel,
-    g_level: &TddLevel,
-    shape: LevelShape,
-    pl: Sides<&[ProductEntry]>,
+    (f_level, g_level): (&TddLevel, &TddLevel),
+    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
     other: CellLookup<'_>,
     mut emit: Emit<'_>,
 ) -> Result<Made, OperationError> {
@@ -595,15 +584,12 @@ const DENSE_PAIR_CELLS: usize = 1 << 24;
 /// map of `g`'s pairs: a dense array over the two children's widths where
 /// it is small ([`DENSE_PAIR_CELLS`]) or no larger than the hash table,
 /// else an open-addressing table.
-#[expect(clippy::too_many_arguments)]
 fn walk_pairs(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pb: &mut ProbeBuffers,
-    f_level: &TddLevel,
-    g_level: &TddLevel,
-    shape: LevelShape,
-    pl: Sides<&[ProductEntry]>,
+    (f_level, g_level): (&TddLevel, &TddLevel),
+    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
     level_pairs: u64,
     emit: Emit<'_>,
 ) -> Result<(), OperationError> {
