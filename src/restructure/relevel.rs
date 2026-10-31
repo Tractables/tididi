@@ -74,7 +74,7 @@ pub(super) trait Word: Copy + Ord + Default {
     /// The bits of the cell, fields 2 and 3: the fingerprint and dedup key.
     fn cell(self, layout: &Layout) -> u64;
     /// Phase 2's sort: the triples, in ascending order of `src` as
-    /// [`collect_triples`] leaves them, into ascending order.
+    /// [`Packed::collect_triples`] leaves them, into ascending order.
     ///
     /// The sort is not charged to the work clock: the probe charges the pairs
     /// it rebuilds, and the pool search's work bound is set in that measure.
@@ -310,10 +310,12 @@ pub(crate) fn prepare_levels(
     let table = &mut scratch.bucket.table;
     let counted = if fitted.bits() <= 64 {
         *layout = fitted;
-        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, narrow, triples, groups, table, max_pairs)
+        let mut packed = Packed { layout: fitted, triples: narrow, groups, dir, crossed, marginal_ctx: marginal };
+        packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
     } else {
         *layout = Layout::WIDE;
-        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, wide, triples, groups, table, max_pairs)
+        let mut packed = Packed { layout: Layout::WIDE, triples: wide, groups, dir, crossed, marginal_ctx: marginal };
+        packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
     };
     match counted {
         Ok(Some((inner_nodes, pairs))) => {
@@ -327,47 +329,54 @@ pub(crate) fn prepare_levels(
     }
 }
 
-/// [`prepare_levels`] with the `count` triples packed as `W` under
-/// `layout`: the inner level's nodes and the pairs of the two new levels.
-#[allow(clippy::too_many_arguments)]
-fn prepare_with<W: Word>(
-    lim: &Limits,
-    old_v: &TddLevel,
-    old_w: &TddLevel,
+/// The triple buffer, group table and rotation geometry shared across a
+/// rebuild's prepare and finish phases.
+struct Packed<'a, W> {
+    layout: Layout,
+    triples: &'a mut Vec<W>,
+    groups: &'a mut Vec<PairGroup>,
     dir: RotationKind,
     crossed: bool,
     marginal_ctx: bool,
-    layout: &Layout,
-    triples: &mut Vec<W>,
-    count: usize,
-    groups: &mut Vec<PairGroup>,
-    table: &mut Vec<u32>,
-    max_pairs: usize,
-) -> Result<Option<(usize, usize)>, OperationError> {
-    triples.clear();
-    lim.reserve_exact(triples, count)?;
-    if !group_triples(lim, old_v, old_w, dir, crossed, marginal_ctx, layout, triples, groups, max_pairs)? {
-        return Ok(None);
+}
+
+impl<W: Word> Packed<'_, W> {
+    /// [`prepare_levels`] with the `count` triples packed as `W` under
+    /// `self.layout`: the inner level's nodes and the pairs of the two new levels.
+    fn prepare(
+        &mut self,
+        lim: &Limits,
+        old_v: &TddLevel,
+        old_w: &TddLevel,
+        count: usize,
+        table: &mut Vec<u32>,
+        max_pairs: usize,
+    ) -> Result<Option<(usize, usize)>, OperationError> {
+        self.triples.clear();
+        lim.reserve_exact(self.triples, count)?;
+        if !self.group_triples(lim, old_v, old_w, max_pairs)? {
+            return Ok(None);
+        }
+        // One group per distinct inner pair, so this is the new inner level's
+        // pair count.
+        let inner_pairs = self.groups.len();
+        let nodes = if self.marginal_ctx {
+            // Sharing is suppressed: each distinct inner pair is a node of its own.
+            inner_pairs
+        } else {
+            // Phase 3: number the distinct cell lists in the order of their first
+            // groups, which is the number of the inner node each group goes under.
+            let nodes = number_cell_lists(lim, self.triples, &self.layout, self.groups, table);
+            release_or_clear(lim, table);
+            nodes?
+        };
+        // Bail check 2: the inner level's nodes and pairs.
+        if nodes + inner_pairs >= max_pairs {
+            return Ok(None);
+        }
+        let outer_pairs: usize = filed_groups(self.groups, self.marginal_ctx).map(|g| (g.end - g.start) as usize).sum();
+        Ok(Some((nodes, inner_pairs + outer_pairs)))
     }
-    // One group per distinct inner pair, so this is the new inner level's
-    // pair count.
-    let inner_pairs = groups.len();
-    let nodes = if marginal_ctx {
-        // Sharing is suppressed: each distinct inner pair is a node of its own.
-        inner_pairs
-    } else {
-        // Phase 3: number the distinct cell lists in the order of their first
-        // groups, which is the number of the inner node each group goes under.
-        let nodes = number_cell_lists(lim, triples, layout, groups, table);
-        release_or_clear(lim, table);
-        nodes?
-    };
-    // Bail check 2: the inner level's nodes and pairs.
-    if nodes + inner_pairs >= max_pairs {
-        return Ok(None);
-    }
-    let outer_pairs: usize = filed_groups(groups, marginal_ctx).map(|g| (g.end - g.start) as usize).sum();
-    Ok(Some((nodes, inner_pairs + outer_pairs)))
 }
 
 /// The tables of [`score_levels`], kept warm across probes.
@@ -797,99 +806,92 @@ pub(crate) fn finish_levels(
 ) -> Result<(TddLevel, TddLevel), OperationError> {
     let Prepared { narrow, wide, layout, groups, nodes } = prepared;
     let built = if layout.bits() <= 64 {
-        finish_with(lim, &tdd.levels[info.v_idx.idx()], dir, marginal, layout, narrow, groups, *nodes, scratch)
+        let mut packed = Packed { layout: *layout, triples: narrow, groups, dir, crossed: false, marginal_ctx: marginal };
+        packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
     } else {
-        finish_with(lim, &tdd.levels[info.v_idx.idx()], dir, marginal, layout, wide, groups, *nodes, scratch)
+        let mut packed = Packed { layout: *layout, triples: wide, groups, dir, crossed: false, marginal_ctx: marginal };
+        packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
     };
     let (outer, inner) = built?;
     Ok(tdd.replace_level_pair((info.v_idx, outer), (info.w_idx, inner)))
 }
 
-/// The two new levels of [`finish_levels`], outer then inner, from the
-/// triples packed as `W` under `layout`, which are released with `groups`.
-#[allow(clippy::too_many_arguments)]
-fn finish_with<W: Word>(
-    lim: &Limits,
-    old_v: &TddLevel,
-    dir: RotationKind,
-    marginal_ctx: bool,
-    layout: &Layout,
-    triples: &mut Vec<W>,
-    groups: &mut Vec<PairGroup>,
-    nodes: usize,
-    scratch: &mut RestructureScratch,
-) -> Result<(TddLevel, TddLevel), OperationError> {
-    let mut inner = Transient::new(lim, TddLevel::new());
-    let built = if marginal_ctx {
-        expand_every_pair(lim, &mut inner, groups)
-    } else {
-        // Phase 4: the inner nodes, each the inner pairs of its groups.
-        let built = cluster_by_cell_list(lim, &mut inner, groups, nodes, &mut scratch.bucket);
-        release_or_clear(lim, &mut scratch.bucket.ends);
-        release_or_clear(lim, &mut scratch.bucket.pairs);
-        built
-    };
-    if let Err(e) = built {
-        release_or_clear(lim, triples);
-        release_or_clear(lim, groups);
-        return Err(e);
-    }
-    // Neither level is installed until both are built; a refusal in between
-    // drops the inner one and hands its charge back.
-    let outer = build_outer_level(lim, old_v, triples, groups, layout, scratch, dir, marginal_ctx)?;
-    Ok((outer, inner.keep()))
-}
-
-/// Phases 1 and 2: every old v-pair expanded against the w-level into packed
-/// triples, sorted, and grouped by their inner pair into `group_info`.
-/// Returns `false`, `triples` left empty, where bail check 1 gives up.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if the triples, the sort's buffers or the
-/// group table are refused.
-#[allow(clippy::too_many_arguments)]
-fn group_triples<W: Word>(
-    lim: &Limits,
-    old_v: &TddLevel,
-    old_w: &TddLevel,
-    dir: RotationKind,
-    crossed: bool,
-    marginal_ctx: bool,
-    layout: &Layout,
-    triples: &mut Vec<W>,
-    group_info: &mut Vec<PairGroup>,
-    max_pairs: usize,
-) -> Result<bool, OperationError> {
-    triples.clear();
-    if !collect_triples(lim, old_v, old_w, dir, crossed, layout, triples, max_pairs)? {
-        triples.clear();
-        return Ok(false);
+impl<W: Word> Packed<'_, W> {
+    /// The two new levels of [`finish_levels`], outer then inner, from the
+    /// triples packed as `W` under `self.layout`, which are released with `self.groups`.
+    fn finish(
+        &mut self,
+        lim: &Limits,
+        old_v: &TddLevel,
+        nodes: usize,
+        scratch: &mut RestructureScratch,
+    ) -> Result<(TddLevel, TddLevel), OperationError> {
+        let mut inner = Transient::new(lim, TddLevel::new());
+        let built = if self.marginal_ctx {
+            expand_every_pair(lim, &mut inner, self.groups)
+        } else {
+            // Phase 4: the inner nodes, each the inner pairs of its groups.
+            let built = cluster_by_cell_list(lim, &mut inner, self.groups, nodes, &mut scratch.bucket);
+            release_or_clear(lim, &mut scratch.bucket.ends);
+            release_or_clear(lim, &mut scratch.bucket.pairs);
+            built
+        };
+        if let Err(e) = built {
+            release_or_clear(lim, self.triples);
+            release_or_clear(lim, self.groups);
+            return Err(e);
+        }
+        // Neither level is installed until both are built; a refusal in between
+        // drops the inner one and hands its charge back.
+        let outer = self.build_outer_level(lim, old_v, scratch)?;
+        Ok((outer, inner.keep()))
     }
 
-    // Phase 2: sort the packed triples. After sorting, cells for each inner
-    // pair are contiguous and sorted — no per-group sort needed.
-    W::sort(lim, layout, triples)?;
+    /// Phases 1 and 2: every old v-pair expanded against the w-level into packed
+    /// triples, sorted, and grouped by their inner pair into `self.groups`.
+    /// Returns `false`, `self.triples` left empty, where bail check 1 gives up.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if the triples, the sort's buffers or the
+    /// group table are refused.
+    fn group_triples(
+        &mut self,
+        lim: &Limits,
+        old_v: &TddLevel,
+        old_w: &TddLevel,
+        max_pairs: usize,
+    ) -> Result<bool, OperationError> {
+        self.triples.clear();
+        if !self.collect_triples(lim, old_v, old_w, max_pairs)? {
+            self.triples.clear();
+            return Ok(false);
+        }
 
-    // `group_info` addresses `triples` with u32 offsets. The u32 width of a
-    // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
-    // triples the `as u32` casts below would wrap, `same_cells` would compare
-    // wrong-but-in-range cell slices, and the resulting inner-node sharing would
-    // silently change the count. `write <= read <= n`, so this single check
-    // covers every cast in the scan.
-    let n = triples.len();
-    debug_assert!(
-        u32::try_from(n).is_ok(),
-        "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
-    );
+        // Phase 2: sort the packed triples. After sorting, cells for each inner
+        // pair are contiguous and sorted — no per-group sort needed.
+        W::sort(lim, &self.layout, self.triples)?;
 
-    // In marginal context (full expansion) the cell multiset is kept: a duplicate
-    // (axis, src) cell is a legitimate separate count-contribution (two
-    // marginalization-collapsed twin primes), so cell-deduping it would drop
-    // count-mass. Boolean mode dedups.
-    group_info.clear();
-    group_by_inner_pair(lim, triples, layout, group_info, marginal_ctx)?;
-    Ok(true)
+        // `self.groups` addresses `self.triples` with u32 offsets. The u32 width of a
+        // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
+        // triples the `as u32` casts below would wrap, `same_cells` would compare
+        // wrong-but-in-range cell slices, and the resulting inner-node sharing would
+        // silently change the count. `write <= read <= n`, so this single check
+        // covers every cast in the scan.
+        let n = self.triples.len();
+        debug_assert!(
+            u32::try_from(n).is_ok(),
+            "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
+        );
+
+        // In marginal context (full expansion) the cell multiset is kept: a duplicate
+        // (axis, src) cell is a legitimate separate count-contribution (two
+        // marginalization-collapsed twin primes), so cell-deduping it would drop
+        // count-mass. Boolean mode dedups.
+        self.groups.clear();
+        group_by_inner_pair(lim, self.triples, &self.layout, self.groups, self.marginal_ctx)?;
+        Ok(true)
+    }
 }
 
 /// Bounds on the four fields of a rotation's triples, bit for bit: every
@@ -927,56 +929,54 @@ fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKin
     (bounds, triples)
 }
 
-/// Phase 1: expand every old v-pair against the w-level into packed triples.
-/// Returns `false` if the triple count reaches `max_pairs` (bail check 1): the
-/// distinct inner pairs are never more numerous than the triples, so a count
-/// of them could not bail earlier.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if the triple buffer's growth is refused.
-#[allow(clippy::too_many_arguments)]
-fn collect_triples<W: Word>(
-    lim: &Limits,
-    old_v_level: &TddLevel,
-    old_w_level: &TddLevel,
-    dir: RotationKind,
-    crossed: bool,
-    layout: &Layout,
-    triples: &mut Vec<W>,
-    max_pairs: usize,
-) -> Result<bool, OperationError> {
-    for i in 0..old_v_level.nodes().len() {
-        let src = i as u32;
-        for vp in old_v_level.pairs_iter_of_idx(i) {
-            let (w_local, v_axis) = match dir {
-                RotationKind::Left => (ChildDecoder::structural().node(vp.right).idx(), vp.left),
-                RotationKind::Right => (ChildDecoder::structural().node(vp.left).idx(), vp.right),
-            };
-            for wp in old_w_level.pairs_iter_of_idx(w_local) {
-                // A crossed rotation's w had its children swapped: its left
-                // side is the stored right one.
-                let (w_left, w_right) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
-                let (inner, axis) = match dir {
-                    RotationKind::Left => (
-                        ChildPair::new(v_axis, w_left),
-                        w_right,
-                    ),
-                    RotationKind::Right => (
-                        ChildPair::new(w_right, v_axis),
-                        w_left,
-                    ),
+impl<W: Word> Packed<'_, W> {
+    /// Phase 1: expand every old v-pair against the w-level into packed triples.
+    /// Returns `false` if the triple count reaches `max_pairs` (bail check 1): the
+    /// distinct inner pairs are never more numerous than the triples, so a count
+    /// of them could not bail earlier.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if the triple buffer's growth is refused.
+    fn collect_triples(
+        &mut self,
+        lim: &Limits,
+        old_v_level: &TddLevel,
+        old_w_level: &TddLevel,
+        max_pairs: usize,
+    ) -> Result<bool, OperationError> {
+        for i in 0..old_v_level.nodes().len() {
+            let src = i as u32;
+            for vp in old_v_level.pairs_iter_of_idx(i) {
+                let (w_local, v_axis) = match self.dir {
+                    RotationKind::Left => (ChildDecoder::structural().node(vp.right).idx(), vp.left),
+                    RotationKind::Right => (ChildDecoder::structural().node(vp.left).idx(), vp.right),
                 };
-                lim.try_push(triples, W::pack(layout, inner, src, axis))?;
-                // Checked per triple: one `vp` whose `w_local` fans out widely
-                // can push `triples` far past `max_pairs` within one `vp`.
-                if triples.len() >= max_pairs {
-                    return Ok(false);
+                for wp in old_w_level.pairs_iter_of_idx(w_local) {
+                    // A crossed rotation's w had its children swapped: its left
+                    // side is the stored right one.
+                    let (w_left, w_right) = if self.crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
+                    let (inner, axis) = match self.dir {
+                        RotationKind::Left => (
+                            ChildPair::new(v_axis, w_left),
+                            w_right,
+                        ),
+                        RotationKind::Right => (
+                            ChildPair::new(w_right, v_axis),
+                            w_left,
+                        ),
+                    };
+                    lim.try_push(self.triples, W::pack(&self.layout, inner, src, axis))?;
+                    // Checked per triple: one `vp` whose `w_local` fans out widely
+                    // can push `triples` far past `max_pairs` within one `vp`.
+                    if self.triples.len() >= max_pairs {
+                        return Ok(false);
+                    }
                 }
             }
         }
+        Ok(true)
     }
-    Ok(true)
 }
 
 /// One distinct inner pair and where its cells sit in the packed `triples`.
@@ -1140,52 +1140,49 @@ fn cluster_by_cell_list(
     Ok(())
 }
 
-/// Phase 5: build the outer level from the deduped (packed) triples, one node
-/// per old v-node. `triples` is released once its pairs have been filed, on
-/// the error path as well as the normal one.
-///
-/// Each node's pairs come out in ascending order, the order a sort of each
-/// node's list leaves, and in the Boolean build free of duplicates.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if a filing buffer or the level's arena is
-/// refused. The partially built level is dropped, so its charge goes back
-/// first.
-#[allow(clippy::too_many_arguments)]
-fn build_outer_level<W: Word>(
-    lim: &Limits,
-    old_v_level: &TddLevel,
-    triples: &mut Vec<W>,
-    groups: &mut Vec<PairGroup>,
-    layout: &Layout,
-    scratch: &mut RestructureScratch,
-    dir: RotationKind,
-    marginal_ctx: bool,
-) -> Result<TddLevel, OperationError> {
-    let n_v = old_v_level.nodes().len();
-    let filed = file_outer_pairs(lim, triples, groups, layout, scratch, n_v, dir, marginal_ctx);
-    // Last read of `triples` and the groups: the filed lists now hold every
-    // outer pair. Release the triples before the arena that copies those
-    // pairs is built.
-    release_or_clear(lim, triples);
-    release_or_clear(lim, groups);
-    release_or_clear(lim, &mut scratch.by_axis);
-    release_or_clear(lim, &mut scratch.axis_ends);
-    let built = filed.and_then(|()| {
-        let mut outer_level = Transient::new(lim, TddLevel::new());
-        let ends = &scratch.outer_ends;
-        let pairs = &scratch.outer_pairs;
-        let mut begin = 0;
-        for &end in &ends[..n_v] {
-            outer_level.push_node(lim, &pairs[begin as usize..end as usize])?;
-            begin = end;
-        }
-        Ok(outer_level.keep())
-    });
-    release_or_clear(lim, &mut scratch.outer_ends);
-    release_or_clear(lim, &mut scratch.outer_pairs);
-    built
+impl<W: Word> Packed<'_, W> {
+    /// Phase 5: build the outer level from the deduped (packed) triples, one node
+    /// per old v-node. `self.triples` is released once its pairs have been filed, on
+    /// the error path as well as the normal one.
+    ///
+    /// Each node's pairs come out in ascending order, the order a sort of each
+    /// node's list leaves, and in the Boolean build free of duplicates.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if a filing buffer or the level's arena is
+    /// refused. The partially built level is dropped, so its charge goes back
+    /// first.
+    fn build_outer_level(
+        &mut self,
+        lim: &Limits,
+        old_v_level: &TddLevel,
+        scratch: &mut RestructureScratch,
+    ) -> Result<TddLevel, OperationError> {
+        let n_v = old_v_level.nodes().len();
+        let filed = self.file_outer_pairs(lim, scratch, n_v);
+        // Last read of `self.triples` and the groups: the filed lists now hold every
+        // outer pair. Release the triples before the arena that copies those
+        // pairs is built.
+        release_or_clear(lim, self.triples);
+        release_or_clear(lim, self.groups);
+        release_or_clear(lim, &mut scratch.by_axis);
+        release_or_clear(lim, &mut scratch.axis_ends);
+        let built = filed.and_then(|()| {
+            let mut outer_level = Transient::new(lim, TddLevel::new());
+            let ends = &scratch.outer_ends;
+            let pairs = &scratch.outer_pairs;
+            let mut begin = 0;
+            for &end in &ends[..n_v] {
+                outer_level.push_node(lim, &pairs[begin as usize..end as usize])?;
+                begin = end;
+            }
+            Ok(outer_level.keep())
+        });
+        release_or_clear(lim, &mut scratch.outer_ends);
+        release_or_clear(lim, &mut scratch.outer_pairs);
+        built
+    }
 }
 
 /// The groups whose cells become outer pairs, in `group_info`'s order.
@@ -1210,109 +1207,109 @@ fn filed_groups(group_info: &[PairGroup], marginal_ctx: bool) -> impl Iterator<I
     })
 }
 
-/// File each triple's outer pair, through the inner node its group went
-/// under, under the old v-node it came from: node `i`'s pairs end up at
-/// `outer_pairs[outer_ends[i - 1]..outer_ends[i]]`, from 0 for the first.
-///
-/// The filed groups ([`filed_groups`]) come in ascending order of their node
-/// and a group's cells in ascending order of their axis. So a left rotation,
-/// whose outer pair is `(node, axis)`, files each node's pairs in ascending
-/// order. A right rotation's pair is `(axis, node)`: its cells are first
-/// placed in ascending order of their axis, in a counting pass that keeps
-/// the node order within an axis, and then filed, which leaves each node's
-/// pairs in ascending order as well. Where the axis references are too sparse
-/// for a counting pass, each node's pairs are sorted instead. Marginal context
-/// keeps the outer multiset in the order filed: a duplicate outer pair is a
-/// legitimate separate count-mass (two marginalization-collapsed twin
-/// primes), so the sum over the kept multiset is the pre-rotation count
-/// exactly.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if a buffer is refused.
-#[allow(clippy::too_many_arguments)]
-fn file_outer_pairs<W: Word>(
-    lim: &Limits,
-    triples: &[W],
-    groups: &[PairGroup],
-    layout: &Layout,
-    scratch: &mut RestructureScratch,
-    n_v: usize,
-    dir: RotationKind,
-    marginal_ctx: bool,
-) -> Result<(), OperationError> {
-    let RestructureScratch { by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
-    let filed = || filed_groups(groups, marginal_ctx).flat_map(|g| triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
-    // Each node's pair count, at the slot after the node's.
-    ends.clear();
-    lim.try_resize(ends, n_v + 1, 0)?;
-    let mut cells = 0usize;
-    let mut max_axis = 0u32;
-    for (_, p) in filed() {
-        ends[tri_src(p, layout) as usize + 1] += 1;
-        max_axis = max_axis.max(tri_axis(p, layout).0);
-        cells += 1;
-    }
-    // Each node's start; the filing below moves each to the node's end.
-    for i in 0..n_v {
-        ends[i + 1] += ends[i];
-    }
-    pairs.clear();
-    lim.try_resize(pairs, cells, ChildPair::new(NodeIdx(0), NodeIdx(0)))?;
-    let mut file = |src: u32, pair: ChildPair| {
-        let at = &mut ends[src as usize];
-        pairs[*at as usize] = pair;
-        *at += 1;
-    };
-    let axis_range = max_axis as usize + 1;
-    let by_axis_order = !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
-    if by_axis_order {
-        axis_ends.clear();
-        lim.try_resize(axis_ends, axis_range + 1, 0)?;
+impl<W: Word> Packed<'_, W> {
+    /// File each triple's outer pair, through the inner node its group went
+    /// under, under the old v-node it came from: node `i`'s pairs end up at
+    /// `outer_pairs[outer_ends[i - 1]..outer_ends[i]]`, from 0 for the first.
+    ///
+    /// The filed groups ([`filed_groups`]) come in ascending order of their node
+    /// and a group's cells in ascending order of their axis. So a left rotation,
+    /// whose outer pair is `(node, axis)`, files each node's pairs in ascending
+    /// order. A right rotation's pair is `(axis, node)`: its cells are first
+    /// placed in ascending order of their axis, in a counting pass that keeps
+    /// the node order within an axis, and then filed, which leaves each node's
+    /// pairs in ascending order as well. Where the axis references are too sparse
+    /// for a counting pass, each node's pairs are sorted instead. Marginal context
+    /// keeps the outer multiset in the order filed: a duplicate outer pair is a
+    /// legitimate separate count-mass (two marginalization-collapsed twin
+    /// primes), so the sum over the kept multiset is the pre-rotation count
+    /// exactly.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if a buffer is refused.
+    fn file_outer_pairs(
+        &self,
+        lim: &Limits,
+        scratch: &mut RestructureScratch,
+        n_v: usize,
+    ) -> Result<(), OperationError> {
+        let layout = &self.layout;
+        let dir = self.dir;
+        let marginal_ctx = self.marginal_ctx;
+        let RestructureScratch { by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
+        let filed = || filed_groups(self.groups, marginal_ctx).flat_map(|g| self.triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
+        // Each node's pair count, at the slot after the node's.
+        ends.clear();
+        lim.try_resize(ends, n_v + 1, 0)?;
+        let mut cells = 0usize;
+        let mut max_axis = 0u32;
         for (_, p) in filed() {
-            axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
+            ends[tri_src(p, layout) as usize + 1] += 1;
+            max_axis = max_axis.max(tri_axis(p, layout).0);
+            cells += 1;
         }
-        for a in 0..axis_range {
-            axis_ends[a + 1] += axis_ends[a];
+        // Each node's start; the filing below moves each to the node's end.
+        for i in 0..n_v {
+            ends[i + 1] += ends[i];
         }
-        by_axis.clear();
-        lim.try_resize(by_axis, cells, 0)?;
-        for (node, p) in filed() {
-            let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
-            by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
+        pairs.clear();
+        lim.try_resize(pairs, cells, ChildPair::new(NodeIdx(0), NodeIdx(0)))?;
+        let mut file = |src: u32, pair: ChildPair| {
+            let at = &mut ends[src as usize];
+            pairs[*at as usize] = pair;
             *at += 1;
-        }
-        let mut begin = 0;
-        for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
-            for &e in &by_axis[begin as usize..end as usize] {
-                file((e >> 32) as u32, ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)));
+        };
+        let axis_range = max_axis as usize + 1;
+        let by_axis_order = !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
+        if by_axis_order {
+            axis_ends.clear();
+            lim.try_resize(axis_ends, axis_range + 1, 0)?;
+            for (_, p) in filed() {
+                axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
             }
-            begin = end;
-        }
-    } else {
-        for (node, p) in filed() {
-            let outer_pair = match dir {
-                RotationKind::Left => ChildPair::new(node, tri_axis(p, layout)),
-                RotationKind::Right => ChildPair::new(tri_axis(p, layout), node),
-            };
-            file(tri_src(p, layout), outer_pair);
-        }
-        if !marginal_ctx && dir == RotationKind::Right {
+            for a in 0..axis_range {
+                axis_ends[a + 1] += axis_ends[a];
+            }
+            by_axis.clear();
+            lim.try_resize(by_axis, cells, 0)?;
+            for (node, p) in filed() {
+                let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
+                by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
+                *at += 1;
+            }
             let mut begin = 0;
-            for &end in &ends[..n_v] {
-                pairs[begin as usize..end as usize].sort_unstable();
+            for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
+                for &e in &by_axis[begin as usize..end as usize] {
+                    file((e >> 32) as u32, ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)));
+                }
                 begin = end;
             }
+        } else {
+            for (node, p) in filed() {
+                let outer_pair = match dir {
+                    RotationKind::Left => ChildPair::new(node, tri_axis(p, layout)),
+                    RotationKind::Right => ChildPair::new(tri_axis(p, layout), node),
+                };
+                file(tri_src(p, layout), outer_pair);
+            }
+            if !marginal_ctx && dir == RotationKind::Right {
+                let mut begin = 0;
+                for &end in &ends[..n_v] {
+                    pairs[begin as usize..end as usize].sort_unstable();
+                    begin = end;
+                }
+            }
         }
+        debug_assert!(
+            marginal_ctx || (0..n_v).all(|i| {
+                let begin = if i == 0 { 0 } else { ends[i - 1] };
+                pairs[begin as usize..ends[i] as usize].windows(2).all(|w| w[0] < w[1])
+            }),
+            "each outer node's pairs are ascending and distinct",
+        );
+        Ok(())
     }
-    debug_assert!(
-        marginal_ctx || (0..n_v).all(|i| {
-            let begin = if i == 0 { 0 } else { ends[i - 1] };
-            pairs[begin as usize..ends[i] as usize].windows(2).all(|w| w[0] < w[1])
-        }),
-        "each outer node's pairs are ascending and distinct",
-    );
-    Ok(())
 }
 
 

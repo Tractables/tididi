@@ -68,11 +68,12 @@ fn sorted_and_deduplicated(triples: &[u128], groups: &[PairGroup], n_v: usize, d
     lists
 }
 
-/// The outer lists `file_outer_pairs` files from `triples` under `layout`.
-fn filed<W: Word>(triples: &[W], layout: &Layout, groups: &[PairGroup], n_v: usize, dir: RotationKind) -> Vec<Vec<ChildPair>> {
+/// The outer lists `Packed::file_outer_pairs` files from `triples` under `layout`.
+fn filed<W: Word>(triples: &mut Vec<W>, layout: Layout, groups: &mut Vec<PairGroup>, n_v: usize, dir: RotationKind) -> Vec<Vec<ChildPair>> {
     let eng = Engine::new();
     let mut scratch = RestructureScratch::default();
-    file_outer_pairs(eng.limits(), triples, groups, layout, &mut scratch, n_v, dir, false).unwrap();
+    let packed = Packed { layout, triples, groups, dir, crossed: false, marginal_ctx: false };
+    packed.file_outer_pairs(eng.limits(), &mut scratch, n_v).unwrap();
     let mut begin = 0;
     let mut lists = Vec::new();
     for &end in &scratch.outer_ends[..n_v] {
@@ -94,7 +95,7 @@ fn the_filed_outer_lists_are_the_sorted_distinct_pairs() {
     for round in 0..200 {
         let n_v = 1 + (round % 6) as u32;
         let axes = if round % 2 == 0 { &dense } else { &sparse };
-        let (triples, groups) = clustered_groups(&mut rng, n_v, axes);
+        let (mut triples, mut groups) = clustered_groups(&mut rng, n_v, axes);
         // A v-node no cell names has no pairs; in a rotation every one has some.
         let wide = &Layout::WIDE;
         let named: std::collections::BTreeSet<u32> = triples.iter().map(|&p| tri_src(p, wide)).collect();
@@ -109,11 +110,11 @@ fn the_filed_outer_lists_are_the_sorted_distinct_pairs() {
         }
         let fitted = Layout::fitted(bound);
         assert!(fitted.bits() <= 64, "round {round}: the test's fields fit one word");
-        let narrow: Vec<u64> = triples.iter().map(|&p| u64::pack(&fitted, tri_inner(p, wide), tri_src(p, wide), tri_axis(p, wide))).collect();
+        let mut narrow: Vec<u64> = triples.iter().map(|&p| u64::pack(&fitted, tri_inner(p, wide), tri_src(p, wide), tri_axis(p, wide))).collect();
         for dir in [RotationKind::Left, RotationKind::Right] {
             let want = sorted_and_deduplicated(&triples, &groups, n_v as usize, dir);
-            assert_eq!(filed(&triples, wide, &groups, n_v as usize, dir), want, "round {round}, {dir:?}, wide");
-            assert_eq!(filed(&narrow, &fitted, &groups, n_v as usize, dir), want, "round {round}, {dir:?}, fitted");
+            assert_eq!(filed(&mut triples, *wide, &mut groups, n_v as usize, dir), want, "round {round}, {dir:?}, wide");
+            assert_eq!(filed(&mut narrow, fitted, &mut groups, n_v as usize, dir), want, "round {round}, {dir:?}, fitted");
         }
     }
 }

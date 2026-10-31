@@ -173,6 +173,15 @@ fn take_child(vtree: &Vtree, child: VtreeIdx, built: &mut [Option<Pieces>]) -> O
     Some(built[child.idx()].take().expect("a child level is visited before its parent"))
 }
 
+/// The two operands' levels at one internal vtree node and the pieces of
+/// their left and right children.
+pub(super) struct LevelOverlay<'a> {
+    pub(super) fl: &'a TddLevel,
+    pub(super) gl: &'a TddLevel,
+    pub(super) lp: &'a Pieces,
+    pub(super) rp: &'a Pieces,
+}
+
 /// The overlay of two structural, nonzero diagrams on one internal-rooted
 /// vtree, before its reduction. Weights are the caller's.
 fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
@@ -195,10 +204,11 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
         let ro = take_child(&vtree, right, &mut built);
         let lp = lo.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, true)]);
         let rp = ro.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, false)]);
+        let step = LevelOverlay { fl, gl, lp, rp };
         let (levels, _) = assembly.parts_mut();
         let out = &mut levels[t.idx()];
         if t == root {
-            let pairs = root_cells(eng, op, fl, gl, f.output.local, g.output.local, lp, rp, &mut scratch)?;
+            let pairs = step.root_cells(eng, op, f.output.local, g.output.local, &mut scratch)?;
             if pairs.is_empty() {
                 drop(assembly);
                 return crate::build::constant_on(eng, &vtree, false);
@@ -209,7 +219,7 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
         }
         let mut pieces = spare.pop().unwrap_or_default();
         pieces.clear();
-        inner_level(eng, op, fl, gl, lp, rp, out, &mut scratch, &mut pieces)?;
+        step.inner_level(eng, op, out, &mut scratch, &mut pieces)?;
         out_nodes += pieces.f_part.len() as u64;
         eng.limits().level_done(out_nodes)?;
         built[t.idx()] = Some(pieces);
@@ -265,195 +275,191 @@ fn index_pairs(
     Ok(())
 }
 
-/// Build one internal, non-root level of the overlay into `out` and its
-/// pieces into the empty `pieces`.
-///
-/// Every node of `f` is split by `g`: its cells are grouped by the node of
-/// `g` they lie in, each group a product node and the ungrouped rest the
-/// residue. A disjunction also walks `g` and keeps the cells no node of `f`
-/// holds, as `g`'s residues; the cells both hold are the products already
-/// built.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn inner_level(
-    eng: &Engine,
-    op: Overlay,
-    fl: &TddLevel,
-    gl: &TddLevel,
-    lp: &Pieces,
-    rp: &Pieces,
-    out: &mut TddLevel,
-    s: &mut Scratch,
-    pieces: &mut Pieces,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let mut poll = lim.gate();
-    let walk_g = op != Overlay::AndNot;
-    let f_width = fl.slot_count();
-    let g_width = gl.slot_count();
-    index_owners(eng, gl, &mut s.owner)?;
-    lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
-    pieces.f_start.push(0);
-    s.products.clear();
+impl LevelOverlay<'_> {
+    /// Build one internal, non-root level of the overlay into `out` and its
+    /// pieces into the empty `pieces`.
+    ///
+    /// Every node of `f` is split by `g`: its cells are grouped by the node of
+    /// `g` they lie in, each group a product node and the ungrouped rest the
+    /// residue. A disjunction also walks `g` and keeps the cells no node of `f`
+    /// holds, as `g`'s residues; the cells both hold are the products already
+    /// built.
+    pub(super) fn inner_level(
+        &self,
+        eng: &Engine,
+        op: Overlay,
+        out: &mut TddLevel,
+        s: &mut Scratch,
+        pieces: &mut Pieces,
+    ) -> Result<(), OperationError> {
+        let &LevelOverlay { fl, gl, lp, rp } = self;
+        let lim = eng.limits();
+        let mut poll = lim.gate();
+        let walk_g = op != Overlay::AndNot;
+        let f_width = fl.slot_count();
+        let g_width = gl.slot_count();
+        index_owners(eng, gl, &mut s.owner)?;
+        lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
+        pieces.f_start.push(0);
+        s.products.clear();
 
-    for a in 0..f_width {
-        s.tagged.clear();
-        for p in fl.pairs_iter_of_idx(a) {
-            let xs = lp.of_f(p.left.0);
-            let ys = rp.of_f(p.right.0);
-            for &x in xs {
-                let gx = lp.g_part[x as usize];
-                for &y in ys {
-                    let gy = rp.g_part[y as usize];
-                    let b = if gx == ABSENT || gy == ABSENT {
-                        ABSENT
-                    } else {
-                        s.owner.get(&key(gx, gy)).copied().unwrap_or(ABSENT)
-                    };
-                    lim.try_push(&mut s.tagged, (b, x, y))?;
+        for a in 0..f_width {
+            s.tagged.clear();
+            for p in fl.pairs_iter_of_idx(a) {
+                let xs = lp.of_f(p.left.0);
+                let ys = rp.of_f(p.right.0);
+                for &x in xs {
+                    let gx = lp.g_part[x as usize];
+                    for &y in ys {
+                        let gy = rp.g_part[y as usize];
+                        let b = if gx == ABSENT || gy == ABSENT {
+                            ABSENT
+                        } else {
+                            s.owner.get(&key(gx, gy)).copied().unwrap_or(ABSENT)
+                        };
+                        lim.try_push(&mut s.tagged, (b, x, y))?;
+                    }
+                }
+                poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+            }
+            s.tagged.sort_unstable();
+            let mut i = 0;
+            while i < s.tagged.len() {
+                let b = s.tagged[i].0;
+                s.pairs.clear();
+                while i < s.tagged.len() && s.tagged[i].0 == b {
+                    let (_, x, y) = s.tagged[i];
+                    lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
+                    i += 1;
+                }
+                let o = out.push_node(lim, &s.pairs)?.0;
+                lim.try_push(&mut pieces.f_items, o)?;
+                lim.try_push(&mut pieces.f_part, a as u32)?;
+                lim.try_push(&mut pieces.g_part, b)?;
+                if walk_g && b != ABSENT {
+                    lim.try_push(&mut s.products, (b, o))?;
                 }
             }
-            poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+            lim.try_push(&mut pieces.f_start, pieces.f_items.len() as u32)?;
         }
-        s.tagged.sort_unstable();
-        let mut i = 0;
-        while i < s.tagged.len() {
-            let b = s.tagged[i].0;
-            s.pairs.clear();
-            while i < s.tagged.len() && s.tagged[i].0 == b {
-                let (_, x, y) = s.tagged[i];
-                lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
-                i += 1;
-            }
-            let o = out.push_node(lim, &s.pairs)?.0;
-            lim.try_push(&mut pieces.f_items, o)?;
-            lim.try_push(&mut pieces.f_part, a as u32)?;
-            lim.try_push(&mut pieces.g_part, b)?;
-            if walk_g && b != ABSENT {
-                lim.try_push(&mut s.products, (b, o))?;
+
+        if walk_g {
+            index_pairs(eng, fl, 0..f_width, &mut s.held)?;
+            // Stable by `g` node, so each node's products stay in output order.
+            s.products.sort_by_key(|&(b, _)| b);
+            lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
+            pieces.g_start.push(0);
+            let mut next = 0;
+            for b in 0..g_width {
+                while next < s.products.len() && s.products[next].0 == b as u32 {
+                    lim.try_push(&mut pieces.g_items, s.products[next].1)?;
+                    next += 1;
+                }
+                s.pairs.clear();
+                for p in gl.pairs_iter_of_idx(b) {
+                    let xs = lp.of_g(p.left.0);
+                    let ys = rp.of_g(p.right.0);
+                    for &x in xs {
+                        let fx = lp.f_part[x as usize];
+                        for &y in ys {
+                            let fy = rp.f_part[y as usize];
+                            if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
+                                continue;
+                            }
+                            lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
+                        }
+                    }
+                    poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+                }
+                if !s.pairs.is_empty() {
+                    crate::diagram::sort_pairs(&mut s.pairs);
+                    let o = out.push_node(lim, &s.pairs)?.0;
+                    lim.try_push(&mut pieces.g_items, o)?;
+                    lim.try_push(&mut pieces.f_part, ABSENT)?;
+                    lim.try_push(&mut pieces.g_part, b as u32)?;
+                }
+                lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
             }
         }
-        lim.try_push(&mut pieces.f_start, pieces.f_items.len() as u32)?;
+        poll.flush()?;
+        Ok(())
     }
 
-    if walk_g {
-        index_pairs(eng, fl, 0..f_width, &mut s.held)?;
-        // Stable by `g` node, so each node's products stay in output order.
-        s.products.sort_by_key(|&(b, _)| b);
-        lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
-        pieces.g_start.push(0);
-        let mut next = 0;
-        for b in 0..g_width {
-            while next < s.products.len() && s.products[next].0 == b as u32 {
-                lim.try_push(&mut pieces.g_items, s.products[next].1)?;
-                next += 1;
-            }
-            s.pairs.clear();
-            for p in gl.pairs_iter_of_idx(b) {
-                let xs = lp.of_g(p.left.0);
-                let ys = rp.of_g(p.right.0);
+    /// The root's one node: the cells of `f_out`, and for a disjunction the cells
+    /// of `g_out` outside `f_out`; for a difference, the cells of `f_out` outside
+    /// `g_out`. A sum is the disjunction, refusing a cell of `g_out` inside
+    /// `f_out`. Returned sorted, in `s.pairs`, and empty when the result is false.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::SharedModel`] for a sum whose operands share a cell.
+    /// Allocation refusals and installed limits propagate.
+    fn root_cells<'s>(
+        &self,
+        eng: &Engine,
+        op: Overlay,
+        f_out: NodeIdx,
+        g_out: NodeIdx,
+        s: &'s mut Scratch,
+    ) -> Result<&'s [ChildPair], OperationError> {
+        let &LevelOverlay { fl, gl, lp, rp } = self;
+        let lim = eng.limits();
+        let mut poll = lim.gate();
+        s.pairs.clear();
+        // The operand whose pairs a cell is tested against.
+        let excluded = match op {
+            Overlay::Or | Overlay::Add => fl,
+            Overlay::AndNot => gl,
+        };
+        let excluded_out = match op {
+            Overlay::Or | Overlay::Add => f_out,
+            Overlay::AndNot => g_out,
+        };
+        index_pairs(eng, excluded, std::iter::once(excluded_out.idx()), &mut s.held)?;
+        if op != Overlay::AndNot {
+            for p in fl.pairs_iter_of_idx(f_out.idx()) {
+                let xs = lp.of_f(p.left.0);
+                let ys = rp.of_f(p.right.0);
                 for &x in xs {
-                    let fx = lp.f_part[x as usize];
                     for &y in ys {
-                        let fy = rp.f_part[y as usize];
-                        if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
-                            continue;
-                        }
                         lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
                     }
                 }
                 poll.poll((xs.len() * ys.len()) as u64 + 1)?;
             }
-            if !s.pairs.is_empty() {
-                crate::diagram::sort_pairs(&mut s.pairs);
-                let o = out.push_node(lim, &s.pairs)?.0;
-                lim.try_push(&mut pieces.g_items, o)?;
-                lim.try_push(&mut pieces.f_part, ABSENT)?;
-                lim.try_push(&mut pieces.g_part, b as u32)?;
-            }
-            lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
         }
-    }
-    poll.flush()?;
-    Ok(())
-}
-
-/// The root's one node: the cells of `f_out`, and for a disjunction the cells
-/// of `g_out` outside `f_out`; for a difference, the cells of `f_out` outside
-/// `g_out`. A sum is the disjunction, refusing a cell of `g_out` inside
-/// `f_out`. Returned sorted, in `s.pairs`, and empty when the result is false.
-///
-/// # Errors
-///
-/// [`OperationError::SharedModel`] for a sum whose operands share a cell.
-/// Allocation refusals and installed limits propagate.
-#[allow(clippy::too_many_arguments)]
-fn root_cells<'s>(
-    eng: &Engine,
-    op: Overlay,
-    fl: &TddLevel,
-    gl: &TddLevel,
-    f_out: NodeIdx,
-    g_out: NodeIdx,
-    lp: &Pieces,
-    rp: &Pieces,
-    s: &'s mut Scratch,
-) -> Result<&'s [ChildPair], OperationError> {
-    let lim = eng.limits();
-    let mut poll = lim.gate();
-    s.pairs.clear();
-    // The operand whose pairs a cell is tested against.
-    let excluded = match op {
-        Overlay::Or | Overlay::Add => fl,
-        Overlay::AndNot => gl,
-    };
-    let excluded_out = match op {
-        Overlay::Or | Overlay::Add => f_out,
-        Overlay::AndNot => g_out,
-    };
-    index_pairs(eng, excluded, std::iter::once(excluded_out.idx()), &mut s.held)?;
-    if op != Overlay::AndNot {
-        for p in fl.pairs_iter_of_idx(f_out.idx()) {
-            let xs = lp.of_f(p.left.0);
-            let ys = rp.of_f(p.right.0);
+        // The walked operand: `g` for a disjunction, `f` for a difference; a cell
+        // is kept when its components in the other operand are not a pair of that
+        // operand's output.
+        let (walked, walked_out) = match op {
+            Overlay::Or | Overlay::Add => (gl, g_out),
+            Overlay::AndNot => (fl, f_out),
+        };
+        for p in walked.pairs_iter_of_idx(walked_out.idx()) {
+            let (xs, ys, x_part, y_part) = match op {
+                Overlay::Or | Overlay::Add => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
+                Overlay::AndNot => (lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part),
+            };
             for &x in xs {
+                let cx = x_part[x as usize];
                 for &y in ys {
+                    let cy = y_part[y as usize];
+                    if cx != ABSENT && cy != ABSENT && s.held.contains(&key(cx, cy)) {
+                        // A cell of both operands: a model `f + g` counts twice.
+                        if op == Overlay::Add {
+                            return Err(OperationError::SharedModel);
+                        }
+                        continue;
+                    }
                     lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
                 }
             }
             poll.poll((xs.len() * ys.len()) as u64 + 1)?;
         }
+        poll.flush()?;
+        crate::diagram::sort_pairs(&mut s.pairs);
+        Ok(&s.pairs)
     }
-    // The walked operand: `g` for a disjunction, `f` for a difference; a cell
-    // is kept when its components in the other operand are not a pair of that
-    // operand's output.
-    let (walked, walked_out) = match op {
-        Overlay::Or | Overlay::Add => (gl, g_out),
-        Overlay::AndNot => (fl, f_out),
-    };
-    for p in walked.pairs_iter_of_idx(walked_out.idx()) {
-        let (xs, ys, x_part, y_part) = match op {
-            Overlay::Or | Overlay::Add => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
-            Overlay::AndNot => (lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part),
-        };
-        for &x in xs {
-            let cx = x_part[x as usize];
-            for &y in ys {
-                let cy = y_part[y as usize];
-                if cx != ABSENT && cy != ABSENT && s.held.contains(&key(cx, cy)) {
-                    // A cell of both operands: a model `f + g` counts twice.
-                    if op == Overlay::Add {
-                        return Err(OperationError::SharedModel);
-                    }
-                    continue;
-                }
-                lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
-            }
-        }
-        poll.poll((xs.len() * ys.len()) as u64 + 1)?;
-    }
-    poll.flush()?;
-    crate::diagram::sort_pairs(&mut s.pairs);
-    Ok(&s.pairs)
 }
 
 /// The two-cell truth table of a leaf label: `(x, ¬x)`.

@@ -44,7 +44,7 @@ use crate::reduce::ReductionPlan;
 use crate::value::{Count, CountRead, CountVec, COUNT_OVERFLOW};
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::overlay::{inner_level, leaf_index, overlay_on, Overlay, Pieces, Scratch, ABSENT};
+use super::overlay::{leaf_index, overlay_on, LevelOverlay, Overlay, Pieces, Scratch, ABSENT};
 
 /// Return `f + g`, the pointwise sum of two count diagrams sharing a vtree
 /// allocation.
@@ -206,13 +206,11 @@ fn side_refs<'s>(side: &'s Side, raw: EncodedChildRef, of_g: bool, one: &'s mut 
 /// Push into `pairs` the pairs of node `a` of `level`, an operand's level
 /// (`g`'s when `of_g`), each rewritten onto the output references of its
 /// sides, charging the work to the level's `poll`.
-#[allow(clippy::too_many_arguments)]
 fn rewrite_node(
     eng: &Engine,
     level: &TddLevel,
     a: usize,
-    left: &Side,
-    right: &Side,
+    (left, right): (&Side, &Side),
     of_g: bool,
     pairs: &mut Vec<ChildPair>,
     poll: &mut PollGate<'_>,
@@ -371,7 +369,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
             // summed-out level under it, so it is never one.
             debug_assert!(t != root, "a Boolean root in a diagram with a summed-out level");
             let (Side::Pieces(lp), Side::Pieces(rp)) = (&ls, &rs) else { unreachable!("a Boolean level has structural children") };
-            inner_level(eng, Overlay::Or, fl, gl, lp, rp, out, &mut scratch, &mut pieces)?;
+            (LevelOverlay { fl, gl, lp, rp }).inner_level(eng, Overlay::Or, out, &mut scratch, &mut pieces)?;
         } else {
             for (child_side, child) in [(ChildSide::Left, left), (ChildSide::Right, right)] {
                 if summed(f, child) {
@@ -381,8 +379,8 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
             let mut poll = lim.gate();
             if t == root {
                 pairs.clear();
-                rewrite_node(eng, fl, f.output.local.idx(), &ls, &rs, false, &mut pairs, &mut poll)?;
-                rewrite_node(eng, gl, g.output.local.idx(), &ls, &rs, true, &mut pairs, &mut poll)?;
+                rewrite_node(eng, fl, f.output.local.idx(), (&ls, &rs), false, &mut pairs, &mut poll)?;
+                rewrite_node(eng, gl, g.output.local.idx(), (&ls, &rs), true, &mut pairs, &mut poll)?;
                 poll.flush()?;
                 crate::diagram::sort_pairs(&mut pairs);
                 let local = out.push_node(lim, &pairs)?;
@@ -395,7 +393,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                 lim.reserve_exact(if of_g { &mut pieces.g_start } else { &mut pieces.f_start }, width + 1)?;
                 for a in 0..width {
                     pairs.clear();
-                    rewrite_node(eng, level, a, &ls, &rs, of_g, &mut pairs, &mut poll)?;
+                    rewrite_node(eng, level, a, (&ls, &rs), of_g, &mut pairs, &mut poll)?;
                     crate::diagram::sort_pairs(&mut pairs);
                     let o = out.push_node(lim, &pairs)?.0;
                     let (start, items) = match of_g {

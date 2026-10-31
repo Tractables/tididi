@@ -167,13 +167,13 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     );
 }
 
-/// MEMORY-RECLAIM regression. When a cluster-rotation marginalizes a new
+/// When a cluster rotation marginalizes a new
 /// parent over two already-marginal children, those children become interior
 /// to a marginal region: their count stores are subsumed by the parent's
 /// aggregate and unreachable from the root. The reclaim-on-marginalization
 /// (`free_subsumed_marginal_children`, fired when the new parent marginalizes
-/// inside `marginalize_closure`) must FREE them (width → 0) while preserving
-/// #F exactly. Fails without that free (children keep their stores resident).
+/// inside `marginalize_closure`) frees them (width 0) while preserving
+/// the model count.
 #[test]
 fn cluster_rotation_frees_subsumed_child_stores() {
     let eng_lim = crate::limits::Limits::new();
@@ -354,7 +354,7 @@ fn gc1_sweep_undercount_repro() {
 
     assert_eq!(
         mc_marginal, mc_search,
-        "the search SWEEP changed the marginalized count"
+        "the search sweep changed the marginalized count"
     );
     assert_eq!(
         mc_marginal, mc_closure,
@@ -500,7 +500,7 @@ fn rotation_locality_linear_left_chain() {
 #[test]
 fn rotation_locality_unsat_left() {
     let eng = Engine::new();
-    // UNSAT formula: post-rotation diagram has an empty output but the
+    // Unsatisfiable formula: post-rotation diagram has an empty output but the
     // locality invariant still applies (vacuously: every level is empty,
     // and empty == empty).
     let vtree = Arc::new(Vtree::balanced(3));

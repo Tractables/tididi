@@ -328,7 +328,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
             let mut scratch = crate::restructure::scratch::RestructureScratch::default();
-            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, mv, usize::MAX, &mut scratch, super::Twin::Alone, 0, None)).unwrap();
+            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, (mv, usize::MAX, 0), &mut scratch, super::Twin::Alone, None)).unwrap();
             if kept {
                 continue;
             }
