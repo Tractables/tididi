@@ -13,28 +13,11 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{filled, ix, mk, normalize, vt, Ref, SkipForm, NEG, NONE, ONE, POS, ZREF};
+use super::{
+    cells_label, filled, ix, literal_cells, mk, normalize, vt, Ref, SkipForm, NONE, ONE, POS, ZREF,
+};
 use crate::limits::{Charged, Limits};
 use crate::OperationError;
-
-/// The literal cells a leaf label covers: bit 0 positive, bit 1 negative.
-#[inline]
-fn cells(label: u32) -> u8 {
-    match label {
-        ONE => 3,
-        POS => 1,
-        _ => 2,
-    }
-}
-
-#[inline]
-fn label_of(cells: u8) -> u32 {
-    match cells {
-        3 => ONE,
-        1 => POS,
-        _ => NEG,
-    }
-}
 
 /// `¬f`, for `f` pruned (no false side, no node without pairs) and free of
 /// twins; canonical when `f` is.
@@ -133,10 +116,14 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                     }
                 };
                 for &(a, b) in &lvl.pairs {
-                    own(cells(ix(a)), cells(ix(b)));
+                    own(literal_cells(ix(a)), literal_cells(ix(b)));
                 }
                 for &x in leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
-                    if vt(x) == l { own(cells(ix(x)), 3) } else { own(3, cells(ix(x))) }
+                    if vt(x) == l {
+                        own(literal_cells(ix(x)), 3)
+                    } else {
+                        own(3, literal_cells(ix(x)))
+                    }
                 }
                 for i in 0..2u32 {
                     for j in 0..2u32 {
@@ -153,7 +140,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 lim.reserve_map(&mut cov, lvl.pairs.len())?;
                 for &(a, b) in &lvl.pairs {
                     let (lab, e) = if left_leaf { (a, b) } else { (b, a) };
-                    *cov.entry(e).or_insert(0) |= cells(ix(lab));
+                    *cov.entry(e).or_insert(0) |= literal_cells(ix(lab));
                 }
                 let mut v: Vec<(Ref, u8)> = Vec::new();
                 lim.reserve_exact(&mut v, cov.len())?;
@@ -162,7 +149,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                 v.sort_unstable();
                 lim.reserve_exact(&mut z, v.len() + 1)?;
                 for &(e, c) in &v {
-                    let lab = mk(leaf, label_of(3 & !c));
+                    let lab = mk(leaf, cells_label(3 & !c));
                     z.push(if left_leaf { (lab, e) } else { (e, lab) });
                 }
                 lim.discard(v);
@@ -252,7 +239,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
                     if is_top {
                         let ent = cov.entry(e).or_default();
                         if sh.is_leaf(sib) {
-                            ent.0 |= cells(ix(s));
+                            ent.0 |= literal_cells(ix(s));
                         } else {
                             lim.try_push(&mut ent.1, s)?;
                         }
@@ -335,8 +322,8 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     // Z of the level the skip lands on, behind `true` on the skipped
     // variables.
     out.out = if sh.is_leaf(sh.root) {
-        let c = 3 & !cells(ix(f.out));
-        if c == 0 { ZREF } else { mk(sh.root, label_of(c)) }
+        let c = 3 & !literal_cells(ix(f.out));
+        if c == 0 { ZREF } else { mk(sh.root, cells_label(c)) }
     } else {
         let w = zlev(sh.root);
         if w == NONE { ZREF } else { zres[pos[w as usize] as usize] }

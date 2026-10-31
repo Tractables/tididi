@@ -433,8 +433,7 @@ pub(crate) fn contract_in(
         }
         lvs[e].rm = rm;
         lvs[e].gres = gres;
-        lim.release_bytes(s.levels[c as usize].bytes());
-        s.levels[c as usize] = out;
+        s.levels.replace_level(c as usize, out, lim);
     }
     s.out = resolve(&lvs, sh.root, s.out);
     for v in [sstamp, sslot, order, firsts] {
@@ -457,8 +456,6 @@ pub(crate) fn contract_in(
     }
     if merged {
         s.collect_in(visited, lim)?;
-    } else {
-        s.active.retain(|&t| s.levels[t as usize].width() > 0);
     }
     Ok(s)
 }
