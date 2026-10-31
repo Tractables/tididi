@@ -353,7 +353,8 @@ impl InstallTarget for [TddLevel] {
 /// installed.
 ///
 /// A level with no column in `computed` is left structural: the walk that
-/// filled `computed` did not visit it.
+/// filled `computed` did not visit it. Parent links carry the return path, so
+/// the traversal allocates no stack.
 pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     target: &mut S,
     vtree: &Vtree,
@@ -361,28 +362,34 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     computed: &mut [Option<K::Col>],
     store: &mut K::Store,
 ) {
-    cascade_at::<K, S>(target, vtree, t, false, computed, store);
-}
-
-fn cascade_at<K: MarginalDomain, S: InstallTarget + ?Sized>(
-    target: &mut S,
-    vtree: &Vtree,
-    t: VtreeIdx,
-    subsumed: bool,
-    computed: &mut [Option<K::Col>],
-    store: &mut K::Store,
-) {
-    let Some(level) = InternalLevel::new(vtree, t) else {
-        return;
-    };
-    if target.levels()[t.idx()].is_marginal() {
-        return;
-    }
-    let (left, right) = vtree.children(t);
-    cascade_at::<K, S>(target, vtree, left, true, computed, store);
-    cascade_at::<K, S>(target, vtree, right, true, computed, store);
-    if let Some(col) = computed[t.idx()].take() {
-        target.install::<K>(vtree, level, subsumed, col, computed, store);
+    let mut u = t;
+    let mut subtree_done = false;
+    loop {
+        if subtree_done || (!vtree.node(u).is_leaf() && !target.levels()[u.idx()].is_marginal()) {
+            if !subtree_done {
+                u = vtree.children(u).0;
+                continue;
+            }
+            if let Some(level) = InternalLevel::new(vtree, u)
+                && let Some(col) = computed[u.idx()].take()
+            {
+                target.install::<K>(vtree, level, u != t, col, computed, store);
+            }
+        }
+        if u == t {
+            return;
+        }
+        let parent = vtree
+            .node(u)
+            .parent()
+            .expect("a non-root cascade node has a parent");
+        if u == vtree.children(parent).0 {
+            u = vtree.children(parent).1;
+            subtree_done = false;
+        } else {
+            u = parent;
+            subtree_done = true;
+        }
     }
 }
 

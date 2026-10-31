@@ -192,6 +192,19 @@ fn all_leaves_inline_preserve_count() {
     assert_eq!(t.model_count().unwrap(), baseline);
 }
 
+/// Marginalizing the root of a deep right-linear vtree walks the spine via
+/// parent pointers rather than the call stack.
+#[test]
+fn deep_linear_vtree_cascade_does_not_overflow_stack() {
+    let eng = Engine::new();
+    let n = 60_000u32;
+    let vtree = Arc::new(Vtree::linear(n));
+    let mut tdd = Tdd::one(&vtree);
+    eng.marginalize_levels(&mut tdd, &[vtree.root()]).unwrap();
+    assert!(tdd.level(vtree.root()).is_marginal());
+    assert_eq!(tdd.model_count().unwrap(), num_bigint::BigUint::from(1u8) << n);
+}
+
 /// Every invariant a marginalized diagram must satisfy.
 ///
 /// Canonicity is not a post-condition of `marginalize_levels`: the fusion sweep in
