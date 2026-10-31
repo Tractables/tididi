@@ -1032,14 +1032,13 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { column, touched, bucket, met, seen, code, rows, .. } = wide;
         // Every class there can be, as `refine_context_groups` reserves.
-        lim.try_resize(seen, pairs.len(), 0u32)?;
-        met.clear();
-        lim.reserve_exact(met, pairs.len())?;
-        lim.try_resize(bucket, pairs.len(), 0u32)?;
-        touched.clear();
-        lim.reserve_exact(touched, pairs.len())?;
+        lim.try_resize(wide.seen, pairs.len(), 0u32)?;
+        wide.met.clear();
+        lim.reserve_exact(wide.met, pairs.len())?;
+        lim.try_resize(wide.bucket, pairs.len(), 0u32)?;
+        wide.touched.clear();
+        lim.reserve_exact(wide.touched, pairs.len())?;
         // A pair's node is kept in the bucket where its alone bit is clear:
         // a node already alone is in no split. On a level whose wide parent
         // nodes each set one node apart most pairs name one; on others most
@@ -1058,67 +1057,63 @@ impl Partition<'_> {
                     break;
                 }
                 if kept > from {
-                    touched.push(kept as u32);
+                    wide.touched.push(kept as u32);
                     from = kept;
                 }
                 sibling = s;
                 siblings += 1;
             }
             if (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 == 0 {
-                bucket[kept] = t;
+                wide.bucket[kept] = t;
                 kept += 1;
             }
         }
         if ordered {
             if kept > from {
-                touched.push(kept as u32);
+                wide.touched.push(kept as u32);
             }
             // Two or more siblings of few that keep a node: their nodes'
             // classes are read once, by code. With no fifth sibling, the
             // split by codes refuses only before it reads a pair.
             if siblings <= FEW_SIBLINGS
-                && touched.len() >= 2
-                && self.split_by_codes(lim, pairs, side, bucket, seen, met, code, touched, rows)?
+                && wide.touched.len() >= 2
+                && self.split_by_codes(lim, pairs, side, wide)?
             {
                 return Ok(());
             }
             let mut from = 0;
-            for &to in touched.iter() {
-                self.split_bucket(&bucket[from..to as usize], met, seen);
+            for &to in wide.touched.iter() {
+                self.split_bucket(&wide.bucket[from..to as usize], wide.met, wide.seen);
                 from = to as usize;
             }
             return Ok(());
         }
-        if self.split_by_codes(lim, pairs, side, bucket, seen, met, code, touched, rows)? {
+        if self.split_by_codes(lim, pairs, side, wide)? {
             return Ok(());
         }
         // Where most of the level's nodes are alone, the pairs of those
         // already alone are left out; elsewhere reading every pair's alone
         // bit costs more than the pairs it leaves out.
         if self.twinable * 2 < self.class.len() {
-            self.split_scattered::<true>(lim, pairs, side, column, touched, bucket, met, seen)
+            self.split_scattered::<true>(lim, pairs, side, wide)
         } else {
-            self.split_scattered::<false>(lim, pairs, side, column, touched, bucket, met, seen)
+            self.split_scattered::<false>(lim, pairs, side, wide)
         }
     }
 
     /// The nodes of a wide parent node whose pairs come in no order of
-    /// their siblings bucketed by sibling in `bucket`, in two passes over
+    /// their siblings bucketed by sibling in `wide.bucket`, in two passes over
     /// the pairs: one counts each sibling's nodes and one puts them. Each
     /// bucket is then split ([`Self::split_bucket`]). With `SKIP_ALONE`
     /// both passes leave out the pairs of nodes already alone.
-    #[allow(clippy::too_many_arguments)]
     fn split_scattered<const SKIP_ALONE: bool>(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
-        column: &mut Vec<u32>,
-        touched: &mut Vec<u32>,
-        bucket: &mut [u32],
-        met: &mut Vec<u32>,
-        seen: &mut [u32],
+        wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
+        let Wide { column, touched, bucket, met, seen, .. } = wide;
         touched.clear();
         // `column` grows to the siblings as they are counted; on a refusal
         // the counts made are cleared first.
@@ -1168,7 +1163,7 @@ impl Partition<'_> {
 
     /// A wide parent node whose pairs name at most [`FEW_SIBLINGS`]
     /// siblings, split in one step by each node's code there: the set of
-    /// those siblings it is paired with, one bit each in `code`. Every class
+    /// those siblings it is paired with, one bit each in `wide.code`. Every class
     /// splits into its members of each code and its members the node does
     /// not name, as one split per sibling leaves it, with each named node's
     /// class read once rather than once per sibling. Returns `false`, with
@@ -1177,25 +1172,19 @@ impl Partition<'_> {
     ///
     /// The first pass reads each pair's sibling against the siblings met so
     /// far, held in registers, ORs its bit into the node's code and lists
-    /// the node at its first pair, in `bucket`. The second takes each listed
-    /// node's code, into `codes`, and reads its class: a class met keeps the
+    /// the node at its first pair, in `wide.bucket`. The second takes each listed
+    /// node's code, into `wide.touched`, and reads its class: a class met keeps the
     /// first code it meets in `dest` and counts its members in `hits`, and
     /// only a class that meets a second code counts its members by code, in
-    /// a row of `rows`. Each class met then gets the class its members of
+    /// a row of `wide.rows`. Each class met then gets the class its members of
     /// each code move to, as [`Partition::split_sibling`] gives them, and
     /// where some node moves the last pass moves the nodes.
-    #[allow(clippy::too_many_arguments)]
     fn split_by_codes(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
-        bucket: &mut [u32],
-        seen: &mut [u32],
-        met: &mut Vec<u32>,
-        code: &mut [u8],
-        codes: &mut Vec<u32>,
-        rows: &mut Vec<u32>,
+        wide: &mut Wide<'_>,
     ) -> Result<bool, OperationError> {
         // Where every row starts is below `MIXED`.
         if pairs.len() >= 1 << 27 {
@@ -1214,8 +1203,8 @@ impl Partition<'_> {
             let mut bit = hit & used;
             if bit == 0 {
                 if d == FEW_SIBLINGS {
-                    for &t in &bucket[..listed] {
-                        code[t as usize] = 0;
+                    for &t in &wide.bucket[..listed] {
+                        wide.code[t as usize] = 0;
                     }
                     return Ok(false);
                 }
@@ -1224,17 +1213,17 @@ impl Partition<'_> {
                 used |= bit;
                 d += 1;
             }
-            let e = &mut code[t as usize];
-            bucket[listed] = t;
+            let e = &mut wide.code[t as usize];
+            wide.bucket[listed] = t;
             listed += usize::from(*e == 0);
             *e |= bit;
         }
         // Within the reserve of one entry a pair.
-        codes.clear();
-        for &t in &bucket[..listed] {
-            codes.push(u32::from(std::mem::take(&mut code[t as usize])));
+        wide.touched.clear();
+        for &t in &wide.bucket[..listed] {
+            wide.touched.push(u32::from(std::mem::take(&mut wide.code[t as usize])));
         }
-        self.split_listed_codes(lim, &bucket[..listed], codes, d, seen, met, rows)?;
+        self.split_listed_codes(lim, listed, d, wide)?;
         Ok(true)
     }
 
@@ -1258,16 +1247,15 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<Degrees, OperationError> {
-        let Wide { bucket, seen, met, touched: codes, rows, .. } = wide;
         if pairs.len() >= 1 << 27 {
             return Ok(Degrees::Many);
         }
-        lim.try_resize(seen, pairs.len(), 0u32)?;
-        lim.try_resize(bucket, pairs.len(), 0u32)?;
-        met.clear();
-        lim.reserve_exact(met, pairs.len())?;
-        codes.clear();
-        lim.reserve_exact(codes, pairs.len())?;
+        lim.try_resize(wide.seen, pairs.len(), 0u32)?;
+        lim.try_resize(wide.bucket, pairs.len(), 0u32)?;
+        wide.met.clear();
+        lim.reserve_exact(wide.met, pairs.len())?;
+        wide.touched.clear();
+        lim.reserve_exact(wide.touched, pairs.len())?;
         let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
         let (mut d, mut used) = (1usize, 1u8);
         let (mut listed, mut last) = (0usize, None);
@@ -1307,15 +1295,15 @@ impl Partition<'_> {
             let [moved, alone] = self.bits[(t / 64) as usize];
             if (alone >> (t % 64)) & 1 == 0 {
                 first &= (moved >> (t % 64)) & 1 == 0;
-                codes.push(u32::from(e));
-                bucket[listed] = t;
+                wide.touched.push(u32::from(e));
+                wide.bucket[listed] = t;
                 listed += 1;
             }
         }
         if first && self.can_twin(0) {
-            self.split_first_codes(&bucket[..listed], codes, d);
+            self.split_first_codes(&wide.bucket[..listed], wide.touched, d);
         } else {
-            self.split_listed_codes(lim, &bucket[..listed], codes, d, seen, met, rows)?;
+            self.split_listed_codes(lim, listed, d, wide)?;
         }
         Ok(Degrees::Split)
     }
@@ -1349,22 +1337,19 @@ impl Partition<'_> {
         }
     }
 
-    /// The nodes `nodes` of a wide parent node of `d` siblings at most
-    /// [`FEW_SIBLINGS`], each listed once with its code in `node_codes`,
-    /// split by their codes ([`Self::split_by_codes`]).
-    #[allow(clippy::too_many_arguments)]
+    /// The first `listed` nodes in `wide.bucket` of a wide parent node of `d`
+    /// siblings at most [`FEW_SIBLINGS`], each listed once with its code in
+    /// `wide.touched`, split by their codes ([`Self::split_by_codes`]).
     #[inline(always)]
     fn split_listed_codes(
         &mut self,
         lim: &Limits,
-        nodes: &[u32],
-        node_codes: &[u32],
+        listed: usize,
         d: usize,
-        seen: &mut [u32],
-        met: &mut Vec<u32>,
-        rows: &mut Vec<u32>,
+        wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let listed = nodes.len();
+        let Wide { bucket, touched, seen, met, rows, .. } = wide;
+        let (nodes, node_codes) = (&bucket[..listed], &touched[..]);
         // A class that meets two codes has two members or more here.
         let stride = 1usize << d;
         rows.clear();

@@ -739,7 +739,8 @@ fn group_single(
         let runs = (low_starts.as_slice(), n, low_count - lone);
         let mut ids = if spare.capacity() >= low_count { std::mem::take(spare) } else { Vec::new() };
         ids.clear();
-        number_lone(lim, &mut s.slots, &s.low_hash, &mut s.low_first, runs, (&mut s.rank, high_count, high), same_highs, ids)?
+        let table = (&mut s.slots, s.low_hash.as_slice(), &mut s.low_first);
+        number_lone(lim, table, runs, (&mut s.rank, high_count, high), same_highs, ids)?
     } else {
         number_hashed(lim, &mut s.slots, &s.low_hash, &mut s.low_first, same_highs)?
     };
@@ -1005,13 +1006,10 @@ fn close_groups(
 /// more than one. A run of one key is numbered through `lone.0`, a slot
 /// for each of `lone.1` keys, addressed by `lone.2` of the key's position:
 /// the key is the run's content. Only the longer runs are hashed, and
-/// `hashes` lists theirs in order. The numbers go into `ids`, emptied.
-#[allow(clippy::too_many_arguments)]
+/// `table.1` lists theirs in order. The numbers go into `ids`, emptied.
 fn number_lone(
     lim: &Limits,
-    slots: &mut Vec<u64>,
-    hashes: &[u64],
-    firsts: &mut Vec<u32>,
+    (slots, hashes, firsts): (&mut Vec<u64>, &[u64], &mut Vec<u32>),
     (starts, n, long): (&[u32], usize, usize),
     (lone, keys, key): (&mut Vec<u32>, usize, impl Fn(u32) -> usize),
     same: impl Fn(u32, u32) -> bool,
@@ -1142,24 +1140,23 @@ fn split_hashed(
     }
     // Equal sets hash alike, so the numbering by hash merges every pair of
     // low values that shares an atom, and only a collision merges more. The
-    // split built on it is checked by counting (`covers_exactly`), and only
-    // a collision sends the low values to be confirmed against their sets.
+    // split built on it is checked by counting (`Decomposition::covers_exactly`),
+    // and only a collision sends the low values to be confirmed against
+    // their sets.
     let (mut low_atom, mut low_atoms) = number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |_, _| true)?;
-    let mut merged = low_atoms as usize != lows;
     let (mut split, covered) =
-        hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), (&low_atom, low_atoms), merged)?;
+        hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), (&low_atom, low_atoms))?;
     let covered = match covered {
         Some(covered) => covered,
-        None => !merged || covers_exactly(lim, &split, n, (&high_atom, high_atoms), (&low_atom, low_atoms))?,
+        None => low_atoms as usize == lows || split.covers_exactly(lim, n, (&high_atom, high_atoms), (&low_atom, low_atoms))?,
     };
     if !covered {
-        discard_split(lim, split);
+        split.discard(lim);
         let by_hash = low_atom;
         (low_atom, low_atoms) = confirm_lows(lim, s, parent, low_width, &by_hash, low_atoms)?;
         lim.discard(by_hash);
-        merged = low_atoms as usize != lows;
         let low = (&low_atom[..], low_atoms);
-        (split, _) = hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), low, merged)?;
+        (split, _) = hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), low)?;
     }
     gate.flush()?;
 
@@ -1335,19 +1332,17 @@ fn sample_repeats(
 }
 
 /// The node's pairs in `split_hashed` once the low values are numbered by
-/// `low_atom` (by rank), `merged` when two of them share a number: the
-/// first run of each high atom realizes all the triples there are. With one
-/// parent atom they come out as its pairs, high atom by high atom, sorted
-/// only where low values merge. Otherwise a counting sort by parent atom
-/// groups them, and each group is sorted and deduplicated. Leaves each low
-/// slot's atom in `s.high_of`.
+/// `low_atom` (by rank): the first run of each high atom realizes all the
+/// triples there are. With one parent atom they come out as its pairs, high
+/// atom by high atom, sorted only where low values merge. Otherwise a
+/// counting sort by parent atom groups them, and each group is sorted and
+/// deduplicated. Leaves each low slot's atom in `s.high_of`.
 ///
 /// Where the pairs are written as the node's ([`Decomposition::Pairs`])
 /// and low values merged, the pass also counts the values the pairs'
-/// products hold, as `covers_exactly` does, while each group is in the
-/// cache, and returns whether they cover the parent's values exactly.
-/// `None` otherwise: the caller checks.
-#[allow(clippy::too_many_arguments)]
+/// products hold, as [`Decomposition::covers_exactly`] does, while each
+/// group is in the cache, and returns whether they cover the parent's values
+/// exactly. `None` otherwise: the caller checks.
 fn hashed_split(
     lim: &Limits,
     s: &mut Scratch,
@@ -1355,9 +1350,9 @@ fn hashed_split(
     low_width: usize,
     (high_atom, high_atoms): (&[u32], u32),
     (low_atom, low_atoms): (&[u32], u32),
-    merged: bool,
 ) -> Result<(Decomposition, Option<bool>), OperationError> {
     let n = parent.len();
+    let merged = low_atoms as usize != low_atom.len();
     let mask = (1u64 << low_width) - 1;
     let data = &parent.data;
     let atom_of = &mut s.high_of;
@@ -1368,7 +1363,7 @@ fn hashed_split(
     let mut gate = lim.gate();
     gate.poll(held as u64)?;
     if parent.atoms == 1 && s.direct {
-        let (split, covered) = direct_pairs(lim, s, parent, low_width, (high_atom, high_atoms), (low_atom, low_atoms), merged, held)?;
+        let (split, covered) = direct_pairs(lim, s, parent, low_width, (high_atom, high_atoms), (low_atom, low_atoms), held)?;
         gate.flush()?;
         return Ok((split, covered));
     }
@@ -1413,7 +1408,6 @@ fn hashed_split(
 /// values merged, the values the pairs' products hold are counted group by
 /// group, and whether they are the parent's `n` is returned beside the
 /// pairs.
-#[allow(clippy::too_many_arguments)]
 fn direct_pairs(
     lim: &Limits,
     s: &mut Scratch,
@@ -1421,10 +1415,10 @@ fn direct_pairs(
     low_width: usize,
     (high_atom, high_atoms): (&[u32], u32),
     (low_atom, low_atoms): (&[u32], u32),
-    merged: bool,
     held: usize,
 ) -> Result<(Decomposition, Option<bool>), OperationError> {
     let n = parent.len();
+    let merged = low_atoms as usize != low_atom.len();
     let mask = (1u64 << low_width) - 1;
     let (data, atom_of) = (&parent.data, &s.high_of);
     let (high_size, low_size) = match merged {
@@ -1472,76 +1466,78 @@ fn atom_sizes(lim: &Limits, atom: &[u32], atoms: u32) -> Result<Vec<u64>, Operat
     Ok(size)
 }
 
-/// Whether the pairs of `split`, built from child atoms that may merge
-/// values of different atoms, describe the parent's `n` values exactly.
-///
-/// Every parent value lies in the product of its two child atoms, and that
-/// product is among its parent atom's pairs, so the products cover the
-/// values. They are exact when they hold no other value and no value
-/// twice: when the sizes of the products, `|high atom| * |low atom|` in
-/// child values, sum to `n`. Two low values merged although some high
-/// value pairs with one and not the other leave a product with a value
-/// that is not the parent's, or one that a second parent atom's pair holds
-/// too, and the sum exceeds `n`. The sizes come from `high` and `low`, each
-/// child value's atom and the number of atoms.
-fn covers_exactly(
-    lim: &Limits,
-    split: &Decomposition,
-    n: usize,
-    high: (&[u32], u32),
-    low: (&[u32], u32),
-) -> Result<bool, OperationError> {
-    let (high_size, low_size) = (atom_sizes(lim, high.0, high.1)?, atom_sizes(lim, low.0, low.1)?);
-    let mut gate = lim.gate();
-    let mut models = 0u128;
-    match split {
-        Decomposition::Grouped { ends, lows } => {
-            gate.poll(lows.len() as u64)?;
-            let mut start = 0;
-            for (h, &end) in ends.iter().enumerate() {
-                let width: u64 = lows[start..end as usize].iter().map(|&l| low_size[l as usize]).sum();
-                models += u128::from(high_size[h]) * u128::from(width);
-                start = end as usize;
+impl Decomposition {
+    /// Whether the pairs of `self`, built from child atoms that may merge
+    /// values of different atoms, describe the parent's `n` values exactly.
+    ///
+    /// Every parent value lies in the product of its two child atoms, and that
+    /// product is among its parent atom's pairs, so the products cover the
+    /// values. They are exact when they hold no other value and no value
+    /// twice: when the sizes of the products, `|high atom| * |low atom|` in
+    /// child values, sum to `n`. Two low values merged although some high
+    /// value pairs with one and not the other leave a product with a value
+    /// that is not the parent's, or one that a second parent atom's pair holds
+    /// too, and the sum exceeds `n`. The sizes come from `high` and `low`, each
+    /// child value's atom and the number of atoms.
+    fn covers_exactly(
+        &self,
+        lim: &Limits,
+        n: usize,
+        high: (&[u32], u32),
+        low: (&[u32], u32),
+    ) -> Result<bool, OperationError> {
+        let (high_size, low_size) = (atom_sizes(lim, high.0, high.1)?, atom_sizes(lim, low.0, low.1)?);
+        let mut gate = lim.gate();
+        let mut models = 0u128;
+        match self {
+            Decomposition::Grouped { ends, lows } => {
+                gate.poll(lows.len() as u64)?;
+                let mut start = 0;
+                for (h, &end) in ends.iter().enumerate() {
+                    let width: u64 = lows[start..end as usize].iter().map(|&l| low_size[l as usize]).sum();
+                    models += u128::from(high_size[h]) * u128::from(width);
+                    start = end as usize;
+                }
+            }
+            Decomposition::ByAtom { pairs, .. } => {
+                gate.poll(pairs.len() as u64)?;
+                for &pair in pairs {
+                    models += u128::from(high_size[(pair >> 32) as usize]) * u128::from(low_size[pair as u32 as usize]);
+                }
+            }
+            Decomposition::Triples { triples, .. } => {
+                gate.poll(triples.len() as u64)?;
+                for &[_, h, l] in triples {
+                    models += u128::from(high_size[h as usize]) * u128::from(low_size[l as usize]);
+                }
+            }
+            Decomposition::Pairs { pairs } => {
+                gate.poll(pairs.len() as u64)?;
+                for pair in pairs {
+                    models += u128::from(high_size[pair.left.0 as usize]) * u128::from(low_size[pair.right.0 as usize]);
+                }
             }
         }
-        Decomposition::ByAtom { pairs, .. } => {
-            gate.poll(pairs.len() as u64)?;
-            for &pair in pairs {
-                models += u128::from(high_size[(pair >> 32) as usize]) * u128::from(low_size[pair as u32 as usize]);
-            }
-        }
-        Decomposition::Triples { triples, .. } => {
-            gate.poll(triples.len() as u64)?;
-            for &[_, h, l] in triples {
-                models += u128::from(high_size[h as usize]) * u128::from(low_size[l as usize]);
-            }
-        }
-        Decomposition::Pairs { pairs } => {
-            gate.poll(pairs.len() as u64)?;
-            for pair in pairs {
-                models += u128::from(high_size[pair.left.0 as usize]) * u128::from(low_size[pair.right.0 as usize]);
-            }
-        }
+        gate.flush()?;
+        lim.discard(high_size);
+        lim.discard(low_size);
+        Ok(models == n as u128)
     }
-    gate.flush()?;
-    lim.discard(high_size);
-    lim.discard(low_size);
-    Ok(models == n as u128)
-}
 
-/// Hand back the buffers of a split that is rebuilt.
-fn discard_split(lim: &Limits, split: Decomposition) {
-    match split {
-        Decomposition::Grouped { ends, lows } => {
-            lim.discard(ends);
-            lim.discard(lows);
+    /// Hand back the buffers of a split that is rebuilt.
+    fn discard(self, lim: &Limits) {
+        match self {
+            Decomposition::Grouped { ends, lows } => {
+                lim.discard(ends);
+                lim.discard(lows);
+            }
+            Decomposition::ByAtom { ends, pairs } => {
+                lim.discard(ends);
+                lim.discard(pairs);
+            }
+            Decomposition::Triples { triples, .. } => lim.discard(triples),
+            Decomposition::Pairs { pairs } => lim.discard(pairs),
         }
-        Decomposition::ByAtom { ends, pairs } => {
-            lim.discard(ends);
-            lim.discard(pairs);
-        }
-        Decomposition::Triples { triples, .. } => lim.discard(triples),
-        Decomposition::Pairs { pairs } => lim.discard(pairs),
     }
 }
 
