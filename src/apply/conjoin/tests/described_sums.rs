@@ -209,3 +209,75 @@ fn conditioned_and_empty_products_match_the_cells() {
         same_both_ways(&parts, &targets_up_to(&vtree, h));
     }
 }
+
+/// Multi-step marginalization: a first conjunction sums out low subtrees and
+/// minimizes, keeping multi-pair parent levels described even when equal
+/// literal weights repeat child values; a second conjunction then sums out
+/// higher levels over carried and entry-marginal children off their
+/// descriptions.
+#[test]
+fn carried_marginal_children_match_the_cells() {
+    let run = |n: u32, seed: u64| {
+        let mut rng = Lcg::new(seed);
+        let vtree = Arc::new(Vtree::balanced(n));
+        let eng = Engine::new();
+        let uniform = RationalWeights::from_literals(&vec![
+            LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
+            n as usize
+        ]);
+        let store = WeightStore::new(uniform, Arithmetic::ScaledFloat);
+        let factors: Vec<Tdd> = (0..4)
+            .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))
+            .collect();
+        let weighted = |mut f: Tdd| {
+            f.set_weights(store.empty_like()).unwrap();
+            f
+        };
+        let f02 = weighted(eng.and(&factors[0], &factors[2]).unwrap());
+        let f1 = weighted(factors[1].clone());
+        let h3 = targets_up_to(&vtree, 3);
+        let h4: Vec<VtreeIdx> = targets_up_to(&vtree, 4)
+            .into_iter()
+            .filter(|t| !h3.contains(t))
+            .collect();
+        let mut low = Vec::new();
+        let mut low_vars = Vec::new();
+        for &p in &h4 {
+            let l = vtree.children(p).0;
+            let (ll, lr) = vtree.children(l);
+            let (lll, llr) = vtree.children(ll);
+            let (lrl, lrr) = vtree.children(lr);
+            for u in [lll, llr, lrl, lrr] {
+                let (a, b) = vtree.children(u);
+                low_vars.extend([vtree.leaf_var(a), vtree.leaf_var(b)]);
+            }
+            low.extend([lll, llr, lrl, lrr, ll, lr, l]);
+        }
+        let third = weighted(eng.exists_vars(factors[3].clone(), &low_vars).unwrap());
+        let mut partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
+        partial.minimize().unwrap();
+        for &p in &h4 {
+            assert!(
+                partial.levels[p.idx()].implicit().is_some(),
+                "minimizing a summed child destroyed its parent's description at level {}",
+                p.idx()
+            );
+        }
+        let before = described_sums();
+        let depth = n.ilog2() as usize + 1;
+        for h in 4..=depth {
+            let high = targets_up_to(&vtree, h);
+            same_both_ways(&[partial.clone(), third.clone()], &high);
+            same_both_ways(&[third.clone(), partial.clone()], &high);
+        }
+        assert!(
+            described_sums() > before,
+            "no level with carried marginal children was summed off its description"
+        );
+    };
+    run(32, 0x5d_0030);
+    with_floor(2, || {
+        run(32, 0x5d_0031);
+    });
+}
+
