@@ -47,40 +47,28 @@ fn is_one(sh: &Shape, r: Ref) -> bool {
     r != ZREF && sh.is_leaf(vt(r)) && ix(r) == ONE
 }
 
-/// Per vtree node, whether it is in `g`'s cone (an ancestor, or itself, of a
-/// level holding a node of `g` or of a leaf `g` reads a literal on), together
-/// with the internal nodes in the cone ordered children first. Below the cone
-/// every reference of `g` is `true`; the cone holds every ancestor of its
+/// Per vtree node, whether it is in `g`'s cone: an ancestor (or itself) of a
+/// level holding a node of `g` or of a leaf `g` reads a literal on. Below the
+/// cone every reference of `g` is `true`; the cone holds every ancestor of its
 /// levels.
-fn cone_of(
-    sh: &Shape,
-    g: &SkipForm,
-    ng: &Numbered,
-    lim: &Limits,
-) -> Result<(Vec<bool>, Vec<u32>), OperationError> {
+fn cone_of(sh: &Shape, g: &SkipForm, ng: &Numbered, lim: &Limits) -> Result<Vec<bool>, OperationError> {
     let mut cone = filled(lim, sh.num_nodes(), false)?;
-    let mut cone_levels = Vec::new();
-    let mut up = |mut t: u32, cone_levels: &mut Vec<u32>| -> Result<(), OperationError> {
+    let mut up = |mut t: u32| {
         while t != NONE && !cone[t as usize] {
             cone[t as usize] = true;
-            if !sh.is_leaf(t) {
-                lim.try_push(cone_levels, t)?;
-            }
             t = sh.parent[t as usize];
         }
-        Ok(())
     };
     for &t in &g.active {
-        up(t, &mut cone_levels)?;
+        up(t);
     }
     for &c in &ng.leaves {
         let b = ng.base[c as usize];
         if [POS, NEG].iter().any(|&k| ng.top[(b + k) as usize] != NONE) {
-            up(c, &mut cone_levels)?;
+            up(c);
         }
     }
-    cone_levels.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
-    Ok((cone, cone_levels))
+    Ok(cone)
 }
 
 /// The products with `true` of `g` that the conjunction's scans may meet,
@@ -95,14 +83,17 @@ fn identity_seeds(
     nf: &Numbered,
     ng: &Numbered,
     cone: &[bool],
-    cone_levels: &[u32],
+    f_cone: &[u32],
     lim: &Limits,
 ) -> Result<Vec<(u32, Ref, Ref)>, OperationError> {
     let mut seeds: Vec<(u32, Ref, Ref)> = Vec::new();
     let mut tops: Vec<Ref> = Vec::new();
     for &c in &ng.leaves {
         let t = mk(c, ONE);
-        if ng.top[ng.id(t)] != NONE {
+        let top = ng.top[ng.id(t)];
+        // Every product in `seeds` is built at an internal level `p`, where
+        // `ng.read_at(sh, t, p)` holds only if `t` is read above leaf `c`.
+        if top != NONE && top != c {
             lim.try_push(&mut tops, t)?;
         }
     }
@@ -111,18 +102,27 @@ fn identity_seeds(
     }
     let mut seen = filled(lim, nf.len(), false)?;
     let mut note = |x: Ref, seeds: &mut Vec<(u32, Ref, Ref)>| -> Result<(), OperationError> {
-        if cone[vt(x) as usize] || std::mem::replace(&mut seen[nf.id(x)], true) {
+        let vx = vt(x);
+        if sh.is_leaf(vx) {
+            let p = sh.parent[vx as usize];
+            if p == NONE || cone[p as usize] {
+                return Ok(());
+            }
+        } else if cone[vx as usize] {
+            return Ok(());
+        }
+        if std::mem::replace(&mut seen[nf.id(x)], true) {
             return Ok(());
         }
         for &t in &tops {
-            let p = if !sh.is_leaf(vt(x)) {
-                if !sh.within(vt(t), vt(x)) {
+            let p = if !sh.is_leaf(vx) {
+                if !sh.within(vt(t), vx) {
                     continue;
                 }
-                vt(x)
+                vx
             } else {
-                let p = sh.parent[vt(x) as usize];
-                if vt(t) == vt(x) || p == NONE || sh.parent[vt(t) as usize] != p || cone[p as usize] {
+                let p = sh.parent[vx as usize];
+                if vt(t) == vx || sh.parent[vt(t) as usize] != p {
                     continue;
                 }
                 p
@@ -134,7 +134,7 @@ fn identity_seeds(
         Ok(())
     };
     note(f.out, &mut seeds)?;
-    for &u in cone_levels {
+    for &u in f_cone {
         for &(a, b) in &f.levels[u as usize].pairs {
             note(a, &mut seeds)?;
             note(b, &mut seeds)?;
@@ -225,44 +225,70 @@ impl Lists {
     }
 }
 
-/// Build one node's products (`keys`, their pair combinations in `combos`
-/// by key) at internal `u` into `out`, noting each with its result in
-/// `made`; empties `keys` and `combos`. The work units they took.
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn emit(
-    sh: &Shape,
-    u: u32,
-    out: &mut SkipForm,
-    keys: &mut Vec<(Ref, Ref)>,
-    combos: &mut Vec<(u32, Ref, Ref)>,
-    buf: &mut Vec<(Ref, Ref)>,
-    made: &mut Vec<(Ref, Ref, Ref)>,
-    lim: &Limits,
-) -> Result<u64, OperationError> {
-    if keys.is_empty() {
-        return Ok(0);
-    }
-    let work = (keys.len() + combos.len()) as u64;
-    if keys.len() > 1 {
-        combos.sort_unstable_by_key(|c| c.0);
-    }
-    let mut i = 0;
-    for (k, &(a, b)) in keys.iter().enumerate() {
-        buf.clear();
-        while i < combos.len() && combos[i].0 == k as u32 {
-            lim.try_push(buf, (combos[i].1, combos[i].2))?;
-            i += 1;
+/// Scratch buffers for building one node's products (`keys` and their pair
+/// combinations in `combos` by key) and recording the level's products in
+/// `made`.
+#[derive(Default)]
+struct NodeBatch {
+    keys: Vec<(Ref, Ref)>,
+    combos: Vec<(u32, Ref, Ref)>,
+    buf: Vec<(Ref, Ref)>,
+    made: Vec<(Ref, Ref, Ref)>,
+}
+
+impl NodeBatch {
+    #[inline]
+    fn push_stamped(
+        &mut self,
+        slot: &mut (u32, u32),
+        stamp: u32,
+        key: (Ref, Ref),
+        pair: (Ref, Ref),
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
+        if slot.0 != stamp {
+            lim.try_push(&mut self.keys, key)?;
+            *slot = (stamp, (self.keys.len() - 1) as u32);
         }
-        let res = match normalize(sh, u, buf) {
-            Err(t) => t,
-            Ok(()) => mk(u, out.push_node(u, buf, lim)?),
-        };
-        lim.try_push(made, (a, b, res))?;
+        lim.try_push(&mut self.combos, (slot.1, pair.0, pair.1))
     }
-    keys.clear();
-    combos.clear();
-    Ok(work)
+
+    /// Build the queued products at internal `u` into `out`, noting each with
+    /// its result in `made`; empties `keys` and `combos`. The work units they
+    /// took.
+    #[inline]
+    fn emit(&mut self, u: u32, out: &mut SkipForm, lim: &Limits) -> Result<u64, OperationError> {
+        if self.keys.is_empty() {
+            return Ok(0);
+        }
+        let work = (self.keys.len() + self.combos.len()) as u64;
+        if self.keys.len() > 1 {
+            self.combos.sort_unstable_by_key(|c| c.0);
+        }
+        let mut i = 0;
+        for (k, &(a, b)) in self.keys.iter().enumerate() {
+            self.buf.clear();
+            while i < self.combos.len() && self.combos[i].0 == k as u32 {
+                lim.try_push(&mut self.buf, (self.combos[i].1, self.combos[i].2))?;
+                i += 1;
+            }
+            let res = match normalize(&out.shape, u, &mut self.buf) {
+                Err(t) => t,
+                Ok(()) => mk(u, out.push_node(u, &self.buf, lim)?),
+            };
+            lim.try_push(&mut self.made, (a, b, res))?;
+        }
+        self.keys.clear();
+        self.combos.clear();
+        Ok(work)
+    }
+
+    fn discard(self, lim: &Limits) {
+        lim.discard(self.keys);
+        lim.discard(self.combos);
+        lim.discard(self.buf);
+        lim.discard(self.made);
+    }
 }
 
 /// An operand's references numbered densely: stored node `i` of level `t`
@@ -282,13 +308,12 @@ impl Numbered {
         Self::of_levels(s, &s.active, lim)
     }
 
-    /// Number only the references of `s` at levels in `cone_levels`, and those
-    /// named from `s.out` or `s`'s levels in `cone_levels`: since the cone
-    /// holds every ancestor of its levels, the highest level where any such
-    /// reference is read in `s` is attained at `s.out` or at a level in
-    /// `cone_levels`.
-    pub(super) fn of_cone(s: &SkipForm, cone_levels: &[u32], lim: &Limits) -> Result<Numbered, OperationError> {
-        Self::of_levels(s, cone_levels, lim)
+    /// Number only the references of `s` at levels in `f_cone`, and those named
+    /// from `s.out` or `s`'s levels in `f_cone`: since the cone holds every
+    /// ancestor of its levels, the highest level where any such reference is
+    /// read in `s` is attained at `s.out` or at a level in `f_cone`.
+    pub(super) fn of_cone(s: &SkipForm, f_cone: &[u32], lim: &Limits) -> Result<Numbered, OperationError> {
+        Self::of_levels(s, f_cone, lim)
     }
 
     fn of_levels(s: &SkipForm, levels: &[u32], lim: &Limits) -> Result<Numbered, OperationError> {
@@ -296,11 +321,8 @@ impl Numbered {
         let mut base = vec![NONE; sh.num_nodes()];
         let mut n = 0u32;
         for &t in levels {
-            let w = s.levels[t as usize].width() as u32;
-            if w > 0 {
-                base[t as usize] = n;
-                n += w;
-            }
+            base[t as usize] = n;
+            n += s.levels[t as usize].width() as u32;
         }
         let mut top = Vec::new();
         lim.try_resize(&mut top, n as usize, NONE)?;
@@ -332,8 +354,8 @@ impl Numbered {
             } else {
                 s.levels[v].width()
             };
-            let new_len = self.top.len() + w;
-            lim.try_resize(&mut self.top, new_len, NONE)?;
+            lim.reserve(&mut self.top, w)?;
+            self.top.resize(self.top.len() + w, NONE);
         }
         let t = &mut self.top[(self.base[v] + ix(x)) as usize];
         if *t == NONE || sh.pre[c as usize] < sh.pre[*t as usize] {
@@ -406,24 +428,27 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     let ng = Numbered::of(g, lim)?;
     // Outside `g`'s cone `g` is `true`: there the result is `f`'s own levels,
     // and a product of a reference of `f` with `true` is that reference.
-    let (mut cone, cone_levels) = cone_of(sh, g, &ng, lim)?;
-    let nf = Numbered::of_cone(f, &cone_levels, lim)?;
+    let mut cone = cone_of(sh, g, &ng, lim)?;
+    let mut f_cone: Vec<u32> = Vec::new();
+    lim.reserve(&mut f_cone, f.active.len())?;
+    f_cone.extend(f.active.iter().copied().filter(|&t| cone[t as usize]));
+    let nf = Numbered::of_cone(f, &f_cone, lim)?;
     let free = |x: Ref| !cone[vt(x) as usize];
-    let seeds = identity_seeds(sh, f, &nf, &ng, &cone, &cone_levels, lim)?;
+    let seeds = identity_seeds(sh, f, &nf, &ng, &cone, &f_cone, lim)?;
     // The levels in the cone products can land on, children first.
     let mut todo: Vec<u32> = Vec::new();
-    lim.reserve(&mut todo, cone_levels.len())?;
-    for &u in &cone_levels {
-        let (l, r) = sh.kids[u as usize];
-        if f.levels[u as usize].width() > 0
-            || g.levels[u as usize].width() > 0
-            || (sh.is_leaf(l) && (nf.leaf_refs(sh, l, u).next().is_some() || ng.leaf_refs(sh, l, u).next().is_some()))
-            || (sh.is_leaf(r) && (nf.leaf_refs(sh, r, u).next().is_some() || ng.leaf_refs(sh, r, u).next().is_some()))
-        {
-            todo.push(u);
+    lim.reserve(&mut todo, f_cone.len() + g.active.len() + nf.leaves.len() + ng.leaves.len())?;
+    todo.extend(f_cone.iter().chain(&g.active).copied());
+    for nb in [&nf, &ng] {
+        for &c in &nb.leaves {
+            let p = sh.parent[c as usize];
+            if p != NONE && cone[p as usize] && nb.leaf_refs(sh, c, p).next().is_some() {
+                todo.push(p);
+            }
         }
     }
-    lim.discard(cone_levels);
+    todo.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
+    todo.dedup();
     let mut next_seed = 0;
     // True products, per reference of each side: the other side's
     // reference and the result.
@@ -440,11 +465,8 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     // One node's products against the other side and their pair
     // combinations, built as soon as the node is done; the level's
     // products, listed once the level is done.
-    let mut keys: Vec<(Ref, Ref)> = Vec::new();
-    let mut combos: Vec<(u32, Ref, Ref)> = Vec::new();
-    let mut made: Vec<(Ref, Ref, Ref)> = Vec::new();
+    let mut batch = NodeBatch::default();
     let mut ends: Vec<(Ref, Ref)> = Vec::new();
-    let mut buf: Vec<(Ref, Ref)> = Vec::new();
     let mut fb = [(0, 0); 1];
     let mut gb = [(0, 0); 1];
     for &u in &todo {
@@ -456,7 +478,7 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
             next_seed += 1;
         }
         let (l, r) = sh.kids[u as usize];
-        made.clear();
+        batch.made.clear();
         let mut work = 0u64;
         let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
         if sh.is_leaf(l) && sh.is_leaf(r) {
@@ -483,14 +505,14 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
                             };
                             if x != ZREF && y != ZREF {
                                 if cell == NIL {
-                                    lim.try_push(&mut keys, (a, b))?;
-                                    cell = (keys.len() - 1) as u32;
+                                    lim.try_push(&mut batch.keys, (a, b))?;
+                                    cell = (batch.keys.len() - 1) as u32;
                                 }
-                                lim.try_push(&mut combos, (cell, x, y))?;
+                                lim.try_push(&mut batch.combos, (cell, x, y))?;
                             }
                         }
                     }
-                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
+                    work += batch.emit(u, &mut out, lim)?;
                 }
             }
             lim.discard(fr);
@@ -555,29 +577,23 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
                                 e = next;
                                 let o = other(&live, oa, ob);
                                 if o != ZREF {
-                                    let c = &mut cg[(gbase + j) as usize];
-                                    if c.0 != cstamp {
-                                        lim.try_push(&mut keys, (a, mk(u, j)))?;
-                                        *c = (cstamp, (keys.len() - 1) as u32);
-                                    }
-                                    let (pl, pr) = join(res, o);
-                                    lim.try_push(&mut combos, (c.1, pl, pr))?;
+                                    batch.push_stamped(
+                                        &mut cg[(gbase + j) as usize],
+                                        cstamp,
+                                        (a, mk(u, j)),
+                                        join(res, o),
+                                        lim,
+                                    )?;
                                 }
                             }
                         }
                         if skips && ng.above(sh, y, u) {
                             // `y` is `true` on the other side here.
-                            let c = &mut cg[gy];
-                            if c.0 != cstamp {
-                                lim.try_push(&mut keys, (a, y))?;
-                                *c = (cstamp, (keys.len() - 1) as u32);
-                            }
-                            let (pl, pr) = join(res, oa);
-                            lim.try_push(&mut combos, (c.1, pl, pr))?;
+                            batch.push_stamped(&mut cg[gy], cstamp, (a, y), join(res, oa), lim)?;
                         }
                     }
                 }
-                work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
+                work += batch.emit(u, &mut out, lim)?;
             }
             if skips {
                 // Skips of `f` through this level against `g`'s nodes.
@@ -600,16 +616,10 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
                             }
                         }
                         for &(x, res) in &ends {
-                            let c = &mut cf[nf.id(x)];
-                            if c.0 != cstamp {
-                                lim.try_push(&mut keys, (x, b))?;
-                                *c = (cstamp, (keys.len() - 1) as u32);
-                            }
-                            let (pl, pr) = join(res, ob);
-                            lim.try_push(&mut combos, (c.1, pl, pr))?;
+                            batch.push_stamped(&mut cf[nf.id(x)], cstamp, (x, b), join(res, ob), lim)?;
                         }
                     }
-                    work += emit(sh, u, &mut out, &mut keys, &mut combos, &mut buf, &mut made, lim)?;
+                    work += batch.emit(u, &mut out, lim)?;
                 }
             }
         }
@@ -617,9 +627,9 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         lim.check_stop()?;
         let lookup = sh.looked_up[u as usize];
         if lookup {
-            lim.reserve_map(&mut live, made.len())?;
+            lim.reserve_map(&mut live, batch.made.len())?;
         }
-        for &(a, b, res) in &made {
+        for &(a, b, res) in &batch.made {
             let (fa, gb) = (nf.id(a), ng.id(b));
             pf.push(fa, b, res, lim)?;
             pg.push(gb, a, res, lim)?;
@@ -644,15 +654,13 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         lim.discard(v);
     }
     lim.discard(gent);
-    lim.discard(keys);
-    lim.discard(combos);
-    lim.discard(made);
+    batch.discard(lim);
     lim.discard(ends);
-    lim.discard(buf);
     ng.discard(lim);
     out.collect_pushed(lim)?;
-    if out.out == ZREF {
-        lim.discard(todo);
+    lim.discard(todo);
+    if out.out == ZREF || f_cone.len() == f.active.len() {
+        lim.discard(f_cone);
         nf.discard(lim);
         return Ok((out, cone));
     }
@@ -669,35 +677,37 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         Ok(())
     };
     note_f(f.out, &mut boundary)?;
-    for &u in &todo {
+    for &u in &f_cone {
         for &(a, b) in &f.levels[u as usize].pairs {
             note_f(a, &mut boundary)?;
             note_f(b, &mut boundary)?;
         }
     }
-    lim.discard(todo);
+    lim.discard(f_cone);
     let f_outside = boundary.len();
     let mut out_outside = 0usize;
-    let mut note_o = |x: Ref| {
-        if x != ZREF && !cone[vt(x) as usize] && !sh.is_leaf(vt(x)) {
-            let id = nf.id(x);
-            if mark_out[id] == 1 {
-                mark_out[id] = 2;
-                out_outside += 1;
+    if f_outside > 0 {
+        let mut note_o = |x: Ref| {
+            if x != ZREF && !cone[vt(x) as usize] && !sh.is_leaf(vt(x)) {
+                let id = nf.id(x);
+                if mark_out[id] == 1 {
+                    mark_out[id] = 2;
+                    out_outside += 1;
+                }
             }
-        }
-    };
-    note_o(out.out);
-    for &u in &out.active {
-        for &(a, b) in &out.levels[u as usize].pairs {
-            note_o(a);
-            note_o(b);
+        };
+        note_o(out.out);
+        for &u in &out.active {
+            for &(a, b) in &out.levels[u as usize].pairs {
+                note_o(a);
+                note_o(b);
+            }
         }
     }
     if out_outside > 0 {
         for &t in &f.active {
             if !cone[t as usize] {
-                out.levels.share_from(&f.levels, t as usize);
+                out.levels[t as usize] = f.levels[t as usize].copy(lim)?;
                 out.active.push(t);
             }
         }

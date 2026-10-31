@@ -219,20 +219,36 @@ pub(crate) fn contract_in(
                 }
             }
             // Entities whose hashes agree, confirmed by their partner lists.
-            seen.clear();
-            cand.clear();
-            lim.try_resize(&mut cand, ent.len(), false)?;
-            lim.reserve_map(&mut seen, ent.len())?;
             let mut any = false;
-            for (i, x) in ent.iter().enumerate() {
-                match seen.entry((x.1, x.2)) {
-                    std::collections::hash_map::Entry::Occupied(o) => {
-                        cand[*o.get() as usize] = true;
-                        cand[i] = true;
-                        any = true;
+            if ent.len() > 1 && ent.len() <= 8 {
+                for i in 1..ent.len() {
+                    for j in 0..i {
+                        if (ent[i].1, ent[i].2) == (ent[j].1, ent[j].2) {
+                            if !any {
+                                cand.clear();
+                                lim.try_resize(&mut cand, ent.len(), false)?;
+                                any = true;
+                            }
+                            cand[j] = true;
+                            cand[i] = true;
+                        }
                     }
-                    std::collections::hash_map::Entry::Vacant(v) => {
-                        v.insert(i as u32);
+                }
+            } else if ent.len() > 8 {
+                seen.clear();
+                cand.clear();
+                lim.try_resize(&mut cand, ent.len(), false)?;
+                lim.reserve_map(&mut seen, ent.len())?;
+                for (i, x) in ent.iter().enumerate() {
+                    match seen.entry((x.1, x.2)) {
+                        std::collections::hash_map::Entry::Occupied(o) => {
+                            cand[*o.get() as usize] = true;
+                            cand[i] = true;
+                            any = true;
+                        }
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            v.insert(i as u32);
+                        }
                     }
                 }
             }
@@ -357,6 +373,25 @@ pub(crate) fn contract_in(
         lvs.push(cl);
     }
     lim.check_stop()?;
+    for v in [sstamp, sslot, order, firsts] {
+        lim.discard(v);
+    }
+    lim.discard(cand);
+    lim.discard(ent);
+    lim.discard(seen);
+    lim.discard(occ);
+    lim.discard(ctx);
+    lim.discard(members);
+    if let Some(nm) = names {
+        lim.discard(nm.start);
+        lim.discard(nm.levels);
+    }
+    if !merged {
+        for cl in lvs {
+            cl.discard(lim);
+        }
+        return Ok(s);
+    }
     // Patch from the leaves up. A side read at `d` resolves through a
     // group a skip joined there, else through its node's result.
     let resolve = |lvs: &Vec<CLv>, d: u32, x: Ref| -> Ref {
@@ -404,7 +439,6 @@ pub(crate) fn contract_in(
                 match normalize(sh, c, &mut buf) {
                     Err(t) => {
                         *x = t;
-                        merged = true;
                     }
                     Ok(()) => {
                         out.push(&buf, lim)?;
@@ -436,30 +470,16 @@ pub(crate) fn contract_in(
         }
         lvs[e].rm = rm;
         lvs[e].gres = gres;
-        s.levels.replace_level(c as usize, out, lim);
+        lim.release_bytes(s.levels[c as usize].bytes());
+        s.levels[c as usize] = out;
     }
     s.out = resolve(&lvs, sh.root, s.out);
-    for v in [sstamp, sslot, order, firsts] {
-        lim.discard(v);
-    }
-    lim.discard(cand);
-    lim.discard(ent);
-    lim.discard(seen);
-    lim.discard(occ);
-    lim.discard(ctx);
-    lim.discard(members);
     lim.discard(buf);
-    if let Some(nm) = names {
-        lim.discard(nm.start);
-        lim.discard(nm.levels);
-    }
     let visited: Vec<u32> = lvs.iter().map(|l| l.level).collect();
     for cl in lvs {
         cl.discard(lim);
     }
-    if merged {
-        s.collect_in(visited, lim)?;
-    }
+    s.collect_in(visited, lim)?;
     Ok(s)
 }
 
@@ -493,8 +513,11 @@ impl Ids {
         }
         let id = (b + ix(x)) as usize;
         if id >= sstamp.len() {
-            lim.try_resize(sstamp, self.n as usize, 0u32)?;
-            lim.try_resize(sslot, self.n as usize, 0u32)?;
+            let need = self.n as usize - sstamp.len();
+            lim.reserve(sstamp, need)?;
+            sstamp.resize(self.n as usize, 0u32);
+            lim.reserve(sslot, need)?;
+            sslot.resize(self.n as usize, 0u32);
         }
         Ok(id)
     }

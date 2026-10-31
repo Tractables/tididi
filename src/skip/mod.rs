@@ -208,12 +208,11 @@ impl SLevel {
 }
 
 /// Per vtree node its [`SLevel`], stored only for levels that were written:
-/// reading an unwritten level gives the empty one. Levels unchanged across an
-/// operation share their [`Arc`].
+/// reading an unwritten level gives the empty one.
 #[derive(Clone, Debug)]
 pub(crate) struct LevelMap {
     idx: Vec<u32>,
-    lv: Vec<Arc<SLevel>>,
+    lv: Vec<SLevel>,
 }
 
 static EMPTY: SLevel = SLevel { start: Vec::new(), pairs: Vec::new() };
@@ -221,61 +220,6 @@ static EMPTY: SLevel = SLevel { start: Vec::new(), pairs: Vec::new() };
 impl LevelMap {
     fn new(n: usize) -> LevelMap {
         LevelMap { idx: vec![NONE; n], lv: Vec::new() }
-    }
-    #[inline]
-    pub(crate) fn is_unique(&self, u: usize) -> bool {
-        let i = self.idx[u];
-        i == NONE || Arc::strong_count(&self.lv[i as usize]) == 1
-    }
-    /// Share level `u` from `other` without copying its arena buffers.
-    #[inline]
-    pub(crate) fn share_from(&mut self, other: &LevelMap, u: usize) {
-        let oi = other.idx[u];
-        if oi == NONE {
-            return;
-        }
-        let arc = Arc::clone(&other.lv[oi as usize]);
-        let i = self.idx[u];
-        if i == NONE {
-            self.idx[u] = self.lv.len() as u32;
-            self.lv.push(arc);
-        } else {
-            self.lv[i as usize] = arc;
-        }
-    }
-    /// Ensure level `u` has a uniquely owned [`SLevel`], charging `lim` if a
-    /// shared level is copied.
-    pub(crate) fn ensure_unique(&mut self, u: usize, lim: &Limits) -> Result<(), OperationError> {
-        let i = self.idx[u];
-        if i != NONE && Arc::strong_count(&self.lv[i as usize]) > 1 {
-            let copied = self.lv[i as usize].copy(lim)?;
-            self.lv[i as usize] = Arc::new(copied);
-        }
-        Ok(())
-    }
-    /// Replace level `u` with `new_lvl`, releasing the old level's bytes to
-    /// `lim` when uniquely owned.
-    pub(crate) fn replace_level(&mut self, u: usize, new_lvl: SLevel, lim: &Limits) {
-        let i = self.idx[u];
-        if i == NONE {
-            self.idx[u] = self.lv.len() as u32;
-            self.lv.push(Arc::new(new_lvl));
-        } else {
-            let old = std::mem::replace(&mut self.lv[i as usize], Arc::new(new_lvl));
-            if let Ok(owned) = Arc::try_unwrap(old) {
-                lim.release_bytes(owned.bytes());
-            }
-        }
-    }
-    /// Clear level `u`, releasing its bytes to `lim` when uniquely owned.
-    pub(crate) fn clear_level(&mut self, u: usize, lim: &Limits) {
-        let i = self.idx[u];
-        if i != NONE {
-            let old = std::mem::replace(&mut self.lv[i as usize], Arc::new(SLevel::default()));
-            if let Ok(owned) = Arc::try_unwrap(old) {
-                lim.release_bytes(owned.bytes());
-            }
-        }
     }
 }
 
@@ -295,9 +239,9 @@ impl std::ops::IndexMut<usize> for LevelMap {
         if i == NONE {
             i = self.lv.len() as u32;
             self.idx[u] = i;
-            self.lv.push(Arc::new(SLevel::default()));
+            self.lv.push(SLevel::default());
         }
-        Arc::make_mut(&mut self.lv[i as usize])
+        &mut self.lv[i as usize]
     }
 }
 
@@ -335,13 +279,10 @@ impl SkipForm {
         self.collect_in(cand, lim)
     }
 
-    /// Drop the diagram, handing the charge for its uniquely owned levels back to `lim`.
+    /// Drop the diagram, handing the charge for its levels back to `lim`.
     pub(crate) fn discard(self, lim: &Limits) {
-        for arc in self.levels.lv {
-            if let Ok(lvl) = Arc::try_unwrap(arc) {
-                lim.release_bytes(lvl.bytes());
-            }
-        }
+        let bytes: u64 = self.levels.lv.iter().map(SLevel::bytes).sum();
+        lim.release_bytes(bytes);
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -388,7 +329,8 @@ impl SkipForm {
             drop_all.sort_unstable();
             drop_all.dedup();
             for &t in &drop_all {
-                self.levels.clear_level(t as usize, lim);
+                lim.release_bytes(self.levels[t as usize].bytes());
+                self.levels[t as usize] = SLevel::default();
             }
             return Ok(());
         }
@@ -406,7 +348,7 @@ impl SkipForm {
         let mut live = filled(lim, total, 0u32)?;
         let mark = |live: &mut [u32], r: Ref| {
             let p = pos[vt(r) as usize];
-            if p != NONE && !sh.is_leaf(vt(r)) {
+            if p != NONE {
                 live[base[p as usize] as usize + ix(r) as usize] = 1;
             }
         };
@@ -437,7 +379,7 @@ impl SkipForm {
         }
         let fix = |live: &[u32], r: Ref| -> Ref {
             let p = pos[vt(r) as usize];
-            if p == NONE || sh.is_leaf(vt(r)) {
+            if p == NONE {
                 r
             } else {
                 mk(vt(r), live[base[p as usize] as usize + ix(r) as usize])
@@ -451,28 +393,14 @@ impl SkipForm {
         }
         for (i, &t) in cand.iter().enumerate() {
             let lslice = &live[base[i] as usize..base[i + 1] as usize];
-            if lslice.iter().all(|&x| x == NONE) {
-                self.levels.clear_level(t as usize, lim);
-                continue;
-            }
-            if !self.levels.is_unique(t as usize)
-                && lslice.iter().enumerate().all(|(k, &x)| x == k as u32)
-                && self.levels[t as usize]
-                    .pairs
-                    .iter()
-                    .all(|&(a, b)| fix(&live, a) == a && fix(&live, b) == b)
-            {
-                active.push(t);
-                continue;
-            }
-            self.levels.ensure_unique(t as usize, lim)?;
             // Compacted in place: a kept node moves down to its new number.
             let lvl = &mut self.levels[t as usize];
             let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
-            for (k, &new_k) in lslice.iter().enumerate() {
-                let hi = lvl.start[k + 1] as usize;
+            for &new_k in lslice {
+                let hi = lvl.start[lo + 1] as usize;
+                let pair_lo = lvl.start[lo] as usize;
                 if new_k != NONE {
-                    for q in lo..hi {
+                    for q in pair_lo..hi {
                         let (a, b) = lvl.pairs[q];
                         lvl.pairs[w] = (fix(&live, a), fix(&live, b));
                         w += 1;
@@ -480,11 +408,16 @@ impl SkipForm {
                     j += 1;
                     lvl.start[j] = w as u32;
                 }
-                lo = hi;
+                lo += 1;
             }
-            lvl.pairs.truncate(w);
-            lvl.start.truncate(j + 1);
-            active.push(t);
+            if j == 0 {
+                lim.release_bytes(lvl.bytes());
+                *lvl = SLevel::default();
+            } else {
+                lvl.pairs.truncate(w);
+                lvl.start.truncate(j + 1);
+                active.push(t);
+            }
         }
         active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
         active.dedup();
