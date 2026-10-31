@@ -542,18 +542,13 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         process_cell::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base,
+            (eng, a.ctx),
+            (a.j, a.row_base),
             a.f_pairs,
-            a.ctx,
-            a.right_level_t,
-            a.g_pairs_scratch,
+            (a.right_level_t, a.g_pairs_scratch),
             a.node_idx,
-            a.left,
-            a.right,
-            &mut self.sink,
-            a.gate,
+            (a.left, a.right),
+            (&mut self.sink, a.gate),
         )
     }
 }
@@ -578,17 +573,13 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesid
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         cell_pairs::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base + a.j,
+            (eng, a.ctx),
+            (a.j, a.row_base + a.j),
             a.f_pairs,
             &self.g,
-            a.ctx,
             a.node_idx,
-            a.left,
-            a.right,
-            &mut self.sink,
-            a.gate,
+            (a.left, a.right),
+            (&mut self.sink, a.gate),
         )
     }
 }
@@ -709,18 +700,13 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         self.sink.row(a.i);
         process_cell::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base,
+            (eng, a.ctx),
+            (a.j, a.row_base),
             a.f_pairs,
-            a.ctx,
-            a.right_level_t,
-            a.g_pairs_scratch,
+            (a.right_level_t, a.g_pairs_scratch),
             a.node_idx,
-            a.left,
-            a.right,
-            &mut self.sink,
-            a.gate,
+            (a.left, a.right),
+            (&mut self.sink, a.gate),
         )
     }
 }

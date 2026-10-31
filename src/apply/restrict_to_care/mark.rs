@@ -1092,7 +1092,7 @@ impl<'a> Walk<'a> {
                         cands.extend_from_slice(js);
                     }
                 }
-                if self.probe(other, s, *p, cp, &cands, i as u32, first, one_each, out)? {
+                if self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out)? {
                     return Ok(());
                 }
             }
@@ -1142,7 +1142,7 @@ impl<'a> Walk<'a> {
                     }
                 }
             }
-            if self.probe(other, s, *p, cp, &cands, i as u32, first, one_each, out)? {
+            if self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out)? {
                 break;
             }
         }
@@ -1157,9 +1157,14 @@ impl<'a> Walk<'a> {
     /// Try `care` pairs `cands` against `f` pair `p` (index `i`) on the side
     /// other than `s`, whose child is `other`; the side `s` is live for each.
     /// Returns whether `first` was met.
-    #[expect(clippy::too_many_arguments)]
-    fn probe(&mut self, other: VtreeIdx, s: usize, p: ChildPair, cp: &[ChildPair], cands: &[u32], i: u32,
-             first: bool, one_each: bool, out: &mut Vec<(u32, u32)>) -> Result<bool, Halt> {
+    fn probe(
+        &mut self,
+        (other, s): (VtreeIdx, usize),
+        (i, p): (u32, ChildPair),
+        (cp, cands): (&[ChildPair], &[u32]),
+        (first, one_each): (bool, bool),
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<bool, Halt> {
         let (f, care) = (self.f, self.care);
         let fo = decode(f, other, side_of(p, 1 - s));
         for &j in cands {

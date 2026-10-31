@@ -183,6 +183,16 @@ fn tri_axis<W: Word>(p: W, layout: &Layout) -> EncodedChildRef {
 /// expansion grows, the pair table included, is charged through the engine's
 /// limits, so a rotation too wide for the host comes back as an answer rather
 /// than an abort.
+/// A rotation move at `info` in `dir`, crossed or not, bounded at
+/// `max_pairs`.
+#[derive(Clone, Copy)]
+pub(crate) struct RotationStep<'a> {
+    pub(crate) info: &'a RotationInfo,
+    pub(crate) dir: RotationKind,
+    pub(crate) crossed: bool,
+    pub(crate) max_pairs: usize,
+}
+
 pub(crate) fn rebuild_rotated_levels(
     lim: &Limits,
     tdd: &mut Tdd,
@@ -192,7 +202,8 @@ pub(crate) fn rebuild_rotated_levels(
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let marginal = tdd.has_marginal_level();
-    rebuild_levels(lim, tdd, info, dir, false, marginal, scratch, max_pairs)
+    let step = RotationStep { info, dir, crossed: false, max_pairs };
+    rebuild_levels(lim, tdd, step, marginal, scratch)
 }
 
 /// [`rebuild_rotated_levels`], given whether `tdd` has a marginal level
@@ -200,24 +211,20 @@ pub(crate) fn rebuild_rotated_levels(
 /// each rebuild forgets what the diagram knows of its levels, and asking
 /// again reads every level.
 ///
-/// Where `crossed`, the rotation's promoted node had its two children
+/// Where `step.crossed`, the rotation's promoted node had its two children
 /// swapped first ([`swap_children`](crate::vtree::rotate::swap_children)):
 /// the old w-level is read with its sides exchanged, so the grouping the
 /// rotation makes pairs the other grandchild with `v`'s other child.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_levels(
     lim: &Limits,
     tdd: &mut Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    crossed: bool,
+    step: RotationStep<'_>,
     marginal: bool,
     scratch: &mut RestructureScratch,
-    max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let mut prepared = std::mem::take(&mut scratch.prepared);
-    let rebuilt = match prepare_levels(lim, tdd, info, dir, crossed, marginal, scratch, &mut prepared, max_pairs) {
-        Ok(Some(_)) => finish_levels(lim, tdd, info, dir, marginal, scratch, &mut prepared).map(Some),
+    let rebuilt = match prepare_levels(lim, tdd, step, marginal, scratch, &mut prepared) {
+        Ok(Some(_)) => finish_levels(lim, tdd, step.info, step.dir, marginal, scratch, &mut prepared).map(Some),
         other => other.map(|_| None),
     };
     scratch.prepared = prepared;
@@ -270,9 +277,9 @@ impl Prepared {
     }
 }
 
-/// Prepare the rebuild of the two levels of a rotation in `dir` into
-/// `prepared`: the pairs the two new levels will hold, or `None` where the
-/// rebuild would pass `max_pairs` or is abandoned. The diagram is only read;
+/// Prepare the rebuild of the two levels of `step` into `prepared`: the
+/// pairs the two new levels will hold, or `None` where the rebuild would
+/// pass `step.max_pairs` or is abandoned. The diagram is only read;
 /// `prepared` is left empty unless the result is `Some`.
 ///
 /// The inner level holds one pair per distinct inner pair. The outer level
@@ -282,18 +289,15 @@ impl Prepared {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a buffer the rebuild needs is refused.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_levels(
     lim: &Limits,
     tdd: &Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    crossed: bool,
+    step: RotationStep<'_>,
     marginal: bool,
     scratch: &mut RestructureScratch,
     prepared: &mut Prepared,
-    max_pairs: usize,
 ) -> Result<Option<usize>, OperationError> {
+    let RotationStep { info, dir, crossed, max_pairs } = step;
     debug_assert_eq!(marginal, tdd.has_marginal_level());
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     // The group table indexes the triples with `u32` offsets;
@@ -509,19 +513,15 @@ fn mix(x: u64) -> u64 {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a table the score needs is refused.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn score_levels(
     lim: &Limits,
     tdd: &Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    crossed: bool,
+    step: RotationStep<'_>,
     scratch: &mut ScoreScratch,
-    max_pairs: usize,
     cap: usize,
 ) -> Result<Option<usize>, OperationError> {
     let mut score = [None];
-    score_crossings(lim, tdd, info, dir, &[crossed], &[cap], scratch, max_pairs, &mut score)?;
+    score_crossings(lim, tdd, step, (&[step.crossed], &[cap]), scratch, &mut score)?;
     Ok(score[0])
 }
 
@@ -542,24 +542,22 @@ pub(crate) fn score_levels_crossed_too(
     caps: [usize; 2],
 ) -> Result<[Option<usize>; 2], OperationError> {
     let mut scores = [None; 2];
-    score_crossings(lim, tdd, info, dir, &[false, true], &caps, scratch, max_pairs, &mut scores)?;
+    let step = RotationStep { info, dir, crossed: false, max_pairs };
+    score_crossings(lim, tdd, step, (&[false, true], &caps), scratch, &mut scores)?;
     Ok(scores)
 }
 
-/// [`score_levels`] of the move in `dir` crossed as each of `crossings`
-/// says, under the cap beside it, into `scores`.
-#[allow(clippy::too_many_arguments)]
+/// [`score_levels`] of `step` crossed as each of `crossings` says, under
+/// the cap beside it, into `scores`.
 fn score_crossings(
     lim: &Limits,
     tdd: &Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    crossings: &[bool],
-    caps: &[usize],
+    step: RotationStep<'_>,
+    (crossings, caps): (&[bool], &[usize]),
     s: &mut ScoreScratch,
-    max_pairs: usize,
     scores: &mut [Option<usize>],
 ) -> Result<(), OperationError> {
+    let RotationStep { info, dir, max_pairs, .. } = step;
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     let max_pairs = max_pairs.min(u32::MAX as usize);
     let left = dir == RotationKind::Left;

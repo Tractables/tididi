@@ -1403,18 +1403,13 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         process_cell::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base,
+            (eng, a.ctx),
+            (a.j, a.row_base),
             a.f_pairs,
-            a.ctx,
-            a.right_level_t,
-            a.g_pairs_scratch,
+            (a.right_level_t, a.g_pairs_scratch),
             a.node_idx,
-            a.left,
-            a.right,
-            self.sum.cells(),
-            a.gate,
+            (a.left, a.right),
+            (self.sum.cells(), a.gate),
         )
     }
 

@@ -1810,7 +1810,7 @@ impl Row {
             self.marks.fill(0);
             self.tops.fill(0);
             for at in 0..self.words.len() {
-                drain_word(lim, &mut self.words[at], at, left, out, done, rows, most)?;
+                drain_word(lim, &mut self.words[at], at, left, out, (done, rows, most))?;
             }
             return Ok(self.words.len() as u64);
         }
@@ -1826,7 +1826,7 @@ impl Row {
                     let at = (m << 6) | marks.trailing_zeros() as usize;
                     marks &= marks - 1;
                     read += 1;
-                    drain_word(lim, &mut self.words[at], at, left, out, done, rows, most)?;
+                    drain_word(lim, &mut self.words[at], at, left, out, (done, rows, most))?;
                 }
             }
         }
@@ -1837,16 +1837,13 @@ impl Row {
 /// Append `(left, c)` to `out` for every column `c` set in word `at`,
 /// ascending, and clear the word.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 fn drain_word(
     lim: &crate::limits::Limits,
     word: &mut u64,
     at: usize,
     left: EncodedChildRef,
     out: &mut Vec<ChildPair>,
-    done: u64,
-    rows: u64,
-    most: u64,
+    (done, rows, most): (u64, u64, u64),
 ) -> Result<(), OperationError> {
     let mut bits = std::mem::take(word);
     // A row has at most 2^26 words, so its columns fit a `u32`.

@@ -18,16 +18,17 @@ fn compare_every_move(tdd: &Tdd, bound: usize, scratch: &mut RestructureScratch)
             };
             let Some(info) = rotated else { continue };
             for crossed in [false, true] {
+                let step = RotationStep { info: &info, dir: kind, crossed, max_pairs: bound };
                 let mut prepared = Prepared::default();
-                let exact = prepare_levels(&lim, tdd, &info, kind, crossed, false, scratch, &mut prepared, bound)
+                let exact = prepare_levels(&lim, tdd, step, false, scratch, &mut prepared)
                     .expect("nothing is armed");
-                let score = score_levels(&lim, tdd, &info, kind, crossed, &mut scratch.score, bound, usize::MAX)
+                let score = score_levels(&lim, tdd, step, &mut scratch.score, usize::MAX)
                     .expect("nothing is armed");
                 assert_eq!(score, exact, "{kind:?} at {v:?}, crossed {crossed}, bound {bound}");
                 // Under a cap, the score where it is below the cap.
                 let n = exact.unwrap_or(0);
                 for cap in [0, 1, n / 2, n.saturating_sub(1), n, n + 1, 2 * n] {
-                    let capped = score_levels(&lim, tdd, &info, kind, crossed, &mut scratch.score, bound, cap)
+                    let capped = score_levels(&lim, tdd, step, &mut scratch.score, cap)
                         .expect("nothing is armed");
                     assert_eq!(capped, exact.filter(|&n| n < cap), "{kind:?} at {v:?}, crossed {crossed}, bound {bound}, cap {cap}");
                 }
@@ -64,7 +65,8 @@ fn a_score_gives_up_where_a_preparation_does() {
         let root = tdd.vtree.root();
         let mut tree = (*tdd.vtree).clone();
         if let Some(info) = rotate_left(&mut tree, root) {
-            gave_up += usize::from(score_levels(&lim, &tdd, &info, RotationKind::Left, false, &mut scratch.score, 1, usize::MAX).unwrap().is_none());
+            let step = RotationStep { info: &info, dir: RotationKind::Left, crossed: false, max_pairs: 1 };
+            gave_up += usize::from(score_levels(&lim, &tdd, step, &mut scratch.score, usize::MAX).unwrap().is_none());
         }
     }
     assert!(gave_up > 0);
@@ -106,7 +108,8 @@ fn a_move_and_its_crossing_score_together_as_apart() {
                         let together =
                             score_levels_crossed_too(&lim, &tdd, &info, kind, &mut scratch.score, bound, caps).expect("nothing is armed");
                         let apart = [false, true].map(|crossed| {
-                            score_levels(&lim, &tdd, &info, kind, crossed, &mut scratch.score, bound, caps[usize::from(crossed)])
+                            let step = RotationStep { info: &info, dir: kind, crossed, max_pairs: bound };
+                            score_levels(&lim, &tdd, step, &mut scratch.score, caps[usize::from(crossed)])
                                 .expect("nothing is armed")
                         });
                         assert_eq!(together, apart, "{kind:?} at {v:?}, bound {bound}, caps {caps:?}");

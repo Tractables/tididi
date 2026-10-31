@@ -136,7 +136,7 @@ pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Opt
         eng.limits().try_resize(&mut filled, vtree.num_nodes(), false)?;
         expand_full(eng, &vtree, &mut Target { levels: &mut levels, source }, canonical, closed, &mut filled)?;
         let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
-        complement_full_at_root(eng, &vtree, levels, source, output, &filled, closed, owed)?
+        complement_full_at_root(eng, &vtree, (levels, source), output, &filled, (closed, owed))?
     };
     #[cfg(debug_assertions)]
     if at_root && !zero && result.output.vtree == vtree.root() {
@@ -253,16 +253,13 @@ impl Target<'_, '_> {
 /// output's slot when the complement is a node beside it. `levels` and
 /// `source` are an [`expand_full`] target's. `closed` says the levels were
 /// closed before [`expand_full`], which left the root as it was.
-#[expect(clippy::too_many_arguments)]
 fn complement_full_at_root(
     eng: &Engine,
     vtree: &Arc<crate::vtree::Vtree>,
-    levels: Vec<TddLevel>,
-    source: Option<&[TddLevel]>,
+    (levels, source): (Vec<TddLevel>, Option<&[TddLevel]>),
     out_local: NodeIdx,
     filled: &[bool],
-    closed: bool,
-    owed: Option<Owed>,
+    (closed, owed): (bool, Option<Owed>),
 ) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     let root = vtree.root();
     let root_idx = root.idx();

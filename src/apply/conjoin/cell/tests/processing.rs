@@ -206,10 +206,9 @@ fn collect_sink_respects_soft_budget() {
     let ok = {
         let eng = Engine::new();
         process_cell::<_, _, _>(
-            &eng,
-            0, 0, &small, &ctx, &g, &mut scratch, &mut node_idx,
-            &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
-            &mut eng.limits().gate_with(u64::MAX),
+            (&eng, &ctx),
+            (0, 0), &small, (&g, &mut scratch), &mut node_idx,
+            (&AliveLookup, &AliveLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         )
     };
     assert!(ok.is_ok(), "no budget: collector should complete, got {:?}", ok.err());
@@ -226,10 +225,9 @@ fn collect_sink_respects_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(4096));
         process_cell::<_, _, _>(
-            &eng,
-            0, 0, &big, &ctx, &g, &mut scratch, &mut node_idx,
-            &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
-            &mut eng.limits().gate_with(u64::MAX),
+            (&eng, &ctx),
+            (0, 0), &big, (&g, &mut scratch), &mut node_idx,
+            (&AliveLookup, &AliveLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         )
     };
     lim.reset_meters();
@@ -278,11 +276,10 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         #[inline(always)]
         fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
-                eng,
-                a.j, a.row_base, a.f_pairs,
-                a.ctx, a.right_level_t, a.g_pairs_scratch, a.node_idx, a.left, a.right,
-                &mut CollectSink { out: &mut *self.out },
-                a.gate,
+                (eng, a.ctx),
+                (a.j, a.row_base), a.f_pairs,
+                (a.right_level_t, a.g_pairs_scratch), a.node_idx, (a.left, a.right),
+                (&mut CollectSink { out: &mut *self.out }, a.gate),
             )
         }
     }
@@ -382,10 +379,9 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         let mut node_idx: Vec<u32> = Vec::new();
         for j in 0..right_width {
             process_cell(
-                &eng, j, 0, &f_pairs, &ctx, &lvl,
-                &mut scratch, &mut node_idx,
-                &RefLookup, &RefLookup, &mut CollectSink { out: &mut out },
-                &mut eng.limits().gate_with(u64::MAX),
+                (&eng, &ctx), (j, 0), &f_pairs,
+                (&lvl, &mut scratch), &mut node_idx,
+                (&RefLookup, &RefLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
             ).expect("an unbudgeted walk completes");
         }
         out
@@ -522,10 +518,9 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
         };
         let mut out: Vec<ChildPair> = Vec::new();
         process_cell(
-            &eng, 0, 0, &f_pairs, &ctx, &level,
-            &mut Vec::new(), &mut Vec::<u32>::new(),
-            &SomeDead, &SomeDead, &mut CollectSink { out: &mut out },
-            &mut eng.limits().gate_with(u64::MAX),
+            (&eng, &ctx), (0, 0), &f_pairs,
+            (&level, &mut Vec::new()), &mut Vec::<u32>::new(),
+            (&SomeDead, &SomeDead), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         ).expect("an unbudgeted walk completes");
         out.sort_by_key(|p| (p.left.raw(), p.right.raw()));
         out

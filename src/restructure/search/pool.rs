@@ -20,7 +20,9 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Charged, Limits, OperationError, Transient};
-use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too};
+use crate::restructure::relevel::{
+    Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too,
+};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::rng::Lcg;
@@ -863,6 +865,17 @@ struct BoundedMove {
     bound: usize,
 }
 
+impl BoundedMove {
+    fn step(&self) -> RotationStep<'_> {
+        RotationStep {
+            info: &self.info,
+            dir: self.mv.rotation.kind,
+            crossed: self.mv.crossed,
+            max_pairs: self.bound,
+        }
+    }
+}
+
 /// What one member needs to be put back as it was.
 struct Saved<'a> {
     output: TddNodeId,
@@ -886,7 +899,7 @@ fn rebuild_member<'a>(
     saved: &mut Vec<(usize, Saved<'a>)>,
     scratch: &mut RestructureScratch,
 ) -> Result<Option<usize>, OperationError> {
-    let BoundedMove { info, mv, bound } = step;
+    let BoundedMove { info, mv, .. } = step;
     saved.push((i, Saved {
         output: m.output,
         canonical: m.levels.is_canonical(m.output),
@@ -898,7 +911,7 @@ fn rebuild_member<'a>(
     // No member has a marginal level here.
     let rebuilt = match prepared {
         Some(prepared) => finish_levels(lim, m, &info, mv.rotation.kind, false, scratch, prepared).map(Some),
-        None => rebuild_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, bound),
+        None => rebuild_levels(lim, m, step.step(), false, scratch),
     };
     let Some((outer, inner)) = rebuilt? else {
         return Ok(None);
@@ -941,7 +954,7 @@ fn probe(
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
-    let BoundedMove { info, mv, bound } = step;
+    let BoundedMove { info, bound, .. } = step;
     let lim = eng.limits();
     // A level of one pair rebuilds into one of one pair, two pairs for the
     // two levels, which a bound above two lets through.
@@ -968,7 +981,7 @@ fn probe(
         }
         prepared.0.push(Some(Prepared::default()));
         let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
-        let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
+        let Some(new) = prepare_levels(lim, m, step.step(), false, scratch, slot)? else {
             return Ok(false);
         };
         gate.poll((old + new) as u64 + REBUILD_UNITS)?;
@@ -1093,7 +1106,7 @@ fn probe_scored<'l>(
         tests::note_score();
         let (kind, score) = (mv.rotation.kind, &mut scratch.score);
         let new = match &mut twin {
-            Twin::Alone => score_levels(lim, m, &info, kind, mv.crossed, score, bound, cap(sum, rest))?,
+            Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
             Twin::Fill(slots) => {
                 // A crossing refused by an earlier member's score is capped
                 // at nothing.
@@ -1105,7 +1118,7 @@ fn probe_scored<'l>(
             }
             Twin::Given(slots) => match slots.get(i) {
                 Some(&Some(given)) => given,
-                _ => score_levels(lim, m, &info, kind, mv.crossed, score, bound, cap(sum, rest))?,
+                _ => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
             },
         };
         let Some(new) = new else {
@@ -1247,14 +1260,14 @@ fn debug_check_scores(
     scores: &[usize],
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let BoundedMove { info, mv, bound } = step;
+    let BoundedMove { info, .. } = step;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     for (m, &score) in members.iter().zip(scores) {
         if m.levels[v].live_pairs() <= 1 && m.levels[w].live_pairs() == m.levels[v].live_pairs() {
             continue;
         }
         let mut prepared = Prepared::default();
-        let new = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, &mut prepared, bound)?;
+        let new = prepare_levels(lim, m, step.step(), false, scratch, &mut prepared)?;
         lim.discard(prepared);
         if let Some(new) = new {
             debug_assert!(new >= score, "a score is at most the pairs: {score} > {new}");
@@ -1274,7 +1287,7 @@ fn debug_check_refusal(
     total: usize,
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let BoundedMove { info, mv, bound } = step;
+    let BoundedMove { info, .. } = step;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     let mut pairs = 0usize;
     for m in members {
@@ -1284,7 +1297,7 @@ fn debug_check_refusal(
             continue;
         }
         let mut prepared = Prepared::default();
-        let new = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, &mut prepared, bound)?;
+        let new = prepare_levels(lim, m, step.step(), false, scratch, &mut prepared)?;
         lim.discard(prepared);
         let Some(new) = new else { return Ok(()) };
         pairs += new;

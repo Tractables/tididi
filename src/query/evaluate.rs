@@ -94,7 +94,7 @@ impl Engine {
         let mut cols = Vec::new();
         lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
         cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
-        fold_held::<_, false>(&fold, self, tdd, at, at, &mut cols, &held, Retention::Frontier, &mut gate)?;
+        fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
         let result = std::mem::take(&mut cols[at.idx()]);
         gate.finish()?;
         Ok(result)

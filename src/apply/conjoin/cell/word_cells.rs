@@ -590,7 +590,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
                 // order, as the row loop polls them.
                 for j in 0..width {
                     if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
-                        process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                        process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
                     } else {
                         let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
                         if n2 != 0 {
@@ -607,13 +607,13 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
                 for k in 0..a.w.live_cols.len() {
                     let j = a.w.live_cols[k] as usize;
                     walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
-                    process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
                 }
                 poll.poll(units - walked)?;
             }
             RowMode::Walk => {
                 for j in 0..width {
-                    process_cell(eng, j, row_base, f_pairs, ctx, g_level, g_scratch, slab, left, right, &mut a.sink, &mut poll)?;
+                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
                 }
                 poll.poll(width as u64)?;
             }
@@ -1328,8 +1328,8 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
         };
         if walk {
             return process_cell(
-                eng, a.j, a.row_base, a.f_pairs, a.ctx, a.right_level_t, a.g_pairs_scratch,
-                a.node_idx, a.left, a.right, &mut self.sink, a.gate,
+                (eng, a.ctx), (a.j, a.row_base), a.f_pairs, (a.right_level_t, a.g_pairs_scratch),
+                a.node_idx, (a.left, a.right), (&mut self.sink, a.gate),
             );
         }
         let n2 = (self.w.col_start[a.j + 1] - self.w.col_start[a.j]) as usize;

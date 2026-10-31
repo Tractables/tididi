@@ -1078,17 +1078,14 @@ pub(super) fn push_kept<T, S: PairSink>(
 /// The pair count is known before the sweep, so the whole cell is charged to
 /// the work clock in one go: one branch per cell rather than one per pair.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 fn cell_one_sided<const ITER_F: bool, L, R, S>(
     eng: &Engine,
     f_pairs: &[ChildPair],
     g_pairs: &[ChildPair],
     node_idx: &mut [u32],
     grid_pos: usize,
-    left: &L,
-    right: &R,
-    sink: &mut S,
-    gate: &mut PollGate,
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
 ) -> Result<(), OperationError>
 where
     L: ChildLookup,
@@ -1163,19 +1160,14 @@ where
 /// f row of at least [`GROUPED_MIN_PAIRS`] pairs, the walk takes both sides a
 /// run of shared `.left` at a time.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 fn cell_prefilter<L, R, S>(
-    eng: &Engine,
-    j: usize,
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    (j, grid_pos): (usize, usize),
     f_pairs: &[ChildPair],
     g_pairs: &[ChildPair],
-    ctx: &CellCtx<'_>,
     node_idx: &mut [u32],
-    grid_pos: usize,
-    left: &L,
-    right: &R,
-    sink: &mut S,
-    gate: &mut PollGate,
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
 ) -> Result<(), OperationError>
 where
     L: ChildLookup,
@@ -1294,20 +1286,14 @@ where
 /// arguments spilled and reloaded, the column table and the work-clock gate
 /// read back through memory at every cell.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
-    eng: &Engine,
-    j: usize,
-    row_base: usize,
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    (j, row_base): (usize, usize),
     f_pairs: &[ChildPair],
-    ctx: &CellCtx<'_>,
-    right_level: &TddLevel,
-    g_pairs_scratch: &mut Vec<ChildPair>,
+    (right_level, g_pairs_scratch): (&TddLevel, &mut Vec<ChildPair>),
     node_idx: &mut [u32],
-    left: &L,
-    right: &R,
-    sink: &mut S,
-    gate: &mut PollGate,
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
 ) -> Result<(), OperationError>
 where
     L: ChildLookup,
@@ -1325,7 +1311,7 @@ where
     // `row_base` is the row's flat slab offset, already computed by the row loop
     // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
     // re-deriving the same product per cell.
-    cell_pairs(eng, j, row_base + j, f_pairs, g_pairs, ctx, node_idx, left, right, sink, gate)
+    cell_pairs((eng, ctx), (j, row_base + j), f_pairs, g_pairs, node_idx, (left, right), (sink, gate))
 }
 
 /// Column `j`'s pairs: the g node's, read from the per-level
@@ -1451,19 +1437,14 @@ pub(crate) fn poll_each_then_due(mut gate: PollGate<'_>, each: u64, then: u64) -
 /// nonempty, written at `grid_pos`: the arms of [`process_cell`], which
 /// reads column `j`'s pairs for it.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn cell_pairs<L, R, S>(
-    eng: &Engine,
-    j: usize,
-    grid_pos: usize,
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    (j, grid_pos): (usize, usize),
     f_pairs: &[ChildPair],
     g_pairs: &[ChildPair],
-    ctx: &CellCtx<'_>,
     node_idx: &mut [u32],
-    left: &L,
-    right: &R,
-    sink: &mut S,
-    gate: &mut PollGate,
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
 ) -> Result<(), OperationError>
 where
     L: ChildLookup,
@@ -1484,17 +1465,16 @@ where
         }
     } else if g_pairs.len() == 1 {
         cell_one_sided::<true, _, _, _>(
-            eng, f_pairs, g_pairs, node_idx, grid_pos, left, right, sink, gate,
+            eng, f_pairs, g_pairs, node_idx, grid_pos, (left, right), (sink, gate),
         )?;
     } else if f_pairs.len() == 1 {
         cell_one_sided::<false, _, _, _>(
-            eng, f_pairs, g_pairs, node_idx, grid_pos, left, right, sink, gate,
+            eng, f_pairs, g_pairs, node_idx, grid_pos, (left, right), (sink, gate),
         )?;
     } else {
         cell_prefilter(
-            eng,
-            j, f_pairs, g_pairs, ctx,
-            node_idx, grid_pos, left, right, sink, gate,
+            (eng, ctx), (j, grid_pos), f_pairs, g_pairs,
+            node_idx, (left, right), (sink, gate),
         )?;
     }
     Ok(())
