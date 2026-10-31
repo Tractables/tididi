@@ -32,13 +32,12 @@ directly. Vtree node indices stay fixed when the vtree is rotated, so array
 order is not a traversal order; walk levels with [`Vtree::bottomup`] to visit
 children before parents.
 
-A structural reference into an internal child with a leaf sibling may encode a
-one-pair node inline by storing the leaf's two-bit mask and the grandchild
-reference in the [`EncodedChildRef`] word instead of a slot at that child
-level. A *marginal level* stores a value per node instead of pairs, and a
-reference into it may carry that value inline; see
-[Marginal levels](#marginal-levels). Code outside the `diagram` module decodes
-both inline forms through [`ChildDecoder`].
+A *marginal level* stores a value per node instead of pairs, and a reference
+into it may carry that value inline, so code outside the `diagram` module
+decodes references through [`ChildDecoder`]; see
+[Marginal levels](#marginal-levels). A [`SkipTdd`] omits pass-through nodes
+at levels with a single-variable child so pair references can name lower
+descendants directly.
 
 Vtree constructors and grafts all finish through one checked constructor,
 which derives parent links and returns the node permutation that grafting uses
