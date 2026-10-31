@@ -135,7 +135,7 @@ fn sweep_levels(
         // stands for the checks at the free levels before it.
         lim.level_done(output_nodes + cone.free_before(k))?;
 
-        if held.len() < 2 && holds_back(sweep, run, f, g, t, left, right) {
+        if held.len() < 2 && holds_back(sweep, run, f, g, (t, left, right)) {
             held.push((t, left, right));
             continue;
         }
@@ -143,7 +143,7 @@ fn sweep_levels(
             let c = pick_streamed(eng, run, f, g, &held)?;
             for (i, &(h, hl, hr)) in held.iter().enumerate() {
                 if i != c {
-                    build_level(eng, run, f, g, sweep, h, hl, hr)?;
+                    build_level(eng, run, f, g, sweep, (h, hl, hr))?;
                     output_nodes += run.levels[h.idx()].slot_count() as u64;
                 }
             }
@@ -152,10 +152,10 @@ fn sweep_levels(
                 sweep.counted = Some(count);
                 continue;
             }
-            build_level(eng, run, f, g, sweep, c_t, c_l, c_r)?;
+            build_level(eng, run, f, g, sweep, (c_t, c_l, c_r))?;
             output_nodes += run.levels[c_t.idx()].slot_count() as u64;
         }
-        build_level(eng, run, f, g, sweep, t, left, right)?;
+        build_level(eng, run, f, g, sweep, (t, left, right))?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
     if progress {
@@ -168,16 +168,13 @@ fn sweep_levels(
 
 /// Build the level at `t` from its children's, by the route it is given, and
 /// release the children's grids.
-#[expect(clippy::too_many_arguments)]
 fn build_level(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     sweep: &mut Sweep<'_, '_>,
-    t: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
+    (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
 ) -> Result<(), OperationError> {
     let vtree = sweep.vtree;
     let shape = run.shape(t, left, right);
@@ -371,7 +368,7 @@ pub(crate) enum ConjoinMode {
 /// with each operand's free levels ([`ApplyRun::cone`]) in `free`.
 pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Held<'_>, g: &mut Held<'_>, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
     debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
-    apply_and_held(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
+    apply_and_held(eng, f, g, (VtreeMask::default(), VtreeMask::default()), None, ConjoinMode::Restore, free)
         .map(Conjoined::diagram)
 }
 
@@ -429,18 +426,16 @@ impl Conjoined {
 /// Otherwise the diagram is built and the caller counts it. `free` names
 /// each operand's free levels ([`ApplyRun::cone`]), which only a plain
 /// conjunction may have.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_and_core(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
-    targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
+    (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), targets, quantified, filter, mode, free)
+    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), (targets, quantified), filter, mode, free)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed, without a filter
@@ -455,7 +450,7 @@ pub(crate) fn apply_and_either(
     quantified: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(eng, f, g, targets, quantified, None, mode, Operands::default())
+    apply_and_held(eng, f, g, (targets, quantified), None, mode, Operands::default())
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
@@ -463,13 +458,11 @@ pub(crate) fn apply_and_either(
 /// the caller copies one that is not so first. Its weight store is copied
 /// into the result's, which takes every marginal level it has; an owned
 /// operand's is moved there.
-#[expect(clippy::too_many_arguments)]
 fn apply_and_held(
     eng: &Engine,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-    targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
+    (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
     free: Operands<VtreeMask<'_>>,
@@ -533,7 +526,7 @@ fn apply_and_held(
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
     let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
-    let mut run = apply_and_setup(eng, &vtree, f, g, targets, free, kind, levels, &mut scratch)?;
+    let mut run = apply_and_setup(eng, &vtree, Operands { f: &*f, g: &*g }, (targets, free), kind, levels, &mut scratch)?;
     run.restoring = keep;
     let plain = unmarked && !run.entry_marginality.any();
     run.plain = plain;

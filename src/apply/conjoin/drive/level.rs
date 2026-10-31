@@ -58,7 +58,7 @@ pub(super) fn run_sparse_level(
 
     // Priced with its children's lists in hand, before the scatter claims
     // anything: a level that cannot fit is refused here, named.
-    let priced = price_sparse_level(eng.limits(), run, f, g, shape, passthrough, complete, filtered)?;
+    let priced = price_sparse_level(eng.limits(), run, (f, g), shape, (passthrough, complete), filtered)?;
 
     let identity = Sides {
         left: Operands { f: run.f_identity[li], g: run.g_identity[li] },
@@ -66,14 +66,11 @@ pub(super) fn run_sparse_level(
     };
     let (lists, cells) = run.products.lists_with_cells(li, ri, ti, Sides { left: gw.left, right: gw.right }, identity, filtered);
     let (made, held) = apply_sparse_level(
-        eng,
-        shape, f, g,
+        eng, shape, (f, g),
         run.levels,
-        lists,
-        cells,
+        (lists, cells),
         run.thresholds,
-        passthrough,
-        complete,
+        (passthrough, complete),
     )?;
     if held {
         run.outer_held.push(ti);
@@ -214,7 +211,7 @@ pub(super) fn count_sparse_root(
     )?;
     let lists = run.products.lists(li, ri, ti);
     count_sparse_level(
-        eng, shape, f, g, levels,
+        eng, shape, (f, g), levels,
         Sides { left: lists.left, right: lists.right },
         None, &mut fold,
     )?;
@@ -382,7 +379,7 @@ pub(super) fn sum_sparse_root(
     let mut sum = ChildSum::new(lim, side, col, kept_width)?;
     let lists = run.products.lists(li, ri, ti);
     sum_sparse_level(
-        eng, shape, f, g, run.levels,
+        eng, shape, (f, g), run.levels,
         Sides { left: lists.left, right: lists.right },
         complete, &mut sum,
     )?;
@@ -484,9 +481,7 @@ pub(super) fn holds_back(
     run: &ApplyRun,
     f: &Tdd,
     g: &Tdd,
-    t: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
+    (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
 ) -> bool {
     let vtree = sweep.vtree;
     let root = vtree.root();
@@ -782,20 +777,14 @@ pub(super) fn open_level_arenas(
 /// [`Route::PlainDense`] assume no marginal child and read both child grids
 /// positionally. `relay` says a level of one-pair cells may be written as
 /// a description ([`run_level_rows_single`]).
-#[expect(clippy::too_many_arguments)]
 fn run_row_loop(
     eng: &Engine,
-    route: Route,
-    lookups: PlainLookups,
-    single_pair: bool,
-    pairs: bool,
+    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, bool, bool),
     words: Option<(&mut WordScratch, Sides<usize>)>,
-    rows: RowLoop<'_>,
-    scratch: RowScratch<'_>,
+    (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
     level: &mut TddLevel,
     env: StreamEnv<'_>,
     stream_state: &mut Option<StreamLevelState>,
-    relay: bool,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
     if pairs {
@@ -805,7 +794,7 @@ fn run_row_loop(
     if let Some((words, f_rows)) = words {
         if let Route::Stream { marginal_children } = route {
             let state = stream_state.as_mut().expect("Route::Stream implies an open stream column");
-            return run_level_rows_stream_words(eng, rows, scratch, words, f_rows, marginal_children, state, env);
+            return run_level_rows_stream_words(eng, rows, scratch, (words, f_rows, marginal_children), state, env);
         }
         debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain and streaming routes read cells by g-pair vectors");
         return run_level_rows_words(eng, rows, scratch, words, level, lookups, f_rows);
@@ -887,7 +876,6 @@ fn run_row_loop(
 /// # Errors
 ///
 /// Propagates a refused reservation for the mask buffers.
-#[expect(clippy::too_many_arguments)]
 fn build_level_prefilter_masks(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -895,21 +883,20 @@ fn build_level_prefilter_masks(
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
-    lookups: PlainLookups,
-    pairs: bool,
+    (lookups, pairs): (PlainLookups, bool),
 ) -> Result<(), OperationError> {
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let right_level = g.level(t);
     build_side_masks::<false>(
-        eng, right_level, gw.here,
+        eng, (right_level, gw.here),
         ChildGrid { plan: plan.sides.left, f_width: fw.left, g_width: gw.left, base: bases.left.idx() },
-        matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs,
+        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs),
         run.products.arena.slab(), &mut run.prefilter_masks.left,
     )?;
     build_side_masks::<true>(
-        eng, right_level, gw.here,
+        eng, (right_level, gw.here),
         ChildGrid { plan: plan.sides.right, f_width: fw.right, g_width: gw.right, base: bases.right.idx() },
-        matches!(lookups, PlainLookups::CompleteRight { .. }), pairs,
+        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs),
         run.products.arena.slab(), &mut run.prefilter_masks.right,
     )
 }
@@ -1215,7 +1202,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups, pairs)?;
+        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, (lookups, pairs))?;
     }
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route; any other reads its operands' pairs, an implicit
@@ -1340,18 +1327,20 @@ pub(super) fn build_level_dense(
         // Nothing filters the level's nodes or folds them into counts.
         let relay = sweep.filter.is_none() && stream_state.is_none();
         run_row_loop(
-            eng, route, lookups, single_pair, pairs,
+            eng, (route, lookups, single_pair, pairs, relay),
             words.then_some((&mut *run.words, f_rows)),
-            RowLoop {
-                f_level: f.level(t), g_level: g.level(t),
-                children: Sides { left: left_level, right: right_level },
-                ctx: &cell_ctx, f_width: fw.here,
-            },
-            RowScratch {
-                f_pairs: run.f_pairs_scratch,
-                g_pairs: run.g_pairs_scratch,
-                node_idx: run.products.arena.slab_vec(),
-            },
+            (
+                RowLoop {
+                    f_level: f.level(t), g_level: g.level(t),
+                    children: Sides { left: left_level, right: right_level },
+                    ctx: &cell_ctx, f_width: fw.here,
+                },
+                RowScratch {
+                    f_pairs: run.f_pairs_scratch,
+                    g_pairs: run.g_pairs_scratch,
+                    node_idx: run.products.arena.slab_vec(),
+                },
+            ),
             level,
             StreamEnv {
                 left_idx: li,
@@ -1361,7 +1350,6 @@ pub(super) fn build_level_dense(
                 ws: sweep.ws.as_deref(),
             },
             &mut stream_state,
-            relay,
         )?;
     }
 

@@ -105,39 +105,35 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
     if let Some(avx2) = Avx2::detect() {
         // Safety: an `Avx2` exists only where the processor has the
         // features `avx2_float_level` enables.
-        return unsafe { avx2_float_level(avx2, eng, rows, scratch, left, right, values, env) };
+        return unsafe { avx2_float_level(avx2, eng, rows, scratch, (left, right), values, env) };
     }
-    float_level(Base, eng, rows, scratch, left, right, values, env)
+    float_level(Base, eng, rows, scratch, (left, right), values, env)
 }
 
 avx2_fn! {
     /// [`stream_float_level`] compiled with [`avx2_fn`]'s features.
-    #[expect(clippy::too_many_arguments)]
     #[inline(never)]
     fn avx2_float_level<L: ChildLookup, R: ChildLookup>(
         avx2: Avx2,
         eng: &Engine,
         rows: RowLoop<'_>,
         scratch: RowScratch<'_>,
-        left: &L,
-        right: &R,
+        (left, right): (&L, &R),
         values: &mut FloatCol,
         env: StreamEnv<'_>,
     ) -> Result<(), OperationError> {
-        float_level(avx2, eng, rows, scratch, left, right, values, env)
+        float_level(avx2, eng, rows, scratch, (left, right), values, env)
     }
 }
 
 /// [`stream_float_level`] for `isa`.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
     isa: I,
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    left: &L,
-    right: &R,
+    (left, right): (&L, &R),
     values: &mut FloatCol,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
@@ -153,7 +149,7 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
         let mut next = pools.cell_pairs.checkout(eng);
         let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
+        let mut action = sum_rows(isa, eng, rows, (left, right), sink, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
     let mut st = st;
@@ -171,7 +167,7 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
         let mut next = pools.cell_pairs.checkout(eng);
         let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, left, right, sum, bufs, &mut *scratch.g_pairs)?;
+        let mut action = sum_rows(isa, eng, rows, (left, right), sum, bufs, &mut *scratch.g_pairs)?;
         return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
     }
     let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
@@ -313,14 +309,11 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 /// vectors ([`super::word_cells::words_pay_marginal`]): the same column, each
 /// cell's pairs folded in the order the row loop folds them, and the same
 /// work. A side carried through kills nothing.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn run_level_rows_stream_words(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    words: &mut WordScratch,
-    f_rows: Sides<usize>,
-    marginal_children: bool,
+    (words, f_rows, marginal_children): (&mut WordScratch, Sides<usize>, bool),
     stream_state: &mut StreamLevelState,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
@@ -329,24 +322,21 @@ pub(crate) fn run_level_rows_stream_words(
     if marginal_children {
         super::super::note_word_cells(super::super::WordNote::StreamMarginal);
         let (left, right) = (MarginalLookup::new(&sides.left), MarginalLookup::new(&sides.right));
-        stream_words(eng, rows, scratch, words, f_rows, &left, &right, stream_state, env)
+        stream_words(eng, rows, scratch, (words, f_rows), (&left, &right), stream_state, env)
     } else {
         let left = DenseLookup { base: sides.left.base, stride: sides.left.stride };
         let right = DenseLookup { base: sides.right.base, stride: sides.right.stride };
-        stream_words(eng, rows, scratch, words, f_rows, &left, &right, stream_state, env)
+        stream_words(eng, rows, scratch, (words, f_rows), (&left, &right), stream_state, env)
     }
 }
 
 /// [`run_level_rows_stream_words`] on one pair of lookups.
-#[expect(clippy::too_many_arguments)]
 fn stream_words<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    words: &mut WordScratch,
-    f_rows: Sides<usize>,
-    left: &L,
-    right: &R,
+    (words, f_rows): (&mut WordScratch, Sides<usize>),
+    (left, right): (&L, &R),
     stream_state: &mut StreamLevelState,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
@@ -355,7 +345,7 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(env, rows.children, counts);
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
@@ -363,15 +353,15 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
                 let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
-                return super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink);
+                return super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink);
             }
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
         }
         StreamLevelState::Int(counts) => {
             let mut st = attach_children::<IntFold>(env, rows.children, counts);
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
         }
     }
 }
@@ -618,13 +608,9 @@ struct RowFloats<'r> {
 }
 
 impl<'b> ValueSide<'b> {
-    #[expect(clippy::too_many_arguments)]
     fn new(
-        n: usize,
-        fixed: bool,
-        spares: usize,
-        vals: &'b mut [f64],
-        dead: &'b mut [u8],
+        (n, fixed, spares): (usize, bool, usize),
+        (vals, dead): (&'b mut [f64], &'b mut [u8]),
         stats: &'b mut [f64],
         slot_of: &'b mut [u32],
         (lanes, marks): (&'b mut [f64], &'b mut [u8]),
@@ -944,16 +930,12 @@ fn row_width(side: &ChildPlan<'_>, passthrough: bool, bound: usize, pairs: usize
 /// its f pairs read each of its rows twice or more on average, coming back
 /// to it after leaving it: as many as fit [`KEEP_MIN_BYTES`] or the output
 /// grid's bytes, the left side first.
-#[expect(clippy::too_many_arguments)]
 fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
-    left: &L,
-    right: &R,
+    (left, right): (&L, &R),
     (bound, ones, pairs): (Sides<usize>, usize, usize),
-    floats: &'b mut Vec<f64>,
-    flags: &'b mut Vec<u8>,
-    slots: &'b mut Vec<u32>,
+    (floats, flags, slots): (&'b mut Vec<f64>, &'b mut Vec<u8>, &'b mut Vec<u32>),
     scratch: &mut Vec<ChildPair>,
 ) -> Result<Option<ValueRows<'b>>, OperationError> {
     let sides = &rows.ctx.sides;
@@ -1052,8 +1034,8 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let (lmarks, rest) = rest.split_at_mut(ml);
     let (rmarks, gdead) = rest.split_at_mut(mr);
     let (lmap, rmap) = slots.split_at_mut(nl);
-    let left = ValueSide::new(sl, lfixed, spares, lv, ld, lst, lmap, (llanes, lmarks));
-    let right = ValueSide::new(sr, rfixed, spares, rv, rd, rst, rmap, (rlanes, rmarks));
+    let left = ValueSide::new((sl, lfixed, spares), (lv, ld), lst, lmap, (llanes, lmarks));
+    let right = ValueSide::new((sr, rfixed, spares), (rv, rd), rst, rmap, (rlanes, rmarks));
     let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
     let ahead = Ahead { sums: ahead_sums, flags: ahead_flags, rows: [(0, none); LANES - 1], got: 0, held: 0 };
     let gather = Gather { vals: gvals, dead: gdead, right: gright, held: None, last: None };
@@ -1392,20 +1374,18 @@ impl Peek<'_> {
 }
 
 /// The [`SumRows`] of a level summed by `sum` for `isa`.
-#[expect(clippy::too_many_arguments)]
 fn sum_rows<'o, 'r: 'o, I: Isa, S: RowSum, L: ChildLookup, R: ChildLookup>(
     isa: I,
     eng: &Engine,
     rows: RowLoop<'r>,
-    left: &L,
-    right: &R,
+    (left, right): (&L, &R),
     sum: S,
     bufs: SumBuffers<'o>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<SumRows<'o, S, I>, OperationError> {
     let SumBuffers { ones, floats, flags, slots, next } = bufs;
     let (ones, pairs, bound) = read_columns(eng, rows, ones, scratch)?;
-    let values = value_rows(eng, rows, left, right, (bound, ones.len(), pairs), floats, flags, slots, scratch)?;
+    let values = value_rows(eng, rows, (left, right), (bound, ones.len(), pairs), (floats, flags, slots), scratch)?;
     let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
     let peek = Peek { f_level: rows.f_level, f_width: rows.f_width, scratch: next, next: [none; LANES - 1], from: 0 };
     Ok(SumRows { isa, sum, ones, pairs, values, peek })
@@ -1440,21 +1420,18 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
 
     #[inline(always)]
     fn whole_row(&mut self, eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
-        sum_row(self.isa, &mut self.sum, self.ones, self.pairs, self.values.as_mut(), &mut self.peek, eng, row)
+        sum_row(self.isa, &mut self.sum, (self.ones, self.pairs), self.values.as_mut(), &mut self.peek, eng, row)
     }
 }
 
 /// An instruction set the streamed float sums are compiled for; its
 /// methods run [`block_rows`] and [`ahead_row`] compiled for it.
 trait Isa: Copy {
-    #[expect(clippy::too_many_arguments)]
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
         sum: &mut S,
-        i: usize,
-        p1: ChildPair,
-        next: &[ChildPair],
-        lay: Lay,
+        i_p1: (usize, ChildPair),
+        next_lay: (&[ChildPair], Lay),
         vr: &mut ValueRows<'_>,
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
@@ -1472,15 +1449,13 @@ impl Isa for Base {
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
         sum: &mut S,
-        i: usize,
-        p1: ChildPair,
-        next: &[ChildPair],
-        lay: Lay,
+        (i, p1): (usize, ChildPair),
+        (next, lay): (&[ChildPair], Lay),
         vr: &mut ValueRows<'_>,
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
-        block_rows(sum, i, p1, next, lay, vr, eng, row)
+        block_rows(sum, (i, p1), (next, lay), vr, eng, row)
     }
 
     #[inline(never)]
@@ -1495,17 +1470,15 @@ impl Isa for Avx2 {
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
         sum: &mut S,
-        i: usize,
-        p1: ChildPair,
-        next: &[ChildPair],
-        lay: Lay,
+        (i, p1): (usize, ChildPair),
+        (next, lay): (&[ChildPair], Lay),
         vr: &mut ValueRows<'_>,
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
         // Safety: an `Avx2` exists only where the processor has the
         // features `avx2_block_rows` enables.
-        unsafe { avx2_block_rows(sum, i, p1, next, lay, vr, eng, row) }
+        unsafe { avx2_block_rows(sum, (i, p1), (next, lay), vr, eng, row) }
     }
 
     #[inline(always)]
@@ -1517,19 +1490,16 @@ impl Isa for Avx2 {
 
 avx2_fn! {
     /// [`block_rows`] compiled with [`avx2_fn`]'s features.
-    #[expect(clippy::too_many_arguments)]
     #[inline(never)]
     fn avx2_block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         sum: &mut S,
-        i: usize,
-        p1: ChildPair,
-        next: &[ChildPair],
-        lay: Lay,
+        (i, p1): (usize, ChildPair),
+        (next, lay): (&[ChildPair], Lay),
         vr: &mut ValueRows<'_>,
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
-        block_rows(sum, i, p1, next, lay, vr, eng, row)
+        block_rows(sum, (i, p1), (next, lay), vr, eng, row)
     }
 }
 
@@ -1570,13 +1540,11 @@ fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, u
 /// with room for their sums. A cell a checked sum cannot hold goes through its
 /// cell sink, its pairs in the same order. Any other row is left to the
 /// cells (0 columns written).
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
     isa: I,
     sum: &mut S,
-    ones: &[ChildPair],
-    pairs: usize,
+    (ones, pairs): (&[ChildPair], usize),
     values: Option<&mut ValueRows<'_>>,
     peek: &mut Peek<'_>,
     eng: &Engine,
@@ -1595,7 +1563,7 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
                 if (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs || eager())
                     && let Some((m, lay)) = peek.block(row.ctx, i, p1, vr, pairs)
                 {
-                    return isa.block_rows(sum, i, p1, &peek.next[..m - 1], lay, vr, eng, row);
+                    return isa.block_rows(sum, (i, p1), (&peek.next[..m - 1], lay), vr, eng, row);
                 }
             }
             if vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) > VALUE_ROW_READS * pairs && !eager() {
@@ -1669,7 +1637,7 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             sum.push(eng, node_idx, row_base + j, acc)?;
             continue;
         }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1722,7 +1690,7 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
             sum.push(eng, node_idx, row_base + j, acc)?;
             continue;
         }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1733,14 +1701,11 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
 /// floats, those of a side `lay` names laid side by side, each column's
 /// pairs walked once for the block, row `i`'s cells appended and the
 /// others' sums held until the row loop reaches their rows.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
-    i: usize,
-    p1: ChildPair,
-    next: &[ChildPair],
-    lay: Lay,
+    (i, p1): (usize, ChildPair),
+    (next, lay): (&[ChildPair], Lay),
     vr: &mut ValueRows<'_>,
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
@@ -1771,14 +1736,14 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     let (ctx, level) = (row.ctx, row.right_level_t);
     match lay {
         Lay::Left => match gather.rows(true, if rside.fixed { 0 } else { ra[0] }, rrow, ctx, level, &mut *row.g_pairs_scratch) {
-            Some(rg) => lanes_by(track, check, sum, llaid, rg, out, eng, row),
-            None => lanes_by(track, check, sum, llaid, rone, out, eng, row),
+            Some(rg) => lanes_by((track, check), sum, (llaid, rg), out, eng, row),
+            None => lanes_by((track, check), sum, (llaid, rone), out, eng, row),
         },
         Lay::Right => match gather.rows(false, if lside.fixed { 0 } else { la[0] }, lrow, ctx, level, &mut *row.g_pairs_scratch) {
-            Some(lg) => lanes_by(track, check, sum, lg, rlaid, out, eng, row),
-            None => lanes_by(track, check, sum, lone, rlaid, out, eng, row),
+            Some(lg) => lanes_by((track, check), sum, (lg, rlaid), out, eng, row),
+            None => lanes_by((track, check), sum, (lone, rlaid), out, eng, row),
         },
-        Lay::Both => lanes_by(track, check, sum, llaid, rlaid, out, eng, row),
+        Lay::Both => lanes_by((track, check), sum, (llaid, rlaid), out, eng, row),
     }
 }
 
@@ -1843,14 +1808,11 @@ impl Lanes for Gathered<'_> {
 
 /// [`lane_values`] where a cell of the rows is dead (`track`) and where a
 /// product of them may not be its float (`check`).
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn lanes_by<A: Lanes, B: Lanes, L: ChildLookup, R: ChildLookup, S: RowSum>(
-    track: bool,
-    check: bool,
+    (track, check): (bool, bool),
     sum: &mut S,
-    l: A,
-    r: B,
+    (l, r): (A, B),
     out: (usize, &mut [f64], &mut [u8]),
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
@@ -1916,7 +1878,7 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
             sum.push(eng, node_idx, row_base + j, acc[0])?;
             continue;
         }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1951,7 +1913,7 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             sum.push(eng, node_idx, row_base + j, acc)?;
             continue;
         }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, g, left, right)?;
+        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1980,7 +1942,7 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         sums[..n].fill(0.0);
         flags[..n].fill(0);
         for p1 in f_pairs {
-            add_grid(sum, &mut sums[..n], &mut flags[..n], block, node_idx, left, right, p1.left.0, p1.right.0);
+            add_grid(sum, (&mut sums[..n], &mut flags[..n]), block, node_idx, (left, right), (p1.left.0, p1.right.0));
         }
         for (x, q) in block.iter().enumerate() {
             let j = j0 + x;
@@ -1996,7 +1958,7 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 sum.push(eng, node_idx, row_base + j, sums[x])?;
                 continue;
             }
-            refold(sum, eng, node_idx, row_base + j, f_pairs, std::slice::from_ref(q), left, right)?;
+            refold(sum, eng, (node_idx, row_base + j), (f_pairs, std::slice::from_ref(q)), (left, right))?;
         }
         j0 += n;
     }
@@ -2054,7 +2016,7 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
         at += 1;
         let (a, b) = (p1.left.0, p1.right.0);
         if !reads(lside, rside, p1) {
-            add_grid(sum, sums, flags, ones, node_idx, left, right, a, b);
+            add_grid(sum, (sums, flags), ones, node_idx, (left, right), (a, b));
             continue;
         }
         lside.unpin();
@@ -2083,7 +2045,7 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
             sum.push(eng, node_idx, row_base + j, sums[j])?;
             continue;
         }
-        refold(sum, eng, node_idx, row_base + j, f_pairs, std::slice::from_ref(q), left, right)?;
+        refold(sum, eng, (node_idx, row_base + j), (f_pairs, std::slice::from_ref(q)), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -2091,18 +2053,14 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
 
 /// Add f pair `(a, b)`'s product to each one-pair column's sum, read off
 /// the grids; a column without pairs is skipped.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn add_grid<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &S,
-    sums: &mut [f64],
-    flags: &mut [u8],
+    (sums, flags): (&mut [f64], &mut [u8]),
     ones: &[ChildPair],
     node_idx: &[u32],
-    left: &L,
-    right: &R,
-    a: u32,
-    b: u32,
+    (left, right): (&L, &R),
+    (a, b): (u32, u32),
 ) {
     let (lrow, rrow) = (left.row(a), right.row(b));
     for ((s, f), q) in sums.iter_mut().zip(flags.iter_mut()).zip(ones) {
@@ -2179,17 +2137,13 @@ fn add_block<const TRACK: bool, const CHECK: bool, S: RowSum>(sums: &mut [f64], 
 /// Fold the cell at `pos`, the f pairs `f_pairs` against the column pairs
 /// `g`, through `sum`'s cell sink, its pairs in the order the row loop
 /// walks them: a cell whose float sum a checked sum cannot hold.
-#[expect(clippy::too_many_arguments)]
 #[inline(never)]
 fn refold<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
     eng: &Engine,
-    node_idx: &mut [u32],
-    pos: usize,
-    f_pairs: &[ChildPair],
-    g: &[ChildPair],
-    left: &L,
-    right: &R,
+    (node_idx, pos): (&mut [u32], usize),
+    (f_pairs, g): (&[ChildPair], &[ChildPair]),
+    (left, right): (&L, &R),
 ) -> Result<(), OperationError> {
     let cells = sum.cells();
     let start = cells.begin();
