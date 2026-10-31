@@ -83,7 +83,8 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let f = f.into();
-        let canonical = f.levels.is_canonical(f.output);
+        let has_marginal = f.has_marginal_level();
+        let canonical = !has_marginal && f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
         // `expand_full` left every level below the root covering its
         // children's whole basis, and the old output and its complement cover
@@ -95,7 +96,12 @@ impl Engine {
         if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
             self.certify_complement(&mut result, full, old)?;
         } else {
-            self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
+            let scope = if has_marginal {
+                crate::reduce::prune::PruneScope::Whole
+            } else {
+                crate::reduce::prune::PruneScope::BelowRoot
+            };
+            self.reduce_scoped(&mut result, plan, scope)?;
         }
         Ok(result)
     }
@@ -110,6 +116,9 @@ pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
 /// [`negate_on`] of an owned or borrowed operand, with the old output's slot
 /// where the complement was built beside it.
 pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+    if tdd.has_marginal_level() {
+        return complement_marginal_on(eng, tdd);
+    }
     tdd.require_structure()?;
     eng.limits().check_stop()?;
     let vtree = Arc::clone(&tdd.vtree);
@@ -389,10 +398,11 @@ pub(crate) fn expand_full(
     let mut marked = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
 
-    expand_full_with(eng, vtree, target, (canonical, closed), &mut marked, &mut cells, filled)
+    expand_full_with(eng, vtree, target, (canonical, closed), &mut marked, &mut cells, filled, None)
 }
 
 /// [`expand_full`] with the scratch checked out.
+#[expect(clippy::too_many_arguments)]
 fn expand_full_with(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
@@ -401,9 +411,13 @@ fn expand_full_with(
     marked: &mut Vec<u8>,
     cells: &mut Vec<ChildPair>,
     filled: &mut [bool],
+    skip: Option<&[bool]>,
 ) -> Result<(), OperationError> {
     let root = vtree.root();
-    for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != root) {
+    for (t, left, right) in vtree
+        .internal_bottomup()
+        .filter(|&(t, _, _)| t != root && !skip.is_some_and(|s| s[t.idx()]))
+    {
         // Read bottom-up: a child's basis includes the fill node its own visit
         // added.
         let lefts = ChildBasis::of(vtree, &target.levels[..], left);
@@ -976,6 +990,649 @@ fn each_pair(level: &TddLevel, cells: Cells, mut mark: impl FnMut(ChildPair)) {
             level.described_read_next(&mut cursor, i, &mut buf).iter().for_each(|&pair| mark(pair));
         }
     }
+}
+
+// ── Marginal subtree complement ──────────────────────────────────────────────
+
+/// Find the highest marginal subtree in `levels`, or return `Err(level)` if two
+/// separate marginal subtrees meet at a structural ancestor that still holds
+/// unmarginalized variables on one side.
+fn find_marginal_subtree(
+    vtree: &crate::vtree::Vtree,
+    levels: &[TddLevel],
+) -> Result<Option<(crate::vtree::VtreeIdx, bool)>, crate::vtree::VtreeIdx> {
+    fn walk(
+        vtree: &crate::vtree::Vtree,
+        levels: &[TddLevel],
+        t: crate::vtree::VtreeIdx,
+    ) -> Result<Option<(crate::vtree::VtreeIdx, bool)>, crate::vtree::VtreeIdx> {
+        if levels[t.idx()].is_marginal() {
+            return Ok(Some((t, true)));
+        }
+        if vtree.node(t).is_leaf() {
+            return Ok(None);
+        }
+        let (left, right) = vtree.children(t);
+        match (walk(vtree, levels, left)?, walk(vtree, levels, right)?) {
+            (None, None) => Ok(None),
+            (Some((m, _)), None) => Ok(Some((m, false))),
+            (None, Some((m, _))) => Ok(Some((m, false))),
+            (Some((_, true)), Some((_, true))) => Ok(Some((t, true))),
+            (Some(_), Some((m_r, _))) => Err(m_r),
+        }
+    }
+    walk(vtree, levels, vtree.root())
+}
+
+/// Partition function $Z(t) = \prod_{v \in \text{vars}(t)} (w_v^+ + w_v^-)$ of
+/// vtree subtree `t` in the store's arithmetic, folded in the vtree's tree order.
+fn z_weighted(
+    vtree: &crate::vtree::Vtree,
+    ws: &crate::diagram::WeightStore,
+    t: crate::vtree::VtreeIdx,
+) -> crate::diagram::WeightValue {
+    match *vtree.node(t) {
+        crate::vtree::VtreeNode::Leaf { var, .. } => ws.leaf_val(var, LeafLabel::One),
+        crate::vtree::VtreeNode::Internal { left, right, .. } => {
+            z_weighted(vtree, ws, left).mul(&z_weighted(vtree, ws, right))
+        }
+    }
+}
+
+/// Subtract the sum of `terms` from $2^{\text{num\_vars}}$, returning `Ok(None)`
+/// when the difference is zero and `Err(OperationError::MarginalLevel(m))` if
+/// the sum exceeds $2^{\text{num\_vars}}$.
+fn subtract_from_power_of_two<'a>(
+    m: crate::vtree::VtreeIdx,
+    num_vars: u32,
+    terms: impl IntoIterator<Item = crate::value::CountRead<'a>>,
+) -> Result<Option<crate::value::Count>, OperationError> {
+    use crate::value::{Count, CountRead};
+    if num_vars < 128 {
+        let z = 1u128 << num_vars;
+        let mut sum = 0u128;
+        for term in terms {
+            let v = match term {
+                CountRead::Fast(v) => v,
+                CountRead::Big(_) => return Err(OperationError::MarginalLevel(m)),
+            };
+            sum = sum.checked_add(v).ok_or(OperationError::MarginalLevel(m))?;
+            if sum > z {
+                return Err(OperationError::MarginalLevel(m));
+            }
+        }
+        let diff = z - sum;
+        Ok((diff != 0).then_some(Count::Fast(diff)))
+    } else {
+        let z = num_bigint::BigUint::from(1u32) << num_vars;
+        let mut sum = num_bigint::BigUint::ZERO;
+        for term in terms {
+            match term {
+                CountRead::Fast(v) => sum += v,
+                CountRead::Big(b) => sum += b,
+            }
+            if sum > z {
+                return Err(OperationError::MarginalLevel(m));
+            }
+        }
+        if sum == z {
+            return Ok(None);
+        }
+        let diff = z - sum;
+        Ok(Some(match u128::try_from(&diff) {
+            Ok(v) => Count::from_u128(v),
+            Err(_) => Count::Big(diff),
+        }))
+    }
+}
+
+/// Complement a diagram whose marginal levels form a single closed subtree `m`
+/// (after `marginalize_closure`), subtracting each disjoint partition branch's
+/// marginal value from $Z(m)$.
+fn complement_marginal_on(
+    eng: &Engine,
+    tdd: Cow<'_, Tdd>,
+) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+    eng.limits().check_stop()?;
+    let Some((m, _)) = find_marginal_subtree(&tdd.vtree, &tdd.levels)
+        .map_err(OperationError::MarginalLevel)?
+    else {
+        unreachable!("has_marginal_level")
+    };
+    let mut result = match tdd {
+        Cow::Owned(tdd) => tdd,
+        Cow::Borrowed(tdd) => tdd.try_clone_on(eng)?,
+    };
+    crate::marginal::marginalize_closure(eng, &mut result)?;
+    if result.is_zero() {
+        let m_levels: Vec<_> = result
+            .vtree
+            .bottomup()
+            .filter(|&t| result.levels[t.idx()].is_marginal())
+            .collect();
+        let weights = result.weights.take();
+        let mut one = crate::build::constant_on(eng, &result.vtree, true)?;
+        one.weights = weights;
+        crate::marginal::marginalize_levels(eng, &mut one, &m_levels)?;
+        return Ok((one, None));
+    }
+
+    let vtree = Arc::clone(&result.vtree);
+    let root = vtree.root();
+    let m = if result.levels[root.idx()].is_marginal() { root } else { m };
+    let out_local = result.output.local;
+    if m == root {
+        complement_marginal_root(eng, &vtree, &mut result, out_local)?;
+        return Ok((result, None));
+    }
+
+    // Canonicalize off-spine levels and fuse boundary pairs before completing
+    // off-spine levels so no dead or content-twin node enters `s_basis`.
+    eng.reduce_scoped(
+        &mut result,
+        crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Fresh),
+        crate::reduce::prune::PruneScope::Whole,
+    )?;
+    if result.is_zero() {
+        let m_levels: Vec<_> = result
+            .vtree
+            .bottomup()
+            .filter(|&t| result.levels[t.idx()].is_marginal())
+            .collect();
+        let weights = result.weights.take();
+        let mut one = crate::build::constant_on(eng, &result.vtree, true)?;
+        one.weights = weights;
+        crate::marginal::marginalize_levels(eng, &mut one, &m_levels)?;
+        return Ok((one, None));
+    }
+    let out_local = result.output.local;
+
+    // Build the ancestor spine [p_0, ..., p_k] from `root` to `parent(m)` and
+    // the spine child list [p_1, ..., p_k, m].
+    let mut spine = Vec::new();
+    let mut cur = m;
+    while let Some(p) = vtree.node(cur).parent() {
+        spine.push(p);
+        cur = p;
+    }
+    spine.reverse();
+    let k = spine.len() - 1;
+    let mut spine_children: Vec<crate::vtree::VtreeIdx> = spine[1..].to_vec();
+    spine_children.push(m);
+
+    let mut on_spine_or_m = vec![false; vtree.num_nodes()];
+    for t in vtree.subtree(m) {
+        on_spine_or_m[t.idx()] = true;
+    }
+    for &p in &spine {
+        on_spine_or_m[p.idx()] = true;
+    }
+
+    // Make every off-spine internal level full so each off-spine sibling S_i
+    // spans its entire assignment cube.
+    let closed = result.levels.is_closed();
+    let mut levels = std::mem::take(&mut result.levels).into_vec();
+    let mut filled = Vec::new();
+    eng.limits().try_resize(&mut filled, vtree.num_nodes(), false)?;
+    {
+        let scratch = &eng.scratch.negate;
+        let mut marked = scratch.cover.checkout_preserving(eng);
+        let mut cells = scratch.cells.checkout_preserving(eng);
+        expand_full_with(
+            eng,
+            &vtree,
+            &mut Target { levels: &mut levels, source: None },
+            (false, closed),
+            &mut marked,
+            &mut cells,
+            &mut filled,
+            Some(&on_spine_or_m),
+        )?;
+    }
+    result.levels = levels.into();
+
+    // Extract each spine level's old nodes in (s_raw, c_raw) orientation and
+    // each off-spine sibling's alive basis.
+    let mut s_basis: Vec<Vec<u32>> = Vec::with_capacity(spine.len());
+    let mut old_spine_nodes: Vec<Vec<Vec<(u32, u32)>>> = Vec::with_capacity(spine.len());
+    for i in 0..=k {
+        let p = spine[i];
+        let c_vtree = spine_children[i];
+        let (left, right) = vtree.children(p);
+        let c_on_left = left == c_vtree;
+        let s_vtree = if c_on_left { right } else { left };
+        let s_is_leaf = vtree.node(s_vtree).is_leaf();
+        let p_level = &result.levels[p.idx()];
+
+        let mut raw_nodes: Vec<Vec<(u32, u32)>> = (0..p_level.node_count())
+            .map(|u| {
+                p_level
+                    .pairs_iter_of_idx(u)
+                    .map(|pair| {
+                        if c_on_left {
+                            (pair.right.0, pair.left.0)
+                        } else {
+                            (pair.left.0, pair.right.0)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let basis = if s_is_leaf {
+            let uses_literal = raw_nodes
+                .iter()
+                .flatten()
+                .any(|&(s, _)| s == POS_LEAF_IDX.0 || s == NEG_LEAF_IDX.0);
+            if !uses_literal {
+                vec![ONE_LEAF_IDX.0]
+            } else {
+                for pairs in &mut raw_nodes {
+                    let mut expanded = Vec::with_capacity(pairs.len());
+                    for &(s, c) in pairs.iter() {
+                        if s == ONE_LEAF_IDX.0 {
+                            expanded.push((POS_LEAF_IDX.0, c));
+                            expanded.push((NEG_LEAF_IDX.0, c));
+                        } else {
+                            expanded.push((s, c));
+                        }
+                    }
+                    *pairs = expanded;
+                }
+                vec![POS_LEAF_IDX.0, NEG_LEAF_IDX.0]
+            }
+        } else {
+            (0..result.levels[s_vtree.idx()].slot_count() as u32)
+                .filter(|&idx| !empty_node(&result.levels[s_vtree.idx()], idx as usize))
+                .collect()
+        };
+        for pairs in &mut raw_nodes {
+            pairs.sort_unstable();
+        }
+        s_basis.push(basis);
+        old_spine_nodes.push(raw_nodes);
+    }
+
+    for &p in &spine {
+        result.levels[p.idx()] = TddLevel::new();
+    }
+
+    let m_is_leaf = vtree.node(m).is_leaf();
+    let weighted = result.weights.is_some();
+    let num_m_vars = vtree
+        .subtree(m)
+        .filter(|&t| vtree.node(t).is_leaf())
+        .count() as u32;
+
+    let (old_m_fast, old_m_big) = if !weighted && !m_is_leaf {
+        match result.levels[m.idx()].marginal_store_mut() {
+            Some((counts, big)) => (std::mem::take(counts), big.take()),
+            None => (Vec::new(), None),
+        }
+    } else {
+        (Vec::new(), None)
+    };
+    let old_m_weights = if weighted && !m_is_leaf {
+        result
+            .weights
+            .as_mut()
+            .and_then(|ws| ws.take_level(m.idx()))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let z_w = weighted.then(|| z_weighted(&vtree, result.weights.as_ref().expect("weighted"), m));
+
+    let mut memo: rustc_hash::FxHashMap<(usize, Vec<u32>), Option<u32>> =
+        rustc_hash::FxHashMap::default();
+    let mut node_dedup: Vec<rustc_hash::FxHashMap<Vec<ChildPair>, u32>> =
+        (0..=k).map(|_| rustc_hash::FxHashMap::default()).collect();
+    let mut new_m_counts = crate::value::CountVec::default();
+    let mut m_slot_map: rustc_hash::FxHashMap<crate::value::Count, u32> =
+        rustc_hash::FxHashMap::default();
+    let mut new_m_weights: Vec<crate::diagram::WeightValue> = Vec::new();
+    let mut w_slot_map: rustc_hash::FxHashMap<crate::diagram::WeightKey, u32> =
+        rustc_hash::FxHashMap::default();
+
+    #[expect(clippy::too_many_arguments)]
+    fn complement_spine(
+        eng: &Engine,
+        vtree: &crate::vtree::Vtree,
+        result: &mut Tdd,
+        spine: &[crate::vtree::VtreeIdx],
+        spine_children: &[crate::vtree::VtreeIdx],
+        s_basis: &[Vec<u32>],
+        old_spine_nodes: &[Vec<Vec<(u32, u32)>>],
+        m: crate::vtree::VtreeIdx,
+        m_is_leaf: bool,
+        weighted: bool,
+        num_m_vars: u32,
+        old_m_fast: &[u128],
+        old_m_big: Option<&crate::diagram::CountOverflow>,
+        old_m_weights: &[crate::diagram::WeightValue],
+        z_w: Option<&crate::diagram::WeightValue>,
+        memo: &mut rustc_hash::FxHashMap<(usize, Vec<u32>), Option<u32>>,
+        node_dedup: &mut [rustc_hash::FxHashMap<Vec<ChildPair>, u32>],
+        new_m_counts: &mut crate::value::CountVec,
+        m_slot_map: &mut rustc_hash::FxHashMap<crate::value::Count, u32>,
+        new_m_weights: &mut Vec<crate::diagram::WeightValue>,
+        w_slot_map: &mut rustc_hash::FxHashMap<crate::diagram::WeightKey, u32>,
+        i: usize,
+        nodes: Vec<u32>,
+    ) -> Result<Option<u32>, OperationError> {
+        eng.limits().check_stop()?;
+        if let Some(&cached) = memo.get(&(i, nodes.clone())) {
+            return Ok(cached);
+        }
+        let k = spine.len() - 1;
+        let p = spine[i];
+        let c_vtree = spine_children[i];
+        let (left, _right) = vtree.children(p);
+        let c_on_left = left == c_vtree;
+        let mut emitted_pairs: Vec<ChildPair> = Vec::new();
+        charge_pairs(eng, s_basis[i].len() as u64)?;
+
+        if i < k {
+            for &s in &s_basis[i] {
+                let mut child_nodes = Vec::new();
+                for &u in &nodes {
+                    for &(su, cu) in &old_spine_nodes[i][u as usize] {
+                        if su == s {
+                            child_nodes.push(cu);
+                        }
+                    }
+                }
+                child_nodes.sort_unstable();
+                if let Some(bar_c) = complement_spine(
+                    eng,
+                    vtree,
+                    result,
+                    spine,
+                    spine_children,
+                    s_basis,
+                    old_spine_nodes,
+                    m,
+                    m_is_leaf,
+                    weighted,
+                    num_m_vars,
+                    old_m_fast,
+                    old_m_big,
+                    old_m_weights,
+                    z_w,
+                    memo,
+                    node_dedup,
+                    new_m_counts,
+                    m_slot_map,
+                    new_m_weights,
+                    w_slot_map,
+                    i + 1,
+                    child_nodes,
+                )? {
+                    let (l, r) = if c_on_left { (bar_c, s) } else { (s, bar_c) };
+                    eng.limits().try_push(
+                        &mut emitted_pairs,
+                        ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
+                    )?;
+                }
+            }
+        } else {
+            let old_ref = crate::value::CountRef::new(old_m_fast, old_m_big);
+            let view = ChildDecoder::marginal();
+            for &s in &s_basis[k] {
+                let mut c_refs = Vec::new();
+                for &u in &nodes {
+                    for &(su, cu) in &old_spine_nodes[k][u as usize] {
+                        if su == s {
+                            c_refs.push(cu);
+                        }
+                    }
+                }
+                let bar_m_ref = if weighted && m_is_leaf {
+                    let ws = result.weights.as_ref().expect("weighted");
+                    let col = ws.level(m.idx()).expect("weighted marginal leaf has column");
+                    let canon = if ws.is_bounded() {
+                        [0, 1, 2]
+                    } else {
+                        crate::diagram::leaf_canon_map(col)
+                    };
+                    match c_refs.as_slice() {
+                        [] if !col[0].is_zero() => Some(canon[0]),
+                        [1] if !col[2].is_zero() => Some(canon[2]),
+                        [2] if !col[1].is_zero() => Some(canon[1]),
+                        _ => None,
+                    }
+                } else if weighted {
+                    let ws = result.weights.as_ref().expect("weighted");
+                    let mut sum_w = ws.wzero();
+                    for &c_raw in &c_refs {
+                        let crate::diagram::ValueRef::Slot(slot) =
+                            view.value(EncodedChildRef::from_raw(c_raw))
+                        else {
+                            unreachable!("weighted marginal ref is slot");
+                        };
+                        sum_w.add_assign(&old_m_weights[slot as usize]);
+                    }
+                    let mut bar_w = z_w.expect("weighted").clone();
+                    bar_w.add_assign(&sum_w.neg());
+                    if bar_w.is_zero() {
+                        None
+                    } else {
+                        let key = crate::diagram::weight_key(&bar_w);
+                        let slot = if let Some(&slot) = w_slot_map.get(&key) {
+                            slot
+                        } else {
+                            let slot = u32::try_from(new_m_weights.len())
+                                .map_err(|_| OperationError::IndexOverflow)?;
+                            eng.limits().try_push(new_m_weights, bar_w)?;
+                            w_slot_map.insert(key, slot);
+                            slot
+                        };
+                        Some(slot)
+                    }
+                } else {
+                    let terms = c_refs
+                        .iter()
+                        .map(|&r| old_ref.read(view, EncodedChildRef::from_raw(r)));
+                    match subtract_from_power_of_two(m, num_m_vars, terms)? {
+                        None => None,
+                        Some(crate::value::Count::Fast(v))
+                            if v <= u128::from(crate::diagram::MARGINAL_INLINE_MAX) =>
+                        {
+                            Some(
+                                crate::diagram::ValueRef::inline_raw(v)
+                                    .expect("inline count fits"),
+                            )
+                        }
+                        Some(bar_c) => {
+                            let slot = if let Some(&slot) = m_slot_map.get(&bar_c) {
+                                slot
+                            } else {
+                                let slot = u32::try_from(new_m_counts.len())
+                                    .map_err(|_| OperationError::IndexOverflow)?;
+                                new_m_counts.push(eng, bar_c.clone())?;
+                                m_slot_map.insert(bar_c, slot);
+                                slot
+                            };
+                            Some(slot)
+                        }
+                    }
+                };
+                if let Some(m_raw) = bar_m_ref {
+                    let (l, r) = if c_on_left { (m_raw, s) } else { (s, m_raw) };
+                    eng.limits().try_push(
+                        &mut emitted_pairs,
+                        ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
+                    )?;
+                }
+            }
+        }
+
+        if emitted_pairs.is_empty() {
+            memo.insert((i, nodes), None);
+            return Ok(None);
+        }
+        crate::diagram::sort_pairs(&mut emitted_pairs);
+        let out_idx = if let Some(&existing) = node_dedup[i].get(&emitted_pairs) {
+            existing
+        } else {
+            let level = &mut result.levels[p.idx()];
+            reserve_fill(eng, level, emitted_pairs.len())?;
+            let idx = level.push_node(eng.limits(), &emitted_pairs)?.0;
+            node_dedup[i].insert(emitted_pairs, idx);
+            idx
+        };
+        memo.insert((i, nodes), Some(out_idx));
+        Ok(Some(out_idx))
+    }
+
+    let root_out = complement_spine(
+        eng,
+        &vtree,
+        &mut result,
+        &spine,
+        &spine_children,
+        &s_basis,
+        &old_spine_nodes,
+        m,
+        m_is_leaf,
+        weighted,
+        num_m_vars,
+        &old_m_fast,
+        old_m_big.as_ref(),
+        &old_m_weights,
+        z_w.as_ref(),
+        &mut memo,
+        &mut node_dedup,
+        &mut new_m_counts,
+        &mut m_slot_map,
+        &mut new_m_weights,
+        &mut w_slot_map,
+        0,
+        vec![out_local.0],
+    )?;
+
+    if let Some(out_idx) = root_out {
+        if !weighted {
+            let p_k = spine[k];
+            let m_side = crate::diagram::ChildSide::of(&vtree, p_k, m);
+            result.levels[p_k.idx()].set_has_value_refs(m_side, true);
+            if !m_is_leaf {
+                let (counts, big) = new_m_counts.into_parts();
+                crate::diagram::MarginalStorage::new(&mut result.levels[m.idx()], None, m.idx())
+                    .install_counts(counts, big);
+            }
+        } else if !m_is_leaf {
+            crate::diagram::MarginalStorage::new(
+                &mut result.levels[m.idx()],
+                result.weights.as_mut(),
+                m.idx(),
+            )
+            .install_weights(new_m_weights);
+        }
+        result.output = TddNodeId { vtree: root, local: NodeIdx(out_idx) };
+        for (t, _, _) in vtree.internal_bottomup() {
+            if !result.levels[t.idx()].is_marginal() {
+                result.try_invalidate(eng, t)?;
+            }
+        }
+        result.dirty.set_loose(None);
+    } else {
+        crate::diagram::MarginalStorage::new(
+            &mut result.levels[m.idx()],
+            result.weights.as_mut(),
+            m.idx(),
+        )
+        .clear(m_is_leaf);
+        for t in 0..result.levels.len() {
+            if !result.levels[t].is_marginal() {
+                let level = &mut result.levels[t];
+                level.nodes = level.take_nodes();
+                level.pairs.clear();
+                level.ranges.clear();
+                level.dead_pairs = 0;
+            }
+            result.levels.mark_changed(crate::vtree::VtreeIdx(t as u32));
+        }
+        result.output = TddNodeId { vtree: root, local: crate::diagram::ZERO };
+        result.dirty.set_loose(Some(Vec::new()));
+    }
+    Ok((result, None))
+}
+
+/// Complement a diagram whose root level `root` is itself marginal.
+fn complement_marginal_root(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    result: &mut Tdd,
+    out_local: NodeIdx,
+) -> Result<(), OperationError> {
+    let root = vtree.root();
+    result.levels.forget();
+    if vtree.node(root).is_leaf() {
+        if let Some(ws) = result.weights.as_ref() {
+            let col = ws.level(root.idx()).expect("weighted marginal leaf has column");
+            let canon = if ws.is_bounded() {
+                [0, 1, 2]
+            } else {
+                crate::diagram::leaf_canon_map(col)
+            };
+            let neg_slot = match out_local.0 {
+                1 if !col[2].is_zero() => Some(canon[2]),
+                2 if !col[1].is_zero() => Some(canon[1]),
+                _ => None,
+            };
+            result.output.local = neg_slot.map_or(crate::diagram::ZERO, NodeIdx);
+        } else {
+            result.output.local = complement_leaf_root(out_local).unwrap_or(crate::diagram::ZERO);
+        }
+        return Ok(());
+    }
+    if let Some(bar_w) = result.weights.as_ref().map(|ws| {
+        let old_w = ws.level(root.idx()).expect("marginal root")[out_local.idx()].clone();
+        let mut bar_w = z_weighted(vtree, ws, root);
+        bar_w.add_assign(&old_w.neg());
+        bar_w
+    }) {
+        if bar_w.is_zero() {
+            crate::diagram::MarginalStorage::new(
+                &mut result.levels[root.idx()],
+                result.weights.as_mut(),
+                root.idx(),
+            )
+            .clear(false);
+            result.output.local = crate::diagram::ZERO;
+        } else {
+            crate::diagram::MarginalStorage::new(
+                &mut result.levels[root.idx()],
+                result.weights.as_mut(),
+                root.idx(),
+            )
+            .install_weights(vec![bar_w]);
+            result.output.local = NodeIdx(0);
+        }
+    } else {
+        let num_m_vars = vtree
+            .subtree(root)
+            .filter(|&t| vtree.node(t).is_leaf())
+            .count() as u32;
+        let old_c = result.levels[root.idx()]
+            .count_column()
+            .expect("marginal root")
+            .get(out_local.idx());
+        let Some(bar_c) = subtract_from_power_of_two(root, num_m_vars, [old_c])? else {
+            crate::diagram::MarginalStorage::new(&mut result.levels[root.idx()], None, root.idx())
+                .clear(false);
+            result.output.local = crate::diagram::ZERO;
+            return Ok(());
+        };
+        let mut col = crate::value::CountVec::try_with_capacity(eng, 1)?;
+        col.push(eng, bar_c)?;
+        let (counts, big) = col.into_parts();
+        crate::diagram::MarginalStorage::new(&mut result.levels[root.idx()], None, root.idx())
+            .install_counts(counts, big);
+        result.output.local = NodeIdx(0);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

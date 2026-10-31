@@ -227,3 +227,23 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
     }
     assert!(known > 0, "every conjunction was false");
 }
+
+/// A plain conjunction whose result is false clears its levels and returns
+/// the canonical false diagram with nothing owed to the reduction passes.
+#[test]
+fn a_false_conjunction_empties_its_levels_and_owes_nothing() {
+    let eng = Engine::new();
+    for (label, vtree) in vtree_shapes(8) {
+        let f = compile_clauses(&vtree, &[vec![1, 2], vec![3, 4], vec![5, -6], vec![7, 8]]);
+        let g = compile_clauses(&vtree, &[vec![-1], vec![-2], vec![-3, 6], vec![-7, 8]]);
+        assert!(!f.is_zero() && !g.is_zero(), "{label}");
+        let out = eng.and(f, g).unwrap();
+        assert!(out.is_zero(), "{label}");
+        assert_eq!(out.node_count(), 0, "{label}");
+        assert_eq!(out.pair_count(), 0, "{label}");
+        assert!(out.dirty.is_empty(), "{label}");
+        assert_eq!(out.dirty.loose(), Some(&[][..]), "{label}");
+        assert!(out.levels.is_canonical(out.output), "{label}");
+        assert_canonical(&out);
+    }
+}

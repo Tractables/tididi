@@ -9,6 +9,9 @@ fn check(f: &Tdd) {
     let pairs: usize = f.levels().iter().map(|l| (0..l.nodes().len()).map(|i| l.pair_count_at(i)).sum::<usize>()).sum();
     for _ in 0..2 {
         assert_eq!((f.node_count(), f.max_width(), f.has_marginal_level(), f.pair_count()), (nodes, width, marginal, pairs));
+        if f.levels.is_closed() {
+            assert_eq!(f.levels().iter().map(TddLevel::pair_count).sum::<usize>(), pairs);
+        }
     }
 }
 

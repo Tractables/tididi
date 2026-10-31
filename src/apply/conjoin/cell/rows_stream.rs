@@ -165,6 +165,17 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         && let Some(l) = plain_floats(eng, lchild, &mut lbuf)?
         && let Some(r) = plain_floats(eng, rchild, &mut rbuf)?
     {
+        if let Some(products) = PlainProducts::from_floats(l, lchild.view, r, rchild.view)
+            && let Some(out) = counts.narrow_under(products.scale)
+        {
+            let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
+            let pools = &eng.scratch.apply;
+            let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
+            let mut next = pools.cell_pairs.checkout(eng);
+            let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
+            let mut action = sum_rows(isa, eng, rows, left, right, sink, bufs, &mut *scratch.g_pairs)?;
+            return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
+        }
         let products = CheckedProducts::new(l, lchild.view, r, rchild.view);
         let sum = CheckedSum { products, left: lchild, right: rchild, counts, store, cell: &mut cell_pairs };
         let pools = &eng.scratch.apply;
@@ -205,7 +216,16 @@ pub(crate) fn run_level_described_stream(
         return Ok(false);
     }
     let st = attach_children::<FloatFold>(env, children, values);
-    let Some(products) = PlainProducts::of(&st.left, &st.right) else {
+    let pools = &eng.scratch.apply;
+    let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+    let products = match PlainProducts::of(&st.left, &st.right) {
+        Some(p) => Some(p),
+        None => match (plain_floats(eng, &st.left, &mut lbuf)?, plain_floats(eng, &st.right, &mut rbuf)?) {
+            (Some(l), Some(r)) => PlainProducts::from_floats(l, st.left.view, r, st.right.view),
+            _ => None,
+        },
+    };
+    let Some(products) = products else {
         return Ok(false);
     };
     // A slot below 2^30 is the index of its float under either child view
@@ -359,7 +379,16 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
-            if let Some(products) = PlainProducts::of(&st.left, &st.right)
+            let pools = &eng.scratch.apply;
+            let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+            let products = match PlainProducts::of(&st.left, &st.right) {
+                Some(p) => Some(p),
+                None => match (plain_floats(eng, &st.left, &mut lbuf)?, plain_floats(eng, &st.right, &mut rbuf)?) {
+                    (Some(l), Some(r)) => PlainProducts::from_floats(l, st.left.view, r, st.right.view),
+                    _ => None,
+                },
+            };
+            if let Some(products) = products
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
                 let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };

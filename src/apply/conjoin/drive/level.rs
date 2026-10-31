@@ -423,7 +423,6 @@ fn install_summed(
     /// installs it and noting each level installed.
     struct Summing<'l> {
         levels: &'l mut [TddLevel],
-        c: VtreeIdx,
         installed: Vec<VtreeIdx>,
     }
     impl InstallTarget for Summing<'_> {
@@ -435,6 +434,7 @@ fn install_summed(
             &mut self,
             vtree: &crate::vtree::Vtree,
             t: InternalLevel,
+            subsumed: bool,
             col: K::Col,
             computed: &mut [Option<K::Col>],
             store: &mut K::Store,
@@ -442,7 +442,7 @@ fn install_summed(
             let v = t.vtree_idx();
             debug_assert!(self.installed.len() < self.installed.capacity(), "reserved for every internal level of the subtree");
             self.installed.push(v);
-            if v != self.c {
+            if subsumed {
                 install_streamed::<K>(self.levels, vtree, t, col, computed, store);
                 return;
             }
@@ -456,7 +456,7 @@ fn install_summed(
     let internal = vtree.subtree(c).filter(|&x| !vtree.node(x).is_leaf()).count();
     let mut installed = Vec::new();
     eng.limits().reserve_exact(&mut installed, internal)?;
-    let mut target = Summing { levels, c, installed };
+    let mut target = Summing { levels, installed };
     cascade::<crate::value::IntFold, Summing<'_>>(&mut target, vtree, c, computed, &mut ());
     debug_assert!(target.levels[c.idx()].is_marginal(), "the cascade installs the summed child");
     Ok(target.installed)
@@ -658,29 +658,14 @@ impl StreamLevels {
     }
 }
 
-/// Give both children a dense grid and bump-allocate this level's own,
-/// returning the base the cell build writes into.
-///
-/// The sparse-marginal route allocates only a reused `right_width`-row scratch instead of
-/// the dense `left_width * right_width` slab: the row driver processes one structural row at a
-/// time into it and records the surviving cells in the output product list, so
-/// the slab is never materialized and the grandparent densifies the level
-/// lazily. That route's base is the scratch, not a slab base, which is why it
-/// is returned rather than read back off the grid descriptor.
-fn materialize_children_and_grid(
+/// Ensure both children of a dense level have materialized grids.
+fn materialize_dense_children(
     eng: &Engine,
     run: &mut ApplyRun,
     shape: LevelShape,
-    use_sparse_marginal: bool,
-) -> Result<GridBase, OperationError> {
-    let LevelShape { t, left, right, f: fw, g: gw } = shape;
-    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    // ── Dense path: ensure children have grids ───────────────────
-    //
-    // Only when the arena bumps: a child processed by the sparse pipeline has
-    // no grid, so materialize one. On this path the child is known ungridded —
-    // there is nothing to scan — so the identity fast path is the only way to
-    // build its product list.
+) -> Result<(), OperationError> {
+    let LevelShape { left, right, f: fw, g: gw, .. } = shape;
+    let (li, ri) = (left.idx(), right.idx());
     if run.products.arena.is_bump() {
         if run.products.arena.is_sparse(li) {
             run.materialize_dense_child(eng, li, fw.left, gw.left)?;
@@ -689,11 +674,19 @@ fn materialize_children_and_grid(
             run.materialize_dense_child(eng, ri, fw.right, gw.right)?;
         }
     }
+    Ok(())
+}
 
-    // Dense output owns an f-by-g slab. Sparse marginal output reuses one
-    // g-width row, records live products separately, and remains ungridded
-    // until its parent needs a dense view. Only a bump arena uses that route;
-    // a preplanned arena already owns the full slab.
+/// Bump-allocate this level's grid or single-row sparse-marginal scratch,
+/// returning the base the cell build writes into.
+fn claim_level_grid(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    shape: LevelShape,
+    use_sparse_marginal: bool,
+) -> Result<GridBase, OperationError> {
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let ti = t.idx();
     let cells = if use_sparse_marginal { gw.here } else { grid_cells(fw.here, gw.here)? };
     let base = run.products.arena.claim(eng, ti, cells)?;
     if use_sparse_marginal {
@@ -702,6 +695,94 @@ fn materialize_children_and_grid(
         run.products.arena.set_dense(ti, base);
     }
     Ok(base)
+}
+
+/// Stop before claiming the level's dense output slab when the rows the level
+/// enters will charge at least `rem` work units, the work left to an active
+/// [`StopAt::WorkUnits`](crate::limits::StopAt::WorkUnits) threshold.
+#[cold]
+#[inline(never)]
+#[expect(clippy::too_many_arguments)]
+fn stop_before_grid(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    plan: &MarginalPlan,
+    bases: Sides<GridBase>,
+    lookups: PlainLookups,
+    masked: bool,
+    pairs: bool,
+    rem: u64,
+    masks_built: &mut bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let _ = grid_cells(fw.here, gw.here)?;
+    if rem == 0 {
+        return lim.check_stop();
+    }
+    let f_level = f.level(t);
+    let needed = rem.div_ceil(gw.here as u64) as usize;
+    if !masked {
+        if let Some(d) = f_level.implicit() {
+            if d.pairs_per_node() > 0 && fw.here >= needed {
+                lim.charge_work(rem);
+                return lim.check_stop();
+            }
+            return Ok(());
+        }
+        let mut entered = 0usize;
+        for i in 0..fw.here {
+            if entered + (fw.here - i) < needed {
+                break;
+            }
+            if f_level.pair_count_at(i) > 0 {
+                entered += 1;
+                if entered >= needed {
+                    lim.charge_work(rem);
+                    return lim.check_stop();
+                }
+            }
+        }
+        return Ok(());
+    }
+    if !plan.both_multi_pair {
+        super::super::note_one_sided_masks();
+    }
+    build_level_prefilter_masks(eng, run, g, shape, plan, bases, lookups, pairs)?;
+    *masks_built = true;
+    let child_alive = |side: SidePlan, masks: &liveness::PrefilterSideMasks, a: usize| -> bool {
+        if side.is_passthrough() {
+            true
+        } else if !masks.row_cols.is_empty() {
+            masks.row_cols[a] & liveness::ROW_LIVE != 0
+        } else if !masks.live_cols.is_empty() {
+            masks.live_cols[a] != 0
+        } else {
+            true
+        }
+    };
+    let (lv, rv) = (plan.sides.left.view, plan.sides.right.view);
+    let mut entered = 0usize;
+    for i in 0..fw.here {
+        if entered + (fw.here - i) < needed {
+            break;
+        }
+        let f_pairs = f_level.pairs_view_decoded(i, run.f_pairs_scratch, lv, rv);
+        if !f_pairs.is_empty()
+            && f_pairs.iter().any(|p| child_alive(plan.sides.left, &run.prefilter_masks.left, p.left.raw() as usize))
+            && f_pairs.iter().any(|p| child_alive(plan.sides.right, &run.prefilter_masks.right, p.right.raw() as usize))
+        {
+            entered += 1;
+            if entered >= needed {
+                lim.charge_work(rem);
+                return lim.check_stop();
+            }
+        }
+    }
+    Ok(())
 }
 
 
@@ -1128,7 +1209,7 @@ pub(super) fn build_level_dense(
     // Materialize any sparse child grid and bump-allocate this level's own.
     // The route is already known, which is what lets this skip `ensure_grid`
     // for a sparse child on a level that will take the plain-dense emit.
-    let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
+    materialize_dense_children(eng, run, shape)?;
 
     // Child grid geometry: product `(a, b)` sits at `base + a * g_child_width + b`.
     let bases = Sides {
@@ -1136,10 +1217,8 @@ pub(super) fn build_level_dense(
         right: run.products.arena.materialized(ri).expect("the right child's grid is materialized"),
     };
 
-    let mut lookups = plain_lookups(
-        route,
-        Sides { left: run.products.is_complete(li), right: run.products.is_complete(ri) },
-    );
+    let complete = Sides { left: run.products.is_complete(li), right: run.products.is_complete(ri) };
+    let mut lookups = plain_lookups(route, complete);
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
     // the materialized child grids, and either flag implies a route that has them.
     // With both sides complete no mask can clear, and the row loop reads none; on a
@@ -1165,30 +1244,31 @@ pub(super) fn build_level_dense(
                 right: matches!(lookups, PlainLookups::CompleteRight { .. }),
             },
         );
+    let mut masks_built = false;
+    if !use_sparse_marginal
+        && let Some(rem) = lim.work_stop_within((fw.here as u64).saturating_mul(gw.here as u64))
+    {
+        stop_before_grid(
+            eng, run, f, g, shape, &plan, bases, lookups, masked, pairs, rem, &mut masks_built,
+        )?;
+    }
+    let output_grid_base = claim_level_grid(eng, run, shape, use_sparse_marginal)?;
+
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
-    // A summed level of two affine operand levels over complete child grids
-    // is summed off the description of its pairs, where its child columns
-    // keep every product a float; the row loop sums any other. The
-    // description's words are the operands' pair words, which the row loop
-    // reads as they are through a structural view, and through the
-    // marginal view of a child summed in this apply with bit 30 cleared
-    // (`ChildDecoder::coord`), which leaves the words of operand levels
-    // structural at entry and narrower than 2^30 as they are.
-    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
-        !view.is_marginal() || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
-    };
+    // A summed level of two affine operand levels over complete or carried
+    // child sides is summed off the description of its pairs, where its
+    // child columns keep every product a float; the row loop sums any
+    // other. Every slot the description names lies in its child column,
+    // which holds fewer than 2^30 floats, so the operands' pair words have
+    // bit 30 clear and read as they are under either child view.
     if let Some(StreamLevelState::Float(values)) = &mut stream_state
         && sweep.filter.is_none()
-        && !passthrough.left
-        && !passthrough.right
-        && as_they_are(li, (fw.left, gw.left), sides.left.view)
-        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
         && !crate::diagram::stored_levels_forced()
         && let Some((product, work)) =
-            super::compose::plan_sums(lim, f.level(t), g.level(t), shape, grouped, run.products.arena.slab(), bases)
+            super::compose::plan_sums(lim, f.level(t), g.level(t), shape, sides, complete, grouped, run.products.arena.slab(), bases)
     {
         let [level, left_level, right_level] = run.levels
             .get_disjoint_mut([ti, li, ri])
@@ -1211,22 +1291,36 @@ pub(super) fn build_level_dense(
         }
     }
 
-    if masked {
+    if masked && !masks_built {
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups, pairs)?;
     }
     // A level of two complete sides whose operand levels are affine takes
-    // the implicit route; any other reads its operands' pairs, an implicit
-    // operand's generated from its description.
-    let composed = (matches!(lookups, PlainLookups::Complete { .. })
-        && !use_sparse_marginal
+    // the implicit route; on a bounded weighted diagram a structural level
+    // with a marginal child takes it over complete or carried child sides
+    // too. Any other reads its operands' pairs, an implicit operand's
+    // generated from its description.
+    let composed = if !use_sparse_marginal
         && stream_state.is_none()
         && sweep.filter.is_none()
-        && !crate::diagram::stored_levels_forced())
-    .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, grouped))
-    .flatten();
+        && !crate::diagram::stored_levels_forced()
+    {
+        if matches!(lookups, PlainLookups::Complete { .. }) {
+            super::compose::plan(lim, f.level(t), g.level(t), shape, grouped)
+        } else if route == Route::MarginalChild
+            && !grid_lookups_forced()
+            && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
+        {
+            let opt_bases = Sides { left: Some(bases.left), right: Some(bases.right) };
+            super::compose::plan_marginal(lim, f.level(t), g.level(t), shape, sides, complete, grouped, run.products.arena.slab(), opt_bases)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     // The arenas the implicit route opened before it found it would have to
     // stop inside the level, or grow the arena in bounded steps, which the
     // row loop does on the written pairs: the capacity the meter was charged
@@ -1243,7 +1337,9 @@ pub(super) fn build_level_dense(
             // written without the reservation, which it would drop: its
             // capacities are charged as reserved and not allocated.
             let charged = if lim.bounded_growth() { usize::MAX } else { level.pairs.capacity() };
-            note_lookups(PlainLookups::Complete { charged });
+            if matches!(route, Route::PlainDense | Route::Dense) {
+                note_lookups(PlainLookups::Complete { charged });
+            }
             let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
             if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
                 let size = complete_level_size(f.level(t), g.level(t))?;
@@ -1253,7 +1349,11 @@ pub(super) fn build_level_dense(
                 super::compose::write(eng, product, &mut run.levels[ti], size, slab, work, (meter, doublings))?;
                 break 'routes;
             }
-            opened = Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?);
+            opened = Some(if matches!(route, Route::PlainDense | Route::Dense) {
+                reserve_complete_level(lim, f.level(t), g.level(t), level)?
+            } else {
+                usize::MAX
+            });
         }
 
         // `t` and its two vtree children are three distinct tree nodes, so these
@@ -1273,7 +1373,8 @@ pub(super) fn build_level_dense(
         let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
 
         match opened {
-            Some(charged) => lookups = PlainLookups::Complete { charged },
+            Some(charged) if charged != usize::MAX => lookups = PlainLookups::Complete { charged },
+            Some(_) => note_lookups(lookups),
             None => {
                 open_level_arenas(lim, f, g, shape, level, route)?;
                 if let PlainLookups::Complete { charged }

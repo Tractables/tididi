@@ -317,6 +317,41 @@ impl Limits {
             })
     }
 
+    /// The work units left before an active [`StopAt::WorkUnits`] threshold
+    /// fires within `max_work` more units of the work clock, at the current
+    /// output-pair meter and with no stop callback installed.
+    #[inline(always)]
+    pub(crate) fn work_stop_within(&self, max_work: u64) -> Option<u64> {
+        let end = self.work_clock.get().saturating_add(max_work);
+        if self.quiet.get().holds(end, self.pairs_in_flight.get()) {
+            return None;
+        }
+        self.work_stop_within_slow(end)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn work_stop_within_slow(&self, end: u64) -> Option<u64> {
+        if self.stop_callback.borrow().is_some() {
+            return None;
+        }
+        let stop = self.stop.get();
+        let reached = |at: StopAt| match at {
+            StopAt::WorkUnits(units) if units <= end => Some(units),
+            _ => None,
+        };
+        let u1 = stop.unconditional.and_then(reached);
+        let u2 = stop.after_pairs.and_then(|(floor, at)| {
+            (self.pairs_in_flight.get() >= floor).then(|| reached(at)).flatten()
+        });
+        let at = match (u1, u2) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => return None,
+        };
+        Some(at.saturating_sub(self.work_clock.get()))
+    }
+
     #[inline]
     fn reached(&self, at: StopAt, now: &mut Clock<'_>) -> bool {
         match at {

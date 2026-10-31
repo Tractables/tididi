@@ -63,10 +63,16 @@ impl FloatCol {
     /// `width` zeros, reserved through the engine.
     pub(crate) fn zeros(eng: &Engine, width: usize) -> Result<FloatCol, OperationError> {
         let mut col = FloatCol::with_capacity(eng, width)?;
-        if let Repr::Narrow { vals, .. } = &mut col.repr {
+        col.resize_zeros(width);
+        Ok(col)
+    }
+
+    /// Fill an empty narrow column with `width` zeros within its reserved capacity.
+    pub(crate) fn resize_zeros(&mut self, width: usize) {
+        if let Repr::Narrow { vals, .. } = &mut self.repr {
+            debug_assert!(vals.is_empty() && vals.capacity() >= width);
             vals.resize(width, 0.0);
         }
-        Ok(col)
     }
 
     /// The bytes one value takes in a column that stays narrow.

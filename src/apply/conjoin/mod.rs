@@ -452,11 +452,7 @@ fn conjoin_kept<'a>(
         (marginal | l.is_marginal(), width.max(l.slot_count()))
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
-    if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
-        fill_free_cow(&mut f, free.f);
-        fill_free_cow(&mut g, free.g);
-        return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
-    }
+    let weighted_or_marginal = f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal;
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
     let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
         fill_free_cow(&mut f, free.f);
@@ -466,10 +462,13 @@ fn conjoin_kept<'a>(
         }
         AndRefused { error, f, g }
     };
-    if same_structure(&f, &g, free) {
+    if weighted_or_marginal && let Err(error) = crate::apply::shared_weights([&*f, &*g].into_iter()) {
+        return Err(give_back(error, f, g));
+    }
+    if !f_marginal && !g_marginal && same_structure(&f, &g, free) {
         // f ∧ f = f, as two owned operands return it: f itself where owned,
         // its free levels built, a copy of it where borrowed.
-        let out = match f {
+        let mut out = match f {
             Cow::Owned(mut out) => {
                 fill_free(&mut out, free.f);
                 out
@@ -479,6 +478,9 @@ fn conjoin_kept<'a>(
                 Err(error) => return Err(give_back(error, Cow::Borrowed(borrowed), g)),
             },
         };
+        if out.weights.is_none() {
+            out.weights = g.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
+        }
         recycle(eng, g);
         return Ok(out);
     }
@@ -491,7 +493,14 @@ fn conjoin_kept<'a>(
         _ => None,
     };
     let (f_known, g_known) = (known(&f, free.f), known(&g, free.g));
-    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
+    let cone_free = if weighted_or_marginal {
+        fill_free_cow(&mut f, free.f);
+        fill_free_cow(&mut g, free.g);
+        Operands::default()
+    } else {
+        free
+    };
+    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), cone_free) {
         Ok(out) => {
             recycle(eng, f);
             recycle(eng, g);
@@ -636,7 +645,7 @@ impl crate::Engine {
     /// before each conjunction. Here the sweep keeps the operands whole until
     /// the result exists, which holds their storage as long as a clone would,
     /// without the copy. Operands with a weight table or a marginal level are
-    /// cloned first. Each operand is owned or borrowed, at the costs
+    /// read in place. Each operand is owned or borrowed, at the costs
     /// [`and`] states; a borrowed one comes back as the borrow. An owned one
     /// comes back as reduced as it was given and with the level counts it
     /// kept ([`Engine::attach_level_counts`]), so what is done with it next
@@ -853,24 +862,39 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
+        collapse_target_subtrees(self, &vtree, &f, &g, &mut mask);
         // One internal target, on an unweighted conjunction: where each
         // operand has one node at the target's parent, that level may sum
         // the target out as it is built (`ConjoinMode::Sum`).
-        let summable = match targets.split_first() {
-            Some((&c, rest)) => (rest.iter().all(|&t| t == c)
-                && !vtree.node(c).is_leaf()
-                && vtree.node(c).parent().is_some()
-                && f.weights.is_none()
-                && g.weights.is_none()
-                && !two_step_forced())
-            .then_some(c),
-            None => None,
+        let summable = if f.weights.is_none() && g.weights.is_none() && !two_step_forced() {
+            let mut it = mask
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &m)| m.then_some(VtreeIdx(i as u32)));
+            match (it.next(), it.next()) {
+                (Some(c), None)
+                    if vtree.node(c).parent().is_some()
+                        && targets.iter().all(|&t| {
+                            !vtree.node(t).is_leaf()
+                                || std::iter::successors(vtree.node(t).parent(), |&x| {
+                                    vtree.node(x).parent()
+                                })
+                                .any(|x| x == c)
+                        }) =>
+                {
+                    Some(c)
+                }
+                _ => None,
+            }
+        } else {
+            None
         };
         let mode = match summable {
             Some(c) => ConjoinMode::Sum(c),
             None => ConjoinMode::Build,
         };
-        let (out, _) = conjoin_cow_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
+        let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
+        let (out, _) = conjoin_cow_as(self, f, g, summed, VtreeMask::default(), mode)?;
         let mut out = match out {
             // The root summed the target out as it found its pairs, leaving
             // what the pass below and its pair fusion leave but for the
@@ -878,7 +902,12 @@ impl crate::Engine {
             // `sparse::ChildSum::write_root`).
             Conjoined::Summed(mut out) => {
                 note_summed();
-                if let Some(parent) = targets.first().and_then(|&c| vtree.node(c).parent()) {
+                for &t in targets {
+                    if vtree.node(t).is_leaf() && !out.level(t).is_marginal() {
+                        crate::marginal::marginalize_leaf_inline(&mut out, t, &vtree);
+                    }
+                }
+                if let Some(parent) = summable.and_then(|c| vtree.node(c).parent()) {
                     #[cfg(debug_assertions)]
                     crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
                         &out, Some(&[parent]), "and_marginalizing",
@@ -953,6 +982,7 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
         }
+        collapse_target_subtrees(self, &vtree, &f, &g, &mut mask);
         // With no target left the sweep is given none, so no route reads a
         // set mask that names nothing as one that sums levels out.
         let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
@@ -974,6 +1004,99 @@ impl crate::Engine {
         match result? {
             Conjoined::Counted(count) => Ok(count),
             Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),
+        }
+    }
+}
+
+/// For each maximal internal target `c` whose subtree is scheduled in `mask`
+/// (or already marginal in an operand), clear `mask` on `c`'s strict
+/// descendants — and on `c` itself when the subtree already holds a marginal
+/// level — when `c`'s subtree has a structural level above the sparse floor or
+/// `c`'s parent is a one-node root that can sum `c` out: the subtree can then
+/// use the relabelling and sparse routes on the way up to `c`, and `c`'s
+/// parent can sum `c` out at the root (`ConjoinMode::Sum`).
+fn collapse_target_subtrees(
+    eng: &Engine,
+    vtree: &Vtree,
+    f: &Tdd,
+    g: &Tdd,
+    mask: &mut [bool],
+) {
+    let weighted = f.weights.is_some() || g.weights.is_some();
+    if weighted && mask[vtree.root().idx()] {
+        return;
+    }
+    let min_grid = sparse::sparse_thresholds(eng.limits()).min_grid as u64;
+    let is_big = |u: VtreeIdx| {
+        let (fl, gl) = (f.level(u), g.level(u));
+        (fl.slot_count() as u64) * (gl.slot_count() as u64) > min_grid
+            || price::combinations_bound(fl, gl) > min_grid as u128
+    };
+    let is_scheduled = |c: VtreeIdx, mask: &[bool]| {
+        mask[c.idx()]
+            && vtree.subtree(c).all(|u| {
+                vtree.node(u).is_leaf()
+                    || mask[u.idx()]
+                    || f.level(u).is_marginal()
+                    || g.level(u).is_marginal()
+            })
+    };
+    for c in vtree.bottomup().rev() {
+        if c == vtree.root() || !is_scheduled(c, mask) {
+            continue;
+        }
+        let is_relabel = |u: VtreeIdx| {
+            single_pair(f, u.idx(), f.level(u).slot_count()).is_some()
+                || single_pair(g, u.idx(), g.level(u).slot_count()).is_some()
+        };
+        let whole_structural = vtree
+            .subtree(c)
+            .all(|u| !f.level(u).is_marginal() && !g.level(u).is_marginal());
+        let marginal_spine_relabels = whole_structural
+            || vtree.subtree(c).all(|u| {
+                f.level(u).is_marginal()
+                    || g.level(u).is_marginal()
+                    || is_relabel(u)
+                    || vtree
+                        .subtree(u)
+                        .all(|x| !f.level(x).is_marginal() && !g.level(x).is_marginal())
+            });
+        if weighted && !marginal_spine_relabels {
+            continue;
+        }
+        let sibling_marginal = vtree.node(c).parent().is_some_and(|p| {
+            let (l, r) = vtree.children(p);
+            let s = if l == c { r } else { l };
+            f.level(s).is_marginal() || g.level(s).is_marginal() || mask[s.idx()]
+        });
+        let can_sum_at_parent = !weighted
+            && whole_structural
+            && vtree.node(c).parent().is_some_and(|p| {
+                f.level(p).slot_count() == 1
+                    && g.level(p).slot_count() == 1
+                    && (vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || f.level(u).slot_count() == 1)
+                        || vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || g.level(u).slot_count() == 1))
+                    && (is_big(p) || {
+                        let (l, r) = vtree.children(p);
+                        let kept = if l == c { r } else { l };
+                        vtree.subtree(kept).any(|u| !vtree.node(u).is_leaf() && is_big(u))
+                    })
+            });
+        let has_big = vtree.subtree(c).any(|u| {
+            !vtree.node(u).is_leaf()
+                && !f.level(u).is_marginal()
+                && !g.level(u).is_marginal()
+                && (!weighted || (f.level(u).implicit().is_none() && g.level(u).implicit().is_none()))
+                && is_big(u)
+        });
+        let relabels_c = !can_sum_at_parent && is_relabel(c);
+        let keep_root = whole_structural && !sibling_marginal && !relabels_c;
+        if has_big || can_sum_at_parent {
+            for d in vtree.subtree(c) {
+                if d != c || !keep_root {
+                    mask[d.idx()] = false;
+                }
+            }
         }
     }
 }

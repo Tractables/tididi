@@ -16,7 +16,7 @@
 //! that centres them ([`Plain::new`], [`plain_fold_centred`]).
 
 use super::*;
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ImplicitLevel, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
 use crate::value::{FloatCol, FloatFold, FloatSlice};
 use crate::isa::avx2_fn;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -276,6 +276,29 @@ impl<'a> PlainProducts<'a> {
     /// or else centred ([`plain_fold_centred`]).
     pub(crate) fn of(left: &'a StreamChild<'_, FloatFold>, right: &'a StreamChild<'_, FloatFold>) -> Option<Self> {
         let (l, r) = (left.col.plain()?, right.col.plain()?);
+        Self::from_plains(l, left.view, r, right.view)
+    }
+
+    /// The products of the floats `left.0` under the scale `left.1`, read
+    /// through `lview`, and the floats `right.0` under `right.1`, read
+    /// through `rview` — each a child column's [`plain_floats`] — where their
+    /// offsets fit the plain range as they are or centred.
+    pub(crate) fn from_floats(
+        left: (&'a [f64], i64),
+        lview: ChildDecoder,
+        right: (&'a [f64], i64),
+        rview: ChildDecoder,
+    ) -> Option<Self> {
+        let (l, r) = (Plain::new(left.0, left.1), Plain::new(right.0, right.1));
+        Self::from_plains(l, lview, r, rview)
+    }
+
+    fn from_plains(
+        l: Plain<'a>,
+        lview: ChildDecoder,
+        r: Plain<'a>,
+        rview: ChildDecoder,
+    ) -> Option<Self> {
         if l.at.neg || r.at.neg {
             return None;
         }
@@ -287,7 +310,7 @@ impl<'a> PlainProducts<'a> {
         } else {
             return None;
         };
-        Some(PlainProducts { left: l.vals, lview: left.view, right: r.vals, rview: right.view, by, scale })
+        Some(PlainProducts { left: l.vals, lview, right: r.vals, rview, by, scale })
     }
 
     /// The product of the left value `lc` names and the right value `rc`
@@ -552,15 +575,15 @@ impl ValueDomain for FloatFold {
         if let Some(col) = &computed[level_idx] {
             return StreamChild { col: FloatColumn::folded(col.slice()), view: level.child_decoder() };
         }
+        if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
+            // The label-ordered triple `diagram::leaf_column_vals` defines.
+            let col = std::array::from_fn(|i| scaled(&store.leaf_val(var, LeafLabel::from_idx(i))));
+            return StreamChild { col: FloatColumn::leaf(col), view: level.child_decoder() };
+        }
         if let Some(col) = level.is_weight_marginal().then(|| store.level(level_idx)).flatten() {
             return StreamChild { col: FloatColumn::Stored(col), view: ChildDecoder::marginal() };
         }
-        let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) else {
-            unreachable!("FloatFold::child_view: no values for level {level_idx}");
-        };
-        // The label-ordered triple `diagram::leaf_column_vals` defines.
-        let col = std::array::from_fn(|i| scaled(&store.leaf_val(var, LeafLabel::from_idx(i))));
-        StreamChild { col: FloatColumn::leaf(col), view: ChildDecoder::structural() }
+        unreachable!("FloatFold::child_view: no values for level {level_idx}");
     }
 
     #[inline]
@@ -586,6 +609,151 @@ impl ValueDomain for FloatFold {
             |k| right.col.get(right.view.index(k)),
         )
     }
+
+    /// Sums each node of level `t` from the child columns of its vtree
+    /// children: an implicit level whose child columns fit [`PlainProducts`]
+    /// is summed row by row off its description without generating its pairs,
+    /// and any level whose child columns fit [`PlainProducts`] fills a narrow
+    /// column under `products.scale` in place.
+    fn fold_column(
+        eng: &Engine,
+        t: VtreeIdx,
+        input: FoldInput<'_, Self>,
+        computed: &[Option<FloatCol>],
+        mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<FloatCol, OperationError> {
+        let lvl = t.idx();
+        let (left, right) = input.vtree.children(t);
+        let level = &input.levels[lvl];
+        let n = level.slot_count();
+        let mut col = FloatCol::with_capacity(eng, n)?;
+        if n == 0 {
+            return Ok(col);
+        }
+        let FoldInput { vtree, levels, store } = input;
+        let lchild = Self::child_view(left.idx(), vtree, &levels[left.idx()], computed, store);
+        let rchild = Self::child_view(right.idx(), vtree, &levels[right.idx()], computed, store);
+        let pools = &eng.scratch.apply;
+        let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+        let products = match PlainProducts::of(&lchild, &rchild) {
+            Some(p) => Some(p),
+            None => match (plain_floats(eng, &lchild, &mut lbuf)?, plain_floats(eng, &rchild, &mut rbuf)?) {
+                (Some(l), Some(r)) => PlainProducts::from_floats(l, lchild.view, r, rchild.view),
+                _ => None,
+            },
+        };
+        if let Some(products) = &products
+            && let Some(out) = col.narrow_under(products.scale)
+        {
+            if let Some(d) = level.implicit()
+                && d.nodes() == n
+                && d.pairs() != 0
+                && d.counts_nodes()
+            {
+                let (lo, hi) = d.slot_range();
+                let (left_f, right_f) = products.floats();
+                if lo.0 >= 0
+                    && lo.1 >= 0
+                    && hi.0 < left_f.len() as i64
+                    && hi.1 < right_f.len() as i64
+                {
+                    let places = d.offsets(eng.limits())?;
+                    let unit = 1 + d.pairs_per_node() as u64;
+                    for _ in 0..n {
+                        before_node(unit)?;
+                    }
+                    #[cfg(all(target_arch = "x86_64", not(miri)))]
+                    if let Some(avx2) = Avx2::detect() {
+                        // Safety: an `Avx2` exists only where the processor has
+                        // the features `avx2_described_column` enables.
+                        unsafe { avx2_described_column(avx2, d, &places, products, out) };
+                        return Ok(col);
+                    }
+                    described_column(d, &places, products, out);
+                    return Ok(col);
+                }
+            }
+            level.try_for_each_node::<OperationError>(0..n, |_, pairs| {
+                before_node(1 + pairs.len() as u64)?;
+                let mut sum = 0.0f64;
+                for pair in pairs {
+                    if let (Some(l), Some(r)) = (products.left_factor(pair.left.raw()), products.right_factor(pair.right.raw())) {
+                        sum += l * r;
+                    }
+                }
+                out.push(sum);
+                Ok(())
+            })?;
+            return Ok(col);
+        }
+        col.resize_zeros(n);
+        let at = FoldScope { left: left.idx(), right: right.idx(), input, computed };
+        level.try_for_each_node(0..n, |i, pairs| {
+            before_node(1 + pairs.len() as u64)?;
+            let value = if pairs.iter().any(|p| p.left.is_reserved() || p.right.is_reserved()) {
+                Self::fold_node(&at, PairsIter::slice(pairs))
+            } else {
+                Self::fold_cell(pairs, &lchild, &rchild, store)
+            };
+            col.set(eng, i, value)
+        })?;
+        Ok(col)
+    }
+}
+
+/// The nodes of a row [`described_column`] sums at once, each in its own float.
+const DESCRIBED_BLOCK: usize = 256;
+
+avx2_fn! {
+    /// [`described_column`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_described_column(
+        _avx2: Avx2,
+        product: &ImplicitLevel,
+        places: &[(i64, i64)],
+        products: &PlainProducts<'_>,
+        out: &mut Vec<f64>,
+    ) {
+        described_column(product, places, products, out);
+    }
+}
+
+/// Sum every node of `product` for [`FloatFold::fold_column`], which made room
+/// for them in `out`: each row of the description is summed a block of nodes at
+/// a time, in pair order, as [`PlainProducts::product`] sums a node.
+#[inline(always)]
+fn described_column(
+    product: &ImplicitLevel,
+    places: &[(i64, i64)],
+    products: &PlainProducts<'_>,
+    out: &mut Vec<f64>,
+) {
+    let (left, right) = products.floats();
+    let one = places.len() == 1;
+    let mut acc = [0.0f64; DESCRIBED_BLOCK];
+    product.each_row(|first, step, len| {
+        let mut j = 0;
+        while j < len {
+            let m = (len - j).min(DESCRIBED_BLOCK);
+            let acc = &mut acc[..m];
+            if !one {
+                acc.fill(0.0);
+            }
+            let at = (first.0 + j as i64 * step.0, first.1 + j as i64 * step.1);
+            for &(pl, pr) in places {
+                let (mut l, mut r) = (at.0 + pl, at.1 + pr);
+                for a in acc.iter_mut() {
+                    // Safety: every slot a pair names lies in its column
+                    // (`slot_range`, checked by the caller).
+                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe { *right.get_unchecked(r as usize) });
+                    *a = if one { v } else { *a + v };
+                    (l, r) = (l + step.0, r + step.1);
+                }
+            }
+            out.extend_from_slice(acc);
+            j += m;
+        }
+    });
 }
 
 #[cfg(test)]

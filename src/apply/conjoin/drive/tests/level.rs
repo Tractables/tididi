@@ -86,3 +86,42 @@ fn the_column_table_is_kept_wherever_a_cell_can_group() {
     assert!(column_table_pays(short, short, 3, COLUMN_TABLE_MIN_REREADS / 2, false));
     assert!(!column_table_pays(short, short, 1, usize::MAX, false), "one row reads each column once");
 }
+
+#[test]
+fn dense_level_stops_before_claiming_its_grid_when_entered_rows_reach_work_stop() {
+    use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = vtree.root();
+    let (left, _) = vtree.children(root);
+    let eng = Engine::new();
+    let wide = |n: usize, multi: bool| {
+        let mut f = eng.clause(&vtree, [1, 2, 3, 4]).unwrap();
+        f.levels[left.idx()].nodes.stored_mut().clear();
+        f.levels[left.idx()].pairs.stored_mut().clear();
+        if multi {
+            for i in 0..n as u32 {
+                f.levels[left.idx()].pairs.stored_mut().extend([pair(0, 1), pair(1, 1)]);
+                f.levels[left.idx()].nodes.stored_mut().push(crate::diagram::EncodedNode::multi_pair(2 * i, 2));
+            }
+        } else {
+            f.levels[left.idx()].nodes.stored_mut().extend((0..n).map(|_| crate::diagram::EncodedNode::inline(pair(1, 1))));
+        }
+        f.levels[root.idx()].nodes.stored_mut().clear();
+        f.levels[root.idx()].pairs.stored_mut().clear();
+        f.levels[root.idx()].pairs.stored_mut().extend((0..n as u32).map(|i| pair(i, 0)));
+        f.levels[root.idx()].nodes.stored_mut().push(crate::diagram::EncodedNode::multi_pair(0, n as u32));
+        f
+    };
+    for multi in [false, true] {
+        let (f, g) = (wide(100, multi), wide(101, multi));
+        let start = eng.limits().work_units();
+        let rules = StopRules::default().with_unconditional(Some(StopAt::WorkUnits(start + 5_000)));
+        let config = LimitConfig::none()
+            .with_sparse_route(SparseRoute::new(u32::MAX, 4096))
+            .with_stop_rules(rules);
+        let _scope = eng.limits().scope(config);
+        assert_eq!(eng.and(&f, &g).err(), Some(OperationError::Stopped));
+        assert_eq!(eng.limits().work_units(), start + 5_000);
+        assert!(eng.limits().meters().in_flight_bytes < 10_000, "the 40,400-byte grid slab at `left` is not claimed");
+    }
+}

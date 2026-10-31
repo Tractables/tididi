@@ -1291,6 +1291,9 @@ fn the_lists_a_description_is_checked_with_are_reserved() {
     assert_eq!(repeating.repeats_a_pair(&lim), Err(OperationError::OverBudget));
     assert_eq!(repeating.repeats_a_pair(&lim), Ok(true));
     let distinct = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (2, 0))], &[(4, (4, 0))]);
+    assert!(distinct.nodes_distinct());
+    let repeating_nodes = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (2, 0))], &[(2, (4, 0)), (2, (4, 0))]);
+    assert!(!repeating_nodes.nodes_distinct());
     lim.refuse_nth_reserve(0);
     assert_eq!(distinct.repeats_a_pair(&lim), Ok(false));
     assert_eq!(lim.reserve_exact(&mut Vec::<u8>::new(), 1), Err(OperationError::OverBudget), "nothing was listed");
