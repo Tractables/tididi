@@ -62,7 +62,7 @@ impl CLv {
             level,
             width,
             group_of: Vec::new(),
-            gstart: vec![0],
+            gstart: Vec::new(),
             gpairs: Vec::new(),
             chainmap: FxHashMap::default(),
             gres: Vec::new(),
@@ -70,7 +70,7 @@ impl CLv {
         }
     }
     fn groups(&self) -> usize {
-        self.gstart.len() - 1
+        self.gstart.len().saturating_sub(1)
     }
     fn group(&self, g: usize) -> &[(Ref, Ref)] {
         &self.gpairs[self.gstart[g] as usize..self.gstart[g + 1] as usize]
@@ -78,6 +78,9 @@ impl CLv {
     /// Add a group of the stored nodes and skips `members` (`sh`'s level
     /// `c`, whose children are `l` and `r`), returning its number.
     fn push_group(&mut self, s: &SkipForm, members: &[Ref], l: u32, r: u32, lim: &Limits) -> Result<u32, OperationError> {
+        if self.gstart.is_empty() {
+            lim.try_push(&mut self.gstart, 0)?;
+        }
         let g = self.groups() as u32;
         for &e in members {
             if vt(e) == self.level {

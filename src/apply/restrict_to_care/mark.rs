@@ -1524,10 +1524,8 @@ impl<'a> Walk<'a> {
                 for (cv, x, y) in [(lc, decode(f, lc, p.left), cl), (rc, decode(f, rc, p.right), cr)] {
                     match self.child(cv, x, y) {
                         Child::Pair((Some(a), None)) => self.keep_node(cv, a),
-                        Child::Pair(k) => {
-                            if self.visit(cv, k)? {
-                                eng.limits().try_push(&mut stack, (cv, k))?;
-                            }
+                        Child::Pair(k) if self.visit(cv, k)? => {
+                            eng.limits().try_push(&mut stack, (cv, k))?;
                         }
                         _ => {}
                     }

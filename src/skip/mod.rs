@@ -459,36 +459,40 @@ impl SkipForm {
             return Ok(());
         }
         // Per candidate level (by its position in `cand`): which nodes are
-        // live, then their new numbers.
+        // live, then their new numbers, packed into `live[base[i]..base[i + 1]]`.
         let mut pos = vec![NONE; sh.num_nodes()];
+        let mut base = Vec::with_capacity(cand.len() + 1);
+        let mut total = 0usize;
         for (i, &t) in cand.iter().enumerate() {
             pos[t as usize] = i as u32;
+            base.push(total as u32);
+            total += self.levels[t as usize].width();
         }
-        let mut live: Vec<Vec<u32>> = Vec::with_capacity(cand.len());
-        for &t in &cand {
-            live.push(filled(lim, self.levels[t as usize].width(), 0)?);
-        }
-        let mark = |live: &mut Vec<Vec<u32>>, r: Ref| {
+        base.push(total as u32);
+        let mut live = filled(lim, total, 0u32)?;
+        let mark = |live: &mut [u32], r: Ref| {
             let p = pos[vt(r) as usize];
             if p != NONE && !sh.is_leaf(vt(r)) {
-                live[p as usize][ix(r) as usize] = 1;
+                live[base[p as usize] as usize + ix(r) as usize] = 1;
             }
         };
         mark(&mut live, self.out);
         for (i, &t) in cand.iter().enumerate() {
             let lvl = &self.levels[t as usize];
+            let b = base[i] as usize;
             for k in 0..lvl.width() {
-                if live[i][k] != 0 {
-                    for &(a, b) in lvl.node(k as u32) {
+                if live[b + k] != 0 {
+                    for &(a, r) in lvl.node(k as u32) {
                         mark(&mut live, a);
-                        mark(&mut live, b);
+                        mark(&mut live, r);
                     }
                 }
             }
         }
-        for v in live.iter_mut() {
+        for i in 0..cand.len() {
+            let (lo, hi) = (base[i] as usize, base[i + 1] as usize);
             let mut next = 0u32;
-            for x in v.iter_mut() {
+            for x in &mut live[lo..hi] {
                 *x = if *x != 0 {
                     next += 1;
                     next - 1
@@ -497,9 +501,13 @@ impl SkipForm {
                 };
             }
         }
-        let fix = |live: &Vec<Vec<u32>>, r: Ref| -> Ref {
+        let fix = |live: &[u32], r: Ref| -> Ref {
             let p = pos[vt(r) as usize];
-            if p == NONE || sh.is_leaf(vt(r)) { r } else { mk(vt(r), live[p as usize][ix(r) as usize]) }
+            if p == NONE || sh.is_leaf(vt(r)) {
+                r
+            } else {
+                mk(vt(r), live[base[p as usize] as usize + ix(r) as usize])
+            }
         };
         let mut active = Vec::with_capacity(cand.len() + self.active.len());
         for &t in &self.active {
@@ -508,12 +516,13 @@ impl SkipForm {
             }
         }
         for (i, &t) in cand.iter().enumerate() {
-            if live[i].iter().all(|&x| x == NONE) {
+            let lslice = &live[base[i] as usize..base[i + 1] as usize];
+            if lslice.iter().all(|&x| x == NONE) {
                 self.levels.clear_level(t as usize, lim);
                 continue;
             }
             if !self.levels.is_unique(t as usize)
-                && live[i].iter().enumerate().all(|(k, &x)| x == k as u32)
+                && lslice.iter().enumerate().all(|(k, &x)| x == k as u32)
                 && self.levels[t as usize]
                     .pairs
                     .iter()
@@ -526,9 +535,9 @@ impl SkipForm {
             // Compacted in place: a kept node moves down to its new number.
             let lvl = &mut self.levels[t as usize];
             let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
-            for k in 0..lvl.width() {
+            for (k, &new_k) in lslice.iter().enumerate() {
                 let hi = lvl.start[k + 1] as usize;
-                if live[i][k] != NONE {
+                if new_k != NONE {
                     for q in lo..hi {
                         let (a, b) = lvl.pairs[q];
                         lvl.pairs[w] = (fix(&live, a), fix(&live, b));
@@ -547,9 +556,7 @@ impl SkipForm {
         active.dedup();
         self.active = active;
         self.out = fix(&live, self.out);
-        for v in live {
-            lim.discard(v);
-        }
+        lim.discard(live);
         Ok(())
     }
 
