@@ -767,3 +767,168 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     nf.discard(lim);
     Ok((out, cone))
 }
+
+fn emit_clause_node(
+    sh: &Shape,
+    out: &mut SkipForm,
+    u: u32,
+    buf: &mut Vec<(Ref, Ref)>,
+    lim: &Limits,
+) -> Result<Ref, OperationError> {
+    match normalize(sh, u, buf) {
+        Err(target) => Ok(target),
+        Ok(()) => Ok(mk(u, out.push_node(u, buf, lim)?)),
+    }
+}
+
+/// The canonical skip form of `clause` over `vtree` and `shape`, built on the
+/// ancestor paths of its literals, or `None` when `clause` names a variable in
+/// both polarities (true).
+pub(crate) fn clause_form<L: crate::LiteralInput>(
+    vtree: &crate::vtree::Vtree,
+    shape: &Arc<Shape>,
+    clause: &[L],
+    lim: &Limits,
+) -> Result<Option<SkipForm>, OperationError> {
+    let sh = &**shape;
+    let mut lits: Vec<(u32, bool)> = Vec::new();
+    lim.reserve_exact(&mut lits, clause.len())?;
+    let mut gate = lim.gate();
+    for raw in clause {
+        gate.poll(1)?;
+        let lit = raw.literal()?;
+        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+        lits.push((leaf.0, lit.sign));
+    }
+    gate.flush()?;
+    if lits.is_empty() {
+        lim.discard(lits);
+        return Ok(Some(SkipForm::zero(Arc::clone(shape))));
+    }
+    lits.sort_unstable_by_key(|&(leaf, sign)| (std::cmp::Reverse(sh.pre[leaf as usize]), sign));
+    lits.dedup();
+    if lits.windows(2).any(|w| w[0].0 == w[1].0) {
+        lim.discard(lits);
+        return Ok(None);
+    }
+    let mut out = SkipForm::zero(Arc::clone(shape));
+    if sh.is_leaf(sh.root) {
+        let (leaf, pos) = lits[0];
+        lim.discard(lits);
+        out.out = mk(leaf, if pos { POS } else { NEG });
+        return Ok(Some(out));
+    }
+    let mut nodes: Vec<(u32, u32)> = Vec::new();
+    for &(leaf, pos) in &lits {
+        lim.try_push(&mut nodes, (leaf, if pos { POS } else { NEG }))?;
+        let mut u = sh.parent[leaf as usize];
+        while u != NONE {
+            lim.try_push(&mut nodes, (u, ONE))?;
+            u = sh.parent[sh.chain_up[u as usize] as usize];
+        }
+    }
+    lim.discard(lits);
+    nodes.sort_unstable_by_key(|&(u, _)| std::cmp::Reverse(sh.pre[u as usize]));
+    nodes.dedup_by_key(|x| x.0);
+    let m = nodes.len();
+    let mut kids = filled(lim, m, (NONE, NONE))?;
+    let mut stack: Vec<u32> = Vec::new();
+    for (i, &(u, _)) in nodes.iter().enumerate() {
+        if !sh.is_leaf(u) {
+            let (l, r) = sh.kids[u as usize];
+            let lc = if stack.last().is_some_and(|&top| sh.within(nodes[top as usize].0, l)) {
+                stack.pop().unwrap()
+            } else {
+                NONE
+            };
+            let rc = if stack.last().is_some_and(|&top| sh.within(nodes[top as usize].0, r)) {
+                stack.pop().unwrap()
+            } else {
+                NONE
+            };
+            kids[i] = (lc, rc);
+        }
+        lim.try_push(&mut stack, i as u32)?;
+    }
+    debug_assert_eq!(stack.len(), 1);
+    lim.discard(stack);
+    let mut need_dt = filled(lim, m, false)?;
+    for i in (0..m).rev() {
+        let (lc, rc) = kids[i];
+        if need_dt[i] || (lc != NONE && rc != NONE) {
+            if lc != NONE {
+                need_dt[lc as usize] = true;
+            }
+            if rc != NONE {
+                need_dt[rc as usize] = true;
+            }
+        }
+    }
+    let mut c_ref = filled(lim, m, ZREF)?;
+    let mut d_ref = filled(lim, m, ZREF)?;
+    let mut buf: Vec<(Ref, Ref)> = Vec::new();
+    let mut gate = lim.gate();
+    for i in 0..m {
+        gate.poll(1)?;
+        let (u, label) = nodes[i];
+        if sh.is_leaf(u) {
+            c_ref[i] = mk(u, label);
+            if need_dt[i] {
+                d_ref[i] = mk(u, if label == POS { NEG } else { POS });
+            }
+            continue;
+        }
+        let (l, r) = sh.kids[u as usize];
+        let (lc, rc) = kids[i];
+        match (lc != NONE, rc != NONE) {
+            (true, true) => {
+                let (cl, dl) = (c_ref[lc as usize], d_ref[lc as usize]);
+                let (cr, dr) = (c_ref[rc as usize], d_ref[rc as usize]);
+                buf.clear();
+                lim.reserve(&mut buf, 3)?;
+                buf.extend_from_slice(&[(cl, cr), (cl, dr), (dl, cr)]);
+                c_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                if need_dt[i] {
+                    buf.clear();
+                    lim.try_push(&mut buf, (dl, dr))?;
+                    d_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                }
+            }
+            (true, false) => {
+                let top_r = super::negate::build_top(sh, &mut out, r, lim)?;
+                let (cl, dl) = (c_ref[lc as usize], d_ref[lc as usize]);
+                buf.clear();
+                lim.try_push(&mut buf, (cl, top_r))?;
+                c_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                if need_dt[i] {
+                    buf.clear();
+                    lim.try_push(&mut buf, (dl, top_r))?;
+                    d_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                }
+            }
+            (false, true) => {
+                let top_l = super::negate::build_top(sh, &mut out, l, lim)?;
+                let (cr, dr) = (c_ref[rc as usize], d_ref[rc as usize]);
+                buf.clear();
+                lim.try_push(&mut buf, (top_l, cr))?;
+                c_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                if need_dt[i] {
+                    buf.clear();
+                    lim.try_push(&mut buf, (top_l, dr))?;
+                    d_ref[i] = emit_clause_node(sh, &mut out, u, &mut buf, lim)?;
+                }
+            }
+            (false, false) => unreachable!("every internal spine node has a spine child"),
+        }
+    }
+    gate.flush()?;
+    out.out = c_ref[m - 1];
+    out.active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+    lim.discard(nodes);
+    lim.discard(kids);
+    lim.discard(need_dt);
+    lim.discard(c_ref);
+    lim.discard(d_ref);
+    lim.discard(buf);
+    Ok(Some(out))
+}

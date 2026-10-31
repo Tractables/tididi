@@ -337,3 +337,39 @@ fn skip_operations_stop_at_the_memory_budget() {
     assert_eq!(eng.to_skip(&f).err(), Some(OperationError::OverBudget));
     assert_eq!(eng.to_stored(&sf).err(), Some(OperationError::OverBudget));
 }
+
+#[test]
+fn skip_and_clause_handles_edge_cases_and_large_chains() {
+    use crate::vtree::VarId;
+    use crate::OperationError;
+    let eng = Engine::new();
+    let vtree = Arc::new(crate::Vtree::linear(64));
+    let one = eng.to_skip(&Tdd::one(&vtree)).unwrap();
+
+    // Out-of-vtree variable returns `VariableNotInVtree`.
+    assert_eq!(
+        eng.skip_and_clause(&one, &[65i32]).unwrap_err(),
+        OperationError::VariableNotInVtree(VarId(65))
+    );
+
+    // Tautological clause leaves the operand unchanged.
+    let c1 = eng.skip_and_clause(&one, &[-3i32, 40, -60]).unwrap();
+    let taut = eng.skip_and_clause(&c1, &[12i32, -40, -12]).unwrap();
+    assert_eq!(fingerprint(&taut.form), fingerprint(&c1.form));
+
+    // Duplicate literals and far-apart literals on a 64-var linear chain match stored `and_clause`.
+    let mut stored = Tdd::one(&vtree);
+    let mut skip = one;
+    for clause in [
+        vec![-1i32, 32, -64],
+        vec![2i32, 2, -32, 63],
+        vec![-2i32, 15, -48, 64],
+        vec![1i32, -15, 32],
+    ] {
+        stored = eng.and_clause(stored, &clause).unwrap();
+        eng.minimize(&mut stored).unwrap();
+        skip = eng.skip_and_clause(&skip, &clause).unwrap();
+        let want = eng.to_skip(&stored).unwrap();
+        assert_eq!(fingerprint(&skip.form), fingerprint(&want.form));
+    }
+}

@@ -360,22 +360,29 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
 fn top_at(f: &SkipForm, t: u32, lim: &Limits) -> Result<SkipForm, OperationError> {
     let sh = &*f.shape;
     let mut out = SkipForm::zero(f.shape.clone());
-    fn build(sh: &super::Shape, out: &mut SkipForm, t: u32, lim: &Limits) -> Result<Ref, OperationError> {
-        let mut t = t;
-        while !sh.is_leaf(t) {
-            let (l, r) = sh.kids[t as usize];
-            if sh.is_leaf(l) {
-                t = r;
-            } else if sh.is_leaf(r) {
-                t = l;
-            } else {
-                let (a, b) = (build(sh, out, l, lim)?, build(sh, out, r, lim)?);
-                return Ok(mk(t, out.push_node(t, &[(a, b)], lim)?));
-            }
-        }
-        Ok(mk(t, ONE))
-    }
-    out.out = build(sh, &mut out, t, lim)?;
+    out.out = build_top(sh, &mut out, t, lim)?;
     out.collect_pushed(lim)?;
     Ok(out)
+}
+
+/// `true` over `t`'s variables, pushing `(true, true)` nodes at internal
+/// levels of `t`'s subtree whose children are both internal.
+pub(crate) fn build_top(
+    sh: &super::Shape,
+    out: &mut SkipForm,
+    mut t: u32,
+    lim: &Limits,
+) -> Result<Ref, OperationError> {
+    while !sh.is_leaf(t) {
+        let (l, r) = sh.kids[t as usize];
+        if sh.is_leaf(l) {
+            t = r;
+        } else if sh.is_leaf(r) {
+            t = l;
+        } else {
+            let (a, b) = (build_top(sh, out, l, lim)?, build_top(sh, out, r, lim)?);
+            return Ok(mk(t, out.push_node(t, &[(a, b)], lim)?));
+        }
+    }
+    Ok(mk(t, ONE))
 }

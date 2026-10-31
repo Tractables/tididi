@@ -150,10 +150,15 @@ impl Engine {
     pub fn skip_and_clause<L: LiteralInput>(&self, f: &SkipTdd, clause: &[L]) -> Result<SkipTdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        let c = self.and_clause(Tdd::one(&f.vtree), clause)?;
-        let c = from_tdd(&c, Arc::clone(&f.form.shape), lim)?;
-        let c = contract(c, lim)?;
+        let Some(c) = conjoin::clause_form(&f.vtree, &f.form.shape, clause, lim)? else {
+            return Ok(f.clone());
+        };
+        if c.is_zero() || f.is_zero() {
+            c.discard(lim);
+            return Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: SkipForm::zero(Arc::clone(&f.form.shape)) });
+        }
         let (raw, cone) = conjoin::and_scoped(&f.form, &c, lim)?;
+        c.discard(lim);
         let res = contract_in(raw, Some(&cone), lim);
         lim.discard(cone);
         Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: res? })
