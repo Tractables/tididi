@@ -134,9 +134,6 @@ pub(super) fn take_relabel_level(
         || (sweep.count_root && t == sweep.vtree.root())
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
-        || (sweep.ws.is_some()
-            && !run.entry_marginality.either(left.idx())
-            && !run.entry_marginality.either(right.idx()))
     {
         return Ok(false);
     }
@@ -231,13 +228,14 @@ pub(super) fn take_relabel_level(
         note_relabelled(true);
         return Ok(true);
     }
-    if sweep.ws.is_some() {
-        return Ok(false);
-    }
 
     let mut map = pools.relabel_map.checkout(eng);
     let carrier = if carrier_f { &f.levels[ti] } else { &g.levels[ti] };
     let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
+    super::output::mark_passthrough_inlined(
+        &mut run.levels[ti],
+        Sides { left: marginal.left_any, right: marginal.right_any },
+    );
     // An unfiltered, unquantified, unsummed conjunction's seat closes the level as it stands.
     if run.plain || sweep.keeps_left_pairs() {
         run.levels[ti].leave_live_pairs(pairs);
