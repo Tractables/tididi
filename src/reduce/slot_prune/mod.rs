@@ -79,6 +79,25 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
             })?;
             continue;
         }
+        // Renumbering a bounded weight-marginal child of a multi-pair implicit
+        // parent destroys the parent's description whenever two slots merge or
+        // a slot is dropped; keeping the column as it is keeps the parent
+        // implicit. One-pair-per-node parents already store their pairs inline
+        // in their node headers and re-close after equal-valued slots merge.
+        if tdd.weights.as_ref().is_some_and(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal())
+            && tdd.levels[v.idx()].slot_count() == store_len
+            && let Some(d) = tdd.levels[parent.idx()].implicit()
+            && d.pairs_per_node() >= 2
+        {
+            let (lo, hi) = d.slot_range();
+            let (lo, hi) = match side {
+                crate::diagram::ChildSide::Left => (lo.0, hi.0),
+                crate::diagram::ChildSide::Right => (lo.1, hi.1),
+            };
+            if lo >= 0 && (hi as usize) < store_len {
+                continue;
+            }
+        }
 
         slots.reserve(lim, store_len)?;
         remap.clear();

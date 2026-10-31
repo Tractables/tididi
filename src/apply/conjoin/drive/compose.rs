@@ -33,6 +33,18 @@ pub(super) fn plan(
     shape: LevelShape,
     grouped: bool,
 ) -> Option<ImplicitLevel> {
+    let (df, dg) = fit_operands(lim, f, g, shape)?;
+    compose_described(&df, &dg, (shape.g.left, shape.g.right), grouped)
+}
+
+/// The descriptions of `f` and `g` where the implicit route can build
+/// `shape`'s level from them.
+fn fit_operands(
+    lim: &crate::limits::Limits,
+    f: &TddLevel,
+    g: &TddLevel,
+    shape: LevelShape,
+) -> Option<(ImplicitLevel, ImplicitLevel)> {
     // A level that fits a description holds its arena's length in pairs or,
     // at one pair a node, its nodes' count, so the product of the two bounds
     // bounds the product's pairs: under the floor, the row loop writes the
@@ -54,8 +66,16 @@ pub(super) fn plan(
         None if l.closes_by_fit() => None,
         None => ImplicitLevel::fit(l),
     };
-    let df = described(f)?;
-    let dg = described(g)?;
+    Some((described(f)?, described(g)?))
+}
+
+/// The product of `df` and `dg` at `stride` where its pairs reach the floor.
+fn compose_described(
+    df: &ImplicitLevel,
+    dg: &ImplicitLevel,
+    stride: (usize, usize),
+    grouped: bool,
+) -> Option<ImplicitLevel> {
     // The row loop groups a cell when its f row and g column both have
     // `GROUPED_MIN_PAIRS` pairs and the column table recorded the column's
     // runs, which it does for every long column while their pairs fit `u32`.
@@ -65,35 +85,67 @@ pub(super) fn plan(
         && dg.pairs() <= u32::MAX as usize;
     // A product of fewer pairs than the floor is stored: the row loop writes
     // it.
-    ImplicitLevel::product(&df, &dg, (shape.g.left, shape.g.right), grouped)
+    ImplicitLevel::product(df, dg, stride, grouped)
         .filter(|p| p.pairs() >= floor())
+}
+
+/// The description of level `t`'s output over complete or carried child
+/// sides, when `f` and `g` are affine there (`plan_marginal`, `plan_sums`).
+#[expect(clippy::too_many_arguments)]
+pub(super) fn plan_marginal(
+    lim: &crate::limits::Limits,
+    f: &TddLevel,
+    g: &TddLevel,
+    shape: LevelShape,
+    sides: Sides<super::super::marginal_plan::SidePlan>,
+    complete: Sides<bool>,
+    grouped: bool,
+    slab: &[u32],
+    bases: Sides<Option<GridBase>>,
+) -> Option<ImplicitLevel> {
+    use super::super::marginal_plan::Carrier;
+    let (df, dg) = fit_operands(lim, f, g, shape)?;
+    let (fl, fh) = df.slot_range();
+    let (gl, gh) = dg.slot_range();
+    let grid_complete = |comp: bool, base: Option<GridBase>, cells: usize| {
+        comp || base.is_some_and(|b| slab[b.idx()..][..cells].iter().enumerate().all(|(c, &s)| s as usize == c))
+    };
+    let side_stride = |carrier: Option<Carrier>, f_zero: bool, g_zero: bool, comp: bool, base: Option<GridBase>, fw: usize, gw: usize| match carrier {
+        Some(Carrier::F) => g_zero.then_some(1),
+        Some(Carrier::G) => f_zero.then_some(1),
+        None => grid_complete(comp, base, fw * gw).then_some(gw),
+    };
+    let (fw, gw) = (shape.f, shape.g);
+    let sl = side_stride(sides.left.carrier, fl.0 == 0 && fh.0 == 0, gl.0 == 0 && gh.0 == 0, complete.left, bases.left, fw.left, gw.left)?;
+    let sr = side_stride(sides.right.carrier, fl.1 == 0 && fh.1 == 0, gl.1 == 0 && gh.1 == 0, complete.right, bases.right, fw.right, gw.right)?;
+    compose_described(&df, &dg, (sl, sr), grouped)
 }
 
 /// The description of a summed level's pairs and the work the row loop
 /// charges for them, where the level can be summed off the description
 /// (`run_level_described_stream`): the implicit route's description
-/// ([`plan`]), a level no stop can fire within, and two complete child
-/// grids, each cell holding the slot its index names. A summed level's
-/// grid is complete where every cell of it is live, its cells' slots
+/// ([`plan_marginal`]), a level no stop can fire within, and each child side
+/// either carried from one operand, the other naming slot 0 there, or a
+/// complete child grid, each cell holding the slot its index names. A summed
+/// level's grid is complete where every cell of it is live, its cells' slots
 /// taken in cell order. No pair dies on such a level, so the row loop
 /// would charge every cell all its pairs ([`work`]).
+#[expect(clippy::too_many_arguments)]
 pub(super) fn plan_sums(
     lim: &crate::limits::Limits,
     f: &TddLevel,
     g: &TddLevel,
     shape: LevelShape,
+    sides: Sides<super::super::marginal_plan::SidePlan>,
+    complete: Sides<bool>,
     grouped: bool,
     slab: &[u32],
     bases: Sides<GridBase>,
 ) -> Option<(ImplicitLevel, u64)> {
-    let product = plan(lim, f, g, shape, grouped)?;
+    let bases = Sides { left: Some(bases.left), right: Some(bases.right) };
+    let product = plan_marginal(lim, f, g, shape, sides, complete, grouped, slab, bases)?;
     let work = work((shape.f.here, shape.g.here), &product);
-    let complete = |base: GridBase, cells: usize| slab[base.idx()..][..cells].iter().enumerate().all(|(c, &s)| s as usize == c);
-    let (fw, gw) = (shape.f, shape.g);
-    (lim.cannot_stop_within(work, 0)
-        && complete(bases.left, fw.left * gw.left)
-        && complete(bases.right, fw.right * gw.right))
-    .then_some((product, work))
+    lim.cannot_stop_within(work, 0).then_some((product, work))
 }
 
 /// The work the row loop charges a level of `product`'s shape on which no

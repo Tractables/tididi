@@ -226,7 +226,22 @@ fn build_level(
         // is touched: the marginal plan and the two gates read only metadata.
         let marginal = run.level_marginal(f, g, shape, sweep.targets);
         let plan = plan_marginal_level(f, g, shape, run, &marginal);
-        let route = route_level(&plan, &marginal, run.sparse_gate(shape, f.level(t), g.level(t)));
+        let mut route = route_level(&plan, &marginal, run.sparse_gate(shape, f.level(t), g.level(t)));
+        if matches!(route, Route::Sparse | Route::SparseMarg)
+            && (marginal.left_any || marginal.right_any)
+            && !marginal.is_target
+            && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
+            && sweep.filter.is_none()
+            && !crate::diagram::stored_levels_forced()
+            && !grid_lookups_forced()
+        {
+            let complete = Sides { left: run.products.is_complete(left_idx), right: run.products.is_complete(right_idx) };
+            let bases = Sides { left: run.products.arena.materialized(left_idx), right: run.products.arena.materialized(right_idx) };
+            let grouped = plan.both_multi_pair && !plan.sides.left.is_passthrough() && !plan.sides.right.is_passthrough();
+            if compose::plan_marginal(eng.limits(), f.level(t), g.level(t), shape, plan.sides, complete, grouped, run.products.arena.slab(), bases).is_some() {
+                route = Route::MarginalChild;
+            }
+        }
         route.validate(f, g, shape, &marginal, run)?;
         note_route(t, route);
 
