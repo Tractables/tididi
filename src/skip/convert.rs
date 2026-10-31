@@ -36,26 +36,33 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
     // A canonical diagram holds only nodes its output reaches, and its skip
     // form only nodes their referrers name.
     let canonical = levels.is_canonical(f.output);
-    // The nodes the output reaches, top-down.
-    let mut reach: Vec<Vec<bool>> = Vec::with_capacity(n);
-    for i in 0..n {
-        reach.push(if sh.is_leaf(i as u32) || canonical { Vec::new() } else { filled(lim, levels[i].slot_count(), false)? });
-    }
-    if !sh.is_leaf(root) && !canonical {
-        reach[root as usize][f.output().local.idx()] = true;
-    }
-    for &t in sh.topdown.iter().filter(|_| !canonical) {
-        let (l, r) = sh.kids[t as usize];
-        for i in 0..reach[t as usize].len() {
-            if !reach[t as usize][i] {
-                continue;
-            }
-            for pair in levels[t as usize].pairs_iter_of_idx(i) {
-                if !sh.is_leaf(l) {
-                    reach[l as usize][pair.left.raw() as usize] = true;
+    // The nodes the output reaches, top-down, when `f` is not certified canonical.
+    let mut reach: Vec<Vec<bool>> = Vec::new();
+    if !canonical {
+        reach.reserve_exact(n);
+        for i in 0..n {
+            reach.push(if sh.is_leaf(i as u32) {
+                Vec::new()
+            } else {
+                filled(lim, levels[i].slot_count(), false)?
+            });
+        }
+        if !sh.is_leaf(root) {
+            reach[root as usize][f.output().local.idx()] = true;
+        }
+        for &t in &sh.topdown {
+            let (l, r) = sh.kids[t as usize];
+            for i in 0..reach[t as usize].len() {
+                if !reach[t as usize][i] {
+                    continue;
                 }
-                if !sh.is_leaf(r) {
-                    reach[r as usize][pair.right.raw() as usize] = true;
+                for pair in levels[t as usize].pairs_iter_of_idx(i) {
+                    if !sh.is_leaf(l) {
+                        reach[l as usize][pair.left.raw() as usize] = true;
+                    }
+                    if !sh.is_leaf(r) {
+                        reach[r as usize][pair.right.raw() as usize] = true;
+                    }
                 }
             }
         }
@@ -65,7 +72,7 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
     let mut buf = Vec::new();
     for &t in &sh.bottomup {
         let (l, r) = sh.kids[t as usize];
-        let width = if sh.is_leaf(t) { 0 } else { levels[t as usize].slot_count() };
+        let width = levels[t as usize].slot_count();
         let mut out = filled(lim, width, ZREF)?;
         for i in 0..out.len() {
             if !canonical && !reach[t as usize][i] {
@@ -170,9 +177,6 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
     let mut b = Tdd::builder(eng, vtree)?;
     let mut node: Vec<ChildPair> = Vec::new();
     for &t in &sh.bottomup {
-        if sh.is_leaf(t) {
-            continue;
-        }
         let (l, r) = sh.kids[t as usize];
         let lvl = &s.levels[t as usize];
         let here = &pts[start[t as usize] as usize..start[t as usize + 1] as usize];

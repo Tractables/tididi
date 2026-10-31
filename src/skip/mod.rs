@@ -12,8 +12,6 @@
 //! the named node and its index there (a leaf label on a leaf level), so a
 //! side whose node is not its child level's is a skip.
 
-#![allow(dead_code)]
-
 pub(crate) mod api;
 pub(crate) mod conjoin;
 pub(crate) mod contract;
@@ -66,8 +64,6 @@ pub(crate) struct Shape {
     pub(crate) topdown: Vec<u32>,
     /// Internal nodes, every child before its parent.
     pub(crate) bottomup: Vec<u32>,
-    /// A leaf's variable id; 0 on an internal node.
-    pub(crate) var: Vec<u32>,
     /// Edges from the root.
     pub(crate) depth: Vec<u32>,
     /// Whether a node or one of its ancestors is the left child of a level
@@ -85,11 +81,9 @@ impl Shape {
         let n = vt.num_nodes();
         let mut kids = vec![(NONE, NONE); n];
         let mut parent = vec![NONE; n];
-        let mut var = vec![0u32; n];
         for i in 0..n {
             match vt.node(crate::vtree::VtreeIdx(i as u32)) {
-                VtreeNode::Leaf { var: v, parent: p } => {
-                    var[i] = v.0;
+                VtreeNode::Leaf { parent: p, .. } => {
                     parent[i] = p.map_or(NONE, |p| p.0);
                 }
                 VtreeNode::Internal { left, right, parent: p } => {
@@ -143,7 +137,7 @@ impl Shape {
                 chain_up[r as usize] = chain_up[t as usize];
             }
         }
-        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up, chain_up }
+        Shape { root, kids, parent, pre, size, topdown, bottomup, depth, looked_up, chain_up }
     }
 
     #[inline]
@@ -167,21 +161,6 @@ impl Shape {
 
     pub(crate) fn num_nodes(&self) -> usize {
         self.kids.len()
-    }
-
-    /// The lowest common ancestor of `a` and `b`.
-    pub(crate) fn lca(&self, mut a: u32, mut b: u32) -> u32 {
-        while self.depth[a as usize] > self.depth[b as usize] {
-            a = self.parent[a as usize];
-        }
-        while self.depth[b as usize] > self.depth[a as usize] {
-            b = self.parent[b as usize];
-        }
-        while a != b {
-            a = self.parent[a as usize];
-            b = self.parent[b as usize];
-        }
-        a
     }
 }
 
@@ -242,10 +221,6 @@ static EMPTY: SLevel = SLevel { start: Vec::new(), pairs: Vec::new() };
 impl LevelMap {
     fn new(n: usize) -> LevelMap {
         LevelMap { idx: vec![NONE; n], lv: Vec::new() }
-    }
-    /// Every vtree node's level, in vtree index order.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &SLevel> + '_ {
-        self.idx.iter().map(|&i| if i == NONE { &EMPTY } else { &self.lv[i as usize] })
     }
     #[inline]
     pub(crate) fn is_unique(&self, u: usize) -> bool {
@@ -338,16 +313,6 @@ pub(crate) struct SkipForm {
     pub(crate) out: Ref,
 }
 
-/// Sizes of a skip-form diagram.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SkipSize {
-    pub(crate) nodes: u64,
-    pub(crate) pairs: u64,
-    /// Pair sides that skip, and their distinct (child level, target).
-    pub(crate) skips: u64,
-    pub(crate) forwarders: u64,
-}
-
 impl SkipForm {
     pub(crate) fn zero(shape: Arc<Shape>) -> SkipForm {
         let n = shape.num_nodes();
@@ -368,11 +333,6 @@ impl SkipForm {
     pub(crate) fn collect_pushed(&mut self, lim: &Limits) -> Result<(), OperationError> {
         let cand = std::mem::take(&mut self.active);
         self.collect_in(cand, lim)
-    }
-
-    /// The bytes the levels' arenas hold.
-    pub(crate) fn bytes(&self) -> u64 {
-        self.active.iter().map(|&t| self.levels[t as usize].bytes()).sum()
     }
 
     /// Drop the diagram, handing the charge for its uniquely owned levels back to `lim`.
@@ -406,32 +366,6 @@ impl SkipForm {
             (mk(l, ONE), r)
         };
         &buf[..]
-    }
-
-    pub(crate) fn size(&self) -> SkipSize {
-        let sh = &self.shape;
-        let mut s = SkipSize::default();
-        let mut seen = rustc_hash::FxHashSet::default();
-        for &t in &self.active {
-            let lvl = &self.levels[t as usize];
-            s.nodes += lvl.width() as u64;
-            s.pairs += lvl.pairs.len() as u64;
-            let (l, r) = sh.kids[t as usize];
-            for &(a, b) in &lvl.pairs {
-                for (c, x) in [(l, a), (r, b)] {
-                    if vt(x) != c {
-                        s.skips += 1;
-                        seen.insert((c, x));
-                    }
-                }
-            }
-        }
-        if self.out != ZREF && vt(self.out) != sh.root {
-            s.skips += 1;
-            seen.insert((sh.root, self.out));
-        }
-        s.forwarders = seen.len() as u64;
-        s
     }
 
     /// Drop nodes the output does not reach and number the rest in order.

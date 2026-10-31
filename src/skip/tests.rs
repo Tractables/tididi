@@ -37,8 +37,8 @@ fn skip_form_expands_to_the_same_function() {
         eng.minimize(&mut back).unwrap();
         assert_eq!((back.pair_count(), back.node_count()), (pairs, nodes));
         assert!(eng.equivalent(&back, &f).unwrap());
-        // Canonical: the round trip's skip form has the same size.
-        assert_eq!(skip(&back).size(), s.size());
+        // Canonical: the round trip's skip form has the same fingerprint.
+        assert_eq!(fingerprint(&skip(&back)), fingerprint(&s));
     }
 }
 
@@ -47,7 +47,8 @@ fn conjunction_matches_the_stored_form() {
     for (eng, f, g) in cases(2, 200) {
         let (sf, sg) = (Arc::new(skip(&f)), skip(&g));
         let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let h = conjoin::and(&sf, &sg, eng.limits()).unwrap();
+        let (h, cone) = conjoin::and_scoped(&sf, &sg, eng.limits()).unwrap();
+        eng.limits().discard(cone);
         let want = eng.and(&f, &g).unwrap();
         assert_eq!(h.model_count(eng.limits()).unwrap(), eng.model_count(&want).unwrap());
         let mut back = to_tdd(&h, &eng, f.vtree()).unwrap();
@@ -106,10 +107,8 @@ fn contracted_conjunction_is_the_canonical_skip_form() {
         if fingerprint(&h) != fingerprint(&want) {
             eprintln!("vtree {:?}", sf.shape.kids);
             eprintln!("equivalent {}", eng.equivalent(&back, &fun).unwrap());
-            eprintln!("mine {:?}", h.levels.iter().enumerate().filter(|l| l.1.width() > 0).map(|(i, l)| (i, (0..l.width()).map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a)), (vt(b), ix(b)))).collect::<Vec<_>>()).collect::<Vec<_>>())).collect::<Vec<_>>());
-            eprintln!("mine out {:?}", (vt(h.out), ix(h.out)));
-            eprintln!("want {:?}", want.levels.iter().enumerate().filter(|l| l.1.width() > 0).map(|(i, l)| (i, (0..l.width()).map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a)), (vt(b), ix(b)))).collect::<Vec<_>>()).collect::<Vec<_>>())).collect::<Vec<_>>());
-            eprintln!("want out {:?}", (vt(want.out), ix(want.out)));
+            eprintln!("mine {:?} out {:?}", dump(&h), (vt(h.out), ix(h.out)));
+            eprintln!("want {:?} out {:?}", dump(&want), (vt(want.out), ix(want.out)));
         }
         assert_eq!(fingerprint(&h), fingerprint(&want));
         // Contracting a canonical form changes nothing.
@@ -150,11 +149,17 @@ fn negation_is_the_canonical_skip_form() {
 type Dump = Vec<(usize, Vec<Vec<((u32, u32, u32), (u32, u32, u32))>>)>;
 
 fn dump(s: &SkipForm) -> Dump {
-    s.levels
+    s.active
         .iter()
-        .enumerate()
-        .filter(|l| l.1.width() > 0)
-        .map(|(i, l)| (i, (0..l.width()).map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a), 0), (vt(b), ix(b), 0))).collect()).collect()))
+        .map(|&t| {
+            let l = &s.levels[t as usize];
+            (
+                t as usize,
+                (0..l.width())
+                    .map(|k| l.node(k as u32).iter().map(|&(a, b)| ((vt(a), ix(a), 0), (vt(b), ix(b), 0))).collect())
+                    .collect(),
+            )
+        })
         .collect()
 }
 

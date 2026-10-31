@@ -16,39 +16,19 @@ use super::{filled, ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE,
 use crate::limits::Limits;
 use crate::OperationError;
 
-/// Where a product's node is.
-pub(crate) enum Land {
-    /// Known without building: a reference into the result (a leaf label or
-    /// false).
-    Done(Ref),
-    /// Built at this internal level.
-    At(u32),
-}
-
-/// Where the product of `a` and `b` (references read from one child level)
-/// is built: `Done` for a false or leaf result.
+/// The product of `a` and `b` (references read from one child level) when
+/// known without building (a false or leaf result), or `None` when built at an
+/// internal level.
 #[inline]
-pub(crate) fn land_pair(sh: &Shape, a: Ref, b: Ref) -> Land {
+pub(crate) fn land_pair(sh: &Shape, a: Ref, b: Ref) -> Option<Ref> {
     if a == ZREF || b == ZREF {
-        return Land::Done(ZREF);
+        return Some(ZREF);
     }
-    let (va, vb) = (vt(a), vt(b));
-    if va == vb {
-        if sh.is_leaf(va) {
-            return Land::Done(leaf_and(va, ix(a), ix(b)));
-        }
-        return Land::At(va);
+    let va = vt(a);
+    if va == vt(b) && sh.is_leaf(va) {
+        return Some(leaf_and(va, ix(a), ix(b)));
     }
-    if sh.within(vb, va) {
-        return Land::At(va);
-    }
-    if sh.within(va, vb) {
-        return Land::At(vb);
-    }
-    // They part below a level both skip through: each skips the other's
-    // single variable, so both are leaves under it.
-    debug_assert!(sh.is_leaf(va) && sh.is_leaf(vb) && sh.parent[va as usize] == sh.parent[vb as usize]);
-    Land::At(sh.parent[va as usize])
+    None
 }
 
 #[inline]
@@ -397,7 +377,9 @@ impl Numbered {
     }
 }
 
-/// `f ∧ g`, pruned, in skip form; not contracted.
+/// `f ∧ g`, pruned, in skip form; not contracted, together with the
+/// upward-closed cone of levels that changed (those in `g`'s cone and any
+/// level outside it that lost a node when unreachable branches were dropped).
 ///
 /// Built from the leaves up, as the stored conjunction is: a product exists
 /// once one of its pair combinations has both child products true
@@ -410,28 +392,16 @@ impl Numbered {
 /// `g`'s pairs. A product whose other reference is no longer read is
 /// dropped from its reference's list when a scan meets it. Products no
 /// output path reaches are dropped at the end.
-pub(crate) fn and(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
-    let (out, cone) = and_scoped(f, g, lim)?;
-    lim.discard(cone);
-    Ok(out)
-}
-
-/// [`and`] returning the upward-closed cone of levels that changed (those in
-/// `g`'s cone and any level outside it that lost a node when unreachable
-/// branches were dropped).
 pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipForm, Vec<bool>), OperationError> {
     // Shapes read from one vtree are equal; `f`'s serves both.
     debug_assert_eq!(f.shape.kids, g.shape.kids);
     let shape = Arc::clone(&f.shape);
     let sh = &*shape;
     let mut out = SkipForm::zero(Arc::clone(&shape));
-    match land_pair(sh, f.out, g.out) {
-        Land::Done(r) => {
-            out.out = r;
-            let cone = filled(lim, sh.num_nodes(), false)?;
-            return Ok((out, cone));
-        }
-        Land::At(_) => {}
+    if let Some(r) = land_pair(sh, f.out, g.out) {
+        out.out = r;
+        let cone = filled(lim, sh.num_nodes(), false)?;
+        return Ok((out, cone));
     }
     let ng = Numbered::of(g, lim)?;
     // Outside `g`'s cone `g` is `true`: there the result is `f`'s own levels,
@@ -508,7 +478,7 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
                     let mut cell = NIL;
                     for &(la, ra) in f.pairs_at(u, a, &mut fb) {
                         for &(lb, rb) in g.pairs_at(u, b, &mut gb) {
-                            let (Land::Done(x), Land::Done(y)) = (land_pair(sh, la, lb), land_pair(sh, ra, rb)) else {
+                            let (Some(x), Some(y)) = (land_pair(sh, la, lb), land_pair(sh, ra, rb)) else {
                                 unreachable!("leaf products are known")
                             };
                             if x != ZREF && y != ZREF {
@@ -537,8 +507,8 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
                     return oa;
                 }
                 match land_pair(sh, oa, ob) {
-                    Land::Done(x) => x,
-                    Land::At(_) => live.get(&key(nf.id(oa), ng.id(ob))).copied().unwrap_or(ZREF),
+                    Some(x) => x,
+                    None => live.get(&key(nf.id(oa), ng.id(ob))).copied().unwrap_or(ZREF),
                 }
             };
             lstamp += 1;
@@ -659,9 +629,9 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         }
     }
     out.out = match land_pair(sh, f.out, g.out) {
-        Land::Done(r) => r,
-        Land::At(_) if is_one(sh, g.out) && free(f.out) => f.out,
-        Land::At(_) => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
+        Some(r) => r,
+        None if is_one(sh, g.out) && free(f.out) => f.out,
+        None => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
     };
     lim.discard(seeds);
     pf.discard(lim);
