@@ -152,8 +152,9 @@ fn fuse_whole(eng: &Engine, tdd: &mut Tdd, bitmap_min_plans: usize, scratch: &mu
     let (_, right) = tdd.vtree.children(root);
     let mut plans = Vec::new();
     let mut nodes = 0..tdd.levels[root.idx()].nodes().len();
+    let boundary = super::super::Boundary { v: right, parent: root, side: ChildSide::Right };
     let done = collect_fusion_plans::<IntFold>(
-        eng, tdd, root, right, ChildSide::Right, &mut nodes, usize::MAX, &mut plans, &mut scratch.pair_fusion,
+        eng, tdd, boundary, &mut nodes, usize::MAX, &mut plans, &mut scratch.pair_fusion,
     )
     .expect("no limits armed");
     assert!(done, "one chunk holds the level");

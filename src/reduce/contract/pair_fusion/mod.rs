@@ -128,10 +128,11 @@ pub(super) fn fuse_pairs_inner(
         if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
             continue;
         }
+        let boundary = Boundary { v, parent, side };
         if weighted {
-            fuse_boundary::<WeightFold>(eng, tdd, v, parent, side, listed, scratch, &mut stats)?;
+            fuse_boundary::<WeightFold>(eng, tdd, boundary, listed, scratch, &mut stats)?;
         } else {
-            fuse_boundary::<IntFold>(eng, tdd, v, parent, side, listed, scratch, &mut stats)?;
+            fuse_boundary::<IntFold>(eng, tdd, boundary, listed, scratch, &mut stats)?;
         }
     }
     // A weighted group the pinned column cannot hold stays unfused, so only
@@ -182,15 +183,20 @@ fn chunk_plans() -> usize {
     pinned_chunk_plans().unwrap_or(CHUNK_PLANS)
 }
 
-/// The three phases at one boundary: marginal level `v` under `parent`, on
-/// `side` of its pairs, reading the parent nodes `listed` where given.
-#[expect(clippy::too_many_arguments)]
+/// One marginal child `v` under `parent`, on `side` of its pairs.
+#[derive(Clone, Copy)]
+pub(super) struct Boundary {
+    pub(super) v: VtreeIdx,
+    pub(super) parent: VtreeIdx,
+    pub(super) side: ChildSide,
+}
+
+/// The three phases at one `boundary`, reading the parent nodes `listed`
+/// where given.
 fn fuse_boundary<D: SlotValues>(
     eng: &Engine,
     tdd: &mut Tdd,
-    v: VtreeIdx,
-    parent: VtreeIdx,
-    side: ChildSide,
+    boundary: Boundary,
     listed: Option<&[u32]>,
     scratch: &mut ContractScratch,
     stats: &mut PairFusionStats,
@@ -200,16 +206,16 @@ fn fuse_boundary<D: SlotValues>(
         Some(nodes) => {
             debug_assert!(nodes.is_sorted(), "listed fusion nodes ascend");
             let nodes = nodes.iter().map(|&n| n as usize);
-            fuse_chunks::<D>(eng, tdd, v, parent, side, nodes, &mut rewrite, scratch, stats)
+            fuse_chunks::<D>(eng, tdd, boundary, nodes, &mut rewrite, scratch, stats)
         }
         None => {
-            let all = 0..tdd.levels[parent.idx()].nodes().len();
-            fuse_chunks::<D>(eng, tdd, v, parent, side, all, &mut rewrite, scratch, stats)
+            let all = 0..tdd.levels[boundary.parent.idx()].nodes().len();
+            fuse_chunks::<D>(eng, tdd, boundary, all, &mut rewrite, scratch, stats)
         }
     };
     // Every chunk rewritten before a stop is a valid level, so the sweep
     // runs on every exit.
-    rewrite.finish(tdd, parent);
+    rewrite.finish(tdd, boundary.parent);
     fused
 }
 
@@ -220,18 +226,16 @@ fn fuse_boundary<D: SlotValues>(
 /// so the next chunk reads the pairs and values a scan of the whole level
 /// would; slots are minted in the same order, so the level and store are the
 /// ones one chunk would leave.
-#[expect(clippy::too_many_arguments)]
 fn fuse_chunks<D: SlotValues>(
     eng: &Engine,
     tdd: &mut Tdd,
-    v: VtreeIdx,
-    parent: VtreeIdx,
-    side: ChildSide,
+    boundary: Boundary,
     mut nodes: impl Iterator<Item = usize>,
     rewrite: &mut ParentRewrite<'_>,
     scratch: &mut ContractScratch,
     stats: &mut PairFusionStats,
 ) -> Result<(), OperationError> {
+    let Boundary { v, parent, side } = boundary;
     let lim = eng.limits();
     let chunk = chunk_plans();
     let mut plans: Transient<'_, Vec<PlanEntry<D::Value>>> = Transient::new(lim, Vec::new());
@@ -243,7 +247,7 @@ fn fuse_chunks<D: SlotValues>(
         // each.
         plans.clear();
         let done =
-            collect_fusion_plans::<D>(eng, tdd, parent, v, side, &mut nodes, chunk, &mut plans, &mut scratch.pair_fusion)?;
+            collect_fusion_plans::<D>(eng, tdd, boundary, &mut nodes, chunk, &mut plans, &mut scratch.pair_fusion)?;
         if !plans.is_empty() {
             // Phase 2: encode each plan's value as a marginal-side ref, an
             // inline count or a value-keyed slot (`FusionSlots`). `any_inline`

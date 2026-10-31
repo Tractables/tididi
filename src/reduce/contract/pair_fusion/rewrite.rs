@@ -50,8 +50,8 @@ pub(super) struct ParentRewrite<'a> {
     /// when the boundary is done.
     fused_x: Transient<'a, FxHashMap<u32, u32>>,
     /// The membership bitmap of a node with many plans (see
-    /// `fuse_node_pairs`), all zero between nodes, charged as it grows and
-    /// handed back at the end.
+    /// [`Self::fuse_node_pairs`]), all zero between nodes, charged as it grows
+    /// and handed back at the end.
     bits: Transient<'a, Vec<u64>>,
     bitmap_min_plans: usize,
     /// Whether a chunk was applied, so the level is stored and marked changed.
@@ -126,16 +126,7 @@ impl<'a> ParentRewrite<'a> {
                 cursor += 1;
             }
             let this_plans = &plans[plan_start..cursor];
-            dead_acc += fuse_node_pairs(
-                eng,
-                level,
-                n,
-                side,
-                this_plans,
-                &mut self.fused_x,
-                &mut self.bits,
-                self.bitmap_min_plans,
-            )?;
+            dead_acc += self.fuse_node_pairs(eng, level, n, side, this_plans)?;
         }
         level.note_dead_pairs(dead_acc);
         stopped
@@ -149,35 +140,34 @@ impl<'a> ParentRewrite<'a> {
             tdd.levels[parent.idx()].compact_pairs_if_stale();
         }
     }
-}
 
-/// Rewrite one node's pair list in place: drop every pair whose x-side carries a
-/// plan, then append one fused pair per plan. Returns the arena slots the shrink
-/// abandoned.
-///
-/// The kept pairs stay in their order and the fused pairs follow them in plan
-/// order, the order in which the node's pairs first name each fused x-ref: a
-/// function of the node's old list alone, so a builder that sums a marginal
-/// child as it emits the node can write the same list
-/// (`sparse::sum`).
-///
-/// A node with at least `bitmap_min_plans` ([`BITMAP_MIN_PLANS`]) plans whose largest planned x-ref
-/// is under [`BITMAP_BITS_PER_PLAN`] bits per plan tests each pair on a bitmap
-/// of the planned x-refs (`bits`, zero on entry and on return) instead of in
-/// `fused_x`, which it then does not build. The bit of `x` is set exactly when
-/// a plan names `x`, so the pairs kept, the pairs dropped and the node's new
-/// pair list are the ones the map gives, in the same order.
-#[expect(clippy::too_many_arguments)]
-fn fuse_node_pairs<V>(
-    eng: &Engine,
-    level: &mut TddLevel,
-    n: usize,
-    side: ChildSide,
-    this_plans: &[PlanEntry<V>],
-    fused_x: &mut FxHashMap<u32, u32>,
-    bits: &mut Vec<u64>,
-    bitmap_min_plans: usize,
-) -> Result<usize, OperationError> {
+    /// Rewrite one node's pair list in place: drop every pair whose x-side
+    /// carries a plan, then append one fused pair per plan. Returns the arena
+    /// slots the shrink abandoned.
+    ///
+    /// The kept pairs stay in their order and the fused pairs follow them in
+    /// plan order, the order in which the node's pairs first name each fused
+    /// x-ref: a function of the node's old list alone, so a builder that sums
+    /// a marginal child as it emits the node can write the same list
+    /// (`sparse::sum`).
+    ///
+    /// A node with at least `self.bitmap_min_plans` ([`BITMAP_MIN_PLANS`])
+    /// plans whose largest planned x-ref is under [`BITMAP_BITS_PER_PLAN`]
+    /// bits per plan tests each pair on a bitmap of the planned x-refs
+    /// (`self.bits`, zero on entry and on return) instead of in
+    /// `self.fused_x`, which it then does not build. The bit of `x` is set
+    /// exactly when a plan names `x`, so the pairs kept, the pairs dropped and
+    /// the node's new pair list are the ones the map gives, in the same order.
+    fn fuse_node_pairs<V>(
+        &mut self,
+        eng: &Engine,
+        level: &mut TddLevel,
+        n: usize,
+        side: ChildSide,
+        this_plans: &[PlanEntry<V>],
+    ) -> Result<usize, OperationError> {
+        let ParentRewrite { fused_x, bits, bitmap_min_plans, .. } = self;
+        let bitmap_min_plans = *bitmap_min_plans;
     // A plan-carrying node held ≥2 pairs (Phase 1 skips `pair_count_at < 2`),
     // so it is arena-backed, never an inline node whose single pair lives in
     // the node word.
@@ -275,7 +265,8 @@ fn fuse_node_pairs<V>(
         write += 1;
     }
 
-    // Re-encode via the shared epilogue: shrink in place, or inline the sole
-    // survivor.
-    Ok(level.reencode_shrunk(n, start, old_len, write - start))
+        // Re-encode via the shared epilogue: shrink in place, or inline the sole
+        // survivor.
+        Ok(level.reencode_shrunk(n, start, old_len, write - start))
+    }
 }

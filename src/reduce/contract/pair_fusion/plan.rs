@@ -11,7 +11,7 @@ use crate::diagram::ChildSide;
 use crate::value::slots::SlotValues;
 
 use super::super::scratch::{GroupCell, PFusionScratch};
-use super::PlanEntry;
+use super::{Boundary, PlanEntry};
 
 /// Phase 1: scan the parent nodes `nodes` yields, ascending, and collect
 /// per-(node, `x_idx`) groups with > 1 distinct marginal-side index into
@@ -24,18 +24,16 @@ use super::PlanEntry;
 ///
 /// The value domain `D` sums each group; the grouping walk is shared by both
 /// instantiations, and the domain can never vary per node or per pair.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn collect_fusion_plans<D: SlotValues>(
     eng: &Engine,
     tdd: &Tdd,
-    parent: VtreeIdx,
-    v: VtreeIdx,
-    side: ChildSide,
+    boundary: Boundary,
     nodes: &mut impl Iterator<Item = usize>,
     chunk_plans: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     scratch: &mut PFusionScratch,
 ) -> Result<bool, OperationError> {
+    let Boundary { v, parent, side } = boundary;
     let plevel = &tdd.levels[parent.idx()];
     // A level can hold billions of pairs, so the sweep tests for a stop once
     // per stride of the nodes and pairs it reads, not once per sweep. This
@@ -71,11 +69,11 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         // run. A wide node that does not is sorted into runs: its table
         // would be too wide for the cache, and a probe per pair would miss.
         if node.windows(2).all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side)) {
-            group_by_runs::<D>(lim, tdd, v, side, n, node, out, &mut scratch.run)?;
+            group_by_runs::<D>(lim, tdd, (v, side), (n, node), out, &mut scratch.run)?;
         } else if node.len() >= SORT_MIN {
-            group_by_sorting::<D>(lim, tdd, v, side, n, node, out, scratch)?;
+            group_by_sorting::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
         } else {
-            group_by_scatter::<D>(lim, tdd, v, side, n, node, out, scratch)?;
+            group_by_scatter::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
         }
         if out.len() >= chunk_plans {
             return Ok(false);
@@ -113,14 +111,11 @@ fn marginal_ref(pair: ChildPair, side: ChildSide) -> u32 {
 /// and the plans are put in that order, which is the order the table emits
 /// them in. Every pass reads and writes in sequence, where the table misses
 /// the cache on nearly every pair of a wide node.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn group_by_sorting<D: SlotValues>(
     lim: &Limits,
     tdd: &Tdd,
-    v: VtreeIdx,
-    side: ChildSide,
-    n: usize,
-    node: &[ChildPair],
+    (v, side): (VtreeIdx, ChildSide),
+    (n, node): (usize, &[ChildPair]),
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
@@ -203,14 +198,11 @@ pub(super) fn group_by_sorting<D: SlotValues>(
 /// each group is a run of them, and the runs come in the order of their first
 /// occurrences, which is the order the table emits its groups in. No table is
 /// touched, so a wide node costs one read of its pairs.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn group_by_runs<D: SlotValues>(
     lim: &Limits,
     tdd: &Tdd,
-    v: VtreeIdx,
-    side: ChildSide,
-    n: usize,
-    node: &[ChildPair],
+    (v, side): (VtreeIdx, ChildSide),
+    (n, node): (usize, &[ChildPair]),
     out: &mut Vec<PlanEntry<D::Value>>,
     run: &mut Vec<u32>,
 ) -> Result<(), OperationError> {
@@ -246,14 +238,11 @@ pub(super) fn group_by_runs<D: SlotValues>(
 /// earlier plan's `c(M)` contribution. Distinct marginal nodes are disjoint
 /// Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … = c(L)·(v1+v2+…)`,
 /// the fusion invariant, in whichever domain `D` is.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn group_by_scatter<D: SlotValues>(
     lim: &Limits,
     tdd: &Tdd,
-    v: VtreeIdx,
-    side: ChildSide,
-    n: usize,
-    node: &[ChildPair],
+    (v, side): (VtreeIdx, ChildSide),
+    (n, node): (usize, &[ChildPair]),
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {

@@ -249,9 +249,9 @@ fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
             let mut sc = PFusionScratch::default();
             let mut by_table = Vec::new();
             let node = level.pairs_vec(0);
-            group_by_scatter::<IntFold>(eng.limits(), &tdd, v, side, 0, &node, &mut by_table, &mut sc).expect("no limits armed");
+            group_by_scatter::<IntFold>(eng.limits(), &tdd, (v, side), (0, &node), &mut by_table, &mut sc).expect("no limits armed");
             let mut by_sort = Vec::new();
-            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, &node, &mut by_sort, &mut sc)
+            group_by_sorting::<IntFold>(eng.limits(), &tdd, (v, side), (0, &node), &mut by_sort, &mut sc)
                 .expect("no limits armed");
             let view = |plans: &[PlanEntry<crate::value::Count>]| -> Vec<(usize, u32, crate::value::Count)> {
                 plans.iter().map(|p| (p.node_idx, p.x_idx, p.value.clone())).collect()

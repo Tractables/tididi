@@ -428,7 +428,7 @@ pub(super) fn find_twin_groups(
     let found = if by_fingerprints {
         group_twins_by_entries(eng, &entries, width, scratch)?
     } else if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
-        match refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole, child, true)? {
+        match refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: true }, child)? {
             Some(found) => found,
             // A large parent node with its pairs in no order: the
             // fingerprints search the level for less.
@@ -448,7 +448,7 @@ pub(super) fn find_twin_groups(
         let exact = scratch.unnamed_exact;
         let unnamed = std::mem::take(&mut scratch.unnamed);
         let other = if by_fingerprints {
-            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole, child, false)?
+            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: false }, child)?
                 .expect("a refinement that may not give up does not")
         } else {
             group_twins_by_entries(eng, &entries, width, scratch)?

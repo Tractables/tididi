@@ -51,8 +51,9 @@ pub(super) const HAND_OFF_PAIRS: usize = 1 << 18;
 /// The nodes a refinement starts with in its first class
 /// ([`refine_context_groups`]).
 pub(super) enum Start<'a> {
-    /// Every node of the child level.
-    Whole,
+    /// Every node of the child level, with whether a large scattered parent
+    /// node may hand the level back to fingerprinting.
+    Whole { hand_off: bool },
     /// These nodes, ascending, which hold every node with a twin
     /// ([`super::listed`]).
     Listed(&'a [u32]),
@@ -106,12 +107,11 @@ pub(super) enum Start<'a> {
 /// the group's start, which is all a merge in node order reads of the
 /// groups; [`list_members`] writes the rest.
 ///
-/// With `hand_off`, a refinement of a stored level that would split a
-/// scattered parent node of [`HAND_OFF_PAIRS`] pairs or more gives up
-/// before its wide parent nodes, which it splits last, and returns `None`
-/// with no groups listed; else it returns whether some group holds two
-/// nodes or more.
-#[allow(clippy::too_many_arguments)]
+/// Under [`Start::Whole`] with `hand_off`, a refinement of a stored level
+/// that would split a scattered parent node of [`HAND_OFF_PAIRS`] pairs or
+/// more gives up before its wide parent nodes, which it splits last, and
+/// returns `None` with no groups listed; else it returns whether some group
+/// holds two nodes or more.
 pub(super) fn refine_context_groups(
     level: &TddLevel,
     side: ChildSide,
@@ -120,7 +120,6 @@ pub(super) fn refine_context_groups(
     width: usize,
     start: Start<'_>,
     child: Option<&[EncodedNode]>,
-    hand_off: bool,
 ) -> Result<Option<bool>, OperationError> {
     scratch.marked = None;
     let ContractScratch {
@@ -152,11 +151,10 @@ pub(super) fn refine_context_groups(
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
     // The first class: every node, or the listed ones.
-    let whole = matches!(start, Start::Whole);
-    let first = match start {
-        Start::Whole => {
+    let (whole, hand_off, first) = match start {
+        Start::Whole { hand_off } => {
             bits.fill([0; 2]);
-            width
+            (true, hand_off, width)
         }
         Start::Listed(listed) => {
             bits.fill([u64::MAX; 2]);
@@ -165,7 +163,7 @@ pub(super) fn refine_context_groups(
                 word[0] &= !(1 << (t % 64));
                 word[1] &= !(1 << (t % 64));
             }
-            listed.len()
+            (false, false, listed.len())
         }
     };
     // The classes made are nested sets of two or more nodes each, so there

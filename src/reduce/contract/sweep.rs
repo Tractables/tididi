@@ -417,7 +417,7 @@ fn sweep_twins(
         };
         let (left_fired, right_fired) = match joint_contract_fixpoint(
             eng,
-            tdd, parent, left, right, is_marginal_boundary, reach, &mut scratch,
+            tdd, parent, is_marginal_boundary, reach, &mut scratch,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -571,7 +571,7 @@ fn list_changed_children(
         let ContractScratch { reach, reach_bits, .. } = &mut *scratch;
         reach[side as usize].clear();
         if listed.is_ok() && !tdd.vtree.node(t1).is_leaf() && !tdd.levels[t1.idx()].is_marginal() {
-            listed = named_by(eng.limits(), tdd, t1, parent, side, &changed, reach_bits, &mut reach[side as usize]);
+            listed = named_by(eng.limits(), tdd, (t1, parent, side), &changed, reach_bits, &mut reach[side as usize]);
         }
     }
     scratch.listing.put(parent.idx(), changed);
@@ -610,17 +610,15 @@ fn list_changed_children(
 /// and each productive fusion keeps it and lowers the total pair count (k ≥ 2
 /// pairs at one child become one), so the pair (node count, pair count)
 /// strictly decreases lexicographically at every productive step.
-#[allow(clippy::too_many_arguments)]
 fn joint_contract_fixpoint(
     eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
     is_marginal_boundary: bool,
     reach: Reach,
     scratch: &mut ContractScratch,
 ) -> Result<(bool, bool), OperationError> {
+    let (left, right) = tdd.vtree.children(parent);
     let mut left_fired = false;
     let mut right_fired = false;
     // The children the next round searches again.

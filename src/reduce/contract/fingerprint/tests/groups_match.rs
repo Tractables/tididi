@@ -981,9 +981,8 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
                 eng.limits(),
                 &mut scratch,
                 width as usize,
-                refine::Start::Whole,
+                refine::Start::Whole { hand_off },
                 child,
-                hand_off,
             )
             .expect("refine_context_groups");
             assert_eq!(found, if hand_off { None } else { Some(true) }, "{side:?}, hand_off {hand_off}");

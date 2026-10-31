@@ -66,13 +66,10 @@ pub(in crate::reduce::contract) fn pair_mass(tdd: &Tdd, parent: VtreeIdx, nodes:
 /// Set `out` to the nodes of the child level `t1` (on side `t1_side` of
 /// `parent`) that the pairs of the parent nodes `nodes` name, ascending.
 /// `bits` is scratch, one bit per node of `t1`.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::reduce::contract) fn named_by(
     lim: &Limits,
     tdd: &Tdd,
-    t1: VtreeIdx,
-    parent: VtreeIdx,
-    t1_side: ChildSide,
+    (t1, parent, t1_side): (VtreeIdx, VtreeIdx, ChildSide),
     nodes: &[u32],
     bits: &mut Vec<u64>,
     out: &mut Vec<u32>,
@@ -122,7 +119,6 @@ pub(in crate::reduce::contract) fn find_listed_twin_groups(
         level.slot_count(),
         Start::Listed(listed),
         child,
-        false,
     )?;
     Ok(found.expect("a refinement that may not give up does not"))
 }

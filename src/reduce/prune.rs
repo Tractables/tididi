@@ -921,11 +921,11 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     }
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
 
-    let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
-    let order = vtree.bottomup_slice().iter().filter(|&&t| tdd.is_structural_internal(t)).map(|&t| {
-        let (left, right) = vtree.children(t);
-        (t, level_base[t.idx()], child(left), child(right))
-    });
+    let order = vtree
+        .bottomup_slice()
+        .iter()
+        .filter(|&&t| tdd.is_structural_internal(t))
+        .map(|&t| visit_at(&vtree, level_base, &level_dirty, t));
     let plans = plan_levels(eng.limits(), tdd, order, &marks[..total], remap)?;
     compact_levels(tdd, &vtree, level_base, &level_dirty, &marks[..total], remap, plans);
     seed_dirty_levels(tdd, &level_dirty);
@@ -949,6 +949,13 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
 /// The slots level `t`'s block of marks covers, a whole number of words.
 fn span(level_base: &[usize], t: VtreeIdx) -> usize {
     (level_base[t.idx() + 1] - level_base[t.idx()]) * 64
+}
+
+/// The [`Visit`] of level `level` in [`prune_whole`]'s flat mark table.
+fn visit_at(vtree: &crate::vtree::Vtree, level_base: &[usize], level_dirty: &[bool], level: VtreeIdx) -> Visit {
+    let (left, right) = vtree.children(level);
+    let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
+    Visit { level, base: level_base[level.idx()], left: child(left), right: child(right) }
 }
 
 /// Pass 2 (bottom-up): compact every level that lost a node and rewrite the
@@ -980,11 +987,9 @@ fn compact_levels(
         if !tdd.is_structural_internal(t) {
             continue;
         }
-        let (left, right) = vtree.children(t);
-        let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
-        let (l, r) = (child(left), child(right));
+        let v = visit_at(vtree, level_base, level_dirty, t);
         let plan = plans.take(t);
-        compact_one_level(tdd, t, &marks[level_base[t.idx()]..], marks, remap, l, r, plan, counted);
+        compact_one_level(tdd, v, marks, remap, plan, counted);
     }
 }
 
@@ -1039,21 +1044,18 @@ impl Child {
 ///
 /// [`TddLevel::leave_live_pairs`]: crate::diagram::TddLevel::leave_live_pairs
 /// [`TddLevel::known_live_pairs`]: crate::diagram::TddLevel::known_live_pairs
-#[expect(clippy::too_many_arguments)]
 fn compact_one_level(
     tdd: &mut Tdd,
-    t: VtreeIdx,
-    own: &[u64],
+    v: Visit,
     marks: &[u64],
     remap: &mut [u32],
-    left: Child,
-    right: Child,
     plan: Option<Kept>,
     counted: bool,
 ) -> bool {
+    let Visit { level: t, base, left, right } = v;
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
-    let own = &own[..words(width)];
+    let own = &marks[base..base + words(width)];
     let lost = !all_marked(own, width);
     debug_assert_eq!(plan.is_some(), tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty));
     if !(lost || left.dirty || right.dirty) {
@@ -1203,38 +1205,35 @@ impl Plans {
 fn plan_levels(
     lim: &Limits,
     tdd: &Tdd,
-    order: impl Iterator<Item = (VtreeIdx, usize, Child, Child)>,
+    order: impl Iterator<Item = Visit>,
     marks: &[u64],
     remap: &mut [u32],
 ) -> Result<Plans, OperationError> {
     let mut plans = Vec::new();
-    for (t, base, left, right) in order {
-        if let Some(kept) = plan_level(lim, tdd, t, &marks[base..], marks, remap, left, right)? {
-            plans.push((t, kept));
+    for v in order {
+        if let Some(kept) = plan_level(lim, tdd, v, marks, remap)? {
+            plans.push((v.level, kept));
         }
     }
     Ok(Plans(plans.into_iter().peekable()))
 }
 
-/// [`plan_levels`] for level `t`, whose block of marks starts `own`:
-/// `None` when it is stored, or the compaction leaves it as it is.
-#[expect(clippy::too_many_arguments)]
+/// [`plan_levels`] for `v.level`: `None` when it is stored, or the
+/// compaction leaves it as it is.
 fn plan_level(
     lim: &Limits,
     tdd: &Tdd,
-    t: VtreeIdx,
-    own: &[u64],
+    v: Visit,
     marks: &[u64],
     remap: &mut [u32],
-    left: Child,
-    right: Child,
 ) -> Result<Option<Kept>, OperationError> {
+    let Visit { level: t, base, left, right } = v;
     let level = &tdd.levels[t.idx()];
     if level.pairs.implicit().is_none() {
         return Ok(None);
     }
     let width = level.slot_count();
-    let own = &own[..words(width)];
+    let own = &marks[base..base + words(width)];
     if all_marked(own, width) && !left.dirty && !right.dirty {
         return Ok(None);
     }
@@ -1474,15 +1473,15 @@ fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]
             continue;
         }
         let (left, right) = vtree.children(t);
-        mark_children_of_level(lim, tdd, t, level_base[t.idx()], block(left), block(right), marks, bytes)?;
+        mark_children_of_level(lim, tdd, t, level_base[t.idx()], [block(left), block(right)], marks, bytes)?;
     }
     Ok(())
 }
 
 /// Mark every child slot the marked nodes of level `t` name. `base` is the
-/// word level `t`'s block starts at in `marks`, and `left` and `right` are
-/// its children's, `None` for a child whose marks nobody reads: a leaf or
-/// marginal level, which the compaction never drops a node from.
+/// word level `t`'s block starts at in `marks`, and `children` are its left
+/// and right children's, `None` for a child whose marks nobody reads: a leaf
+/// or marginal level, which the compaction never drops a node from.
 ///
 /// A side of a marginal child may be an inline count rather than a slot; such a
 /// side names no child slot, so the decoder answers `None` for it and only real
@@ -1493,28 +1492,26 @@ fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]
 /// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
 /// level's nodes are read in are refused ([`mark_described`]), or the
 /// bytes.
-#[expect(clippy::too_many_arguments)]
 fn mark_children_of_level(
     lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     base: usize,
-    left: Option<usize>,
-    right: Option<usize>,
+    children: [Option<usize>; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
 ) -> Result<(), OperationError> {
-    match (left, right) {
-        (Some(l), Some(r)) => mark_sides::<true, true>(lim, tdd, t, base, l, r, marks, bytes),
-        (Some(l), None) => mark_sides::<true, false>(lim, tdd, t, base, l, 0, marks, bytes),
-        (None, Some(r)) => mark_sides::<false, true>(lim, tdd, t, base, 0, r, marks, bytes),
-        (None, None) => Ok(()),
+    match children {
+        [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes),
+        [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes),
+        [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes),
+        [None, None] => Ok(()),
     }
 }
 
 /// [`mark_children_of_level`] marking the left child's slots at block
-/// `left_base` when `LEFT`, and the right child's at `right_base` when
-/// `RIGHT`.
+/// `child_base[0]` when `LEFT`, and the right child's at `child_base[1]`
+/// when `RIGHT`.
 ///
 /// A stored level whose marked nodes are many beside a side's slots marks
 /// that side a byte a slot in `bytes`, packed into the side's bits after
@@ -1524,17 +1521,16 @@ fn mark_children_of_level(
 /// scattered children every mark decides that branch and writes its word.
 /// The bytes cost a clear and a pack a slot, which pay where the marks a
 /// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
-#[expect(clippy::too_many_arguments)]
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     base: usize,
-    left_base: usize,
-    right_base: usize,
+    child_base: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
 ) -> Result<(), OperationError> {
+    let [left_base, right_base] = child_base;
     let (left, right) = tdd.vtree.children(t);
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
@@ -1564,9 +1560,9 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         if ls.is_some() || rs.is_some() {
             let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
             return match (ls, rs) {
-                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
-                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
-                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
+                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
+                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
+                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
                 (None, None) => unreachable!(),
             };
         }
@@ -1628,14 +1624,12 @@ fn note_sides_marked(_bytes: u64, _bits: u64) {}
 /// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots
 /// rounded up to whole words, and packed into its block of `marks` at
 /// `child_base`; a side not staged marked as bits.
-#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bool>(
     lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
-    base: usize,
-    child_base: [usize; 2],
+    (base, child_base): (usize, [usize; 2]),
     n: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
@@ -1898,7 +1892,7 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        mark_children_of_level(eng.limits(), tdd, t, visits[i].base, lb, rb, marks, bytes)?;
+        mark_children_of_level(eng.limits(), tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
 
         let (lc, rc) = (settle_child(marks, lb, lw), settle_child(marks, rb, rw));
         visits[i].left = lc;
@@ -2009,15 +2003,14 @@ fn compact_visited(
     let counted = tdd.levels.is_closed();
     // What the compaction does with the levels held as descriptions is
     // decided first.
-    let order = visits.iter().rev().map(|v| (v.level, v.base, v.left, v.right));
-    let mut plans = plan_levels(eng.limits(), tdd, order, marks, remap)?;
+    let mut plans = plan_levels(eng.limits(), tdd, visits.iter().rev().copied(), marks, remap)?;
     // The first level compacted makes room in the worklists for every level
     // still to come, so that each list grows once however many are pushed.
     let mut room = false;
     for k in (0..visits.len()).rev() {
         let v = visits[k];
         let plan = plans.take(v.level);
-        if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, v.left, v.right, plan, counted) {
+        if compact_one_level(tdd, v, marks, remap, plan, counted) {
             if !room {
                 tdd.dirty.reserve_all(k + 1);
                 room = true;
@@ -2131,8 +2124,7 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
             remap_need = remap_need.max(parent.left.span + parent.right.span);
         }
         lim.try_resize(remap, remap_need, UNREACHED)?;
-        let order = visits.iter().rev().map(|v| (v.level, v.base, v.left, v.right));
-        plans = Some(plan_levels(lim, tdd, order, marks, remap)?);
+        plans = Some(plan_levels(lim, tdd, visits.iter().rev().copied(), marks, remap)?);
     }
     lim.charge_work(2 * slots as u64);
     // From the bottom of the chain up, as the compaction goes: a described
@@ -2147,8 +2139,7 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
         let last = tdd.levels[c.idx()].slot_count() - 1;
         match plans.as_mut().and_then(|plans| plans.take(c)) {
             Some(plan) => {
-                let v = visits[j];
-                compact_one_level(tdd, c, &marks[v.base..], marks, remap, v.left, v.right, Some(plan), counted);
+                compact_one_level(tdd, visits[j], marks, remap, Some(plan), counted);
             }
             None => {
                 let level = &tdd.levels[c.idx()];
