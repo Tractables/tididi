@@ -232,14 +232,18 @@ fn build_level(
             && !marginal.is_target
             && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
             && sweep.filter.is_none()
+            && !eng.limits().bounded_growth()
             && !crate::diagram::stored_levels_forced()
             && !grid_lookups_forced()
         {
             let complete = Sides { left: run.products.is_complete(left_idx), right: run.products.is_complete(right_idx) };
             let bases = Sides { left: run.products.arena.materialized(left_idx), right: run.products.arena.materialized(right_idx) };
             let grouped = plan.both_multi_pair && !plan.sides.left.is_passthrough() && !plan.sides.right.is_passthrough();
-            if compose::plan_marginal(eng.limits(), f.level(t), g.level(t), shape, plan.sides, complete, grouped, run.products.arena.slab(), bases).is_some() {
-                route = Route::MarginalChild;
+            if let Some(product) = compose::plan_marginal(eng.limits(), f.level(t), g.level(t), shape, plan.sides, complete, grouped, run.products.arena.slab(), bases) {
+                let (work, meter, _) = compose::charges((shape.f.here, shape.g.here), &product, 0);
+                if eng.limits().cannot_stop_within(work, meter as u64) {
+                    route = Route::MarginalChild;
+                }
             }
         }
         route.validate(f, g, shape, &marginal, run)?;

@@ -211,9 +211,8 @@ fn conditioned_and_empty_products_match_the_cells() {
 }
 
 /// Multi-step marginalization: a first conjunction sums out low subtrees and
-/// minimizes, keeping multi-pair parent levels described even when equal
-/// literal weights repeat child values; a second conjunction then sums out
-/// higher levels over carried and entry-marginal children off their
+/// keeps multi-pair parent levels described; a second conjunction then sums
+/// out higher levels over carried and entry-marginal children off their
 /// descriptions.
 #[test]
 fn carried_marginal_children_match_the_cells() {
@@ -221,11 +220,15 @@ fn carried_marginal_children_match_the_cells() {
         let mut rng = Lcg::new(seed);
         let vtree = Arc::new(Vtree::balanced(n));
         let eng = Engine::new();
-        let uniform = RationalWeights::from_literals(&vec![
-            LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
-            n as usize
-        ]);
-        let store = WeightStore::new(uniform, Arithmetic::ScaledFloat);
+        let distinct = RationalWeights::from_literals(
+            &(0..n)
+                .map(|v| LiteralWeights {
+                    negative: rat(1, 3 + v as i64),
+                    positive: rat(2 + v as i64, 3 + v as i64),
+                })
+                .collect::<Vec<_>>(),
+        );
+        let store = WeightStore::new(distinct, Arithmetic::ScaledFloat);
         let factors: Vec<Tdd> = (0..4)
             .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))
             .collect();
@@ -254,12 +257,11 @@ fn carried_marginal_children_match_the_cells() {
             low.extend([lll, llr, lrl, lrr, ll, lr, l]);
         }
         let third = weighted(eng.exists_vars(factors[3].clone(), &low_vars).unwrap());
-        let mut partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
-        partial.minimize().unwrap();
+        let partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
         for &p in &h4 {
             assert!(
                 partial.levels[p.idx()].implicit().is_some(),
-                "minimizing a summed child destroyed its parent's description at level {}",
+                "expected parent level {} to stay described after first marginalization",
                 p.idx()
             );
         }

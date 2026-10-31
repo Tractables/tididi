@@ -1024,15 +1024,13 @@ fn collapse_target_subtrees(
 ) {
     const SCHED: u8 = 1 << 0;
     const STRUCT: u8 = 1 << 1;
-    const SPINE: u8 = 1 << 2;
-    const F_UNIT: u8 = 1 << 3;
-    const G_UNIT: u8 = 1 << 4;
-    const BIG: u8 = 1 << 5;
-    const ANY_BIG: u8 = 1 << 6;
-    const CLEARED: u8 = 1 << 7;
+    const F_UNIT: u8 = 1 << 2;
+    const G_UNIT: u8 = 1 << 3;
+    const BIG: u8 = 1 << 4;
+    const ANY_BIG: u8 = 1 << 5;
+    const CLEARED: u8 = 1 << 6;
 
-    let weighted = f.weights.is_some() || g.weights.is_some();
-    if (weighted && mask[vtree.root().idx()]) || !mask.contains(&true) {
+    if f.weights.is_some() || g.weights.is_some() || !mask.contains(&true) {
         return;
     }
     let min_grid = sparse::sparse_thresholds(eng.limits()).min_grid as u64;
@@ -1052,7 +1050,7 @@ fn collapse_target_subtrees(
         let ui = u.idx();
         let marg = is_marg(u);
         if vtree.node(u).is_leaf() {
-            flags[ui] = SCHED | SPINE | F_UNIT | G_UNIT | if !marg { STRUCT } else { 0 };
+            flags[ui] = SCHED | F_UNIT | G_UNIT | if !marg { STRUCT } else { 0 };
             continue;
         }
         let (l, r) = vtree.children(u);
@@ -1068,9 +1066,6 @@ fn collapse_target_subtrees(
         if struct_u {
             b |= STRUCT;
         }
-        if struct_u || ((marg || is_relabel(u)) && (both & SPINE != 0)) {
-            b |= SPINE;
-        }
         if f.level(u).slot_count() == 1 && (both & F_UNIT != 0) {
             b |= F_UNIT;
         }
@@ -1080,10 +1075,7 @@ fn collapse_target_subtrees(
         if big_u || (either & ANY_BIG != 0) {
             b |= ANY_BIG;
         }
-        let plain_big = !marg
-            && (!weighted || (f.level(u).implicit().is_none() && g.level(u).implicit().is_none()))
-            && big_u;
-        if plain_big || (either & BIG != 0) {
+        if (!marg && big_u) || (either & BIG != 0) {
             b |= BIG;
         }
         flags[ui] = b;
@@ -1101,7 +1093,7 @@ fn collapse_target_subtrees(
             }
             continue;
         }
-        if c == vtree.root() || !mask[ci] || (fc & SCHED == 0) || (weighted && (fc & SPINE == 0)) {
+        if c == vtree.root() || !mask[ci] || (fc & SCHED == 0) {
             continue;
         }
         let whole_structural = fc & STRUCT != 0;
@@ -1110,8 +1102,7 @@ fn collapse_target_subtrees(
             let s = if l == c { r } else { l };
             is_marg(s) || mask[s.idx()]
         });
-        let can_sum_at_parent = !weighted
-            && whole_structural
+        let can_sum_at_parent = whole_structural
             && (fc & (F_UNIT | G_UNIT) != 0)
             && vtree.node(c).parent().is_some_and(|p| {
                 f.level(p).slot_count() == 1
