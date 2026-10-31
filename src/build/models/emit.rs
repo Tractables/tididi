@@ -21,6 +21,15 @@ impl Charged for Finished {
     }
 }
 
+/// The per-level emission pass over a planned [`Layout`].
+struct Emit<'a, 'b> {
+    eng: &'a Engine,
+    assembly: &'a mut Assembly<'b>,
+    vtree: &'a Arc<Vtree>,
+    state: Vec<Option<Finished>>,
+    pair_list: Vec<ChildPair>,
+}
+
 /// Store every level bottom-up from the plans and return the diagram's
 /// output node.
 pub(super) fn fill(
@@ -34,22 +43,18 @@ pub(super) fn fill(
     let mut state: Vec<Option<Finished>> = Vec::new();
     lim.reserve_exact(&mut state, vtree.num_nodes())?;
     state.resize_with(vtree.num_nodes(), || None);
-    let mut pair_list = Vec::new();
+    let mut emit = Emit { eng, assembly, vtree, state, pair_list: Vec::new() };
     let mut emitted = 0u64;
 
     for t in vtree.bottomup() {
         lim.check_stop()?;
         let leaf = vtree.node(t).is_leaf();
         let finished = match (layout.count[t.idx()], one_sided_child(vtree, layout, t)) {
-            (0, _) => free_subtree(eng, assembly, vtree, &state, t, leaf)?,
-            (_, Some(constrained)) => {
-                carry_child(eng, assembly, vtree, &state, t, constrained)?
-            }
+            (0, _) => emit.free_subtree(t, leaf)?,
+            (_, Some(constrained)) => emit.carry_child(t, constrained)?,
             _ => match plans[t.idx()].take().expect("every split node is planned") {
                 Plan::Leaf(locals) => Finished { locals },
-                Plan::Branch(split) => {
-                    store_level(eng, assembly, vtree, &state, &mut pair_list, t, split)?
-                }
+                Plan::Branch(split) => emit.store_level(t, split)?,
             },
         };
         if !leaf {
@@ -58,16 +63,16 @@ pub(super) fn fill(
             lim.check_output_cap(emitted)?;
             let (left, right) = vtree.children(t);
             for child in [left, right] {
-                if let Some(done) = state[child.idx()].take() {
+                if let Some(done) = emit.state[child.idx()].take() {
                     lim.discard(done);
                 }
             }
         }
-        state[t.idx()] = Some(finished);
+        emit.state[t.idx()] = Some(finished);
     }
 
     let root = vtree.root();
-    let done = state[root.idx()].as_ref().expect("the root was just finished");
+    let done = emit.state[root.idx()].as_ref().expect("the root was just finished");
     debug_assert_eq!(done.locals.len(), 1, "the root level holds one atom");
     Ok(TddNodeId { vtree: root, local: done.locals[0] })
 }
@@ -88,29 +93,6 @@ fn one_sided_child(vtree: &Vtree, layout: &Layout, t: VtreeIdx) -> Option<VtreeI
     }
 }
 
-/// A node whose subtree holds no constrained variable: one atom, true over
-/// every assignment to the subtree's leaves.
-fn free_subtree(
-    eng: &Engine,
-    assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
-    state: &[Option<Finished>],
-    t: VtreeIdx,
-    leaf: bool,
-) -> Result<Finished, OperationError> {
-    let local = if leaf {
-        ONE_LEAF_IDX
-    } else {
-        let (left, right) = vtree.children(t);
-        let pair = ChildPair::new(true_node(state, left), true_node(state, right));
-        assembly.push(eng, t, &[pair])?
-    };
-    let mut locals = Vec::new();
-    eng.limits().reserve_exact(&mut locals, 1)?;
-    locals.push(local);
-    Ok(Finished { locals })
-}
-
 /// The node a finished free subtree stored its one atom at.
 fn true_node(state: &[Option<Finished>], t: VtreeIdx) -> NodeIdx {
     below(state, t).locals[0]
@@ -121,36 +103,47 @@ fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
     state[t.idx()].as_ref().expect("a child is finished before its parent")
 }
 
-/// An internal node whose constrained variables all sit under one child: its
-/// atoms are that child's, each paired with the free side's true node, and
-/// stored in the order of the child's nodes.
-fn carry_child(
-    eng: &Engine,
-    assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
-    state: &[Option<Finished>],
-    t: VtreeIdx,
-    constrained: VtreeIdx,
-) -> Result<Finished, OperationError> {
-    let lim = eng.limits();
-    let (left, _) = vtree.children(t);
-    let free_local = true_node(state, vtree.sibling(constrained));
-    let from = below(state, constrained);
-    let mut locals = Vec::new();
-    lim.try_resize(&mut locals, from.locals.len(), NodeIdx(0))?;
-    assembly.reserve(eng, t, from.locals.len(), 0)?;
-    let order = stored_order(lim, from.locals.iter().map(|&child| u64::from(child.0)))?;
-    for atom in in_order(&order, from.locals.len()) {
-        let child = from.locals[atom];
-        let pair = if constrained == left {
-            ChildPair::new(child, free_local)
+impl Emit<'_, '_> {
+    /// A node whose subtree holds no constrained variable: one atom, true over
+    /// every assignment to the subtree's leaves.
+    fn free_subtree(&mut self, t: VtreeIdx, leaf: bool) -> Result<Finished, OperationError> {
+        let local = if leaf {
+            ONE_LEAF_IDX
         } else {
-            ChildPair::new(free_local, child)
+            let (left, right) = self.vtree.children(t);
+            let pair = ChildPair::new(true_node(&self.state, left), true_node(&self.state, right));
+            self.assembly.push(self.eng, t, &[pair])?
         };
-        locals[atom] = assembly.push(eng, t, &[pair])?;
+        let mut locals = Vec::new();
+        self.eng.limits().reserve_exact(&mut locals, 1)?;
+        locals.push(local);
+        Ok(Finished { locals })
     }
-    lim.discard(order);
-    Ok(Finished { locals })
+
+    /// An internal node whose constrained variables all sit under one child:
+    /// its atoms are that child's, each paired with the free side's true node,
+    /// and stored in the order of the child's nodes.
+    fn carry_child(&mut self, t: VtreeIdx, constrained: VtreeIdx) -> Result<Finished, OperationError> {
+        let lim = self.eng.limits();
+        let (left, _) = self.vtree.children(t);
+        let free_local = true_node(&self.state, self.vtree.sibling(constrained));
+        let from = below(&self.state, constrained);
+        let mut locals = Vec::new();
+        lim.try_resize(&mut locals, from.locals.len(), NodeIdx(0))?;
+        self.assembly.reserve(self.eng, t, from.locals.len(), 0)?;
+        let order = stored_order(lim, from.locals.iter().map(|&child| u64::from(child.0)))?;
+        for atom in in_order(&order, from.locals.len()) {
+            let child = from.locals[atom];
+            let pair = if constrained == left {
+                ChildPair::new(child, free_local)
+            } else {
+                ChildPair::new(free_local, child)
+            };
+            locals[atom] = self.assembly.push(self.eng, t, &[pair])?;
+        }
+        lim.discard(order);
+        Ok(Finished { locals })
+    }
 }
 
 /// The key a level's nodes are stored by: a pair's right node above its
@@ -191,22 +184,15 @@ fn in_order(order: &[u32], atoms: usize) -> impl Iterator<Item = usize> + '_ {
     order.iter().map(|&atom| atom as usize).chain(own)
 }
 
-/// Store one node per atom of a node constrained on both sides, in the
-/// order of their least pairs (see [`pair_key`]), and record where each
-/// landed.
-#[allow(clippy::too_many_arguments)]
-fn store_level(
-    eng: &Engine,
-    assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
-    state: &[Option<Finished>],
-    pair_list: &mut Vec<ChildPair>,
-    t: VtreeIdx,
-    split: Decomposition,
-) -> Result<Finished, OperationError> {
-    let lim = eng.limits();
-    let (left, right) = vtree.children(t);
-    let (l, r) = (&below(state, left).locals, &below(state, right).locals);
+impl Emit<'_, '_> {
+    /// Store one node per atom of a node constrained on both sides, in the
+    /// order of their least pairs (see [`pair_key`]), and record where each
+    /// landed.
+    fn store_level(&mut self, t: VtreeIdx, split: Decomposition) -> Result<Finished, OperationError> {
+        let Self { eng, assembly, vtree, state, pair_list } = self;
+        let lim = eng.limits();
+        let (left, right) = vtree.children(t);
+        let (l, r) = (&below(state, left).locals, &below(state, right).locals);
     // A child whose nodes are not in atom order, as a leaf's literals and
     // a level stored in the order of its pairs need not be, reorders the
     // pairs.
@@ -352,4 +338,5 @@ fn store_level(
     gate.flush()?;
     lim.discard(triples);
     Ok(Finished { locals })
+    }
 }

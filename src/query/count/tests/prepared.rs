@@ -195,7 +195,7 @@ fn full_width_headers_and_packed_overflow_use_the_shared_fold() {
         layout: Layout { left: 31, start: 32, payload: 64, node_word: 64, pair_word: 16, pairs: 1 },
         vars: [VtreeIdx(0); TRACKED], tracked: 0,
     };
-    packed.fold(&eng, &nodes, &pairs, &left, &right, &mut out, 0, &mut eng.limits().gate()).unwrap();
+    packed.fold(&eng, (&nodes, &pairs), (&left, &right), &mut out, 0, &mut eng.limits().gate()).unwrap();
     let expected = BigUint::from(u128::MAX) * 2u32;
     assert!(matches!(out.get(0), crate::value::CountRead::Big(v) if v == &expected));
     assert!(matches!(out.get(1), crate::value::CountRead::Fast(0)));

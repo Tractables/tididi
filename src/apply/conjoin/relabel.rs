@@ -169,7 +169,7 @@ pub(super) fn take_relabel_level(
         }
         let ci = c.idx();
         let identity = Operands { f: run.f_identity[ci], g: run.g_identity[ci] };
-        run.products.column(eng, ci, run.f_widths[ci], run.g_widths[ci], carrier_f, label, identity, buf)
+        run.products.column(eng, ci, (run.f_widths[ci], run.g_widths[ci]), (carrier_f, label), identity, buf)
     };
     let left_filled = side_map(left, one.left.raw(), &mut left_buf)?;
     let right_filled = side_map(right, one.right.raw(), &mut right_buf)?;

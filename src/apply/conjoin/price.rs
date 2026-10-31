@@ -530,15 +530,12 @@ pub(super) fn price_dense_level(
 /// # Errors
 ///
 /// As [`price_dense_level`].
-#[expect(clippy::too_many_arguments)]
 pub(super) fn price_sparse_level(
     lim: &Limits,
     run: &ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
-    passthrough: Option<Passthrough>,
-    complete: Option<Complete>,
+    (passthrough, complete): (Option<Passthrough>, Option<Complete>),
     filtered: bool,
 ) -> Result<Option<Pairs>, OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;

@@ -462,7 +462,8 @@ impl ModelColumns {
             assert_eq!(column.len(), len, "a buffer holds the rows written");
         }
         if len > 0 {
-            self.fill(self.root, 0, 1, rows.start, rows.end, rows.start, out);
+            let base = rows.start;
+            self.fill(self.root, (0, 1), (rows, base), out);
         }
     }
 
@@ -587,13 +588,12 @@ impl ModelColumns {
     }
 
     /// Writes node `n`'s rows, each repeated `rep` times from row `start`,
-    /// where they meet rows `lo..hi`; entry `i` of each buffer of `out` is
+    /// where they meet rows `rows`; entry `i` of each buffer of `out` is
     /// row `base + i`.
-    #[allow(clippy::too_many_arguments)]
-    fn fill(&mut self, n: u32, start: u64, rep: u64, lo: u64, hi: u64, base: u64, out: &mut [&mut [u32]]) {
+    fn fill(&mut self, n: u32, (start, rep): (u64, u64), (rows, base): (Range<u64>, u64), out: &mut [&mut [u32]]) {
         let node = self.nodes[n as usize];
         let end = start + node.count * rep;
-        let (a, b) = (start.max(lo), end.min(hi));
+        let (a, b) = (start.max(rows.start), end.min(rows.end));
         if a >= b {
             return;
         }
@@ -649,7 +649,7 @@ impl ModelColumns {
                         return;
                     }
                 }
-                self.fill_pairs(node, start, rep, a, b, base, out);
+                self.fill_pairs(node, (start, rep), (a..b, base), out);
             }
         }
     }
@@ -735,9 +735,9 @@ impl ModelColumns {
         v
     }
 
-    /// [`fill`](Self::fill) of a node with pairs, over rows `a..b` of its range.
-    #[allow(clippy::too_many_arguments)]
-    fn fill_pairs(&mut self, node: Node, start: u64, rep: u64, a: u64, b: u64, base: u64, out: &mut [&mut [u32]]) {
+    /// [`fill`](Self::fill) of a node with pairs, over rows `rows` of its range.
+    fn fill_pairs(&mut self, node: Node, (start, rep): (u64, u64), (rows, base): (Range<u64>, u64), out: &mut [&mut [u32]]) {
+        let (a, b) = (rows.start, rows.end);
         let (first, n) = (node.a as usize, node.b as usize);
         let (e0, e1) = ((a - start) / rep, (b - start).div_ceil(rep));
         // The first pair whose rows reach `e0`, and its first row.
@@ -772,9 +772,9 @@ impl ModelColumns {
                 continue;
             }
             let (pa, pb) = (ps.max(a), pe.min(b));
-            self.fill(l, ps, rep * cr, pa, pb, base, out);
+            self.fill(l, (ps, rep * cr), (pa..pb, base), out);
             if cr == 1 {
-                self.fill(r, ps, cl * rep, pa, pb, base, out);
+                self.fill(r, (ps, cl * rep), (pa..pb, base), out);
                 continue;
             }
             // The right child's rows recur as `cl` tiles of `tile` rows.
@@ -785,15 +785,15 @@ impl ModelColumns {
             let f1 = (pb - ps) / tile;
             if f0 + 1 >= f1 {
                 for t in t0..t1 {
-                    self.fill(r, ps + t * tile, rep, pa, pb, base, out);
+                    self.fill(r, (ps + t * tile, rep), (pa..pb, base), out);
                 }
                 continue;
             }
             for t in t0..f0 {
-                self.fill(r, ps + t * tile, rep, pa, pb, base, out);
+                self.fill(r, (ps + t * tile, rep), (pa..pb, base), out);
             }
             let first_tile = ps + f0 * tile;
-            self.fill(r, first_tile, rep, pa, pb, base, out);
+            self.fill(r, (first_tile, rep), (pa..pb, base), out);
             let level = self.levels[nr.level as usize];
             for touch in &self.touched[level.touch as usize..(level.touch + level.touches) as usize] {
                 copy_tiles(
@@ -805,7 +805,7 @@ impl ModelColumns {
                 );
             }
             for t in f1..t1 {
-                self.fill(r, ps + t * tile, rep, pa, pb, base, out);
+                self.fill(r, (ps + t * tile, rep), (pa..pb, base), out);
             }
         }
         if n > LINEAR_PAIRS {

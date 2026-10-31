@@ -743,7 +743,7 @@ pub(crate) fn apply_and_fallible(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
-    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
+    apply_and_core(eng, f, g, (targets, quantified), filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
 }
 
 thread_local! {

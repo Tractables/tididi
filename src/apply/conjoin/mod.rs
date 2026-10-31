@@ -1,9 +1,30 @@
-//! Conjunction of two diagrams via the compacting product construction.
+//! Bottom-up conjunction of two diagrams over a shared vtree.
 //!
-//! Given two diagrams over the same vtree, produces a diagram for their conjunction.
-//! The product construction pairs every node from f with every node from g
-//! at each vtree level, computes the conjunction of their input pairs, and
-//! omits dead nodes (compaction). See `docs/tdd.md` for details.
+//! Entry points validate the operands, align weight tables, and check the
+//! constant and self-conjunction (`f ∧ f = f`) shortcuts before entering the
+//! level sweep ([`drive`]). Operands may be owned or borrowed (`Cow<Tdd>`),
+//! placed onto a wider destination with free levels left unbuilt
+//! ([`Engine::and_onto`]), or restored intact on refusal
+//! ([`Engine::and_restoring`]).
+//!
+//! Within the active [`setup::Cone`], leaf levels are seeded from the constant
+//! conjunction table ([`leaf_seed`]) and each internal level is routed once
+//! ([`route::route_level`]):
+//! - [`identity`] moves or copies the other operand's level when one operand is
+//!   constant-true over the subtree;
+//! - [`relabel`] carries or rewrites one operand's pairs when the other operand
+//!   has a single node with a single pair;
+//! - [`sparse`] scatters, filters, and deduplicates over live child products
+//!   (or probes one `f` node at a time) when child or level grids are wide and
+//!   sparse;
+//! - [`streaming_marginal`] folds each live cell directly into a count or weight
+//!   column on levels scheduled for marginalization;
+//! - [`cell`] walks the dense product grid, using dead-pair liveness masks
+//!   ([`liveness`]), arithmetic lookups on complete children, or implicit
+//!   affine product descriptions (`drive::compose`).
+//!
+//! Root-level streaming ([`ConjoinMode::Count`] and [`ConjoinMode::Sum`]) folds
+//! or sums a one-product sparse root without materializing its pairs.
 
 use std::borrow::{Borrow, Cow};
 use std::sync::Arc;
@@ -350,7 +371,7 @@ fn conjoin_recycling_as(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    let result = apply_and_core(eng, &mut f, &mut g, targets, quantified, filter, mode, Operands::default());
+    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, mode, Operands::default());
     diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
     diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
     result
@@ -966,7 +987,7 @@ impl crate::Engine {
             return count;
         }
         let result = apply_and_core(
-            self, &mut f, &mut g, summed, VtreeMask::default(), None, ConjoinMode::Count,
+            self, &mut f, &mut g, (summed, VtreeMask::default()), None, ConjoinMode::Count,
             Operands::default(),
         );
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
@@ -981,366 +1002,23 @@ impl crate::Engine {
 #[cfg(test)]
 pub(crate) mod tests;
 
-// A test sends `and_marginalizing` down the two-step path to compare the
-// root that sums its child out against it, and counts the roots that did.
 #[cfg(test)]
-use tests::{note_summed, two_step_forced};
+use tests::{
+    ahead_after_forced, ahead_forced_off, complete_sides_listed, dense_poll_stride_forced,
+    grid_lookups_forced, lend_forced_off, lone_columns_forced_off, note_ahead, note_as_operand,
+    note_complete_side, note_held_tight, note_implied_walk, note_kept_counts, note_lent,
+    note_lone_columns, note_lone_pair, note_lookups, note_one_sided_masks, note_pair_row_unrolled,
+    note_pair_rows, note_pairs_grown, note_reach_columns_row, note_reach_tables, note_read_through,
+    note_relabelled, note_relayed, note_route, note_row_columns_row, note_scheduled_charge,
+    note_single_rows, note_summed, note_summed_complete_root, note_whole_row, note_word_cells,
+    note_written_pairs, one_sided_masks_forced_off, pair_rows_forced_off, reach_columns_forced_off,
+    reach_tables_forced, relabel_forced_off, relay_forced_off, row_columns_forced_off,
+    seed_pairs_forced, single_rows_forced_off, two_step_forced, word_cells_forced,
+    word_rows_sorted_forced,
+};
 
+mod probes;
+pub(crate) use probes::note_kept_counts_read;
+use probes::WordNote;
 #[cfg(not(test))]
-#[inline(always)]
-fn two_step_forced() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_summed() {}
-
-// A test reads every child side from the grid, as the oracle for the
-// arithmetic lookups on complete children, and counts the levels that read a
-// side by arithmetic, the meter charges of their reserved arenas, the levels
-// that read a lone g pair in every cell, and those that read one pair a
-// column; and reads each cell's column, as the oracle for the last.
-#[cfg(test)]
-use tests::{grid_lookups_forced, lone_columns_forced_off, note_lone_columns, note_lone_pair, note_lookups, note_scheduled_charge, note_whole_row};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn grid_lookups_forced() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_lookups(_lookups: PlainLookups) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_scheduled_charge() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_lone_pair() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_lone_columns() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_whole_row() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn lone_columns_forced_off() -> bool {
-    false
-}
-
-// A test builds no dead-pair masks with one multi-pair operand, as the oracle
-// for those masks, and counts the levels that build them.
-#[cfg(test)]
-use tests::{note_one_sided_masks, one_sided_masks_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn one_sided_masks_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_one_sided_masks() {}
-
-// A test builds no reach or row columns, as the oracle for the rows that
-// read them, or no row columns, and counts those rows.
-#[cfg(test)]
-use tests::{note_reach_columns_row, note_row_columns_row, reach_columns_forced_off, row_columns_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn reach_columns_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn row_columns_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_reach_columns_row() {}
-
-// A test runs every level of one pair a node through the row loop of any
-// level, as the oracle for the loop of one-pair cells, and counts the
-// levels that loop built.
-#[cfg(test)]
-use tests::{note_single_rows, single_rows_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn single_rows_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_single_rows() {}
-
-// A test reads the columns of every level read by pairs of many-pair
-// columns off the tables of their bytes' columns, and counts those levels.
-#[cfg(test)]
-use tests::{note_reach_tables, reach_tables_forced};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn reach_tables_forced() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_reach_tables() {}
-
-// A test builds every level of one-pair cells on their row loop, as the
-// oracle for the levels written as a description of relayed right
-// children, and counts those levels.
-#[cfg(test)]
-use tests::{note_relayed, relay_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn relay_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_relayed() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_row_columns_row(_whole: bool) {}
-
-// A test builds levels with their arenas left to grow, as the oracle for
-// the levels sized ahead from the first share of their walk, sizes small
-// levels ahead from a larger share, and counts the levels sized ahead by
-// route; it seeds the dense route's pair arenas small, so that the levels
-// of small diagrams outgrow them.
-#[cfg(test)]
-use tests::{ahead_after_forced, ahead_forced_off, note_ahead, seed_pairs_forced};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn ahead_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn ahead_after_forced() -> Option<usize> {
-    None
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_ahead(_sparse: bool) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn seed_pairs_forced() -> Option<usize> {
-    None
-}
-
-// A test runs every masked level on the row loop of any level, as the
-// oracle for the levels read by pairs, and counts those levels.
-#[cfg(test)]
-use tests::{note_pair_row_unrolled, note_pair_rows, pair_rows_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn pair_rows_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_pair_rows(_complete: bool, _one_pair: bool) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_pair_row_unrolled() {}
-
-// A test reads the cells of every level that can be read by g-pair vectors
-// by them, or of none, as their oracle, writes every such row's live cells
-// off the sorted list of its live candidates, and counts those levels.
-#[cfg(test)]
-use tests::{note_word_cells, word_cells_forced, word_rows_sorted_forced};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn word_cells_forced() -> Option<bool> {
-    None
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn word_rows_sorted_forced() -> bool {
-    false
-}
-
-// A test lowers the stride of the dense levels' poll gates.
-#[cfg(test)]
-use tests::dense_poll_stride_forced;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn dense_poll_stride_forced() -> Option<u64> {
-    None
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_word_cells(_what: WordNote) {}
-
-/// What a test counts of the levels read by g-pair vectors.
-#[derive(Clone, Copy)]
-enum WordNote {
-    /// A level of two grids.
-    Grids,
-    /// A level with a complete side.
-    Complete,
-    /// A cell walked in the grouped order.
-    Grouped,
-    /// A row read by vectors.
-    Row,
-    /// A row read by vectors that walks its live cells alone.
-    Cells,
-    /// A row read by vectors that writes its live cells off the sorted
-    /// list of its live candidates.
-    Sorted,
-    /// A streaming target's level, and one read through marginal lookups.
-    Stream,
-    StreamMarginal,
-    /// A sparse-marginal level.
-    SparseMarginal,
-}
-
-// A test counts the times a level's pairs arena grew.
-#[cfg(test)]
-use tests::note_pairs_grown;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_pairs_grown() {}
-
-// A test sends every level a sparse walk would take from f through
-// the walk's writes, as the oracle the move is checked against, and counts
-// the levels it took.
-#[cfg(test)]
-use tests::{lend_forced_off, note_lent};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn lend_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_lent() {}
-
-// A test counts the levels the sparse leaf arm's owner walk read from f's
-// implied nodes.
-#[cfg(test)]
-use tests::note_implied_walk;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_implied_walk(_dense: bool) {}
-
-// A test lists the levels a conjunction built as an operand holds them.
-#[cfg(test)]
-use tests::note_as_operand;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_as_operand(_t: usize, _of_f: bool) {}
-
-// A test counts the levels only the leaf arm's held products show tight.
-#[cfg(test)]
-use tests::note_held_tight;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_held_tight() {}
-
-// A test lists the route each level took.
-#[cfg(test)]
-use tests::note_route;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_route(_t: VtreeIdx, _route: Route) {}
-
-// A test sends every level past the relabelling route, as the oracle the
-// route is checked against, and counts the levels it took: moved whole, and
-// rebuilt; those of them that read through a marginal child; and the nodes
-// it wrote holding a pair twice.
-#[cfg(test)]
-use tests::{note_read_through, note_relabelled, note_written_pairs, relabel_forced_off};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn relabel_forced_off() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_relabelled(_moved: bool) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_read_through() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_written_pairs(_pairs: &[ChildPair]) {}
-
-// A test lists every child a sparse level joins, the oracle the arithmetic
-// reads of a complete child are checked against, and counts the levels that
-// read one.
-#[cfg(test)]
-use tests::{complete_sides_listed, note_complete_side, note_summed_complete_root};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn complete_sides_listed() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_complete_side(_side: crate::diagram::ChildSide) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_summed_complete_root() {}
-
-// A test counts the levels a count read from an operand's kept counts
-// instead of folding them.
-#[cfg(test)]
-use tests::note_kept_counts;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_kept_counts(_levels: usize) {}
-
-/// Note for the tests' census that a count outside the conjunction read
-/// `levels` kept columns; nothing outside the tests.
-#[inline(always)]
-pub(crate) fn note_kept_counts_read(levels: usize) {
-    note_kept_counts(levels);
-}
+use probes::*;

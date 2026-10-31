@@ -295,14 +295,11 @@ pub(super) struct ChildGrid {
 /// masks are a pair's and the row columns are over g's pairs, read off the
 /// child grid's cells without its live column masks where it has at most
 /// 64 columns (`build_pair_row_columns`); a complete side builds none.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
-    right_level: &TddLevel,
-    right_width: usize,
+    (right_level, right_width): (&TddLevel, usize),
     child: ChildGrid,
-    complete: bool,
-    pairs: bool,
+    (complete, pairs): (bool, bool),
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {

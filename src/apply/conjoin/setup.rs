@@ -387,18 +387,17 @@ struct Snapshot {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a list cannot grow.
-#[expect(clippy::too_many_arguments)]
 fn survey<'r>(
     eng: &Engine,
     vtree: &'r Vtree,
-    f: &Tdd,
-    g: &Tdd,
+    ops: Operands<&Tdd>,
     masks: Operands<VtreeMask<'r>>,
     min_grid: usize,
-    f_widths: &mut [usize],
-    g_widths: &mut [usize],
+    widths: Operands<&mut [usize]>,
     lists: &'r mut ConeLists,
 ) -> Result<(Snapshot, Cone<'r>), OperationError> {
+    let Operands { f, g } = ops;
+    let Operands { f: f_widths, g: g_widths } = widths;
     let internal = vtree.internal_bottomup_slice();
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
@@ -537,18 +536,16 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
-#[expect(clippy::too_many_arguments)]
 pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
-    f: &Tdd,
-    g: &Tdd,
-    targets: VtreeMask<'_>,
-    free: Operands<VtreeMask<'r>>,
+    ops: Operands<&Tdd>,
+    (targets, free): (VtreeMask<'_>, Operands<VtreeMask<'r>>),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
 ) -> Result<ApplyRun<'a, 'r>, OperationError> {
+    let Operands { f, g } = ops;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
     let thresholds = sparse_thresholds(lim);
@@ -559,7 +556,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
     if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
     let (Snapshot { total_cells, any_entry_marginal, might_use_sparse }, cone) = survey(
-        eng, vtree, f, g, free, min_grid, f_widths, g_widths, cone,
+        eng, vtree, ops, free, min_grid, Operands { f: f_widths, g: g_widths }, cone,
     )?;
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);

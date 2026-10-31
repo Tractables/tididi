@@ -593,10 +593,8 @@ impl Settle {
 /// one per probe of `g`'s table, a probe per pair of its sides' products,
 /// against a memoized product per pair of nodes. Each product made is
 /// appended to `f`'s level, and `grown` marks the level.
-#[allow(clippy::too_many_arguments)]
 fn block_products(
     lim: &Limits,
-    vtree: &Vtree,
     f: &mut Tdd,
     g: &Tdd,
     top: &[Option<u32>],
@@ -604,6 +602,7 @@ fn block_products(
     b: u32,
     grown: &mut [bool],
 ) -> Result<Vec<u32>, OperationError> {
+    let vtree = g.vtree();
     let whole = |u: VtreeIdx| top[u.idx()].filter(|_| g.level(u).node_count() == 1);
     // The internal levels under `t`, parents first; the descent ends where
     // `g` has only its true node.
@@ -943,7 +942,7 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
                 continue;
             }
             let to = match grid {
-                None => block_products(lim, &vtree, products.f, g, &top, t, b, &mut products.grown)?,
+                None => block_products(lim, products.f, g, &top, t, b, &mut products.grown)?,
                 Some(_) => {
                     let width = products.f.levels[t.idx()].node_count() as u32;
                     let mut to = Vec::new();

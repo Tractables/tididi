@@ -331,12 +331,12 @@ impl Products {
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] when the map's growth is refused.
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn column(
         &self,
         eng: &Engine,
-        c: usize, f_width: usize, g_width: usize,
-        carrier_f: bool, fixed: u32,
+        c: usize,
+        (f_width, g_width): (usize, usize),
+        (carrier_f, fixed): (bool, u32),
         identity: Operands<bool>,
         out: &mut Vec<u32>,
     ) -> Result<bool, OperationError> {

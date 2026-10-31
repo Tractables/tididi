@@ -388,20 +388,8 @@ pub(crate) fn expand_full(
     let scratch = &eng.scratch.negate;
     let mut marked = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
-
-    expand_full_with(eng, vtree, target, (canonical, closed), &mut marked, &mut cells, filled)
-}
-
-/// [`expand_full`] with the scratch checked out.
-fn expand_full_with(
-    eng: &Engine,
-    vtree: &crate::vtree::Vtree,
-    target: &mut Target<'_, '_>,
-    (canonical, closed): (bool, bool),
-    marked: &mut Vec<u8>,
-    cells: &mut Vec<ChildPair>,
-    filled: &mut [bool],
-) -> Result<(), OperationError> {
+    let marked = &mut *marked;
+    let cells = &mut *cells;
     let root = vtree.root();
     for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != root) {
         // Read bottom-up: a child's basis includes the fill node its own visit

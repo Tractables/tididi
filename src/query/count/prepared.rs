@@ -274,9 +274,9 @@ impl Prepared {
         }
         let bad = if bad == 0 { 0 } else { bad << packed.layout.payload };
         macro_rules! pairs { ($nodes:expr) => { match &packed.pairs {
-            Words::U16(v) => packed.fold(eng, $nodes, v, left, right, out, bad, gate),
-            Words::U32(v) => packed.fold(eng, $nodes, v, left, right, out, bad, gate),
-            Words::U64(v) => packed.fold(eng, $nodes, v, left, right, out, bad, gate),
+            Words::U16(v) => packed.fold(eng, ($nodes, v), (left, right), out, bad, gate),
+            Words::U32(v) => packed.fold(eng, ($nodes, v), (left, right), out, bad, gate),
+            Words::U64(v) => packed.fold(eng, ($nodes, v), (left, right), out, bad, gate),
         } }; }
         match &packed.nodes { Words::U16(v) => pairs!(v), Words::U32(v) => pairs!(v), Words::U64(v) => pairs!(v) }?;
         Ok(true)
@@ -301,9 +301,8 @@ impl<P: Copy + Into<u64>> Iterator for Inputs<'_, P> {
 }
 
 impl Packed {
-    #[allow(clippy::too_many_arguments)]
     fn fold<N: Copy + Into<u64>, P: Copy + Into<u64>, C: CountColumn>(
-        &self, eng: &Engine, nodes: &[N], pairs: &[P], left: &C, right: &C,
+        &self, eng: &Engine, (nodes, pairs): (&[N], &[P]), (left, right): (&C, &C),
         out: &mut C, bad: u64, gate: &mut PollGate,
     ) -> Result<(), OperationError> {
         let batch = eng.limits().reduce_poll_stride().clamp(1, 256) as usize;

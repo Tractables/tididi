@@ -55,13 +55,13 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             let ((f, f_plan), (g, g_plan)) = (place(f), place(g));
             let (mut f_widths, mut g_widths) = (vec![0; n], vec![0; n]);
 
-            let (_, cone) = survey(&eng, &into, &f, &g, Operands::default(), 0, &mut f_widths, &mut g_widths, &mut lists).unwrap();
+            let (_, cone) = survey(&eng, &into, Operands { f: &f, g: &g }, Operands::default(), 0, Operands { f: &mut f_widths, g: &mut g_widths }, &mut lists).unwrap();
             assert_eq!(cone.built, internal, "{shape}: no free level");
             assert_eq!(cone.leaves, into.leaf_bottomup_slice(), "{shape}: no free level");
             assert!(cone.tops.is_empty() && cone.free.is_empty() && cone.free_nodes == 0, "{shape}: no free level");
 
             let masks = Operands { f: VtreeMask::new(Some(&f_plan.free)), g: VtreeMask::new(Some(&g_plan.free)) };
-            let (_, cone) = survey(&eng, &into, &f, &g, masks, 0, &mut f_widths, &mut g_widths, &mut lists).unwrap();
+            let (_, cone) = survey(&eng, &into, Operands { f: &f, g: &g }, masks, 0, Operands { f: &mut f_widths, g: &mut g_widths }, &mut lists).unwrap();
             let free_at = |t: VtreeIdx| f_plan.free[t.idx()] || g_plan.free[t.idx()];
             let under_free = |t: VtreeIdx| {
                 let mut up = into.node(t).parent();
