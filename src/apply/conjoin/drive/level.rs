@@ -187,28 +187,16 @@ pub(super) fn count_sparse_root(
     sweep: &Sweep<'_, '_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
     let vtree = sweep.vtree;
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    use crate::value::{IntFold, Retention, ValueDomain};
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
     run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
 
-    let lim = eng.limits();
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    seed_kept_counts(eng, run, sweep, &mut computed, &[left, right])?;
+    let computed = fold_count_columns(eng, run, vtree, Some(sweep), &[left, right], Retention::Frontier)?;
     let levels: &[TddLevel] = run.levels;
-    let marginal = |i: usize| levels[i].is_marginal();
-    let input = FoldInput { vtree, levels, store: &() };
-    let mut gate = lim.gate();
-    for child in [left, right] {
-        IntFold::ensure(eng, child, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
-    }
-    gate.flush()?;
-
     let mut fold = CandidateFold::new(
-        lim,
+        eng.limits(),
         IntFold::child_view(li, vtree, &levels[li], &computed, &()),
         IntFold::child_view(ri, vtree, &levels[ri], &computed, &()),
     )?;
@@ -219,6 +207,35 @@ pub(super) fn count_sparse_root(
         None, &mut fold,
     )?;
     Ok(fold.finish())
+}
+
+/// Fold the count columns of `roots` over the levels built so far, seeded with
+/// `sweep`'s kept counts ([`seed_kept_counts`]) when `sweep` is given.
+fn fold_count_columns(
+    eng: &Engine,
+    run: &ApplyRun,
+    vtree: &crate::vtree::Vtree,
+    sweep: Option<&Sweep<'_, '_>>,
+    roots: &[VtreeIdx],
+    retention: crate::value::Retention,
+) -> Result<Vec<Option<crate::value::CountVec>>, OperationError> {
+    use crate::value::{CountVec, FoldInput, IntFold, ValueDomain};
+    let lim = eng.limits();
+    let mut computed: Vec<Option<CountVec>> = Vec::new();
+    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
+    computed.resize_with(vtree.num_nodes(), || None);
+    if let Some(sweep) = sweep {
+        seed_kept_counts(eng, run, sweep, &mut computed, roots)?;
+    }
+    let levels: &[TddLevel] = run.levels;
+    let marginal = |i: usize| levels[i].is_marginal();
+    let input = FoldInput { vtree, levels, store: &() };
+    let mut gate = lim.gate();
+    for &root in roots {
+        IntFold::ensure(eng, root, input, &mut computed, &marginal, retention, |w| gate.poll(w))?;
+    }
+    gate.flush()?;
+    Ok(computed)
 }
 
 /// Seed `computed` with the operands' kept counts ([`Sweep::kept`]) for the
@@ -340,7 +357,6 @@ pub(super) fn sum_sparse_root(
     vtree: &crate::vtree::Vtree,
     side: ChildSide,
 ) -> Result<Option<Vec<VtreeIdx>>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let (c, kept) = match side {
@@ -360,26 +376,15 @@ pub(super) fn sum_sparse_root(
         note_summed_complete_root();
     }
 
-    let lim = eng.limits();
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    {
-        let levels: &[TddLevel] = run.levels;
-        let marginal = |i: usize| levels[i].is_marginal();
-        let input = FoldInput { vtree, levels, store: &() };
-        let mut gate = lim.gate();
-        // `Retention::All`: the install takes every walked level's column,
-        // as the two-step pass does.
-        IntFold::ensure(eng, c, input, &mut computed, &marginal, Retention::All, |w| gate.poll(w))?;
-        gate.flush()?;
-    }
+    // `Retention::All`: the install takes every walked level's column,
+    // as the two-step pass does.
+    let mut computed = fold_count_columns(eng, run, vtree, None, &[c], crate::value::Retention::All)?;
     let col = computed[c.idx()].take().expect("the fold leaves the summed child's column");
     let kept_width = match vtree.node(kept).is_leaf() {
         true => crate::diagram::LEAF_WIDTH,
         false => run.levels[kept.idx()].slot_count(),
     };
-    let mut sum = ChildSum::new(lim, side, col, kept_width)?;
+    let mut sum = ChildSum::new(eng.limits(), side, col, kept_width)?;
     let lists = run.products.lists(li, ri, ti);
     sum_sparse_level(
         eng, shape, f, g, run.levels,
@@ -587,7 +592,7 @@ pub(super) fn count_streamed_root(
     root: (VtreeIdx, VtreeIdx, VtreeIdx),
     c: (VtreeIdx, VtreeIdx, VtreeIdx),
 ) -> Result<Option<num_bigint::BigUint>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    use crate::value::{IntFold, Retention, ValueDomain};
     let vtree = sweep.vtree;
     let (t, root_left, root_right) = root;
     let (c_t, cl, cr) = c;
@@ -599,26 +604,15 @@ pub(super) fn count_streamed_root(
     for x in [o, cl, cr] {
         run.ensure_product_list_for_child(eng, x.idx(), run.f_widths[x.idx()], run.g_widths[x.idx()])?;
     }
-    let lim = eng.limits();
     // Priced on the index sizes alone, before any count is folded: a root
     // that builds `c` after all folds its own columns.
     let read = StreamLevels { root: (t, c_left), c, o };
-    let Some(pivot) = choose_pivot(lim, &read.input(run, f, g, [&[]; 3]))? else {
+    let Some(pivot) = choose_pivot(eng.limits(), &read.input(run, f, g, [&[]; 3]))? else {
         return Ok(None);
     };
 
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    seed_kept_counts(eng, run, sweep, &mut computed, &[o, cl, cr])?;
+    let computed = fold_count_columns(eng, run, vtree, Some(sweep), &[o, cl, cr], Retention::Frontier)?;
     let levels: &[TddLevel] = run.levels;
-    let marginal = |i: usize| levels[i].is_marginal();
-    let input = FoldInput { vtree, levels, store: &() };
-    let mut gate = lim.gate();
-    for x in [o, cl, cr] {
-        IntFold::ensure(eng, x, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
-    }
-    gate.flush()?;
     let column = |x: VtreeIdx| {
         let side = IntFold::child_view(x.idx(), vtree, &levels[x.idx()], &computed, &());
         (!side.view.is_marginal() && side.col.all_u64()).then(|| side.col.fast_slice())
@@ -1387,14 +1381,14 @@ pub(super) fn build_level_dense(
             }
         }
 
+        let rows = RowLoop {
+            f_level: f.level(t), g_level: g.level(t),
+            children: Sides { left: left_level, right: right_level },
+            ctx: &cell_ctx, f_width: fw.here,
+        };
+        let f_rows = Sides { left: fw.left, right: fw.right };
         if use_sparse_marginal {
-            let rows = RowLoop {
-                f_level: f.level(t), g_level: g.level(t),
-                children: Sides { left: left_level, right: right_level },
-                ctx: &cell_ctx, f_width: fw.here,
-            };
             // Read by g-pair vectors where they pay.
-            let f_rows = Sides { left: fw.left, right: fw.right };
             let words = !(passthrough.left && passthrough.right)
                 && super::super::word_cells_forced().unwrap_or_else(|| {
                     words_pay_marginal(eng, rows, &mut *run.words, true, f_rows, run.products.arena.slab())
@@ -1417,7 +1411,6 @@ pub(super) fn build_level_dense(
         // by g-pair vectors (`run_level_rows_words`,
         // `run_level_rows_stream_words`); a streaming level needs a side
         // that is not carried through.
-        let f_rows = Sides { left: fw.left, right: fw.right };
         let words = !pairs
             && match route {
                 Route::PlainDense => !single_pair && stream_state.is_none(),
@@ -1427,11 +1420,6 @@ pub(super) fn build_level_dense(
             }
             && !matches!(lookups, PlainLookups::Complete { .. })
             && super::super::word_cells_forced().unwrap_or_else(|| {
-                let rows = RowLoop {
-                    f_level: f.level(t), g_level: g.level(t),
-                    children: Sides { left: left_level, right: right_level },
-                    ctx: &cell_ctx, f_width: fw.here,
-                };
                 let slab = run.products.arena.slab();
                 match route {
                     Route::Stream { marginal_children } => words_pay_marginal(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
@@ -1443,11 +1431,7 @@ pub(super) fn build_level_dense(
         run_row_loop(
             eng, route, lookups, single_pair, pairs,
             words.then_some((&mut *run.words, f_rows)),
-            RowLoop {
-                f_level: f.level(t), g_level: g.level(t),
-                children: Sides { left: left_level, right: right_level },
-                ctx: &cell_ctx, f_width: fw.here,
-            },
+            rows,
             RowScratch {
                 f_pairs: run.f_pairs_scratch,
                 g_pairs: run.g_pairs_scratch,

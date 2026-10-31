@@ -862,24 +862,39 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
+        collapse_target_subtrees(self, &vtree, &f, &g, &mut mask);
         // One internal target, on an unweighted conjunction: where each
         // operand has one node at the target's parent, that level may sum
         // the target out as it is built (`ConjoinMode::Sum`).
-        let summable = match targets.split_first() {
-            Some((&c, rest)) => (rest.iter().all(|&t| t == c)
-                && !vtree.node(c).is_leaf()
-                && vtree.node(c).parent().is_some()
-                && f.weights.is_none()
-                && g.weights.is_none()
-                && !two_step_forced())
-            .then_some(c),
-            None => None,
+        let summable = if f.weights.is_none() && g.weights.is_none() && !two_step_forced() {
+            let mut it = mask
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &m)| m.then_some(VtreeIdx(i as u32)));
+            match (it.next(), it.next()) {
+                (Some(c), None)
+                    if vtree.node(c).parent().is_some()
+                        && targets.iter().all(|&t| {
+                            !vtree.node(t).is_leaf()
+                                || std::iter::successors(vtree.node(t).parent(), |&x| {
+                                    vtree.node(x).parent()
+                                })
+                                .any(|x| x == c)
+                        }) =>
+                {
+                    Some(c)
+                }
+                _ => None,
+            }
+        } else {
+            None
         };
         let mode = match summable {
             Some(c) => ConjoinMode::Sum(c),
             None => ConjoinMode::Build,
         };
-        let (out, _) = conjoin_cow_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
+        let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
+        let (out, _) = conjoin_cow_as(self, f, g, summed, VtreeMask::default(), mode)?;
         let mut out = match out {
             // The root summed the target out as it found its pairs, leaving
             // what the pass below and its pair fusion leave but for the
@@ -887,7 +902,12 @@ impl crate::Engine {
             // `sparse::ChildSum::write_root`).
             Conjoined::Summed(mut out) => {
                 note_summed();
-                if let Some(parent) = targets.first().and_then(|&c| vtree.node(c).parent()) {
+                for &t in targets {
+                    if vtree.node(t).is_leaf() && !out.level(t).is_marginal() {
+                        crate::marginal::marginalize_leaf_inline(&mut out, t, &vtree);
+                    }
+                }
+                if let Some(parent) = summable.and_then(|c| vtree.node(c).parent()) {
                     #[cfg(debug_assertions)]
                     crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
                         &out, Some(&[parent]), "and_marginalizing",
@@ -962,6 +982,7 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
         }
+        collapse_target_subtrees(self, &vtree, &f, &g, &mut mask);
         // With no target left the sweep is given none, so no route reads a
         // set mask that names nothing as one that sums levels out.
         let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
@@ -983,6 +1004,132 @@ impl crate::Engine {
         match result? {
             Conjoined::Counted(count) => Ok(count),
             Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),
+        }
+    }
+}
+
+/// For each maximal internal target `c` whose subtree is scheduled in `mask`
+/// (or already marginal in an operand), clear `mask` on `c`'s strict
+/// descendants — and on `c` itself when the subtree already holds a marginal
+/// level — when `c`'s subtree has a structural level above the sparse floor or
+/// `c`'s parent is a one-node root that can sum `c` out: the subtree can then
+/// use the relabelling and sparse routes on the way up to `c`, and `c`'s
+/// parent can sum `c` out at the root (`ConjoinMode::Sum`).
+fn collapse_target_subtrees(
+    eng: &Engine,
+    vtree: &Vtree,
+    f: &Tdd,
+    g: &Tdd,
+    mask: &mut [bool],
+) {
+    const SCHED: u8 = 1 << 0;
+    const STRUCT: u8 = 1 << 1;
+    const SPINE: u8 = 1 << 2;
+    const F_UNIT: u8 = 1 << 3;
+    const G_UNIT: u8 = 1 << 4;
+    const BIG: u8 = 1 << 5;
+    const ANY_BIG: u8 = 1 << 6;
+    const CLEARED: u8 = 1 << 7;
+
+    let weighted = f.weights.is_some() || g.weights.is_some();
+    if (weighted && mask[vtree.root().idx()]) || !mask.contains(&true) {
+        return;
+    }
+    let min_grid = sparse::sparse_thresholds(eng.limits()).min_grid as u64;
+    let is_big = |u: VtreeIdx| {
+        let (fl, gl) = (f.level(u), g.level(u));
+        (fl.slot_count() as u64) * (gl.slot_count() as u64) > min_grid
+            || price::combinations_bound(fl, gl) > min_grid as u128
+    };
+    let is_marg = |u: VtreeIdx| f.level(u).is_marginal() || g.level(u).is_marginal();
+    let is_relabel = |u: VtreeIdx| {
+        single_pair(f, u.idx(), f.level(u).slot_count()).is_some()
+            || single_pair(g, u.idx(), g.level(u).slot_count()).is_some()
+    };
+
+    let mut flags = vec![0u8; vtree.num_nodes()];
+    for u in vtree.bottomup() {
+        let ui = u.idx();
+        let marg = is_marg(u);
+        if vtree.node(u).is_leaf() {
+            flags[ui] = SCHED | SPINE | F_UNIT | G_UNIT | if !marg { STRUCT } else { 0 };
+            continue;
+        }
+        let (l, r) = vtree.children(u);
+        let (fl, fr) = (flags[l.idx()], flags[r.idx()]);
+        let both = fl & fr;
+        let either = fl | fr;
+        let struct_u = !marg && (both & STRUCT != 0);
+        let big_u = is_big(u);
+        let mut b = 0u8;
+        if (mask[ui] || marg) && (both & SCHED != 0) {
+            b |= SCHED;
+        }
+        if struct_u {
+            b |= STRUCT;
+        }
+        if struct_u || ((marg || is_relabel(u)) && (both & SPINE != 0)) {
+            b |= SPINE;
+        }
+        if f.level(u).slot_count() == 1 && (both & F_UNIT != 0) {
+            b |= F_UNIT;
+        }
+        if g.level(u).slot_count() == 1 && (both & G_UNIT != 0) {
+            b |= G_UNIT;
+        }
+        if big_u || (either & ANY_BIG != 0) {
+            b |= ANY_BIG;
+        }
+        let plain_big = !marg
+            && (!weighted || (f.level(u).implicit().is_none() && g.level(u).implicit().is_none()))
+            && big_u;
+        if plain_big || (either & BIG != 0) {
+            b |= BIG;
+        }
+        flags[ui] = b;
+    }
+
+    for c in vtree.bottomup().rev() {
+        let ci = c.idx();
+        let fc = flags[ci];
+        if fc & CLEARED != 0 {
+            mask[ci] = false;
+            if !vtree.node(c).is_leaf() {
+                let (l, r) = vtree.children(c);
+                flags[l.idx()] |= CLEARED;
+                flags[r.idx()] |= CLEARED;
+            }
+            continue;
+        }
+        if c == vtree.root() || !mask[ci] || (fc & SCHED == 0) || (weighted && (fc & SPINE == 0)) {
+            continue;
+        }
+        let whole_structural = fc & STRUCT != 0;
+        let sibling_marginal = vtree.node(c).parent().is_some_and(|p| {
+            let (l, r) = vtree.children(p);
+            let s = if l == c { r } else { l };
+            is_marg(s) || mask[s.idx()]
+        });
+        let can_sum_at_parent = !weighted
+            && whole_structural
+            && (fc & (F_UNIT | G_UNIT) != 0)
+            && vtree.node(c).parent().is_some_and(|p| {
+                f.level(p).slot_count() == 1
+                    && g.level(p).slot_count() == 1
+                    && (is_big(p) || {
+                        let (l, r) = vtree.children(p);
+                        let kept = if l == c { r } else { l };
+                        flags[kept.idx()] & ANY_BIG != 0
+                    })
+            });
+        if (fc & BIG != 0) || can_sum_at_parent {
+            let relabels_c = !can_sum_at_parent && is_relabel(c);
+            if !whole_structural || sibling_marginal || relabels_c {
+                mask[ci] = false;
+            }
+            let (l, r) = vtree.children(c);
+            flags[l.idx()] |= CLEARED;
+            flags[r.idx()] |= CLEARED;
         }
     }
 }
