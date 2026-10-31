@@ -150,6 +150,7 @@ For more specialized control:
 | Pair each node of a level with a code | [`Engine::tag_level`](crate::Engine::tag_level) |
 | Pair each point with a running sum, maximum or rank of keyed values | [`Engine::prefix_fold`](crate::Engine::prefix_fold), [`FoldMonoid`](crate::apply::FoldMonoid), [`FoldRange`](crate::apply::FoldRange) |
 | Number each level's nodes in top-down walk order | [`Tdd::renumber_top_down`](crate::Tdd::renumber_top_down) |
+| Combine and count canonical diagrams whose pairs skip pass-through levels | [`SkipTdd`](crate::SkipTdd), [`Engine::to_skip`](crate::Engine::to_skip), [`Engine::to_stored`](crate::Engine::to_stored), [`Engine::skip_and`](crate::Engine::skip_and), [`Engine::skip_and_clause`](crate::Engine::skip_and_clause), [`Engine::skip_or`](crate::Engine::skip_or), [`Engine::skip_negate`](crate::Engine::skip_negate), [`Engine::skip_model_count`](crate::Engine::skip_model_count) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;

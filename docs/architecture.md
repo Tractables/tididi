@@ -32,10 +32,13 @@ directly. Vtree node indices stay fixed when the vtree is rotated, so array
 order is not a traversal order; walk levels with [`Vtree::bottomup`] to visit
 children before parents.
 
-A *marginal level* stores a value per node instead of pairs, and a reference
-into it may carry that value inline, so code outside the `diagram` module
-decodes references through [`ChildDecoder`]; see
-[Marginal levels](#marginal-levels).
+A structural reference into an internal child with a leaf sibling may encode a
+one-pair node inline by storing the leaf's two-bit mask and the grandchild
+reference in the [`EncodedChildRef`] word instead of a slot at that child
+level. A *marginal level* stores a value per node instead of pairs, and a
+reference into it may carry that value inline; see
+[Marginal levels](#marginal-levels). Code outside the `diagram` module decodes
+both inline forms through [`ChildDecoder`].
 
 Vtree constructors and grafts all finish through one checked constructor,
 which derives parent links and returns the node permutation that grafting uses
@@ -211,6 +214,9 @@ it does not substitute into the replacement functions.
 | [`diagram`] | Diagram storage, child references, weights and level pools. |
 | [`limits`] | Resource limits, cancellation, memory hooks and measurements. |
 | `value` | Count arithmetic, value domains, column storage and the shared value traversal. |
+| `sort` | Radix and comparison sorting over pair keys and scratch buffers. |
+| `isa` | Architecture-specific bit, table and arithmetic primitives. |
+| `skip` | Canonical [`SkipTdd`] diagrams whose pairs skip pass-through levels, with their conversions, Boolean operations and model counter. |
 | `build` | Constants, literals, cubes and sets of models. |
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
 | `marginal` | Summing levels into values and restoring marginal invariants. |
@@ -311,7 +317,7 @@ release build, as described under [Testing](#testing).
 | **value slot** | An index into a marginal level's value store; nodes may share one. |
 | **twin** | A node that every parent uses with the same siblings as another node; reduction merges twins into their union. |
 | **algebra** | The domain a fold computes in: the zero, the leaf values, the sum and the product an [`EvalAlgebra`] supplies. |
-| **arithmetic** | Which numeric representation a store's values use ([`Arithmetic`]): exact rationals, or the signed log domain. |
+| **arithmetic** | Which numeric representation a store's values use ([`Arithmetic`]): exact rationals, scaled floats, or the signed log domain. |
 | **cell** | A position in the conjunction's product grid: one node of each operand. |
 | **column** | A per-node value array for one level during a bottom-up fold. |
 | **fold** | One bottom-up pass computing a value per node. |
@@ -329,6 +335,7 @@ release build, as described under [Testing](#testing).
 [`RotationObjective`]: crate::restructure::search::RotationObjective
 [`ChildDecoder`]: crate::diagram::ChildDecoder
 [`EncodedChildRef`]: crate::diagram::EncodedChildRef
+[`SkipTdd`]: crate::SkipTdd
 [`Tdd`]: crate::Tdd
 [`Tdd::output`]: crate::Tdd::output
 [`Tdd::is_zero`]: crate::Tdd::is_zero
