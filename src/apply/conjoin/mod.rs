@@ -1008,9 +1008,10 @@ impl crate::Engine {
     }
 }
 
-/// For each maximal internal target `c` below the root whose entire subtree is
-/// structural in both operands and scheduled in `mask`, clear `mask` on `c`'s
-/// strict descendants when `c`'s subtree has a level above the sparse floor or
+/// For each maximal internal target `c` whose subtree is scheduled in `mask`
+/// (or already marginal in an operand), clear `mask` on `c`'s strict
+/// descendants — and on `c` itself when the subtree already holds a marginal
+/// level — when `c`'s subtree has a structural level above the sparse floor or
 /// `c`'s parent is a one-node root that can sum `c` out: the subtree can then
 /// use the relabelling and sparse routes on the way up to `c`, and `c`'s
 /// parent can sum `c` out at the root (`ConjoinMode::Sum`).
@@ -1030,32 +1031,52 @@ fn collapse_target_subtrees(
         (fl.slot_count() as u64) * (gl.slot_count() as u64) > min_grid
             || price::combinations_bound(fl, gl) > min_grid as u128
     };
-    for c in vtree.bottomup() {
-        if !mask[c.idx()] || vtree.node(c).parent().is_none_or(|p| mask[p.idx()]) {
+    let is_scheduled = |c: VtreeIdx, mask: &[bool]| {
+        mask[c.idx()]
+            && vtree.subtree(c).all(|u| {
+                vtree.node(u).is_leaf()
+                    || mask[u.idx()]
+                    || f.level(u).is_marginal()
+                    || g.level(u).is_marginal()
+            })
+    };
+    for c in vtree.bottomup().rev() {
+        if c == vtree.root() || !is_scheduled(c, mask) {
             continue;
         }
-        let whole_structural = vtree.subtree(c).all(|u| {
-            !f.level(u).is_marginal()
+        let whole_structural = vtree
+            .subtree(c)
+            .all(|u| !f.level(u).is_marginal() && !g.level(u).is_marginal());
+        let can_sum_at_parent = whole_structural
+            && vtree.node(c).parent().is_some_and(|p| {
+                f.level(p).slot_count() == 1
+                    && g.level(p).slot_count() == 1
+                    && (vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || f.level(u).slot_count() == 1)
+                        || vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || g.level(u).slot_count() == 1))
+                    && (is_big(p) || {
+                        let (l, r) = vtree.children(p);
+                        let kept = if l == c { r } else { l };
+                        vtree.subtree(kept).any(|u| !vtree.node(u).is_leaf() && is_big(u))
+                    })
+            });
+        let has_big = vtree.subtree(c).any(|u| {
+            !vtree.node(u).is_leaf()
+                && !f.level(u).is_marginal()
                 && !g.level(u).is_marginal()
-                && (vtree.node(u).is_leaf() || mask[u.idx()])
+                && is_big(u)
         });
-        if !whole_structural {
-            continue;
-        }
-        let can_sum_at_parent = vtree.node(c).parent().is_some_and(|p| {
-            f.level(p).slot_count() == 1
-                && g.level(p).slot_count() == 1
-                && (vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || f.level(u).slot_count() == 1)
-                    || vtree.subtree(c).all(|u| vtree.node(u).is_leaf() || g.level(u).slot_count() == 1))
-                && (is_big(p) || {
-                    let (l, r) = vtree.children(p);
-                    let kept = if l == c { r } else { l };
-                    vtree.subtree(kept).any(|u| !vtree.node(u).is_leaf() && is_big(u))
-                })
+        let sibling_marginal = vtree.node(c).parent().is_some_and(|p| {
+            let (l, r) = vtree.children(p);
+            let s = if l == c { r } else { l };
+            f.level(s).is_marginal() || g.level(s).is_marginal() || mask[s.idx()]
         });
-        if vtree.subtree(c).any(|u| !vtree.node(u).is_leaf() && is_big(u)) || can_sum_at_parent {
+        let relabels_c = !can_sum_at_parent
+            && (single_pair(f, c.idx(), f.level(c).slot_count()).is_some()
+                || single_pair(g, c.idx(), g.level(c).slot_count()).is_some());
+        let keep_root = whole_structural && !sibling_marginal && !relabels_c;
+        if has_big || can_sum_at_parent {
             for d in vtree.subtree(c) {
-                if d != c {
+                if d != c || !keep_root {
                     mask[d.idx()] = false;
                 }
             }

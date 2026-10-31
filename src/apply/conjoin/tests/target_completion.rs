@@ -73,3 +73,52 @@ fn target_completion_preserves_false_and_empty_requests() {
     assert!(eng.equivalent(&result, &f).unwrap());
     assert_canonical(&result);
 }
+
+#[test]
+fn collapse_target_subtrees_handles_prior_marginal_descendants_and_siblings() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(8));
+    let root = tree.root();
+    let (left, right) = tree.children(root);
+    let (ll, lr) = tree.children(left);
+    let (rl, rr) = tree.children(right);
+
+    let mut f = eng.clause(&tree, [1, 2, 3, 4]).unwrap();
+    f = eng.and(f, eng.clause(&tree, [-1, -3, 5, 6]).unwrap()).unwrap();
+    f = eng.and(f, eng.clause(&tree, [2, -4, 7, 8]).unwrap()).unwrap();
+    let mut g = eng.clause(&tree, [3, 5, 7]).unwrap();
+    g = eng.and(g, eng.clause(&tree, [-4, -6, 8]).unwrap()).unwrap();
+
+    // Step 1: marginalize `ll` inside `left`, leaving `lr` structural.
+    let mut f_step1 = f.clone();
+    eng.marginalize_levels(&mut f_step1, &[ll]).unwrap();
+    assert!(f_step1.level(ll).is_marginal());
+    assert!(!f_step1.level(lr).is_marginal());
+
+    // Step 2: schedule `[left, lr]` (and `[root, left, lr, right, rl, rr]`)
+    // when `ll` is already marginal in `f_step1`.
+    for targets in [
+        vec![left, lr],
+        vec![lr],
+        vec![left, lr, rl],
+        vec![root, left, lr, right, rl, rr],
+    ] {
+        let mut expected = eng.and(f_step1.clone(), g.clone()).unwrap();
+        eng.marginalize_levels(&mut expected, &targets).unwrap();
+        let mut actual = eng.and_marginalizing(f_step1.clone(), g.clone(), &targets).unwrap();
+        for &t in &targets {
+            assert!(actual.level(t).is_marginal(), "target {t:?} in {targets:?}");
+        }
+        assert_eq!(actual.model_count().unwrap(), expected.model_count().unwrap());
+        let counted = eng
+            .and_model_count(f_step1.clone(), g.clone(), &targets)
+            .unwrap();
+        assert_eq!(counted, expected.model_count().unwrap());
+        actual.minimize().unwrap();
+        expected.minimize().unwrap();
+        assert_canonical(&actual);
+        assert_canonical(&expected);
+        assert_eq!(actual.pair_count(), expected.pair_count());
+        assert_eq!(actual.node_count(), expected.node_count());
+    }
+}
