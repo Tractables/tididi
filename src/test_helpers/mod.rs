@@ -9,7 +9,7 @@
 //! `assert_restrict_ok`, and `ClauseStore`, which decides CNF encodings and
 //! probes without a solver; `compile` turns a formula or a truth table into a
 //! diagram and holds the small constructors (`pair`, `rat`, `exact_weight`)
-//! hand-built fixtures need. Three modules are `cfg(test)` throughout:
+//! hand-built fixtures need. Four modules are `cfg(test)` throughout:
 //!
 //! - `toy` — hand-encoded marginal diagrams too small to reach by compiling,
 //!   and `marginalize_subtree`.
@@ -23,6 +23,9 @@
 //!   `stopping_engine`, the whole-tree `rotate_left` / `rotate_right`,
 //!   `reroot_to_child`, and `restrict_paths`, the ways the care
 //!   restriction's walk took on this thread.
+//! - `implicit` — `implicit_chain`, `implicit_like_stored`, and
+//!   `same_as_stored` for testing implicit level representations against stored
+//!   ones.
 //!
 //! The canonicity oracle has a test of its own:
 //! `reduce::tests::canonicity::every_route_to_one_function_minimizes_to_the_same_diagram`

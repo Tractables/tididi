@@ -82,7 +82,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
 
         slots.reserve(lim, store_len)?;
         remap.clear();
-        lim.reserve(&mut *remap, store_len)?;
+        lim.try_resize(&mut remap, store_len, u32::MAX)?;
         let referenced =
             referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut slots);
         if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
@@ -107,7 +107,6 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // The composed remap, old slot to final slot: unreferenced slots are
         // dropped, and equal-valued referenced slots map to one output slot
         // (first occurrence wins).
-        remap.resize(store_len, u32::MAX);
         let values_merged = tdd.reindex_level(v, referenced, &mut remap, |level, weights, referenced, remap| {
             MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap, merge)
         })?;

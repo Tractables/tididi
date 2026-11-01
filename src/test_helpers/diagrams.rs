@@ -220,14 +220,8 @@ pub fn unnamed_levels(tdd: &Tdd) -> Vec<u32> {
 }
 
 /// Whether `t` lies in the subtree rooted at `root`.
-pub fn under(vtree: &Vtree, mut t: VtreeIdx, root: VtreeIdx) -> bool {
-    loop {
-        if t == root { return true; }
-        match vtree.node(t).parent() {
-            Some(parent) => t = parent,
-            None => return false,
-        }
-    }
+pub fn under(vtree: &Vtree, t: VtreeIdx, root: VtreeIdx) -> bool {
+    vtree.in_subtree(t, root)
 }
 
 /// The value of node `id` of `f` at `assignment`, indexed by `VarId::idx`,

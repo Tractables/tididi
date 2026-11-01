@@ -637,70 +637,23 @@ fn regroup(
     let owners = Runs::pack(lim, atoms.len(), &entries, 0u32)?;
     lim.discard(entries);
 
-    // Group atoms by owner set → one cell per distinct owner set. A single
-    // owner finds its cell through `by_owner`; a larger set by hashing its
-    // run and comparing it against the cells that hash alike, chained
-    // through `next_alike`. Each cell keeps the atom the scan reaches first.
+    // Group atoms by owner set → one cell per distinct owner set, and keep
+    // in each cell the atom the scan reaches first.
     let scan_key = |atom: u32| (first[atom as usize], atoms[atom as usize]);
-    let mut by_owner = Vec::new();
-    lim.try_resize(&mut by_owner, n_nodes, NONE)?;
-    let mut by_hash: FxHashMap<u64, u32> = FxHashMap::default();
-    let mut next_alike: Vec<u32> = Vec::new();
+    let (cell_of, n_cells) = group_by_owners(work, &owners)?;
     let mut cell_first: Vec<u32> = Vec::new();
-    let mut cell_of = Vec::new();
-    lim.reserve_exact(&mut cell_of, atoms.len())?;
-
-    for atom in 0..atoms.len() {
-        work.poll()?;
-        let mine = owners.get(atom);
-        let atom = u32::try_from(atom).map_err(|_| OperationError::IndexOverflow)?;
-        let digest = match *mine {
-            [_] => None,
-            _ => Some(owner_set_hash(mine)),
-        };
-        let found = match digest {
-            None => by_owner[mine[0] as usize],
-            Some(digest) => {
-                let mut cell = by_hash.get(&digest).copied().unwrap_or(NONE);
-                while cell != NONE && owners.get(cell_first[cell as usize] as usize) != mine {
-                    cell = next_alike[cell as usize];
-                }
-                cell
-            }
-        };
-        let cell = if found != NONE {
-            let kept = &mut cell_first[found as usize];
-            if scan_key(atom) < scan_key(*kept) { *kept = atom; }
-            found
-        } else {
-            let cell = u32::try_from(cell_first.len()).ok()
-                .filter(|&cell| cell != NONE)
-                .ok_or(OperationError::IndexOverflow)?;
-            let alike = match digest {
-                None => {
-                    by_owner[mine[0] as usize] = cell;
-                    NONE
-                }
-                Some(digest) => {
-                    lim.reserve_map(&mut by_hash, 1)?;
-                    by_hash.insert(digest, cell).unwrap_or(NONE)
-                }
-            };
-            lim.try_push(&mut next_alike, alike)?;
-            lim.try_push(&mut cell_first, atom)?;
-            cell
-        };
-        cell_of.push(cell);
+    lim.try_resize(&mut cell_first, n_cells, NONE)?;
+    for (atom, &cell) in cell_of.iter().enumerate() {
+        let atom = atom as u32;
+        let kept = &mut cell_first[cell as usize];
+        if *kept == NONE || scan_key(atom) < scan_key(*kept) {
+            *kept = atom;
+        }
     }
-
-    lim.discard(by_owner);
-    lim.discard(by_hash);
-    lim.discard(next_alike);
 
     // Number the cells in the order the scan reaches them, which is the order
     // of their first atoms, and list each cell's owners in that order: the
     // fan-out of a node then comes out ascending.
-    let n_cells = cell_first.len();
     let mut numbered = Vec::new();
     lim.reserve_exact(&mut numbered, n_cells)?;
     for (cell, &atom) in cell_first.iter().enumerate() {
@@ -741,7 +694,7 @@ fn regroup(
     lim.discard(first);
     lim.discard(owners);
     lim.discard(cell_first);
-    lim.discard(cell_of);
+    drop(cell_of);
     lim.discard(numbered);
     lim.discard(number);
     let mut new_nodes = Transient::new(lim, Runs::pack(lim, n_cells, &cell_pairs, TRUE_PAIR)?);
@@ -754,6 +707,45 @@ fn regroup(
     let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
     lim.discard(fanout);
     Ok(Some(remap))
+}
+
+/// Group items `0..owners.len()` by their owner set in `owners`, numbering
+/// distinct owner sets in the order they are first met. Returns each item's
+/// group and the number of groups.
+fn group_by_owners<'a>(
+    work: &mut Rewrite<'a>,
+    owners: &Runs<u32>,
+) -> Result<(Transient<'a, Vec<u32>>, usize), OperationError> {
+    let lim = work.eng.limits();
+    let n = owners.len();
+    let mut group_of = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut group_of, n)?;
+    let mut group_atom: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
+    let mut next_alike: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
+    let mut by_hash: FxHashMap<u64, u32> = FxHashMap::default();
+    for atom in 0..n {
+        work.poll()?;
+        let mine = owners.get(atom);
+        let atom = u32::try_from(atom).map_err(|_| OperationError::IndexOverflow)?;
+        let digest = owner_set_hash(mine);
+        let mut group = by_hash.get(&digest).copied().unwrap_or(NONE);
+        while group != NONE && owners.get(group_atom[group as usize] as usize) != mine {
+            group = next_alike[group as usize];
+        }
+        if group == NONE {
+            group = u32::try_from(group_atom.len())
+                .ok()
+                .filter(|&g| g != NONE)
+                .ok_or(OperationError::IndexOverflow)?;
+            lim.reserve_map(&mut by_hash, 1)?;
+            let alike = by_hash.insert(digest, group).unwrap_or(NONE);
+            lim.try_push(&mut next_alike, alike)?;
+            lim.try_push(&mut group_atom, atom)?;
+        }
+        group_of.push(group);
+    }
+    lim.discard(by_hash);
+    Ok((group_of, group_atom.len()))
 }
 
 /// What [`regroup_atom_per_pair`] did with a level.
@@ -800,22 +792,6 @@ fn regroup_atom_per_pair(
     left_remap: Option<&Remap>,
     right_remap: Option<&Remap>,
 ) -> Result<OneAtom, OperationError> {
-    /// A pair's atom, its sides ordered as the sort and the stamp read them,
-    /// with the pair's position in the scan and the node holding it.
-    #[derive(Copy, Clone)]
-    struct Keyed {
-        sorted: u32,
-        stamped: u32,
-        pair: u32,
-        owner: u32,
-    }
-    /// An atom while its run is read: the node of its first pair, and its
-    /// number among the shared atoms once a second node is found to have it.
-    #[derive(Copy, Clone)]
-    struct Seen {
-        owner: u32,
-        shared: u32,
-    }
     let lim = work.eng.limits();
     let level = &tdd.levels[parent.idx()];
     let n = level.nodes().len();
@@ -836,8 +812,7 @@ fn regroup_atom_per_pair(
             None => Some(side.0),
         }
     };
-    // Each pair's atom in scan order, where each node's run starts, and the
-    // atoms keyed for the sort.
+    // Each pair's atom in scan order and where each node's run starts.
     let mut atoms: Transient<'_, Vec<ChildPair>> = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut atoms, n_pairs)?;
     let mut starts: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
@@ -869,79 +844,11 @@ fn regroup_atom_per_pair(
         }
         starts.push(atoms.len() as u32);
     }
-    let stamp_left = left_max <= right_max;
     let span = left_max.min(right_max) as usize + 1;
     if span > n_pairs.saturating_mul(ONE_ATOM_STAMP_PER_PAIR).saturating_add(1 << 16) {
         return Ok(OneAtom::Declined);
     }
-    let mut keyed = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut keyed, n_pairs)?;
-    for (owner, node) in starts.windows(2).enumerate() {
-        for p in node[0]..node[1] {
-            let atom = atoms[p as usize];
-            let (sorted, stamped) = if stamp_left { (atom.right.0, atom.left.0) } else { (atom.left.0, atom.right.0) };
-            // `owner` fits: the nodes were counted in a `u32`.
-            keyed.push(Keyed { sorted, stamped, pair: p, owner: owner as u32 });
-        }
-    }
-    work.gate.poll(n_pairs as u64)?;
-    let bits = u32::BITS - left_max.max(right_max).leading_zeros();
-    sort_by_key_stable(work, &mut keyed, bits, |k| k.sorted)?;
-
-    // The atoms of several owners. A run holds every pair of each of its
-    // atoms, in scan order, so an atom's later owners differ from its first
-    // exactly when it is shared; a second read of a run that found one lists
-    // every pair of its shared atoms, numbering those atoms as it goes.
-    let mut stamp = Transient::new(lim, Vec::new());
-    lim.try_resize(&mut stamp, span, 0u32)?;
-    let mut slot = Transient::new(lim, Vec::new());
-    lim.try_resize(&mut slot, span, 0u32)?;
-    let mut seen: Transient<'_, Vec<Seen>> = Transient::new(lim, Vec::new());
-    // Each pair's shared atom, `NONE` for a pair whose atom has one owner.
-    let mut shared_of = Transient::new(lim, Vec::new());
-    lim.try_resize(&mut shared_of, n_pairs, NONE)?;
-    let mut shared_atoms: Transient<'_, Vec<ChildPair>> = Transient::new(lim, Vec::new());
-    {
-        let (stamp, slot, seen, shared_of): (&mut Vec<u32>, &mut Vec<u32>, &mut Vec<Seen>, &mut Vec<u32>) =
-            (&mut stamp, &mut slot, &mut seen, &mut shared_of);
-        let mut run = 0u32;
-        for same in keyed.chunk_by(|a, b| a.sorted == b.sorted) {
-            run += 1;
-            work.gate.poll(same.len() as u64)?;
-            seen.clear();
-            let mut found = false;
-            for k in same {
-                let s = k.stamped as usize;
-                if stamp[s] != run {
-                    stamp[s] = run;
-                    // A run's atoms number no more than its pairs.
-                    slot[s] = seen.len() as u32;
-                    lim.try_push(seen, Seen { owner: k.owner, shared: NONE })?;
-                } else if seen[slot[s] as usize].owner != k.owner {
-                    seen[slot[s] as usize].owner = NONE;
-                    found = true;
-                }
-            }
-            if !found {
-                continue;
-            }
-            for k in same {
-                let atom = &mut seen[slot[k.stamped as usize] as usize];
-                if atom.owner != NONE {
-                    continue;
-                }
-                if atom.shared == NONE {
-                    atom.shared = u32::try_from(shared_atoms.len()).map_err(|_| OperationError::IndexOverflow)?;
-                    lim.try_push(&mut shared_atoms, atoms[k.pair as usize])?;
-                }
-                shared_of[k.pair as usize] = atom.shared;
-            }
-        }
-    }
-    drop(keyed);
-    drop(stamp);
-    drop(slot);
-    drop(seen);
+    let (shared_of, shared_atoms) = find_shared_one_atom(work, &atoms, &starts, (left_max, right_max))?;
 
     if shared_atoms.is_empty() {
         // Each node keeps one cell, its own atoms: the partition is kept and
@@ -963,52 +870,11 @@ fn regroup_atom_per_pair(
     let shared: &[u32] = &shared_of;
     let n_shared = shared_atoms.len();
     let one_pair_each = n_pairs == n;
-    let mut group_of: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
-    let n_groups = if one_pair_each {
-        n_shared
+    let (group_of, n_groups) = if one_pair_each {
+        (Transient::new(lim, Vec::new()), n_shared)
     } else {
-        // Each shared atom's owners, ascending: the scan meets them in order.
-        let mut last = Transient::new(lim, Vec::new());
-        lim.try_resize(&mut last, n_shared, NONE)?;
-        let mut entries: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
-        for (owner, node) in starts.windows(2).enumerate() {
-            // `owner` fits: the nodes were counted in a `u32`.
-            let owner = owner as u32;
-            work.gate.poll(u64::from(node[1] - node[0]))?;
-            for &atom in &shared[node[0] as usize..node[1] as usize] {
-                if atom != NONE && last[atom as usize] != owner {
-                    last[atom as usize] = owner;
-                    lim.try_push(&mut entries, (atom, owner))?;
-                }
-            }
-        }
-        drop(last);
-        let owners = Transient::new(lim, Runs::pack(lim, n_shared, &entries, 0u32)?);
-        drop(entries);
-        lim.reserve_exact(&mut group_of, n_shared)?;
-        let mut group_atom: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
-        let mut next_alike: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
-        let mut by_hash: FxHashMap<u64, u32> = FxHashMap::default();
-        for atom in 0..n_shared {
-            work.poll()?;
-            let mine = owners.get(atom);
-            let digest = owner_set_hash(mine);
-            let mut group = by_hash.get(&digest).copied().unwrap_or(NONE);
-            while group != NONE && owners.get(group_atom[group as usize] as usize) != mine {
-                group = next_alike[group as usize];
-            }
-            if group == NONE {
-                group = u32::try_from(group_atom.len()).map_err(|_| OperationError::IndexOverflow)?;
-                lim.reserve_map(&mut by_hash, 1)?;
-                let alike = by_hash.insert(digest, group).unwrap_or(NONE);
-                lim.try_push(&mut next_alike, alike)?;
-                // The shared atoms were numbered in a `u32`.
-                lim.try_push(&mut group_atom, atom as u32)?;
-            }
-            group_of.push(group);
-        }
-        lim.discard(by_hash);
-        group_atom.len()
+        let owners = owners_of_shared_atoms(work, &starts, shared, n_shared)?;
+        group_by_owners(work, &owners)?
     };
     let group_ix: &[u32] = &group_of;
     let group = |atom: u32| if one_pair_each { atom } else { group_ix[atom as usize] };
@@ -1079,12 +945,167 @@ fn regroup_atom_per_pair(
             Runs::pack(lim, n, &fanout, 0u32)?
         }
     };
-    let n_cells = order.len();
+    emit_one_atom_nodes(
+        work,
+        tdd,
+        parent,
+        (&atoms, &starts, shared),
+        shared_atoms,
+        (group_ix, n_groups),
+        &order,
+    )?;
+    drop(order);
+    drop(number);
+    drop(group_of);
+    drop(shared_of);
+    drop(atoms);
+    drop(starts);
+    Ok(OneAtom::Done(Some(remap)))
+}
 
-    // Each group's atoms, and then every cell in its number's order: a
-    // node's own cell is its unshared atoms, read in scan order again.
+type SharedOneAtoms<'a> = (Transient<'a, Vec<u32>>, Transient<'a, Vec<ChildPair>>);
+
+/// Sort `atoms` by one side and stamp the other within each run to find the
+/// atoms that belong to more than one node. Returns each pair's shared-atom
+/// index (`NONE` when unshared) and the list of shared atoms.
+fn find_shared_one_atom<'a>(
+    work: &mut Rewrite<'a>,
+    atoms: &[ChildPair],
+    starts: &[u32],
+    (left_max, right_max): (u32, u32),
+) -> Result<SharedOneAtoms<'a>, OperationError> {
+    /// A pair's atom, its sides ordered as the sort and the stamp read them,
+    /// with the pair's position in the scan and the node holding it.
+    #[derive(Copy, Clone)]
+    struct Keyed {
+        sorted: u32,
+        stamped: u32,
+        pair: u32,
+        owner: u32,
+    }
+    /// An atom while its run is read: the node of its first pair, and its
+    /// number among the shared atoms once a second node is found to have it.
+    #[derive(Copy, Clone)]
+    struct Seen {
+        owner: u32,
+        shared: u32,
+    }
+    let lim = work.eng.limits();
+    let n_pairs = atoms.len();
+    let stamp_left = left_max <= right_max;
+    let span = left_max.min(right_max) as usize + 1;
+    let mut keyed = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut keyed, n_pairs)?;
+    for (owner, node) in starts.windows(2).enumerate() {
+        for p in node[0]..node[1] {
+            let atom = atoms[p as usize];
+            let (sorted, stamped) = if stamp_left { (atom.right.0, atom.left.0) } else { (atom.left.0, atom.right.0) };
+            // `owner` fits: the nodes were counted in a `u32`.
+            keyed.push(Keyed { sorted, stamped, pair: p, owner: owner as u32 });
+        }
+    }
+    work.gate.poll(n_pairs as u64)?;
+    let bits = u32::BITS - left_max.max(right_max).leading_zeros();
+    sort_by_key_stable(work, &mut keyed, bits, |k| k.sorted)?;
+
+    // The atoms of several owners. A run holds every pair of each of its
+    // atoms, in scan order, so an atom's later owners differ from its first
+    // exactly when it is shared; a second read of a run that found one lists
+    // every pair of its shared atoms, numbering those atoms as it goes.
+    let mut stamp = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut stamp, span, 0u32)?;
+    let mut slot = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut slot, span, 0u32)?;
+    let mut seen: Transient<'_, Vec<Seen>> = Transient::new(lim, Vec::new());
+    // Each pair's shared atom, `NONE` for a pair whose atom has one owner.
+    let mut shared_of = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut shared_of, n_pairs, NONE)?;
+    let mut shared_atoms: Transient<'_, Vec<ChildPair>> = Transient::new(lim, Vec::new());
+    {
+        let (stamp, slot, seen, shared_of): (&mut Vec<u32>, &mut Vec<u32>, &mut Vec<Seen>, &mut Vec<u32>) =
+            (&mut stamp, &mut slot, &mut seen, &mut shared_of);
+        let mut run = 0u32;
+        for same in keyed.chunk_by(|a, b| a.sorted == b.sorted) {
+            run += 1;
+            work.gate.poll(same.len() as u64)?;
+            seen.clear();
+            let mut found = false;
+            for k in same {
+                let s = k.stamped as usize;
+                if stamp[s] != run {
+                    stamp[s] = run;
+                    // A run's atoms number no more than its pairs.
+                    slot[s] = seen.len() as u32;
+                    lim.try_push(seen, Seen { owner: k.owner, shared: NONE })?;
+                } else if seen[slot[s] as usize].owner != k.owner {
+                    seen[slot[s] as usize].owner = NONE;
+                    found = true;
+                }
+            }
+            if !found {
+                continue;
+            }
+            for k in same {
+                let atom = &mut seen[slot[k.stamped as usize] as usize];
+                if atom.owner != NONE {
+                    continue;
+                }
+                if atom.shared == NONE {
+                    atom.shared = u32::try_from(shared_atoms.len()).map_err(|_| OperationError::IndexOverflow)?;
+                    lim.try_push(&mut shared_atoms, atoms[k.pair as usize])?;
+                }
+                shared_of[k.pair as usize] = atom.shared;
+            }
+        }
+    }
+    Ok((shared_of, shared_atoms))
+}
+
+/// Pack each shared atom's owners in ascending node order.
+fn owners_of_shared_atoms<'a>(
+    work: &mut Rewrite<'a>,
+    starts: &[u32],
+    shared: &[u32],
+    n_shared: usize,
+) -> Result<Transient<'a, Runs<u32>>, OperationError> {
+    let lim = work.eng.limits();
+    // Each shared atom's owners, ascending: the scan meets them in order.
+    let mut last = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut last, n_shared, NONE)?;
+    let mut entries: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
+    for (owner, node) in starts.windows(2).enumerate() {
+        // `owner` fits: the nodes were counted in a `u32`.
+        let owner = owner as u32;
+        work.gate.poll(u64::from(node[1] - node[0]))?;
+        for &atom in &shared[node[0] as usize..node[1] as usize] {
+            if atom != NONE && last[atom as usize] != owner {
+                last[atom as usize] = owner;
+                lim.try_push(&mut entries, (atom, owner))?;
+            }
+        }
+    }
+    drop(last);
+    Ok(Transient::new(lim, Runs::pack(lim, n_shared, &entries, 0u32)?))
+}
+
+/// Pack each shared-atom group's atoms and write every cell of `parent` in its
+/// number's order: a node's own cell is its unshared atoms, read in scan order
+/// again.
+fn emit_one_atom_nodes(
+    work: &mut Rewrite<'_>,
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    (atoms, starts, shared): (&[ChildPair], &[u32], &[u32]),
+    shared_atoms: Transient<'_, Vec<ChildPair>>,
+    (group_ix, n_groups): (&[u32], usize),
+    order: &[u32],
+) -> Result<(), OperationError> {
+    let lim = work.eng.limits();
+    let n = starts.len() - 1;
+    let one_pair_each = atoms.len() == n;
+    let group = |atom: u32| if one_pair_each { atom } else { group_ix[atom as usize] };
     let mut grouped: Transient<'_, Vec<(u32, ChildPair)>> = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut grouped, n_shared)?;
+    lim.reserve_exact(&mut grouped, shared_atoms.len())?;
     grouped.extend(shared_atoms.iter().enumerate().map(|(atom, &pair)| (group(atom as u32), pair)));
     drop(shared_atoms);
     let mut groups = Transient::new(lim, Runs::pack(lim, n_groups, &grouped, TRUE_PAIR)?);
@@ -1092,8 +1113,8 @@ fn regroup_atom_per_pair(
     let mut own: Vec<ChildPair> = Vec::new();
     let level = &mut tdd.levels[parent.idx()];
     level.clear();
-    lim.reserve_exact(level.nodes.stored_mut(), n_cells)?;
-    for &cell in order.iter() {
+    lim.reserve_exact(level.nodes.stored_mut(), order.len())?;
+    for &cell in order {
         match (cell as usize).checked_sub(n) {
             Some(group) => write_cell(work, level, groups.get_mut(group))?,
             None => {
@@ -1111,14 +1132,7 @@ fn regroup_atom_per_pair(
     lim.discard(own);
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, parent)?;
-    drop(groups);
-    drop(order);
-    drop(number);
-    drop(group_of);
-    drop(shared_of);
-    drop(atoms);
-    drop(starts);
-    Ok(OneAtom::Done(Some(remap)))
+    Ok(())
 }
 
 /// Write one cell into `level` from its atoms, sorted and without repeats,

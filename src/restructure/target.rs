@@ -374,7 +374,7 @@ impl Mover<'_, '_> {
             for t in self.tdd.vtree.subtree(u) {
                 lim.check_stop()?;
                 if let VtreeNode::Leaf { var, .. } = self.tdd.vtree.node(t) {
-                    exact &= under(self.target, self.target.leaf_of(*var).expect("same variables"), partner);
+                    exact &= self.target.in_subtree(self.target.leaf_of(*var).expect("same variables"), partner);
                 }
             }
         }
@@ -425,7 +425,7 @@ impl Mover<'_, '_> {
         for t in self.tdd.vtree.bottomup() {
             lim.check_stop()?;
             counts[t.idx()] = match self.tdd.vtree.node(t) {
-                VtreeNode::Leaf { var, .. } => (u32::from(under(self.target, self.target.leaf_of(*var).expect("same variables"), target)), 1),
+                VtreeNode::Leaf { var, .. } => (u32::from(self.target.in_subtree(self.target.leaf_of(*var).expect("same variables"), target)), 1),
                 VtreeNode::Internal { left, right, .. } => {
                     let (l, r) = (counts[left.idx()], counts[right.idx()]);
                     (l.0 + r.0, l.1 + r.1)
@@ -518,10 +518,15 @@ impl Mover<'_, '_> {
 
     /// Exchange node `t`'s children and read its level's pairs the other way.
     fn mirror(&mut self, t: VtreeIdx) {
-        Arc::make_mut(&mut self.tdd.vtree).swap_children(t);
-        self.tdd.levels[t.idx()].swap_sides();
+        mirror_at(self.tdd, t);
         self.stats.mirrors += 1;
     }
+}
+
+/// Exchange node `t`'s children and read its level's pairs the other way.
+fn mirror_at(tdd: &mut Tdd, t: VtreeIdx) {
+    Arc::make_mut(&mut tdd.vtree).swap_children(t);
+    tdd.levels[t.idx()].swap_sides();
 }
 
 /// Keep every rotation, and remember what it did to the pair count.
@@ -557,9 +562,8 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
                 let (tl, tr) = target.children(t);
                 let (mut sl, mut sr) = tdd.vtree.children(s);
                 let some_leaf = first_leaf(&tdd.vtree, sl);
-                if !under(target, target.leaf_of(some_leaf).expect("same variables"), tl) {
-                    Arc::make_mut(&mut tdd.vtree).swap_children(s);
-                    tdd.levels[s.idx()].swap_sides();
+                if !target.in_subtree(target.leaf_of(some_leaf).expect("same variables"), tl) {
+                    mirror_at(tdd, s);
                     mirrors += 1;
                     std::mem::swap(&mut sl, &mut sr);
                 }
@@ -590,19 +594,6 @@ fn first_leaf(vtree: &Vtree, mut t: VtreeIdx) -> VarId {
         match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => return *var,
             VtreeNode::Internal { left, .. } => t = *left,
-        }
-    }
-}
-
-/// Whether `node` lies in the subtree of `root`.
-fn under(vtree: &Vtree, mut node: VtreeIdx, root: VtreeIdx) -> bool {
-    loop {
-        if node == root {
-            return true;
-        }
-        match vtree.node(node).parent() {
-            Some(parent) => node = parent,
-            None => return false,
         }
     }
 }

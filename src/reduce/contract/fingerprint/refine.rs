@@ -1189,28 +1189,16 @@ impl Partition<'_> {
             return Ok(false);
         }
         let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
-        // The slots in use, one bit each.
-        let (mut d, mut used) = (1usize, 1u8);
+        let mut d = 1usize;
         let mut listed = 0;
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
-            let hit = u8::from(s == sib[0])
-                | u8::from(s == sib[1]) << 1
-                | u8::from(s == sib[2]) << 2
-                | u8::from(s == sib[3]) << 3;
-            let mut bit = hit & used;
-            if bit == 0 {
-                if d == FEW_SIBLINGS {
-                    for &t in &wide.bucket[..listed] {
-                        wide.code[t as usize] = 0;
-                    }
-                    return Ok(false);
+            let Some(bit) = sibling_bit(&mut sib, &mut d, s) else {
+                for &t in &wide.bucket[..listed] {
+                    wide.code[t as usize] = 0;
                 }
-                sib[d] = s;
-                bit = 1 << d;
-                used |= bit;
-                d += 1;
-            }
+                return Ok(false);
+            };
             let e = &mut wide.code[t as usize];
             wide.bucket[listed] = t;
             listed += usize::from(*e == 0);
@@ -1255,7 +1243,7 @@ impl Partition<'_> {
         wide.touched.clear();
         lim.reserve_exact(wide.touched, pairs.len())?;
         let mut sib = [split_pair(&pairs[0], side).1; FEW_SIBLINGS];
-        let (mut d, mut used) = (1usize, 1u8);
+        let mut d = 1usize;
         let (mut listed, mut last) = (0usize, None);
         // Whether every node listed is in the first class with no pair
         // read before naming it.
@@ -1273,20 +1261,9 @@ impl Partition<'_> {
                 if u != t {
                     break;
                 }
-                let hit = u8::from(s == sib[0])
-                    | u8::from(s == sib[1]) << 1
-                    | u8::from(s == sib[2]) << 2
-                    | u8::from(s == sib[3]) << 3;
-                let mut bit = hit & used;
-                if bit == 0 {
-                    if d == FEW_SIBLINGS {
-                        return Ok(Degrees::Many);
-                    }
-                    sib[d] = s;
-                    bit = 1 << d;
-                    used |= bit;
-                    d += 1;
-                }
+                let Some(bit) = sibling_bit(&mut sib, &mut d, s) else {
+                    return Ok(Degrees::Many);
+                };
                 e |= bit;
                 k += 1;
             }
@@ -1601,4 +1578,27 @@ fn group_runs(
         }
     }
     Ok(())
+}
+
+/// The bit of sibling `code` among the `d` slots of `sib` in use, allocating a
+/// new slot when `code` has not been seen yet and fewer than [`FEW_SIBLINGS`]
+/// slots are in use.
+#[inline(always)]
+fn sibling_bit(sib: &mut [u32; FEW_SIBLINGS], d: &mut usize, code: u32) -> Option<u8> {
+    let used = (1u8 << *d) - 1;
+    let hit = u8::from(code == sib[0])
+        | u8::from(code == sib[1]) << 1
+        | u8::from(code == sib[2]) << 2
+        | u8::from(code == sib[3]) << 3;
+    let bit = hit & used;
+    if bit != 0 {
+        return Some(bit);
+    }
+    if *d == FEW_SIBLINGS {
+        return None;
+    }
+    sib[*d] = code;
+    let bit = 1 << *d;
+    *d += 1;
+    Some(bit)
 }

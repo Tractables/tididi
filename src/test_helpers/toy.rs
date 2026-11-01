@@ -20,18 +20,7 @@ pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     let counts = node_counts(tdd);
     for &t in vtree.bottomup_slice() {
         let ti = t.idx();
-        let mut under = t == root;
-        if !under {
-            let mut cur = t;
-            while let Some(p) = vtree.node(cur).parent() {
-                if p == root {
-                    under = true;
-                    break;
-                }
-                cur = p;
-            }
-        }
-        if !under {
+        if !vtree.in_subtree(t, root) {
             continue;
         }
         if matches!(*vtree.node(VtreeIdx(ti as u32)), VtreeNode::Leaf { .. }) || tdd.levels[ti].is_marginal() {

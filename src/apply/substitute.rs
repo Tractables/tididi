@@ -141,8 +141,7 @@ impl Engine {
                     let level = f.level(t);
                     lim.reserve_exact(&mut columns[t.idx()], level.nodes().len())?;
                     for (i, node) in level.nodes().iter().enumerate() {
-                        // One disjunction per node: a fold of `or` over the
-                        // pairs would complement the growing sum at each step.
+                        // One balanced disjunction per node rather than a linear fold over its pairs.
                         let mut terms = Vec::new();
                         terms.try_reserve(level.pair_count_at(i)).map_err(|_| OperationError::OverBudget)?;
                         for pair in level.pairs_iter_of(&node) {

@@ -18,21 +18,9 @@ fn patterns(vtree: &Vtree) -> Vec<Vec<VarId>> {
     if leaves.len() > 1 {
         out.push(leaves[1..].to_vec());
         let (left, _) = vtree.children(vtree.root());
-        out.push(vtree.leaf_bottomup().filter(|&(t, _)| under(vtree, t, left)).map(|(_, v)| v).collect());
+        out.push(vtree.leaf_bottomup().filter(|&(t, _)| vtree.in_subtree(t, left)).map(|(_, v)| v).collect());
     }
     out
-}
-
-fn under(vtree: &Vtree, mut t: crate::vtree::VtreeIdx, root: crate::vtree::VtreeIdx) -> bool {
-    loop {
-        if t == root {
-            return true;
-        }
-        match vtree.node(t).parent() {
-            Some(p) => t = p,
-            None => return false,
-        }
-    }
 }
 
 /// Project `f` onto `keep` (local ids in `keep`'s order) and check the

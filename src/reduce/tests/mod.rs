@@ -21,10 +21,7 @@ fn edited_marginal_diagram(eng: &Engine) -> crate::Tdd {
     let mut g = eng.clause(&vtree, [1, 5]).unwrap();
     let (left, _) = vtree.children(vtree.root());
     let summed: Vec<VtreeIdx> = vtree.internal_bottomup_slice().iter().copied()
-        .filter(|&t| { let mut cur = t; loop {
-            if cur == left { break true; }
-            match vtree.node(cur).parent() { Some(p) => cur = p, None => break false }
-        } })
+        .filter(|&t| vtree.in_subtree(t, left))
         .collect();
     eng.marginalize_levels(&mut g, &summed).unwrap();
     let f = eng.and(g, eng.literal(&vtree, 8).unwrap()).unwrap();

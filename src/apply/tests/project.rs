@@ -249,19 +249,10 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     // which production does not create.
     let mut marginal_vars: Vec<u32> = Vec::new();
     for vi in 0..vtree.num_nodes() {
-        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
-            let mut cur = VtreeIdx(vi as u32);
-            let mut under = cur == ra;
-            while let Some(p) = vtree.node(cur).parent() {
-                if p == ra {
-                    under = true;
-                    break;
-                }
-                cur = p;
-            }
-            if under {
-                marginal_vars.push(var.0);
-            }
+        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32))
+            && vtree.in_subtree(VtreeIdx(vi as u32), ra)
+        {
+            marginal_vars.push(var.0);
         }
     }
     marginal_vars.sort_unstable();

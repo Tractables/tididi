@@ -303,6 +303,51 @@ pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
     Ok(keep)
 }
 
+/// A diagram's output, certification, closed-levels state, and pending
+/// reduction obligations, saved before a rotation trial or pool move.
+pub(super) struct DiagramHeader {
+    output: TddNodeId,
+    canonical: bool,
+    closed: bool,
+    pub(super) dirty: Dirty,
+}
+
+impl DiagramHeader {
+    /// Take the header from `tdd`, moving its pending obligations out.
+    pub(super) fn take(tdd: &mut Tdd) -> Self {
+        let output = tdd.output;
+        DiagramHeader {
+            output,
+            canonical: tdd.levels.is_canonical(output),
+            closed: tdd.levels.is_closed(),
+            dirty: std::mem::take(&mut tdd.dirty),
+        }
+    }
+
+    /// Snapshot the header of `tdd`, cloning its pending obligations.
+    pub(super) fn clone_from_tdd(tdd: &Tdd) -> Self {
+        let output = tdd.output;
+        DiagramHeader {
+            output,
+            canonical: tdd.levels.is_canonical(output),
+            closed: tdd.levels.is_closed(),
+            dirty: tdd.dirty.clone(),
+        }
+    }
+
+    /// Put the header back on `tdd`.
+    pub(super) fn restore(self, tdd: &mut Tdd) {
+        tdd.output = self.output;
+        tdd.dirty = self.dirty;
+        if self.canonical {
+            tdd.levels.certify(self.output);
+        }
+        if self.closed {
+            tdd.reinstate_closed_levels();
+        }
+    }
+}
+
 /// Own a sequence's preimage until its topology and levels are committed together.
 struct RotationTrial<'a> {
     tdd: &'a mut Tdd,
@@ -314,11 +359,7 @@ struct RotationTrial<'a> {
     /// reached it, parallel to `preimages`.
     changed: SmallVec<[VtreeIdx; 2]>,
     preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
-    old_output: TddNodeId,
-    old_canonical: bool,
-    /// Whether every level was closed, which a rollback reinstates.
-    old_closed: bool,
-    old_dirty: Option<Dirty>,
+    header: Option<DiagramHeader>,
     /// Set by [`commit`](RotationTrial::commit), so the rollback in `Drop` knows
     /// there is nothing left to roll back.
     committed: bool,
@@ -327,20 +368,14 @@ struct RotationTrial<'a> {
 impl<'a> RotationTrial<'a> {
     /// Take the state a rollback restores.
     fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
-        let old_output = tdd.output;
-        let old_canonical = tdd.levels.is_canonical(old_output);
-        let old_closed = tdd.levels.is_closed();
-        let old_dirty = Some(std::mem::take(&mut tdd.dirty));
+        let header = Some(DiagramHeader::take(tdd));
         RotationTrial {
             tdd,
             lim,
             pending: SmallVec::new(),
             changed: SmallVec::new(),
             preimages: SmallVec::new(),
-            old_output,
-            old_canonical,
-            old_closed,
-            old_dirty,
+            header,
             committed: false,
         }
     }
@@ -393,7 +428,7 @@ impl<'a> RotationTrial<'a> {
         // dropped both, which left a later `minimize` skipping levels it still
         // owed work on. The pair fusion records stand where no move rebuilt
         // or pushed a level.
-        let carried = self.old_dirty.take().expect("a trial takes the worklists when it is created");
+        let carried = self.header.take().expect("a trial takes the worklists when it is created").dirty;
         self.tdd.dirty.merge_under_kept(carried, &changed);
     }
 }
@@ -412,11 +447,8 @@ impl Drop for RotationTrial<'_> {
             let rebuilt = std::mem::replace(&mut self.tdd.levels[level.idx()], preimage.keep());
             self.lim.discard(rebuilt);
         }
-        self.tdd.output = self.old_output;
-        if let Some(dirty) = self.old_dirty.take() {
-            self.tdd.dirty = dirty;
+        if let Some(header) = self.header.take() {
+            header.restore(self.tdd);
         }
-        if self.old_canonical { self.tdd.levels.certify(self.old_output); }
-        if self.old_closed { self.tdd.reinstate_closed_levels(); }
     }
 }

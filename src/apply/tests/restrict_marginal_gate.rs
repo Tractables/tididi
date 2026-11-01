@@ -49,19 +49,10 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
     let support_of = |root: VtreeIdx| -> Vec<u32> {
         let mut s = Vec::new();
         for vi in 0..vtree.num_nodes() {
-            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
-                let mut cur = VtreeIdx(vi as u32);
-                let mut under = cur == root;
-                while let Some(p) = vtree.node(cur).parent() {
-                    if p == root {
-                        under = true;
-                        break;
-                    }
-                    cur = p;
-                }
-                if under {
-                    s.push(var.0);
-                }
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32))
+                && vtree.in_subtree(VtreeIdx(vi as u32), root)
+            {
+                s.push(var.0);
             }
         }
         s

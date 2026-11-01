@@ -781,8 +781,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         }
         for (slots, n) in [(&mut w.slots.left, f_rows.left), (&mut w.slots.right, f_rows.right)] {
             slots.clear();
-            lim.reserve_exact(slots, n)?;
-            slots.resize(n, UNBUILT);
+            lim.try_resize(slots, n, UNBUILT)?;
         }
         let strides = (ctx.sides.left.stride as usize, ctx.sides.right.stride as usize);
         if kills.0 {
@@ -796,14 +795,11 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         w.summaries.left.clear();
         w.summaries.right.clear();
         w.col_slot.clear();
-        lim.reserve_exact(&mut w.col_slot, width)?;
-        w.col_slot.resize(width, 0);
+        lim.try_resize(&mut w.col_slot, width, 0)?;
         w.counts.clear();
-        lim.reserve_exact(&mut w.counts, width)?;
-        w.counts.resize(width, 0);
+        lim.try_resize(&mut w.counts, width, 0)?;
         w.col_live.clear();
-        lim.reserve_exact(&mut w.col_live, width.div_ceil(64))?;
-        w.col_live.resize(width.div_ceil(64), 0);
+        lim.try_resize(&mut w.col_live, width.div_ceil(64), 0)?;
         w.live_cols.clear();
         lim.reserve_exact(&mut w.live_cols, width)?;
         // Each g pair's run in its column, where the column table grouped it.
@@ -815,8 +811,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
                 if let Some(runs) = cols.runs(j) {
                     let start = w.col_start[j] as usize;
                     if w.run_of.is_empty() {
-                        lim.reserve_exact(&mut w.run_of, w.g_flat.len())?;
-                        w.run_of.resize(w.g_flat.len(), 0);
+                        lim.try_resize(&mut w.run_of, w.g_flat.len(), 0)?;
                     }
                     let mut from = 0;
                     for (r, &end) in runs.iter().enumerate() {
@@ -826,17 +821,14 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
                     most = most.max(runs.len());
                 }
             }
-            lim.reserve_exact(&mut w.run_counts, most)?;
-            w.run_counts.resize(most, 0);
+            lim.try_resize(&mut w.run_counts, most, 0)?;
         }
         let words = w.g_flat.len().div_ceil(64);
         let sum_words = words.div_ceil(64);
         w.union.clear();
-        lim.reserve_exact(&mut w.union, words)?;
-        w.union.resize(words, 0);
+        lim.try_resize(&mut w.union, words, 0)?;
         w.union_sum.clear();
-        lim.reserve_exact(&mut w.union_sum, sum_words)?;
-        w.union_sum.resize(sum_words, 0);
+        lim.try_resize(&mut w.union_sum, sum_words, 0)?;
         Ok(ByWords { sink, w, lim, words, sum_words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cell_words: 0, written: 0, cursor: 0, runs_row: usize::MAX })
     }
 
@@ -1082,8 +1074,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
                 w.counts[c as usize] = at;
                 at += n;
             }
-            lim.reserve_exact(&mut w.sorted, w.entries.len())?;
-            w.sorted.resize(w.entries.len(), 0);
+            lim.try_resize(&mut w.sorted, w.entries.len(), 0)?;
             for &e in &w.entries {
                 let c = col(e);
                 w.sorted[w.counts[c] as usize] = e;
@@ -1138,9 +1129,8 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         let mut bits = std::mem::take(&mut w.cell_bits);
         bits.clear();
         let n = w.live_cols.len() * cell_words;
-        let grown = self.lim.reserve_exact(&mut bits, n);
+        let grown = self.lim.try_resize(&mut bits, n, 0);
         if grown.is_ok() {
-            bits.resize(n, 0);
             for k in 0..n1 {
                 let (at, bit) = (k / 64, 1u64 << (k % 64));
                 live_words(w, words, kills, w.row_slots[k], |word, mut m| {
@@ -1375,8 +1365,7 @@ fn by_child(
     lim.reserve_exact(by_child, g_flat.len())?;
     if width <= 4 * g_flat.len() + 4096 {
         counts.clear();
-        lim.reserve_exact(counts, width)?;
-        counts.resize(width, 0);
+        lim.try_resize(counts, width, 0)?;
         for q in g_flat {
             counts[field(q) as usize] += 1;
         }

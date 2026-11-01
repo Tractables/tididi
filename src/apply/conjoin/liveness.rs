@@ -261,8 +261,7 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
     }
     let words = width.div_ceil(64);
     let bits = 128 - reach.iter().fold(0u128, |any, &r| any | r).leading_zeros() as usize;
-    eng.limits().reserve_exact(columns, bits * words)?;
-    columns.resize(bits * words, 0);
+    eng.limits().try_resize(columns, bits * words, 0)?;
     for (j, &r) in reach.iter().enumerate() {
         let mut r = r;
         while r != 0 {

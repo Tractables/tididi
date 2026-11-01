@@ -207,11 +207,7 @@ impl Engine {
         let lim = eng.limits();
         let _op = lim.enter()?;
         tdd.check_level_indices(&[root])?;
-        let additional = tdd.vtree.num_nodes().saturating_sub(tried.len());
-        if additional != 0 {
-            lim.reserve(tried, additional)?;
-            tried.resize(tdd.vtree.num_nodes(), 0);
-        }
+        lim.try_resize(tried, tdd.vtree.num_nodes(), 0)?;
         let allow = subtree_allow_mask(&tdd.vtree, root);
         // Read-only bail: no candidate ⇒ no vtree clone, no work.
         let mut cands = collect_cluster_candidates(tdd, &allow);

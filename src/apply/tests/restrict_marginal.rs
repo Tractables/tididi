@@ -39,19 +39,10 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
     let support_of = |root: VtreeIdx| -> BTreeSet<u32> {
         let mut s = BTreeSet::new();
         for vi in 0..vtree.num_nodes() {
-            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
-                let mut cur = VtreeIdx(vi as u32);
-                let mut under = cur == root;
-                while let Some(p) = vtree.node(cur).parent() {
-                    if p == root {
-                        under = true;
-                        break;
-                    }
-                    cur = p;
-                }
-                if under {
-                    s.insert(var.0);
-                }
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32))
+                && vtree.in_subtree(VtreeIdx(vi as u32), root)
+            {
+                s.insert(var.0);
             }
         }
         s
@@ -259,19 +250,10 @@ fn restrict_marginal_care_same_regions(
     let vars_under = |root: VtreeIdx| -> Vec<VarId> {
         let mut s = Vec::new();
         for vi in 0..vtree.num_nodes() {
-            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32)) {
-                let mut cur = VtreeIdx(vi as u32);
-                let mut under = cur == root;
-                while let Some(p) = vtree.node(cur).parent() {
-                    if p == root {
-                        under = true;
-                        break;
-                    }
-                    cur = p;
-                }
-                if under {
-                    s.push(var);
-                }
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32))
+                && vtree.in_subtree(VtreeIdx(vi as u32), root)
+            {
+                s.push(var);
             }
         }
         s

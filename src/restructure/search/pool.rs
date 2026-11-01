@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use crate::Engine;
-use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{Tdd, TddLevel};
 use crate::limits::{Charged, Limits, OperationError, Transient};
 use crate::restructure::relevel::{
     Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too,
@@ -29,6 +29,7 @@ use crate::vtree::rng::Lcg;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
+use super::probe::DiagramHeader;
 
 /// A rotation, with the promoted child's children swapped first if
 /// `crossed`.
@@ -599,7 +600,7 @@ struct Undo<'a> {
     known: Known,
     /// Each member's output, whether it was canonical and closed, and its
     /// pending reduction work.
-    members: Vec<(TddNodeId, bool, bool, Dirty)>,
+    members: Vec<DiagramHeader>,
     /// Whether a level of every member at each node is filed in `levels`.
     filed: Vec<bool>,
     /// (member, node, the level as the restart found it).
@@ -613,7 +614,7 @@ impl<'a> Undo<'a> {
         Undo {
             tree: tree.clone(),
             known: known.clone(),
-            members: members.iter().map(|m| (m.output, m.levels.is_canonical(m.output), m.levels.is_closed(), m.dirty.clone())).collect(),
+            members: members.iter().map(|m| DiagramHeader::clone_from_tdd(m)).collect(),
             filed: vec![false; tree.num_nodes()],
             levels: Vec::new(),
             pairs: live_pairs(members),
@@ -645,15 +646,8 @@ impl<'a> Undo<'a> {
             let rebuilt = std::mem::replace(&mut members[i].levels[t], level.keep());
             lim.discard(rebuilt);
         }
-        for (m, (output, canonical, closed, dirty)) in members.iter_mut().zip(self.members) {
-            m.output = output;
-            m.dirty = dirty;
-            if canonical {
-                m.levels.certify(output);
-            }
-            if closed {
-                m.reinstate_closed_levels();
-            }
+        for (m, header) in members.iter_mut().zip(self.members) {
+            header.restore(m);
         }
         *tree = self.tree;
         *known = self.known;
@@ -878,13 +872,12 @@ impl BoundedMove {
 
 /// What one member needs to be put back as it was.
 struct Saved<'a> {
-    output: TddNodeId,
-    canonical: bool,
-    closed: bool,
-    dirty: Dirty,
+    header: DiagramHeader,
     /// The levels the rebuild replaced, outer then inner.
     levels: Option<(Transient<'a, TddLevel>, Transient<'a, TddLevel>)>,
 }
+
+type SavedMembers<'a> = Transient<'a, Vec<(usize, Saved<'a>)>>;
 
 /// Member `i`'s two levels at `step` rebuilt within `step.bound`, from
 /// `prepared` where the probe prepared them, and what it needs to be put back
@@ -901,10 +894,7 @@ fn rebuild_member<'a>(
 ) -> Result<Option<usize>, OperationError> {
     let BoundedMove { info, mv, .. } = step;
     saved.push((i, Saved {
-        output: m.output,
-        canonical: m.levels.is_canonical(m.output),
-        closed: m.levels.is_closed(),
-        dirty: std::mem::take(&mut m.dirty),
+        header: DiagramHeader::take(m),
         levels: None,
     }));
     m.levels.forget();
@@ -918,6 +908,35 @@ fn rebuild_member<'a>(
     };
     saved.last_mut().expect("pushed above").1.levels = Some((Transient::new(lim, outer), Transient::new(lim, inner)));
     Ok(Some(m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs()))
+}
+
+/// Rebuild every member at `step`, stopping on the first refusal or error, and
+/// returning the saved preimages and outcome for [`settle`].
+fn rebuild_other_members<'a>(
+    lim: &'a Limits,
+    members: &mut [&mut Tdd],
+    step: BoundedMove,
+    scratch: &mut RestructureScratch,
+    mut on_rebuilt: impl FnMut(usize, bool, usize) -> Result<(), OperationError>,
+    mut prepared: Option<&mut [Option<Prepared>]>,
+) -> Result<(SavedMembers<'a>, Result<bool, OperationError>), OperationError> {
+    let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
+    lim.reserve_exact(&mut saved, members.len())?;
+    let mut outcome: Result<bool, OperationError> = Ok(true);
+    for (i, m) in members.iter_mut().enumerate() {
+        let prep = prepared.as_deref_mut().and_then(|p| p[i].as_mut());
+        let had_prep = prep.is_some();
+        let rebuilt = rebuild_member(lim, i, m, step, prep, &mut saved, scratch);
+        debug_assert!(!had_prep || !matches!(rebuilt, Ok(None)), "a rebuild passes the bound its preparation passed");
+        outcome = match rebuilt {
+            Ok(Some(pairs)) => on_rebuilt(i, had_prep, pairs).map(|()| true),
+            other => other.map(|_| false),
+        };
+        if !matches!(outcome, Ok(true)) {
+            break;
+        }
+    }
+    Ok((saved, outcome))
 }
 
 /// The rebuilds a probe prepared, one for each member but those it left
@@ -995,23 +1014,17 @@ fn probe(
         return Ok(false);
     }
     // Kept: every member rebuilt, each put back if a later one is refused.
-    let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
-    lim.reserve_exact(&mut saved, members.len())?;
-    let mut outcome: Result<bool, OperationError> = Ok(true);
-    for (i, m) in members.iter_mut().enumerate() {
-        let rebuilt = rebuild_member(lim, i, m, step, prepared.0[i].as_mut(), &mut saved, scratch);
-        debug_assert!(!matches!(rebuilt, Ok(None)), "a rebuild passes the bound its preparation passed");
-        outcome = match rebuilt {
-            Ok(Some(pairs)) => {
-                debug_assert_eq!(pairs, after[i], "a rebuild leaves the pairs its preparation gave");
-                if prepared.0[i].is_some() { Ok(true) } else { gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS).map(|()| true) }
-            }
-            other => other.map(|_| false),
-        };
-        if !matches!(outcome, Ok(true)) {
-            break;
-        }
-    }
+    let (mut saved, outcome) = rebuild_other_members(
+        lim,
+        members,
+        step,
+        scratch,
+        |i, had_prep, pairs| {
+            debug_assert_eq!(pairs, after[i], "a rebuild leaves the pairs its preparation gave");
+            if had_prep { Ok(()) } else { gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS) }
+        },
+        Some(&mut prepared.0),
+    )?;
     settle(lim, members, &info, &mut saved, outcome, None)
 }
 
@@ -1146,23 +1159,18 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         return Ok(false);
     }
-    let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
-    lim.reserve_exact(&mut saved, members.len())?;
-    let mut outcome: Result<bool, OperationError> = Ok(true);
-    for (i, m) in members.iter_mut().enumerate() {
-        let rebuilt = rebuild_member(lim, i, m, step, None, &mut saved, scratch);
-        outcome = match rebuilt {
-            Ok(Some(pairs)) => {
-                debug_assert!(!scored[i] || pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
-                after[i] = pairs;
-                gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS).map(|()| true)
-            }
-            other => other.map(|_| false),
-        };
-        if !matches!(outcome, Ok(true)) {
-            break;
-        }
-    }
+    let (mut saved, outcome) = rebuild_other_members(
+        lim,
+        members,
+        step,
+        scratch,
+        |i, _, pairs| {
+            debug_assert!(!scored[i] || pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
+            after[i] = pairs;
+            gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
+        },
+        None,
+    )?;
     // The gate's residue charged and the stop tested before the move is
     // kept.
     let outcome = outcome.and_then(|kept| {
@@ -1224,7 +1232,7 @@ fn settle<'a>(
         for (i, s) in saved.drain(..) {
             let m = &mut members[i];
             m.close_changed_levels(&[info.v_idx, info.w_idx]);
-            m.dirty.merge_under_kept(s.dirty, &[info.v_idx, info.w_idx]);
+            m.dirty.merge_under_kept(s.header.dirty, &[info.v_idx, info.w_idx]);
         }
         return Ok(true);
     }
@@ -1238,14 +1246,7 @@ fn settle<'a>(
             lim.discard(rebuilt_outer);
             lim.discard(rebuilt_inner);
         }
-        m.output = s.output;
-        m.dirty = s.dirty;
-        if s.canonical {
-            m.levels.certify(s.output);
-        }
-        if s.closed {
-            m.reinstate_closed_levels();
-        }
+        s.header.restore(m);
     }
     outcome
 }

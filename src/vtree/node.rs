@@ -217,6 +217,19 @@ impl Vtree {
         })
     }
 
+    /// Whether `node` lies in the subtree rooted at `root` (`root` included).
+    pub(crate) fn in_subtree(&self, mut node: VtreeIdx, root: VtreeIdx) -> bool {
+        loop {
+            if node == root {
+                return true;
+            }
+            let Some(p) = self.node(node).parent() else {
+                return false;
+            };
+            node = p;
+        }
+    }
+
     /// Whether both vtrees have the same shape and variable at each corresponding leaf.
     ///
     /// Corresponding nodes are reached by the same left/right steps from the

@@ -473,28 +473,7 @@ impl Layout {
         }
 
         // The value subtree: exactly the value block.
-        let mut value_bit = Vec::new();
-        lim.try_resize(&mut value_bit, vtree.num_nodes(), u8::MAX)?;
-        let mut leaves = 0usize;
-        let mut stack = Vec::new();
-        lim.try_push(&mut stack, value_root)?;
-        while let Some(s) = stack.pop() {
-            if vtree.node(s).is_leaf() {
-                let v = vtree.leaf_var(s);
-                match role.get(&v) {
-                    Some(&bit) if bit != u8::MAX => value_bit[s.idx()] = bit,
-                    _ => return Err(layout(format!("variable {} under the value subtree is not a value variable", v.0))),
-                }
-                leaves += 1;
-            } else {
-                let (l, r) = vtree.children(s);
-                lim.try_push(&mut stack, l)?;
-                lim.try_push(&mut stack, r)?;
-            }
-        }
-        if leaves != value_vars.len() {
-            return Err(layout("a value variable is not a leaf of the value subtree".to_string()));
-        }
+        let value_bit = subtree_leaf_bits(lim, vtree, value_root, &role, value_vars.len(), "value")?;
 
         // The path from the root down to `t`.
         let mut path = Vec::new();
@@ -508,6 +487,43 @@ impl Layout {
         path.reverse();
         Ok(Layout { path, chain, value_root, value_bit })
     }
+}
+
+/// Map each leaf under `root` in `vtree` to its bit index in `role`, checking
+/// that the subtree's leaves are exactly the `expected` variables of `block`
+/// (with `role` values below `u8::MAX`).
+fn subtree_leaf_bits(
+    lim: &Limits,
+    vtree: &Vtree,
+    root: VtreeIdx,
+    role: &FxHashMap<VarId, u8>,
+    expected: usize,
+    block: &str,
+) -> Result<Vec<u8>, PrefixFoldError> {
+    let layout = PrefixFoldError::Layout;
+    let mut bit_of = Vec::new();
+    lim.try_resize(&mut bit_of, vtree.num_nodes(), u8::MAX)?;
+    let mut leaves = 0usize;
+    let mut stack = Vec::new();
+    lim.try_push(&mut stack, root)?;
+    while let Some(s) = stack.pop() {
+        if vtree.node(s).is_leaf() {
+            let v = vtree.leaf_var(s);
+            match role.get(&v) {
+                Some(&bit) if bit != u8::MAX => bit_of[s.idx()] = bit,
+                _ => return Err(layout(format!("variable {} under the {block} subtree is not a {block} variable", v.0))),
+            }
+            leaves += 1;
+        } else {
+            let (l, r) = vtree.children(s);
+            lim.try_push(&mut stack, l)?;
+            lim.try_push(&mut stack, r)?;
+        }
+    }
+    if leaves != expected {
+        return Err(layout(format!("a {block} variable is not a leaf of the {block} subtree")));
+    }
+    Ok(bit_of)
 }
 
 impl Coding {
@@ -541,7 +557,6 @@ impl Coding {
         }
 
         // `into`: the vtree outside the value subtree, the code subtree in its place.
-        let mut stack = Vec::new();
         let mut image = Vec::new();
         lim.try_resize(&mut image, vtree.num_nodes(), VtreeIdx(NONE))?;
         let mut code_root = None;
@@ -568,27 +583,7 @@ impl Coding {
             }
         }
         let code_root = code_root.expect("the walk reaches every node of a matching shape");
-        let mut code_bit = Vec::new();
-        lim.try_resize(&mut code_bit, into.num_nodes(), u8::MAX)?;
-        let mut leaves = 0usize;
-        lim.try_push(&mut stack, code_root)?;
-        while let Some(s) = stack.pop() {
-            if into.node(s).is_leaf() {
-                let v = into.leaf_var(s);
-                let Some(&bit) = code_role.get(&v) else {
-                    return Err(layout(format!("variable {} under the code subtree is not a code variable", v.0)));
-                };
-                code_bit[s.idx()] = bit;
-                leaves += 1;
-            } else {
-                let (l, r) = into.children(s);
-                lim.try_push(&mut stack, l)?;
-                lim.try_push(&mut stack, r)?;
-            }
-        }
-        if leaves != code_vars.len() {
-            return Err(layout("a code variable is not a leaf of the code subtree".to_string()));
-        }
+        let code_bit = subtree_leaf_bits(lim, into, code_root, &code_role, code_vars.len(), "code")?;
         Ok(Coding { image, code_bit })
     }
 }
@@ -1041,71 +1036,20 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// on the right. Per `(l, l')` it reads the pairs that begin with `l'`
     /// or the products of `r`, whichever are fewer, so no pair of nodes is
     /// tried that no satisfiable conjunction holds.
-    fn conjoin(&mut self, at: usize, x: VtreeIdx, mut roots: [Vec<u32>; 2]) -> Result<(), OperationError> {
+    fn conjoin(&mut self, at: usize, x: VtreeIdx, roots: [Vec<u32>; 2]) -> Result<(), OperationError> {
         let (lim, ops) = (self.lim, self.ops);
         let vtree = ops[0].vtree();
+        self.key_side_levels(at, x)?;
+        let reach = self.reachable_key_pairs(at, roots)?;
         let side = &mut self.products[at];
-        // The internal nodes under `x`, children before parents.
-        let mut stack = Vec::new();
-        lim.try_push(&mut stack, (x, false))?;
-        while let Some((t, done)) = stack.pop() {
-            if vtree.node(t).is_leaf() {
-                continue;
-            }
-            if done {
-                self.slot[t.idx()] = side.order.len() as u32;
-                lim.try_push(&mut side.order, t)?;
-                continue;
-            }
-            let (l, r) = vtree.children(t);
-            lim.try_push(&mut stack, (t, true))?;
-            lim.try_push(&mut stack, (r, false))?;
-            lim.try_push(&mut stack, (l, false))?;
-        }
-        let n = side.order.len();
-        lim.reserve(&mut side.at, n)?;
-        side.at.extend((0..n).map(|_| Products::default()));
         let slot = &self.slot;
-        let child = |c: VtreeIdx| match vtree.node(c).is_leaf() {
-            true => None,
-            false => Some(slot[c.idx()] as usize),
-        };
-        // Top-down: the nodes each operand reaches, per internal node.
-        let mut reach: [Vec<Vec<u32>>; 2] = Default::default();
-        for (side, reach) in reach.iter_mut().enumerate() {
-            lim.try_resize(reach, n, Vec::new())?;
-            reach[n - 1] = std::mem::take(&mut roots[side]);
-        }
-        for k in (0..n).rev() {
-            let (cl, cr) = {
-                let (tl, tr) = vtree.children(side.order[k]);
-                (child(tl), child(tr))
-            };
-            for (s, reach) in reach.iter_mut().enumerate() {
-                let mut nodes = std::mem::take(&mut reach[k]);
-                nodes.sort_unstable();
-                nodes.dedup();
-                for &node in &nodes {
-                    for pair in ops[s].level(side.order[k]).pairs_iter_of_idx(node as usize) {
-                        self.gate.poll(1)?;
-                        if let Some(c) = cl {
-                            lim.try_push(&mut reach[c], pair.left.raw())?;
-                        }
-                        if let Some(c) = cr {
-                            lim.try_push(&mut reach[c], pair.right.raw())?;
-                        }
-                    }
-                }
-                reach[k] = nodes;
-            }
-        }
         // Bottom-up: the products.
         let mut b_pairs: Vec<[u32; 3]> = Vec::new();
         let mut found: Vec<[u32; 3]> = Vec::new();
         let mut lefts: Vec<[u32; 2]> = Vec::new();
         for (k, &t) in side.order.iter().enumerate() {
             let (tl, tr) = vtree.children(t);
-            let (cl, cr) = (child(tl), child(tr));
+            let (cl, cr) = (child_slot(vtree, slot, tl), child_slot(vtree, slot, tr));
             let (below, here) = side.at.split_at_mut(k);
             let here = &mut here[0];
             // The pairs of `values` there, by their left child.
@@ -1222,6 +1166,74 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         Ok(())
     }
 
+    /// Record the internal nodes under `x`, children before parents, into
+    /// `self.products[at]` and `self.slot`.
+    fn key_side_levels(&mut self, at: usize, x: VtreeIdx) -> Result<(), OperationError> {
+        let lim = self.lim;
+        let vtree = self.ops[0].vtree();
+        let side = &mut self.products[at];
+        let mut stack = Vec::new();
+        lim.try_push(&mut stack, (x, false))?;
+        while let Some((t, done)) = stack.pop() {
+            if vtree.node(t).is_leaf() {
+                continue;
+            }
+            if done {
+                self.slot[t.idx()] = side.order.len() as u32;
+                lim.try_push(&mut side.order, t)?;
+                continue;
+            }
+            let (l, r) = vtree.children(t);
+            lim.try_push(&mut stack, (t, true))?;
+            lim.try_push(&mut stack, (r, false))?;
+            lim.try_push(&mut stack, (l, false))?;
+        }
+        let n = side.order.len();
+        lim.reserve(&mut side.at, n)?;
+        side.at.extend((0..n).map(|_| Products::default()));
+        Ok(())
+    }
+
+    /// Walk top-down over `self.products[at].order` from `roots` to collect the
+    /// nodes each operand reaches at every internal node of the key side.
+    fn reachable_key_pairs(
+        &mut self,
+        at: usize,
+        mut roots: [Vec<u32>; 2],
+    ) -> Result<[Vec<Vec<u32>>; 2], OperationError> {
+        let (lim, ops) = (self.lim, self.ops);
+        let vtree = ops[0].vtree();
+        let order = &self.products[at].order;
+        let n = order.len();
+        let mut reach: [Vec<Vec<u32>>; 2] = Default::default();
+        for (s, reach) in reach.iter_mut().enumerate() {
+            lim.try_resize(reach, n, Vec::new())?;
+            reach[n - 1] = std::mem::take(&mut roots[s]);
+        }
+        for k in (0..n).rev() {
+            let (tl, tr) = vtree.children(order[k]);
+            let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
+            for (s, reach) in reach.iter_mut().enumerate() {
+                let mut nodes = std::mem::take(&mut reach[k]);
+                nodes.sort_unstable();
+                nodes.dedup();
+                for &node in &nodes {
+                    for pair in ops[s].level(order[k]).pairs_iter_of_idx(node as usize) {
+                        self.gate.poll(1)?;
+                        if let Some(c) = cl {
+                            lim.try_push(&mut reach[c], pair.left.raw())?;
+                        }
+                        if let Some(c) = cr {
+                            lim.try_push(&mut reach[c], pair.right.raw())?;
+                        }
+                    }
+                }
+                reach[k] = nodes;
+            }
+        }
+        Ok(reach)
+    }
+
     /// Marks the products `used` at slot `top` of path level `at`'s key
     /// side, and those below them, for the result.
     fn mark_used(&mut self, at: usize, top: usize, used: &[u32]) -> Result<(), OperationError> {
@@ -1232,11 +1244,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         }
         for k in (0..=top).rev() {
             let (tl, tr) = vtree.children(side.order[k]);
-            let child = |c: VtreeIdx| match vtree.node(c).is_leaf() {
-                true => None,
-                false => Some(self.slot[c.idx()] as usize),
-            };
-            let (cl, cr) = (child(tl), child(tr));
+            let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
             let (below, here) = side.at.split_at_mut(k);
             let here = &here[0];
             for p in 0..here.keys.len() {
@@ -1370,11 +1378,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             for k in 0..side.order.len() {
                 let t = side.order[k];
                 let (tl, tr) = vtree.children(t);
-                let child = |c: VtreeIdx| match vtree.node(c).is_leaf() {
-                    true => None,
-                    false => Some(self.slot[c.idx()] as usize),
-                };
-                let (cl, cr) = (child(tl), child(tr));
+                let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
                 let n = side.at[k].keys.len();
                 let mut out = Vec::new();
                 lim.reserve(&mut out, n)?;
@@ -1405,11 +1409,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 Some(j) => (layout.chain[j], None, true),
                 None => {
                     let (u, x, right) = layout.path[at];
-                    let side = match vtree.node(x).is_leaf() {
-                        true => None,
-                        false => Some(self.slot[x.idx()] as usize),
-                    };
-                    (u, Some(side), right)
+                    (u, Some(child_slot(vtree, &self.slot, x)), right)
                 }
             };
             let bottom = at + 1 == r + m;
@@ -1493,6 +1493,13 @@ fn cube(
     let r = cube(eng, assembly, gate, into, r, code, code_bit)?;
     gate.poll(1)?;
     Ok(assembly.intern(eng, t, &[ChildPair::new(NodeIdx(l), NodeIdx(r))])?.0)
+}
+
+/// The slot of `c` in `slot` when `c` is an internal vtree node, or `None` for
+/// a leaf.
+#[inline]
+fn child_slot(vtree: &Vtree, slot: &[u32], c: VtreeIdx) -> Option<usize> {
+    (!vtree.node(c).is_leaf()).then(|| slot[c.idx()] as usize)
 }
 
 #[cfg(test)]

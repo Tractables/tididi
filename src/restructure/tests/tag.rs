@@ -17,7 +17,7 @@ fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId
     let mut local = vec![None; vtree.num_vars() as usize];
     let mut m = 0u32;
     for (t, v) in vtree.leaf_bottomup() {
-        if under(vtree, t, at) {
+        if vtree.in_subtree(t, at) {
             m += 1;
             local[v.idx()] = Some(VarId(m));
         }
@@ -26,18 +26,6 @@ fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId
     let code = [VarId(m + 1), VarId(m + 2)];
     let into = Vtree::join(&sub, &Vtree::balanced_over(&code).unwrap()).unwrap();
     (Arc::new(into), local, code)
-}
-
-fn under(vtree: &Vtree, mut t: VtreeIdx, root: VtreeIdx) -> bool {
-    loop {
-        if t == root {
-            return true;
-        }
-        match vtree.node(t).parent() {
-            Some(p) => t = p,
-            None => return false,
-        }
-    }
 }
 
 /// Every assignment to `g`'s variables against the tags read node by node.
@@ -119,7 +107,7 @@ fn a_level_summed_beside_the_tagged_one_is_not_read() {
             let tags = vec![Some(0); f.level(vtree.root()).nodes().len()];
             assert!(matches!(
                 eng.tag_level(&f, vtree.root(), &into, |v| local[v.idx()].unwrap(), &tags, &code, &CODES),
-                Err(TagError::Operation(OperationError::MarginalLevel(level))) if under(&vtree, level, right),
+                Err(TagError::Operation(OperationError::MarginalLevel(level))) if vtree.in_subtree(level, right),
             ));
         }
     }
@@ -274,7 +262,7 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
         let mut local = vec![None; vtree.num_vars() as usize];
         let mut m = 0u32;
         for (t, v) in vtree.leaf_bottomup() {
-            if under(&vtree, t, at) {
+            if vtree.in_subtree(t, at) {
                 m += 1;
                 local[v.idx()] = Some(VarId(m));
             }
