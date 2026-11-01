@@ -380,14 +380,26 @@ pub(super) fn build_row_columns(
     };
     // Consecutive child rows often have the same live columns, all of them
     // on a near-complete child: the last row's word is kept for the next.
-    let mut last = (0u128, word_of(0));
-    row_cols.extend(live_cols.iter().map(|&live| {
-        if live != last.0 {
-            last = (live, word_of(live));
+    extend_cached_words(live_cols.iter().copied(), word_of, row_cols);
+    Ok(())
+}
+
+/// Extend `out` with `word_of(key)` for each key in `keys`, reusing the previous
+/// word when consecutive keys are equal.
+#[inline]
+fn extend_cached_words<K: Copy + Eq + Default>(
+    keys: impl Iterator<Item = K>,
+    mut word_of: impl FnMut(K) -> u64,
+    out: &mut Vec<u64>,
+) {
+    let z = K::default();
+    let mut last = (z, word_of(z));
+    out.extend(keys.map(|k| {
+        if k != last.0 {
+            last = (k, word_of(k));
         }
         last.1
     }));
-    Ok(())
 }
 
 /// The most pairs a level read by pairs reads off each child row a pair at
@@ -449,13 +461,7 @@ pub(super) fn build_pair_row_columns(
                 }
                 word
             };
-            let mut last = (0u64, word_of(0));
-            row_cols.extend(rows.map(|row| {
-                if row != last.0 {
-                    last = (row, word_of(row));
-                }
-                last.1
-            }));
+            extend_cached_words(rows, word_of, row_cols);
         }
     }
     Ok(())

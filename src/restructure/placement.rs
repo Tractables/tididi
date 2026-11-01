@@ -50,18 +50,22 @@ struct PassThrough {
 impl PassThrough {
     fn new(vtree: &Vtree, assembly: &Assembly<'_>, at: VtreeIdx, free_side: ChildSide) -> Self {
         let (left, right) = vtree.children(at);
-        let (free, carries) = if free_side == ChildSide::Left { (left, right) } else { (right, left) };
+        let (free, carries) = free_side.pick((left, right), (right, left));
         let carries_leaf = vtree.node(carries).is_leaf();
         let width = if carries_leaf { LEAF_WIDTH } else { assembly.level(carries).slot_count() };
         Self { carries, carries_leaf, one: true_node(vtree, free), width, free_side }
     }
 
+    /// The `(left, right)` children of join `i`.
+    #[inline]
+    fn pair(&self, i: usize) -> (NodeIdx, NodeIdx) {
+        let child = NodeIdx(i as u32);
+        self.free_side.pick((self.one, child), (child, self.one))
+    }
+
     /// The `(left, right)` children of each join, in slot order.
     fn pairs(&self) -> impl Iterator<Item = (NodeIdx, NodeIdx)> + '_ {
-        (0..self.width).map(move |i| {
-            let child = NodeIdx(i as u32);
-            if self.free_side == ChildSide::Left { (self.one, child) } else { (child, self.one) }
-        })
+        (0..self.width).map(move |i| self.pair(i))
     }
 
     /// Make `level`, empty, the joins' level over an internal carried
@@ -73,14 +77,10 @@ impl PassThrough {
     fn build(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(!self.carries_leaf && level.nodes().is_empty() && level.pairs.is_empty());
         let width = self.width;
-        let pair = |i: usize| {
-            let child = NodeIdx(i as u32);
-            if self.free_side == ChildSide::Left { ChildPair::new(self.one, child) } else { ChildPair::new(child, self.one) }
-        };
         if width >= floor().max(2) && lim.memory_unbounded() && !stored_levels_forced() {
-            let first = pair(0);
-            let first = (i64::from(first.left.raw()), i64::from(first.right.raw()));
-            let step = if self.free_side == ChildSide::Left { (0, 1) } else { (1, 0) };
+            let (left, right) = self.pair(0);
+            let first = (i64::from(left.0), i64::from(right.0));
+            let step = self.free_side.pick((0, 1), (1, 0));
             if let Some(described) = ImplicitLevel::one_step(width, first, step) {
                 let held = level.nodes.imply();
                 let node_capacity = lim.charge_as_pushed::<EncodedNode>(held, width)?;
@@ -91,7 +91,10 @@ impl PassThrough {
         }
         let nodes = level.nodes.stored_mut();
         lim.reserve_as_pushed(nodes, width)?;
-        nodes.extend((0..width).map(|i| EncodedNode::inline(pair(i))));
+        nodes.extend((0..width).map(|i| {
+            let (left, right) = self.pair(i);
+            EncodedNode::inline(ChildPair::new(left, right))
+        }));
         Ok(())
     }
 }
@@ -350,9 +353,9 @@ impl<'a> MovePlacement<'a> {
     /// a literal on one level. Hands back a join's refusal.
     pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) -> Result<(), OperationError> {
         let (left, right) = self.vtree.children(at);
-        let one = true_node(self.vtree, if free_side == ChildSide::Left { left } else { right });
+        let one = true_node(self.vtree, free_side.pick(left, right));
         for &label in labels {
-            let (l, r) = if free_side == ChildSide::Left { (one, label) } else { (label, one) };
+            let (l, r) = free_side.pick((one, label), (label, one));
             self.join(at, l, r)?;
         }
         Ok(())
@@ -364,7 +367,7 @@ impl<'a> MovePlacement<'a> {
         let (_, mut pairs) = self.assembly.level(at).internal_inputs_iter().next()?;
         let pair = pairs.next()?;
         let decoder = crate::diagram::ChildDecoder::structural();
-        Some(decoder.node(if side == ChildSide::Left { pair.left } else { pair.right }))
+        Some(decoder.node(side.pick(pair.left, pair.right)))
     }
 
     /// Add a connecting node, recording any marginal boundary it introduces.

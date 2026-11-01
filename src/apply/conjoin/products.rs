@@ -103,6 +103,23 @@ fn fill_complete_product_list(
     Ok(())
 }
 
+/// Whether `list` holds one entry per cell of `f_width × g_width`, numbered in
+/// cell order from 0.
+#[inline]
+fn list_is_complete(list: &[ProductEntry], f_width: usize, g_width: usize) -> bool {
+    f_width.checked_mul(g_width) == Some(list.len())
+        && list.iter().enumerate().all(|(c, e)| {
+            e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c
+        })
+}
+
+#[inline]
+fn split_lists(product_lists: &mut [Vec<ProductEntry>], left: usize, right: usize, out: usize) -> ProductLists<'_> {
+    let [left, right, out] = product_lists.get_disjoint_mut([left, right, out])
+        .expect("a level and its children are distinct");
+    ProductLists { left, right, out }
+}
+
 #[derive(Default)]
 pub(super) struct Products {
     pub(super) arena: GridArena,
@@ -220,12 +237,7 @@ impl Products {
             let grid = &self.arena.slab()[base.idx()..base.idx() + cells];
             debug_assert!(grid.iter().enumerate().all(|(c, &n)| n as usize == c), "level {t} is not complete");
         } else if self.has_pl[t] {
-            let list = &self.product_lists[t];
-            debug_assert_eq!(list.len(), cells, "level {t} is not complete");
-            debug_assert!(
-                list.iter().enumerate().all(|(c, e)| e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c),
-                "level {t} is not complete"
-            );
+            debug_assert!(list_is_complete(&self.product_lists[t], f_width, g_width), "level {t} is not complete");
         }
     }
 
@@ -254,9 +266,7 @@ impl Products {
     }
 
     pub(super) fn lists(&mut self, left: usize, right: usize, out: usize) -> ProductLists<'_> {
-        let [left, right, out] = self.product_lists.get_disjoint_mut([left, right, out])
-            .expect("a level and its children are distinct");
-        ProductLists { left, right, out }
+        split_lists(&mut self.product_lists, left, right, out)
     }
 
     /// [`Self::lists`], with each child's cells read one at a time where
@@ -295,9 +305,7 @@ impl Products {
             left: cells(left, g_widths.left, identity.left),
             right: cells(right, g_widths.right, identity.right),
         };
-        let [left, right, out] = self.product_lists.get_disjoint_mut([left, right, out])
-            .expect("a level and its children are distinct");
-        (ProductLists { left, right, out }, lookups)
+        (split_lists(&mut self.product_lists, left, right, out), lookups)
     }
 
     pub(super) fn row_buffers(&mut self, t: usize) -> (&mut Vec<u32>, &mut Vec<ProductEntry>) {
@@ -403,12 +411,7 @@ impl Products {
     /// each `f` node together, in node order, so a level whose `g` operand
     /// has one node there is complete whenever no product died.
     pub(super) fn note_sparse_built(&mut self, t: usize, f_width: usize, g_width: usize) {
-        let list = &self.product_lists[t];
-        self.complete[t] = self.has_pl[t]
-            && f_width.checked_mul(g_width) == Some(list.len())
-            && list.iter().enumerate().all(|(c, e)| {
-                e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c
-            });
+        self.complete[t] = self.has_pl[t] && list_is_complete(&self.product_lists[t], f_width, g_width);
     }
 
     pub(super) fn reclaim_child(&mut self, level: usize, f_width: usize, g_width: usize) {

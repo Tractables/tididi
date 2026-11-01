@@ -155,6 +155,27 @@ struct SwapInterners {
     orphan_overflow: usize,
 }
 
+fn intern_unseeded<K: Eq + std::hash::Hash>(
+    map: &mut FxHashMap<K, u32>,
+    key: K,
+) -> Result<(), OperationError> {
+    map.try_reserve(1).map_err(|_| OperationError::OverBudget)?;
+    map.insert(key, SLOT_UNSEEDED);
+    Ok(())
+}
+
+fn seed_slot<K: Eq + std::hash::Hash>(map: &mut FxHashMap<K, u32>, key: &K, idx: u32) {
+    if let Some(slot) = map.get_mut(key)
+        && *slot == SLOT_UNSEEDED
+    {
+        *slot = idx;
+    }
+}
+
+fn seeded_slot<K: Eq + std::hash::Hash>(map: &FxHashMap<K, u32>, key: &K) -> Option<u32> {
+    map.get(key).copied().filter(|&s| s != SLOT_UNSEEDED)
+}
+
 /// Pre-scan: intern the counts that actually need a destination slot.
 ///
 /// Only a `Mint` ref reaches the dst store, so the interners are keyed by
@@ -187,25 +208,21 @@ fn collect_swap_mints(
         };
         if failed {
             return;
-        }
+        };
         if c == COUNT_OVERFLOW {
             match src.big.and_then(|sb| sb.get(s)) {
                 Some(b) if !big_to_slot.contains_key(b) => {
-                    if big_to_slot.try_reserve(1).is_err() {
+                    if intern_unseeded(&mut big_to_slot, b.clone()).is_err() {
                         failed = true;
-                        return;
                     }
-                    big_to_slot.insert(b.clone(), SLOT_UNSEEDED);
                 }
                 Some(_) => {} // key already interned by an earlier ref
                 None => orphan_overflow += 1,
             }
-        } else if !small_to_slot.contains_key(&c) {
-            if small_to_slot.try_reserve(1).is_err() {
-                failed = true;
-                return;
-            }
-            small_to_slot.insert(c, SLOT_UNSEEDED);
+        } else if !small_to_slot.contains_key(&c)
+            && intern_unseeded(&mut small_to_slot, c).is_err()
+        {
+            failed = true;
         }
     });
     if failed {
@@ -255,20 +272,14 @@ fn reserve_and_seed_dst(
     // so an equal count reuses its slot instead of pushing a duplicate.
     // Lowest index wins. Slots holding a count nothing asked for are skipped —
     // that is what keeps the interners sized by the scan rather than by the store.
-    // Indexes `dst_counts` and `dst_big` at the same position.
-    #[expect(clippy::needless_range_loop)]
-    for i in 0..dst_counts.len() {
-        let c = dst_counts[i];
+    for (i, &c) in dst_counts.iter().enumerate() {
         if c == COUNT_OVERFLOW {
-            if let Some(b) = dst_big.as_ref().and_then(|b| b.get(i))
-                && let Some(slot) = interners.big.get_mut(b)
-                    && *slot == SLOT_UNSEEDED {
-                        *slot = i as u32;
-                    }
-        } else if let Some(slot) = interners.small.get_mut(&c)
-            && *slot == SLOT_UNSEEDED {
-                *slot = i as u32;
+            if let Some(b) = dst_big.as_ref().and_then(|b| b.get(i)) {
+                seed_slot(&mut interners.big, b, i as u32);
             }
+        } else {
+            seed_slot(&mut interners.small, &c, i as u32);
+        }
     }
     Ok(())
 }
@@ -301,13 +312,10 @@ fn remap_swap_ref(
             "resolve_swapped_marginal_side: src slot {s} is the `COUNT_OVERFLOW` sentinel \
              but has no BigUint entry"
         );
-        if let Some(b) = big_val {
-            match interners.big.get(b) {
-                Some(&existing) if existing != SLOT_UNSEEDED => {
-                    return ValueRef::slot_raw(existing);
-                }
-                _ => {}
-            }
+        if let Some(b) = big_val
+            && let Some(existing) = seeded_slot(&interners.big, b)
+        {
+            return ValueRef::slot_raw(existing);
         }
         let new_idx = dst_counts.len() as u32;
         dst_counts.push(COUNT_OVERFLOW);
@@ -317,26 +325,19 @@ fn remap_swap_ref(
                 .expect("keyed overflow ⇒ pre-scan created the side table")
                 .insert(new_idx as usize, b.clone());
             // The key was interned by the pre-scan; record the slot it just got.
-            if let Some(slot) = interners.big.get_mut(b) {
-                *slot = new_idx;
-            }
+            seed_slot(&mut interners.big, b, new_idx);
         }
         ValueRef::slot_raw(new_idx)
     } else {
         // Small (but above inline threshold) count: look up in the small interner.
         // Nothing to mirror into the sparse side table — a non-overflow slot
         // simply has no entry there.
-        match interners.small.get(&c) {
-            Some(&existing) if existing != SLOT_UNSEEDED => {
-                return ValueRef::slot_raw(existing);
-            }
-            _ => {}
+        if let Some(existing) = seeded_slot(&interners.small, &c) {
+            return ValueRef::slot_raw(existing);
         }
         let new_idx = dst_counts.len() as u32;
         dst_counts.push(c);
-        if let Some(slot) = interners.small.get_mut(&c) {
-            *slot = new_idx;
-        }
+        seed_slot(&mut interners.small, &c, new_idx);
         ValueRef::slot_raw(new_idx)
     }
 }

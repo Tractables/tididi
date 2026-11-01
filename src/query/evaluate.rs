@@ -6,7 +6,7 @@ use num_traits::Zero;
 use crate::value::{walk_bottom_up, CountRead, Retention, FoldInput, ValueDomain, WeightFold};
 use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
 use crate::Engine;
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 use super::fold::{fold_bottom_up_from, fold_held, LevelFold, Side};
 use crate::limits::{OperationError, PollGate};
@@ -37,8 +37,7 @@ impl Engine {
             let fold = Evaluate::counting(algebra, tdd, root)?;
             let held = beneath_marginal(tdd, root, tdd.output.vtree);
             let mut cols = Vec::new();
-            lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
-            cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
+            lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
             fold_bottom_up_from(&fold, self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
             cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
         };
@@ -92,8 +91,7 @@ impl Engine {
         let fold = Evaluate::counting(algebra, tdd, at)?;
         let held = beneath_marginal(tdd, at, at);
         let mut cols = Vec::new();
-        lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
-        cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
+        lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
         fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
         let result = std::mem::take(&mut cols[at.idx()]);
         gate.finish()?;
@@ -173,7 +171,7 @@ impl<'a, S: EvalAlgebra> Evaluate<'a, S> {
         }
         let mut counts = Vec::new();
         let mut first = None;
-        for t in subtree(&tdd.vtree, root) {
+        for t in tdd.vtree.subtree(root) {
             let inline = inline_counts(tdd, t, root);
             if !inline.is_empty() {
                 first.get_or_insert(t);
@@ -286,20 +284,6 @@ fn set_count(n: &mut BigUint, read: CountRead<'_>) {
     }
 }
 
-/// The levels under `root`, `root` included.
-fn subtree(vtree: &Vtree, root: VtreeIdx) -> Vec<VtreeIdx> {
-    let mut out = Vec::new();
-    let mut stack = vec![root];
-    while let Some(t) = stack.pop() {
-        out.push(t);
-        if !vtree.node(t).is_leaf() {
-            let (l, r) = vtree.children(t);
-            stack.extend([l, r]);
-        }
-    }
-    out
-}
-
 /// The levels a walk from `root` need not visit: those under a marginal
 /// level, which reads its own stored counts and never its children's. Empty
 /// when no level is marginal, or when `keep` — the level read afterwards —
@@ -317,7 +301,7 @@ fn beneath_marginal(tdd: &Tdd, root: VtreeIdx, keep: VtreeIdx) -> Vec<bool> {
         up = if t == root { None } else { tdd.vtree.node(t).parent() };
     }
     let mut held = vec![false; tdd.vtree.num_nodes()];
-    for t in subtree(&tdd.vtree, root) {
+    for t in tdd.vtree.subtree(root) {
         held[t.idx()] = parent_marginal(t);
     }
     held
@@ -370,8 +354,7 @@ fn fold_columns_under<A: ColumnAlgebra>(
     // Each marginal level's inline counts, kept until its parent is folded.
     let mut tables: Vec<Vec<u32>> = Vec::new();
     if tdd.levels.iter().any(TddLevel::is_marginal) {
-        lim.reserve_exact(&mut tables, tdd.vtree.num_nodes())?;
-        tables.resize_with(tdd.vtree.num_nodes(), Vec::new);
+        lim.try_resize(&mut tables, tdd.vtree.num_nodes(), Vec::new())?;
     }
     walk_bottom_up(
         &tdd.vtree,
