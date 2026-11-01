@@ -243,14 +243,15 @@ pub(crate) fn apply_sparse_level(
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<(Made, bool), OperationError> {
     let t_idx = shape.t.idx();
-    let (pl, pl_output) = (
-        Sides {
-            left: lists.left,
-            right: lists.right,
-        },
-        lists.out,
-    );
+    let ProductLists {
+        left,
+        right,
+        out: pl_output,
+    } = lists;
+    let pl = Sides { left, right };
+
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels, passthrough);
+
     seed_output(
         eng,
         &f.levels[t_idx],
@@ -261,87 +262,111 @@ pub(crate) fn apply_sparse_level(
     let mut guard = WsGuard::new(eng);
     let ws = &mut *guard;
     ws.outer_held = false;
-    let duplicates_legal = any_diagram_marginal(f, g, levels);
+
+    // Duplicate pairs in one node's list are legal once any level of the
+    // diagram is marginal — pair lists are then multisets feeding a sum.
+    // A duplicate here is *inherited*: an operand parent whose own list
+    // holds the same pair twice produces the same product pair twice, which
+    // is exactly the multiplicity the count recurrence needs. Only the
+    // pure-Boolean case still guarantees set-ness, so that is where the
+    // emit's check stays armed. `cfg!` is a compile-time constant, so the
+    // level scan is dead code in release.
+    let duplicates_legal = cfg!(debug_assertions)
+        && (f.levels.iter().any(|l| l.is_marginal())
+            || g.levels.iter().any(|l| l.is_marginal())
+            || levels.iter().any(|l| l.is_marginal()));
+
+    // ── Fused scatter-filter ──────────────────────────────────────
+    //
+    // Four-way join: parent(p1,p2) <- f(p1,a1,s1) /\ g(p2,a2,s2)
+    //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
+    //
+    // When the inner child is a leaf, the reverse index for the
+    // opposite operand is keyed by the non-leaf child for selectivity,
+    // and `CONJOIN_GRID` supplies the leaf product directly; a
+    // pass-through inner side supplies the carried field the same way.
 
     // A level where f and g have one node each has one product at most,
     // `(0, 0)`, and every candidate is one of its pairs: the scatter writes
     // them straight into the output level, and nothing is left to group.
     if shape.f.here == 1 && shape.g.here == 1 {
-        let held = apply_single_product_sparse_level(
+        let level = &mut levels[t_idx];
+        let base = level.pairs.len();
+        scatter_level(
             eng,
             ws,
             (f, g),
             (shape, pl),
-            &mut levels[t_idx],
-            pl_output,
-            (duplicates_legal, passthrough, complete),
+            Collect::Direct(&mut *level),
+            (passthrough, complete),
         )?;
+        let held = ws.outer_held;
+        // The one product's node holds every candidate.
+        let candidates = level.pairs.len() - base;
+        finish_direct(eng, level, base, pl_output, duplicates_legal)?;
+        level.leave_live_pairs(candidates);
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
         return Ok((Made::Written, held));
     }
 
-    if let Some((made, live)) = try_probe_sparse_level(
-        eng,
-        ws,
-        (f, g),
-        shape,
-        levels,
-        (pl, &mut *pl_output, cells),
-        (duplicates_legal, thresholds, passthrough, complete),
-    )? {
-        let made = finish_emitted_level(
-            f,
-            &mut levels[t_idx],
-            t_idx,
-            made,
-            live,
-            pl_output,
-            &mut guard,
-        );
-        return Ok((made, false));
+    // A level of many products, each found by a lookup or two, is walked by
+    // `f` node instead of scattered (`probe_level`). It joins both children,
+    // so a pass-through side, and a leaf, which the leaf arm already reads by
+    // lookup, stay with the scatter; and its pair table holds a `g` pair once,
+    // so it is withheld where pair lists may be multisets. A complete side
+    // has no list to walk through: the probe reads it only directly.
+    let joined = passthrough.is_none()
+        && !f.vtree.node(shape.left).is_leaf()
+        && !f.vtree.node(shape.right).is_leaf();
+    if joined {
+        // Whether any level of the operands or of the output is marginal,
+        // a scan of every level: read only where the probe would run, past
+        // its size gate, so that a diagram of many levels does not pay a
+        // scan on each of its small ones. The level being built is split
+        // out of the scan, and read on its own.
+        let (below, rest) = levels.split_at_mut(t_idx);
+        let (level, above) = rest
+            .split_first_mut()
+            .expect("the level is one of the levels");
+        let here = level.is_marginal();
+        let multisets = || {
+            here || f.levels.iter().any(|l| l.is_marginal())
+                || g.levels.iter().any(|l| l.is_marginal())
+                || below.iter().chain(above.iter()).any(|l| l.is_marginal())
+        };
+        let listed = Sides {
+            left: complete.is_none_or(|c| c.side != ChildSide::Left),
+            right: complete.is_none_or(|c| c.side != ChildSide::Right),
+        };
+        let mut live = None;
+        let emit = Emit {
+            level,
+            out: &mut *pl_output,
+            duplicates_legal,
+            thresholds,
+            live: &mut live,
+        };
+        if let Some(made) =
+            probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)?
+        {
+            let made = finish_emitted_level(
+                f,
+                &mut levels[t_idx],
+                t_idx,
+                made,
+                live,
+                pl_output,
+                &mut guard,
+            );
+            return Ok((made, false));
+        }
     }
 
-    scatter_and_finish_sparse_level(
-        eng,
-        &mut guard,
-        (f, g),
-        (shape, pl),
-        (&mut levels[t_idx], pl_output),
-        (duplicates_legal, thresholds, passthrough, complete),
-    )
-}
-
-/// Duplicate pairs in one node's list are legal once any level of the
-/// diagram is marginal — pair lists are then multisets feeding a sum.
-#[inline]
-fn any_diagram_marginal(f: &Held<'_>, g: &Tdd, levels: &[TddLevel]) -> bool {
-    cfg!(debug_assertions)
-        && (f.levels.iter().any(|l| l.is_marginal())
-            || g.levels.iter().any(|l| l.is_marginal())
-            || levels.iter().any(|l| l.is_marginal()))
-}
-
-/// Run the full four-way scatter-filter join into `level` and finalize `pl_output`.
-fn scatter_and_finish_sparse_level(
-    eng: &Engine,
-    guard: &mut WsGuard<'_>,
-    (f, g): (&mut Held<'_>, &Tdd),
-    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
-    (level, pl_output): (&mut TddLevel, &mut Vec<ProductEntry>),
-    (duplicates_legal, thresholds, passthrough, complete): (
-        bool,
-        SparseThresholds,
-        Option<Passthrough>,
-        Option<Complete>,
-    ),
-) -> Result<(Made, bool), OperationError> {
-    let t_idx = shape.t.idx();
-    let ws = &mut **guard;
     let mut live = None;
     let emit = Emit {
-        level,
+        level: &mut levels[t_idx],
         out: pl_output,
         duplicates_legal,
         thresholds,
@@ -356,103 +381,16 @@ fn scatter_and_finish_sparse_level(
         (passthrough, complete),
     )?;
     let held = ws.outer_held;
-    let made = finish_emitted_level(f, level, t_idx, made, live, pl_output, guard);
+    let made = finish_emitted_level(
+        f,
+        &mut levels[t_idx],
+        t_idx,
+        made,
+        live,
+        pl_output,
+        &mut guard,
+    );
     Ok((made, held))
-}
-
-/// Scatter and finish a level where both `f` and `g` have width 1, returning `outer_held`.
-fn apply_single_product_sparse_level(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    (f, g): (&mut Held<'_>, &Tdd),
-    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    (duplicates_legal, passthrough, complete): (bool, Option<Passthrough>, Option<Complete>),
-) -> Result<bool, OperationError> {
-    let base = level.pairs.len();
-    scatter_level(
-        eng,
-        ws,
-        (f, g),
-        (shape, pl),
-        Collect::Direct(&mut *level),
-        (passthrough, complete),
-    )?;
-    let held = ws.outer_held;
-    // The one product's node holds every candidate.
-    let candidates = level.pairs.len() - base;
-    finish_direct(eng, level, base, pl_output, duplicates_legal)?;
-    level.leave_live_pairs(candidates);
-    Ok(held)
-}
-
-type SparseProbeCells<'a> = (
-    Sides<&'a [ProductEntry]>,
-    &'a mut Vec<ProductEntry>,
-    Sides<CellLookup<'a>>,
-);
-type SparseProbeOpts = (
-    bool,
-    SparseThresholds,
-    Option<Passthrough>,
-    Option<Complete>,
-);
-
-/// Try the `f`-node probe walk (`probe_level`) when neither child is a leaf or
-/// pass-through side.
-fn try_probe_sparse_level(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    (f, g): (&Held<'_>, &Tdd),
-    shape: LevelShape,
-    levels: &mut [TddLevel],
-    (pl, pl_output, cells): SparseProbeCells<'_>,
-    (duplicates_legal, thresholds, passthrough, complete): SparseProbeOpts,
-) -> Result<Option<(Made, Option<usize>)>, OperationError> {
-    // A level of many products, each found by a lookup or two, is walked by
-    // `f` node instead of scattered (`probe_level`). It joins both children,
-    // so a pass-through side, and a leaf, which the leaf arm already reads by
-    // lookup, stay with the scatter; and its pair table holds a `g` pair once,
-    // so it is withheld where pair lists may be multisets. A complete side
-    // has no list to walk through: the probe reads it only directly.
-    let joined = passthrough.is_none()
-        && !f.vtree.node(shape.left).is_leaf()
-        && !f.vtree.node(shape.right).is_leaf();
-    if !joined {
-        return Ok(None);
-    }
-    // Whether any level of the operands or of the output is marginal,
-    // a scan of every level: read only where the probe would run, past
-    // its size gate, so that a diagram of many levels does not pay a
-    // scan on each of its small ones. The level being built is split
-    // out of the scan, and read on its own.
-    let (below, rest) = levels.split_at_mut(shape.t.idx());
-    let (level, above) = rest
-        .split_first_mut()
-        .expect("the level is one of the levels");
-    let here = level.is_marginal();
-    let multisets = || {
-        here || f.levels.iter().any(|l| l.is_marginal())
-            || g.levels.iter().any(|l| l.is_marginal())
-            || below.iter().chain(above.iter()).any(|l| l.is_marginal())
-    };
-    let listed = Sides {
-        left: complete.is_none_or(|c| c.side != ChildSide::Left),
-        right: complete.is_none_or(|c| c.side != ChildSide::Right),
-    };
-    let mut live = None;
-    let emit = Emit {
-        level,
-        out: pl_output,
-        duplicates_legal,
-        thresholds,
-        live: &mut live,
-    };
-    Ok(
-        probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)?
-            .map(|made| (made, live)),
-    )
 }
 
 /// Complete a probe- or scatter-emitted level: install `f`'s level if `made == Made::F`,

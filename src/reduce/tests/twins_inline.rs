@@ -8,7 +8,8 @@ use crate::Engine;
 use crate::marginal::transition::free_subsumed_marginal_children;
 
 use crate::diagram::{
-    ChildPair, ChildSide, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal, take_levels,
+    ChildPair, ChildSide, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal,
+    take_levels,
 };
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
@@ -46,8 +47,10 @@ fn empty_levels(n: usize) -> Vec<TddLevel> {
 /// is a no-op here.  Model count before == model count after.
 #[test]
 fn test_inline_ref_twins_merged_by_minimize() {
-    use crate::test_helpers::check::marginal::{check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness};
     use crate::diagram::ValueRef;
+    use crate::test_helpers::check::marginal::{
+        check_no_orphan_slots, check_slot_count_uniqueness, check_twin_canonicality,
+    };
     use crate::vtree::VtreeNode;
 
     const INLINE_VAL: u32 = 1;
@@ -80,32 +83,25 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // P and Q: IDENTICAL pair lists [(Pos, Inline(1))].
     // slot-prune never sees them (inline, not slot) -> values_merged == 0.
     // Context-based T sees different sibling contexts -> no merge.
-    let p = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair::new(pos, inline_ref),
-    ]);
-    let q = levels[v_parent4.idx()].push_internal_node(&[
-        ChildPair::new(pos, inline_ref),
-    ]);
+    let p = levels[v_parent4.idx()].push_internal_node(&[ChildPair::new(pos, inline_ref)]);
+    let q = levels[v_parent4.idx()].push_internal_node(&[ChildPair::new(pos, inline_ref)]);
 
     // v_right5: two DISTINCT siblings so root refs P and Q with different contexts.
-    let s0 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair::new(pos, one),
-    ]);
-    let s1 = levels[v_right5.idx()].push_internal_node(&[
-        ChildPair::new(neg, one),
-    ]);
+    let s0 = levels[v_right5.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let s1 = levels[v_right5.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
 
     // root: one node with pairs (P, s0) and (Q, s1) — DIFFERENT siblings.
     // P's grandparent context = {(root0, s1)}, Q's = {(root0, s0)}: not equal.
-    let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair::new(p, s0),
-        ChildPair::new(q, s1),
-    ]);
+    let root_node =
+        levels[root_idx.idx()].push_internal_node(&[ChildPair::new(p, s0), ChildPair::new(q, s1)]);
 
     let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
-        TddNodeId { vtree: root_idx, local: root_node },
+        TddNodeId {
+            vtree: root_idx,
+            local: root_node,
+        },
     );
 
     let count_before = tdd.model_count().unwrap();
@@ -113,7 +109,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // Mark root dirty; Engine::reduce runs prune + contract + unconditional scan.
     tdd.seed_contract_worklist([root_idx.0]);
-    eng.reduce(&mut tdd, ReductionPlan::default()).expect("Engine::reduce must not OOM");
+    eng.reduce(&mut tdd, ReductionPlan::default())
+        .expect("Engine::reduce must not OOM");
     // The content-twin scan is not run by Engine::reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
@@ -137,7 +134,8 @@ fn test_inline_ref_twins_merged_by_minimize() {
 
     // (e) v_parent4 must have contracted from width 2 to width 1.
     assert_eq!(
-        tdd.levels[v_parent4.idx()].slot_count(), 1,
+        tdd.levels[v_parent4.idx()].slot_count(),
+        1,
         "sharable inline-ref twins P and Q must merge to 1 node at v_parent4"
     );
 }
@@ -170,7 +168,10 @@ fn test_content_twins_merge_at_plain_levels() {
     let (v_left, v_right) = vtree.children(root_idx);
     let (_leaf0, sub_left_r) = vtree.children(v_left);
     let (_leaf3, sub_right_r) = vtree.children(v_right);
-    assert!(matches!(*vtree.node(sub_left_r), VtreeNode::Internal { .. }), "sub_left_r internal");
+    assert!(
+        matches!(*vtree.node(sub_left_r), VtreeNode::Internal { .. }),
+        "sub_left_r internal"
+    );
 
     let n = vtree.num_nodes();
     let mut levels = take_levels(&eng, n);
@@ -184,11 +185,14 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // --- sub_left_r: a PLAIN level (both children are vtree leaves) with two
     //     content-identical nodes. ---
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let (pos, neg, _) = leaf_nodes();
     let b1 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
     let b2 = levels[sub_left_r.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
-    assert_eq!(levels[sub_left_r.idx()].slot_count(), 2, "setup: B1 and B2 are two distinct nodes");
+    assert_eq!(
+        levels[sub_left_r.idx()].slot_count(),
+        2,
+        "setup: B1 and B2 are two distinct nodes"
+    );
 
     // --- v_left: also a PLAIN level. X1 and X2 give B1/B2 DIFFERENT sibling
     //     contexts, which is what blinds context-based twin contraction. ---
@@ -197,15 +201,16 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // --- root: one node over both, with the marginal sibling on the right. ---
     let vr_slot0 = NodeIdx(0);
-    let root_node = levels[root_idx.idx()].push_internal_node(&[
-        ChildPair::new(x1, vr_slot0),
-        ChildPair::new(x2, vr_slot0),
-    ]);
+    let root_node = levels[root_idx.idx()]
+        .push_internal_node(&[ChildPair::new(x1, vr_slot0), ChildPair::new(x2, vr_slot0)]);
 
     let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
-        TddNodeId { vtree: root_idx, local: root_node },
+        TddNodeId {
+            vtree: root_idx,
+            local: root_node,
+        },
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
     // marginalization step frees as `v_right` becomes marginal.
@@ -214,9 +219,14 @@ fn test_content_twins_merge_at_plain_levels() {
 
     let count_before = tdd.model_count().unwrap();
     let expected: u64 = 6;
-    assert_eq!(count_before, expected.into(), "pre-minimize model count must be {expected}");
+    assert_eq!(
+        count_before,
+        expected.into(),
+        "pre-minimize model count must be {expected}"
+    );
 
-    super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
+    super::canonicalize_content_twins(&eng, &mut tdd)
+        .expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count must be unchanged — the merge is a pure canonicalization.
     let count_after = tdd.model_count().unwrap();
@@ -227,7 +237,8 @@ fn test_content_twins_merge_at_plain_levels() {
 
     // (b) THE DISCRIMINATOR: the plain level collapsed from 2 nodes to 1.
     assert_eq!(
-        tdd.levels[sub_left_r.idx()].slot_count(), 1,
+        tdd.levels[sub_left_r.idx()].slot_count(),
+        1,
         "plain-level content twins B1/B2 must merge (width 2 → 1)"
     );
 
@@ -261,14 +272,19 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
     let root_idx = vtree.root();
     let (v_leaf_x, v_marginal) = vtree.children(root_idx);
-    assert!(vtree.node(v_leaf_x).is_leaf(), "the left child must be the leaf x");
+    assert!(
+        vtree.node(v_leaf_x).is_leaf(),
+        "the left child must be the leaf x"
+    );
 
-    let mut levels: Vec<crate::diagram::TddLevel> =
-        (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
+    let mut levels = empty_levels(vtree.num_nodes());
 
     // `(y z)` summed out to one node holding a count small enough to inline.
     for child in [vtree.children(v_marginal).0, vtree.children(v_marginal).1] {
-        assert!(vtree.node(child).is_leaf(), "the marginal subtree is two leaves");
+        assert!(
+            vtree.node(child).is_leaf(),
+            "the marginal subtree is two leaves"
+        );
     }
     levels[v_marginal.idx()].become_marginal(vec![2], None);
 
@@ -283,7 +299,10 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
         levels,
-        TddNodeId { vtree: root_idx, local: root_node },
+        TddNodeId {
+            vtree: root_idx,
+            local: root_node,
+        },
     );
     inline_small_marginal_refs(&mut tdd, None);
     assert!(

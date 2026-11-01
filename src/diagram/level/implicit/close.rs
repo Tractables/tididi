@@ -320,8 +320,20 @@ impl TddLevel {
             }
             stored += kept;
             emptied |= kept == 0;
-            let meta = (filler, empty);
-            dead += self.finish_described_node_rewrite((i, k, kept), sorted, meta, &mut words);
+            if let Some(room) = words.as_mut() {
+                if kept == 0 {
+                    room.nodes.push(empty);
+                }
+                continue;
+            }
+            let arena = self.pairs.stored_mut();
+            arena.resize((i + 1) * k, filler);
+            if sorted {
+                super::super::sort_pairs(&mut arena[i * k..i * k + kept]);
+            }
+            if kept < k {
+                dead += self.reencode_shrunk(i, i * k, k, kept);
+            }
         }
         if !built {
             return Ok(false);
@@ -340,32 +352,6 @@ impl TddLevel {
             }
         }
         Ok(emptied)
-    }
-
-    #[inline(always)]
-    fn finish_described_node_rewrite(
-        &mut self,
-        (i, k, kept): (usize, usize, usize),
-        sorted: bool,
-        (filler, empty): (ChildPair, EncodedNode),
-        words: &mut Option<StoreRoom>,
-    ) -> usize {
-        if let Some(room) = words.as_mut() {
-            if kept == 0 {
-                room.nodes.push(empty);
-            }
-            return 0;
-        }
-        let arena = self.pairs.stored_mut();
-        arena.resize((i + 1) * k, filler);
-        if sorted {
-            super::super::sort_pairs(&mut arena[i * k..i * k + kept]);
-        }
-        if kept < k {
-            self.reencode_shrunk(i, i * k, k, kept)
-        } else {
-            0
-        }
     }
 
     /// Build an implicit level stored where its pairs lie, before a pass

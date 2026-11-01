@@ -122,114 +122,58 @@ pub(super) fn refine_context_groups(
     child: Option<&[EncodedNode]>,
 ) -> Result<Option<bool>, OperationError> {
     scratch.marked = None;
+    let ContractScratch {
+        twin_class,
+        twin_bits,
+        classes,
+        refine_keys,
+        refine_runs,
+        refine_links,
+        refine_table,
+        refine_wide,
+        refine_radix,
+        refine_column,
+        refine_reach,
+        refine_touched,
+        refine_bucket,
+        refine_met,
+        refine_seen,
+        refine_code,
+        refine_rows,
+        flat_groups,
+        group_starts,
+        unnamed,
+        unnamed_exact,
+        remap,
+        marked,
+        member_groups,
+        ..
+    } = scratch;
     // Zero between parent nodes, so it only grows.
-    lim.try_resize(&mut scratch.refine_code, width, 0u8)?;
-    scratch.flat_groups.clear();
-    scratch.group_starts.clear();
-    let (mut part, whole, hand_off) = init_level_partition(
-        lim,
-        &mut scratch.twin_class,
-        &mut scratch.twin_bits,
-        &mut scratch.classes,
-        width,
-        start,
-    )?;
+    lim.try_resize(refine_code, width, 0u8)?;
     let mut wide = Wide {
-        keys: &mut scratch.refine_keys,
-        runs: &mut scratch.refine_runs,
-        links: &mut scratch.refine_links,
-        table: &mut scratch.refine_table,
-        radix: &mut scratch.refine_radix,
-        column: &mut scratch.refine_column,
-        reach: &mut scratch.refine_reach,
-        touched: &mut scratch.refine_touched,
-        bucket: &mut scratch.refine_bucket,
-        met: &mut scratch.refine_met,
-        seen: &mut scratch.refine_seen,
-        code: &mut scratch.refine_code[..width],
-        rows: &mut scratch.refine_rows,
+        keys: refine_keys,
+        runs: refine_runs,
+        links: refine_links,
+        table: refine_table,
+        radix: refine_radix,
+        column: refine_column,
+        reach: refine_reach,
+        touched: refine_touched,
+        bucket: refine_bucket,
+        met: refine_met,
+        seen: refine_seen,
+        code: &mut refine_code[..width],
+        rows: refine_rows,
     };
-    if !split_level_partition(
-        level,
-        side,
-        lim,
-        &mut part,
-        &mut scratch.refine_wide,
-        &mut wide,
-        hand_off,
-    )? {
-        return Ok(None);
-    }
-    if !has_twinable_after_unnamed(
-        lim,
-        &mut part,
-        width,
-        whole,
-        &mut scratch.unnamed,
-        &mut scratch.unnamed_exact,
-    )? {
-        return Ok(Some(false));
-    }
-    let twinable = part.twinable;
-    list_refined_groups(lim, twinable, width, child, scratch)?;
-    Ok(Some(true))
-}
-
-/// Drop the unnamed class from `part`, record `*unnamed_exact`, and return
-/// whether `part.twinable > 0`.
-fn has_twinable_after_unnamed(
-    lim: &Limits,
-    part: &mut Partition<'_>,
-    width: usize,
-    whole: bool,
-    unnamed: &mut Vec<u32>,
-    unnamed_exact: &mut bool,
-) -> Result<bool, OperationError> {
-    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
-    *unnamed_exact = whole && left_unnamed != 1;
-    debug_assert_eq!(
-        part.twinable,
-        part.classes
-            .iter()
-            .filter(|k| k.size >= 2)
-            .map(|k| k.size as usize)
-            .sum::<usize>(),
-        "the count of nodes that can have a twin"
-    );
-    Ok(part.twinable != 0)
-}
-
-/// Initialize the single starting equivalence class in `part` from `start`,
-/// returning `(part, whole, hand_off)`.
-fn init_level_partition<'a>(
-    lim: &Limits,
-    twin_class: &'a mut Vec<u32>,
-    twin_bits: &'a mut Vec<[u64; 2]>,
-    classes: &'a mut Vec<ClassInfo>,
-    width: usize,
-    start: Start<'_>,
-) -> Result<(Partition<'a>, bool, bool), OperationError> {
+    flat_groups.clear();
+    group_starts.clear();
     let words = width.div_ceil(64);
     lim.try_resize(twin_class, width, 0u32)?;
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
-    let (whole, hand_off, first) = init_first_class(bits, width, start);
-    classes.clear();
-    lim.reserve_exact(classes, width + 1)?;
-    classes.push(ClassInfo::new(first as u32));
-    let twinable = if first >= 2 { first } else { 0 };
-    let part = Partition {
-        class: &mut twin_class[..width],
-        bits,
-        classes,
-        twinable,
-    };
-    Ok((part, whole, hand_off))
-}
-
-/// Initialize the first class bitmask from `start`, returning `(whole, hand_off, first_count)`.
-fn init_first_class(bits: &mut [[u64; 2]], width: usize, start: Start<'_>) -> (bool, bool, usize) {
-    match start {
+    // The first class: every node, or the listed ones.
+    let (whole, hand_off, first) = match start {
         Start::Whole { hand_off } => {
             bits.fill([0; 2]);
             (true, hand_off, width)
@@ -243,20 +187,25 @@ fn init_first_class(bits: &mut [[u64; 2]], width: usize, start: Start<'_>) -> (b
             }
             (false, false, listed.len())
         }
-    }
-}
-
-/// Split `part` across all parent nodes of `level` on `side`, returning
-/// `Ok(false)` when `hand_off` aborts before a scattered wide parent node.
-fn split_level_partition(
-    level: &TddLevel,
-    side: ChildSide,
-    lim: &Limits,
-    part: &mut Partition<'_>,
-    refine_wide: &mut Vec<u64>,
-    wide: &mut Wide<'_>,
-    hand_off: bool,
-) -> Result<bool, OperationError> {
+    };
+    // The classes made are nested sets of two or more nodes each, so there
+    // are fewer than `width` besides the first.
+    classes.clear();
+    lim.reserve_exact(classes, width + 1)?;
+    classes.push(ClassInfo::new(first as u32));
+    let twinable = if first >= 2 { first } else { 0 };
+    let mut part = Partition {
+        class: &mut twin_class[..width],
+        bits,
+        classes,
+        twinable,
+    };
+    // A stored level's wide parent nodes are refined after the narrow ones,
+    // narrowest first by the power of two of their widths, and in arena
+    // order within one, so that their pairs are read forward: by then most
+    // nodes have left the partition, and a wide node sorts only the pairs
+    // of the nodes still in it. The refinement stops once no node can have
+    // a twin.
     let stored = level.stored();
     refine_wide.clear();
     match (stored, side) {
@@ -275,48 +224,60 @@ fn split_level_partition(
                     2 => part.split_two(pairs, side),
                     3 | 4 if part.split_few(pairs, side) => {}
                     n if n <= SMALL_PAIRS => part.split_small(pairs, side),
-                    _ => part.split_wide(lim, pairs, side, wide)?,
+                    _ => part.split_wide(lim, pairs, side, &mut wide)?,
                 }
             }
         }
     }
     if let Some(stored) = stored {
         refine_wide.sort_unstable();
+        // The widest come last, past every node of fewer than
+        // `HAND_OFF_PAIRS` pairs.
         if hand_off
             && refine_wide.last().is_some_and(|&w| w >= LARGE_WIDE)
             && part.twinable != 0
             && any_scattered(stored, refine_wide, side)
         {
-            return Ok(false);
+            return Ok(None);
         }
         for &w in refine_wide.iter() {
             if part.twinable == 0 {
                 break;
             }
-            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, wide)?;
+            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
         }
     }
-    Ok(true)
-}
-
-/// Materialize the refined twin classes from `scratch` into `scratch.flat_groups`
-/// and `scratch.group_starts`, optionally marking members and recording
-/// `scratch.marked`.
-fn list_refined_groups(
-    lim: &Limits,
-    twinable: usize,
-    width: usize,
-    child: Option<&[EncodedNode]>,
-    scratch: &mut ContractScratch,
-) -> Result<(), OperationError> {
-    lim.try_resize(&mut scratch.flat_groups, twinable, 0u32)?;
-    lim.reserve_exact(&mut scratch.group_starts, twinable / 2)?;
+    // A node leaves the first class once a parent node names it, so a
+    // refinement from the whole level that ends with no node there, or with
+    // the two or more it lists, has every other node named.
+    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
+    *unnamed_exact = whole && left_unnamed != 1;
+    debug_assert_eq!(
+        part.twinable,
+        part.classes
+            .iter()
+            .filter(|k| k.size >= 2)
+            .map(|k| k.size as usize)
+            .sum::<usize>(),
+        "the count of nodes that can have a twin"
+    );
+    if part.twinable == 0 {
+        return Ok(Some(false));
+    }
+    let Partition {
+        class,
+        bits,
+        classes,
+        twinable,
+    } = part;
+    lim.try_resize(flat_groups, twinable, 0u32)?;
+    lim.reserve_exact(group_starts, twinable / 2)?;
     let mut list = Listing {
-        class: &scratch.twin_class[..width],
-        bits: &mut scratch.twin_bits[..width.div_ceil(64)],
-        classes: &mut scratch.classes,
-        flat_groups: &mut scratch.flat_groups,
-        group_starts: &mut scratch.group_starts,
+        class,
+        bits,
+        classes,
+        flat_groups,
+        group_starts,
         width,
     };
     match child {
@@ -326,21 +287,21 @@ fn list_refined_groups(
                 final_remap,
                 absorbed,
                 ..
-            } = &mut scratch.remap;
+            } = remap;
             lim.try_resize(final_remap, width, NodeIdx(0))?;
             lim.try_resize(absorbed, width.div_ceil(64), 0u64)?;
-            scratch.member_groups.clear();
-            lim.reserve_exact(&mut scratch.member_groups, twinable)?;
-            scratch.marked = Some(Marks {
+            member_groups.clear();
+            lim.reserve_exact(member_groups, twinable)?;
+            *marked = Some(Marks {
                 width,
-                ..list.list::<true>(final_remap, absorbed, &mut scratch.member_groups, nodes)
+                ..list.list::<true>(final_remap, absorbed, member_groups, nodes)
             });
         }
         None => {
             list.list::<false>(&mut [], &mut [], &mut Vec::new(), &[]);
         }
     }
-    Ok(())
+    Ok(Some(true))
 }
 
 /// The least entry in the list of wide parent nodes
@@ -456,17 +417,47 @@ impl Listing<'_> {
                     continue;
                 }
                 let pairs = if MARK {
-                    node_mark_pairs(nodes[t], &mut marks)
+                    match nodes[t].kind() {
+                        NodeKind::Inline(_) => {
+                            marks.inline += 1;
+                            1
+                        }
+                        NodeKind::Multi { len, .. } => {
+                            marks.in_order &= len > 0;
+                            len
+                        }
+                        NodeKind::MultiRanged(_) => {
+                            marks.in_order = false;
+                            0
+                        }
+                    }
                 } else {
                     0
                 };
-                merged |= record_class_member::<MARK>(
-                    k,
-                    (t, b),
-                    pairs,
-                    (&mut next, flat_groups, group_starts),
-                    (final_remap, member_groups),
-                );
+                if k.pos == u32::MAX {
+                    flat_groups[next as usize] = t as u32;
+                    k.pos = if MARK {
+                        group_starts.len() as u32
+                    } else {
+                        next + 1
+                    };
+                    group_starts.push(next);
+                    next += k.size;
+                    k.dest = t as u32;
+                    k.hits = pairs;
+                } else if MARK {
+                    merged |= 1 << b;
+                    final_remap[t] = NodeIdx(k.dest | DROPPED);
+                    k.hits = k.hits.saturating_add(pairs);
+                    debug_assert!(
+                        member_groups.len() < member_groups.capacity(),
+                        "within the reserve"
+                    );
+                    member_groups.push(k.pos);
+                } else {
+                    flat_groups[k.pos as usize] = t as u32;
+                    k.pos += 1;
+                }
             }
             if MARK {
                 absorbed[w] = merged;
@@ -475,63 +466,9 @@ impl Listing<'_> {
         debug_assert_eq!(
             next as usize,
             flat_groups.len(),
-            "every twinable node is listed"
+            "every node that can have a twin is listed"
         );
         marks
-    }
-}
-
-#[inline(always)]
-fn record_class_member<const MARK: bool>(
-    k: &mut ClassInfo,
-    (t, b): (usize, usize),
-    pairs: u32,
-    (next, flat_groups, group_starts): (&mut u32, &mut [u32], &mut Vec<u32>),
-    (final_remap, member_groups): (&mut [NodeIdx], &mut Vec<u32>),
-) -> u64 {
-    if k.pos == u32::MAX {
-        flat_groups[*next as usize] = t as u32;
-        k.pos = if MARK {
-            group_starts.len() as u32
-        } else {
-            *next + 1
-        };
-        group_starts.push(*next);
-        *next += k.size;
-        k.dest = t as u32;
-        k.hits = pairs;
-        0
-    } else if MARK {
-        final_remap[t] = NodeIdx(k.dest | DROPPED);
-        k.hits = k.hits.saturating_add(pairs);
-        debug_assert!(
-            member_groups.len() < member_groups.capacity(),
-            "within reserve"
-        );
-        member_groups.push(k.pos);
-        1 << b
-    } else {
-        flat_groups[k.pos as usize] = t as u32;
-        k.pos += 1;
-        0
-    }
-}
-
-#[inline(always)]
-fn node_mark_pairs(node: EncodedNode, marks: &mut Marks) -> u32 {
-    match node.kind() {
-        NodeKind::Inline(_) => {
-            marks.inline += 1;
-            1
-        }
-        NodeKind::Multi { len, .. } => {
-            marks.in_order &= len > 0;
-            len
-        }
-        NodeKind::MultiRanged(_) => {
-            marks.in_order = false;
-            0
-        }
     }
 }
 
@@ -980,18 +917,6 @@ impl Partition<'_> {
             members[g] += 1;
             named[f] += 1;
         }
-        self.apply_small_run_groups(runs, (&node, &of), (&lead, &first), (&members, &named));
-    }
-
-    /// Assign classes to the grouped runs found by [`Self::split_small`].
-    #[inline]
-    fn apply_small_run_groups(
-        &mut self,
-        runs: usize,
-        (node, of): (&[u32; SMALL_PAIRS], &[u32; SMALL_PAIRS]),
-        (lead, first): (&[u8; SMALL_PAIRS], &[u8; SMALL_PAIRS]),
-        (members, named): (&[u8; SMALL_PAIRS], &[u8; SMALL_PAIRS]),
-    ) {
         // A class all of whose members are named here keeps its first group
         // of two or more.
         let mut keep = [false; SMALL_PAIRS];
@@ -1066,10 +991,35 @@ impl Partition<'_> {
             radix,
             ..
         } = wide;
-        let Some(sb) = self.pack_and_sort_wide_keys(lim, pairs, side, keys, radix)? else {
+        // Each pair of a node not alone a key of its sibling's bits and its
+        // node's above them, so that the sort places only the bits there
+        // are. Most pairs of a wide node name a node already alone, which
+        // its alone bit tells in cache: every pair's key is written, and
+        // kept only where the bit is clear, with no branch and no read of
+        // the node's class.
+        keys.clear();
+        lim.try_resize(keys, pairs.len(), 0u64)?;
+        let (mut kept, mut top) = (0usize, 0u32);
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            let live = !(self.bits[(t / 64) as usize][1] >> (t % 64)) & 1;
+            keys[kept] = pack(t, s);
+            kept += live as usize;
+            top |= s & 0u32.wrapping_sub(live as u32);
+        }
+        keys.truncate(kept);
+        if keys.is_empty() {
             return Ok(());
-        };
+        }
+        let sb = u32::BITS - top.leading_zeros();
+        let tb = u32::BITS - (self.class.len() as u32 - 1).leading_zeros();
         let low = (1u64 << sb) - 1;
+        for key in keys.iter_mut() {
+            *key = ((*key >> 32) << sb) | (*key & low);
+        }
+        if !keys.is_sorted() {
+            radix.sort(lim, keys, 0, (sb + tb) as usize)?;
+        }
         runs.clear();
         lim.reserve_exact(runs, keys.len())?;
         let mut k = 0;
@@ -1100,49 +1050,6 @@ impl Partition<'_> {
         })?;
         self.apply_groups(runs, links, |r| (keys[r.1 as usize] >> sb) as u32);
         Ok(())
-    }
-
-    /// Pack the non-alone pairs of `pairs` into `keys` and sort them by
-    /// `(node, sibling)`, returning `Some(sb)` (the sibling bit width) when at
-    /// least one pair remains.
-    fn pack_and_sort_wide_keys(
-        &self,
-        lim: &Limits,
-        pairs: &[ChildPair],
-        side: ChildSide,
-        keys: &mut Vec<u64>,
-        radix: &mut Radix,
-    ) -> Result<Option<u32>, OperationError> {
-        // Each pair of a node not alone a key of its sibling's bits and its
-        // node's above them, so that the sort places only the bits there
-        // are. Most pairs of a wide node name a node already alone, which
-        // its alone bit tells in cache: every pair's key is written, and
-        // kept only where the bit is clear, with no branch and no read of
-        // the node's class.
-        keys.clear();
-        lim.try_resize(keys, pairs.len(), 0u64)?;
-        let (mut kept, mut top) = (0usize, 0u32);
-        for pair in pairs {
-            let (t, s) = split_pair(pair, side);
-            let live = !(self.bits[(t / 64) as usize][1] >> (t % 64)) & 1;
-            keys[kept] = pack(t, s);
-            kept += live as usize;
-            top |= s & 0u32.wrapping_sub(live as u32);
-        }
-        keys.truncate(kept);
-        if keys.is_empty() {
-            return Ok(None);
-        }
-        let sb = u32::BITS - top.leading_zeros();
-        let tb = u32::BITS - (self.class.len() as u32 - 1).leading_zeros();
-        let low = (1u64 << sb) - 1;
-        for key in keys.iter_mut() {
-            *key = ((*key >> 32) << sb) | (*key & low);
-        }
-        if !keys.is_sorted() {
-            radix.sort(lim, keys, 0, (sb + tb) as usize)?;
-        }
-        Ok(Some(sb))
     }
 
     /// A wide parent node split by how many siblings it pairs each node
@@ -1185,9 +1092,33 @@ impl Partition<'_> {
             touched,
             ..
         } = wide;
-        let Some(top) = self.collect_degree_runs(lim, pairs, side, runs)? else {
-            return Ok(Degrees::Unordered);
-        };
+        runs.clear();
+        lim.reserve_exact(runs, pairs.len())?;
+        let (mut last, mut top) = (None, 0u32);
+        let mut k = 0;
+        while k < pairs.len() {
+            let t = split_pair(&pairs[k], side).0;
+            if last.is_some_and(|last| t < last) {
+                return Ok(Degrees::Unordered);
+            }
+            last = Some(t);
+            let end = k
+                + 1
+                + pairs[k + 1..]
+                    .iter()
+                    .take_while(|pair| split_pair(pair, side).0 == t)
+                    .count();
+            let c = self.of(t);
+            if self.can_twin(c) {
+                // The run's start in the third field, which the grouping
+                // does not read.
+                runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
+                top = pairs[k..end]
+                    .iter()
+                    .fold(top, |top, pair| top | split_pair(pair, side).1);
+            }
+            k = end;
+        }
         if runs.is_empty() {
             return Ok(Degrees::Split);
         }
@@ -1233,46 +1164,6 @@ impl Partition<'_> {
             }
         }
         Ok(Degrees::Unsettled)
-    }
-
-    /// Collect the degree runs of twinable nodes in `pairs` into `runs`,
-    /// returning `None` when `pairs` is not in ascending node order, or
-    /// `Some(top)` (the bitwise OR of their sibling indices).
-    fn collect_degree_runs(
-        &self,
-        lim: &Limits,
-        pairs: &[ChildPair],
-        side: ChildSide,
-        runs: &mut Vec<(u64, u32, u32)>,
-    ) -> Result<Option<u32>, OperationError> {
-        runs.clear();
-        lim.reserve_exact(runs, pairs.len())?;
-        let (mut last, mut top) = (None, 0u32);
-        let mut k = 0;
-        while k < pairs.len() {
-            let t = split_pair(&pairs[k], side).0;
-            if last.is_some_and(|last| t < last) {
-                return Ok(None);
-            }
-            last = Some(t);
-            let end = k
-                + 1
-                + pairs[k + 1..]
-                    .iter()
-                    .take_while(|pair| split_pair(pair, side).0 == t)
-                    .count();
-            let c = self.of(t);
-            if self.can_twin(c) {
-                // The run's start in the third field, which the grouping
-                // does not read.
-                runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
-                top = pairs[k..end]
-                    .iter()
-                    .fold(top, |top, pair| top | split_pair(pair, side).1);
-            }
-            k = end;
-        }
-        Ok(Some(top))
     }
 
     /// A wide parent node split sibling by sibling, where no parent node
@@ -1637,43 +1528,11 @@ impl Partition<'_> {
             }
             k.hits += 1;
         }
-        if self.assign_listed_code_destinations(stride, met, rows) {
-            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(node_codes) {
-                if c == ALONE {
-                    continue;
-                }
-                let k = self.classes[c as usize];
-                let dest = if k.hits == 0 {
-                    k.dest
-                } else {
-                    rows[(k.hits - 1) as usize + e as usize]
-                };
-                match dest {
-                    ALONE => self.alone(t, c),
-                    // A node of the first class it names is moved there
-                    // anyway, so that it reads as named.
-                    dest if dest != c || c == 0 => self.put(t, dest),
-                    _ => {}
-                }
-            }
-        }
-        for &c in met.iter() {
-            self.classes[c as usize].hits = 0;
-        }
-        Ok(())
-    }
-
-    /// Assign destination classes across `met` and `rows` in [`Self::split_listed_codes`],
-    /// returning whether any node changes class.
-    #[inline(always)]
-    fn assign_listed_code_destinations(
-        &mut self,
-        stride: usize,
-        met: &[u32],
-        rows: &mut [u32],
-    ) -> bool {
+        // A class of one code is split as by one sibling, and keeps its
+        // `hits` no more; one of two codes or more moves some member, and
+        // keeps in `hits` one past where its row starts.
         let mut moves = false;
-        for &c in met {
+        for &c in met.iter() {
             let k = self.classes[c as usize];
             if k.dest & MIXED == 0 {
                 let dest = if k.hits == k.size {
@@ -1707,7 +1566,30 @@ impl Partition<'_> {
             }
             moves = true;
         }
-        moves
+        if moves {
+            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(node_codes) {
+                if c == ALONE {
+                    continue;
+                }
+                let k = self.classes[c as usize];
+                let dest = if k.hits == 0 {
+                    k.dest
+                } else {
+                    rows[(k.hits - 1) as usize + e as usize]
+                };
+                match dest {
+                    ALONE => self.alone(t, c),
+                    // A node of the first class it names is moved there
+                    // anyway, so that it reads as named.
+                    dest if dest != c || c == 0 => self.put(t, dest),
+                    _ => {}
+                }
+            }
+        }
+        for &c in met.iter() {
+            self.classes[c as usize].hits = 0;
+        }
+        Ok(())
     }
 
     /// [`Self::split_sibling`] by the `nodes` one sibling is paired with,

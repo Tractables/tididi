@@ -1,5 +1,5 @@
-use crate::diagram::{ChildPair, ChildSide, StoredPairs, Tdd, TddLevel};
 use crate::Engine;
+use crate::diagram::{ChildPair, ChildSide, StoredPairs, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::limits::{Limits, OperationError};
@@ -44,7 +44,11 @@ fn for_each_target_sibling(
 /// marginal one, so the side toward it is a node index.
 #[inline]
 fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (u32, u32) {
-    if t1_side == ChildSide::Left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) }
+    if t1_side == ChildSide::Left {
+        (pair.left.0, pair.right.0)
+    } else {
+        (pair.right.0, pair.left.0)
+    }
 }
 
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
@@ -112,7 +116,12 @@ pub(super) trait TwinEntries {
     /// Whether none of the `width` nodes can have a twin: no two nodes share
     /// an entry, and at most one has none where two nodes with none are
     /// twins ([`Self::EMPTY_TWINS`]). `false` when that is not known.
-    fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
+    fn no_twin(
+        &self,
+        _lim: &Limits,
+        _scratch: &mut ContractScratch,
+        _width: usize,
+    ) -> Result<bool, OperationError> {
         Ok(false)
     }
 }
@@ -164,11 +173,21 @@ impl TwinEntries for ContextEntries<'_> {
     /// Two nodes share a context only where a parent node pairs both with
     /// one sibling ([`repeats_a_sibling`]); a level whose parent nodes never
     /// repeat one, common on grids, then needs no fingerprint.
-    fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
+    fn no_twin(
+        &self,
+        lim: &Limits,
+        scratch: &mut ContractScratch,
+        _width: usize,
+    ) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
         }
-        Ok(!repeats_a_sibling(self.parent_level, self.t1_side, lim, scratch)?)
+        Ok(!repeats_a_sibling(
+            self.parent_level,
+            self.t1_side,
+            lim,
+            scratch,
+        )?)
     }
 }
 
@@ -187,10 +206,18 @@ pub(super) fn repeats_a_sibling(
     lim: &Limits,
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
-    let ContractScratch { twin_local, twin_generation, .. } = scratch;
+    let ContractScratch {
+        twin_local,
+        twin_generation,
+        ..
+    } = scratch;
     match (level.stored(), side) {
-        (Some(stored), ChildSide::Left) => stored_repeats_a_sibling::<true>(stored, lim, twin_local, twin_generation),
-        (Some(stored), ChildSide::Right) => stored_repeats_a_sibling::<false>(stored, lim, twin_local, twin_generation),
+        (Some(stored), ChildSide::Left) => {
+            stored_repeats_a_sibling::<true>(stored, lim, twin_local, twin_generation)
+        }
+        (Some(stored), ChildSide::Right) => {
+            stored_repeats_a_sibling::<false>(stored, lim, twin_local, twin_generation)
+        }
         (None, _) => {
             let (mut buf, mut cursor) = (Vec::new(), None);
             for i in 0..level.node_count() {
@@ -212,7 +239,11 @@ fn stored_repeats_a_sibling<const LEFT: bool>(
     twin_local: &mut Vec<u64>,
     twin_generation: &mut u32,
 ) -> Result<bool, OperationError> {
-    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    let side = if LEFT {
+        ChildSide::Left
+    } else {
+        ChildSide::Right
+    };
     for node in stored.nodes() {
         if node_repeats_a_sibling(stored.of(node), side, lim, twin_local, twin_generation)? {
             return Ok(true);
@@ -250,12 +281,26 @@ fn node_repeats_a_sibling(
         [] | [_] => return Ok(false),
         [p, q] => return Ok(repeat(split_pair(&p, side), split_pair(&q, side))),
         [p, q, r] => {
-            let (p, q, r) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side));
+            let (p, q, r) = (
+                split_pair(&p, side),
+                split_pair(&q, side),
+                split_pair(&r, side),
+            );
             return Ok(repeat(p, q) | repeat(p, r) | repeat(q, r));
         }
         [p, q, r, u] => {
-            let (p, q, r, u) = (split_pair(&p, side), split_pair(&q, side), split_pair(&r, side), split_pair(&u, side));
-            return Ok(repeat(p, q) | repeat(p, r) | repeat(p, u) | repeat(q, r) | repeat(q, u) | repeat(r, u));
+            let (p, q, r, u) = (
+                split_pair(&p, side),
+                split_pair(&q, side),
+                split_pair(&r, side),
+                split_pair(&u, side),
+            );
+            return Ok(repeat(p, q)
+                | repeat(p, r)
+                | repeat(p, u)
+                | repeat(q, r)
+                | repeat(q, u)
+                | repeat(r, u));
         }
         _ if pairs.len() <= refine::SMALL_PAIRS => {
             let n = pairs.len();
@@ -266,11 +311,15 @@ fn node_repeats_a_sibling(
             }
             let key = &mut key[..n];
             key.sort_unstable();
-            return Ok(key.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]));
+            return Ok(key
+                .windows(2)
+                .any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]));
         }
         _ => {}
     }
-    let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+    let mut cells = (2 * pairs.len())
+        .next_power_of_two()
+        .min(TWIN_TABLE_START_CELLS);
     let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
     for (read, pair) in pairs.iter().enumerate() {
         let s = split_pair(pair, side).1;
@@ -343,7 +392,8 @@ pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
-        self.0.for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
+        self.0
+            .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
     }
 }
 
@@ -391,7 +441,10 @@ pub(super) fn find_twin_groups(
     screen: bool,
 ) -> Result<bool, OperationError> {
     let level = &tdd.levels[t1.idx()];
-    debug_assert!(!level.is_marginal(), "a marginal child is left to pair fusion");
+    debug_assert!(
+        !level.is_marginal(),
+        "a marginal child is left to pair fusion"
+    );
     let parent_level = &tdd.levels[parent.idx()];
     let width = level.slot_count();
     debug_assert!(
@@ -420,7 +473,15 @@ pub(super) fn find_twin_groups(
     let found = if by_fingerprints {
         group_twins_by_entries(eng, &entries, width, scratch)?
     } else if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
-        match refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: true }, child)? {
+        match refine::refine_context_groups(
+            parent_level,
+            t1_side,
+            lim,
+            scratch,
+            width,
+            Start::Whole { hand_off: true },
+            child,
+        )? {
             Some(found) => found,
             // A large parent node with its pairs in no order: the
             // fingerprints search the level for less.
@@ -435,51 +496,41 @@ pub(super) fn find_twin_groups(
         false
     };
     if cfg!(debug_assertions) {
-        debug_check_twin_groups(
-            eng, &entries, parent_level, t1_side, lim, scratch, width, child, by_fingerprints, found,
-        )?;
+        list_members(lim, scratch)?;
+        let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+        let exact = scratch.unnamed_exact;
+        let unnamed = std::mem::take(&mut scratch.unnamed);
+        let other = if by_fingerprints {
+            refine::refine_context_groups(
+                parent_level,
+                t1_side,
+                lim,
+                scratch,
+                width,
+                Start::Whole { hand_off: false },
+                child,
+            )?
+            .expect("a refinement that may not give up does not")
+        } else {
+            group_twins_by_entries(eng, &entries, width, scratch)?
+        };
+        list_members(lim, scratch)?;
+        assert_eq!(
+            (found, &kept.0, &kept.1),
+            (other, &scratch.group_starts, &scratch.flat_groups),
+            "the refined twin groups differ from the fingerprinted ones",
+        );
+        // Each lists the nodes no pair names where it read every pair.
+        if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
+            assert_eq!(
+                unnamed, scratch.unnamed,
+                "the refinement and the fingerprints list different unnamed nodes"
+            );
+        }
+        scratch.unnamed = unnamed;
+        scratch.unnamed_exact = exact;
     }
     Ok(found)
-}
-
-/// Cross-check the twin groups found on `parent_level` against the alternative
-/// grouping route (refinement vs. fingerprints) in debug builds.
-#[expect(clippy::too_many_arguments)]
-fn debug_check_twin_groups(
-    eng: &Engine,
-    entries: &ContextEntries<'_>,
-    parent_level: &TddLevel,
-    t1_side: ChildSide,
-    lim: &crate::limits::Limits,
-    scratch: &mut ContractScratch,
-    width: usize,
-    child: Option<&[crate::diagram::EncodedNode]>,
-    by_fingerprints: bool,
-    found: bool,
-) -> Result<(), OperationError> {
-    list_members(lim, scratch)?;
-    let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
-    let exact = scratch.unnamed_exact;
-    let unnamed = std::mem::take(&mut scratch.unnamed);
-    let other = if by_fingerprints {
-        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: false }, child)?
-            .expect("a refinement that may not give up does not")
-    } else {
-        group_twins_by_entries(eng, entries, width, scratch)?
-    };
-    list_members(lim, scratch)?;
-    assert_eq!(
-        (found, &kept.0, &kept.1),
-        (other, &scratch.group_starts, &scratch.flat_groups),
-        "the refined twin groups differ from the fingerprinted ones",
-    );
-    // Each lists the nodes no pair names where it read every pair.
-    if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
-        assert_eq!(unnamed, scratch.unnamed, "the refinement and the fingerprints list different unnamed nodes");
-    }
-    scratch.unnamed = unnamed;
-    scratch.unnamed_exact = exact;
-    Ok(())
 }
 
 /// Group the `width` nodes of `level` by the multiset of their `entries`.
@@ -605,20 +656,31 @@ fn mark_candidates(
     if width >= PARTITION_MIN_WIDTH {
         return mark_partitioned_candidates(lim, scratch, width);
     }
-    let ContractScratch { fingerprints, twin_hash_table, is_candidate, .. } = scratch;
+    let ContractScratch {
+        fingerprints,
+        twin_hash_table,
+        is_candidate,
+        ..
+    } = scratch;
     lim.try_resize(is_candidate, width, false)?;
     is_candidate[..width].fill(false);
     let mut found = false;
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..width], None, |i, occupant| {
-        if let Some(occ) = occupant {
-            // Idempotent stores: re-flagging an already-flagged node is a
-            // redundant write, not a miscount, so the probe needs no guards.
-            is_candidate[i] = true;
-            is_candidate[occ] = true;
-            found = true;
-        }
-        true
-    })?;
+    probe_fingerprints(
+        lim,
+        twin_hash_table,
+        &fingerprints[..width],
+        None,
+        |i, occupant| {
+            if let Some(occ) = occupant {
+                // Idempotent stores: re-flagging an already-flagged node is a
+                // redundant write, not a miscount, so the probe needs no guards.
+                is_candidate[i] = true;
+                is_candidate[occ] = true;
+                found = true;
+            }
+            true
+        },
+    )?;
     Ok(found)
 }
 
@@ -629,11 +691,20 @@ fn mark_partitioned_candidates(
     scratch: &mut ContractScratch,
     width: usize,
 ) -> Result<bool, OperationError> {
-    let ContractScratch { fingerprints, is_candidate, part_records, part_starts, part_table, .. } = scratch;
+    let ContractScratch {
+        fingerprints,
+        is_candidate,
+        part_records,
+        part_starts,
+        part_table,
+        ..
+    } = scratch;
     lim.try_resize(is_candidate, width, false)?;
     is_candidate[..width].fill(false);
     let fingerprints = &fingerprints[..width];
-    let bits = (width / PARTITION_SIZE).next_power_of_two().trailing_zeros();
+    let bits = (width / PARTITION_SIZE)
+        .next_power_of_two()
+        .trailing_zeros();
     let shift = u64::BITS - bits;
     let parts = 1usize << bits;
     // Each partition's size at the entry after its own, then their sums:

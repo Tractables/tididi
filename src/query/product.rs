@@ -30,11 +30,14 @@
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{ChildDecoder, ChildPair, ChildRef, EncodedChildRef, LeafLabel, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
+use crate::Engine;
+use crate::diagram::{
+    ChildDecoder, ChildPair, ChildRef, EncodedChildRef, LEAF_WIDTH, LeafLabel, Tdd, TddLevel,
+    ValueRef,
+};
 use crate::limits::{Limits, OperationError, PollGate, Transient};
 use crate::value::CountRead;
 use crate::vtree::{VtreeIdx, VtreeNode};
-use crate::Engine;
 
 impl Engine {
     /// Sum, over the assignments that neither operand has summed out, of the
@@ -123,8 +126,12 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         crate::apply::check_vtree(l, r)?;
-        if l.weights.is_some() || r.weights.is_some()
-            || l.levels.iter().chain(r.levels.iter()).any(TddLevel::is_weight_marginal)
+        if l.weights.is_some()
+            || r.weights.is_some()
+            || l.levels
+                .iter()
+                .chain(r.levels.iter())
+                .any(TddLevel::is_weight_marginal)
         {
             return Err(OperationError::IncompatibleWeights);
         }
@@ -279,14 +286,20 @@ fn same_diagram(l: &Tdd, r: &Tdd) -> bool {
                 && a.ranges == b.ranges
                 && a.marginal_counts() == b.marginal_counts()
                 && match (a.count_column(), b.count_column()) {
-                    (Some(x), Some(y)) => (0..a.slot_count()).all(|i| x.get(i).to_count() == y.get(i).to_count()),
+                    (Some(x), Some(y)) => {
+                        (0..a.slot_count()).all(|i| x.get(i).to_count() == y.get(i).to_count())
+                    }
                     (x, y) => x.is_none() && y.is_none(),
                 }
         })
 }
 
 /// A marginal level's values as the walk's counts.
-fn column<'a, V: Arith>(lim: &'a Limits, level: &TddLevel, gate: &mut PollGate) -> Result<Transient<'a, Vec<V>>, Halt> {
+fn column<'a, V: Arith>(
+    lim: &'a Limits,
+    level: &TddLevel,
+    gate: &mut PollGate,
+) -> Result<Transient<'a, Vec<V>>, Halt> {
     let col = level.count_column().expect("a count-marginal level");
     let n = level.slot_count();
     let mut out = Transient::new(lim, Vec::new());
@@ -341,13 +354,21 @@ fn constants<'a, V: Arith>(
             }
         } else {
             let (left, right) = vtree.children(s);
-            let lv = vals.remove(&(left.0)).expect("a child is folded before its parent");
-            let rv = vals.remove(&(right.0)).expect("a child is folded before its parent");
-            let (ld, rd) = (tdd.levels[left.idx()].child_decoder(), tdd.levels[right.idx()].child_decoder());
-            let at = |vals: &[Option<V>], view: ChildDecoder, e: EncodedChildRef| match side(view, e) {
-                Side::At(i) => vals[i as usize].clone(),
-                Side::Inline(k) => Some(V::small(u128::from(k))),
-            };
+            let lv = vals
+                .remove(&(left.0))
+                .expect("a child is folded before its parent");
+            let rv = vals
+                .remove(&(right.0))
+                .expect("a child is folded before its parent");
+            let (ld, rd) = (
+                tdd.levels[left.idx()].child_decoder(),
+                tdd.levels[right.idx()].child_decoder(),
+            );
+            let at =
+                |vals: &[Option<V>], view: ChildDecoder, e: EncodedChildRef| match side(view, e) {
+                    Side::At(i) => vals[i as usize].clone(),
+                    Side::Inline(k) => Some(V::small(u128::from(k))),
+                };
             lim.reserve_exact(&mut out, level.nodes().len())?;
             for (_, pairs) in level.internal_inputs_iter() {
                 gate.poll(pairs.len() as u64 + 1)?;
@@ -425,7 +446,11 @@ impl<'t> Level<'t> {
 
     /// Split `p` into `(kept node, summed ref, summed view)` according to whether the left side is kept.
     #[inline]
-    fn split_factored(&self, p: ChildPair, keep_left: bool) -> (u32, EncodedChildRef, ChildDecoder) {
+    fn split_factored(
+        &self,
+        p: ChildPair,
+        keep_left: bool,
+    ) -> (u32, EncodedChildRef, ChildDecoder) {
         if keep_left {
             (node(self.left, p.left), p.right, self.right)
         } else {
@@ -469,20 +494,28 @@ fn product<V: Arith>(lim: &Limits, l: &Tdd, r: &Tdd, same: bool) -> Result<V, Ha
             leaf(lim, same)?
         } else if same && sl.pure[ti] {
             let (left, right) = vtree.children(t);
-            let (Some(Form::Diag(dl)), Some(Form::Diag(dr))) = (forms[left.idx()].take(), forms[right.idx()].take()) else {
+            let (Some(Form::Diag(dl)), Some(Form::Diag(dr))) =
+                (forms[left.idx()].take(), forms[right.idx()].take())
+            else {
                 unreachable!("a structural subtree's children are diagonal")
             };
             Form::Diag(diag(lim, &Level::new(l, t, None), &dl, &dr, &mut gate)?)
         } else {
             let (left, right) = vtree.children(t);
-            let fl = forms[left.idx()].take().expect("a child's form precedes its parent's");
-            let fr = forms[right.idx()].take().expect("a child's form precedes its parent's");
+            let fl = forms[left.idx()]
+                .take()
+                .expect("a child's form precedes its parent's");
+            let fr = forms[right.idx()]
+                .take()
+                .expect("a child's form precedes its parent's");
             let only = t == root;
             let ll = Level::new(l, t, only.then_some(out_l));
             let lr = Level::new(r, t, only.then_some(out_r));
             if only && (matches!(fl, Form::Factor(..)) ^ matches!(fr, Form::Factor(..))) {
                 let (lw, rw) = (l.reference_slot_count(left), r.reference_slot_count(left));
-                let (lw, rw) = if matches!(fr, Form::Factor(..)) { (lw, rw) } else {
+                let (lw, rw) = if matches!(fr, Form::Factor(..)) {
+                    (lw, rw)
+                } else {
                     (l.reference_slot_count(right), r.reference_slot_count(right))
                 };
                 let count = root_contract(lim, &ll, &lr, &fl, &fr, (lw, rw), &mut gate)?;
@@ -507,16 +540,29 @@ fn product<V: Arith>(lim: &Limits, l: &Tdd, r: &Tdd, same: bool) -> Result<V, Ha
     gate.finish()?;
     // The root is a leaf, a summed-out level or diagonal.
     Ok(match forms[root.idx()].take().expect("the root is read") {
-        Form::Diag(d) => if out_l == out_r { d[out_l as usize].clone() } else { V::default() },
+        Form::Diag(d) => {
+            if out_l == out_r {
+                d[out_l as usize].clone()
+            } else {
+                V::default()
+            }
+        }
         Form::Factor(a, b) => a[out_l as usize].times(&b[out_r as usize])?,
-        Form::Sparse(e) => row(&e, out_l).iter().find(|x| x.0 == key(out_l, out_r)).map_or_else(V::default, |x| x.1.clone()),
+        Form::Sparse(e) => row(&e, out_l)
+            .iter()
+            .find(|x| x.0 == key(out_l, out_r))
+            .map_or_else(V::default, |x| x.1.clone()),
     })
 }
 
 /// `M_t` at a leaf both operands keep: the count of `u ∧ v` over its
 /// variable.
 fn leaf<'a, V: Arith>(lim: &'a Limits, same: bool) -> Result<Form<'a, V>, OperationError> {
-    let (one, pos, neg) = (LeafLabel::One as u32, LeafLabel::Pos as u32, LeafLabel::Neg as u32);
+    let (one, pos, neg) = (
+        LeafLabel::One as u32,
+        LeafLabel::Pos as u32,
+        LeafLabel::Neg as u32,
+    );
     if same {
         // One diagram's leaf references are all the constant or all
         // literals, so its referenced nodes are pairwise disjoint.
@@ -529,7 +575,15 @@ fn leaf<'a, V: Arith>(lim: &'a Limits, same: bool) -> Result<Form<'a, V>, Operat
     }
     let mut e = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut e, 7)?;
-    for (u, v, c) in [(one, one, 2), (one, pos, 1), (one, neg, 1), (pos, one, 1), (pos, pos, 1), (neg, one, 1), (neg, neg, 1)] {
+    for (u, v, c) in [
+        (one, one, 2),
+        (one, pos, 1),
+        (one, neg, 1),
+        (pos, one, 1),
+        (pos, pos, 1),
+        (neg, one, 1),
+        (neg, neg, 1),
+    ] {
         e.push((key(u, v), V::small(c)));
     }
     e.sort_unstable_by_key(|x| x.0);
@@ -565,7 +619,11 @@ fn cut<'a, V: Arith>(
 
 /// Refuse `tdd` at `t` when a pair of its parent level, or its output,
 /// reaches a node of `t` that is not constant.
-fn refuse_unless_constant<V>(tdd: &Tdd, t: VtreeIdx, k: &[Option<V>]) -> Result<(), OperationError> {
+fn refuse_unless_constant<V>(
+    tdd: &Tdd,
+    t: VtreeIdx,
+    k: &[Option<V>],
+) -> Result<(), OperationError> {
     let vtree = tdd.vtree();
     let reached_constant = |i: u32| k.get(i as usize).is_some_and(Option::is_some);
     let ok = match vtree.node(t).parent() {
@@ -573,12 +631,20 @@ fn refuse_unless_constant<V>(tdd: &Tdd, t: VtreeIdx, k: &[Option<V>]) -> Result<
         Some(p) => {
             let view = tdd.levels[t.idx()].child_decoder();
             let on_left = vtree.children(p).0 == t;
-            tdd.levels[p.idx()].internal_inputs_iter().all(|(_, pairs)| {
-                pairs.into_iter().all(|pair| reached_constant(node(view, if on_left { pair.left } else { pair.right })))
-            })
+            tdd.levels[p.idx()]
+                .internal_inputs_iter()
+                .all(|(_, pairs)| {
+                    pairs.into_iter().all(|pair| {
+                        reached_constant(node(view, if on_left { pair.left } else { pair.right }))
+                    })
+                })
         }
     };
-    if ok { Ok(()) } else { Err(OperationError::MarginalLevel(t)) }
+    if ok {
+        Ok(())
+    } else {
+        Err(OperationError::MarginalLevel(t))
+    }
 }
 
 /// `M_t` of one structural diagram from its children's diagonals: each
@@ -636,7 +702,10 @@ impl<'f, V: Arith> Row<'f, V> {
 
 /// Ensure `map` has room for at least one more entry, growing in batches of at least 16.
 #[inline]
-fn reserve_map_slot<K: Eq + std::hash::Hash, V>(lim: &Limits, map: &mut FxHashMap<K, V>) -> Result<(), OperationError> {
+fn reserve_map_slot<K: Eq + std::hash::Hash, V>(
+    lim: &Limits,
+    map: &mut FxHashMap<K, V>,
+) -> Result<(), OperationError> {
     if map.len() == map.capacity() {
         let grow = map.len().max(16);
         lim.reserve_map(map, grow)?;
@@ -660,7 +729,9 @@ fn contract<'a, V: Arith>(
         lim.reserve_map(&mut acc, pairs.len())?;
         for p in pairs {
             let (kept, summed, view) = level.split_factored(p, keep_left);
-            acc.entry(key(kept, u)).or_default().plus(&value_at(vals, view, summed))?;
+            acc.entry(key(kept, u))
+                .or_default()
+                .plus(&value_at(vals, view, summed))?;
         }
     }
     let mut out = Transient::new(lim, Vec::new());
@@ -689,7 +760,11 @@ fn root_contract<V: Arith>(
     let (Form::Factor(a, b), other) = (if right_factored { (fr, fl) } else { (fl, fr) }) else {
         unreachable!("one child is factored")
     };
-    let dense = |level: &Level<'_>, vals: &[V], width: usize, gate: &mut PollGate| -> Result<Transient<'_, Vec<V>>, Halt> {
+    let dense = |level: &Level<'_>,
+                 vals: &[V],
+                 width: usize,
+                 gate: &mut PollGate|
+     -> Result<Transient<'_, Vec<V>>, Halt> {
         let mut col = Transient::new(lim, Vec::new());
         lim.try_resize(&mut col, width, V::default())?;
         for (_, pairs) in level.nodes() {
@@ -735,7 +810,11 @@ fn side_sums<'a, V: Arith>(
         gate.poll(pairs.len() as u64 + 1)?;
         let mut acc = V::default();
         for p in pairs {
-            acc.plus(&value_at(a, level.left, p.left).times(&value_at(b, level.right, p.right))?)?;
+            acc.plus(&value_at(a, level.left, p.left).times(&value_at(
+                b,
+                level.right,
+                p.right,
+            ))?)?;
         }
         out[u as usize] = acc;
     }
@@ -743,84 +822,15 @@ fn side_sums<'a, V: Arith>(
 }
 
 /// Add `w` to `acc[(u, v)]`, reserving map capacity through `lim`.
-fn add_entry<V: Arith>(lim: &Limits, acc: &mut FxHashMap<u64, V>, u: u32, v: u32, w: V) -> Result<(), Halt> {
+fn add_entry<V: Arith>(
+    lim: &Limits,
+    acc: &mut FxHashMap<u64, V>,
+    u: u32,
+    v: u32,
+    w: V,
+) -> Result<(), Halt> {
     reserve_map_slot(lim, acc)?;
     acc.entry(key(u, v)).or_default().plus(&w)?;
-    Ok(())
-}
-
-/// Populate `acc` at a level where exactly one child (`(a, b)`, on the right iff
-/// `right_factored`) is factored and `other` is the unfactored child's form.
-fn combine_one_factored<V: Arith>(
-    lim: &Limits,
-    (ll, lr): (&Level<'_>, &Level<'_>),
-    (a, b): (&[V], &[V]),
-    other: &Form<'_, V>,
-    right_factored: bool,
-    acc: &mut FxHashMap<u64, V>,
-    gate: &mut PollGate,
-) -> Result<(), Halt> {
-    let gl = contract(lim, ll, a, right_factored, gate)?;
-    let gr = contract(lim, lr, b, right_factored, gate)?;
-    for &(k, ref x) in gl.iter() {
-        let (p, u) = ((k >> 32) as u32, k as u32);
-        gate.poll(1)?;
-        Row::of(other, p).for_each(|p2, w| {
-            let xw = x.times(w)?;
-            for &(k2, ref y) in row(&gr, p2) {
-                add_entry(lim, acc, u, k2 as u32, xw.times(y)?)?;
-            }
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
-/// Populate `acc` at a level where neither child is factored: every pair of
-/// `ll` meets the pairs of `lr` whose children pair with its own in `fl` and `fr`.
-fn combine_unfactored<V: Arith>(
-    lim: &Limits,
-    (ll, lr): (&Level<'_>, &Level<'_>),
-    (fl, fr): (&Form<'_, V>, &Form<'_, V>),
-    acc: &mut FxHashMap<u64, V>,
-    gate: &mut PollGate,
-) -> Result<(), Halt> {
-    // `r`'s pairs by their two children. Over summed-out storage a
-    // node may repeat a pair, and each copy counts.
-    let mut pairs_r: Transient<'_, Vec<(u64, u32)>> = Transient::new(lim, Vec::new());
-    for (v, pairs) in lr.nodes() {
-        gate.poll(pairs.len() as u64 + 1)?;
-        for p in pairs {
-            lim.try_push(&mut pairs_r, (key(node(lr.left, p.left), node(lr.right, p.right)), v))?;
-        }
-    }
-    pairs_r.sort_unstable();
-    let mut index: Transient<'_, FxHashMap<u64, (u32, u32)>> = Transient::new(lim, FxHashMap::default());
-    let mut start = 0;
-    while start < pairs_r.len() {
-        let k = pairs_r[start].0;
-        let end = start + pairs_r[start..].partition_point(|e| e.0 == k);
-        reserve_map_slot(lim, &mut index)?;
-        index.insert(k, (start as u32, (end - start) as u32));
-        start = end;
-    }
-    for (u, pairs) in ll.nodes() {
-        gate.poll(pairs.len() as u64 + 1)?;
-        for p in pairs {
-            let (rows_l, rows_r) = (Row::of(fl, node(ll.left, p.left)), Row::of(fr, node(ll.right, p.right)));
-            rows_l.for_each(|p2, wl| {
-                rows_r.for_each(|q2, wr| {
-                    if let Some(&(at, len)) = index.get(&key(p2, q2)) {
-                        let w = wl.times(wr)?;
-                        for &(_, v) in &pairs_r[at as usize..(at + len) as usize] {
-                            add_entry(lim, acc, u, v, w.clone())?;
-                        }
-                    }
-                    Ok(())
-                })
-            })?;
-        }
-    }
     Ok(())
 }
 
@@ -844,9 +854,65 @@ fn combine<'a, V: Arith>(
         (_, Form::Factor(a, b)) | (Form::Factor(a, b), _) => {
             let right_factored = matches!(fr, Form::Factor(..));
             let other = if right_factored { fl } else { fr };
-            combine_one_factored(lim, (ll, lr), (a, b), other, right_factored, &mut acc, gate)?;
+            let gl = contract(lim, ll, a, right_factored, gate)?;
+            let gr = contract(lim, lr, b, right_factored, gate)?;
+            for &(k, ref x) in gl.iter() {
+                let (p, u) = ((k >> 32) as u32, k as u32);
+                gate.poll(1)?;
+                Row::of(other, p).for_each(|p2, w| {
+                    let xw = x.times(w)?;
+                    for &(k2, ref y) in row(&gr, p2) {
+                        add_entry(lim, &mut acc, u, k2 as u32, xw.times(y)?)?;
+                    }
+                    Ok(())
+                })?;
+            }
         }
-        _ => combine_unfactored(lim, (ll, lr), (fl, fr), &mut acc, gate)?,
+        _ => {
+            // `r`'s pairs by their two children. Over summed-out storage a
+            // node may repeat a pair, and each copy counts.
+            let mut pairs_r: Transient<'_, Vec<(u64, u32)>> = Transient::new(lim, Vec::new());
+            for (v, pairs) in lr.nodes() {
+                gate.poll(pairs.len() as u64 + 1)?;
+                for p in pairs {
+                    lim.try_push(
+                        &mut pairs_r,
+                        (key(node(lr.left, p.left), node(lr.right, p.right)), v),
+                    )?;
+                }
+            }
+            pairs_r.sort_unstable();
+            let mut index: Transient<'_, FxHashMap<u64, (u32, u32)>> =
+                Transient::new(lim, FxHashMap::default());
+            let mut start = 0;
+            while start < pairs_r.len() {
+                let k = pairs_r[start].0;
+                let end = start + pairs_r[start..].partition_point(|e| e.0 == k);
+                reserve_map_slot(lim, &mut index)?;
+                index.insert(k, (start as u32, (end - start) as u32));
+                start = end;
+            }
+            for (u, pairs) in ll.nodes() {
+                gate.poll(pairs.len() as u64 + 1)?;
+                for p in pairs {
+                    let (rows_l, rows_r) = (
+                        Row::of(fl, node(ll.left, p.left)),
+                        Row::of(fr, node(ll.right, p.right)),
+                    );
+                    rows_l.for_each(|p2, wl| {
+                        rows_r.for_each(|q2, wr| {
+                            if let Some(&(at, len)) = index.get(&key(p2, q2)) {
+                                let w = wl.times(wr)?;
+                                for &(_, v) in &pairs_r[at as usize..(at + len) as usize] {
+                                    add_entry(lim, &mut acc, u, v, w.clone())?;
+                                }
+                            }
+                            Ok(())
+                        })
+                    })?;
+                }
+            }
+        }
     }
     let mut out = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut out, acc.len())?;

@@ -255,17 +255,9 @@ fn group_by_hashed_signature(
         },
     )?;
 
-    scatter_hashed_groups(lim, scratch, n, empty_twins)
-}
-
-/// Build contiguous twin groups in `scratch.flat_groups` and `scratch.group_starts`
-/// from the representative ranks in `scratch.cursors[..n]`.
-fn scatter_hashed_groups(
-    lim: &Limits,
-    scratch: &mut ContractScratch,
-    n: usize,
-    empty_twins: bool,
-) -> Result<bool, OperationError> {
+    // Pass 2: build contiguous groups via counting sort. O(n).
+    // Repurpose fingerprints[] as per-rep member count (additive fingerprints
+    // are no longer needed after hash table construction).
     let ContractScratch {
         fingerprints,
         cursors,
@@ -281,6 +273,10 @@ fn scatter_hashed_groups(
     for &rep in &cursors[..n] {
         fingerprints[rep as usize] += 1;
     }
+    // Assign group offsets for reps with ≥2 members; store write cursor.
+    // `pos` counts group members, so it never exceeds `child_width` (each
+    // node joins at most one group) — the `as u32` narrowings below are
+    // exact by the level-width invariant asserted in `find_twin_groups`.
     let mut pos = 0usize;
     for k in 0..n {
         if cursors[k] as usize == k && fingerprints[k] >= 2 && (empty_twins || !empty(k)) {
@@ -299,6 +295,7 @@ fn scatter_hashed_groups(
             }
         }
     }
+    // Scatter-write members into flat_groups.
     lim.try_resize(flat_groups, pos, 0)?;
     for k in 0..n {
         let rep = cursors[k] as usize;
@@ -308,6 +305,7 @@ fn scatter_hashed_groups(
             fingerprints[rep] = cursor + 1;
         }
     }
+
     Ok(!group_starts.is_empty())
 }
 
@@ -385,29 +383,6 @@ pub(super) fn group_single_entries(
         *record = (key << node_bits) | node as u64;
     }
 
-    let sorted =
-        radix_sort_packed_entries(lim, width, (node_bits, key_bits), records, other, counts)?;
-    emit_packed_entry_runs(
-        lim,
-        sorted,
-        width,
-        node_bits,
-        candidates,
-        group_starts,
-        flat_groups,
-    )
-}
-
-/// Stable least-significant-digit radix sort of `records[..width]` over the key
-/// bits `node_bits..node_bits + key_bits`.
-fn radix_sort_packed_entries<'a>(
-    lim: &crate::limits::Limits,
-    width: usize,
-    (node_bits, key_bits): (u32, u32),
-    records: &'a mut [u64],
-    other: &'a mut Vec<u64>,
-    counts: &mut Vec<u32>,
-) -> Result<&'a [u64], OperationError> {
     lim.try_resize(other, width, 0u64)?;
     lim.try_resize(counts, 1 << SINGLE_ENTRY_DIGIT_BITS, 0u32)?;
     let (mut src, mut dst): (&mut [u64], &mut [u64]) = (&mut records[..width], &mut other[..width]);
@@ -433,20 +408,9 @@ fn radix_sort_packed_entries<'a>(
         }
         shift += digit_bits;
     }
-    Ok(src)
-}
+    let sorted: &[u64] = src;
 
-/// Collect runs of two or more equal keys in `sorted`, ordered by their lowest
-/// member index, into `group_starts` and `flat_groups`.
-fn emit_packed_entry_runs(
-    lim: &crate::limits::Limits,
-    sorted: &[u64],
-    width: usize,
-    node_bits: u32,
-    candidates: &mut Vec<u32>,
-    group_starts: &mut Vec<u32>,
-    flat_groups: &mut Vec<u32>,
-) -> Result<Option<bool>, OperationError> {
+    // The runs of two or more, by their lowest member.
     let node_mask = (1u64 << node_bits) - 1;
     let run_end = |start: usize| {
         let key = sorted[start] >> node_bits;

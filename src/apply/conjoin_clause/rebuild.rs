@@ -152,8 +152,30 @@ pub(super) fn rebuild_spine_level(
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
     lim.reserve(level.nodes.stored_mut(), node_cap)?;
-    let (pair_mult, first_reserve) =
-        plan_spine_pair_reserve(lim, in_pairs, k, both_rel, compute_dt);
+    // Worst-case output pairs per input pair: up to 3 c_t pairs for a
+    // both-relevant node, plus 1 d_t pair when `compute_dt`. The input pairs
+    // are the arena's and at most one more per node, the pair a single-pair
+    // node stores inline, which the arena does not hold. A level whose worst
+    // case is small gets all of it at once; a larger one is sized at up to
+    // twice its input and topped up per node, so the peak never holds a
+    // whole-level worst case of 3 or 4 beside the still-live `old`. Twice
+    // covers a level with one relevant child whole: sized at the input
+    // count, such a level with `d_t` outgrew its arena near its last node
+    // and copied it, once per spine level and clause, which a long run of
+    // clauses paid as a second pass over the level. Growth near the budget
+    // keeps the input count.
+    let inputs = in_pairs.saturating_add(k);
+    let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
+    // One more for a disjunction's cube pair, which this level may carry.
+    let worst = inputs.saturating_mul(pair_mult).saturating_add(1);
+    lim.begin_level(Some(worst as u128));
+    let first_reserve = if lim.bounded_growth() {
+        inputs
+    } else if worst <= RESERVE_WHOLE_LEVEL_UP_TO {
+        worst
+    } else {
+        inputs.saturating_mul(pair_mult.min(2))
+    };
     lim.reserve(level.pairs.stored_mut(), first_reserve)?;
     let ctx = SpineCtx {
         left_grid_base,
@@ -161,15 +183,27 @@ pub(super) fn rebuild_spine_level(
         pair_mult,
         nodes: k,
     };
-    dispatch_rebuild_nodes(
-        eng,
-        (left_rel, right_rel, compute_dt),
-        &old,
-        nodes,
-        ctx,
-        (level, base),
-        tables,
-    )?;
+    match (left_rel, right_rel, compute_dt) {
+        (true, true, true) => {
+            rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (true, true, false) => {
+            rebuild_nodes::<true, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (true, false, true) => {
+            rebuild_nodes::<true, false, true>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (true, false, false) => {
+            rebuild_nodes::<true, false, false>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (false, true, true) => {
+            rebuild_nodes::<false, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (false, true, false) => {
+            rebuild_nodes::<false, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+        }
+        (false, false, _) => unreachable!("a spine level has a relevant child"),
+    }
     // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
     // the two are not resident together at the peak.
     let old_value_ref_sides = old.value_ref_sides;
@@ -183,62 +217,6 @@ pub(super) fn rebuild_spine_level(
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
     Ok(())
-}
-
-/// Begin the level's worst-case pair estimate on `lim` and return
-/// `(pair_mult, first_reserve)`.
-fn plan_spine_pair_reserve(
-    lim: &Limits,
-    in_pairs: usize,
-    k: usize,
-    both_rel: bool,
-    compute_dt: bool,
-) -> (usize, usize) {
-    let inputs = in_pairs.saturating_add(k);
-    let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
-    let worst = inputs.saturating_mul(pair_mult).saturating_add(1);
-    lim.begin_level(Some(worst as u128));
-    let first_reserve = if lim.bounded_growth() {
-        inputs
-    } else if worst <= RESERVE_WHOLE_LEVEL_UP_TO {
-        worst
-    } else {
-        inputs.saturating_mul(pair_mult.min(2))
-    };
-    (pair_mult, first_reserve)
-}
-
-/// Dispatch [`rebuild_nodes`] specialized by `(left_rel, right_rel, compute_dt)`.
-fn dispatch_rebuild_nodes(
-    eng: &Engine,
-    (left_rel, right_rel, compute_dt): (bool, bool, bool),
-    old: &TddLevel,
-    nodes: &[EncodedNode],
-    ctx: SpineCtx,
-    (level, base): (&mut TddLevel, usize),
-    tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
-    match (left_rel, right_rel, compute_dt) {
-        (true, true, true) => {
-            rebuild_nodes::<true, true, true>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (true, true, false) => {
-            rebuild_nodes::<true, true, false>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (true, false, true) => {
-            rebuild_nodes::<true, false, true>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (true, false, false) => {
-            rebuild_nodes::<true, false, false>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (false, true, true) => {
-            rebuild_nodes::<false, true, true>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (false, true, false) => {
-            rebuild_nodes::<false, true, false>(eng, old, nodes, ctx, level, base, tables)
-        }
-        (false, false, _) => unreachable!("a spine level has a relevant child"),
-    }
 }
 
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.

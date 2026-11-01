@@ -1,7 +1,7 @@
 //! The per-level table of resolved g column slices.
 
 use super::*;
-use crate::diagram::{decoded, ChildDecoder, Pairs};
+use crate::diagram::{ChildDecoder, Pairs, decoded};
 use crate::limits::Transient;
 
 /// Pairs a g column and an f row both need before the N×M walk groups their
@@ -136,7 +136,9 @@ impl<'a> RightColumns<'a> {
         // borrowed), so the arena and its budget charge exist only for
         // marginal masks and for an implicit level, whose pairs are generated
         // into it.
-        let borrowed = (!left_view.is_marginal() && !right_view.is_marginal()).then(|| right_level.stored()).flatten();
+        let borrowed = (!left_view.is_marginal() && !right_view.is_marginal())
+            .then(|| right_level.stored())
+            .flatten();
         let mut flat = Transient::new(lim, Vec::<ChildPair>::new());
         if borrowed.is_none() {
             // An implicit level's nodes hold the description's pairs each.
@@ -166,13 +168,29 @@ impl<'a> RightColumns<'a> {
                 // identity fast path (`pairs_view_decoded` → `pairs_read`)
                 // calls, hoisted out of the row loop.
                 let s = stored.of_idx(j);
-                cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len(), run_range: (0, 0) });
+                cols.push(ColumnSlice {
+                    ptr: s.as_ptr(),
+                    len: s.len(),
+                    run_range: (0, 0),
+                });
             }
         } else {
-            fill_owned_column_arena(right_level, right_width, (left_view, right_view), &mut flat, &mut cols);
+            fill_owned_column_arena(
+                right_level,
+                right_width,
+                left_view,
+                right_view,
+                &mut flat,
+                &mut cols,
+            );
         }
 
-        let mut table = RightColumns { flat, cols, run_ends: Transient::new(lim, Vec::new()), eng };
+        let mut table = RightColumns {
+            flat,
+            cols,
+            run_ends: Transient::new(lim, Vec::new()),
+            eng,
+        };
         if grouped {
             table.record_runs();
         }
@@ -240,21 +258,30 @@ impl Drop for RightColumns<'_> {
 fn fill_owned_column_arena(
     right_level: &TddLevel,
     right_width: usize,
-    (left_view, right_view): (ChildDecoder, ChildDecoder),
+    left_view: ChildDecoder,
+    right_view: ChildDecoder,
     flat: &mut Vec<ChildPair>,
     cols: &mut Vec<ColumnSlice>,
 ) {
     match right_level.pair_view() {
         Pairs::Implicit(d) => {
             d.pairs_of_first(right_width, flat);
-            let column = ColumnSlice { ptr: std::ptr::null(), len: d.pairs_per_node(), run_range: (0, 0) };
+            let column = ColumnSlice {
+                ptr: std::ptr::null(),
+                len: d.pairs_per_node(),
+                run_range: (0, 0),
+            };
             cols.extend(std::iter::repeat_n(column, right_width));
         }
         Pairs::Stored(stored) => {
             for j in 0..right_width {
                 let pairs = stored.of_idx(j);
                 flat.extend_from_slice(pairs);
-                cols.push(ColumnSlice { ptr: std::ptr::null(), len: pairs.len(), run_range: (0, 0) });
+                cols.push(ColumnSlice {
+                    ptr: std::ptr::null(),
+                    len: pairs.len(),
+                    run_range: (0, 0),
+                });
             }
         }
     }

@@ -1201,15 +1201,44 @@ fn probe_scored<'l>(
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let (before, scored, floors) = collect_member_floors(lim, members, (v, w), bound > 2)?;
+    let defer = bound > 2;
+    let mut before = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut before, members.len())?;
+    // A member with at most one pair on each level is not scored, its pairs
+    // unchanged, and a scored member ends with at least a pair for each of
+    // its outer nodes.
+    let mut scored = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut scored, members.len())?;
+    let mut floors = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut floors, members.len())?;
+    for m in members.iter() {
+        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
+        let old = outer + inner;
+        before.push(old);
+        let scores = !(defer && outer <= 1 && inner == outer);
+        scored.push(scores);
+        floors.push(if scores { owners } else { old });
+    }
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
-    let (mut after, order) = init_score_order(lim, &before, &mut twin)?;
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, members.len())?;
+    after.extend_from_slice(&before);
+    // The largest members first: a move they refuse is refused with less
+    // of the pool read.
+    let mut order = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut order, members.len())?;
+    order.extend(0..members.len());
+    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
+    if let Twin::Fill(slots) = &mut twin {
+        slots.resize(members.len(), None);
+    }
     // The floors of the members still to score, and the pairs of those
     // scored, of the move and of its crossing where it is scored too.
     let mut rest = floors.iter().sum::<usize>();
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
+    let cap = |sum: usize, rest: usize| limit.saturating_sub(sum + rest);
     for (at, &i) in order.iter().enumerate() {
         let m = &members[i];
         rest -= floors[i];
@@ -1220,26 +1249,44 @@ fn probe_scored<'l>(
             sum_crossed = sum_crossed.map(|s| s + old);
             continue;
         }
-        let new = score_member_move(
-            lim,
-            m,
-            i,
-            step,
-            &mut scratch.score,
-            &mut twin,
-            (sum, &mut sum_crossed),
-            (rest, limit),
-        )?;
+        #[cfg(test)]
+        tests::note_score();
+        let (kind, score) = (mv.rotation.kind, &mut scratch.score);
+        let new = match &mut twin {
+            Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
+            Twin::Fill(slots) => {
+                // A crossing refused by an earlier member's score is capped
+                // at nothing.
+                let crossed_cap = sum_crossed.map_or(0, |s| cap(s, rest));
+                let [plain, crossed] = score_levels_crossed_too(
+                    lim,
+                    m,
+                    &info,
+                    kind,
+                    score,
+                    bound,
+                    [cap(sum, rest), crossed_cap],
+                )?;
+                slots[i] = Some(crossed);
+                sum_crossed = sum_crossed.zip(crossed).map(|(s, n)| s + n);
+                plain
+            }
+            Twin::Given(slots) => match slots.get(i) {
+                Some(&Some(given)) => given,
+                _ => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
+            },
+        };
         let Some(new) = new else {
-            return refuse_probed_member(
-                lim,
-                members,
-                step,
-                (&order[at..], &before, &scored),
-                limit,
-                scratch,
-                gate,
-            );
+            // Refused, by the cap or the bound: this member and the ones
+            // after it charged as if scored.
+            for &j in &order[at..] {
+                gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+            }
+            #[cfg(debug_assertions)]
+            debug_check_refusal(lim, members, step, limit, scratch)?;
+            gate.flush()?;
+            lim.check_stop()?;
+            return Ok(false);
         };
         gate.poll(old as u64 + REBUILD_UNITS)?;
         after[i] = new;
@@ -1254,74 +1301,6 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         return Ok(false);
     }
-    finish_probed_move(
-        lim,
-        members,
-        step,
-        scratch,
-        (&before, &scored, &mut after),
-        limit,
-        (gate, undo),
-    )
-}
-
-#[allow(unused_variables)]
-fn refuse_probed_member(
-    lim: &Limits,
-    members: &[&mut Tdd],
-    step: BoundedMove,
-    (rem_order, before, scored): (&[usize], &[usize], &[bool]),
-    limit: usize,
-    scratch: &mut RestructureScratch,
-    mut gate: crate::limits::PollGate<'_>,
-) -> Result<bool, OperationError> {
-    // Refused, by the cap or the bound: this member and the ones after it
-    // charged as if scored.
-    for &j in rem_order {
-        gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
-    }
-    #[cfg(debug_assertions)]
-    debug_check_refusal(lim, members, step, limit, scratch)?;
-    gate.flush()?;
-    lim.check_stop()?;
-    Ok(false)
-}
-
-type ScoreOrderBufs<'l> = (Transient<'l, Vec<usize>>, Transient<'l, Vec<usize>>);
-
-/// Initialize the `after` score table from `before`, sort `order` largest-first,
-/// and size `twin`'s slot table when filling.
-fn init_score_order<'l>(
-    lim: &'l Limits,
-    before: &[usize],
-    twin: &mut Twin<'_>,
-) -> Result<ScoreOrderBufs<'l>, OperationError> {
-    let mut after = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut after, before.len())?;
-    after.extend_from_slice(before);
-    // The largest members first: a move they refuse is refused with less
-    // of the pool read.
-    let mut order = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut order, before.len())?;
-    order.extend(0..before.len());
-    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
-    if let Twin::Fill(slots) = twin {
-        slots.resize(before.len(), None);
-    }
-    Ok((after, order))
-}
-
-/// Rebuild all members for a move that passed scoring and settle or roll back
-/// according to whether the rebuilt total stays under `limit`.
-fn finish_probed_move<'l>(
-    lim: &'l Limits,
-    members: &mut [&mut Tdd],
-    step: BoundedMove,
-    scratch: &mut RestructureScratch,
-    (before, scored, after): (&[usize], &[bool], &mut [usize]),
-    limit: usize,
-    (mut gate, undo): (crate::limits::PollGate<'_>, Option<&mut Undo<'l>>),
-) -> Result<bool, OperationError> {
     let (mut saved, outcome) = rebuild_other_members(
         lim,
         members,
@@ -1345,82 +1324,7 @@ fn finish_probed_move<'l>(
         lim.check_stop()?;
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(lim, members, &step.info, &mut saved, outcome, undo)
-}
-
-type MemberFloors<'a> = (
-    Transient<'a, Vec<usize>>,
-    Transient<'a, Vec<bool>>,
-    Transient<'a, Vec<usize>>,
-);
-
-/// Each member's old pair total, whether it is scored (a member with at most
-/// one pair on each level is not, its pairs unchanged), and the least pairs it
-/// can end with (a pair for each outer node when scored, else its old pairs).
-fn collect_member_floors<'a>(
-    lim: &'a Limits,
-    members: &[&mut Tdd],
-    (v, w): (usize, usize),
-    defer: bool,
-) -> Result<MemberFloors<'a>, OperationError> {
-    let mut before = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut before, members.len())?;
-    let mut scored = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut scored, members.len())?;
-    let mut floors = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut floors, members.len())?;
-    for m in members.iter() {
-        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
-        let old = outer + inner;
-        before.push(old);
-        let scores = !(defer && outer <= 1 && inner == outer);
-        scored.push(scores);
-        floors.push(if scores { owners } else { old });
-    }
-    Ok((before, scored, floors))
-}
-
-/// Score one member's rebuilt pair count under `step`, updating `twin` and
-/// `sum_crossed` when the crossing move is scored alongside.
-#[expect(clippy::too_many_arguments)]
-fn score_member_move(
-    lim: &Limits,
-    m: &Tdd,
-    i: usize,
-    step: BoundedMove,
-    score: &mut crate::restructure::relevel::ScoreScratch,
-    twin: &mut Twin<'_>,
-    (sum, sum_crossed): (usize, &mut Option<usize>),
-    (rest, limit): (usize, usize),
-) -> Result<Option<usize>, OperationError> {
-    #[cfg(test)]
-    tests::note_score();
-    let BoundedMove { info, mv, bound } = step;
-    let cap = |s: usize| limit.saturating_sub(s + rest);
-    match twin {
-        Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum)),
-        Twin::Fill(slots) => {
-            // A crossing refused by an earlier member's score is capped
-            // at nothing.
-            let crossed_cap = sum_crossed.map_or(0, cap);
-            let [plain, crossed] = score_levels_crossed_too(
-                lim,
-                m,
-                &info,
-                mv.rotation.kind,
-                score,
-                bound,
-                [cap(sum), crossed_cap],
-            )?;
-            slots[i] = Some(crossed);
-            *sum_crossed = (*sum_crossed).zip(crossed).map(|(s, n)| s + n);
-            Ok(plain)
-        }
-        Twin::Given(slots) => match slots.get(i) {
-            Some(&Some(given)) => Ok(given),
-            _ => score_levels(lim, m, step.step(), score, cap(sum)),
-        },
-    }
+    settle(lim, members, &info, &mut saved, outcome, undo)
 }
 
 /// A level's live pairs and the nodes that hold them.

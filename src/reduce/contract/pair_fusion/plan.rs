@@ -114,7 +114,8 @@ fn plan_from_run<D: SlotValues>(
     lim: &Limits,
     tdd: &Tdd,
     v: VtreeIdx,
-    (n, x_idx): (usize, u32),
+    n: usize,
+    x_idx: u32,
     refs: impl ExactSizeIterator<Item = u32>,
     run: &mut Vec<u32>,
 ) -> Result<PlanEntry<D::Value>, OperationError> {
@@ -203,7 +204,7 @@ pub(super) fn group_by_sorting<D: SlotValues>(
             let refs = keyed[at..end]
                 .iter()
                 .map(|&(_, pos)| marginal_ref(node[pos as usize], side));
-            let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
+            let plan = plan_from_run::<D>(lim, tdd, v, n, x_idx, refs, run)?;
             lim.try_push(&mut found, (keyed[at].1, plan))?;
         }
         at = end;
@@ -237,7 +238,7 @@ pub(super) fn group_by_runs<D: SlotValues>(
                 .count();
         if end - at > 1 {
             let refs = node[at..end].iter().map(|&p| marginal_ref(p, side));
-            let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
+            let plan = plan_from_run::<D>(lim, tdd, v, n, x_idx, refs, run)?;
             lim.try_push(out, plan)?;
         }
         at = end;
@@ -265,8 +266,38 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
+    // Bump the generation instead of clearing the cells (O(1) per-node
+    // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
+    // "never stamped" sentinel and must never equal a live `gen`).
+    sc.generation = match sc.generation.checked_add(1) {
+        Some(g) => g,
+        None => {
+            for c in sc.cells.iter_mut() {
+                c.stamp = 0;
+            }
+            1
+        }
+    };
+    let generation = sc.generation;
     let pairs = node.len();
-    let (generation, want) = prepare_scatter_scratch(lim, sc, pairs)?;
+    // At least two cells per pair, so the table is never more than half full
+    // and a probe always ends at an unstamped cell. Grown on demand and
+    // fallibly — an OOM here becomes OverBudget, not a process abort. New
+    // cells are stamped 0 ≠ generation (which is ≥ 1) and read as empty.
+    let want = (2 * pairs).next_power_of_two();
+    if sc.cells.len() < want {
+        lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
+    }
+    // The per-pair and per-group buffers hold at least the widest node's
+    // pair count and are written by index, a node's entries over the last
+    // node's: a slice's base and length stay in registers through the loop,
+    // where a push reloads its vector's length after every store to the
+    // table, which might alias it.
+    for buf in [&mut sc.touched, &mut sc.group_ends, &mut sc.pair_slots] {
+        if buf.len() < pairs {
+            lim.try_resize(buf, pairs, 0)?;
+        }
+    }
     // The node probes only the first `want` cells, a window of its own size,
     // not the whole table: after one wide node the table is as wide as it,
     // and a narrow node hashed across all of it would miss the cache on
@@ -313,55 +344,8 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     if !repeated {
         return Ok(());
     }
-    emit_repeated_scatter_groups::<D>(lim, tdd, (v, side), (n, node), groups, out, sc)
-}
-
-#[inline(always)]
-fn prepare_scatter_scratch(
-    lim: &Limits,
-    sc: &mut PFusionScratch,
-    pairs: usize,
-) -> Result<(u32, usize), OperationError> {
-    // Bump the generation instead of clearing the cells (O(1) per-node
-    // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
-    // "never stamped" sentinel and must never equal a live `gen`).
-    sc.generation = match sc.generation.checked_add(1) {
-        Some(g) => g,
-        None => {
-            for c in sc.cells.iter_mut() {
-                c.stamp = 0;
-            }
-            1
-        }
-    };
-    let want = (2 * pairs).next_power_of_two();
-    if sc.cells.len() < want {
-        lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
-    }
-    for buf in [&mut sc.touched, &mut sc.group_ends, &mut sc.pair_slots] {
-        if buf.len() < pairs {
-            lim.try_resize(buf, pairs, 0)?;
-        }
-    }
-    Ok((sc.generation, want))
-}
-
-/// Lay out groups of two or more occurrences in slot order, scatter their
-/// marginal refs, and emit a [`PlanEntry`] per repeated group in
-/// first-occurrence order.
-fn emit_repeated_scatter_groups<D: SlotValues>(
-    lim: &Limits,
-    tdd: &Tdd,
-    (v, side): (VtreeIdx, ChildSide),
-    (n, node): (usize, &[ChildPair]),
-    groups: usize,
-    out: &mut Vec<PlanEntry<D::Value>>,
-    sc: &mut PFusionScratch,
-) -> Result<(), OperationError> {
-    let pairs = node.len();
-    let touched = &sc.touched[..groups];
-    let group_ends = &mut sc.group_ends[..groups];
-    let pair_slots = &sc.pair_slots[..pairs];
+    let touched = &touched[..groups];
+    let group_ends = &mut group_ends[..groups];
     // Lay the groups of two or more out in slot order: a slot's entry
     // becomes its group's write cursor, and after the second pass its end.
     let mut total = 0u32;

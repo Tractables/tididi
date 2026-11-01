@@ -41,10 +41,10 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
+use crate::Engine;
 use crate::diagram::{LeafLabel, Tdd};
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
-use crate::Engine;
 
 use super::column_layout::roles;
 
@@ -187,14 +187,23 @@ impl Engine {
         limit: u64,
     ) -> Result<Option<Vec<Vec<u32>>>, OperationError> {
         assert_eq!(descending.len(), columns.len(), "one direction per column");
-        assert!(keys <= columns.len(), "{keys} key columns of {}", columns.len());
+        assert!(
+            keys <= columns.len(),
+            "{keys} key columns of {}",
+            columns.len()
+        );
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = Arc::clone(tdd.vtree());
         let role = roles(&vtree, columns)?;
-        let key_bits: Vec<VarId> = columns[..keys].iter().flat_map(|c| c.iter().copied()).collect();
-        let Some(layout) = KeyLayout::new(&vtree, &role, descending, &key_bits) else { return Ok(None) };
+        let key_bits: Vec<VarId> = columns[..keys]
+            .iter()
+            .flat_map(|c| c.iter().copied())
+            .collect();
+        let Some(layout) = KeyLayout::new(&vtree, &role, descending, &key_bits) else {
+            return Ok(None);
+        };
         let mut walk = Walk {
             tdd,
             role: &role,
@@ -210,7 +219,11 @@ impl Engine {
         }
         let root = tdd.output().local.idx() as u32;
         if key_bits.is_empty() {
-            walk.cells.push(Cell { t: vtree.root(), n: root, next: NIL });
+            walk.cells.push(Cell {
+                t: vtree.root(),
+                n: root,
+                next: NIL,
+            });
             walk.go(0)?;
             walk.gate.finish()?;
             return Ok(Some(walk.out));
@@ -220,7 +233,9 @@ impl Engine {
         loop {
             streams.ensure(vtree.root(), root, at + 1)?;
             walk.gate.poll(std::mem::take(&mut streams.work))?;
-            let Some(&(key, rest)) = streams.of(vtree.root(), root).out.get(at) else { break };
+            let Some(&(key, rest)) = streams.of(vtree.root(), root).out.get(at) else {
+                break;
+            };
             at += 1;
             layout.decode(key, &role, |j, bit, b| walk.set(j, bit, b));
             // The nodes the key left pending, copied into the walk's cells.
@@ -265,7 +280,9 @@ impl Engine {
         let vtree = Arc::clone(tdd.vtree());
         let role = roles(&vtree, columns)?;
         let key_bits: Vec<VarId> = columns.iter().flat_map(|c| c.iter().copied()).collect();
-        let Some(layout) = KeyLayout::new(&vtree, &role, descending, &key_bits) else { return Ok(None) };
+        let Some(layout) = KeyLayout::new(&vtree, &role, descending, &key_bits) else {
+            return Ok(None);
+        };
         let mut out: Vec<Vec<u32>> = vec![Vec::new(); columns.len()];
         if limit == 0 || tdd.is_zero() {
             return Ok(Some(out));
@@ -284,7 +301,9 @@ impl Engine {
         for at in 0..usize::try_from(limit).unwrap_or(usize::MAX) {
             streams.ensure(vtree.root(), root, at + 1)?;
             gate.poll(std::mem::take(&mut streams.work))?;
-            let Some(&(key, _)) = streams.of(vtree.root(), root).out.get(at) else { break };
+            let Some(&(key, _)) = streams.of(vtree.root(), root).out.get(at) else {
+                break;
+            };
             layout.decode(key, &role, |j, bit, b| set_code_bit(&mut cur, j, bit, b));
             push_row(&mut out, &cur);
             gate.poll(1)?;
@@ -330,7 +349,12 @@ impl<'a> KeyLayout<'a> {
     /// The layout of `key_bits` in `vtree`, or `None` where its leaves, left
     /// to right, do not read them first and in order among the listed
     /// variables (`role`).
-    fn new(vtree: &'a Vtree, role: &[Option<(u32, u32)>], descending: &[bool], key_bits: &'a [VarId]) -> Option<KeyLayout<'a>> {
+    fn new(
+        vtree: &'a Vtree,
+        role: &[Option<(u32, u32)>],
+        descending: &[bool],
+        key_bits: &'a [VarId],
+    ) -> Option<KeyLayout<'a>> {
         if key_bits.len() > MAX_KEY_BITS {
             return None;
         }
@@ -374,7 +398,12 @@ impl<'a> KeyLayout<'a> {
                 VtreeNode::Internal { left, right, .. } => held[left.idx()] + held[right.idx()],
             };
         }
-        Some(KeyLayout { vtree, key_bits, held, down })
+        Some(KeyLayout {
+            vtree,
+            key_bits,
+            held,
+            down,
+        })
     }
 
     fn held(&self, t: VtreeIdx) -> u32 {
@@ -397,8 +426,20 @@ impl<'a> KeyLayout<'a> {
         match label {
             LeafLabel::One => &[0, 1],
             // The bit is 1; flipped where descending.
-            LeafLabel::Pos => if down { &[0] } else { &[1] },
-            _ => if down { &[1] } else { &[0] },
+            LeafLabel::Pos => {
+                if down {
+                    &[0]
+                } else {
+                    &[1]
+                }
+            }
+            _ => {
+                if down {
+                    &[1]
+                } else {
+                    &[0]
+                }
+            }
         }
     }
 }
@@ -469,11 +510,19 @@ impl<'a> Streams<'a> {
         let (left, right) = match *vtree.node(t) {
             VtreeNode::Leaf { var, .. } => {
                 let label = LeafLabel::from_idx(n as usize);
-                return self.layout.leaf_values(var, label).first().copied().unwrap_or(UNREAD);
+                return self
+                    .layout
+                    .leaf_values(var, label)
+                    .first()
+                    .copied()
+                    .unwrap_or(UNREAD);
             }
             VtreeNode::Internal { left, right, .. } => (left, right),
         };
-        if let Some(&key) = self.least[t.idx()].get(n as usize).filter(|&&key| key != UNREAD) {
+        if let Some(&key) = self.least[t.idx()]
+            .get(n as usize)
+            .filter(|&&key| key != UNREAD)
+        {
             return key;
         }
         let (hl, hr) = (self.layout.held(left), self.layout.held(right));
@@ -482,10 +531,20 @@ impl<'a> Streams<'a> {
         self.work += pairs.len() as u64;
         let key = match (hl, hr) {
             (0, 0) => 0,
-            (0, _) => pairs.map(|pair| self.least(right, pair.right.raw())).min().unwrap_or(UNREAD),
-            (_, 0) => pairs.map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD),
+            (0, _) => pairs
+                .map(|pair| self.least(right, pair.right.raw()))
+                .min()
+                .unwrap_or(UNREAD),
+            (_, 0) => pairs
+                .map(|pair| self.least(left, pair.left.raw()))
+                .min()
+                .unwrap_or(UNREAD),
             _ => {
-                let lead = pairs.clone().map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD);
+                let lead = pairs
+                    .clone()
+                    .map(|pair| self.least(left, pair.left.raw()))
+                    .min()
+                    .unwrap_or(UNREAD);
                 let mut key = UNREAD;
                 if lead != UNREAD {
                     for pair in pairs {
@@ -510,7 +569,12 @@ impl<'a> Streams<'a> {
     }
 
     /// Entry `pos` of node `n`'s stream at vtree node `t`, if it has one.
-    fn entry(&mut self, t: VtreeIdx, n: u32, pos: u32) -> Result<Option<(u128, u32)>, OperationError> {
+    fn entry(
+        &mut self,
+        t: VtreeIdx,
+        n: u32,
+        pos: u32,
+    ) -> Result<Option<(u128, u32)>, OperationError> {
         self.ensure(t, n, pos as usize + 1)?;
         Ok(self.streams[t.idx()][&n].out.get(pos as usize).copied())
     }
@@ -518,7 +582,10 @@ impl<'a> Streams<'a> {
     /// Produces node `n`'s stream at vtree node `t` up to `count` entries,
     /// or to its end.
     fn ensure(&mut self, t: VtreeIdx, n: u32, count: usize) -> Result<(), OperationError> {
-        if self.streams[t.idx()].get(&n).is_some_and(|s| s.out.len() >= count) {
+        if self.streams[t.idx()]
+            .get(&n)
+            .is_some_and(|s| s.out.len() >= count)
+        {
             return Ok(());
         }
         let mut stream = self.streams[t.idx()].remove(&n).unwrap_or_default();
@@ -548,14 +615,25 @@ impl<'a> Streams<'a> {
         list
     }
 
-    fn produce(&mut self, t: VtreeIdx, n: u32, stream: &mut Stream, count: usize) -> Result<(), OperationError> {
+    fn produce(
+        &mut self,
+        t: VtreeIdx,
+        n: u32,
+        stream: &mut Stream,
+        count: usize,
+    ) -> Result<(), OperationError> {
         let vtree = self.layout.vtree;
         let (left, right) = match *vtree.node(t) {
             VtreeNode::Leaf { var, .. } => {
                 if !stream.open {
                     stream.open = true;
                     let label = LeafLabel::from_idx(n as usize);
-                    stream.out.extend(self.layout.leaf_values(var, label).iter().map(|&g| (g, NIL)));
+                    stream.out.extend(
+                        self.layout
+                            .leaf_values(var, label)
+                            .iter()
+                            .map(|&g| (g, NIL)),
+                    );
                 }
                 return Ok(());
             }
@@ -565,10 +643,12 @@ impl<'a> Streams<'a> {
         let pairs = self.tdd.level(t).pairs_iter_of_idx(n as usize);
         if !stream.open {
             stream.open = true;
-            stream.heap = self.open_stream_heap(pairs.clone(), (left, right), (hl, hr));
+            stream.heap = self.open_stream_heap(pairs.clone(), left, right, hl, hr);
         }
         while stream.out.len() < count {
-            let Some(Reverse((key, p, i, j, bound))) = stream.heap.pop() else { break };
+            let Some(Reverse((key, p, i, j, bound))) = stream.heap.pop() else {
+                break;
+            };
             let pair = pairs.clone().nth(p as usize).expect("a pair of the node");
             let (l, r) = (pair.left.raw(), pair.right.raw());
             if bound {
@@ -585,12 +665,18 @@ impl<'a> Streams<'a> {
                 (0, _) => {
                     let (_, below) = self.entry(right, r, i)?.expect("an entry the heap holds");
                     let rest = self.pend(left, l, below);
-                    (rest, self.entry(right, r, i + 1)?.map(|(k, _)| (k, i + 1, 0)))
+                    (
+                        rest,
+                        self.entry(right, r, i + 1)?.map(|(k, _)| (k, i + 1, 0)),
+                    )
                 }
                 (_, 0) => {
                     let (_, below) = self.entry(left, l, i)?.expect("an entry the heap holds");
                     let rest = self.pend(right, r, below);
-                    (rest, self.entry(left, l, i + 1)?.map(|(k, _)| (k, i + 1, 0)))
+                    (
+                        rest,
+                        self.entry(left, l, i + 1)?.map(|(k, _)| (k, i + 1, 0)),
+                    )
                 }
                 _ => {
                     let (lk, lrest) = self.entry(left, l, i)?.expect("an entry the heap holds");
@@ -598,7 +684,9 @@ impl<'a> Streams<'a> {
                     let rest = self.join(lrest, rrest);
                     let next = match self.entry(right, r, j + 1)? {
                         Some((rk, _)) => Some(((lk << hr) | rk, i, j + 1)),
-                        None => self.entry(left, l, i + 1)?.map(|(lk, _)| ((lk << hr) | self.least(right, r), i + 1, 0)),
+                        None => self
+                            .entry(left, l, i + 1)?
+                            .map(|(lk, _)| ((lk << hr) | self.least(right, r), i + 1, 0)),
                     };
                     (rest, next)
                 }
@@ -618,8 +706,10 @@ impl<'a> Streams<'a> {
     fn open_stream_heap(
         &mut self,
         pairs: crate::diagram::PairsIter<'_>,
-        (left, right): (VtreeIdx, VtreeIdx),
-        (hl, hr): (u32, u32),
+        left: VtreeIdx,
+        right: VtreeIdx,
+        hl: u32,
+        hr: u32,
     ) -> BinaryHeap<Reverse<Next>> {
         self.work += pairs.len() as u64;
         // Each pair enters at its least key — where both sides hold key
@@ -683,7 +773,11 @@ impl Walk<'_> {
                     let label = LeafLabel::from_idx(n as usize);
                     match (self.role[var.0 as usize], label) {
                         (Some((j, bit)), LeafLabel::One) => {
-                            let order: [u32; 2] = if self.descending[j as usize] { [1, 0] } else { [0, 1] };
+                            let order: [u32; 2] = if self.descending[j as usize] {
+                                [1, 0]
+                            } else {
+                                [0, 1]
+                            };
                             for b in order {
                                 self.set(j, bit, b);
                                 let mark = self.cells.len();
@@ -735,9 +829,17 @@ impl Walk<'_> {
 
     /// A pending list of the left node, the right node, then `next`.
     fn push(&mut self, left: VtreeIdx, l: u32, right: VtreeIdx, r: u32, next: u32) -> u32 {
-        self.cells.push(Cell { t: right, n: r, next });
+        self.cells.push(Cell {
+            t: right,
+            n: r,
+            next,
+        });
         let r_at = self.cells.len() as u32 - 1;
-        self.cells.push(Cell { t: left, n: l, next: r_at });
+        self.cells.push(Cell {
+            t: left,
+            n: l,
+            next: r_at,
+        });
         self.cells.len() as u32 - 1
     }
 }

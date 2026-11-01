@@ -214,7 +214,56 @@ fn build_level(
     );
 
     if !taken {
-        execute_routed_level(eng, run, f, g, shape, sweep)?;
+        // One decision per level, taken before any of the level's storage
+        // is touched: the marginal plan and the two gates read only metadata.
+        let marginal = run.level_marginal(f, g, shape, sweep.targets);
+        let plan = plan_marginal_level(f, g, shape, run, &marginal);
+        let route = route_level(
+            &plan,
+            &marginal,
+            run.sparse_gate(shape, f.level(t), g.level(t)),
+        );
+        route.validate(f, g, shape, &marginal, run)?;
+        note_route(t, route);
+
+        match route {
+            Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
+                sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, sweep)?);
+            }
+            Route::Sparse => match sums_root(sweep, run, shape, &plan) {
+                Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
+                None => {
+                    run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
+                    run.products
+                        .note_sparse_built(t.idx(), shape.f.here, shape.g.here);
+                }
+            },
+            // Claims no grid of its own: the parent that densifies its
+            // product list prices that grid.
+            Route::SparseMarg => {
+                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?
+            }
+            _ => {
+                // Priced before its grid is claimed: a level that cannot fit
+                // is refused here, named, rather than grown into the budget.
+                let priced = price_dense_level(
+                    eng.limits(),
+                    run,
+                    f,
+                    g,
+                    shape,
+                    route,
+                    sweep.filter.is_some(),
+                )?;
+                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?;
+                debug_assert!(
+                    priced.is_none_or(|p| p.admits(built_pairs(&run.levels[t.idx()]))),
+                    "level {} holds {} pairs where its count found {priced:?}",
+                    t.idx(),
+                    built_pairs(&run.levels[t.idx()]),
+                );
+            }
+        }
     }
 
     if let Some(filter) = sweep.filter.as_deref_mut() {
@@ -230,71 +279,6 @@ fn build_level(
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.
     run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
-    Ok(())
-}
-
-/// Plan, validate, and execute the sparse or dense build route for `shape` when
-/// no fast path took the level.
-fn execute_routed_level(
-    eng: &Engine,
-    run: &mut ApplyRun,
-    f: &mut Held<'_>,
-    g: &mut Held<'_>,
-    shape: LevelShape,
-    sweep: &mut Sweep<'_, '_>,
-) -> Result<(), OperationError> {
-    let t = shape.t;
-    let vtree = sweep.vtree;
-    // One decision per level, taken before any of the level's storage
-    // is touched: the marginal plan and the two gates read only metadata.
-    let marginal = run.level_marginal(f, g, shape, sweep.targets);
-    let plan = plan_marginal_level(f, g, shape, run, &marginal);
-    let route = route_level(
-        &plan,
-        &marginal,
-        run.sparse_gate(shape, f.level(t), g.level(t)),
-    );
-    route.validate(f, g, shape, &marginal, run)?;
-    note_route(t, route);
-
-    match route {
-        Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
-            sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, sweep)?);
-        }
-        Route::Sparse => match sums_root(sweep, run, shape, &plan) {
-            Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
-            None => {
-                run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
-                run.products
-                    .note_sparse_built(t.idx(), shape.f.here, shape.g.here);
-            }
-        },
-        // Claims no grid of its own: the parent that densifies its
-        // product list prices that grid.
-        Route::SparseMarg => {
-            build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?
-        }
-        _ => {
-            // Priced before its grid is claimed: a level that cannot fit
-            // is refused here, named, rather than grown into the budget.
-            let priced = price_dense_level(
-                eng.limits(),
-                run,
-                f,
-                g,
-                shape,
-                route,
-                sweep.filter.is_some(),
-            )?;
-            build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?;
-            debug_assert!(
-                priced.is_none_or(|p| p.admits(built_pairs(&run.levels[t.idx()]))),
-                "level {} holds {} pairs where its count found {priced:?}",
-                t.idx(),
-                built_pairs(&run.levels[t.idx()]),
-            );
-        }
-    }
     Ok(())
 }
 
@@ -565,331 +549,27 @@ fn apply_and_held(
     mode: ConjoinMode,
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
-    let (count_root, keep, sum_child) = decode_conjoin_mode(mode, (f, g), free);
-    let lim = eng.limits();
-    lim.eager_reclaim();
-    let _op = lim.begin_operation();
-    let ws = merge_held_weights(lim, f, g)?;
-    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
-    let vtree = Arc::clone(&f.vtree);
-    let num_nodes = vtree.num_nodes();
-    if f.is_zero() || g.is_zero() {
-        return build_zero_conjoined(eng, vtree, num_nodes, ws, f.output.vtree);
-    }
-
-    let mut assembly = diagram::Assembly::from_levels(
-        eng,
-        Arc::clone(&vtree),
-        diagram::try_take_levels(eng, num_nodes)?,
-        ws,
-    );
-    let mut scratch = eng.scratch.apply.workspace.checkout(eng);
-    let (levels, ws) = assembly.parts_mut();
-    let (mut run, plain, operand_loose, canon_leaves) = setup_held_run(
-        eng,
-        &vtree,
-        (levels, ws.as_ref()),
-        &mut scratch,
-        (f, g),
-        (targets, free),
-        (keep, unmarked),
-    )?;
-    let cone = run.cone;
-    let closed = Operands {
-        f: f.levels.is_closed(),
-        g: g.levels.is_closed(),
-    };
-    let (counted, summed, kept, fused) = run_held_level_sweep(
-        eng,
-        &vtree,
-        &mut run,
-        (f, g),
-        (targets, quantified),
-        filter,
-        (ws.as_mut(), count_root, sum_child),
-    )?;
-    if let Some(count) = counted {
-        return Ok(Conjoined::Counted(count));
-    }
-    let (output, carried, relabel_moved, lent, restoring, queues) = prepare_held_sweep_tail(
-        &vtree,
-        &mut run,
-        (f, g),
-        (&canon_leaves, operand_loose),
-        (plain, ws.as_ref()),
-    );
-    finish_conjoined_assembly(
-        (eng, &vtree),
-        assembly,
-        (f, g),
-        queues,
-        (&carried, &relabel_moved, &lent),
-        (cone, restoring, closed, &kept),
-        (output, &fused, summed),
-    )
-}
-
-type HeldRunSetup<'a, 'r> = (
-    ApplyRun<'a, 'r>,
-    bool,
-    Option<Operands<Vec<u32>>>,
-    Vec<usize>,
-);
-
-fn setup_held_run<'a, 'r: 'a>(
-    eng: &Engine,
-    vtree: &'r Arc<Vtree>,
-    (levels, ws): (&'a mut [TddLevel], Option<&WeightStore>),
-    scratch: &'r mut super::scratch::ApplyWorkspace,
-    (f, g): (&mut Held<'_>, &mut Held<'_>),
-    (targets, free): (VtreeMask<'_>, Operands<VtreeMask<'r>>),
-    (keep, unmarked): (bool, bool),
-) -> Result<HeldRunSetup<'a, 'r>, OperationError> {
-    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws);
-    let mut run = apply_and_setup(
-        eng,
-        vtree,
-        Operands { f: &*f, g: &*g },
-        (targets, free),
-        kind,
-        levels,
-        scratch,
-    )?;
-    run.restoring = keep;
-    let plain = unmarked && !run.entry_marginality.any();
-    run.plain = plain;
     debug_assert!(
-        free.f.is_empty() && free.g.is_empty() || plain,
-        "only a plain conjunction reads free levels",
-    );
-    let (operand_loose, canon_leaves) =
-        prepare_sweep_leaves_and_regions(eng, vtree, &mut run, f, g, ws)?;
-    Ok((run, plain, operand_loose, canon_leaves))
-}
-
-#[inline]
-fn decode_conjoin_mode(
-    mode: ConjoinMode,
-    (f, g): (&Held<'_>, &Held<'_>),
-    free: Operands<VtreeMask<'_>>,
-) -> (bool, bool, Option<VtreeIdx>) {
-    debug_assert!(
-        [(f, free.f), (g, free.g)]
+        [(&*f, free.f), (&*g, free.g)]
             .into_iter()
             .all(|(op, free)| !op.is_borrowed() || free.is_empty()),
         "a borrowed operand has no free level",
     );
-    (
-        matches!(mode, ConjoinMode::Count),
-        matches!(mode, ConjoinMode::Restore),
-        match mode {
-            ConjoinMode::Sum(c) => Some(c),
-            _ => None,
-        },
-    )
-}
-
-fn build_zero_conjoined(
-    eng: &Engine,
-    vtree: Arc<Vtree>,
-    num_nodes: usize,
-    ws: Option<WeightStore>,
-    root_vtree: VtreeIdx,
-) -> Result<Conjoined, OperationError> {
-    eng.limits().check_stop()?;
-    let levels = diagram::try_take_levels(eng, num_nodes)?;
-    diagram::Assembly::from_levels(eng, vtree, levels, ws)
-        .finish(TddNodeId {
-            vtree: root_vtree,
-            local: ZERO,
-        })
-        .map(Conjoined::Built)
-}
-
-type HeldSweepTail = (
-    TddNodeId,
-    Vec<(usize, bool)>,
-    Vec<usize>,
-    Vec<usize>,
-    bool,
-    Option<PlainQueues>,
-);
-
-/// Canonicalize weighted leaf references, compute the output root, and extract
-/// the move logs and plain contraction queues from `run`.
-fn prepare_held_sweep_tail(
-    vtree: &Vtree,
-    run: &mut ApplyRun<'_, '_>,
-    (f, g): (&Held<'_>, &Held<'_>),
-    (canon_leaves, operand_loose): (&[usize], Option<Operands<Vec<u32>>>),
-    (plain, ws): (bool, Option<&WeightStore>),
-) -> HeldSweepTail {
-    crate::marginal::canonicalize_weighted_leaf_refs(canon_leaves, vtree, run.levels, ws);
-    let out_local = compute_apply_output(f, g, run, vtree).unwrap_or(ZERO);
-    let output = TddNodeId {
-        vtree: f.output.vtree,
-        local: out_local,
-    };
-    let carried = std::mem::take(&mut run.carried);
-    let relabel_moved = std::mem::take(&mut run.relabel_moved);
-    let lent = std::mem::take(&mut run.lent);
-    let restoring = run.restoring;
-    let queues = plain.then(|| {
-        prepare_plain_queues(
-            vtree,
-            run,
-            (f, g),
-            (&carried, &relabel_moved),
-            operand_loose,
-        )
-    });
-    (output, carried, relabel_moved, lent, restoring, queues)
-}
-
-type SweepOutcome = (
-    Option<num_bigint::BigUint>,
-    Option<Vec<VtreeIdx>>,
-    Operands<Option<crate::diagram::LevelCounts>>,
-    Vec<VtreeIdx>,
-);
-
-/// Run `sweep_levels` (restoring carried/lent levels and regions on error when
-/// `run.restoring`) and return `(counted, summed, kept, fused)`.
-fn run_held_level_sweep(
-    eng: &Engine,
-    vtree: &Vtree,
-    run: &mut ApplyRun<'_, '_>,
-    (f, g): (&mut Held<'_>, &mut Held<'_>),
-    (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
-    (ws, count_root, sum_child): (Option<&mut WeightStore>, bool, Option<VtreeIdx>),
-) -> Result<SweepOutcome, OperationError> {
-    let cone = run.cone;
-    let kept = Operands {
-        f: f.levels.counts().cloned(),
-        g: g.levels.counts().cloned(),
-    };
-    let mut sweep = Sweep {
-        vtree,
-        targets,
-        quantified,
-        ws,
-        filter,
-        count_root,
-        counted: None,
-        sum_child,
-        summed: None,
-        kept,
-    };
-    if let Err(e) = sweep_levels(eng, run, f, g, &mut sweep) {
-        if run.restoring {
-            give_back(run.levels, f, g, &run.carried, &run.lent);
-            region::give_back_regions(run.levels, cone, f, g);
-        }
-        return Err(e);
-    }
-    let counted = sweep.counted.take();
-    let summed = sweep.summed.take();
-    let kept = Operands {
-        f: sweep.kept.f.take(),
-        g: sweep.kept.g.take(),
-    };
-    let fused = if counted.is_none() && sweep.filter.is_none() && sweep.ws.is_none() {
-        fused_built_levels(vtree, run, f, g, sweep.targets, sweep.quantified)
-    } else {
-        Vec::new()
-    };
-    Ok((counted, summed, kept, fused))
-}
-
-type SweepLeavesAndRegions = (Option<Operands<Vec<u32>>>, Vec<usize>);
-type HeldCounts<'a> = (
-    super::setup::Cone<'a>,
-    bool,
-    Operands<bool>,
-    &'a Operands<Option<crate::diagram::LevelCounts>>,
-);
-
-/// Initialize leaf identity tables, apply leaf levels, settle loose operand
-/// levels, seed output leaves, and take regions before the level sweep.
-fn prepare_sweep_leaves_and_regions(
-    eng: &Engine,
-    vtree: &Arc<Vtree>,
-    run: &mut ApplyRun<'_, '_>,
-    f: &mut Held<'_>,
-    g: &mut Held<'_>,
-    ws: Option<&WeightStore>,
-) -> Result<SweepLeavesAndRegions, OperationError> {
-    let cone = run.cone;
-    init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
-    init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
-    apply_leaf_levels(eng, run)?;
-    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
-        (Some(lf), Some(lg)) if run.plain => Some(Operands {
-            f: settle_loose(eng, f, lf)?,
-            g: settle_loose(eng, g, lg)?,
-        }),
+    let count_root = matches!(mode, ConjoinMode::Count);
+    let keep = matches!(mode, ConjoinMode::Restore);
+    let sum_child = match mode {
+        ConjoinMode::Sum(c) => Some(c),
         _ => None,
     };
-    let canon_leaves = super::leaf_seed::seed_output_leaves(
-        f,
-        g,
-        cone.leaves,
-        run.levels,
-        Operands {
-            f: &run.f_identity[..],
-            g: &run.g_identity[..],
-        },
-        ws,
-    );
-    region::take_regions(vtree, eng.limits(), run, f, g)?;
-    Ok((operand_loose, canon_leaves))
-}
+    let lim = eng.limits();
+    lim.eager_reclaim();
 
-/// Finalize `assembly` (restoring carried/lent levels on refusal when
-/// `restoring`) and run [`finalize_conjoined_diagram`].
-fn finish_conjoined_assembly<'a>(
-    (eng, vtree): (&Engine, &Vtree),
-    assembly: diagram::Assembly<'a>,
-    (f, g): (&mut Held<'_>, &mut Held<'_>),
-    queues: Option<PlainQueues>,
-    (carried, relabel_moved, lent): (&[(usize, bool)], &[usize], &[usize]),
-    (cone, restoring, closed, kept): HeldCounts<'_>,
-    (output, fused, summed): (TddNodeId, &[VtreeIdx], Option<Vec<VtreeIdx>>),
-) -> Result<Conjoined, OperationError> {
-    let plain = queues.is_some();
-    let finished = match queues {
-        Some(queues) => finish_plain_assembly(
-            (eng, vtree),
-            assembly,
-            queues,
-            (carried, closed, kept),
-            output,
-        ),
-        None => assembly.finish_or_return(output),
-    };
-    let out = match finished {
-        Ok(out) => out,
-        Err((e, mut assembly)) => {
-            if restoring {
-                for &t in relabel_moved {
-                    assembly.parts_mut().0[t].settle_held_pairs();
-                }
-                give_back(assembly.parts_mut().0, f, g, carried, lent);
-                region::give_back_regions(assembly.parts_mut().0, cone, f, g);
-            }
-            return Err(e);
-        }
-    };
-    finalize_conjoined_diagram(eng, vtree, out, plain, fused, summed)
-}
+    let _op = lim.begin_operation();
 
-/// Merge or clone the weight stores of `f` and `g`.
-fn merge_held_weights(
-    lim: &crate::limits::Limits,
-    f: &mut Held<'_>,
-    g: &mut Held<'_>,
-) -> Result<Option<crate::diagram::WeightStore>, OperationError> {
+    // The weight store follows the diagram: the operands' stores merge into the
+    // result's, and every level this apply marginalizes writes its values there.
+    // Their marginal levels are the two disjoint subtrees they were built over,
+    // so the merge loses nothing.
     let take_weights = |op: &mut Held<'_>| match op {
         Held::Owned(op) => Ok(op.weights.take()),
         Held::Borrowed(op) => op
@@ -914,130 +594,253 @@ fn merge_held_weights(
                 .any(|l| l.is_weight_marginal()),
         "an operand has weight-marginal levels but neither carries a weight store"
     );
-    Ok(ws)
-}
+    // Nothing but pairs changes hands: no weights, no summed-out level, no
+    // level quantified or filtered, and, as the setup finds, no marginal
+    // level.
+    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
 
-struct PlainQueues {
-    carrier: Vec<u8>,
-    loose: Option<Vec<u32>>,
-    built: Vec<VtreeIdx>,
-    owed_twins: Vec<VtreeIdx>,
-    twin_free: Vec<VtreeIdx>,
-    owed: crate::diagram::Dirty,
-}
-
-/// Compute the carrier map, loose-level list, and dirty/twin queues for a plain
-/// conjunction before `assembly` is finalized.
-fn prepare_plain_queues(
-    vtree: &Vtree,
-    run: &mut ApplyRun<'_, '_>,
-    (f, g): (&Held<'_>, &Held<'_>),
-    (carried, relabel_moved): (&[(usize, bool)], &[usize]),
-    operand_loose: Option<Operands<Vec<u32>>>,
-) -> PlainQueues {
+    // Early return for zero inputs: `x ∧ 0 = 0`.
+    // Avoids allocating the output's levels and arenas for unsatisfiable operands.
+    let vtree = Arc::clone(&f.vtree);
     let num_nodes = vtree.num_nodes();
-    // Which operand each level the sweep carried came from: 1 for `f`,
-    // 2 for `g`, 0 for a level the conjunction built and for every
-    // level outside the cone.
-    let mut carrier = vec![0u8; num_nodes];
-    identity_carriers(carried, relabel_moved, &mut carrier);
-    // In level order, for the lookups of the loose levels and the
-    // contraction's worklists.
-    run.as_operand.sort_unstable();
-    run.outer_held.sort_unstable();
-    let loose = operand_loose.map(|ops| loose::loose_levels(vtree, run, &carrier, ops));
-    // The levels it built are also all it changed, and so all the seat
-    // closes: a carried level, and a free one, is as the operand's end
-    // left it.
-    let mut built: Vec<VtreeIdx> = Vec::with_capacity(run.cone.built.len());
-    built.extend(
-        run.cone
-            .built
-            .iter()
-            .copied()
-            .filter(|t| carrier[t.idx()] == 0),
-    );
-    let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
-        run.as_operand
-            .binary_search_by_key(&t.idx(), |e| e.0)
-            .is_err()
-            && !adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t)
-    });
-    let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
-    owed.requeue(
-        crate::diagram::Pass::LeafContract,
-        twin_free.iter().map(|t| t.0),
-    );
-    PlainQueues {
-        carrier,
-        loose,
-        built,
-        owed_twins,
-        twin_free,
-        owed,
+    if f.is_zero() || g.is_zero() {
+        lim.check_stop()?;
+        let levels = diagram::try_take_levels(eng, num_nodes)?;
+        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
+            .finish(TddNodeId {
+                vtree: f.output.vtree,
+                local: ZERO,
+            })
+            .map(Conjoined::Built);
     }
-}
 
-type PlainAssemblyMeta<'a> = (
-    &'a [(usize, bool)],
-    Operands<bool>,
-    &'a Operands<Option<crate::diagram::LevelCounts>>,
-);
+    let mut assembly = diagram::Assembly::from_levels(
+        eng,
+        Arc::clone(&vtree),
+        diagram::try_take_levels(eng, num_nodes)?,
+        ws,
+    );
+    let mut scratch = eng.scratch.apply.workspace.checkout(eng);
+    let (levels, ws) = assembly.parts_mut();
+    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
+    let mut run = apply_and_setup(
+        eng,
+        &vtree,
+        Operands { f: &*f, g: &*g },
+        (targets, free),
+        kind,
+        levels,
+        &mut scratch,
+    )?;
+    run.restoring = keep;
+    let plain = unmarked && !run.entry_marginality.any();
+    run.plain = plain;
+    debug_assert!(
+        free.f.is_empty() && free.g.is_empty() || plain,
+        "only a plain conjunction reads free levels",
+    );
+    let cone = run.cone;
 
-/// Finish `assembly` for a plain conjunction, seeding dirty/loose queues only
-/// for built levels and carrying kept pair counts from the operands.
-#[allow(clippy::result_large_err)]
-fn finish_plain_assembly<'a>(
-    (eng, vtree): (&Engine, &Vtree),
-    mut assembly: diagram::Assembly<'a>,
-    queues: PlainQueues,
-    (carried, closed, kept): PlainAssemblyMeta<'_>,
-    output: TddNodeId,
-) -> Result<Tdd, (OperationError, diagram::Assembly<'a>)> {
-    let PlainQueues {
-        carrier,
-        loose,
-        built,
-        owed_twins,
-        twin_free,
-        owed,
-    } = queues;
-    let num_nodes = vtree.num_nodes();
-    let levels = assembly.parts_mut().0;
-    for &(t, from_f) in carried {
-        if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
-            levels[t].leave_kept_pairs();
+    // `g_identity[t]` is true when `g` computes constant-true over subtree
+    // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
+    // construction can `mem::swap` them into the output instead of running
+    // the per-node inner loop; `f_identity` is the symmetric case, where
+    // `g`'s nodes are cloned across. A leaf is identity iff only the One label
+    // is referenced by parent pairs; an internal node iff it is width-1 with
+    // both children identity, which the sweep accretes as it goes up. The
+    // predicate is incomplete; a miss only sends a small grid down the dense
+    // path.
+    //
+    // The levels under a free level are read by no level the sweep builds.
+    init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
+    init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
+
+    apply_leaf_levels(eng, &mut run)?;
+
+    // The operands' loose levels as a prune would settle them, read before
+    // the sweep drops the operands' levels.
+    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
+        (Some(lf), Some(lg)) if plain => Some(Operands {
+            f: settle_loose(eng, f, lf)?,
+            g: settle_loose(eng, g, lg)?,
+        }),
+        _ => None,
+    };
+
+    let canon_leaves = super::leaf_seed::seed_output_leaves(
+        f,
+        g,
+        cone.leaves,
+        run.levels,
+        Operands {
+            f: &run.f_identity[..],
+            g: &run.g_identity[..],
+        },
+        ws.as_ref(),
+    );
+    // Taken here, after the setup and before the regions or the sweep move
+    // or drop any operand level: an access that changed a level would have
+    // dropped them.
+    let kept = Operands {
+        f: f.levels.counts().cloned(),
+        g: g.levels.counts().cloned(),
+    };
+    let closed = Operands {
+        f: f.levels.is_closed(),
+        g: g.levels.is_closed(),
+    };
+    region::take_regions(&vtree, lim, &mut run, f, g)?;
+    let mut sweep = Sweep {
+        vtree: &vtree,
+        targets,
+        quantified,
+        ws: ws.as_mut(),
+        filter,
+        count_root,
+        counted: None,
+        sum_child,
+        summed: None,
+        kept,
+    };
+    if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
+        if run.restoring {
+            give_back(run.levels, f, g, &run.carried, &run.lent);
+            region::give_back_regions(run.levels, cone, f, g);
         }
+        return Err(e);
     }
-    assembly
-        .finish_with_or_return(output, owed, &owed_twins, Some(&built[..]))
-        .map(|mut out| {
-            if let Some(loose) = loose {
-                out.dirty.set_loose(Some(loose));
-                out.dirty.dedup_above(num_nodes);
-            }
-            #[cfg(debug_assertions)]
-            crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
-            carry_kept_counts(eng, &mut out, carried, &carrier, kept);
-            out
-        })
-}
+    if let Some(count) = sweep.counted {
+        return Ok(Conjoined::Counted(count));
+    }
+    let summed = sweep.summed.take();
+    let kept = Operands {
+        f: sweep.kept.f.take(),
+        g: sweep.kept.g.take(),
+    };
+    let fused = if sweep.filter.is_none() && sweep.ws.is_none() {
+        fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
+    } else {
+        Vec::new()
+    };
 
-/// Inline small marginal refs, record pair-fusion saturation marks, and wrap
-/// `out` as [`Conjoined::Summed`] or [`Conjoined::Built`].
-fn finalize_conjoined_diagram(
-    eng: &Engine,
-    vtree: &Vtree,
-    mut out: Tdd,
-    plain: bool,
-    fused: &[VtreeIdx],
-    summed: Option<Vec<VtreeIdx>>,
-) -> Result<Conjoined, OperationError> {
+    crate::marginal::canonicalize_weighted_leaf_refs(
+        &canon_leaves,
+        &vtree,
+        run.levels,
+        ws.as_ref(),
+    );
+
+    let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
+    let out_vtree = f.output.vtree;
+    let carried = std::mem::take(&mut run.carried);
+    let relabel_moved = std::mem::take(&mut run.relabel_moved);
+    let lent = std::mem::take(&mut run.lent);
+    let restoring = run.restoring;
+    let output = TddNodeId {
+        vtree: out_vtree,
+        local: out_local,
+    };
+
+    // A plain conjunction changed no level an identity fast path carried,
+    // and such a level brings its whole subtree along, since the other
+    // operand is the identity under it. So the result owes contraction the
+    // levels it built and whatever the operands owed; seeding every level
+    // made the minimization after a join as long as the diagram. A level the
+    // relabelling route moved is its carrier's, but some subtree under it is
+    // a product, so it is owed as built.
+    let finished = if plain {
+        // Which operand each level the sweep carried came from: 1 for `f`,
+        // 2 for `g`, 0 for a level the conjunction built and for every
+        // level outside the cone.
+        let mut carrier = vec![0u8; num_nodes];
+        identity_carriers(&carried, &relabel_moved, &mut carrier);
+        // The result's loose levels (`loose::loose_levels`): a carried level
+        // where its carrier has it loose, and a level under one the
+        // conjunction built where the operands and the sibling's product
+        // grid do not prove it tight. The other operand's entry at a carried
+        // level is for a level the result did not take: an operand embedded
+        // onto a wider scope has every level it gained loose, and a small
+        // factor joined to a large diagram gained the large one's levels,
+        // which made the prune after the join walk it. Listing every level
+        // the conjunction built made that prune walk every one of them.
+        // In level order, for the lookups of the loose levels and the
+        // contraction's worklists.
+        run.as_operand.sort_unstable();
+        run.outer_held.sort_unstable();
+        let loose = operand_loose.map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
+        // The levels it built are also all it changed, and so all the seat
+        // closes: a carried level, and a free one, is as the operand's end
+        // left it.
+        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
+        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        // The contraction is owed the built levels under which the
+        // conjunction can have given two nodes equal contexts
+        // ([`adds_no_twins`]); the leaf contraction every built level. A
+        // level built as an operand holds it gives the nodes of its children
+        // the operand's contexts there, which the operand, not owing the
+        // contraction the level, holds once each; where it owes it, so does
+        // the result.
+        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) =
+            built.iter().partition(|&&t| {
+                run.as_operand
+                    .binary_search_by_key(&t.idx(), |e| e.0)
+                    .is_err()
+                    && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
+            });
+        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
+        owed.requeue(
+            crate::diagram::Pass::LeafContract,
+            twin_free.iter().map(|t| t.0),
+        );
+        // A level the relabelling route moved is as its carrier's last close
+        // left it; where that diagram was closed when the sweep began, the
+        // live pairs it keeps are left for the seat's close.
+        let levels = assembly.parts_mut().0;
+        for &(t, from_f) in &carried {
+            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
+                levels[t].leave_kept_pairs();
+            }
+        }
+        assembly
+            .finish_with_or_return(output, owed, &owed_twins, Some(&built[..]))
+            .map(|mut out| {
+                if let Some(loose) = loose {
+                    out.dirty.set_loose(Some(loose));
+                    out.dirty.dedup_above(num_nodes);
+                }
+                #[cfg(debug_assertions)]
+                crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
+                carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
+                out
+            })
+    } else {
+        assembly.finish_or_return(output)
+    };
+    let mut out = match finished {
+        Ok(out) => out,
+        Err((e, mut assembly)) => {
+            if restoring {
+                // A level the relabelling route moved goes back keeping the
+                // count its carrier kept, which is the count left on it.
+                for &t in &relabel_moved {
+                    assembly.parts_mut().0[t].settle_held_pairs();
+                }
+                give_back(assembly.parts_mut().0, f, g, &carried, &lent);
+                region::give_back_regions(assembly.parts_mut().0, cone, f, g);
+            }
+            return Err(e);
+        }
+    };
+    // Apply emits self-describing marginal refs — bit-30 set is an inline count,
+    // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
+    // so a bit-30-clear ref here is never an already-inline count. A plain
+    // conjunction has no marginal level, and so no ref to inline; leaving its
+    // levels alone keeps them known closed.
     if !plain {
         crate::diagram::inline_small_marginal_refs(&mut out, None);
     }
     // Recorded where the level's marginal child is still its only one.
-    for &t in fused {
+    for &t in &fused {
         let (left, right) = vtree.children(t);
         let marginal = |c: VtreeIdx| out.levels[c.idx()].is_marginal();
         if !marginal(t) && marginal(left) != marginal(right) {

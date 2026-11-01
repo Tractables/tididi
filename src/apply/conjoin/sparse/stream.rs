@@ -602,7 +602,8 @@ struct IndirectSide<'a> {
 fn walk_indirect_pair(
     walked: &IndirectSide<'_>,
     probed: &mut IndirectSide<'_>,
-    (p_walked, p_probed): (u32, u32),
+    p_walked: u32,
+    p_probed: u32,
     weights: &Stamped<u128>,
     total: &mut Total,
 ) -> u64 {
@@ -718,10 +719,10 @@ fn count_indirect(
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
                 Direction::ByLeft => {
-                    walk_indirect_pair(&left, &mut right, (p_cl, p_cr), &weights, &mut total)
+                    walk_indirect_pair(&left, &mut right, p_cl, p_cr, &weights, &mut total)
                 }
                 Direction::ByRight => {
-                    walk_indirect_pair(&right, &mut left, (p_cr, p_cl), &weights, &mut total)
+                    walk_indirect_pair(&right, &mut left, p_cr, p_cl, &weights, &mut total)
                 }
             };
             ticker.poll(walked)?;
@@ -1128,16 +1129,66 @@ fn count_dense<W: Weight>(
     )?;
 
     // Which walks and probes run decides what each side builds.
-    let (left, right, mut probe_cl, mut probe_cr) =
-        build_dense_sides(lim, &view, input, pricing, fold)?;
+    let (mut by_left, mut by_right) = (false, false);
+    view.p_c.pairs_with_parent().for_each(|(_, pair)| {
+        match pricing.choose(pair.left.0, pair.right.0).0 {
+            Direction::ByLeft => by_left = true,
+            Direction::ByRight => by_right = true,
+        }
+    });
+    let mut probe_cl: Probe<u64> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
+    let mut probe_cr: Probe<u64> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+    let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
+        if walked {
+            Owners::new(lim, &view, left, q_width, probe, fold)
+        } else {
+            Ok(Owners::Unread)
+        }
+    };
+    let (left_owners, right_owners) = (
+        owners(by_left, true, q.cl, &probe_cr)?,
+        owners(by_right, false, q.cr, &probe_cl)?,
+    );
+    // A side's rows are read by its walks, and opened by the other side's
+    // walks when its probe is marked and not folded.
+    let opens = |owners: &Owners| matches!(owners, Owners::Probed(_));
+    let (open_cl, open_cr) = (
+        opens(&right_owners) && matches!(probe_cl, Probe::Marked(_)),
+        opens(&left_owners) && matches!(probe_cr, Probe::Marked(_)),
+    );
+    let left = DenseSide::new(lim, &view, input.cl, p.cl, by_left || open_cl, left_owners)?;
+    let right = DenseSide::new(
+        lim,
+        &view,
+        input.cr,
+        p.cr,
+        by_right || open_cr,
+        right_owners,
+    )?;
 
     let mut weights: Vec<W> = Vec::new();
     lim.try_resize(&mut weights, q.c, W::default())?;
     let mut total = Total::default();
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for (p_node, node) in view.p_c.nodes().iter().enumerate() {
+        // `V(p, ·)`.
+        let (mut weighed, mut any) = (0u64, false);
         let tops = p_root.view().bucket(p_node);
-        let (weighed, any) = scatter_top_weights(tops, o_rows.view(), q_root.view(), &mut weights);
+        for (j, &p_o) in tops.iter().enumerate() {
+            prefetch_rows(tops, j, o_rows.view(), q_root.view());
+            for &(q_o, c_o) in o_rows.view().bucket(p_o as usize) {
+                let owners = q_root.view().bucket(q_o as usize);
+                for (i, &q_node) in owners.iter().enumerate() {
+                    if let Some(&ahead) = owners.get(i + AHEAD) {
+                        prefetch(&weights, ahead as usize);
+                    }
+                    let slot = &mut weights[q_node as usize];
+                    *slot = slot.plus(c_o);
+                }
+                weighed += 1 + owners.len() as u64;
+                any |= !owners.is_empty();
+            }
+        }
         ticker.poll(weighed)?;
         if !any {
             continue;
@@ -1167,95 +1218,16 @@ fn count_dense<W: Weight>(
             };
             ticker.poll(walked)?;
         }
-        clear_top_weights(tops, o_rows.view(), q_root.view(), &mut weights);
+        // Empty `V(p, ·)` by walking back over what the round wrote.
+        for (j, &p_o) in tops.iter().enumerate() {
+            prefetch_rows(tops, j, o_rows.view(), q_root.view());
+            for &(q_o, _) in o_rows.view().bucket(p_o as usize) {
+                for &q_node in q_root.view().bucket(q_o as usize) {
+                    weights[q_node as usize] = W::default();
+                }
+            }
+        }
     }
     ticker.flush()?;
     Ok(total.finish())
-}
-
-/// Build the left and right [`DenseSide`]s and child [`Probe`]s for [`count_dense`].
-fn build_dense_sides(
-    lim: &Limits,
-    view: &Oriented<'_>,
-    input: &StreamInput<'_>,
-    pricing: &PairPricing,
-    fold: bool,
-) -> Result<(DenseSide, DenseSide, Probe<u64>, Probe<u64>), OperationError> {
-    let (p, q) = (view.p, view.q);
-    let (mut by_left, mut by_right) = (false, false);
-    view.p_c.pairs_with_parent().for_each(|(_, pair)| {
-        match pricing.choose(pair.left.0, pair.right.0).0 {
-            Direction::ByLeft => by_left = true,
-            Direction::ByRight => by_right = true,
-        }
-    });
-    let probe_cl: Probe<u64> = Probe::new(lim, view, input.cl, p.cl, q.cl)?;
-    let probe_cr: Probe<u64> = Probe::new(lim, view, input.cr, p.cr, q.cr)?;
-    let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
-        if walked {
-            Owners::new(lim, view, left, q_width, probe, fold)
-        } else {
-            Ok(Owners::Unread)
-        }
-    };
-    let (left_owners, right_owners) = (
-        owners(by_left, true, q.cl, &probe_cr)?,
-        owners(by_right, false, q.cr, &probe_cl)?,
-    );
-    // A side's rows are read by its walks, and opened by the other side's
-    // walks when its probe is marked and not folded.
-    let opens = |owners: &Owners| matches!(owners, Owners::Probed(_));
-    let (open_cl, open_cr) = (
-        opens(&right_owners) && matches!(probe_cl, Probe::Marked(_)),
-        opens(&left_owners) && matches!(probe_cr, Probe::Marked(_)),
-    );
-    let left = DenseSide::new(lim, view, input.cl, p.cl, by_left || open_cl, left_owners)?;
-    let right = DenseSide::new(lim, view, input.cr, p.cr, by_right || open_cr, right_owners)?;
-    Ok((left, right, probe_cl, probe_cr))
-}
-
-/// Populate `V(p, ·)` in `weights` for the `p_o` entries in `tops`, returning
-/// `(weighed_units, any_nonzero)`.
-#[inline(always)]
-fn scatter_top_weights<W: Weight>(
-    tops: &[u32],
-    o_rows: GroupedView<'_, (u32, W)>,
-    q_root: GroupedView<'_, u32>,
-    weights: &mut [W],
-) -> (u64, bool) {
-    let (mut weighed, mut any) = (0u64, false);
-    for (j, &p_o) in tops.iter().enumerate() {
-        prefetch_rows(tops, j, o_rows, q_root);
-        for &(q_o, c_o) in o_rows.bucket(p_o as usize) {
-            let owners = q_root.bucket(q_o as usize);
-            for (i, &q_node) in owners.iter().enumerate() {
-                if let Some(&ahead) = owners.get(i + AHEAD) {
-                    prefetch(weights, ahead as usize);
-                }
-                let slot = &mut weights[q_node as usize];
-                *slot = slot.plus(c_o);
-            }
-            weighed += 1 + owners.len() as u64;
-            any |= !owners.is_empty();
-        }
-    }
-    (weighed, any)
-}
-
-/// Reset the entries of `weights` touched by `tops` back to `W::default()`.
-#[inline(always)]
-fn clear_top_weights<W: Weight>(
-    tops: &[u32],
-    o_rows: GroupedView<'_, (u32, W)>,
-    q_root: GroupedView<'_, u32>,
-    weights: &mut [W],
-) {
-    for (j, &p_o) in tops.iter().enumerate() {
-        prefetch_rows(tops, j, o_rows, q_root);
-        for &(q_o, _) in o_rows.bucket(p_o as usize) {
-            for &q_node in q_root.bucket(q_o as usize) {
-                weights[q_node as usize] = W::default();
-            }
-        }
-    }
 }

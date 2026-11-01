@@ -1482,8 +1482,31 @@ impl<W: Word> Packed<'_, W> {
         let by_axis_order =
             !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
         if by_axis_order {
-            let axis_bufs = (axis_ends, by_axis);
-            self.file_outer_pairs_by_axis(lim, (axis_range, cells), axis_bufs, &mut file)?;
+            axis_ends.clear();
+            lim.try_resize(axis_ends, axis_range + 1, 0)?;
+            for (_, p) in filed() {
+                axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
+            }
+            for a in 0..axis_range {
+                axis_ends[a + 1] += axis_ends[a];
+            }
+            by_axis.clear();
+            lim.try_resize(by_axis, cells, 0)?;
+            for (node, p) in filed() {
+                let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
+                by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
+                *at += 1;
+            }
+            let mut begin = 0;
+            for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
+                for &e in &by_axis[begin as usize..end as usize] {
+                    file(
+                        (e >> 32) as u32,
+                        ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)),
+                    );
+                }
+                begin = end;
+            }
         } else {
             for (node, p) in filed() {
                 let outer_pair = match dir {
@@ -1510,49 +1533,6 @@ impl<W: Word> Packed<'_, W> {
                 }),
             "each outer node's pairs are ascending and distinct",
         );
-        Ok(())
-    }
-
-    fn file_outer_pairs_by_axis(
-        &self,
-        lim: &Limits,
-        (axis_range, cells): (usize, usize),
-        (axis_ends, by_axis): (&mut Vec<u32>, &mut Vec<u64>),
-        file: &mut impl FnMut(u32, ChildPair),
-    ) -> Result<(), OperationError> {
-        let layout = &self.layout;
-        let filed = || {
-            filed_groups(self.groups, self.marginal_ctx).flat_map(|g| {
-                self.triples[g.start as usize..g.end as usize]
-                    .iter()
-                    .map(move |&p| (g.node, p))
-            })
-        };
-        axis_ends.clear();
-        lim.try_resize(axis_ends, axis_range + 1, 0)?;
-        for (_, p) in filed() {
-            axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
-        }
-        for a in 0..axis_range {
-            axis_ends[a + 1] += axis_ends[a];
-        }
-        by_axis.clear();
-        lim.try_resize(by_axis, cells, 0)?;
-        for (node, p) in filed() {
-            let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
-            by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
-            *at += 1;
-        }
-        let mut begin = 0;
-        for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
-            for &e in &by_axis[begin as usize..end as usize] {
-                file(
-                    (e >> 32) as u32,
-                    ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)),
-                );
-            }
-            begin = end;
-        }
         Ok(())
     }
 }

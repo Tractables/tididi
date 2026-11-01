@@ -128,7 +128,10 @@ pub(super) struct PairSlot {
 
 impl Default for PairSlot {
     fn default() -> Self {
-        PairSlot { key: EMPTY_KEY, parent: 0 }
+        PairSlot {
+            key: EMPTY_KEY,
+            parent: 0,
+        }
     }
 }
 
@@ -235,8 +238,16 @@ fn plan(
         return Ok(None);
     }
     let f_pairs = f_level.live_pairs() as u64;
-    let g_pairs = count_pairs(lim, g_level, Sides { left: shape.g.left, right: shape.g.right },
-        &mut pb.g_by_left, &mut pb.g_by_right)?;
+    let g_pairs = count_pairs(
+        lim,
+        g_level,
+        Sides {
+            left: shape.g.left,
+            right: shape.g.right,
+        },
+        &mut pb.g_by_left,
+        &mut pb.g_by_right,
+    )?;
     if f_pairs + g_pairs < PROBE_MIN_PAIRS && !probe_forced() {
         return Ok(None);
     }
@@ -255,7 +266,10 @@ fn plan(
     }
     let (lo, ro) = (&pb.left_offsets, &pb.right_offsets);
     let walk = |list: &[ProductEntry], offsets: &[u32], by_g: &[u32], a: usize| -> u64 {
-        list[offsets[a] as usize..offsets[a + 1] as usize].iter().map(|e| u64::from(by_g[e.g_idx.idx()]) + 1).sum()
+        list[offsets[a] as usize..offsets[a + 1] as usize]
+            .iter()
+            .map(|e| u64::from(by_g[e.g_idx.idx()]) + 1)
+            .sum()
     };
     let stride = (f_pairs / PLAN_SAMPLE_PAIRS).max(1) as usize;
     let (mut sampled, mut left, mut right, mut both) = (0u64, 0u64, 0u64, 0u64);
@@ -285,10 +299,15 @@ fn plan(
         (by_right, scale(right), Probe::Right),
         (pairs_ok, scale(both), Probe::Pairs),
     ];
-    let best = options.iter().filter(|o| o.0).min_by_key(|o| o.1).map(|o| (o.1, o.2));
+    let best = options
+        .iter()
+        .filter(|o| o.0)
+        .min_by_key(|o| o.1)
+        .map(|o| (o.1, o.2));
     let level_pairs = f_pairs + g_pairs;
     Ok(best.and_then(|(cost, probe)| {
-        (probe_forced() || cost <= PROBE_PER_PAIR.saturating_mul(level_pairs)).then_some((probe, level_pairs))
+        (probe_forced() || cost <= PROBE_PER_PAIR.saturating_mul(level_pairs))
+            .then_some((probe, level_pairs))
     }))
 }
 
@@ -326,18 +345,51 @@ pub(super) fn probe_level(
     // the pool that will release it.
     let mut pb = std::mem::take(&mut ws.probe);
     let result = (|| {
-        let Some((probe, level_pairs)) = plan(eng, &mut pb, (f_level, g_level), shape, (pl, listed, cells), multisets)? else {
+        let Some((probe, level_pairs)) = plan(
+            eng,
+            &mut pb,
+            (f_level, g_level),
+            shape,
+            (pl, listed, cells),
+            multisets,
+        )?
+        else {
             return Ok(None);
         };
         note_probe(probe);
         // The emit looks each candidate's `g` parent up here; it leaves the
         // map as it found it, all `NO_PRODUCT`.
-        eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
+        eng.limits()
+            .try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
         let made = match probe {
-            Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, (f_level, g_level), (shape, pl), cells.right, emit)?,
-            Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, (f_level, g_level), (shape, pl), cells.left, emit)?,
+            Probe::Left => walk_one_side::<false>(
+                eng,
+                ws,
+                &mut pb,
+                (f_level, g_level),
+                (shape, pl),
+                cells.right,
+                emit,
+            )?,
+            Probe::Right => walk_one_side::<true>(
+                eng,
+                ws,
+                &mut pb,
+                (f_level, g_level),
+                (shape, pl),
+                cells.left,
+                emit,
+            )?,
             Probe::Pairs => {
-                walk_pairs(eng, ws, &mut pb, (f_level, g_level), (shape, pl), level_pairs, emit)?;
+                walk_pairs(
+                    eng,
+                    ws,
+                    &mut pb,
+                    (f_level, g_level),
+                    (shape, pl),
+                    level_pairs,
+                    emit,
+                )?;
                 Made::Written
             }
         };
@@ -356,9 +408,21 @@ fn walk_level<const SWAPPED: bool, W: NodeWalk>(
     f_level: &TddLevel,
     emit: Emit<'_>,
 ) -> Result<(), OperationError> {
-    let SparseWorkspace { node_owners, emit: scratch, .. } = ws;
+    let SparseWorkspace {
+        node_owners,
+        emit: scratch,
+        ..
+    } = ws;
     let nodes = Walked::All(f_level.nodes().len());
-    walk_nodes::<SWAPPED, W>(eng, walk, f_level, nodes, Collect::Nodes(emit), node_owners, scratch)
+    walk_nodes::<SWAPPED, W>(
+        eng,
+        walk,
+        f_level,
+        nodes,
+        Collect::Nodes(emit),
+        node_owners,
+        scratch,
+    )
 }
 
 /// The walk through one child: through the left child unswapped, the right
@@ -377,21 +441,43 @@ fn walk_one_side<const SWAPPED: bool>(
     } else {
         (pl.right, &pb.right_offsets, &pb.g_by_right, shape.g.right)
     };
-    build_reverse_index::<SWAPPED>(eng, g_level, key_width, Some(&counts[..key_width]), &mut pb.index)?;
-    let f_width = if !SWAPPED { shape.f.left } else { shape.f.right };
+    build_reverse_index::<SWAPPED>(
+        eng,
+        g_level,
+        key_width,
+        Some(&counts[..key_width]),
+        &mut pb.index,
+    )?;
+    let f_width = if !SWAPPED {
+        shape.f.left
+    } else {
+        shape.f.right
+    };
     let direct = one_each(list, f_width) && counts[..key_width].iter().all(|&n| n == 1);
-    let walk = OneSide { list, offsets, index: pb.index.view(), other, direct };
+    let walk = OneSide {
+        list,
+        offsets,
+        index: pb.index.view(),
+        other,
+        direct,
+    };
     // Where each pair's candidate is the pair itself, the level is f's
     // where each f node's pairs meet one g parent.
     let itself = direct
         && matches!(other, CellLookup::GIdentity)
-        && list.iter().enumerate().all(|(i, e)| e.prod_idx.0 as usize == i);
+        && list
+            .iter()
+            .enumerate()
+            .all(|(i, e)| e.prod_idx.0 as usize == i);
     if itself && f_level.stored().is_some() {
         // Each walked child's g parent: its one product's one g pair's.
         let parents = &mut ws.node_owners;
         parents.clear();
         eng.limits().reserve(parents, list.len())?;
-        parents.extend(list.iter().map(|e| walk.index.entries[e.g_idx.idx()].parent));
+        parents.extend(
+            list.iter()
+                .map(|e| walk.index.entries[e.g_idx.idx()].parent),
+        );
         if settle_f::<SWAPPED>(eng, parents, f_level, &mut emit)? {
             return Ok(Made::F);
         }
@@ -422,7 +508,9 @@ fn settle_f<const SWAPPED: bool>(
     let Some(stored) = f_level.stored() else {
         return Ok(false);
     };
-    let Emit { level, out, live, .. } = emit;
+    let Emit {
+        level, out, live, ..
+    } = emit;
     let (f_arena, f_nodes) = (stored.arena(), stored.nodes());
     // The walk pushes a node's first pair before it takes a one-pair
     // node's back, so the arena needs one place past f's.
@@ -434,7 +522,13 @@ fn settle_f<const SWAPPED: bool>(
     if !room || crate::apply::conjoin::lend_forced_off() {
         return Ok(false);
     }
-    let parent = |pair: &ChildPair| parents[if !SWAPPED { pair.left.raw() } else { pair.right.raw() } as usize];
+    let parent = |pair: &ChildPair| {
+        parents[if !SWAPPED {
+            pair.left.raw()
+        } else {
+            pair.right.raw()
+        } as usize]
+    };
     // f's arena pairs the node words have placed so far.
     let mut placed = 0usize;
     for node in f_nodes {
@@ -446,7 +540,10 @@ fn settle_f<const SWAPPED: bool>(
         let node_pairs = &f_arena[placed..placed + len as usize];
         placed += len as usize;
         let first = parent(&node_pairs[0]);
-        if !node_pairs[1..].iter().fold(true, |same, pair| same & (parent(pair) == first)) {
+        if !node_pairs[1..]
+            .iter()
+            .fold(true, |same, pair| same & (parent(pair) == first))
+        {
             return Ok(false);
         }
     }
@@ -512,7 +609,11 @@ impl OneSide<'_> {
         let mut group = [(0u32, 0u32, 0u32); SIDE_GROUP];
         for chunk in pairs.chunks(SIDE_GROUP) {
             for (looked, pair) in group.iter_mut().zip(chunk) {
-                let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
+                let (a, b) = if !SWAPPED {
+                    (pair.left.raw(), pair.right.raw())
+                } else {
+                    (pair.right.raw(), pair.left.raw())
+                };
                 let e = &self.list[a as usize];
                 prefetch_at(self.index.entries, e.g_idx.idx());
                 *looked = (e.g_idx.0, e.prod_idx.0, b);
@@ -521,8 +622,16 @@ impl OneSide<'_> {
                 let r = &self.index.entries[g as usize];
                 let across = other(b, r.other);
                 if across != NO_PRODUCT {
-                    let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
-                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
+                    let (left_prod, right_prod) = if !SWAPPED {
+                        (through, across)
+                    } else {
+                        (across, through)
+                    };
+                    push(ParEntry {
+                        g_parent: r.parent,
+                        left_prod,
+                        right_prod,
+                    })?;
                 }
             }
         }
@@ -550,8 +659,13 @@ impl NodeWalk for OneSide<'_> {
         }
         let mut work = 0u64;
         for pair in pairs {
-            let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
-            let bucket = &self.list[self.offsets[a as usize] as usize..self.offsets[a as usize + 1] as usize];
+            let (a, b) = if !SWAPPED {
+                (pair.left.raw(), pair.right.raw())
+            } else {
+                (pair.right.raw(), pair.left.raw())
+            };
+            let bucket = &self.list
+                [self.offsets[a as usize] as usize..self.offsets[a as usize + 1] as usize];
             for e in bucket {
                 let through = e.prod_idx.0;
                 let under = self.index.bucket(e.g_idx.idx());
@@ -561,8 +675,16 @@ impl NodeWalk for OneSide<'_> {
                     if across == NO_PRODUCT {
                         continue;
                     }
-                    let (left_prod, right_prod) = if !SWAPPED { (through, across) } else { (across, through) };
-                    push(ParEntry { g_parent: r.parent, left_prod, right_prod })?;
+                    let (left_prod, right_prod) = if !SWAPPED {
+                        (through, across)
+                    } else {
+                        (across, through)
+                    };
+                    push(ParEntry {
+                        g_parent: r.parent,
+                        left_prod,
+                        right_prod,
+                    })?;
                 }
             }
         }
@@ -589,75 +711,56 @@ fn walk_pairs(
     level_pairs: u64,
     emit: Emit<'_>,
 ) -> Result<(), OperationError> {
+    let lim = eng.limits();
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
+    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
     let one_each = one_each(pl.left, shape.f.left) && one_each(pl.right, shape.f.right);
-    let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
+    let g_pairs: usize = pb.g_by_left[..shape.g.left]
+        .iter()
+        .map(|&n| n as usize)
+        .sum();
     let slots = (2 * g_pairs).next_power_of_two().max(16);
     let small = cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs;
-    let no_larger = cells.saturating_mul(std::mem::size_of::<u32>()) <= slots * std::mem::size_of::<PairSlot>();
+    let no_larger =
+        cells.saturating_mul(std::mem::size_of::<u32>()) <= slots * std::mem::size_of::<PairSlot>();
     if (small || no_larger) && !pairs_hashed_forced() {
-        return walk_pairs_dense(eng, ws, pb, (f_level, g_level), pl, (width, cells), one_each, emit);
-    }
-    walk_pairs_hashed(eng, ws, pb, (f_level, g_level), pl, slots, one_each, emit)
-}
-
-/// [`walk_pairs`] over a dense `g.left × g.right` lookup array.
-#[expect(clippy::too_many_arguments)]
-fn walk_pairs_dense(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    pb: &mut ProbeBuffers,
-    (f_level, g_level): (&TddLevel, &TddLevel),
-    pl: Sides<&[ProductEntry]>,
-    (width, cells): (usize, usize),
-    one_each: bool,
-    emit: Emit<'_>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    if !pb.dense_clean {
-        pb.dense.fill(NO_PRODUCT);
-    }
-    lim.try_resize(&mut pb.dense, cells, NO_PRODUCT)?;
-    pb.dense_clean = false;
-    for (parent, pairs) in g_level.internal_inputs_iter() {
-        for pair in pairs {
-            let at = pair.left.raw() as usize * width + pair.right.raw() as usize;
-            debug_assert_eq!(pb.dense[at], NO_PRODUCT, "a g pair in two nodes, or twice in one");
-            pb.dense[at] = parent as u32;
+        if !pb.dense_clean {
+            pb.dense.fill(NO_PRODUCT);
         }
-    }
-    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
-    let dense = &pb.dense;
-    let pipelined = std::mem::size_of_val(&dense[..]) >= emit.thresholds.pipelined_bytes;
-    let walk = BothSides::new(pl, offsets, one_each, pipelined,
-        #[inline(always)]
-        |c: u32, d: u32| dense[c as usize * width + d as usize],
-        #[inline(always)]
-        |c: u32, d: u32| prefetch_at(dense, c as usize * width + d as usize));
-    walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
-    for (_, pairs) in g_level.internal_inputs_iter() {
-        for pair in pairs {
-            pb.dense[pair.left.raw() as usize * width + pair.right.raw() as usize] = NO_PRODUCT;
+        lim.try_resize(&mut pb.dense, cells, NO_PRODUCT)?;
+        pb.dense_clean = false;
+        for (parent, pairs) in g_level.internal_inputs_iter() {
+            for pair in pairs {
+                let at = pair.left.raw() as usize * width + pair.right.raw() as usize;
+                debug_assert_eq!(
+                    pb.dense[at], NO_PRODUCT,
+                    "a g pair in two nodes, or twice in one"
+                );
+                pb.dense[at] = parent as u32;
+            }
         }
+        let dense = &pb.dense;
+        let pipelined = std::mem::size_of_val(&dense[..]) >= emit.thresholds.pipelined_bytes;
+        let walk = BothSides::new(
+            pl,
+            offsets,
+            one_each,
+            pipelined,
+            #[inline(always)]
+            |c: u32, d: u32| dense[c as usize * width + d as usize],
+            #[inline(always)]
+            |c: u32, d: u32| prefetch_at(dense, c as usize * width + d as usize),
+        );
+        walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
+        for (_, pairs) in g_level.internal_inputs_iter() {
+            for pair in pairs {
+                pb.dense[pair.left.raw() as usize * width + pair.right.raw() as usize] = NO_PRODUCT;
+            }
+        }
+        pb.dense_clean = true;
+        return Ok(());
     }
-    pb.dense_clean = true;
-    Ok(())
-}
-
-/// [`walk_pairs`] over an open-addressing hash table of `g`'s pairs.
-#[expect(clippy::too_many_arguments)]
-fn walk_pairs_hashed(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    pb: &mut ProbeBuffers,
-    (f_level, g_level): (&TddLevel, &TddLevel),
-    pl: Sides<&[ProductEntry]>,
-    slots: usize,
-    one_each: bool,
-    emit: Emit<'_>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
     let mask = slots - 1;
     pb.table.clear();
     lim.try_resize(&mut pb.table, slots, PairSlot::default())?;
@@ -667,16 +770,25 @@ fn walk_pairs_hashed(
             let key = pair_key(pair.left.raw(), pair.right.raw());
             let mut s = slot_of(key, mask);
             while table[s].key != EMPTY_KEY {
-                debug_assert!(table[s].key != key, "a g pair in two nodes, or twice in one");
+                debug_assert!(
+                    table[s].key != key,
+                    "a g pair in two nodes, or twice in one"
+                );
                 s = (s + 1) & mask;
             }
-            table[s] = PairSlot { key, parent: parent as u32 };
+            table[s] = PairSlot {
+                key,
+                parent: parent as u32,
+            };
         }
     }
-    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
     let table = &pb.table;
     let pipelined = std::mem::size_of_val(&table[..]) >= emit.thresholds.pipelined_bytes;
-    let walk = BothSides::new(pl, offsets, one_each, pipelined,
+    let walk = BothSides::new(
+        pl,
+        offsets,
+        one_each,
+        pipelined,
         #[inline(always)]
         |c: u32, d: u32| {
             let key = pair_key(c, d);
@@ -693,7 +805,8 @@ fn walk_pairs_hashed(
             }
         },
         #[inline(always)]
-        |c: u32, d: u32| prefetch_at(table, slot_of(pair_key(c, d), mask)));
+        |c: u32, d: u32| prefetch_at(table, slot_of(pair_key(c, d), mask)),
+    );
     walk_level::<false, _>(eng, ws, &walk, f_level, emit)
 }
 
@@ -726,7 +839,14 @@ impl<'a, F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> BothSides<'a, F, T> {
         find: F,
         touch: T,
     ) -> Self {
-        BothSides { pl, offsets, one_each, pipelined, find, touch }
+        BothSides {
+            pl,
+            offsets,
+            one_each,
+            pipelined,
+            find,
+            touch,
+        }
     }
 
     /// The pipelined walk of a node's pairs, one product a side.
@@ -747,7 +867,11 @@ impl<'a, F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> BothSides<'a, F, T> {
             for &(c, d, left_prod, right_prod) in &group[..chunk.len()] {
                 let parent = (self.find)(c, d);
                 if parent != NO_PRODUCT {
-                    push(ParEntry { g_parent: parent, left_prod, right_prod })?;
+                    push(ParEntry {
+                        g_parent: parent,
+                        left_prod,
+                        right_prod,
+                    })?;
                 }
             }
         }
@@ -774,7 +898,11 @@ impl<F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> NodeWalk for BothSides<'_, F, T> {
                 let r = &self.pl.right[pair.right.raw() as usize];
                 let parent = (self.find)(l.g_idx.0, r.g_idx.0);
                 if parent != NO_PRODUCT {
-                    push(ParEntry { g_parent: parent, left_prod: l.prod_idx.0, right_prod: r.prod_idx.0 })?;
+                    push(ParEntry {
+                        g_parent: parent,
+                        left_prod: l.prod_idx.0,
+                        right_prod: r.prod_idx.0,
+                    })?;
                 }
             }
             return ticker.poll(2 * pairs.len() as u64);
@@ -790,7 +918,11 @@ impl<F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> NodeWalk for BothSides<'_, F, T> {
                 for r in rights {
                     let parent = (self.find)(l.g_idx.0, r.g_idx.0);
                     if parent != NO_PRODUCT {
-                        push(ParEntry { g_parent: parent, left_prod: l.prod_idx.0, right_prod: r.prod_idx.0 })?;
+                        push(ParEntry {
+                            g_parent: parent,
+                            left_prod: l.prod_idx.0,
+                            right_prod: r.prod_idx.0,
+                        })?;
                     }
                 }
             }
@@ -803,7 +935,9 @@ impl<F: Fn(u32, u32) -> u32, T: Fn(u32, u32)> NodeWalk for BothSides<'_, F, T> {
 // against, or takes it wherever it is admissible whatever it prices at, and
 // counts the levels each probe built and those it took from f.
 #[cfg(test)]
-use crate::apply::conjoin::tests::{note_probe, note_settled, pairs_hashed_forced, probe_forced, probe_forced_off};
+use crate::apply::conjoin::tests::{
+    note_probe, note_settled, pairs_hashed_forced, probe_forced, probe_forced_off,
+};
 
 #[cfg(not(test))]
 #[inline(always)]

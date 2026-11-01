@@ -446,6 +446,7 @@ fn survey<'r>(
         f: f_widths,
         g: g_widths,
     } = widths;
+    let internal = vtree.internal_bottomup_slice();
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
     let mut total_cells = match leaf_cells <= min_grid as u64 {
@@ -474,89 +475,36 @@ fn survey<'r>(
         g_widths[t.idx()] = w2;
         (w1, w2)
     };
-    let cone = if masks.f.is_empty() && masks.g.is_empty() {
-        survey_unmasked_cone(
-            vtree,
-            ops,
-            masks,
-            (f_widths, g_widths),
-            &mut level,
-            &mut cells,
-        )
-    } else {
-        let free_nodes = survey_masked_cone(
-            (eng.limits(), vtree),
-            ops,
-            masks,
-            (f_widths, g_widths),
-            lists,
-            &mut level,
-            &mut cells,
-        )?;
-        Cone {
-            built: &lists.built,
-            free_before: &lists.free_before,
-            tops: &lists.tops,
-            free: &lists.free,
-            leaves: &lists.leaves,
-            free_nodes,
-            masks,
+    if masks.f.is_empty() && masks.g.is_empty() {
+        let leaves = vtree.leaf_bottomup_slice();
+        for &t in leaves {
+            level(t, f_widths, g_widths);
         }
-    };
-    let snapshot = Snapshot {
-        total_cells,
-        any_entry_marginal,
-        might_use_sparse,
-    };
-    Ok((snapshot, cone))
-}
-
-/// Survey the full vtree when neither operand has free levels in `masks`.
-fn survey_unmasked_cone<'r>(
-    vtree: &'r Vtree,
-    ops: Operands<&Tdd>,
-    masks: Operands<VtreeMask<'r>>,
-    (f_widths, g_widths): (&mut [usize], &mut [usize]),
-    level: &mut impl FnMut(VtreeIdx, &mut [usize], &mut [usize]) -> (usize, usize),
-    cells: &mut impl FnMut(usize, usize, u128) -> u64,
-) -> Cone<'r> {
-    let internal = vtree.internal_bottomup_slice();
-    let leaves = vtree.leaf_bottomup_slice();
-    for &t in leaves {
-        level(t, f_widths, g_widths);
+        for &t in internal {
+            let (w1, w2) = level(t, f_widths, g_widths);
+            cells(
+                w1,
+                w2,
+                combinations_bound(&f.levels[t.idx()], &g.levels[t.idx()]),
+            );
+        }
+        let cone = Cone {
+            built: internal,
+            free_before: &[],
+            tops: &[],
+            free: &[],
+            leaves,
+            free_nodes: 0,
+            masks,
+        };
+        let snapshot = Snapshot {
+            total_cells,
+            any_entry_marginal,
+            might_use_sparse,
+        };
+        return Ok((snapshot, cone));
     }
-    for &t in internal {
-        let (w1, w2) = level(t, f_widths, g_widths);
-        cells(
-            w1,
-            w2,
-            combinations_bound(&ops.f.levels[t.idx()], &ops.g.levels[t.idx()]),
-        );
-    }
-    Cone {
-        built: internal,
-        free_before: &[],
-        tops: &[],
-        free: &[],
-        leaves,
-        free_nodes: 0,
-        masks,
-    }
-}
-
-/// Populate `lists` and `(f_widths, g_widths)` when at least one operand has
-/// free levels in `masks`, returning `free_nodes`.
-fn survey_masked_cone<'r>(
-    (lim, vtree): (&crate::limits::Limits, &'r Vtree),
-    ops: Operands<&Tdd>,
-    masks: Operands<VtreeMask<'r>>,
-    (f_widths, g_widths): (&mut [usize], &mut [usize]),
-    lists: &mut ConeLists,
-    mut level: impl FnMut(VtreeIdx, &mut [usize], &mut [usize]) -> (usize, usize),
-    mut cells: impl FnMut(usize, usize, u128) -> u64,
-) -> Result<u64, OperationError> {
-    let Operands { f, g } = ops;
-    let internal = vtree.internal_bottomup_slice();
+    let lim = eng.limits();
     let ConeLists {
         built,
         free_before,
@@ -606,6 +554,8 @@ fn survey_masked_cone<'r>(
             }
         }
     }
+    // A free root is the top of its region, under no built level; a leaf
+    // root is the one level.
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
         level(root, f_widths, g_widths);
@@ -613,7 +563,21 @@ fn survey_masked_cone<'r>(
     } else if free_at(root) {
         tops.push(root);
     }
-    Ok(free_nodes)
+    let cone = Cone {
+        built,
+        free_before,
+        tops,
+        free,
+        leaves,
+        free_nodes,
+        masks,
+    };
+    let snapshot = Snapshot {
+        total_cells,
+        any_entry_marginal,
+        might_use_sparse,
+    };
+    Ok((snapshot, cone))
 }
 
 /// Conservative per-cell byte factor for the apply's product grid:
@@ -673,53 +637,72 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     let thresholds = sparse_thresholds(lim);
     let min_grid = thresholds.min_grid;
 
-    scratch
-        .f_widths
-        .resize(scratch.f_widths.len().max(num_nodes), 0);
-    scratch
-        .g_widths
-        .resize(scratch.g_widths.len().max(num_nodes), 0);
-    let (snap, cone) = survey(
+    let ApplyWorkspace {
+        f_widths,
+        g_widths,
+        f_identity,
+        g_identity,
+        f_pairs_scratch,
+        g_pairs_scratch,
+        products,
+        stream_cache,
+        prefilter_masks,
+        words,
+        cone,
+    } = scratch;
+    if f_widths.len() < num_nodes {
+        f_widths.resize(num_nodes, 0);
+    }
+    if g_widths.len() < num_nodes {
+        g_widths.resize(num_nodes, 0);
+    }
+    let (
+        Snapshot {
+            total_cells,
+            any_entry_marginal,
+            might_use_sparse,
+        },
+        cone,
+    ) = survey(
         eng,
         vtree,
         ops,
         free,
         min_grid,
         Operands {
-            f: &mut scratch.f_widths,
-            g: &mut scratch.g_widths,
+            f: f_widths,
+            g: g_widths,
         },
-        &mut scratch.cone,
-    )?;
-    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, snap.any_entry_marginal);
-    preflight_dense_budget(lim, snap.total_cells)?;
-
-    scratch
-        .stream_cache
-        .reset(num_nodes, (!targets.is_empty()).then_some(kind));
-    scratch.products.reset(
-        eng,
-        snap.might_use_sparse,
-        num_nodes,
-        &scratch.f_widths,
-        &scratch.g_widths,
         cone,
     )?;
 
+    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
+
+    preflight_dense_budget(lim, total_cells)?;
+
+    // Streaming-marginal scratch: lazily computed child columns for
+    // streaming-target levels whose children are still explicit.
+    stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(kind));
+    // With no level over the threshold, all the sparse infrastructure — product
+    // lists, live counts, bump allocator — is skipped outright. A level under
+    // a free level is taken whole with its region, and no level reads its
+    // products.
+    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, cone)?;
+
     Ok(ApplyRun {
         levels,
-        f_widths: &mut scratch.f_widths,
-        g_widths: &mut scratch.g_widths,
+        f_widths,
+        g_widths,
         thresholds,
-        stream_cache: &mut scratch.stream_cache,
-        products: &mut scratch.products,
+        stream_cache,
+        products,
         entry_marginality,
-        g_identity: &mut scratch.g_identity,
-        f_identity: &mut scratch.f_identity,
-        f_pairs_scratch: &mut scratch.f_pairs_scratch,
-        g_pairs_scratch: &mut scratch.g_pairs_scratch,
-        prefilter_masks: &mut scratch.prefilter_masks,
-        words: &mut scratch.words,
+        g_identity,
+        f_identity,
+        f_pairs_scratch,
+        g_pairs_scratch,
+        prefilter_masks,
+        words,
         carried: Vec::new(),
         relabel_moved: Vec::new(),
         lent: Vec::new(),

@@ -260,27 +260,34 @@ fn rebuild_along_spine(
     clause: &[(Literal, VtreeIdx)],
     disjoin: bool,
 ) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
     let pool = &eng.scratch.clause;
     let vtree = &f.vtree;
+    let num_nodes = vtree.num_nodes();
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     let mut on_spine = pool.on_spine.checkout(eng);
+    on_spine.cover(lim, num_nodes)?;
     let mut spine_internal = pool.spine_internal.checkout_preserving(eng);
-    let mut need_dt = pool.need_dt.checkout(eng);
-    checkout_clause_spine(
-        eng,
+    let mut dfs_stack = pool.dfs_stack.checkout_preserving(eng);
+    build_clause_spine(
+        lim,
         vtree,
         clause,
         &mut on_spine,
         &mut spine_internal,
-        &mut need_dt,
+        &mut dfs_stack,
     )?;
+    let mut need_dt = pool.need_dt.checkout(eng);
+    need_dt.cover(lim, num_nodes)?;
+    propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the
     // identity, spine internal levels are rebuilt in place below, and f is
     // left with empty levels.
-    let (out_vtree, out_local_in) = (f.output.vtree, f.output.local);
+    let out_vtree = f.output.vtree;
+    let out_local_in = f.output.local;
     let mut levels = std::mem::take(&mut f.levels).into_vec();
     // The accumulator's marginal values move to the output along with its levels:
     // a clause carries none of its own, and the output is nothing but the
@@ -290,148 +297,61 @@ fn rebuild_along_spine(
     // Per-level base offsets into `cd_map`: only spine levels get storage, so
     // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
     // are read through raw pair indices. See `plan_cd_map_bases`.
-    let out_local = sweep_clause_spine_tables(
-        eng,
-        vtree,
-        clause,
-        disjoin,
-        (out_vtree, out_local_in),
-        (&on_spine, &spine_internal, &need_dt),
-        &mut levels,
-    )?;
-    finish_spine_rebuild(
-        eng,
-        f,
-        levels,
-        f_weights,
-        TddNodeId {
-            vtree: out_vtree,
-            local: out_local,
-        },
-        &spine_internal,
-    )
-}
-
-/// Checkout the clause `cd_map` and pair scratch tables, sweep all spine
-/// internal levels bottom-up, and return the output's local node index.
-fn sweep_clause_spine_tables(
-    eng: &Engine,
-    vtree: &Vtree,
-    clause: &[(Literal, VtreeIdx)],
-    disjoin: bool,
-    (out_vtree, out_local_in): (VtreeIdx, NodeIdx),
-    (on_spine, spine_internal, need_dt): (&MarkBuffer, &[VtreeIdx], &MarkBuffer),
-    levels: &mut [TddLevel],
-) -> Result<NodeIdx, OperationError> {
-    let lim = eng.limits();
-    let pool = &eng.scratch.clause;
     let mut level_base = pool.level_base.checkout_preserving(eng);
-    let mut cd_map = pool.cd_map.checkout_preserving(eng);
-    init_clause_cd_map(
-        lim,
-        clause,
-        spine_internal,
-        levels,
-        need_dt,
-        &mut level_base,
-        &mut cd_map,
-    )?;
-    let mut clause_dt_pairs = pool.dt_pairs.checkout(eng);
-    let mut clause_t3_buf = pool.t3_buf.checkout(eng);
-    let chain = disjoin
-        .then(|| CubeChain::new(lim, vtree, clause))
-        .transpose()?;
-    let mut tables = ClauseTables {
-        cd_map: &mut cd_map,
-        level_base: &level_base,
-        need_dt,
-        on_spine,
-        t3_buf: &mut clause_t3_buf,
-        dt_pairs: &mut clause_dt_pairs,
-        output_cube_pair: None,
-    };
-    sweep_spine_internal_levels(
-        eng,
-        vtree,
-        (out_vtree, out_local_in),
-        spine_internal,
-        levels,
-        &mut tables,
-        chain,
-    )?;
-    let ct_out = cd_map[level_base[out_vtree.idx()] + out_local_in.idx()][0];
-    Ok(if ct_out != NO_PRODUCT {
-        NodeIdx(ct_out)
-    } else {
-        ZERO
-    })
-}
+    lim.try_resize(&mut level_base, num_nodes, 0usize)?;
+    let total = plan_cd_map_bases(clause, &spine_internal, &levels, &mut level_base)?;
 
-/// Build the clause's Steiner spine (`on_spine`, `spine_internal`) and
-/// propagate `need_dt` top-down over it.
-fn checkout_clause_spine(
-    eng: &Engine,
-    vtree: &Vtree,
-    clause: &[(Literal, VtreeIdx)],
-    on_spine: &mut MarkBuffer,
-    spine_internal: &mut Vec<VtreeIdx>,
-    need_dt: &mut MarkBuffer,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let num_nodes = vtree.num_nodes();
-    on_spine.cover(lim, num_nodes)?;
-    let mut dfs_stack = eng.scratch.clause.dfs_stack.checkout_preserving(eng);
-    build_clause_spine(lim, vtree, clause, on_spine, spine_internal, &mut dfs_stack)?;
-    need_dt.cover(lim, num_nodes)?;
-    propagate_need_dt(vtree, spine_internal, on_spine, need_dt);
-    Ok(())
-}
-
-/// Plan `level_base`, resize `cd_map`, and populate leaf entries for `clause`.
-fn init_clause_cd_map(
-    lim: &Limits,
-    clause: &[(Literal, VtreeIdx)],
-    spine_internal: &[VtreeIdx],
-    levels: &[TddLevel],
-    need_dt: &MarkBuffer,
-    level_base: &mut Vec<usize>,
-    cd_map: &mut Vec<[u32; 2]>,
-) -> Result<(), OperationError> {
-    lim.try_resize(level_base, levels.len(), 0usize)?;
-    let total = plan_cd_map_bases(clause, spine_internal, levels, level_base)?;
     // The base blocks partition `[0, total)` with no gaps and every `c_t`
     // entry is written once below, so no bulk `NO_PRODUCT` fill is needed. A
     // `d_t` lane is written iff `need_dt[t]`, and a read of one implies
     // `need_dt` on that child, so a stale lane is never read.
-    lim.try_resize(cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
-    fill_leaf_maps(clause, level_base, need_dt, cd_map);
-    Ok(())
-}
+    let mut cd_map = pool.cd_map.checkout_preserving(eng);
+    lim.try_resize(&mut cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
 
-/// Rebuild each spine internal level bottom-up, closing `chain` below the output
-/// level and checking the stop axis and output cap after each level.
-fn sweep_spine_internal_levels(
-    eng: &Engine,
-    vtree: &Vtree,
-    (out_vtree, out_local_in): (VtreeIdx, NodeIdx),
-    spine_internal: &[VtreeIdx],
-    levels: &mut [TddLevel],
-    tables: &mut ClauseTables<'_>,
-    mut chain: Option<CubeChain>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
+    fill_leaf_maps(clause, &level_base, &need_dt, &mut cd_map);
+
+    // Pair buffers reused across the per-level and per-node loops, and from
+    // one clause to the next: a run of clauses grew a fresh pair of them,
+    // push by push, for every clause.
+    let mut clause_dt_pairs = pool.dt_pairs.checkout(eng); // f × d_t pairs
+    // "Type 3" pairs (dt_L, ct_R) of the both-relevant case have larger left
+    // indices than type 1/2 pairs, so they are buffered and flushed after
+    // them to keep the sorted order.
+    let mut clause_t3_buf = pool.t3_buf.checkout(eng);
+
+    // Rebuild each spine internal level bottom-up. Children's maps are fully
+    // written before any parent reads them. The stop axis and the output cap
+    // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
-    for &t in spine_internal {
+    let mut chain = if disjoin {
+        Some(CubeChain::new(lim, vtree, clause)?)
+    } else {
+        None
+    };
+    let mut tables = ClauseTables {
+        cd_map: &mut cd_map,
+        level_base: &level_base,
+        need_dt: &need_dt,
+        on_spine: &on_spine,
+        t3_buf: &mut clause_t3_buf,
+        dt_pairs: &mut clause_dt_pairs,
+        output_cube_pair: None,
+    };
+    for &t in spine_internal.iter() {
+        // The `cd_map` block of a level is sized at its width before the
+        // rebuild, which is also the range the chain reads back.
         let old_width = levels[t.idx()].slot_count();
         if let Some(chain) = chain.as_ref() {
+            // The output level is last in the bottom-up order, so the chain
+            // is complete below it and the cube joins the output node here.
             tables.output_cube_pair = (t == out_vtree).then(|| {
                 (
-                    tables.level_base[t.idx()] + out_local_in.idx(),
+                    level_base[t.idx()] + out_local_in.idx(),
                     chain.pair_at(vtree, t),
                 )
             });
         }
-        rebuild_spine_level(eng, t, vtree, levels, tables)?;
+        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
         if let Some(chain) = chain.as_mut()
             && t != out_vtree
         {
@@ -442,29 +362,38 @@ fn sweep_spine_internal_levels(
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
-    Ok(())
-}
 
-/// Assemble the rebuilt spine levels into the output diagram, carrying over
-/// `f`'s off-spine worklists and pair-fusion records.
-fn finish_spine_rebuild(
-    eng: &Engine,
-    f: &mut Tdd,
-    levels: Vec<TddLevel>,
-    f_weights: Option<WeightStore>,
-    output: TddNodeId,
-    spine_internal: &[VtreeIdx],
-) -> Result<Tdd, OperationError> {
-    let vtree = Arc::clone(&f.vtree);
+    // Output: conjunction of f's output with c_t at the root. `out_vtree` is
+    // an ancestor of every clause leaf, so it is on the spine and its `cd_map`
+    // block is filled.
+    let out_base = level_base[out_vtree.idx()];
+    let ct_out = cd_map[out_base + out_local_in.idx()][0];
+    let out_local = if ct_out != NO_PRODUCT {
+        NodeIdx(ct_out)
+    } else {
+        ZERO
+    };
+
+    // Contract seed: this clause's spine, which is ancestor-closed, so an
+    // off-spine level and its whole subtree are the accumulator's own bytes;
+    // whatever the accumulator still owed is carried over, which keeps this
+    // exact for a caller that does not minimize between clauses. The spine
+    // is also all the walk changed, and so all the seat closes.
+    // The pair fusion records (`Dirty::is_fused`) off the spine are the
+    // accumulator's too.
+    let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
-        output,
+        TddNodeId {
+            vtree: out_vtree,
+            local: out_local,
+        },
         carried,
-        spine_internal,
-        Some(spine_internal),
+        &spine_internal,
+        Some(&spine_internal[..]),
     )?;
-    out.dirty.restore_fused(fused, spine_internal);
+    out.dirty.restore_fused(fused, &spine_internal);
     #[cfg(debug_assertions)]
     {
         let recorded: Vec<VtreeIdx> = (0..out.vtree.num_nodes() as u32)

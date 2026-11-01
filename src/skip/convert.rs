@@ -10,6 +10,47 @@ use crate::limits::Limits;
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::{Engine, OperationError};
 
+/// Compute top-down reachability flags for every internal level of `f` when
+/// `f` is not certified canonical.
+fn compute_untrimmed_reach(
+    f: &Tdd,
+    sh: &Shape,
+    lim: &Limits,
+) -> Result<Vec<Vec<bool>>, OperationError> {
+    let n = sh.num_nodes();
+    let root = sh.root;
+    let levels = &f.levels;
+    let mut reach: Vec<Vec<bool>> = Vec::new();
+    reach.reserve_exact(n);
+    for i in 0..n {
+        reach.push(if sh.is_leaf(i as u32) {
+            Vec::new()
+        } else {
+            filled(lim, levels[i].slot_count(), false)?
+        });
+    }
+    if !sh.is_leaf(root) {
+        reach[root as usize][f.output().local.idx()] = true;
+    }
+    for &t in &sh.topdown {
+        let (l, r) = sh.kids[t as usize];
+        for i in 0..reach[t as usize].len() {
+            if !reach[t as usize][i] {
+                continue;
+            }
+            for pair in levels[t as usize].pairs_iter_of_idx(i) {
+                if !sh.is_leaf(l) {
+                    reach[l as usize][pair.left.raw() as usize] = true;
+                }
+                if !sh.is_leaf(r) {
+                    reach[r as usize][pair.right.raw() as usize] = true;
+                }
+            }
+        }
+    }
+    Ok(reach)
+}
+
 /// The skip form of `f`. Any valid diagram converts; a canonical one
 /// converts to the canonical skip form.
 ///
@@ -30,58 +71,23 @@ pub(crate) fn from_tdd(
         return Err(OperationError::MarginalLevel(VtreeIdx(t as u32)));
     }
     let sh = &*shape;
+    let n = sh.num_nodes();
     let mut form = SkipForm::zero(Arc::clone(&shape));
     if f.is_zero() {
         return Ok(form);
     }
     let root = sh.root;
+    let levels = &f.levels;
     // A canonical diagram holds only nodes its output reaches, and its skip
     // form only nodes their referrers name.
-    let canonical = f.levels.is_canonical(f.output);
+    let canonical = levels.is_canonical(f.output);
     let reach = if canonical {
         Vec::new()
     } else {
         compute_untrimmed_reach(f, sh, lim)?
     };
     // Resolve bottom-up.
-    let res = resolve_tdd_levels_to_skip(f, sh, canonical, &reach, &mut form, lim)?;
-    let o = f.output().local.0;
-    form.out = if sh.is_leaf(root) {
-        mk(root, o)
-    } else {
-        res[root as usize][o as usize]
-    };
-    for v in reach {
-        lim.discard(v);
-    }
-    for v in res {
-        lim.discard(v);
-    }
-    if canonical {
-        form.active = sh
-            .topdown
-            .iter()
-            .copied()
-            .filter(|&t| form.levels[t as usize].width() > 0)
-            .collect();
-    } else {
-        form.collect(lim)?;
-    }
-    Ok(form)
-}
-
-/// Resolve each internal level of `f` bottom-up into `form.levels`, returning
-/// the per-level resolved `Ref` tables.
-fn resolve_tdd_levels_to_skip(
-    f: &Tdd,
-    sh: &Shape,
-    canonical: bool,
-    reach: &[Vec<bool>],
-    form: &mut SkipForm,
-    lim: &Limits,
-) -> Result<Vec<Vec<Ref>>, OperationError> {
-    let levels = &f.levels;
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); sh.num_nodes()];
+    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
     let mut buf = Vec::new();
     for &t in &sh.bottomup {
         let (l, r) = sh.kids[t as usize];
@@ -112,61 +118,57 @@ fn resolve_tdd_levels_to_skip(
         }
         res[t as usize] = out;
     }
+    let o = f.output().local.0;
+    form.out = if sh.is_leaf(root) {
+        mk(root, o)
+    } else {
+        res[root as usize][o as usize]
+    };
+    for v in reach {
+        lim.discard(v);
+    }
+    for v in res {
+        lim.discard(v);
+    }
     lim.discard(buf);
-    Ok(res)
+    if canonical {
+        form.active = sh
+            .topdown
+            .iter()
+            .copied()
+            .filter(|&t| form.levels[t as usize].width() > 0)
+            .collect();
+    } else {
+        form.collect(lim)?;
+    }
+    Ok(form)
 }
 
-/// Mark the nodes reachable from `f.output()` top-down when `f` is not
-/// certified canonical.
-fn compute_untrimmed_reach(
-    f: &Tdd,
-    sh: &Shape,
-    lim: &Limits,
-) -> Result<Vec<Vec<bool>>, OperationError> {
-    let n = sh.num_nodes();
-    let root = sh.root;
-    let levels = &f.levels;
-    let mut reach: Vec<Vec<bool>> = Vec::with_capacity(n);
-    for i in 0..n {
-        reach.push(if sh.is_leaf(i as u32) {
-            Vec::new()
-        } else {
-            filled(lim, levels[i].slot_count(), false)?
-        });
-    }
-    if !sh.is_leaf(root) {
-        reach[root as usize][f.output().local.idx()] = true;
-    }
-    for &t in &sh.topdown {
-        let (l, r) = sh.kids[t as usize];
-        for i in 0..reach[t as usize].len() {
-            if !reach[t as usize][i] {
-                continue;
-            }
-            for pair in levels[t as usize].pairs_iter_of_idx(i) {
-                if !sh.is_leaf(l) {
-                    reach[l as usize][pair.left.raw() as usize] = true;
-                }
-                if !sh.is_leaf(r) {
-                    reach[r as usize][pair.right.raw() as usize] = true;
-                }
-            }
-        }
-    }
-    Ok(reach)
-}
-
-type PassthroughPlan = (Vec<Ref>, Vec<u32>, Vec<u32>);
-
-/// Collect all numbered references in `s` together with the flat `(start, pts)`
-/// lists of pass-through reference numbers needed at each level.
-fn collect_passthroughs(
+/// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
+/// from): every level a skip crosses holds the node `true` on the skipped
+/// variable makes, one per (level, target). The stored form of a canonical
+/// skip form is canonical, but it is not certified as such here.
+pub(crate) fn to_tdd(
     s: &SkipForm,
-    nb: &Numbered,
-    lim: &Limits,
-) -> Result<PassthroughPlan, OperationError> {
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+) -> Result<Tdd, OperationError> {
     let sh = &*s.shape;
     let n = sh.num_nodes();
+    if s.out == ZREF {
+        return Ok(Tdd::zero(vtree));
+    }
+    if sh.is_leaf(sh.root) {
+        return Tdd::builder(eng, vtree)?
+            .finish(TddNodeId {
+                vtree: VtreeIdx(sh.root),
+                local: NodeIdx(ix(s.out)),
+            })
+            .map_err(|_| OperationError::IndexOverflow);
+    }
+    let lim = eng.limits();
+    let nb = Numbered::of(s, lim)?;
+    // Every reference, by number.
     let mut refs = filled(lim, nb.len(), ZREF)?;
     for &t in &s.active {
         let b = nb.base[t as usize];
@@ -180,6 +182,9 @@ fn collect_passthroughs(
             refs[(b + k) as usize] = mk(c, k);
         }
     }
+    // A reference read at a level above its own has a pass-through node at
+    // every level from the highest one it is read at down to its own:
+    // per level, those references, numbered after the level's own nodes.
     let mut start = vec![0u32; n + 1];
     let chain = |x: Ref, top: u32, f: &mut dyn FnMut(u32)| {
         let mut c = top;
@@ -208,33 +213,6 @@ fn collect_passthroughs(
             });
         }
     }
-    Ok((refs, start, pts))
-}
-
-/// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
-/// from): every level a skip crosses holds the node `true` on the skipped
-/// variable makes, one per (level, target). The stored form of a canonical
-/// skip form is canonical, but it is not certified as such here.
-pub(crate) fn to_tdd(
-    s: &SkipForm,
-    eng: &Engine,
-    vtree: &Arc<Vtree>,
-) -> Result<Tdd, OperationError> {
-    let sh = &*s.shape;
-    if s.out == ZREF {
-        return Ok(Tdd::zero(vtree));
-    }
-    if sh.is_leaf(sh.root) {
-        return Tdd::builder(eng, vtree)?
-            .finish(TddNodeId {
-                vtree: VtreeIdx(sh.root),
-                local: NodeIdx(ix(s.out)),
-            })
-            .map_err(|_| OperationError::IndexOverflow);
-    }
-    let lim = eng.limits();
-    let nb = Numbered::of(s, lim)?;
-    let (refs, start, pts) = collect_passthroughs(s, &nb, lim)?;
     // Per reference, its pass-through's index at the last level of its
     // chain written: the levels are written children first, and a
     // reference's next level up its chain is the parent of the last.
@@ -249,8 +227,80 @@ pub(crate) fn to_tdd(
     let mut b = Tdd::builder(eng, vtree)?;
     let mut node: Vec<ChildPair> = Vec::new();
     for &t in &sh.bottomup {
+        let (l, r) = sh.kids[t as usize];
+        let lvl = &s.levels[t as usize];
         let here = &pts[start[t as usize] as usize..start[t as usize + 1] as usize];
-        emit_skip_tdd_level(s, eng, &nb, (t, here, &refs), (&mut cur, &mut node), &mut b)?;
+        // A leaf child is named by literals in every pair of the level, or
+        // by One in every pair; pass-through nodes name One there.
+        let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
+        let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
+        let raw = |cur: &[u32], c: u32, x: Ref| -> u32 {
+            if sh.is_leaf(c) || vt(x) == c {
+                ix(x)
+            } else {
+                width(c) + cur[nb.id(x)]
+            }
+        };
+        let expand =
+            |node: &mut Vec<ChildPair>, left: u32, a_one: bool, right: u32, c_one: bool| {
+                let lefts: &[u32] = if lit_l && a_one {
+                    &[POS, NEG]
+                } else {
+                    std::slice::from_ref(&left)
+                };
+                for &la in lefts {
+                    if lit_r && c_one {
+                        node.push(ChildPair::new(
+                            EncodedChildRef::from_raw(la),
+                            EncodedChildRef::from_raw(POS),
+                        ));
+                        node.push(ChildPair::new(
+                            EncodedChildRef::from_raw(la),
+                            EncodedChildRef::from_raw(NEG),
+                        ));
+                    } else {
+                        node.push(ChildPair::new(
+                            EncodedChildRef::from_raw(la),
+                            EncodedChildRef::from_raw(right),
+                        ));
+                    }
+                }
+            };
+        let grow = |one_l: bool, one_r: bool| {
+            (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 })
+        };
+        let mut npairs: usize = lvl
+            .pairs
+            .iter()
+            .map(|p| {
+                grow(
+                    ix(p.0) == ONE && sh.is_leaf(l),
+                    ix(p.1) == ONE && sh.is_leaf(r),
+                )
+            })
+            .sum();
+        npairs += here.len() * grow(sh.is_leaf(l), sh.is_leaf(r));
+        b.reserve(eng, VtreeIdx(t), lvl.width() + here.len(), npairs)?;
+        for i in 0..lvl.width() {
+            node.clear();
+            for &(a, c) in lvl.node(i as u32) {
+                let a_one = sh.is_leaf(l) && ix(a) == ONE;
+                let c_one = sh.is_leaf(r) && ix(c) == ONE;
+                expand(&mut node, raw(&cur, l, a), a_one, raw(&cur, r, c), c_one);
+            }
+            b.push(eng, VtreeIdx(t), &node)?;
+        }
+        for (k, &id) in here.iter().enumerate() {
+            let x = refs[id as usize];
+            node.clear();
+            if sh.within(vt(x), l) {
+                expand(&mut node, raw(&cur, l, x), false, ONE, sh.is_leaf(r));
+            } else {
+                expand(&mut node, ONE, sh.is_leaf(l), raw(&cur, r, x), false);
+            }
+            b.push(eng, VtreeIdx(t), &node)?;
+            cur[id as usize] = k as u32;
+        }
     }
     let o = if vt(s.out) == sh.root {
         ix(s.out)
@@ -271,107 +321,4 @@ pub(crate) fn to_tdd(
     lim.discard(cur);
     nb.discard(lim);
     Ok(tdd)
-}
-
-fn emit_skip_tdd_level(
-    s: &SkipForm,
-    eng: &Engine,
-    nb: &Numbered,
-    (t, here, refs): (u32, &[u32], &[Ref]),
-    (cur, node): (&mut [u32], &mut Vec<ChildPair>),
-    b: &mut crate::diagram::TddBuilder,
-) -> Result<(), OperationError> {
-    let sh = &*s.shape;
-    let (l, r) = sh.kids[t as usize];
-    let lvl = &s.levels[t as usize];
-    let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
-    let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
-    let raw = |cur: &[u32], c: u32, x: Ref| -> u32 {
-        if sh.is_leaf(c) || vt(x) == c {
-            ix(x)
-        } else {
-            s.levels[c as usize].width() as u32 + cur[nb.id(x)]
-        }
-    };
-    let grow = |one_l: bool, one_r: bool| {
-        (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 })
-    };
-    let mut npairs: usize = lvl
-        .pairs
-        .iter()
-        .map(|p| {
-            grow(
-                ix(p.0) == ONE && sh.is_leaf(l),
-                ix(p.1) == ONE && sh.is_leaf(r),
-            )
-        })
-        .sum();
-    npairs += here.len() * grow(sh.is_leaf(l), sh.is_leaf(r));
-    b.reserve(eng, VtreeIdx(t), lvl.width() + here.len(), npairs)?;
-    for i in 0..lvl.width() {
-        node.clear();
-        for &(a, c) in lvl.node(i as u32) {
-            let a_one = sh.is_leaf(l) && ix(a) == ONE;
-            let c_one = sh.is_leaf(r) && ix(c) == ONE;
-            expand_skip_pair(
-                node,
-                (lit_l, lit_r),
-                (raw(cur, l, a), a_one),
-                (raw(cur, r, c), c_one),
-            );
-        }
-        b.push(eng, VtreeIdx(t), node)?;
-    }
-    for (k, &id) in here.iter().enumerate() {
-        let x = refs[id as usize];
-        node.clear();
-        if sh.within(vt(x), l) {
-            expand_skip_pair(
-                node,
-                (lit_l, lit_r),
-                (raw(cur, l, x), false),
-                (ONE, sh.is_leaf(r)),
-            );
-        } else {
-            expand_skip_pair(
-                node,
-                (lit_l, lit_r),
-                (ONE, sh.is_leaf(l)),
-                (raw(cur, r, x), false),
-            );
-        }
-        b.push(eng, VtreeIdx(t), node)?;
-        cur[id as usize] = k as u32;
-    }
-    Ok(())
-}
-
-fn expand_skip_pair(
-    node: &mut Vec<ChildPair>,
-    (lit_l, lit_r): (bool, bool),
-    (left, a_one): (u32, bool),
-    (right, c_one): (u32, bool),
-) {
-    let lefts: &[u32] = if lit_l && a_one {
-        &[POS, NEG]
-    } else {
-        std::slice::from_ref(&left)
-    };
-    for &la in lefts {
-        if lit_r && c_one {
-            node.push(ChildPair::new(
-                EncodedChildRef::from_raw(la),
-                EncodedChildRef::from_raw(POS),
-            ));
-            node.push(ChildPair::new(
-                EncodedChildRef::from_raw(la),
-                EncodedChildRef::from_raw(NEG),
-            ));
-        } else {
-            node.push(ChildPair::new(
-                EncodedChildRef::from_raw(la),
-                EncodedChildRef::from_raw(right),
-            ));
-        }
-    }
 }

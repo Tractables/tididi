@@ -89,7 +89,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     let mut zpairs = build_z_pairs(f, &lv, &pos, &leaf_skips, lim)?;
     lim.check_stop()?;
     let top = mark_top_classes(f, &lv, &pos, &zpairs, lim)?;
-    let (res, zres) = emit_negated_levels(f, &lv, &pos, &top, &mut zpairs, &mut out, lim)?;
+    let zres = emit_negated_levels(f, &lv, &pos, &top, &mut zpairs, &mut out, lim)?;
     // The root's Z, read from the root: where f skips below the root, the
     // Z of the level the skip lands on, behind `true` on the skipped
     // variables.
@@ -109,9 +109,6 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
         }
     };
     for v in top {
-        lim.discard(v);
-    }
-    for v in res {
         lim.discard(v);
     }
     for (_, v) in leaf_skips {
@@ -139,7 +136,7 @@ fn build_z_pairs(
         match (sh.is_leaf(l), sh.is_leaf(r)) {
             (true, true) => {
                 let skips = leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]);
-                z_pairs_leaf_leaf(&lvl.pairs, (l, r), skips, &mut z, lim)?;
+                z_pairs_leaf_leaf(&lvl.pairs, l, r, skips, &mut z, lim)?;
             }
             (true, false) | (false, true) => {
                 let left_leaf = sh.is_leaf(l);
@@ -164,7 +161,8 @@ fn build_z_pairs(
 
 fn z_pairs_leaf_leaf(
     pairs: &[(Ref, Ref)],
-    (l, r): (u32, u32),
+    l: u32,
+    r: u32,
     skips: &[Ref],
     z: &mut Vec<(Ref, Ref)>,
     lim: &Limits,
@@ -365,7 +363,7 @@ fn emit_negated_levels(
     zpairs: &mut [Vec<(Ref, Ref)>],
     out: &mut SkipForm,
     lim: &Limits,
-) -> Result<(Vec<Vec<Ref>>, Vec<Ref>), OperationError> {
+) -> Result<Vec<Ref>, OperationError> {
     let sh = &*f.shape;
     let mut res: Vec<Vec<Ref>> = vec![Vec::new(); lv.len()];
     let mut zres: Vec<Ref> = vec![ZREF; lv.len()];
@@ -423,8 +421,11 @@ fn emit_negated_levels(
         }
         lim.discard(z);
     }
+    for v in res {
+        lim.discard(v);
+    }
     lim.discard(buf);
-    Ok((res, zres))
+    Ok(zres)
 }
 
 /// `true` over internal `t`'s variables where both children are inner

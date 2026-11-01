@@ -4,8 +4,8 @@ use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::OperationError;
 use crate::diagram::{EncodedNode, NodeIdx, Tdd};
+use crate::limits::OperationError;
 
 use super::scratch::{ContractScratch, MergeBuffers, MergeRemap};
 
@@ -13,11 +13,11 @@ mod data;
 mod plan;
 mod rewrite;
 
-use data::{fork_down, in_order_pairs, rebuild_in_order, rebuild_level, reserve_rebuilt, InOrder};
-use plan::{plan_groups, MergePolicy};
+use data::{InOrder, fork_down, in_order_pairs, rebuild_in_order, rebuild_level, reserve_rebuilt};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
+use plan::{MergePolicy, plan_groups};
 use rewrite::rewrite_parent;
-pub(in crate::reduce::contract) use rewrite::{survivor, DISCARDED, DROPPED};
+pub(in crate::reduce::contract) use rewrite::{DISCARDED, DROPPED, survivor};
 
 /// Merge all twin groups at level t1, then compact.
 ///
@@ -60,25 +60,80 @@ pub(super) fn contract_twins(
     // rewritten below.
     let width = tdd.levels[t1.idx()].slot_count();
 
-    // `remap.absorbed` marks the members merged away; `final_remap` takes each
-    // node to its survivor's new index. Where the search marked the members as
-    // it listed them, both hold its marks and the level is rebuilt in node
-    // order where its marks allow.
-    let (in_order, marked) = prepare_twin_remap(lim, &tdd.levels[t1.idx()], width, scratch)?;
+    // Step 1: plan each group's merge into its first ("kept") node.
+    //
+    // `remap.absorbed` marks the members merged away; every other node
+    // survives. `final_remap` takes each node to its survivor's new index.
+    // Both are grown fallibly and before any mutation, so a grow that trips
+    // the budget surfaces before the diagram changes. Where the search
+    // marked the members as it listed them, both hold its marks. Such a
+    // level is rebuilt in node order where its marks allow, reading only
+    // each group's lowest member of the lists; any other reads the members'
+    // words, in the groups' order, and the members are listed first.
+    let in_order = scratch
+        .marked
+        .and_then(|marks| in_order_pairs(&tdd.levels[t1.idx()], marks, &scratch.unnamed));
+    if in_order.is_none() {
+        super::fingerprint::list_members(lim, scratch)?;
+    } else {
+        lim.try_resize(&mut scratch.rooms, scratch.group_starts.len(), 0u32)?;
+    }
+    let marked = scratch.marked.take().is_some();
     let ContractScratch {
-        remap, merge: bufs, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
-        diagram_marginal, unnamed, twin_class, classes, member_groups, rooms, ..
+        remap,
+        merge: bufs,
+        duplicate,
+        group_starts,
+        flat_groups,
+        has_marginal_below,
+        has_marginal_below_valid,
+        diagram_marginal,
+        unnamed,
+        listing,
+        twin_class,
+        classes,
+        member_groups,
+        rooms,
+        ..
     } = scratch;
+    if !marked {
+        lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
+        let words = width.div_ceil(64);
+        lim.try_resize(&mut remap.absorbed, words, 0u64)?;
+        remap.absorbed[..words].fill(0);
+    }
     let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
-    debug_assert!(!marked || !diagram_marginal, "a search marks the members only where every group merges whole");
-    let policy = decide_level_merge_policy(lim, tdd, t1, parent, diagram_marginal, has_marginal_below, has_marginal_below_valid)?;
+    debug_assert!(
+        !marked || !diagram_marginal,
+        "a search marks the members only where every group merges whole"
+    );
+    let mut policy = MergePolicy::decide(tdd, t1, parent, diagram_marginal);
     bufs.clear();
 
+    // A plain level of a diagram with a marginal level reads the marginal
+    // map, a pass over every level of the diagram, filled once per scratch
+    // checkout: where a child side of `t1` has marginalization below it,
+    // the plan concatenates every member without the overlap filter. A
+    // diagram without a marginal level never fills it; its twin supports
+    // are disjoint, and the plan concatenates every member anyway.
+    if policy.plain_level && diagram_marginal {
+        if !*has_marginal_below_valid {
+            super::duplicate_pair::compute_has_marginal_below_into(lim, tdd, has_marginal_below)?;
+            *has_marginal_below_valid = true;
+        }
+        policy.t1_scalable = MergePolicy::scalable(tdd, t1, has_marginal_below);
+    }
+    // The rebuild reads the members' stored pairs, so an implicit t1 is
+    // built stored first. It is built before the plan, which reads every
+    // member's pairs by index, twice where the overlap filter runs: a stored
+    // node's pairs are read off its words, an implicit level's generated
+    // from its description one node at a time.
     if !group_starts.is_empty() || !unnamed.is_empty() {
         tdd.levels[t1.idx()].store_if_implicit(lim)?;
         tdd.levels.mark_changed(t1);
     }
     plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+    // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     let merged_members = if marked {
         debug_assert!(!policy.t1_scalable, "no fork-down without a marginal level");
@@ -87,13 +142,21 @@ pub(super) fn contract_twins(
         mark_group_members(&policy, remap, bufs)
     };
     for &u in unnamed.iter() {
-        debug_assert!(remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0, "an unnamed node is in no group");
+        debug_assert!(
+            remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0,
+            "an unnamed node is in no group"
+        );
         remap.absorbed[(u / 64) as usize] |= 1 << (u % 64);
         remap.final_remap[u as usize] = NodeIdx(DISCARDED);
     }
     if merged_members + unnamed.len() == 0 {
+        // Nothing merged: level untouched, no compaction or parent rewrite
+        // needed. Returning 0 lets `contract_child` report no-progress.
         return Ok(0);
     }
+    // Everything the merge allocates is had before it changes anything: the
+    // rebuilt level's arenas, and the room an implicit parent is rewritten
+    // into where a pair changes.
     if in_order.is_none() {
         gather_words(bufs, tdd.levels[t1.idx()].nodes.stored());
     }
@@ -103,82 +166,6 @@ pub(super) fn contract_twins(
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
     };
-    invalidate_merged_levels(tdd, t1, parent, diagram_marginal, merged_members, &bufs.group_plans);
-
-    let check_disjoint = cfg!(debug_assertions)
-        && !policy.t1_scalable
-        && !diagram_marginal
-        && !tdd.levels[t1.idx()].any_value_ref_side();
-    match in_order {
-        Some(_) => {
-            let groups = InOrder {
-                class: twin_class, classes, group_starts, flat_groups,
-                member_groups, rooms, unnamed: !unnamed.is_empty(),
-            };
-            rebuild_in_order(&mut tdd.levels[t1.idx()], arenas, remap, groups, check_disjoint);
-        }
-        None => rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint),
-    }
-    finish_merged_levels(eng, tdd, (t1, parent, t1_side), diagram_marginal, (t1_pairs, parent_room), scratch)?;
-    Ok(merged_members + scratch.unnamed.len())
-}
-
-/// Prepare `scratch.remap` and member lists for `contract_twins`, returning
-/// `(in_order, marked)`.
-fn prepare_twin_remap(
-    lim: &crate::limits::Limits,
-    level: &crate::diagram::TddLevel,
-    width: usize,
-    scratch: &mut ContractScratch,
-) -> Result<(Option<data::RebuiltPairs>, bool), OperationError> {
-    let in_order = scratch.marked.and_then(|marks| in_order_pairs(level, marks, &scratch.unnamed));
-    if in_order.is_none() {
-        super::fingerprint::list_members(lim, scratch)?;
-    } else {
-        lim.try_resize(&mut scratch.rooms, scratch.group_starts.len(), 0u32)?;
-    }
-    let marked = scratch.marked.take().is_some();
-    if !marked {
-        lim.try_resize(&mut scratch.remap.final_remap, width, NodeIdx(0))?;
-        let words = width.div_ceil(64);
-        lim.try_resize(&mut scratch.remap.absorbed, words, 0u64)?;
-        scratch.remap.absorbed[..words].fill(0);
-    }
-    Ok((in_order, marked))
-}
-
-/// Decide the [`MergePolicy`] for `t1` under `parent`, lazily populating
-/// `has_marginal_below` when the diagram has a marginal level and `t1` is plain.
-fn decide_level_merge_policy(
-    lim: &crate::limits::Limits,
-    tdd: &Tdd,
-    t1: VtreeIdx,
-    parent: VtreeIdx,
-    diagram_marginal: bool,
-    has_marginal_below: &mut Vec<bool>,
-    has_marginal_below_valid: &mut bool,
-) -> Result<MergePolicy, OperationError> {
-    let mut policy = MergePolicy::decide(tdd, t1, parent, diagram_marginal);
-    if policy.plain_level && diagram_marginal {
-        if !*has_marginal_below_valid {
-            super::duplicate_pair::compute_has_marginal_below_into(lim, tdd, has_marginal_below)?;
-            *has_marginal_below_valid = true;
-        }
-        policy.t1_scalable = MergePolicy::scalable(tdd, t1, has_marginal_below);
-    }
-    Ok(policy)
-}
-
-/// Invalidate `t1` and `parent` before rebuilding `t1`, preserving `tdd.dirty.loose()`
-/// when the diagram has no marginal level.
-fn invalidate_merged_levels(
-    tdd: &mut Tdd,
-    t1: VtreeIdx,
-    parent: VtreeIdx,
-    diagram_marginal: bool,
-    merged_members: usize,
-    plans: &[GroupPlan],
-) {
     // The parent's pair lists are remapped and deduplicated below; t1's nodes
     // were merged, so its pair lists and the identity of its nodes changed.
     // The parent's fusion record stands unless a group redirects
@@ -202,32 +189,54 @@ fn invalidate_merged_levels(
     } else {
         tdd.invalidate(t1);
     }
-    if redirects(plans) {
+    if redirects(&bufs.group_plans) {
         tdd.invalidate(parent);
     } else {
         tdd.invalidate_shrunk(parent);
     }
     tdd.dirty.set_loose(loose);
     tdd.levels.mark_changed(parent);
-}
 
-/// Rewrite `parent`, compact stale pair lists, run fork-down duplicate
-/// resolution, and leave live pair counts on `t1` and `parent`.
-fn finish_merged_levels(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    (t1, parent, t1_side): (VtreeIdx, VtreeIdx, ChildSide),
-    diagram_marginal: bool,
-    (t1_pairs, parent_room): (usize, Option<crate::diagram::StoreRoom>),
-    scratch: &mut ContractScratch,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let ContractScratch { remap, merge: bufs, duplicate, unnamed, listing, .. } = scratch;
+    // A repeated pair is legal where a level of the diagram is marginal, and
+    // where fork-down resolves it right after the rebuild; elsewhere debug
+    // builds check the unions for one.
+    let check_disjoint = cfg!(debug_assertions)
+        && !policy.t1_scalable
+        && !diagram_marginal
+        && !tdd.levels[t1.idx()].any_value_ref_side();
+    match in_order {
+        Some(_) => {
+            let groups = InOrder {
+                class: twin_class,
+                classes,
+                group_starts,
+                flat_groups,
+                member_groups,
+                rooms,
+                unnamed: !unnamed.is_empty(),
+            };
+            rebuild_in_order(
+                &mut tdd.levels[t1.idx()],
+                arenas,
+                remap,
+                groups,
+                check_disjoint,
+            );
+        }
+        None => rebuild_level(
+            &mut tdd.levels[t1.idx()],
+            arenas,
+            remap,
+            bufs,
+            check_disjoint,
+        ),
+    }
     // Without a marginal level a rebuilt level, and a parent the rewrite
     // leaves in node order, stay so for the rest of the sweep
     // (`Listing::ordered`), and a later rewrite of either reads no order.
     let known = !diagram_marginal && listing.ordered(parent.idx());
-    let (ordered, parent_pairs) = rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
+    let (ordered, parent_pairs) =
+        rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
     if !diagram_marginal {
         listing.set_ordered(t1.idx());
         if ordered {
@@ -257,7 +266,7 @@ fn finish_merged_levels(
         tdd.levels[t1.idx()].leave_census();
     }
     tdd.levels[parent.idx()].leave_live_pairs(parent_pairs);
-    Ok(())
+    Ok(merged_members + unnamed.len())
 }
 
 /// Whether a planned group redirects content-equal members onto its
@@ -297,17 +306,30 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// means the level is unchanged. Touches only the scratch: the rebuild
 /// unions the pairs.
 ///
-fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {
+fn mark_group_members(
+    policy: &MergePolicy,
+    remap: &mut MergeRemap,
+    bufs: &mut MergeBuffers,
+) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.
     let mut merged_members = 0usize;
-    let MergeBuffers { sel, group_plans, resolve_keeps, .. } = bufs;
+    let MergeBuffers {
+        sel,
+        group_plans,
+        resolve_keeps,
+        ..
+    } = bufs;
     for p in &*group_plans {
         let members = &sel[p.start as usize..p.end as usize];
         let keep = members[0];
         // A content-equal redirect keeps the members' parent pairs, remapped
         // onto the survivor; every other member's are dropped.
-        let dropped = if p.action == GroupAction::DupRedirect { 0 } else { DROPPED };
+        let dropped = if p.action == GroupAction::DupRedirect {
+            0
+        } else {
+            DROPPED
+        };
         for &idx in &members[1..] {
             remap.absorbed[(idx / 64) as usize] |= 1 << (idx % 64);
             remap.final_remap[idx as usize] = NodeIdx(keep | dropped);

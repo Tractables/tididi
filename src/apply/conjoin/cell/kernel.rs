@@ -1352,14 +1352,59 @@ where
     if f_pairs.len() >= GROUPED_MIN_PAIRS
         && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
     {
-        cell_prefilter_grouped(
-            (eng, ctx),
-            j,
-            (f_pairs, g_pairs, g_runs),
-            node_idx,
-            (left, right),
-            (sink, gate),
-        )?;
+        // ── Grouped N×M: run-length groups by shared `.left` ──────────
+        // Emits the same pair multiset as the general double loop, in
+        // grouped order; every consumer is order-independent (pair lists
+        // are unordered sets — see diagram/level/mod.rs). The column table
+        // groups only levels with no pass-through side.
+        debug_assert!(!left.passthrough() && !right.passthrough());
+        let n2 = g_pairs.len();
+        let n1 = f_pairs.len();
+        let mut p1_idx = 0;
+        while p1_idx < n1 {
+            let p1_left = f_pairs[p1_idx].left;
+            let g1_start = p1_idx;
+            p1_idx += 1;
+            while p1_idx < n1 && f_pairs[p1_idx].left == p1_left {
+                p1_idx += 1;
+            }
+            let g1 = &f_pairs[g1_start..p1_idx];
+            gate.poll((g1.len() * n2) as u64)?;
+
+            if ctx.masked
+                && left.kills()
+                && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0
+            {
+                continue;
+            }
+
+            let mut g2_start = 0;
+            for &g2_end in g_runs {
+                let g2 = &g_pairs[g2_start..g2_end as usize];
+                g2_start = g2_end as usize;
+                let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+                if left.kills() && lc == NO_PRODUCT {
+                    continue;
+                }
+
+                for p1 in g1 {
+                    if ctx.masked
+                        && right.kills()
+                        && ctx.sides.right.live_cols[p1.right.raw() as usize]
+                            & ctx.sides.right.reach[j]
+                            == 0
+                    {
+                        continue;
+                    }
+                    let rrow = right.row(p1.right.0);
+                    let node_idx = &*node_idx;
+                    // `lc` is live here, so only the right side can kill.
+                    push_kept(eng, sink, g2, right.kills(), |p2| {
+                        (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                    })?;
+                }
+            }
+        }
     } else {
         // ── General N×M ───────────────────────────────────────────────
         let kills = left.kills() || right.kills();
@@ -1393,70 +1438,6 @@ where
         }
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
-    Ok(())
-}
-
-/// Grouped N×M walk in [`cell_prefilter`]: run-length groups by shared `.left`.
-#[inline(always)]
-fn cell_prefilter_grouped<L, R, S>(
-    (eng, ctx): (&Engine, &CellCtx<'_>),
-    j: usize,
-    (f_pairs, g_pairs, g_runs): (&[ChildPair], &[ChildPair], &[u32]),
-    node_idx: &mut [u32],
-    (left, right): (&L, &R),
-    (sink, gate): (&mut S, &mut PollGate),
-) -> Result<(), OperationError>
-where
-    L: ChildLookup,
-    R: ChildLookup,
-    S: PairSink,
-{
-    debug_assert!(!left.passthrough() && !right.passthrough());
-    let n2 = g_pairs.len();
-    let n1 = f_pairs.len();
-    let mut p1_idx = 0;
-    while p1_idx < n1 {
-        let p1_left = f_pairs[p1_idx].left;
-        let g1_start = p1_idx;
-        p1_idx += 1;
-        while p1_idx < n1 && f_pairs[p1_idx].left == p1_left {
-            p1_idx += 1;
-        }
-        let g1 = &f_pairs[g1_start..p1_idx];
-        gate.poll((g1.len() * n2) as u64)?;
-
-        if ctx.masked
-            && left.kills()
-            && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0
-        {
-            continue;
-        }
-
-        let mut g2_start = 0;
-        for &g2_end in g_runs {
-            let g2 = &g_pairs[g2_start..g2_end as usize];
-            g2_start = g2_end as usize;
-            let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
-            if left.kills() && lc == NO_PRODUCT {
-                continue;
-            }
-
-            for p1 in g1 {
-                if ctx.masked
-                    && right.kills()
-                    && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j]
-                        == 0
-                {
-                    continue;
-                }
-                let rrow = right.row(p1.right.0);
-                let node_idx = &*node_idx;
-                push_kept(eng, sink, g2, right.kills(), |p2| {
-                    (lc, right.get_in_row(node_idx, rrow, p2.right.0))
-                })?;
-            }
-        }
-    }
     Ok(())
 }
 

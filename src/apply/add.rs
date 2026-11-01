@@ -313,17 +313,31 @@ fn summed(f: &Tdd, t: VtreeIdx) -> bool {
     f.levels[t.idx()].is_marginal()
 }
 
-/// Populate summed-out leaf levels in `assembly` with their label count column
-/// when not under a summed-out parent.
-fn init_summed_leaves(
-    eng: &Engine,
-    vtree: &Vtree,
-    f: &Tdd,
-    g: &Tdd,
-    assembly: &mut Assembly<'_>,
-) -> Result<(), OperationError> {
+/// The sum of two nonfalse unweighted operands that have summed out the
+/// same levels, at least one, before its reduction.
+fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
+    let vtree: Arc<Vtree> = Arc::clone(&f.vtree);
+    let root = vtree.root();
     let lim = eng.limits();
+    let n = vtree.num_nodes();
+    // Whether a level is summed out or has a summed-out level under it.
+    let mut counted: Vec<bool> = Vec::new();
+    lim.try_resize(&mut counted, n, false)?;
+    for t in vtree.bottomup() {
+        counted[t.idx()] = summed(f, t)
+            || (!vtree.node(t).is_leaf() && {
+                let (l, r) = vtree.children(t);
+                counted[l.idx()] || counted[r.idx()]
+            });
+    }
+    // Where `g`'s value slots start at each summed-out level.
+    let mut shift: Vec<u32> = Vec::new();
+    lim.try_resize(&mut shift, n, 0)?;
     let under_summed = |t: VtreeIdx| vtree.node(t).parent().is_some_and(|p| summed(f, p));
+
+    let mut assembly = Assembly::new(eng, &vtree)?;
+    // A summed-out leaf holds its label column, or nothing when every
+    // reference to it is inline; it is never shifted.
     for (leaf, _) in vtree.leaf_bottomup() {
         if !summed(f, leaf) {
             continue;
@@ -342,70 +356,6 @@ fn init_summed_leaves(
         let (levels, _) = assembly.parts_mut();
         levels[leaf.idx()].become_marginal(store, None);
     }
-    Ok(())
-}
-
-/// Copy each node of `f` and then of `g` at a non-root count level `out`,
-/// recording the single-node piece mapping in `pieces`.
-fn copy_count_level_nodes(
-    eng: &Engine,
-    (fl, gl): (&TddLevel, &TddLevel),
-    (ls, rs): (&Side<'_>, &Side<'_>),
-    out: &mut TddLevel,
-    pieces: &mut Pieces,
-    pairs: &mut Vec<ChildPair>,
-    poll: &mut crate::limits::PollGate<'_>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let (fw, gw) = (fl.slot_count(), gl.slot_count());
-    for (level, width, of_g) in [(fl, fw, false), (gl, gw, true)] {
-        lim.reserve_exact(
-            if of_g {
-                &mut pieces.g_start
-            } else {
-                &mut pieces.f_start
-            },
-            width + 1,
-        )?;
-        for a in 0..width {
-            pairs.clear();
-            rewrite_node(eng, level, a, (ls, rs), of_g, pairs, poll)?;
-            crate::diagram::sort_pairs(pairs);
-            let o = out.push_node(lim, pairs)?.0;
-            let (start, items_len) = match of_g {
-                true => (&mut pieces.g_start, pieces.g_items.len() as u32),
-                false => (&mut pieces.f_start, pieces.f_items.len() as u32),
-            };
-            start.push(items_len);
-            let (f_node, g_node) = if of_g {
-                (ABSENT, a as u32)
-            } else {
-                (a as u32, ABSENT)
-            };
-            pieces.push_piece(lim, o, f_node, g_node, of_g)?;
-        }
-        let (start, items) = match of_g {
-            true => (&mut pieces.g_start, &pieces.g_items),
-            false => (&mut pieces.f_start, &pieces.f_items),
-        };
-        start.push(items.len() as u32);
-    }
-    Ok(())
-}
-
-/// The sum of two nonfalse unweighted operands that have summed out the
-/// same levels, at least one, before its reduction.
-fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
-    let vtree: Arc<Vtree> = Arc::clone(&f.vtree);
-    let root = vtree.root();
-    let lim = eng.limits();
-    let n = vtree.num_nodes();
-    let counted = compute_counted_levels(lim, &vtree, f)?;
-    let mut shift: Vec<u32> = Vec::new();
-    lim.try_resize(&mut shift, n, 0)?;
-
-    let mut assembly = Assembly::new(eng, &vtree)?;
-    init_summed_leaves(eng, &vtree, f, g, &mut assembly)?;
 
     let mut built: Vec<Option<Pieces>> = Vec::new();
     lim.reserve_exact(&mut built, n)?;
@@ -419,26 +369,61 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     for (t, left, right) in vtree.internal_bottomup() {
         let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
         if summed(f, t) {
+            let (levels, _) = assembly.parts_mut();
             if t == root {
-                return emit_summed_root(
-                    eng,
-                    assembly,
-                    root,
-                    (fl, f.output.local),
-                    (gl, g.output.local),
+                let value = count_sum(
+                    root_value(fl, f.output.local),
+                    root_value(gl, g.output.local),
+                );
+                let mut column = CountVec::try_with_capacity(eng, 1)?;
+                column.push(eng, value)?;
+                let (counts, big) = column.into_parts();
+                levels[t.idx()].become_marginal(counts, big);
+                return assembly.finish_asserted(
+                    TddNodeId {
+                        vtree: root,
+                        local: NodeIdx(0),
+                    },
+                    None,
                 );
             }
-            let (levels, _) = assembly.parts_mut();
-            shift[t.idx()] = become_summed_internal_level(eng, &vtree, f, (fl, gl), t, levels)?;
+            // Under a summed-out parent a level's values are folded into the
+            // parent's, and its store stays empty.
+            let (counts, big) = match under_summed(t) {
+                true => (Vec::new(), None),
+                false => joined_store(eng, fl, gl)?,
+            };
+            shift[t.idx()] = fl.marginal_counts().map_or(0, <[u128]>::len) as u32;
+            levels[t.idx()].become_marginal(counts, big);
             continue;
         }
-        let (lo, ro) = take_sum_child_pieces(&vtree, f, (left, right), &mut built);
-        let (ls, rs) = sum_child_sides(f, (fl, gl), (left, right), (&lo, &ro), &shift, &leaves);
+        let take = |built: &mut [Option<Pieces>], child: VtreeIdx| {
+            (!vtree.node(child).is_leaf() && !summed(f, child)).then(|| {
+                built[child.idx()]
+                    .take()
+                    .expect("a child level is visited before its parent")
+            })
+        };
+        let (lo, ro) = (take(&mut built, left), take(&mut built, right));
+        let ls = side_of(
+            summed(f, left),
+            shift[left.idx()],
+            &lo,
+            &leaves[leaf_index(fl, gl, true)],
+        );
+        let rs = side_of(
+            summed(f, right),
+            shift[right.idx()],
+            &ro,
+            &leaves[leaf_index(fl, gl, false)],
+        );
         let (levels, _) = assembly.parts_mut();
         let out = &mut levels[t.idx()];
         let mut pieces = spare.pop().unwrap_or_default();
         pieces.clear();
         if !counted[left.idx()] && !counted[right.idx()] {
+            // A Boolean level: the overlay's disjunction. The root has a
+            // summed-out level under it, so it is never one.
             debug_assert!(
                 t != root,
                 "a Boolean root in a diagram with a summed-out level"
@@ -453,17 +438,77 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                 &mut scratch,
                 &mut pieces,
             )?;
-        } else if let Some(local) = build_counted_sum_level(
-            eng,
-            (f, g),
-            (t, left, right, t == root),
-            (&ls, &rs),
-            out,
-            &mut pieces,
-            &mut pairs,
-        )? {
-            lim.level_done(out_nodes + 1)?;
-            return assembly.finish_asserted(TddNodeId { vtree: root, local }, None);
+        } else {
+            for (child_side, child) in [(ChildSide::Left, left), (ChildSide::Right, right)] {
+                if summed(f, child) {
+                    out.set_has_value_refs(
+                        child_side,
+                        fl.has_value_refs(child_side) || gl.has_value_refs(child_side),
+                    );
+                }
+            }
+            let mut poll = lim.gate();
+            if t == root {
+                pairs.clear();
+                rewrite_node(
+                    eng,
+                    fl,
+                    f.output.local.idx(),
+                    (&ls, &rs),
+                    false,
+                    &mut pairs,
+                    &mut poll,
+                )?;
+                rewrite_node(
+                    eng,
+                    gl,
+                    g.output.local.idx(),
+                    (&ls, &rs),
+                    true,
+                    &mut pairs,
+                    &mut poll,
+                )?;
+                poll.flush()?;
+                crate::diagram::sort_pairs(&mut pairs);
+                let local = out.push_node(lim, &pairs)?;
+                lim.level_done(out_nodes + 1)?;
+                return assembly.finish_asserted(TddNodeId { vtree: root, local }, None);
+            }
+            // A count level: a copy of each node of `f`, then of `g`.
+            let (fw, gw) = (fl.slot_count(), gl.slot_count());
+            for (level, width, of_g) in [(fl, fw, false), (gl, gw, true)] {
+                lim.reserve_exact(
+                    if of_g {
+                        &mut pieces.g_start
+                    } else {
+                        &mut pieces.f_start
+                    },
+                    width + 1,
+                )?;
+                for a in 0..width {
+                    pairs.clear();
+                    rewrite_node(eng, level, a, (&ls, &rs), of_g, &mut pairs, &mut poll)?;
+                    crate::diagram::sort_pairs(&mut pairs);
+                    let o = out.push_node(lim, &pairs)?.0;
+                    let (start, items_len) = match of_g {
+                        true => (&mut pieces.g_start, pieces.g_items.len() as u32),
+                        false => (&mut pieces.f_start, pieces.f_items.len() as u32),
+                    };
+                    start.push(items_len);
+                    let (f_node, g_node) = if of_g {
+                        (ABSENT, a as u32)
+                    } else {
+                        (a as u32, ABSENT)
+                    };
+                    pieces.push_piece(lim, o, f_node, g_node, of_g)?;
+                }
+                let (start, items) = match of_g {
+                    true => (&mut pieces.g_start, &pieces.g_items),
+                    false => (&mut pieces.f_start, &pieces.f_items),
+                };
+                start.push(items.len() as u32);
+            }
+            poll.flush()?;
         }
         out_nodes += pieces.f_part.len() as u64;
         lim.level_done(out_nodes)?;
@@ -472,156 +517,6 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
         spare.extend(ro);
     }
     unreachable!("the bottom-up walk ends at the internal root")
-}
-
-/// Take any built child [`Pieces`] from `built` for `(left, right)`.
-fn take_sum_child_pieces(
-    vtree: &Vtree,
-    f: &Tdd,
-    (left, right): (VtreeIdx, VtreeIdx),
-    built: &mut [Option<Pieces>],
-) -> (Option<Pieces>, Option<Pieces>) {
-    let take = |built: &mut [Option<Pieces>], child: VtreeIdx| {
-        (!vtree.node(child).is_leaf() && !summed(f, child))
-            .then(|| built[child.idx()].take().expect("visited child"))
-    };
-    (take(built, left), take(built, right))
-}
-
-/// Construct the left and right [`Side`] views `(ls, rs)` for `t`'s children.
-fn sum_child_sides<'a>(
-    f: &Tdd,
-    (fl, gl): (&TddLevel, &TddLevel),
-    (left, right): (VtreeIdx, VtreeIdx),
-    (lo, ro): (&'a Option<Pieces>, &'a Option<Pieces>),
-    shift: &[u32],
-    leaves: &'a [Pieces; 4],
-) -> (Side<'a>, Side<'a>) {
-    let ls = side_of(
-        summed(f, left),
-        shift[left.idx()],
-        lo,
-        &leaves[leaf_index(fl, gl, true)],
-    );
-    let rs = side_of(
-        summed(f, right),
-        shift[right.idx()],
-        ro,
-        &leaves[leaf_index(fl, gl, false)],
-    );
-    (ls, rs)
-}
-
-/// Convert non-root summed-out level `t` into a marginal level in `levels[t]`
-/// and return the slot-offset shift for `g`'s slots at `t`.
-fn become_summed_internal_level(
-    eng: &Engine,
-    vtree: &Vtree,
-    f: &Tdd,
-    (fl, gl): (&TddLevel, &TddLevel),
-    t: VtreeIdx,
-    levels: &mut [TddLevel],
-) -> Result<u32, OperationError> {
-    let under_summed = vtree.node(t).parent().is_some_and(|p| summed(f, p));
-    let (counts, big) = match under_summed {
-        true => (Vec::new(), None),
-        false => joined_store(eng, fl, gl)?,
-    };
-    let shift = fl.marginal_counts().map_or(0, <[u128]>::len) as u32;
-    levels[t.idx()].become_marginal(counts, big);
-    Ok(shift)
-}
-
-/// Build one structural level above at least one summed-out child, returning
-/// `Some(root_local)` when `is_root` is true.
-fn build_counted_sum_level(
-    eng: &Engine,
-    (f, g): (&Tdd, &Tdd),
-    (t, left, right, is_root): (VtreeIdx, VtreeIdx, VtreeIdx, bool),
-    (ls, rs): (&Side<'_>, &Side<'_>),
-    out: &mut TddLevel,
-    pieces: &mut Pieces,
-    pairs: &mut Vec<ChildPair>,
-) -> Result<Option<NodeIdx>, OperationError> {
-    let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
-    for (child_side, child) in [(ChildSide::Left, left), (ChildSide::Right, right)] {
-        if summed(f, child) {
-            out.set_has_value_refs(
-                child_side,
-                fl.has_value_refs(child_side) || gl.has_value_refs(child_side),
-            );
-        }
-    }
-    let lim = eng.limits();
-    let mut poll = lim.gate();
-    if is_root {
-        pairs.clear();
-        rewrite_node(
-            eng,
-            fl,
-            f.output.local.idx(),
-            (ls, rs),
-            false,
-            pairs,
-            &mut poll,
-        )?;
-        rewrite_node(
-            eng,
-            gl,
-            g.output.local.idx(),
-            (ls, rs),
-            true,
-            pairs,
-            &mut poll,
-        )?;
-        poll.flush()?;
-        crate::diagram::sort_pairs(pairs);
-        return Ok(Some(out.push_node(lim, pairs)?));
-    }
-    copy_count_level_nodes(eng, (fl, gl), (ls, rs), out, pieces, pairs, &mut poll)?;
-    poll.flush()?;
-    Ok(None)
-}
-
-/// Whether each vtree node is summed out in `f` or has a summed-out level under it.
-fn compute_counted_levels(
-    lim: &crate::limits::Limits,
-    vtree: &Vtree,
-    f: &Tdd,
-) -> Result<Vec<bool>, OperationError> {
-    let mut counted: Vec<bool> = Vec::new();
-    lim.try_resize(&mut counted, vtree.num_nodes(), false)?;
-    for t in vtree.bottomup() {
-        counted[t.idx()] = summed(f, t)
-            || (!vtree.node(t).is_leaf() && {
-                let (l, r) = vtree.children(t);
-                counted[l.idx()] || counted[r.idx()]
-            });
-    }
-    Ok(counted)
-}
-
-/// Finish `assembly` when the root level itself is summed out.
-fn emit_summed_root(
-    eng: &Engine,
-    mut assembly: Assembly<'_>,
-    root: VtreeIdx,
-    (fl, f_out): (&TddLevel, NodeIdx),
-    (gl, g_out): (&TddLevel, NodeIdx),
-) -> Result<Tdd, OperationError> {
-    let (levels, _) = assembly.parts_mut();
-    let value = count_sum(root_value(fl, f_out), root_value(gl, g_out));
-    let mut column = CountVec::try_with_capacity(eng, 1)?;
-    column.push(eng, value)?;
-    let (counts, big) = column.into_parts();
-    levels[root.idx()].become_marginal(counts, big);
-    assembly.finish_asserted(
-        TddNodeId {
-            vtree: root,
-            local: NodeIdx(0),
-        },
-        None,
-    )
 }
 
 #[cfg(test)]

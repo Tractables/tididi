@@ -1240,40 +1240,6 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         slots,
         scratch,
     )?;
-    let (kl, kr) = plan_kept_value_rows(
-        lim,
-        rows,
-        (reads, f_pairs, pairs),
-        (sl, lfixed),
-        (sr, rfixed),
-    );
-    let (spares, ll, rl, gright, gw, aw) =
-        plan_value_lane_layouts(rows, pairs, (sl, lfixed), (sr, rfixed));
-    let (nl, nr) = (
-        if kl > 0 { reads.left.rows } else { 0 },
-        if kr > 0 { reads.right.rows } else { 0 },
-    );
-    alloc_value_row_slices(
-        lim,
-        (
-            (sl, lfixed, kl + spares, ll, nl),
-            (sr, rfixed, kr + spares, rl, nr),
-        ),
-        (spares, ones, aw, gright, gw),
-        (floats, flags, slots),
-    )
-    .map(Some)
-}
-
-/// Choose how many rows each side keeps in [`ValueRows`] within the level's
-/// memory budget.
-fn plan_kept_value_rows(
-    lim: &crate::limits::Limits,
-    rows: RowLoop<'_>,
-    (reads, f_pairs, pairs): (Sides<SideReads>, usize, usize),
-    (sl, lfixed): (usize, bool),
-    (sr, rfixed): (usize, bool),
-) -> (usize, usize) {
     let grid = rows
         .f_width
         .saturating_mul(rows.ctx.right_width)
@@ -1301,16 +1267,7 @@ fn plan_kept_value_rows(
         }
         kept
     };
-    (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed))
-}
-
-/// Plan spare row slots, lane layouts, and shared-row gathering for [`value_rows`].
-fn plan_value_lane_layouts(
-    rows: RowLoop<'_>,
-    pairs: usize,
-    (sl, lfixed): (usize, bool),
-    (sr, rfixed): (usize, bool),
-) -> (usize, bool, bool, bool, usize, usize) {
+    let (kl, kr) = (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed));
     // A level of wide enough rows sums a block of f pairs at a time, a
     // side holding a row for each. A level of rows of one f pair whose
     // columns hold enough pairs sums a block of rows at a time: a side
@@ -1365,25 +1322,17 @@ fn plan_value_lane_layouts(
         _ => (false, 0),
     };
     let aw = if ll || rl { (LANES - 1) * width } else { 0 };
-    (spares, ll, rl, gright, gw, aw)
-}
-
-type ValueSideSpec = (usize, bool, usize, bool, usize);
-
-/// Resize and slice `floats`, `flags`, and `slots` into the per-side and
-/// level-wide buffers of [`ValueRows`].
-fn alloc_value_row_slices<'b>(
-    lim: &crate::limits::Limits,
-    ((sl, lfixed, ls, ll, nl), (sr, rfixed, rs, rl, nr)): (ValueSideSpec, ValueSideSpec),
-    (spares, ones, aw, gright, gw): (usize, usize, usize, bool, usize),
-    (floats, flags, slots): (&'b mut Vec<f64>, &'b mut Vec<u8>, &'b mut Vec<u32>),
-) -> Result<ValueRows<'b>, OperationError> {
     let (ml, mr) = (if ll { sl + 1 } else { 0 }, if rl { sr + 1 } else { 0 });
+    let (ls, rs) = (kl + spares, kr + spares);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
     let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr) + gw;
     lim.try_resize(floats, nf, 0.0)?;
     let nd = wl + wr + ones + aw + ml + mr + gw;
     lim.try_resize(flags, nd, 0)?;
+    let (nl, nr) = (
+        if kl > 0 { reads.left.rows } else { 0 },
+        if kr > 0 { reads.right.rows } else { 0 },
+    );
     let ns = nl + nr;
     slots.clear();
     lim.try_resize(slots, ns, NO_SLOT)?;
@@ -1422,14 +1371,14 @@ fn alloc_value_row_slices<'b>(
         held: None,
         last: None,
     };
-    Ok(ValueRows {
+    Ok(Some(ValueRows {
         left,
         right,
         sums,
         flags,
         ahead,
         gather,
-    })
+    }))
 }
 
 /// Each child side's [`SideReads`] over the level's f pairs, its rows
@@ -2156,7 +2105,49 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
             {
                 return one_pair_row(sum, eng, row);
             }
-            return dispatch_one_pair_row_values(sum, ones, vr, p1, eng, row);
+            vr.left.unpin();
+            vr.right.unpin();
+            let ls = vr
+                .left
+                .read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| {
+                    sum.left_factor(c)
+                });
+            let rs = vr
+                .right
+                .read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| {
+                    sum.right_factor(c)
+                });
+            let (l, r) = (vr.left.row(ls), vr.right.row(rs));
+            return match (
+                l.any_dead || r.any_dead,
+                !rows_exact::<S>(l, r),
+                ones.is_empty(),
+            ) {
+                (true, true, true) => {
+                    one_pair_row_values::<true, true, false, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (true, false, true) => {
+                    one_pair_row_values::<true, false, false, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (false, true, true) => {
+                    one_pair_row_values::<false, true, false, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (false, false, true) => {
+                    one_pair_row_values::<false, false, false, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (true, true, false) => {
+                    one_pair_row_values::<true, true, true, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (true, false, false) => {
+                    one_pair_row_values::<true, false, true, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (false, true, false) => {
+                    one_pair_row_values::<false, true, true, _, _, _>(sum, ones, l, r, eng, row)
+                }
+                (false, false, false) => {
+                    one_pair_row_values::<false, false, true, _, _, _>(sum, ones, l, r, eng, row)
+                }
+            };
         }
         return one_pair_row(sum, eng, row);
     }
@@ -2166,62 +2157,6 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
     match values {
         Some(vr) => ones_row_values(sum, ones, vr, eng, row),
         None => ones_row(sum, ones, eng, row),
-    }
-}
-
-/// Read `p1`'s left and right [`ValueRow`]s and dispatch to the specialized
-/// [`one_pair_row_values`] instantiation.
-#[inline(always)]
-fn dispatch_one_pair_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
-    sum: &mut S,
-    ones: &[ChildPair],
-    vr: &mut ValueRows<'_>,
-    p1: ChildPair,
-    eng: &Engine,
-    row: WholeRow<'_, '_, L, R>,
-) -> Result<usize, OperationError> {
-    vr.left.unpin();
-    vr.right.unpin();
-    let ls = vr
-        .left
-        .read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| {
-            sum.left_factor(c)
-        });
-    let rs = vr
-        .right
-        .read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| {
-            sum.right_factor(c)
-        });
-    let (l, r) = (vr.left.row(ls), vr.right.row(rs));
-    match (
-        l.any_dead || r.any_dead,
-        !rows_exact::<S>(l, r),
-        ones.is_empty(),
-    ) {
-        (true, true, true) => {
-            one_pair_row_values::<true, true, false, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (true, false, true) => {
-            one_pair_row_values::<true, false, false, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (false, true, true) => {
-            one_pair_row_values::<false, true, false, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (false, false, true) => {
-            one_pair_row_values::<false, false, false, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (true, true, false) => {
-            one_pair_row_values::<true, true, true, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (true, false, false) => {
-            one_pair_row_values::<true, false, true, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (false, true, false) => {
-            one_pair_row_values::<false, true, true, _, _, _>(sum, ones, l, r, eng, row)
-        }
-        (false, false, false) => {
-            one_pair_row_values::<false, false, true, _, _, _>(sum, ones, l, r, eng, row)
-        }
     }
 }
 
@@ -2368,8 +2303,6 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     note_lanes();
-    let (m, la, ra, (ls, rs), (track, check)) =
-        prepare_block_lanes(sum, (i, p1), (next, lay), vr, &row);
     let ValueRows {
         left: lside,
         right: rside,
@@ -2377,6 +2310,26 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         gather,
         ..
     } = vr;
+    let m = 1 + next.len();
+    let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
+    for (k, p) in next.iter().enumerate() {
+        (la[k + 1], ra[k + 1]) = (p.left.0, p.right.0);
+        ahead.rows[k] = (i + 1 + k, *p);
+    }
+    (ahead.got, ahead.held) = (0, m - 1);
+    let (lays, rays) = match lay {
+        Lay::Left => (true, false),
+        Lay::Right => (false, true),
+        Lay::Both => (true, true),
+    };
+    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| {
+        sum.left_factor(c)
+    });
+    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| {
+        sum.right_factor(c)
+    });
+    let track = (0..m).any(|k| lst[k].2 || rst[k].2);
+    let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
     let (sums, flags) = (&mut *ahead.sums, &mut *ahead.flags);
     let (lrow, rrow) = (lside.row(ls), rside.row(rs));
     let (lone, rone) = (
@@ -2426,51 +2379,6 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         },
         Lay::Both => lanes_by((track, check), sum, (llaid, rlaid), out, eng, row),
     }
-}
-
-type BlockLanesSetup = (
-    usize,
-    [u32; LANES],
-    [u32; LANES],
-    (usize, usize),
-    (bool, bool),
-);
-
-#[inline(always)]
-fn prepare_block_lanes<L: ChildLookup, R: ChildLookup, S: RowSum>(
-    sum: &mut S,
-    (i, p1): (usize, ChildPair),
-    (next, lay): (&[ChildPair], Lay),
-    vr: &mut ValueRows<'_>,
-    row: &WholeRow<'_, '_, L, R>,
-) -> BlockLanesSetup {
-    let ValueRows {
-        left: lside,
-        right: rside,
-        ahead,
-        ..
-    } = vr;
-    let m = 1 + next.len();
-    let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
-    for (k, p) in next.iter().enumerate() {
-        (la[k + 1], ra[k + 1]) = (p.left.0, p.right.0);
-        ahead.rows[k] = (i + 1 + k, *p);
-    }
-    (ahead.got, ahead.held) = (0, m - 1);
-    let (lays, rays) = match lay {
-        Lay::Left => (true, false),
-        Lay::Right => (false, true),
-        Lay::Both => (true, true),
-    };
-    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| {
-        sum.left_factor(c)
-    });
-    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| {
-        sum.right_factor(c)
-    });
-    let track = (0..m).any(|k| lst[k].2 || rst[k].2);
-    let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
-    (m, la, ra, (ls, rs), (track, check))
 }
 
 /// A side's floats for the [`LANES`] rows of a block, as [`lane_values`]
@@ -2751,19 +2659,27 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let (row_base, f_pairs, node_idx, left, right, gate) = (
-        row.row_base,
-        row.f_pairs,
-        row.node_idx,
-        row.left,
-        row.right,
-        row.gate,
-    );
-    let width = row.ctx.right_width;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        node_idx,
+        left,
+        right,
+        gate,
+        ..
+    } = row;
+    let width = ctx.right_width;
     let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
-    let (lside, rside) = (&mut vr.left, &mut vr.right);
-    let (sums, flags) = (&mut vr.sums[..width], &mut vr.flags[..width]);
+    let ValueRows {
+        left: lside,
+        right: rside,
+        sums,
+        flags,
+        ..
+    } = vr;
+    let (sums, flags) = (&mut sums[..width], &mut flags[..width]);
     sums.fill(0.0);
     flags.fill(0);
     let reads = |lside: &ValueSide<'_>, rside: &ValueSide<'_>, p: &ChildPair| {
@@ -2775,14 +2691,25 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
             .get(at..at + BLOCK)
             .filter(|b| lside.spares == BLOCK && b.iter().all(|p| reads(lside, rside, p)));
         if let Some(block) = block {
-            accumulate_ones_block(
-                sum,
-                block,
-                (lside, rside),
-                (sums, flags, ones),
-                node_idx,
-                (left, right),
-            );
+            note_block();
+            lside.unpin();
+            rside.unpin();
+            let (mut ls, mut rs) = ([0usize; BLOCK], [0usize; BLOCK]);
+            for (x, p) in block.iter().enumerate() {
+                ls[x] = lside.read(left, node_idx, p.left.0, S::CHECKED, |c| sum.left_factor(c));
+                rs[x] = rside.read(right, node_idx, p.right.0, S::CHECKED, |c| {
+                    sum.right_factor(c)
+                });
+            }
+            let (l, r) = (ls.map(|s| lside.row(s)), rs.map(|s| rside.row(s)));
+            let track = l.iter().chain(&r).any(|x| x.any_dead);
+            let check = (0..BLOCK).any(|x| !rows_exact::<S>(l[x], r[x]));
+            match (track, check) {
+                (true, true) => add_block::<true, true, S>(sums, flags, ones, l, r),
+                (true, false) => add_block::<true, false, S>(sums, flags, ones, l, r),
+                (false, true) => add_block::<false, true, S>(sums, flags, ones, l, r),
+                (false, false) => add_block::<false, false, S>(sums, flags, ones, l, r),
+            }
             at += BLOCK;
             continue;
         }
@@ -2817,36 +2744,6 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     )?;
     gate.add_short(due_at - due);
     Ok(width)
-}
-
-#[inline(always)]
-fn accumulate_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
-    sum: &S,
-    block: &[ChildPair],
-    (lside, rside): (&mut ValueSide<'_>, &mut ValueSide<'_>),
-    (sums, flags, ones): (&mut [f64], &mut [u8], &[ChildPair]),
-    node_idx: &[u32],
-    (left, right): (&L, &R),
-) {
-    note_block();
-    lside.unpin();
-    rside.unpin();
-    let (mut ls, mut rs) = ([0usize; BLOCK], [0usize; BLOCK]);
-    for (x, p) in block.iter().enumerate() {
-        ls[x] = lside.read(left, node_idx, p.left.0, S::CHECKED, |c| sum.left_factor(c));
-        rs[x] = rside.read(right, node_idx, p.right.0, S::CHECKED, |c| {
-            sum.right_factor(c)
-        });
-    }
-    let (l, r) = (ls.map(|s| lside.row(s)), rs.map(|s| rside.row(s)));
-    let track = l.iter().chain(&r).any(|x| x.any_dead);
-    let check = (0..BLOCK).any(|x| !rows_exact::<S>(l[x], r[x]));
-    match (track, check) {
-        (true, true) => add_block::<true, true, S>(sums, flags, ones, l, r),
-        (true, false) => add_block::<true, false, S>(sums, flags, ones, l, r),
-        (false, true) => add_block::<false, true, S>(sums, flags, ones, l, r),
-        (false, false) => add_block::<false, false, S>(sums, flags, ones, l, r),
-    }
 }
 
 /// Add f pair `(a, b)`'s product to each one-pair column's sum, read off

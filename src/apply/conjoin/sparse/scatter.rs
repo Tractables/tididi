@@ -143,29 +143,150 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     // their owners, one slot per label, where no pair repeats
     // ([`build_owner_table`]): an f pair reads the slots of the labels its
     // own meets, under each product.
-    let collect = if inner.is_none() {
+    if inner.is_none() {
         let built = if !SWAPPED {
             build_owner_table::<true>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
         } else {
             build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
         };
-        match built {
-            Some(ones) => {
-                return scatter_owner_table::<SWAPPED>(
-                    eng,
-                    ws,
-                    (f_level, g_level),
-                    shape,
-                    (f_outer, g_outer, pl_outer),
-                    collect,
-                    ones,
-                );
+        if let Some(ones) = built {
+            // Into the level's nodes from f's nodes, stored or implied at one
+            // pair a node ([`walkable`]), where each f index
+            // has one live product, in order: the walk reads each product and
+            // its slots from the list and the table themselves, nothing
+            // gathered, and the table is cleared after it.
+            let collect = match collect {
+                Collect::Nodes(to) if walkable(f_level) && one_each(pl_outer, f_outer) => {
+                    let gathered = gather_listed_products(
+                        lim,
+                        pl_outer,
+                        &ws.owners[..OWNER_SLOTS * g_outer],
+                        &mut ws.owned,
+                    );
+                    clear_owners::<SWAPPED>(g_level, g_outer, ws);
+                    let (plain, held) = gathered?;
+                    ws.outer_held = held;
+                    let plain = plain && !ones;
+                    let SparseWorkspace {
+                        owned,
+                        node_owners,
+                        emit,
+                        ..
+                    } = &mut *ws;
+                    let listed = Listed {
+                        owned: &owned[..f_outer],
+                        plain,
+                    };
+                    let (f, none) = (
+                        shape.f.here,
+                        GroupedView {
+                            offsets: &[],
+                            entries: &[],
+                        },
+                    );
+                    return if ones {
+                        walk_owned::<SWAPPED, true, true, false>(
+                            eng,
+                            (node_owners, emit),
+                            (f_level, f),
+                            none,
+                            listed,
+                            to,
+                        )
+                    } else {
+                        walk_owned::<SWAPPED, false, true, false>(
+                            eng,
+                            (node_owners, emit),
+                            (f_level, f),
+                            none,
+                            listed,
+                            to,
+                        )
+                    };
+                }
+                collect => collect,
+            };
+            // Each live product of the outer child with its slots, read once;
+            // the table is then done with.
+            let gathered = gather_owned_products(
+                lim,
+                pl_outer,
+                f_outer,
+                &ws.owners[..OWNER_SLOTS * g_outer],
+                &mut ws.outer_offsets,
+                &mut ws.owned,
+            );
+            clear_owners::<SWAPPED>(g_level, g_outer, ws);
+            let held;
+            (ws.owned_len, held) = gathered?;
+            ws.outer_held = held && ws.owned_len == pl_outer.len();
+            // Into the level's nodes from f's nodes, the walk runs as
+            // one loop over them ([`owner_walk_nodes`]), each pair's products
+            // read from its outer child's bucket.
+            let collect = match collect {
+                Collect::Nodes(to) if walkable(f_level) => {
+                    let SparseWorkspace {
+                        owned,
+                        owned_len,
+                        outer_offsets,
+                        node_owners,
+                        emit,
+                        ..
+                    } = ws;
+                    let outer = GroupedView {
+                        offsets: &outer_offsets[..=f_outer],
+                        entries: &owned[..*owned_len],
+                    };
+                    let (f, none) = (
+                        shape.f.here,
+                        Listed {
+                            owned: &[],
+                            plain: false,
+                        },
+                    );
+                    // Without One, a product held for every label is held
+                    // with both literals.
+                    return match (ones, held) {
+                        (true, _) => walk_owned::<SWAPPED, true, false, false>(
+                            eng,
+                            (node_owners, emit),
+                            (f_level, f),
+                            outer,
+                            none,
+                            to,
+                        ),
+                        (false, false) => walk_owned::<SWAPPED, false, false, false>(
+                            eng,
+                            (node_owners, emit),
+                            (f_level, f),
+                            outer,
+                            none,
+                            to,
+                        ),
+                        (false, true) => walk_owned::<SWAPPED, false, false, true>(
+                            eng,
+                            (node_owners, emit),
+                            (f_level, f),
+                            outer,
+                            none,
+                            to,
+                        ),
+                    };
+                }
+                collect => collect,
+            };
+            if ones {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect, |parts| {
+                    OwnerWalk::<true>::of(parts, f_outer)
+                })?;
+            } else {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect, |parts| {
+                    OwnerWalk::<false>::of(parts, f_outer)
+                })?;
             }
-            None => collect,
+            return Ok(Made::Written);
         }
-    } else {
-        collect
-    };
+    }
     // g's reverse index by the outer child: normally the right child,
     // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`. Under a
     // vtree leaf the entries of one outer child are grouped by their leaf
@@ -182,22 +303,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
         (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
     }
     bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
+    // This level gathers no owned products.
     ws.owned_len = 0;
-    run_leaf_walk_inner::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, inner)?;
-    Ok(Made::Written)
-}
-
-#[inline(always)]
-fn run_leaf_walk_inner<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    f_level: &TddLevel,
-    shape: LevelShape,
-    pl_outer: &[ProductEntry],
-    collect: Collect<'_, '_>,
-    inner: Option<Inner>,
-) -> Result<(), OperationError> {
-    match inner {
+    let walked = match inner {
         None => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect, |parts| {
             LabelWalk {
                 g_by_outer: parts.g_by_outer,
@@ -233,178 +341,8 @@ fn run_leaf_walk_inner<const SWAPPED: bool>(
                 (f_node as usize * g_width + g_node as usize) as u32
             }),
         ),
-    }
-}
-
-/// Run the owner-table path of [`scatter_leaf_arm`] once [`build_owner_table`]
-/// succeeds.
-#[inline(always)]
-fn scatter_owner_table<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    (f_level, g_level): (&TddLevel, &TddLevel),
-    shape: LevelShape,
-    (f_outer, g_outer, pl_outer): (usize, usize, &[ProductEntry]),
-    collect: Collect<'_, '_>,
-    ones: bool,
-) -> Result<Made, OperationError> {
-    let lim = eng.limits();
-    let collect = match collect {
-        Collect::Nodes(to) if walkable(f_level) && one_each(pl_outer, f_outer) => {
-            return scatter_listed_owner_table::<SWAPPED>(
-                eng,
-                ws,
-                (f_level, g_level),
-                shape.f.here,
-                (f_outer, g_outer, pl_outer),
-                to,
-                ones,
-            );
-        }
-        collect => collect,
     };
-    let gathered = gather_owned_products(
-        lim,
-        pl_outer,
-        f_outer,
-        &ws.owners[..OWNER_SLOTS * g_outer],
-        &mut ws.outer_offsets,
-        &mut ws.owned,
-    );
-    clear_owners::<SWAPPED>(g_level, g_outer, ws);
-    let held;
-    (ws.owned_len, held) = gathered?;
-    ws.outer_held = held && ws.owned_len == pl_outer.len();
-    let collect = match collect {
-        Collect::Nodes(to) if walkable(f_level) => {
-            return scatter_grouped_owner_table::<SWAPPED>(
-                eng,
-                ws,
-                f_level,
-                (shape.f.here, f_outer),
-                to,
-                (ones, held),
-            );
-        }
-        collect => collect,
-    };
-    if ones {
-        leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect, |parts| {
-            OwnerWalk::<true>::of(parts, f_outer)
-        })?;
-    } else {
-        leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect, |parts| {
-            OwnerWalk::<false>::of(parts, f_outer)
-        })?;
-    }
-    Ok(Made::Written)
-}
-
-#[inline(always)]
-fn scatter_listed_owner_table<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    (f_level, g_level): (&TddLevel, &TddLevel),
-    f_here: usize,
-    (f_outer, g_outer, pl_outer): (usize, usize, &[ProductEntry]),
-    to: Emit<'_>,
-    ones: bool,
-) -> Result<Made, OperationError> {
-    let gathered = gather_listed_products(
-        eng.limits(),
-        pl_outer,
-        &ws.owners[..OWNER_SLOTS * g_outer],
-        &mut ws.owned,
-    );
-    clear_owners::<SWAPPED>(g_level, g_outer, ws);
-    let (plain, held) = gathered?;
-    ws.outer_held = held;
-    let SparseWorkspace {
-        owned,
-        node_owners,
-        emit,
-        ..
-    } = &mut *ws;
-    let listed = Listed {
-        owned: &owned[..f_outer],
-        plain: plain && !ones,
-    };
-    let none = GroupedView {
-        offsets: &[],
-        entries: &[],
-    };
-    if ones {
-        walk_owned::<SWAPPED, true, true, false>(
-            eng,
-            (node_owners, emit),
-            (f_level, f_here),
-            none,
-            listed,
-            to,
-        )
-    } else {
-        walk_owned::<SWAPPED, false, true, false>(
-            eng,
-            (node_owners, emit),
-            (f_level, f_here),
-            none,
-            listed,
-            to,
-        )
-    }
-}
-
-#[inline(always)]
-fn scatter_grouped_owner_table<const SWAPPED: bool>(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    f_level: &TddLevel,
-    (f_here, f_outer): (usize, usize),
-    to: Emit<'_>,
-    (ones, held): (bool, bool),
-) -> Result<Made, OperationError> {
-    let SparseWorkspace {
-        owned,
-        owned_len,
-        outer_offsets,
-        node_owners,
-        emit,
-        ..
-    } = ws;
-    let outer = GroupedView {
-        offsets: &outer_offsets[..=f_outer],
-        entries: &owned[..*owned_len],
-    };
-    let none = Listed {
-        owned: &[],
-        plain: false,
-    };
-    match (ones, held) {
-        (true, _) => walk_owned::<SWAPPED, true, false, false>(
-            eng,
-            (node_owners, emit),
-            (f_level, f_here),
-            outer,
-            none,
-            to,
-        ),
-        (false, false) => walk_owned::<SWAPPED, false, false, false>(
-            eng,
-            (node_owners, emit),
-            (f_level, f_here),
-            outer,
-            none,
-            to,
-        ),
-        (false, true) => walk_owned::<SWAPPED, false, false, true>(
-            eng,
-            (node_owners, emit),
-            (f_level, f_here),
-            outer,
-            none,
-            to,
-        ),
-    }
+    walked.map(|()| Made::Written)
 }
 
 /// A [`LeafWalk`] with `inner_product`, for [`leaf_walk`] to make.
@@ -676,14 +614,45 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // Each candidate's pair goes straight to the level's pair arena and
         // its g parent beside it; `emit_walked` makes the node's products of
         // them, each candidate one pair of one of them.
-        Collect::Nodes(to) => walk_nodes_into_emit::<SWAPPED, W>(
-            eng,
-            walk,
-            (f_level, nodes),
-            to,
-            (node_owners, emit),
-            &mut ticker,
-        ),
+        Collect::Nodes(Emit {
+            level,
+            out,
+            duplicates_legal,
+            live,
+            ..
+        }) => {
+            let start = level.pairs.stored_len();
+            let walked_nodes = nodes.end();
+            let mut candidates = 0;
+            try_for_each_walked(f_level, nodes, |p1, pairs| {
+                let base = level.pairs.stored_len();
+                node_owners.clear();
+                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
+                    try_push_pair_growing(
+                        eng,
+                        level.pairs.stored_mut(),
+                        candidate_pair(&entry),
+                        move |v| grow_by_nodes(eng, v, start, p1, walked_nodes),
+                    )?;
+                    lim.try_push(node_owners, entry.g_parent)
+                })?;
+                candidates += node_owners.len();
+                emit_walked(
+                    eng,
+                    emit,
+                    NodeOut {
+                        level,
+                        pl_output: out,
+                        p1,
+                        base,
+                        duplicates_legal,
+                    },
+                    node_owners,
+                )
+            })?;
+            *live = Some(candidates);
+            Ok(())
+        }
         // The level's one f node is walked in stretches of a
         // `PROJECT_AFTER`th of its pairs, each projected before it.
         Collect::Direct(level) => {
@@ -710,55 +679,6 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
             })
         }),
     }
-}
-
-#[inline(always)]
-fn walk_nodes_into_emit<const SWAPPED: bool, W: NodeWalk>(
-    eng: &Engine,
-    walk: &W,
-    (f_level, nodes): (&TddLevel, Walked<'_>),
-    Emit {
-        level,
-        out,
-        duplicates_legal,
-        live,
-        ..
-    }: Emit<'_>,
-    (node_owners, emit): (&mut Vec<u32>, &mut EmitScratch),
-    ticker: &mut crate::limits::PollGate<'_>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let start = level.pairs.stored_len();
-    let walked_nodes = nodes.end();
-    let mut candidates = 0;
-    try_for_each_walked(f_level, nodes, |p1, pairs| {
-        let base = level.pairs.stored_len();
-        node_owners.clear();
-        walk.node::<SWAPPED>(pairs, ticker, |entry| {
-            try_push_pair_growing(
-                eng,
-                level.pairs.stored_mut(),
-                candidate_pair(&entry),
-                move |v| grow_by_nodes(eng, v, start, p1, walked_nodes),
-            )?;
-            lim.try_push(node_owners, entry.g_parent)
-        })?;
-        candidates += node_owners.len();
-        emit_walked(
-            eng,
-            emit,
-            NodeOut {
-                level,
-                pl_output: out,
-                p1,
-                base,
-                duplicates_legal,
-            },
-            node_owners,
-        )
-    })?;
-    *live = Some(candidates);
-    Ok(())
 }
 
 /// How [`leaf_walk`] finds the candidates of one f node.
@@ -937,11 +857,20 @@ fn owner_walk_nodes<
     dense: Listed<'_>,
     to: Emit<'_>,
 ) -> Result<(Made, usize), OperationError> {
+    const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
+    const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let lim = eng.limits();
-    let (level, out, duplicates_legal) = (to.level, to.out, to.duplicates_legal);
+    let Emit {
+        level,
+        out,
+        duplicates_legal,
+        ..
+    } = to;
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let empty = start == 0 && level.nodes.stored().is_empty();
+    // The live pairs of the nodes made: the copied nodes' and then one a
+    // candidate.
     let (copied, mut made_pairs) = if DENSE {
         match copy_nodes::<SWAPPED, ONES, N>(
             eng,
@@ -959,33 +888,430 @@ fn owner_walk_nodes<
     } else {
         (0, 0)
     };
+    // The node at which the walk sizes the level's arenas and products from
+    // the share of its nodes before it ([`reserve_walk_ahead`]), none
+    // under bounded growth; their lengths and capacities as it begins; and
+    // the pair capacity the output-pair meter is charged for where that
+    // moved the arena past it, `usize::MAX` elsewhere.
     let walked = f_nodes - copied;
-    let ahead = walk_ahead_threshold(lim, copied, walked);
-    let from = [start, level.nodes.stored().len(), out.len()];
+    let after = crate::apply::conjoin::ahead_after_forced().unwrap_or(PROJECT_AFTER);
+    let ahead =
+        if walked >= after && !lim.bounded_growth() && !crate::apply::conjoin::ahead_forced_off() {
+            copied + walked / after
+        } else {
+            usize::MAX
+        };
+    let from = [
+        level.pairs.stored_len(),
+        level.nodes.stored().len(),
+        out.len(),
+    ];
     let seeds = [
         level.pairs.capacity(),
         level.nodes.stored_mut().capacity(),
         out.capacity(),
     ];
     let mut charged = usize::MAX;
-    let mut cur = WalkCursor::of(level, out, charged);
+    // The level's pair arena, nodes and products, held here while the walk
+    // writes past their lengths, and set back into them before a call that
+    // takes them and where the walk ends or fails: a candidate, node or
+    // product is a store and a step. The arena is held as its start `at`,
+    // the next candidate's place `next` and the end of its room
+    // `room_end`, within the capacity the meter is charged for; a candidate
+    // that finds no room is pushed as the arena's own push would push it,
+    // growth and charges included ([`push_past_room`]), and so is a node or
+    // product, by the calls the walk made before.
+    let arena = level.pairs.stored_mut();
+    let mut at = arena.as_mut_ptr();
+    // Safety: the length and capacity are within the allocation.
+    let (mut next, mut room_end) = unsafe { (at.add(arena.len()), at.add(arena.capacity())) };
+    let mut nodes = Tail::of(level.nodes.stored_mut());
+    let mut prods = Tail::of(out);
+    macro_rules! settle {
+        () => {
+            // Safety: the slots below each length are written, those of
+            // the arena below `next`.
+            unsafe {
+                level
+                    .pairs
+                    .stored_mut()
+                    .set_len(next.offset_from_unsigned(at));
+                nodes.settle(level.nodes.stored_mut());
+                prods.settle(out);
+            }
+        };
+    }
+    macro_rules! retake {
+        () => {
+            let arena = level.pairs.stored_mut();
+            at = arena.as_mut_ptr();
+            // Safety: as at the start.
+            unsafe {
+                (next, room_end) = (at.add(arena.len()), at.add(arena.capacity().min(charged)))
+            };
+            nodes = Tail::of(level.nodes.stored_mut());
+            prods = Tail::of(out);
+        };
+    }
+    macro_rules! tri {
+        ($result:expr) => {
+            match $result {
+                Ok(value) => value,
+                Err(e) => {
+                    settle!();
+                    return Err(e);
+                }
+            }
+        };
+    }
     for (p1, node) in (copied..f_nodes).zip(f_level.words(copied, f_nodes)) {
         if p1 == ahead {
-            cur.settle(level, out);
+            settle!();
             charged = reserve_walk_ahead(eng, level, out, from, seeds, p1 - copied, walked)?;
-            cur.retake(level, out, charged);
+            retake!();
         }
-        made_pairs += walk_one_f_node::<SWAPPED, ONES, DENSE, BOTH>(
-            eng,
-            (node_owners, emit),
-            f_level.of(&node),
-            (outer, dense),
-            (level, out, &mut cur),
-            (start, p1, f_nodes),
-            (&mut charged, duplicates_legal, &mut ticker),
-        )?;
+        // Where the node's candidates start.
+        let mut first = next;
+        // The g parent the node's next candidate has while its candidates
+        // so far have one, or two taking turns from the first: then `turn`
+        // is the two's exclusive or, which turns `owner` from one to the
+        // other at each candidate, and otherwise 0. Once they are any other
+        // way, `node_owners` holds every candidate's and `owner` is
+        // [`MIXED`], which no candidate's equals: a candidate of the g
+        // parent expected costs one comparison.
+        let (mut owner, mut turn) = (NO_PRODUCT, 0u32);
+        // The clock units of the node's visits; on a `BOTH` level, how far
+        // twice its candidates overstate them.
+        let mut held = 0u64;
+        // Macros, not closures: a closure holding the node's state is
+        // called out of line, its state kept in memory.
+        macro_rules! push {
+            ($g_parent:expr, $label:expr, $prod:expr) => {{
+                let g_parent: u32 = $g_parent;
+                debug_assert!(g_parent < MIXED, "a g parent is a node index");
+                let (left_prod, right_prod) = orient::<SWAPPED>($label, $prod);
+                let pair = ChildPair::new(
+                    EncodedChildRef::from_raw(left_prod),
+                    EncodedChildRef::from_raw(right_prod),
+                );
+                if next < room_end {
+                    // Safety: `next` is below the room's end.
+                    unsafe {
+                        next.write(pair);
+                        next = next.add(1);
+                    }
+                } else {
+                    // Safety: the slots below `next` hold the arena's
+                    // pairs and the node's candidates so far, and it is
+                    // the room's end.
+                    (at, first, next, room_end) = tri!(unsafe {
+                        push_past_room(
+                            eng,
+                            level.pairs.stored_mut(),
+                            (at, first, next),
+                            pair,
+                            (start, p1, f_nodes),
+                            &mut charged,
+                        )
+                    });
+                }
+                if g_parent == owner {
+                    owner ^= turn;
+                } else if owner == NO_PRODUCT {
+                    owner = g_parent;
+                } else if owner == MIXED {
+                    tri!(lim.try_push(node_owners, g_parent));
+                } else if turn == 0 && next == first.wrapping_add(2) {
+                    // The second g parent second: the next candidate's
+                    // is the first's.
+                    turn = owner ^ g_parent;
+                } else {
+                    // Safety: both lie in the arena, `next` past `first`.
+                    let before = unsafe { next.offset_from_unsigned(first) } - 1;
+                    tri!(spill_owners(
+                        lim,
+                        node_owners,
+                        owner,
+                        turn,
+                        before,
+                        g_parent
+                    ));
+                    (owner, turn) = (MIXED, 0);
+                }
+            }};
+        }
+        macro_rules! meet {
+            ($g_parent:expr, $label:expr, $prod:expr) => {{
+                let g_parent: u32 = $g_parent;
+                if g_parent != NO_PRODUCT {
+                    push!(g_parent, $label, $prod);
+                }
+            }};
+        }
+        // A product's candidates with an f pair of label `inner1`, which
+        // meets Pos where `pos` and Neg where `neg`: [`OwnerWalk`]'s order,
+        // Pos, One, Neg.
+        macro_rules! visit {
+            ($e:expr, $inner1:expr, $pos:expr, $neg:expr) => {{
+                let e: OwnedProduct = $e;
+                let [pos, one, neg] = e.slots;
+                if $pos {
+                    meet!(pos, POS, e.prod);
+                }
+                if ONES {
+                    meet!(one, $inner1, e.prod);
+                }
+                if $neg {
+                    meet!(neg, NEG, e.prod);
+                }
+                // Charged as the walk of every g pair under the product
+                // was; a held slot is below `NO_PRODUCT`, a test the count
+                // takes as a carry.
+                held += u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
+                if ONES {
+                    held += u64::from(one < NO_PRODUCT);
+                }
+            }};
+        }
+        macro_rules! each {
+            ($outer1:expr, $inner1:expr, $pos:expr, $neg:expr) => {{
+                if DENSE {
+                    visit!(dense.entry($outer1), $inner1, $pos, $neg);
+                } else {
+                    // Most buckets hold one product: it is visited without
+                    // the loop's tests.
+                    let bucket = owned_bucket(outer, $outer1);
+                    if let [e] = bucket {
+                        visit!(*e, $inner1, $pos, $neg);
+                    } else {
+                        for e in bucket {
+                            visit!(*e, $inner1, $pos, $neg);
+                        }
+                    }
+                }
+            }};
+        }
+        // The pair's label is tested once, not at each product: a loop for
+        // each literal, and one for any other label, which meets all three.
+        for pair in f_level.of(&node) {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            if BOTH {
+                // Every slot read holds a candidate, and a product's
+                // visit is charged two units: a literal's pair meets one
+                // candidate a product, and any other label's two.
+                let bucket = owned_bucket(outer, outer1);
+                if let &[
+                    OwnedProduct {
+                        prod,
+                        slots: [pos, _, neg],
+                    },
+                ] = bucket
+                {
+                    // A bucket of one product, as most are, without the
+                    // loops' tests.
+                    if inner1 == POS {
+                        push!(pos, POS, prod);
+                    } else if inner1 == NEG {
+                        push!(neg, NEG, prod);
+                    } else {
+                        held += 2;
+                        push!(pos, POS, prod);
+                        push!(neg, NEG, prod);
+                    }
+                } else if inner1 == POS {
+                    for &OwnedProduct {
+                        prod,
+                        slots: [pos, _, _],
+                    } in bucket
+                    {
+                        push!(pos, POS, prod);
+                    }
+                } else if inner1 == NEG {
+                    for &OwnedProduct {
+                        prod,
+                        slots: [_, _, neg],
+                    } in bucket
+                    {
+                        push!(neg, NEG, prod);
+                    }
+                } else {
+                    held += 2 * bucket.len() as u64;
+                    for &OwnedProduct {
+                        prod,
+                        slots: [pos, _, neg],
+                    } in bucket
+                    {
+                        push!(pos, POS, prod);
+                        push!(neg, NEG, prod);
+                    }
+                }
+                continue;
+            }
+            if inner1 == POS {
+                each!(outer1, POS, true, false);
+            } else if inner1 == NEG {
+                each!(outer1, NEG, false, true);
+            } else {
+                each!(outer1, inner1, true, true);
+            }
+        }
+        // Safety: both lie in the arena, `next` not before `first`, and
+        // `first` not before `at`.
+        let (count, base) = unsafe {
+            (
+                next.offset_from_unsigned(first),
+                first.offset_from_unsigned(at),
+            )
+        };
+        tri!(ticker.poll(if BOTH { 2 * count as u64 - held } else { held }));
+        made_pairs += count;
+        if count == 0 {
+            continue;
+        }
+        if owner == MIXED {
+            settle!();
+            emit_mixed_apart(
+                eng,
+                emit,
+                NodeOut {
+                    level,
+                    pl_output: out,
+                    p1,
+                    base,
+                    duplicates_legal,
+                },
+                node_owners,
+            )?;
+            retake!();
+            continue;
+        }
+        if turn != 0 {
+            if count == 2 && prods.room() >= 2 && nodes.room() >= 2 {
+                // [`emit_alternating`] of two candidates, where neither
+                // vector grows: each candidate its own g parent's node.
+                // Safety: the candidates are at `first`, which the arena
+                // then drops.
+                let pairs = unsafe { [first.read(), first.add(1).read()] };
+                next = first;
+                for (g_parent, pair) in [owner, owner ^ turn].into_iter().zip(pairs) {
+                    let product = ProductEntry {
+                        f_idx: FNodeIdx(p1 as u32),
+                        g_idx: GNodeIdx(g_parent),
+                        prod_idx: ProductNodeIdx(prods.len as u32),
+                    };
+                    // Safety: there is room.
+                    unsafe {
+                        prods.put(product);
+                        nodes.put(EncodedNode::inline(pair));
+                    }
+                }
+            } else if matches!(count, 4 | 6 | 8)
+                && prods.room() >= 2
+                && nodes.room() >= 2
+                && base + count < 1 << 31
+            {
+                // [`emit_alternating`] of four, six or eight candidates,
+                // where neither vector grows: the first g parent's half
+                // moved before the second's, in place, and each half its
+                // g parent's node.
+                // Safety: the candidates are the `count` pairs at `first`.
+                let place = unsafe { std::slice::from_raw_parts_mut(first, count) };
+                match count {
+                    4 => split_turns::<4>(place),
+                    6 => split_turns::<6>(place),
+                    _ => split_turns::<8>(place),
+                }
+                let half = count / 2;
+                for (k, g_parent) in [owner, owner ^ turn].into_iter().enumerate() {
+                    let product = ProductEntry {
+                        f_idx: FNodeIdx(p1 as u32),
+                        g_idx: GNodeIdx(g_parent),
+                        prod_idx: ProductNodeIdx(prods.len as u32),
+                    };
+                    // Safety: there is room.
+                    unsafe {
+                        prods.put(product);
+                        nodes.put(EncodedNode::multi_pair(
+                            (base + k * half) as u32,
+                            half as u32,
+                        ));
+                    }
+                }
+                // As in `emit_alternating`: canonical children make each
+                // node's pairs distinct unless pair lists are multisets.
+                #[cfg(debug_assertions)]
+                {
+                    settle!();
+                    let made = level.nodes().len();
+                    debug_assert_unique_pairs(level, made - 2..made, duplicates_legal);
+                }
+            } else {
+                settle!();
+                let node_out = NodeOut {
+                    level,
+                    pl_output: out,
+                    p1,
+                    base,
+                    duplicates_legal,
+                };
+                if matches!(count, 2 | 4 | 6 | 8) {
+                    emit_alternating(eng, node_out, owner, owner ^ turn, count)?;
+                } else {
+                    emit_turns(eng, emit, node_out, owner, turn, node_owners)?;
+                }
+                retake!();
+            }
+            continue;
+        }
+        let product = ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(owner),
+            prod_idx: ProductNodeIdx(prods.len as u32),
+        };
+        if prods.room() > 0 {
+            // Safety: there is room.
+            unsafe { prods.put(product) };
+        } else {
+            settle!();
+            lim.try_push(out, product)?;
+            retake!();
+        }
+        if count == 1 {
+            // Safety: the node's candidate is at `first`, which the arena
+            // then drops.
+            let pair = unsafe { first.read() };
+            next = first;
+            if nodes.room() > 0 {
+                // Safety: there is room.
+                unsafe { nodes.put(EncodedNode::inline(pair)) };
+            } else {
+                settle!();
+                emit_single_pair(eng, level, pair)?;
+                retake!();
+            }
+        } else {
+            if nodes.room() > 0 && (base | count) < 1 << 31 {
+                // Safety: there is room.
+                unsafe { nodes.put(EncodedNode::multi_pair(base as u32, count as u32)) };
+            } else {
+                settle!();
+                reserve_room(lim, level.nodes.stored_mut(), 1)?;
+                level
+                    .try_push_multi_by_range(base, count)
+                    .map_err(|_| OperationError::OverBudget)?;
+                retake!();
+            }
+            // As in `emit_walked`: canonical children make a node's pairs
+            // distinct unless pair lists are multisets.
+            #[cfg(debug_assertions)]
+            {
+                settle!();
+                let made = level.nodes().len();
+                debug_assert_unique_pairs(level, made - 1..made, duplicates_legal);
+            }
+        }
     }
-    cur.settle(level, out);
+    settle!();
     debug_assert!(
         charged == usize::MAX || level.pairs.stored_len() <= charged,
         "a walk's pairs stay within the capacity the meter is charged for"
@@ -994,605 +1320,6 @@ fn owner_walk_nodes<
         trim_walk(level, out, seeds, charged);
     }
     Ok((Made::Written, made_pairs))
-}
-
-#[inline(always)]
-fn walk_ahead_threshold(lim: &crate::limits::Limits, copied: usize, walked: usize) -> usize {
-    let after = crate::apply::conjoin::ahead_after_forced().unwrap_or(PROJECT_AFTER);
-    if walked >= after && !lim.bounded_growth() && !crate::apply::conjoin::ahead_forced_off() {
-        copied + walked / after
-    } else {
-        usize::MAX
-    }
-}
-
-/// Scan and emit candidates for one `f` node `p1` during [`owner_walk_nodes`].
-#[inline(always)]
-fn walk_one_f_node<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool>(
-    eng: &Engine,
-    (node_owners, emit): (&mut Vec<u32>, &mut EmitScratch),
-    f_pairs: &[ChildPair],
-    (outer, dense): (GroupedView<'_, OwnedProduct>, Listed<'_>),
-    (level, out, cur): (&mut TddLevel, &mut Vec<ProductEntry>, &mut WalkCursor),
-    (start, p1, f_nodes): (usize, usize, usize),
-    (charged, duplicates_legal, ticker): (&mut usize, bool, &mut crate::limits::PollGate<'_>),
-) -> Result<usize, OperationError> {
-    let mut first = cur.next;
-    let mut scan = NodeCandidateScan {
-        eng,
-        arena: level.pairs.stored_mut(),
-        node_owners,
-        at: &mut cur.at,
-        first: &mut first,
-        next: &mut cur.next,
-        room_end: &mut cur.room_end,
-        owner: NO_PRODUCT,
-        turn: 0,
-        held: 0,
-        pos: (start, p1, f_nodes),
-        charged,
-    };
-    if let Err(e) = scan.scan::<SWAPPED, ONES, DENSE, BOTH>(f_pairs, outer, dense) {
-        cur.settle(level, out);
-        return Err(e);
-    }
-    let (owner, turn, held) = (scan.owner, scan.turn, scan.held);
-    // Safety: both lie in the arena, `next` not before `first`, and `first` not before `at`.
-    let (count, base) = unsafe {
-        (
-            cur.next.offset_from_unsigned(first),
-            first.offset_from_unsigned(cur.at),
-        )
-    };
-    if let Err(e) = ticker.poll(if BOTH { 2 * count as u64 - held } else { held }) {
-        cur.settle(level, out);
-        return Err(e);
-    }
-    if count > 0 {
-        emit_walked_node(
-            eng,
-            (emit, level, out, cur, node_owners),
-            first,
-            (base, count, p1),
-            (owner, turn),
-            (duplicates_legal, *charged),
-        )?;
-    }
-    Ok(count)
-}
-
-/// Emit the candidates `[base..base + count]` of walked `f` node `p1` according
-/// to `(owner, turn)`.
-#[inline(always)]
-fn emit_walked_node(
-    eng: &Engine,
-    (emit, level, out, cur, node_owners): (
-        &mut EmitScratch,
-        &mut TddLevel,
-        &mut Vec<ProductEntry>,
-        &mut WalkCursor,
-        &mut Vec<u32>,
-    ),
-    first: *mut ChildPair,
-    (base, count, p1): (usize, usize, usize),
-    (owner, turn): (u32, u32),
-    (duplicates_legal, charged): (bool, usize),
-) -> Result<(), OperationError> {
-    if owner == MIXED {
-        cur.settle(level, out);
-        emit_mixed_apart(
-            eng,
-            emit,
-            NodeOut {
-                level,
-                pl_output: out,
-                p1,
-                base,
-                duplicates_legal,
-            },
-            node_owners,
-        )?;
-        cur.retake(level, out, charged);
-        return Ok(());
-    }
-    if turn != 0 {
-        return emit_turn_candidates(
-            eng,
-            (emit, level, out, cur, node_owners),
-            first,
-            (base, count, p1),
-            (owner, turn),
-            (duplicates_legal, charged),
-        );
-    }
-    let product = ProductEntry {
-        f_idx: FNodeIdx(p1 as u32),
-        g_idx: GNodeIdx(owner),
-        prod_idx: ProductNodeIdx(cur.prods.len as u32),
-    };
-    emit_single_owner_walked_node(
-        eng,
-        (level, out, cur),
-        first,
-        product,
-        (base, count),
-        (duplicates_legal, charged),
-    )
-}
-
-#[inline(always)]
-fn emit_single_owner_walked_node(
-    eng: &Engine,
-    (level, out, cur): (&mut TddLevel, &mut Vec<ProductEntry>, &mut WalkCursor),
-    first: *mut ChildPair,
-    product: ProductEntry,
-    (base, count): (usize, usize),
-    (duplicates_legal, charged): (bool, usize),
-) -> Result<(), OperationError> {
-    if cur.prods.room() > 0 && cur.nodes.room() > 0 && (count == 1 || (base | count) < 1 << 31) {
-        emit_single_owner_in_room(
-            first,
-            &mut cur.next,
-            (base, count),
-            product,
-            &mut cur.prods,
-            &mut cur.nodes,
-        );
-        #[cfg(debug_assertions)]
-        if count > 1 {
-            cur.settle(level, out);
-            let made = level.nodes().len();
-            debug_assert_unique_pairs(level, made - 1..made, duplicates_legal);
-        }
-        Ok(())
-    } else {
-        let pair = (count == 1).then(|| {
-            // Safety: the node's candidate is at `first`, which the arena then drops.
-            let pair = unsafe { first.read() };
-            cur.next = first;
-            pair
-        });
-        cur.settle(level, out);
-        emit_single_owner_slow(
-            eng,
-            level,
-            out,
-            product,
-            pair,
-            (base, count),
-            duplicates_legal,
-        )?;
-        cur.retake(level, out, charged);
-        Ok(())
-    }
-}
-
-/// Raw-pointer cursor over `level.pairs`, `level.nodes`, and `out` during
-/// [`owner_walk_nodes`].
-struct WalkCursor {
-    at: *mut ChildPair,
-    next: *mut ChildPair,
-    room_end: *mut ChildPair,
-    nodes: Tail<EncodedNode>,
-    prods: Tail<ProductEntry>,
-}
-
-impl WalkCursor {
-    #[inline(always)]
-    fn of(level: &mut TddLevel, out: &mut Vec<ProductEntry>, charged: usize) -> Self {
-        let arena = level.pairs.stored_mut();
-        let at = arena.as_mut_ptr();
-        // Safety: the length and capacity are within the allocation.
-        let (next, room_end) =
-            unsafe { (at.add(arena.len()), at.add(arena.capacity().min(charged))) };
-        Self {
-            at,
-            next,
-            room_end,
-            nodes: Tail::of(level.nodes.stored_mut()),
-            prods: Tail::of(out),
-        }
-    }
-
-    #[inline(always)]
-    fn settle(&mut self, level: &mut TddLevel, out: &mut Vec<ProductEntry>) {
-        // Safety: the slots below each length are written, those of the arena below `next`.
-        unsafe {
-            level
-                .pairs
-                .stored_mut()
-                .set_len(self.next.offset_from_unsigned(self.at));
-            self.nodes.settle(level.nodes.stored_mut());
-            self.prods.settle(out);
-        }
-    }
-
-    #[inline(always)]
-    fn retake(&mut self, level: &mut TddLevel, out: &mut Vec<ProductEntry>, charged: usize) {
-        *self = Self::of(level, out, charged);
-    }
-}
-
-/// Emit an alternating two-owner node either in room or via [`emit_alternating`] /
-/// [`emit_turns`].
-#[inline(always)]
-fn emit_turn_candidates(
-    eng: &Engine,
-    (emit, level, out, cur, node_owners): (
-        &mut EmitScratch,
-        &mut TddLevel,
-        &mut Vec<ProductEntry>,
-        &mut WalkCursor,
-        &mut Vec<u32>,
-    ),
-    first: *mut ChildPair,
-    (base, count, p1): (usize, usize, usize),
-    (owner, turn): (u32, u32),
-    (duplicates_legal, charged): (bool, usize),
-) -> Result<(), OperationError> {
-    if !emit_turn_in_room(
-        first,
-        &mut cur.next,
-        (base, count),
-        p1,
-        (owner, turn),
-        &mut cur.prods,
-        &mut cur.nodes,
-    ) {
-        cur.settle(level, out);
-        let node_out = NodeOut {
-            level,
-            pl_output: out,
-            p1,
-            base,
-            duplicates_legal,
-        };
-        if matches!(count, 2 | 4 | 6 | 8) {
-            emit_alternating(eng, node_out, owner, owner ^ turn, count)?;
-        } else {
-            emit_turns(eng, emit, node_out, owner, turn, node_owners)?;
-        }
-        cur.retake(level, out, charged);
-    } else {
-        #[cfg(debug_assertions)]
-        if count > 2 {
-            cur.settle(level, out);
-            let made = level.nodes().len();
-            debug_assert_unique_pairs(level, made - 2..made, duplicates_legal);
-        }
-    }
-    Ok(())
-}
-
-/// Emit a single-owner product and node directly into `prods` and `nodes` when
-/// both have room.
-#[inline(always)]
-fn emit_single_owner_in_room(
-    first: *mut ChildPair,
-    next: &mut *mut ChildPair,
-    (base, count): (usize, usize),
-    product: ProductEntry,
-    prods: &mut Tail<ProductEntry>,
-    nodes: &mut Tail<EncodedNode>,
-) {
-    // Safety: caller checked `prods.room() > 0 && nodes.room() > 0`.
-    unsafe { prods.put(product) };
-    if count == 1 {
-        let pair = unsafe { first.read() };
-        *next = first;
-        unsafe { nodes.put(EncodedNode::inline(pair)) };
-    } else {
-        unsafe { nodes.put(EncodedNode::multi_pair(base as u32, count as u32)) };
-    }
-}
-
-/// Emit a single-owner product and node when either `prods` or `nodes` lacks
-/// room (or `(base | count) >= 1 << 31`).
-#[inline(always)]
-fn emit_single_owner_slow(
-    eng: &Engine,
-    level: &mut TddLevel,
-    out: &mut Vec<ProductEntry>,
-    product: ProductEntry,
-    single_pair: Option<ChildPair>,
-    (base, count): (usize, usize),
-    duplicates_legal: bool,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    lim.try_push(out, product)?;
-    if let Some(pair) = single_pair {
-        emit_single_pair(eng, level, pair)?;
-    } else {
-        reserve_room(lim, level.nodes.stored_mut(), 1)?;
-        level
-            .try_push_multi_by_range(base, count)
-            .map_err(|_| OperationError::OverBudget)?;
-        #[cfg(debug_assertions)]
-        {
-            let made = level.nodes().len();
-            debug_assert_unique_pairs(level, made - 1..made, duplicates_legal);
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = duplicates_legal;
-    Ok(())
-}
-
-struct NodeCandidateScan<'a> {
-    eng: &'a Engine,
-    arena: &'a mut Vec<ChildPair>,
-    node_owners: &'a mut Vec<u32>,
-    at: &'a mut *mut ChildPair,
-    first: &'a mut *mut ChildPair,
-    next: &'a mut *mut ChildPair,
-    room_end: &'a mut *mut ChildPair,
-    owner: u32,
-    turn: u32,
-    held: u64,
-    pos: (usize, usize, usize),
-    charged: &'a mut usize,
-}
-
-impl NodeCandidateScan<'_> {
-    /// Push one candidate pair into `(at, first, next, room_end)` and update the
-    /// running g-parent `(owner, turn)` state, spilling to `node_owners` on a third
-    /// or non-alternating owner.
-    #[inline(always)]
-    fn push<const SWAPPED: bool>(
-        &mut self,
-        g_parent: u32,
-        label: u32,
-        prod: u32,
-    ) -> Result<(), OperationError> {
-        let lim = self.eng.limits();
-        debug_assert!(g_parent < MIXED, "a g parent is a node index");
-        let (left_prod, right_prod) = orient::<SWAPPED>(label, prod);
-        let pair = ChildPair::new(
-            EncodedChildRef::from_raw(left_prod),
-            EncodedChildRef::from_raw(right_prod),
-        );
-        if *self.next < *self.room_end {
-            // Safety: `next` is below the room's end.
-            unsafe {
-                self.next.write(pair);
-                *self.next = self.next.add(1);
-            }
-        } else {
-            // Safety: the slots below `next` hold the arena's pairs and the node's
-            // candidates so far, and it is the room's end.
-            (*self.at, *self.first, *self.next, *self.room_end) = unsafe {
-                push_past_room(
-                    self.eng,
-                    self.arena,
-                    (*self.at, *self.first, *self.next),
-                    pair,
-                    self.pos,
-                    self.charged,
-                )?
-            };
-        }
-        if g_parent == self.owner {
-            self.owner ^= self.turn;
-        } else if self.owner == NO_PRODUCT {
-            self.owner = g_parent;
-        } else if self.owner == MIXED {
-            lim.try_push(self.node_owners, g_parent)?;
-        } else if self.turn == 0 && *self.next == self.first.wrapping_add(2) {
-            self.turn = self.owner ^ g_parent;
-        } else {
-            // Safety: both lie in the arena, `next` past `first`.
-            let before = unsafe { self.next.offset_from_unsigned(*self.first) } - 1;
-            spill_owners(
-                lim,
-                self.node_owners,
-                self.owner,
-                self.turn,
-                before,
-                g_parent,
-            )?;
-            (self.owner, self.turn) = (MIXED, 0);
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn visit<const SWAPPED: bool, const ONES: bool>(
-        &mut self,
-        e: OwnedProduct,
-        inner1: u32,
-        pos_active: bool,
-        neg_active: bool,
-    ) -> Result<(), OperationError> {
-        const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
-        const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
-        let [pos, one, neg] = e.slots;
-        if pos_active && pos != NO_PRODUCT {
-            self.push::<SWAPPED>(pos, POS, e.prod)?;
-        }
-        if ONES && one != NO_PRODUCT {
-            self.push::<SWAPPED>(one, inner1, e.prod)?;
-        }
-        if neg_active && neg != NO_PRODUCT {
-            self.push::<SWAPPED>(neg, NEG, e.prod)?;
-        }
-        self.held += u64::from(pos < NO_PRODUCT) + u64::from(neg < NO_PRODUCT);
-        if ONES {
-            self.held += u64::from(one < NO_PRODUCT);
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn visit_outer<const SWAPPED: bool, const ONES: bool, const DENSE: bool>(
-        &mut self,
-        outer: GroupedView<'_, OwnedProduct>,
-        dense: Listed<'_>,
-        outer1: u32,
-        inner1: u32,
-        (pos_active, neg_active): (bool, bool),
-    ) -> Result<(), OperationError> {
-        if DENSE {
-            return self.visit::<SWAPPED, ONES>(
-                dense.entry(outer1),
-                inner1,
-                pos_active,
-                neg_active,
-            );
-        }
-        let bucket = owned_bucket(outer, outer1);
-        if let [e] = bucket {
-            self.visit::<SWAPPED, ONES>(*e, inner1, pos_active, neg_active)
-        } else {
-            for &e in bucket {
-                self.visit::<SWAPPED, ONES>(e, inner1, pos_active, neg_active)?;
-            }
-            Ok(())
-        }
-    }
-
-    #[inline(always)]
-    fn scan<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BOTH: bool>(
-        &mut self,
-        pairs: &[ChildPair],
-        outer: GroupedView<'_, OwnedProduct>,
-        dense: Listed<'_>,
-    ) -> Result<(), OperationError> {
-        const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
-        const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
-        for pair in pairs {
-            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
-            if BOTH {
-                self.scan_both::<SWAPPED>(owned_bucket(outer, outer1), inner1)?;
-                continue;
-            }
-            let (label, active) = if inner1 == POS {
-                (POS, (true, false))
-            } else if inner1 == NEG {
-                (NEG, (false, true))
-            } else {
-                (inner1, (true, true))
-            };
-            self.visit_outer::<SWAPPED, ONES, DENSE>(outer, dense, outer1, label, active)?;
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn scan_both<const SWAPPED: bool>(
-        &mut self,
-        bucket: &[OwnedProduct],
-        inner1: u32,
-    ) -> Result<(), OperationError> {
-        const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
-        const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
-        if let &[
-            OwnedProduct {
-                prod,
-                slots: [pos, _, neg],
-            },
-        ] = bucket
-        {
-            if inner1 == POS {
-                self.push::<SWAPPED>(pos, POS, prod)?;
-            } else if inner1 == NEG {
-                self.push::<SWAPPED>(neg, NEG, prod)?;
-            } else {
-                self.held += 2;
-                self.push::<SWAPPED>(pos, POS, prod)?;
-                self.push::<SWAPPED>(neg, NEG, prod)?;
-            }
-        } else if inner1 == POS {
-            for &OwnedProduct {
-                prod,
-                slots: [pos, _, _],
-            } in bucket
-            {
-                self.push::<SWAPPED>(pos, POS, prod)?;
-            }
-        } else if inner1 == NEG {
-            for &OwnedProduct {
-                prod,
-                slots: [_, _, neg],
-            } in bucket
-            {
-                self.push::<SWAPPED>(neg, NEG, prod)?;
-            }
-        } else {
-            self.held += 2 * bucket.len() as u64;
-            for &OwnedProduct {
-                prod,
-                slots: [pos, _, neg],
-            } in bucket
-            {
-                self.push::<SWAPPED>(pos, POS, prod)?;
-                self.push::<SWAPPED>(neg, NEG, prod)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Try to emit an alternating two-owner node of 2, 4, 6, or 8 candidates
-/// directly into `prods` and `nodes` when both have room for two entries.
-#[inline(always)]
-fn emit_turn_in_room(
-    first: *mut ChildPair,
-    next: &mut *mut ChildPair,
-    (base, count): (usize, usize),
-    p1: usize,
-    (owner, turn): (u32, u32),
-    prods: &mut Tail<ProductEntry>,
-    nodes: &mut Tail<EncodedNode>,
-) -> bool {
-    if count == 2 && prods.room() >= 2 && nodes.room() >= 2 {
-        // Safety: the candidates are at `first`, which the arena then drops.
-        let pairs = unsafe { [first.read(), first.add(1).read()] };
-        *next = first;
-        for (g_parent, pair) in [owner, owner ^ turn].into_iter().zip(pairs) {
-            let product = ProductEntry {
-                f_idx: FNodeIdx(p1 as u32),
-                g_idx: GNodeIdx(g_parent),
-                prod_idx: ProductNodeIdx(prods.len as u32),
-            };
-            // Safety: there is room.
-            unsafe {
-                prods.put(product);
-                nodes.put(EncodedNode::inline(pair));
-            }
-        }
-        return true;
-    }
-    if matches!(count, 4 | 6 | 8)
-        && prods.room() >= 2
-        && nodes.room() >= 2
-        && base + count < 1 << 31
-    {
-        // Safety: the candidates are the `count` pairs at `first`.
-        let place = unsafe { std::slice::from_raw_parts_mut(first, count) };
-        match count {
-            4 => split_turns::<4>(place),
-            6 => split_turns::<6>(place),
-            _ => split_turns::<8>(place),
-        }
-        let half = count / 2;
-        for (k, g_parent) in [owner, owner ^ turn].into_iter().enumerate() {
-            let product = ProductEntry {
-                f_idx: FNodeIdx(p1 as u32),
-                g_idx: GNodeIdx(g_parent),
-                prod_idx: ProductNodeIdx(prods.len as u32),
-            };
-            // Safety: there is room.
-            unsafe {
-                prods.put(product);
-                nodes.put(EncodedNode::multi_pair(
-                    (base + k * half) as u32,
-                    half as u32,
-                ));
-            }
-        }
-        return true;
-    }
-    false
 }
 
 /// Clear [`build_owner_table`]'s slots for `g_level`.
@@ -2164,8 +1891,25 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     ticker: &mut crate::limits::PollGate<'_>,
 ) -> Result<(usize, usize, usize), OperationError> {
     use crate::diagram::NodeKind;
+    const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
     debug_assert!(!PLAIN || (entries.plain && !ONES), "plain entries");
-    let code = |pair: ChildPair| lent_pair_code::<SWAPPED, ONES, PLAIN>(pair, entries);
+    // A pair's g parent, and above it its units.
+    let code = |pair: ChildPair| -> u64 {
+        if PLAIN {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            // The labels One, Pos, Neg (0, 1, 2) to their slots 1, 0, 2,
+            // with no branch: a One pair meets all three of g's labels, and
+            // reads the One slot, empty on a plain level. The slot is read
+            // in place, not from a copy of the entry.
+            let slot = (inner1 ^ u32::from(inner1 <= POS)) as usize;
+            match entries.owned.get(outer1 as usize) {
+                Some(e) if slot < OWNER_SLOTS => u64::from(e.slots[slot]),
+                _ => u64::from(NO_PRODUCT),
+            }
+        } else {
+            copy_code::<SWAPPED, ONES>(pair, entries)
+        }
+    };
     let (arena_room, node_room) = room;
     let f_arena = stored.arena();
     // A node's pairs end within the arena's capacity and below 2^31, where
@@ -2183,8 +1927,25 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
                 if start as usize == n && len != 0 && n + len as usize <= range_room =>
             {
                 let end = n + len as usize;
+                // Safety: `end` is within f's arena (`range_room`) and the
+                // node holds a pair.
+                let (first, rest) = unsafe {
+                    f_arena
+                        .get_unchecked(n..end)
+                        .split_first()
+                        .unwrap_unchecked()
+                };
+                let mut sum = code(*first);
+                let mut copies = true;
+                for &pair in rest {
+                    let next = code(pair);
+                    copies &= next as u32 == sum as u32;
+                    if !PLAIN {
+                        sum += next & !u64::from(u32::MAX);
+                    }
+                }
                 (
-                    lent_multi_node_code::<SWAPPED, ONES, PLAIN>(f_arena, n, end, entries),
+                    if copies { sum } else { u64::from(NO_PRODUCT) },
                     len as usize,
                     end,
                 )
@@ -2222,55 +1983,6 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     Ok((taken, n, pairs))
 }
 
-#[inline(always)]
-fn lent_multi_node_code<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
-    f_arena: &[ChildPair],
-    n: usize,
-    end: usize,
-    entries: Listed<'_>,
-) -> u64 {
-    // Safety: `end` is within f's arena (`range_room`) and the node holds a pair.
-    let (first, rest) = unsafe {
-        f_arena
-            .get_unchecked(n..end)
-            .split_first()
-            .unwrap_unchecked()
-    };
-    let mut sum = lent_pair_code::<SWAPPED, ONES, PLAIN>(*first, entries);
-    let mut copies = true;
-    for &pair in rest {
-        let next = lent_pair_code::<SWAPPED, ONES, PLAIN>(pair, entries);
-        copies &= next as u32 == sum as u32;
-        if !PLAIN {
-            sum += next & !u64::from(u32::MAX);
-        }
-    }
-    if copies { sum } else { u64::from(NO_PRODUCT) }
-}
-
-/// Compute `pair`'s packed `(units << 32 | g_owner)` code in [`take_lent`].
-#[inline(always)]
-fn lent_pair_code<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
-    pair: ChildPair,
-    entries: Listed<'_>,
-) -> u64 {
-    const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
-    if PLAIN {
-        let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
-        // The labels One, Pos, Neg (0, 1, 2) to their slots 1, 0, 2,
-        // with no branch: a One pair meets all three of g's labels, and
-        // reads the One slot, empty on a plain level. The slot is read
-        // in place, not from a copy of the entry.
-        let slot = (inner1 ^ u32::from(inner1 <= POS)) as usize;
-        match entries.owned.get(outer1 as usize) {
-            Some(e) if slot < OWNER_SLOTS => u64::from(e.slots[slot]),
-            _ => u64::from(NO_PRODUCT),
-        }
-    } else {
-        copy_code::<SWAPPED, ONES>(pair, entries)
-    }
-}
-
 /// The first of [`owner_walk_nodes`] on a level where each outer child of f
 /// has one product (`DENSE`), its arena holding `start` pairs before the
 /// walk: f's nodes from the first for as long as each is its own
@@ -2291,6 +2003,7 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     (level, start, out): (&mut TddLevel, usize, &mut Vec<ProductEntry>),
     ticker: &mut crate::limits::PollGate<'_>,
 ) -> Result<Copied, OperationError> {
+    use crate::diagram::NodeKind;
     let lim = eng.limits();
     let (arena, nodes) = (level.pairs.stored_mut(), level.nodes.stored_mut());
     // While each node made so far is f's node as f stores it, its pairs at
@@ -2300,7 +2013,7 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     // f's at the first node that is not so; where none is, the level is f's.
     // f's nodes are lent only where it stores them.
     let lendable = f_level.stored();
-    let unwritten = (lendable.is_some()
+    let mut unwritten = (lendable.is_some()
         && start == 0
         && nodes.is_empty()
         && !crate::apply::conjoin::lend_forced_off())
@@ -2314,27 +2027,58 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
         arena.extend_from_slice(&stored.arena()[..pairs]);
         nodes.extend_from_slice(&stored.nodes()[..made]);
     };
-    let (taken, mut unwritten, mut made_pairs) = try_take_lent_prefix::<SWAPPED, ONES>(
-        lim,
-        (lendable, f_nodes),
-        entries,
-        unwritten,
-        (arena.capacity(), nodes.capacity()),
-        out,
-        ticker,
-    )?;
+    let (mut taken, mut made_pairs) = (0, 0);
+    if let (Some(n), Some(stored)) = (unwritten, lendable) {
+        let lent = if entries.plain {
+            take_lent::<SWAPPED, ONES, true>(
+                lim,
+                (stored, f_nodes),
+                entries,
+                n,
+                (arena.capacity(), nodes.capacity()),
+                out,
+                ticker,
+            )
+        } else {
+            take_lent::<SWAPPED, ONES, false>(
+                lim,
+                (stored, f_nodes),
+                entries,
+                n,
+                (arena.capacity(), nodes.capacity()),
+                out,
+                ticker,
+            )
+        };
+        let (lent, n, pairs) = lent?;
+        (taken, unwritten, made_pairs) = (lent, Some(n), pairs);
+    }
     for (p1, word) in (taken..f_nodes).zip(f_level.words(taken, f_nodes)) {
         let node = &word;
         let pairs = f_level.of(node);
-        let base = unwritten.unwrap_or(arena.len());
-        let count = pairs.len();
-        let Some((owner, held)) = scan_copied_node_owner::<SWAPPED, ONES>(pairs, entries, base)
-        else {
+        let Some((first, rest)) = pairs.split_first() else {
             if let Some(n) = unwritten {
                 write(arena, nodes, p1, n);
             }
             return Ok(Copied::Nodes(p1, made_pairs));
         };
+        let code = copy_code::<SWAPPED, ONES>(*first, entries);
+        let (owner, mut held) = (code as u32, code >> 32);
+        let mut copies = owner != NO_PRODUCT;
+        for &pair in rest {
+            let code = copy_code::<SWAPPED, ONES>(pair, entries);
+            copies &= code as u32 == owner;
+            held += code >> 32;
+        }
+        let (base, count) = (unwritten.unwrap_or(arena.len()), pairs.len());
+        // A node too far into the arena for its words is the walk's to make;
+        // their sum bounds both.
+        if !copies || base + count >= 1 << 31 {
+            if let Some(n) = unwritten {
+                write(arena, nodes, p1, n);
+            }
+            return Ok(Copied::Nodes(p1, made_pairs));
+        }
         ticker.poll(held)?;
         let product = ProductEntry {
             f_idx: FNodeIdx(p1 as u32),
@@ -2347,148 +2091,61 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
             lim.try_push(out, product)?;
         }
         made_pairs += count;
-        if try_keep_unwritten_node(arena, nodes, node, (p1, count), &mut unwritten, write) {
-            continue;
+        if let Some(n) = unwritten {
+            // A node of one pair is made only where the arena has room for
+            // the push the walk takes back, and one of more where it has
+            // room for all of them.
+            let own = match node.kind() {
+                NodeKind::Inline(_) => n < arena.capacity(),
+                NodeKind::Multi { start, .. } => {
+                    start as usize == n && n + count <= arena.capacity()
+                }
+                NodeKind::MultiRanged(_) => false,
+            };
+            if own && p1 < nodes.capacity() {
+                unwritten = Some(if count == 1 { n } else { n + count });
+                continue;
+            }
+            write(arena, nodes, p1, n);
+            unwritten = None;
         }
-        push_copied_node(eng, arena, nodes, *node, pairs, (start, p1, f_nodes), base)?;
+        // The walk's pushes of the candidates: a node of one pair takes its
+        // pair back out of the arena, its push having grown it if full, and
+        // left it as it was if not.
+        let node = if count == 1 {
+            if arena.len() == arena.capacity() {
+                try_push_pair_growing(eng, arena, *first, |v| {
+                    grow_by_nodes(eng, v, start, p1, f_nodes)
+                })?;
+                arena.pop();
+            }
+            *node
+        } else {
+            for &pair in pairs {
+                try_push_pair_growing(eng, arena, pair, |v| {
+                    grow_by_nodes(eng, v, start, p1, f_nodes)
+                })?;
+            }
+            crate::diagram::EncodedNode::multi_pair(base as u32, count as u32)
+        };
+        if nodes.len() < nodes.capacity() {
+            nodes.push(node);
+        } else {
+            reserve_room(lim, nodes, 1)?;
+            nodes.push(node);
+        }
     }
-    Ok(finish_copied_level(
-        arena, nodes, f_nodes, made_pairs, unwritten, lendable,
-    ))
-}
-
-#[inline(always)]
-fn try_keep_unwritten_node(
-    arena: &mut Vec<ChildPair>,
-    nodes: &mut Vec<crate::diagram::EncodedNode>,
-    node: &crate::diagram::EncodedNode,
-    (p1, count): (usize, usize),
-    unwritten: &mut Option<usize>,
-    write: impl FnOnce(&mut Vec<ChildPair>, &mut Vec<crate::diagram::EncodedNode>, usize, usize),
-) -> bool {
-    use crate::diagram::NodeKind;
-    let Some(n) = *unwritten else {
-        return false;
-    };
-    let own = match node.kind() {
-        NodeKind::Inline(_) => n < arena.capacity(),
-        NodeKind::Multi { start, .. } => start as usize == n && n + count <= arena.capacity(),
-        NodeKind::MultiRanged(_) => false,
-    };
-    if own && p1 < nodes.capacity() {
-        *unwritten = Some(if count == 1 { n } else { n + count });
-        return true;
-    }
-    write(arena, nodes, p1, n);
-    *unwritten = None;
-    false
-}
-
-#[inline(always)]
-fn scan_copied_node_owner<const SWAPPED: bool, const ONES: bool>(
-    pairs: &[ChildPair],
-    entries: Listed<'_>,
-    base: usize,
-) -> Option<(u32, u64)> {
-    let (first, rest) = pairs.split_first()?;
-    let code = copy_code::<SWAPPED, ONES>(*first, entries);
-    let (owner, mut held) = (code as u32, code >> 32);
-    let mut copies = owner != NO_PRODUCT;
-    for &pair in rest {
-        let code = copy_code::<SWAPPED, ONES>(pair, entries);
-        copies &= code as u32 == owner;
-        held += code >> 32;
-    }
-    if !copies || base + pairs.len() >= 1 << 31 {
-        return None;
-    }
-    Some((owner, held))
-}
-
-/// Complete [`copy_nodes`] once all `f_nodes` have been copied or left unwritten.
-#[inline(always)]
-fn finish_copied_level(
-    arena: &mut Vec<ChildPair>,
-    nodes: &mut Vec<EncodedNode>,
-    f_nodes: usize,
-    made_pairs: usize,
-    unwritten: Option<usize>,
-    lendable: Option<crate::diagram::StoredPairs<'_>>,
-) -> Copied {
     match (unwritten, lendable) {
         (Some(n), Some(stored)) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
             crate::apply::conjoin::note_lent();
-            Copied::Level(made_pairs)
+            Ok(Copied::Level(made_pairs))
         }
-        (Some(n), Some(stored)) => {
-            arena.extend_from_slice(&stored.arena()[..n]);
-            nodes.extend_from_slice(&stored.nodes()[..f_nodes]);
-            Copied::Nodes(f_nodes, made_pairs)
+        (Some(n), _) => {
+            write(arena, nodes, f_nodes, n);
+            Ok(Copied::Nodes(f_nodes, made_pairs))
         }
-        _ => Copied::Nodes(f_nodes, made_pairs),
+        (None, _) => Ok(Copied::Nodes(f_nodes, made_pairs)),
     }
-}
-
-/// Dispatch [`take_lent`] when `f` stores its nodes and the output level starts
-/// empty.
-#[inline(always)]
-fn try_take_lent_prefix<const SWAPPED: bool, const ONES: bool>(
-    lim: &crate::limits::Limits,
-    (lendable, f_nodes): (Option<crate::diagram::StoredPairs<'_>>, usize),
-    entries: Listed<'_>,
-    unwritten: Option<usize>,
-    caps: (usize, usize),
-    out: &mut Vec<ProductEntry>,
-    ticker: &mut crate::limits::PollGate<'_>,
-) -> Result<(usize, Option<usize>, usize), OperationError> {
-    let Some((n, stored)) = unwritten.zip(lendable) else {
-        return Ok((0, unwritten, 0));
-    };
-    let (lent, n, pairs) = if entries.plain {
-        take_lent::<SWAPPED, ONES, true>(lim, (stored, f_nodes), entries, n, caps, out, ticker)?
-    } else {
-        take_lent::<SWAPPED, ONES, false>(lim, (stored, f_nodes), entries, n, caps, out, ticker)?
-    };
-    Ok((lent, Some(n), pairs))
-}
-
-/// Push a copied `f` node's pairs into `arena` and its [`EncodedNode`] into
-/// `nodes`, charging growth as the walk does.
-#[inline(always)]
-fn push_copied_node(
-    eng: &Engine,
-    arena: &mut Vec<ChildPair>,
-    nodes: &mut Vec<EncodedNode>,
-    node: EncodedNode,
-    pairs: &[ChildPair],
-    (start, p1, f_nodes): (usize, usize, usize),
-    base: usize,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let count = pairs.len();
-    let node = if count == 1 {
-        if arena.len() == arena.capacity() {
-            try_push_pair_growing(eng, arena, pairs[0], |v| {
-                grow_by_nodes(eng, v, start, p1, f_nodes)
-            })?;
-            arena.pop();
-        }
-        node
-    } else {
-        for &pair in pairs {
-            try_push_pair_growing(eng, arena, pair, |v| {
-                grow_by_nodes(eng, v, start, p1, f_nodes)
-            })?;
-        }
-        EncodedNode::multi_pair(base as u32, count as u32)
-    };
-    if nodes.len() < nodes.capacity() {
-        nodes.push(node);
-    } else {
-        reserve_room(lim, nodes, 1)?;
-        nodes.push(node);
-    }
-    Ok(())
 }
 
 /// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps
@@ -3327,75 +2984,83 @@ fn sides<'w, const SWAPPED: bool>(
     } else {
         (f.right, f.left, g.right, g.left)
     };
-    reset_scatter_sides_workspace(
-        eng.limits(),
-        ws,
-        (inner_k, outer_k, filtered_dim, outer_g_dim),
-        (pl_inner, pl_outer, kept),
-    )?;
+    let SparseWorkspace {
+        f_by_outer,
+        g_by_outer,
+        g_by_inner,
+        est_counts,
+        inner_offsets,
+        outer_offsets,
+        filtered,
+        filtered_touched,
+        filtered_held,
+        wanted,
+        wanted_epoch,
+        wanted_keys,
+        inner_seen,
+        inner_seen_epoch,
+        outer_keys,
+        outer_keys_epoch,
+        outer_attached,
+        routes,
+        f_marked,
+        ..
+    } = ws;
+    bucket_offsets(eng.limits(), pl_inner, inner_k, inner_offsets)?;
+    if !kept {
+        bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
+    }
+    filtered.reset(eng.limits(), filtered_dim)?;
+    filtered_touched.clear();
+    // A round that bailed can leave bits set; the level starts with none.
+    let held_words = filtered_dim.div_ceil(64);
+    eng.limits().try_resize(filtered_held, held_words, 0u64)?;
+    filtered_held[..held_words].fill(0);
+    eng.limits().try_resize(wanted, filtered_dim, 0u32)?;
+    wanted_keys.clear();
+    eng.limits().try_resize(inner_seen, inner_k, 0u32)?;
+    eng.limits().try_resize(outer_keys, outer_g_dim, 0u32)?;
+    eng.limits().try_resize(outer_attached, outer_g_dim, 0u32)?;
     Ok(ScatterSides {
-        f_by_outer: ws.f_by_outer.view(),
-        f_under: f_under::<SWAPPED>(&ws.est_counts, shape),
-        f_marked: kept.then_some(&ws.f_marked[..]),
-        g_by_outer: ws.g_by_outer.view(),
-        g_by_inner: ws.g_by_inner.view(),
+        f_by_outer: f_by_outer.view(),
+        f_under: f_under::<SWAPPED>(est_counts, shape),
+        f_marked: kept.then_some(&f_marked[..]),
+        g_by_outer: g_by_outer.view(),
+        g_by_inner: g_by_inner.view(),
         outer: GroupedView {
-            offsets: &ws.outer_offsets,
+            offsets: outer_offsets,
             entries: pl_outer,
         },
         inner: GroupedView {
-            offsets: &ws.inner_offsets,
+            offsets: inner_offsets,
             entries: pl_inner,
         },
         filtered: TouchedBuckets {
-            buckets: &mut ws.filtered,
-            touched: &mut ws.filtered_touched,
-            held: &mut ws.filtered_held,
+            buckets: filtered,
+            touched: filtered_touched,
+            held: filtered_held,
         },
         wanted: EpochFlags {
-            cur: ws.wanted_epoch,
-            stamps: &mut ws.wanted,
-            epoch: &mut ws.wanted_epoch,
+            cur: *wanted_epoch,
+            stamps: wanted,
+            epoch: wanted_epoch,
         },
-        wanted_keys: &mut ws.wanted_keys,
+        wanted_keys,
         inner_seen: EpochFlags {
-            cur: ws.inner_seen_epoch,
-            stamps: &mut ws.inner_seen,
-            epoch: &mut ws.inner_seen_epoch,
+            cur: *inner_seen_epoch,
+            stamps: inner_seen,
+            epoch: inner_seen_epoch,
         },
         outer_keys: EpochFlags {
-            cur: ws.outer_keys_epoch,
-            stamps: &mut ws.outer_keys,
-            epoch: &mut ws.outer_keys_epoch,
+            cur: *outer_keys_epoch,
+            stamps: outer_keys,
+            epoch: outer_keys_epoch,
         },
-        outer_attached: &mut ws.outer_attached,
-        routes: &mut ws.routes,
+        outer_attached,
+        routes,
         outer_k,
         inner_g: filtered_dim,
     })
-}
-
-fn reset_scatter_sides_workspace(
-    lim: &crate::limits::Limits,
-    ws: &mut SparseWorkspace,
-    (inner_k, outer_k, filtered_dim, outer_g_dim): (usize, usize, usize, usize),
-    (pl_inner, pl_outer, kept): (&[ProductEntry], &[ProductEntry], bool),
-) -> Result<(), OperationError> {
-    bucket_offsets(lim, pl_inner, inner_k, &mut ws.inner_offsets)?;
-    if !kept {
-        bucket_offsets(lim, pl_outer, outer_k, &mut ws.outer_offsets)?;
-    }
-    ws.filtered.reset(lim, filtered_dim)?;
-    ws.filtered_touched.clear();
-    let held_words = filtered_dim.div_ceil(64);
-    lim.try_resize(&mut ws.filtered_held, held_words, 0u64)?;
-    ws.filtered_held[..held_words].fill(0);
-    lim.try_resize(&mut ws.wanted, filtered_dim, 0u32)?;
-    ws.wanted_keys.clear();
-    lim.try_resize(&mut ws.inner_seen, inner_k, 0u32)?;
-    lim.try_resize(&mut ws.outer_keys, outer_g_dim, 0u32)?;
-    lim.try_resize(&mut ws.outer_attached, outer_g_dim, 0u32)?;
-    Ok(())
 }
 
 impl ScatterSides<'_> {
@@ -3577,16 +3242,22 @@ impl ScatterSides<'_> {
             ..
         } = self;
         let routes = &mut **routes;
-        routes.pending.clear();
+        let Routes {
+            entries,
+            pending,
+            cursor,
+            ..
+        } = routes;
+        pending.clear();
         let mut total = 0usize;
         for e in outer_products.bucket(outer) {
             for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
                 if FILTER && !wanted.is_set(key) {
                     continue;
                 }
-                let count = &mut routes.cursor[key as usize];
+                let count = &mut cursor[key as usize];
                 if *count == 0 {
-                    routes.pending.push(RouteSlot {
+                    pending.push(RouteSlot {
                         key,
                         start: 0,
                         len: 0,
@@ -3596,14 +3267,33 @@ impl ScatterSides<'_> {
                 total += 1;
             }
         }
-        let mut at = routes.entries.len();
+        let mut at = entries.len();
         if at + total > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
         if total == 0 {
             return Ok(());
         }
-        let dense = assign_route_slot_offsets(lim, routes, outer, width, &mut at)?;
+        let dense = Routes::dense(pending.len(), width);
+        if dense {
+            routes.open(lim, outer, width)?;
+            for key in 0..width {
+                routes.bound(at);
+                let count = routes.cursor[key];
+                if count != 0 {
+                    routes.cursor[key] = at as u32;
+                    at += count as usize;
+                }
+            }
+            routes.bound(at);
+        } else {
+            for slot in routes.pending.iter_mut() {
+                slot.start = at as u32;
+                slot.len = routes.cursor[slot.key as usize];
+                routes.cursor[slot.key as usize] = at as u32;
+                at += slot.len as usize;
+            }
+        }
         let Routes {
             entries,
             pending,
@@ -4041,69 +3731,49 @@ fn count_general_arm<const SWAPPED: bool, const FILTER: bool>(
                 }
             }
         } else {
-            count_general_by_walk::<SWAPPED>(
-                lim,
-                (under, live),
-                inner,
-                (g_by_inner, g_by_outer),
-                fold,
-                (walk, by_key),
-                &mut ticker,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// Walk `under` first when `by_key > walk`, opening only the inner keys the
-/// walk reaches and summing them by inner or outer g-pairs depending on which
-/// is smaller.
-fn count_general_by_walk<const SWAPPED: bool>(
-    lim: &crate::limits::Limits,
-    (under, live): (&[RevEntry], &[ProductEntry]),
-    inner: GroupedView<'_, ProductEntry>,
-    (g_by_inner, g_by_outer): (GroupedView<'_, RevEntry>, GroupedView<'_, RevEntry>),
-    fold: &mut CandidateFold<'_>,
-    (walk, by_key): (usize, usize),
-    ticker: &mut crate::limits::PollGate<'_>,
-) -> Result<(), OperationError> {
-    let mut by_inner = 0usize;
-    for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
-        if let Some(ahead) = under.get(j + WALK_AHEAD) {
-            inner.prefetch_bucket(ahead.other as usize);
-        }
-        for e in inner.bucket(inner1 as usize) {
-            let key = e.g_idx.0;
-            if fold.open_weighted(lim, key, fold.inner_count::<SWAPPED>(e.prod_idx.0))? {
-                by_inner += g_by_inner.len(key as usize);
+            // Open the keys the walk reads, weigh each by the counts of the
+            // inner products that read it, and price summing each by its own
+            // g pairs against the build by key. The walk is then over: the
+            // outer's candidates are each opened key's weight times its sum.
+            let mut by_inner = 0usize;
+            for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
+                if let Some(ahead) = under.get(j + WALK_AHEAD) {
+                    inner.prefetch_bucket(ahead.other as usize);
+                }
+                for e in inner.bucket(inner1 as usize) {
+                    let key = e.g_idx.0;
+                    if fold.open_weighted(lim, key, fold.inner_count::<SWAPPED>(e.prod_idx.0))? {
+                        by_inner += g_by_inner.len(key as usize);
+                    }
+                }
             }
-        }
-    }
-    ticker.poll(walk as u64)?;
-    if by_inner < by_key {
-        for e in live {
-            fold.set_outer(lim, e.g_idx.0, fold.outer_count::<SWAPPED>(e.prod_idx.0))?;
-        }
-        for i in 0..fold.opened_len() {
-            let sum = g_by_inner
-                .bucket(fold.opened_key(i) as usize)
-                .iter()
-                .map(|r| u128::from(fold.outer_or_zero(r.other)))
-                .sum();
-            fold.set_sum_at(i, sum);
-        }
-        ticker.poll(by_inner as u64)?;
-    } else {
-        for e in live {
-            let count = fold.outer_count::<SWAPPED>(e.prod_idx.0);
-            for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
-                fold.add_to_open(key, count);
+            ticker.poll(walk as u64)?;
+            if by_inner < by_key {
+                for e in live {
+                    fold.set_outer(lim, e.g_idx.0, fold.outer_count::<SWAPPED>(e.prod_idx.0))?;
+                }
+                for i in 0..fold.opened_len() {
+                    let sum = g_by_inner
+                        .bucket(fold.opened_key(i) as usize)
+                        .iter()
+                        .map(|r| u128::from(fold.outer_or_zero(r.other)))
+                        .sum();
+                    fold.set_sum_at(i, sum);
+                }
+                ticker.poll(by_inner as u64)?;
+            } else {
+                for e in live {
+                    let count = fold.outer_count::<SWAPPED>(e.prod_idx.0);
+                    for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
+                        fold.add_to_open(key, count);
+                    }
+                }
+                ticker.poll(by_key as u64)?;
             }
+            fold.add_weighted();
+            ticker.poll(fold.opened_len() as u64)?;
         }
-        ticker.poll(by_key as u64)?;
     }
-    fold.add_weighted();
-    ticker.poll(fold.opened_len() as u64)?;
     Ok(())
 }
 
@@ -4427,7 +4097,30 @@ pub(super) fn emit_owned(
         moved_pairs,
     } = emit;
     let first = pl_output.len();
-    let keyed = key_owned_products(lim, owners, p2_map, pl_output, pair_counts, p1, first);
+    pair_counts.clear();
+    let keyed = owners.iter_mut().try_for_each(|owner| {
+        let g_parent = *owner;
+        let slot = p2_map[g_parent as usize];
+        *owner = if slot == NO_PRODUCT {
+            let idx = pl_output.len() as u32;
+            p2_map[g_parent as usize] = idx;
+            lim.try_push(
+                pl_output,
+                ProductEntry {
+                    f_idx: FNodeIdx(p1 as u32),
+                    g_idx: GNodeIdx(g_parent),
+                    prod_idx: ProductNodeIdx(idx),
+                },
+            )?;
+            lim.try_push(pair_counts, 1)?;
+            idx - first as u32
+        } else {
+            let k = slot - first as u32;
+            pair_counts[k as usize] += 1;
+            k
+        };
+        Ok(())
+    });
     let first_node = level.nodes().len();
     let built = keyed.and_then(|()| {
         let products = pl_output.len() - first;
@@ -4435,6 +4128,8 @@ pub(super) fn emit_owned(
         let n = owners.len();
         let arena = level.pairs.stored_mut();
         if products == n {
+            // Each pair is its own product's inline node, read where the
+            // walk wrote it; the nodes have their room.
             let pairs = &arena[base..base + n];
             level.nodes.stored_mut().extend(
                 pairs
@@ -4482,73 +4177,10 @@ pub(super) fn emit_owned(
         p2_map[e.g_idx.idx()] = NO_PRODUCT;
     }
     built?;
+    // As in `emit_walked`: canonical children make a node's pairs distinct
+    // unless pair lists are multisets.
     debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
-}
-
-fn key_owned_products(
-    lim: &crate::limits::Limits,
-    owners: &mut [u32],
-    p2_map: &mut [u32],
-    pl_output: &mut Vec<ProductEntry>,
-    pair_counts: &mut Vec<u32>,
-    p1: usize,
-    first: usize,
-) -> Result<(), OperationError> {
-    pair_counts.clear();
-    for owner in owners.iter_mut() {
-        let g_parent = *owner;
-        let slot = p2_map[g_parent as usize];
-        *owner = if slot == NO_PRODUCT {
-            let idx = pl_output.len() as u32;
-            p2_map[g_parent as usize] = idx;
-            lim.try_push(
-                pl_output,
-                ProductEntry {
-                    f_idx: FNodeIdx(p1 as u32),
-                    g_idx: GNodeIdx(g_parent),
-                    prod_idx: ProductNodeIdx(idx),
-                },
-            )?;
-            lim.try_push(pair_counts, 1)?;
-            idx - first as u32
-        } else {
-            let k = slot - first as u32;
-            pair_counts[k as usize] += 1;
-            k
-        };
-    }
-    Ok(())
-}
-
-fn assign_route_slot_offsets(
-    lim: &crate::limits::Limits,
-    routes: &mut Routes,
-    outer: usize,
-    width: usize,
-    at: &mut usize,
-) -> Result<bool, OperationError> {
-    let dense = Routes::dense(routes.pending.len(), width);
-    if dense {
-        routes.open(lim, outer, width)?;
-        for key in 0..width {
-            routes.bound(*at);
-            let count = routes.cursor[key];
-            if count != 0 {
-                routes.cursor[key] = *at as u32;
-                *at += count as usize;
-            }
-        }
-        routes.bound(*at);
-    } else {
-        for slot in routes.pending.iter_mut() {
-            slot.start = *at as u32;
-            slot.len = routes.cursor[slot.key as usize];
-            routes.cursor[slot.key as usize] = *at as u32;
-            *at += slot.len as usize;
-        }
-    }
-    Ok(dense)
 }
 
 /// The most products [`emit_owned`] gathers a pass each.
@@ -4641,7 +4273,29 @@ fn emit_few(
         (2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n,
         "a few candidates"
     );
-    let (parents, members, counts, products, ranged) = partition_few_candidates(owners);
+    // Each product's g parent, its candidates as a bit each, and its pair
+    // count; and the pairs of the products of more than one, which take a
+    // range of the arena.
+    let mut parents = [0u32; FEW_CANDIDATES];
+    let mut members = [0u8; FEW_CANDIDATES];
+    let mut counts = [0u32; FEW_CANDIDATES];
+    let (mut products, mut ranged) = (0, 0);
+    for (i, &g_parent) in owners.iter().enumerate() {
+        let k = parents[..products]
+            .iter()
+            .position(|&p| p == g_parent)
+            .unwrap_or(products);
+        parents[k] = g_parent;
+        products += usize::from(k == products);
+        members[k] |= 1 << i;
+        let count = counts[k] + 1;
+        counts[k] = count;
+        ranged += match count {
+            1 => 0,
+            2 => 2,
+            _ => 1,
+        };
+    }
     push_product_entries(lim, pl_output, p1, &parents[..products])?;
     // One reserve for the level's pairs, and the output-pair meter
     // charged once for whatever the arena grew by.
@@ -4681,39 +4335,6 @@ fn emit_few(
     built?;
     debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
-}
-
-#[inline(always)]
-fn partition_few_candidates(
-    owners: &[u32],
-) -> (
-    [u32; FEW_CANDIDATES],
-    [u8; FEW_CANDIDATES],
-    [u32; FEW_CANDIDATES],
-    usize,
-    usize,
-) {
-    let mut parents = [0u32; FEW_CANDIDATES];
-    let mut members = [0u8; FEW_CANDIDATES];
-    let mut counts = [0u32; FEW_CANDIDATES];
-    let (mut products, mut ranged) = (0, 0);
-    for (i, &g_parent) in owners.iter().enumerate() {
-        let k = parents[..products]
-            .iter()
-            .position(|&p| p == g_parent)
-            .unwrap_or(products);
-        parents[k] = g_parent;
-        products += usize::from(k == products);
-        members[k] |= 1 << i;
-        let count = counts[k] + 1;
-        counts[k] = count;
-        ranged += match count {
-            1 => 0,
-            2 => 2,
-            _ => 1,
-        };
-    }
-    (parents, members, counts, products, ranged)
 }
 
 /// The cursor of a product of one pair ([`prefix_offsets`]'s mark): it has

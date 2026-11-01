@@ -132,8 +132,27 @@ fn owned_rows(
             }
         }
     } else if layout.is_reversed() {
+        // `vars` runs left to right in leaf order and the leftmost leaf holds
+        // the highest bit, so re-encoding reverses a row's bits; the bits past
+        // the last variable land below the row and shift out.
         gate.poll(rows.len() as u64)?;
-        pack_reversed_rows(rows, num_vars, w, &mut packed);
+        let shift = w * 64 - num_vars;
+        if w == 1 {
+            packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
+        } else {
+            packed.resize(rows.len(), 0);
+            for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
+                for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
+                    *to = word.reverse_bits();
+                }
+                if shift > 0 {
+                    for j in 0..w {
+                        let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
+                        out[j] = out[j] >> shift | above;
+                    }
+                }
+            }
+        }
     } else if w == 1 && n >= BYTE_TABLE_MIN_ROWS {
         // One table per byte of the input word holds where that byte's bits
         // land, so a row is re-encoded by eight lookups instead of one step
@@ -143,63 +162,29 @@ fn owned_rows(
         packed.extend(rows.iter().map(|&word| Layout::reencode_word(&table, word)));
         lim.discard(table);
     } else {
-        pack_general_rows(rows, layout, num_vars, (n, w), &mut packed, &mut gate)?;
-    }
-
-    gate.flush()?;
-    sorted_distinct(lim, radix, num_vars, layout, packed, w, distinct)
-}
-
-/// Re-encode `rows` into `packed` when `layout.is_reversed()`.
-fn pack_reversed_rows(rows: &[u64], num_vars: usize, w: usize, packed: &mut Vec<u64>) {
-    let shift = w * 64 - num_vars;
-    if w == 1 {
-        packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
-    } else {
         packed.resize(rows.len(), 0);
-        for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
-            for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
-                *to = word.reverse_bits();
-            }
-            if shift > 0 {
-                for j in 0..w {
-                    let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
-                    out[j] = out[j] >> shift | above;
+        for k in 0..n {
+            gate.poll(w as u64)?;
+            for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
+                // A row's bits past the last variable carry no assignment.
+                let used = num_vars - j * 64;
+                let mut live = if used >= 64 {
+                    word
+                } else {
+                    word & ((1u64 << used) - 1)
+                };
+                while live != 0 {
+                    let bit = live.trailing_zeros() as usize;
+                    live &= live - 1;
+                    let to = layout.position[j * 64 + bit] as usize;
+                    packed[k * w + to / 64] |= 1u64 << (to % 64);
                 }
             }
         }
     }
-}
 
-/// Re-encode `rows` into `packed` bit by bit through `layout.position`.
-fn pack_general_rows(
-    rows: &[u64],
-    layout: &Layout,
-    num_vars: usize,
-    (n, w): (usize, usize),
-    packed: &mut Vec<u64>,
-    gate: &mut crate::limits::PollGate<'_>,
-) -> Result<(), OperationError> {
-    packed.resize(rows.len(), 0);
-    for k in 0..n {
-        gate.poll(w as u64)?;
-        for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
-            // A row's bits past the last variable carry no assignment.
-            let used = num_vars - j * 64;
-            let mut live = if used >= 64 {
-                word
-            } else {
-                word & ((1u64 << used) - 1)
-            };
-            while live != 0 {
-                let bit = live.trailing_zeros() as usize;
-                live &= live - 1;
-                let to = layout.position[j * 64 + bit] as usize;
-                packed[k * w + to / 64] |= 1u64 << (to % 64);
-            }
-        }
-    }
-    Ok(())
+    gate.flush()?;
+    sorted_distinct(lim, radix, num_vars, layout, packed, w, distinct)
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats

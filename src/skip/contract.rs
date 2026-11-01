@@ -25,7 +25,7 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
-use super::{NEG, ONE, POS, Ref, SLevel, Shape, SkipForm, ZREF, filled, ix, mk, normalize, vt};
+use super::{NEG, ONE, POS, Ref, SLevel, SkipForm, ZREF, filled, ix, mk, normalize, vt};
 
 use crate::OperationError;
 use crate::limits::Limits;
@@ -142,280 +142,6 @@ pub(crate) fn contract(s: SkipForm, lim: &Limits) -> Result<SkipForm, OperationE
     contract_in(s, None, lim)
 }
 
-/// Per-run scratch buffers for [`contract_in`].
-struct ContractWork {
-    ids: Ids,
-    sstamp: Vec<u32>,
-    sslot: Vec<u32>,
-    epoch: u32,
-    ent: Vec<(Ref, u64, u32)>,
-    order: Vec<u32>,
-    seen: FxHashMap<(u64, u32), u32>,
-    cand: Vec<bool>,
-    occ: Vec<(u32, u32, Ref)>,
-    ctx: Vec<(u32, u32)>,
-    firsts: Vec<u32>,
-    members: Vec<Ref>,
-    pending: FxHashMap<u32, Vec<(u32, Vec<Ref>)>>,
-    names: Option<Names>,
-    merged: bool,
-}
-
-impl ContractWork {
-    fn new(n: usize) -> Self {
-        Self {
-            ids: Ids::new(n),
-            sstamp: Vec::new(),
-            sslot: Vec::new(),
-            epoch: 0,
-            ent: Vec::new(),
-            order: Vec::new(),
-            seen: FxHashMap::default(),
-            cand: Vec::new(),
-            occ: Vec::new(),
-            ctx: Vec::new(),
-            firsts: Vec::new(),
-            members: Vec::new(),
-            pending: FxHashMap::default(),
-            names: None,
-            merged: false,
-        }
-    }
-
-    fn discard(self, lim: &Limits) {
-        for v in [self.sstamp, self.sslot, self.order, self.firsts] {
-            lim.discard(v);
-        }
-        lim.discard(self.cand);
-        lim.discard(self.ent);
-        lim.discard(self.seen);
-        lim.discard(self.occ);
-        lim.discard(self.ctx);
-        lim.discard(self.members);
-        if let Some(nm) = self.names {
-            lim.discard(nm.start);
-            lim.discard(nm.levels);
-        }
-    }
-
-    /// Search entities at level `c` under parent `p` (at index `pe` in `lvs`)
-    /// for twin groups, recording local groups in `cl` and deferring skip-only
-    /// groups that part below `c` to `self.pending`.
-    fn contract_under_parent(
-        &mut self,
-        (s, sh): (&SkipForm, &super::Shape),
-        (c, l, r, here): (u32, u32, u32, u32),
-        (p, pcl): (u32, &CLv),
-        cl: &mut CLv,
-        queue: ContractQueue<'_>,
-        lim: &Limits,
-    ) -> Result<(), OperationError> {
-        let plvl = &s.levels[p as usize];
-        let (pl, pr) = sh.kids[p as usize];
-        let left = pl == c;
-        let sib = if left { pr } else { pl };
-        let sib_leaf = sh.is_leaf(sib);
-        let classes = || {
-            (0..pcl.width)
-                .filter(|&i| pcl.group_of.is_empty() || pcl.group_of[i as usize] == NONE)
-                .map(|i| (i, plvl.node(i)))
-                .chain((0..pcl.groups()).map(|g| (pcl.width + g as u32, pcl.group(g))))
-        };
-        let partners = |b: Ref| -> [Ref; 2] {
-            if sib_leaf && ix(b) == ONE {
-                [mk(sib, POS), mk(sib, NEG)]
-            } else {
-                [b, ZREF]
-            }
-        };
-        self.hash_parent_entities(s, left, classes(), &partners, lim)?;
-        if mark_hash_candidates(&self.ent, &mut self.cand, &mut self.seen, lim)? {
-            self.collect_candidate_occurrences(left, classes(), &partners, lim)?;
-            sort_candidate_contexts(
-                &self.ent,
-                &self.cand,
-                &mut self.order,
-                &mut self.occ,
-                &mut self.ctx,
-                lim,
-            )?;
-            self.emit_confirmed_groups((s, sh), (c, l, r, here), cl, queue, lim)?;
-        }
-        lim.charge_work(self.ent.len() as u64 + self.occ.len() as u64);
-        Ok(())
-    }
-
-    fn hash_parent_entities<'a>(
-        &mut self,
-        s: &SkipForm,
-        left: bool,
-        classes: impl Iterator<Item = (u32, &'a [(Ref, Ref)])>,
-        partners: &impl Fn(Ref) -> [Ref; 2],
-        lim: &Limits,
-    ) -> Result<(), OperationError> {
-        self.epoch += 1;
-        self.ent.clear();
-        for (k, pairs) in classes {
-            for &(a, b) in pairs {
-                let (e, partner) = if left { (a, b) } else { (b, a) };
-                let id = self
-                    .ids
-                    .id_alloc(s, e, &mut self.sstamp, &mut self.sslot, lim)?;
-                if self.sstamp[id] != self.epoch {
-                    self.sstamp[id] = self.epoch;
-                    self.sslot[id] = self.ent.len() as u32;
-                    lim.try_push(&mut self.ent, (e, 0, 0))?;
-                }
-                let x = &mut self.ent[self.sslot[id] as usize];
-                for q in partners(partner) {
-                    if q != ZREF {
-                        x.1 = x.1.wrapping_add(mix(k, q));
-                        x.2 += 1;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn collect_candidate_occurrences<'a>(
-        &mut self,
-        left: bool,
-        classes: impl Iterator<Item = (u32, &'a [(Ref, Ref)])>,
-        partners: &impl Fn(Ref) -> [Ref; 2],
-        lim: &Limits,
-    ) -> Result<(), OperationError> {
-        self.occ.clear();
-        for (k, pairs) in classes {
-            for &(a, b) in pairs {
-                let (e, partner) = if left { (a, b) } else { (b, a) };
-                let i = self.sslot[self.ids.id(e)];
-                if self.cand[i as usize] {
-                    for q in partners(partner) {
-                        if q != ZREF {
-                            lim.try_push(&mut self.occ, (i, k, q))?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn emit_confirmed_groups(
-        &mut self,
-        (s, sh): (&SkipForm, &super::Shape),
-        (c, l, r, here): (u32, u32, u32, u32),
-        cl: &mut CLv,
-        (queued, heap): ContractQueue<'_>,
-        lim: &Limits,
-    ) -> Result<(), OperationError> {
-        let ctx = &self.ctx;
-        let occ = &self.occ;
-        let list = |i: u32| {
-            let (a, b) = ctx[i as usize];
-            occ[a as usize..b as usize].iter().map(|x| (x.1, x.2))
-        };
-        let ent = &self.ent;
-        for run in self.order.chunk_by(|&x, &y| {
-            (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)
-        }) {
-            if run.len() < 2 {
-                continue;
-            }
-            self.firsts.clear();
-            let mut of: Vec<u32> = Vec::with_capacity(run.len());
-            for &i in run {
-                let g = self.firsts.iter().position(|&f| list(f).eq(list(i)));
-                of.push(match g {
-                    Some(g) => g as u32,
-                    None => {
-                        lim.try_push(&mut self.firsts, i)?;
-                        (self.firsts.len() - 1) as u32
-                    }
-                });
-            }
-            for g in 0..self.firsts.len() as u32 {
-                self.members.clear();
-                lim.reserve(&mut self.members, run.len())?;
-                self.members.extend(
-                    run.iter()
-                        .zip(&of)
-                        .filter(|x| *x.1 == g)
-                        .map(|x| ent[*x.0 as usize].0),
-                );
-                if self.members.len() < 2 {
-                    continue;
-                }
-                record_confirmed_group(
-                    (
-                        &mut self.merged,
-                        &mut self.ids,
-                        &mut self.names,
-                        &mut self.pending,
-                    ),
-                    &self.members,
-                    (s, sh),
-                    (c, l, r, here),
-                    cl,
-                    (queued, heap),
-                    lim,
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
-type ContractQueue<'a> = (&'a mut [bool], &'a mut BinaryHeap<Reverse<(u32, u32)>>);
-type ConfirmedGroupState<'a> = (
-    &'a mut bool,
-    &'a mut Ids,
-    &'a mut Option<Names>,
-    &'a mut FxHashMap<u32, Vec<(u32, Vec<Ref>)>>,
-);
-
-fn record_confirmed_group(
-    (merged, ids, names, pending): ConfirmedGroupState<'_>,
-    members: &[Ref],
-    (s, sh): (&SkipForm, &super::Shape),
-    (c, l, r, here): (u32, u32, u32, u32),
-    cl: &mut CLv,
-    (queued, heap): ContractQueue<'_>,
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    *merged = true;
-    if members.iter().all(|&e| vt(e) != c) {
-        if names.is_none() {
-            ids.ensure_all(s);
-            *names = Some(Names::of(s, ids, lim)?);
-        }
-        let nm = names.as_ref().expect("names were just read");
-        let v = parts(sh, nm, ids, c, members.iter().copied());
-        if v != c {
-            let mut group = Vec::new();
-            lim.reserve_exact(&mut group, members.len())?;
-            group.extend_from_slice(members);
-            pending.entry(v).or_default().push((here, group));
-            let mut u = v;
-            while u != c && !queued[u as usize] {
-                queued[u as usize] = true;
-                heap.push(Reverse((sh.pre[u as usize], u)));
-                u = sh.parent[u as usize];
-            }
-            return Ok(());
-        }
-    }
-    let g = cl.push_group(s, members, l, r, lim)?;
-    lim.reserve_map(&mut cl.chainmap, members.len())?;
-    for &e in members {
-        if vt(e) != c {
-            cl.chainmap.insert(e, (here, g));
-        }
-    }
-    Ok(())
-}
-
 /// [`contract`] scoped to the upward-closed `cone` of changed levels when
 /// `scope` is `Some(cone)`: levels outside `cone` whose parent had no merge
 /// and lost no node are already canonical and are not walked.
@@ -432,6 +158,7 @@ pub(crate) fn contract_in(
         s.discard(lim);
         return Ok(z);
     }
+    let mut ids = Ids::new(n);
     // The levels visited, parents first: those holding nodes, and the
     // inner children of a level with classes, where skips it names may merge.
     let mut at = vec![NONE; n];
@@ -444,7 +171,23 @@ pub(crate) fn contract_in(
             heap.push(Reverse((sh.pre[t as usize], t)));
         }
     }
-    let mut work = ContractWork::new(n);
+    // Per entity of the current level (a stored node or a skip the parent
+    // names): its reference, partner hash and partner count.
+    let (mut sstamp, mut sslot) = (Vec::new(), Vec::new());
+    let mut epoch = 0u32;
+    let mut ent: Vec<(Ref, u64, u32)> = Vec::new();
+    let mut order: Vec<u32> = Vec::new();
+    let mut seen: FxHashMap<(u64, u32), u32> = FxHashMap::default();
+    let mut cand: Vec<bool> = Vec::new();
+    let mut occ: Vec<(u32, u32, Ref)> = Vec::new();
+    let mut ctx: Vec<(u32, u32)> = Vec::new();
+    let mut firsts: Vec<u32> = Vec::new();
+    let mut members: Vec<Ref> = Vec::new();
+    // Merged skips sent down to the level where they part: per level, the
+    // groups (entry they merged at, members).
+    let mut pending: FxHashMap<u32, Vec<(u32, Vec<Ref>)>> = FxHashMap::default();
+    let mut names: Option<Names> = None;
+    let mut merged = false;
     while let Some(Reverse((_, c))) = heap.pop() {
         let width = s.levels[c as usize].width() as u32;
         let mut cl = CLv::new(c, width);
@@ -454,24 +197,201 @@ pub(crate) fn contract_in(
         let pe = if p == NONE { NONE } else { at[p as usize] };
         if pe != NONE {
             let pcl = &lvs[pe as usize];
-            work.contract_under_parent(
-                (&s, sh),
-                (c, l, r, here),
-                (p, pcl),
-                &mut cl,
-                (&mut queued, &mut heap),
-                lim,
-            )?;
+            let plvl = &s.levels[p as usize];
+            let (pl, pr) = sh.kids[p as usize];
+            let left = pl == c;
+            let sib = if left { pr } else { pl };
+            let sib_leaf = sh.is_leaf(sib);
+            // Every class of the parent with its pairs.
+            let classes = || {
+                (0..pcl.width)
+                    .filter(|&i| pcl.group_of.is_empty() || pcl.group_of[i as usize] == NONE)
+                    .map(|i| (i, plvl.node(i)))
+                    .chain((0..pcl.groups()).map(|g| (pcl.width + g as u32, pcl.group(g))))
+            };
+            // Partners (One as both literals against a leaf sibling).
+            let partners = |b: Ref| -> [Ref; 2] {
+                if sib_leaf && ix(b) == ONE {
+                    [mk(sib, POS), mk(sib, NEG)]
+                } else {
+                    [b, ZREF]
+                }
+            };
+            epoch += 1;
+            ent.clear();
+            for (k, pairs) in classes() {
+                for &(a, b) in pairs {
+                    let (e, partner) = if left { (a, b) } else { (b, a) };
+                    let id = ids.id_alloc(&s, e, &mut sstamp, &mut sslot, lim)?;
+                    if sstamp[id] != epoch {
+                        sstamp[id] = epoch;
+                        sslot[id] = ent.len() as u32;
+                        lim.try_push(&mut ent, (e, 0, 0))?;
+                    }
+                    let x = &mut ent[sslot[id] as usize];
+                    for q in partners(partner) {
+                        if q != ZREF {
+                            x.1 = x.1.wrapping_add(mix(k, q));
+                            x.2 += 1;
+                        }
+                    }
+                }
+            }
+            // Entities whose hashes agree, confirmed by their partner lists.
+            let mut any = false;
+            if ent.len() > 1 && ent.len() <= 8 {
+                for i in 1..ent.len() {
+                    for j in 0..i {
+                        if (ent[i].1, ent[i].2) == (ent[j].1, ent[j].2) {
+                            if !any {
+                                cand.clear();
+                                lim.try_resize(&mut cand, ent.len(), false)?;
+                                any = true;
+                            }
+                            cand[j] = true;
+                            cand[i] = true;
+                        }
+                    }
+                }
+            } else if ent.len() > 8 {
+                seen.clear();
+                cand.clear();
+                lim.try_resize(&mut cand, ent.len(), false)?;
+                lim.reserve_map(&mut seen, ent.len())?;
+                for (i, x) in ent.iter().enumerate() {
+                    match seen.entry((x.1, x.2)) {
+                        std::collections::hash_map::Entry::Occupied(o) => {
+                            cand[*o.get() as usize] = true;
+                            cand[i] = true;
+                            any = true;
+                        }
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            v.insert(i as u32);
+                        }
+                    }
+                }
+            }
+            if any {
+                order.clear();
+                lim.reserve(&mut order, ent.len())?;
+                order.extend((0..ent.len() as u32).filter(|&i| cand[i as usize]));
+                order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
+                occ.clear();
+                for (k, pairs) in classes() {
+                    for &(a, b) in pairs {
+                        let (e, partner) = if left { (a, b) } else { (b, a) };
+                        let i = sslot[ids.id(e)];
+                        if cand[i as usize] {
+                            for q in partners(partner) {
+                                if q != ZREF {
+                                    lim.try_push(&mut occ, (i, k, q))?;
+                                }
+                            }
+                        }
+                    }
+                }
+                occ.sort_unstable();
+                // Each candidate's partner list.
+                ctx.clear();
+                lim.try_resize(&mut ctx, ent.len(), (0, 0))?;
+                for (j, w) in occ.chunk_by(|x, y| x.0 == y.0).scan(0u32, |o, w| {
+                    let start = *o;
+                    *o += w.len() as u32;
+                    Some((start, w))
+                }) {
+                    ctx[w[0].0 as usize] = (j, j + w.len() as u32);
+                }
+                let list = |i: u32| {
+                    let (a, b) = ctx[i as usize];
+                    occ[a as usize..b as usize].iter().map(|x| (x.1, x.2))
+                };
+                for run in order.chunk_by(|&x, &y| {
+                    (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)
+                }) {
+                    if run.len() < 2 {
+                        continue;
+                    }
+                    // Split the run into groups of equal lists.
+                    firsts.clear();
+                    let mut of: Vec<u32> = Vec::with_capacity(run.len());
+                    for &i in run {
+                        let g = firsts.iter().position(|&f| list(f).eq(list(i)));
+                        of.push(match g {
+                            Some(g) => g as u32,
+                            None => {
+                                lim.try_push(&mut firsts, i)?;
+                                (firsts.len() - 1) as u32
+                            }
+                        });
+                    }
+                    for g in 0..firsts.len() as u32 {
+                        members.clear();
+                        lim.reserve(&mut members, run.len())?;
+                        members.extend(
+                            run.iter()
+                                .zip(&of)
+                                .filter(|x| *x.1 == g)
+                                .map(|x| ent[*x.0 as usize].0),
+                        );
+                        if members.len() < 2 {
+                            continue;
+                        }
+                        merged = true;
+                        if members.iter().all(|&e| vt(e) != c) {
+                            if names.is_none() {
+                                ids.ensure_all(&s);
+                                names = Some(Names::of(&s, &ids, lim)?);
+                            }
+                            let nm = names.as_ref().expect("names were just read");
+                            let v = parts(sh, nm, &ids, c, members.iter().copied());
+                            if v != c {
+                                let mut group = Vec::new();
+                                lim.reserve_exact(&mut group, members.len())?;
+                                group.extend_from_slice(&members);
+                                pending.entry(v).or_default().push((here, group));
+                                let mut u = v;
+                                while u != c && !queued[u as usize] {
+                                    queued[u as usize] = true;
+                                    heap.push(Reverse((sh.pre[u as usize], u)));
+                                    u = sh.parent[u as usize];
+                                }
+                                continue;
+                            }
+                        }
+                        let g = cl.push_group(&s, &members, l, r, lim)?;
+                        lim.reserve_map(&mut cl.chainmap, members.len())?;
+                        for &e in &members {
+                            if vt(e) != c {
+                                cl.chainmap.insert(e, (here, g));
+                            }
+                        }
+                    }
+                }
+            }
+            lim.charge_work(ent.len() as u64 + occ.len() as u64);
         }
-        record_pending_skip_groups(&s, &mut work, &mut lvs, &mut cl, (c, l, r, here), lim)?;
+        // Merged skips sent down here: each group is a class of its own,
+        // since only the levels above name its members.
+        if let Some(groups) = pending.remove(&c) {
+            for (from, group) in groups {
+                let g = cl.push_group(&s, &group, l, r, lim)?;
+                let origin = &mut lvs[from as usize].chainmap;
+                lim.reserve_map(origin, group.len())?;
+                for &e in &group {
+                    origin.insert(e, (here, g));
+                }
+                lim.discard(group);
+            }
+        }
         lim.charge_work(s.levels[c as usize].pairs.len() as u64);
-        if (width > 0 || cl.groups() > 0)
-            && scope.is_none_or(|cone| cone[c as usize] || cl.groups() > 0)
-        {
-            for ch in [l, r] {
-                if !sh.is_leaf(ch) && !queued[ch as usize] {
-                    queued[ch as usize] = true;
-                    heap.push(Reverse((sh.pre[ch as usize], ch)));
+        if width > 0 || cl.groups() > 0 {
+            let descend = scope.is_none_or(|cone| cone[c as usize] || cl.groups() > 0);
+            if descend {
+                for ch in [l, r] {
+                    if !sh.is_leaf(ch) && !queued[ch as usize] {
+                        queued[ch as usize] = true;
+                        heap.push(Reverse((sh.pre[ch as usize], ch)));
+                    }
                 }
             }
         }
@@ -479,8 +399,19 @@ pub(crate) fn contract_in(
         lvs.push(cl);
     }
     lim.check_stop()?;
-    let merged = work.merged;
-    work.discard(lim);
+    for v in [sstamp, sslot, order, firsts] {
+        lim.discard(v);
+    }
+    lim.discard(cand);
+    lim.discard(ent);
+    lim.discard(seen);
+    lim.discard(occ);
+    lim.discard(ctx);
+    lim.discard(members);
+    if let Some(nm) = names {
+        lim.discard(nm.start);
+        lim.discard(nm.levels);
+    }
     if !merged {
         for cl in lvs {
             cl.discard(lim);
@@ -488,99 +419,6 @@ pub(crate) fn contract_in(
         return Ok(s);
     }
     patch_merged(s, lvs, &at, lim)
-}
-
-/// Drain merged skip groups sent down to `c` and record their chainmap entries.
-fn record_pending_skip_groups(
-    s: &SkipForm,
-    work: &mut ContractWork,
-    lvs: &mut [CLv],
-    cl: &mut CLv,
-    (c, l, r, here): (u32, u32, u32, u32),
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    if let Some(groups) = work.pending.remove(&c) {
-        for (from, group) in groups {
-            let g = cl.push_group(s, &group, l, r, lim)?;
-            let origin = &mut lvs[from as usize].chainmap;
-            lim.reserve_map(origin, group.len())?;
-            for &e in &group {
-                origin.insert(e, (here, g));
-            }
-            lim.discard(group);
-        }
-    }
-    Ok(())
-}
-
-/// Mark entities in `ent` whose `(hash, count)` collides with another entity.
-fn mark_hash_candidates(
-    ent: &[(Ref, u64, u32)],
-    cand: &mut Vec<bool>,
-    seen: &mut FxHashMap<(u64, u32), u32>,
-    lim: &Limits,
-) -> Result<bool, OperationError> {
-    let mut any = false;
-    if ent.len() > 1 && ent.len() <= 8 {
-        for i in 1..ent.len() {
-            for j in 0..i {
-                if (ent[i].1, ent[i].2) == (ent[j].1, ent[j].2) {
-                    if !any {
-                        cand.clear();
-                        lim.try_resize(cand, ent.len(), false)?;
-                        any = true;
-                    }
-                    cand[j] = true;
-                    cand[i] = true;
-                }
-            }
-        }
-    } else if ent.len() > 8 {
-        seen.clear();
-        cand.clear();
-        lim.try_resize(cand, ent.len(), false)?;
-        lim.reserve_map(seen, ent.len())?;
-        for (i, x) in ent.iter().enumerate() {
-            match seen.entry((x.1, x.2)) {
-                std::collections::hash_map::Entry::Occupied(o) => {
-                    cand[*o.get() as usize] = true;
-                    cand[i] = true;
-                    any = true;
-                }
-                std::collections::hash_map::Entry::Vacant(v) => {
-                    v.insert(i as u32);
-                }
-            }
-        }
-    }
-    Ok(any)
-}
-
-/// Order hash-collision candidates by `(hash, count)` and index each
-/// candidate's sorted partner-occurrence range in `ctx`.
-fn sort_candidate_contexts(
-    ent: &[(Ref, u64, u32)],
-    cand: &[bool],
-    order: &mut Vec<u32>,
-    occ: &mut [(u32, u32, Ref)],
-    ctx: &mut Vec<(u32, u32)>,
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    order.clear();
-    lim.reserve(order, ent.len())?;
-    order.extend((0..ent.len() as u32).filter(|&i| cand[i as usize]));
-    order.sort_unstable_by_key(|&i| (ent[i as usize].1, ent[i as usize].2));
-    occ.sort_unstable();
-    ctx.clear();
-    lim.try_resize(ctx, ent.len(), (0, 0))?;
-    for (j, w) in occ.chunk_by(|x, y| x.0 == y.0).scan(0u32, |o, w| {
-        let start = *o;
-        *o += w.len() as u32;
-        Some((start, w))
-    }) {
-        ctx[w[0].0 as usize] = (j, j + w.len() as u32);
-    }
-    Ok(())
 }
 
 /// Patch `s` from the leaves up with the merged groups and rewrites in `lvs`,
@@ -593,16 +431,39 @@ fn patch_merged(
 ) -> Result<SkipForm, OperationError> {
     let shape = s.shape.clone();
     let sh = &*shape;
+    // A side read at `d` resolves through a group a skip joined there, else
+    // through its node's result.
+    let resolve = |lvs: &Vec<CLv>, d: u32, x: Ref| -> Ref {
+        if !sh.is_leaf(d) && vt(x) != d {
+            let e = at[d as usize];
+            if e != NONE
+                && !lvs[e as usize].chainmap.is_empty()
+                && let Some(&(to, g)) = lvs[e as usize].chainmap.get(&x)
+            {
+                return lvs[to as usize].gres[g as usize];
+            }
+        }
+        let v = vt(x);
+        if !sh.is_leaf(v) {
+            let e = at[v as usize];
+            if e != NONE {
+                let rm = &lvs[e as usize].rm;
+                if !rm.is_empty() && rm[ix(x) as usize] != KEEP {
+                    return rm[ix(x) as usize];
+                }
+            }
+        }
+        x
+    };
     let mut buf: Vec<(Ref, Ref)> = Vec::new();
     for e in (0..lvs.len()).rev() {
         let c = lvs[e].level;
         let (l, r) = sh.kids[c as usize];
         let width = lvs[e].width as usize;
-        let changes = |lvs: &[CLv], lvl: &SLevel, i: usize| {
-            lvl.node(i as u32).iter().any(|&(a, b)| {
-                resolve_patched_ref(sh, lvs, at, l, a) != a
-                    || resolve_patched_ref(sh, lvs, at, r, b) != b
-            })
+        let changes = |lvs: &Vec<CLv>, lvl: &SLevel, i: usize| {
+            lvl.node(i as u32)
+                .iter()
+                .any(|&(a, b)| resolve(lvs, l, a) != a || resolve(lvs, r, b) != b)
         };
         let lvl = &s.levels[c as usize];
         let grouped = |i: usize| !lvs[e].group_of.is_empty() && lvs[e].group_of[i] != NONE;
@@ -618,14 +479,14 @@ fn patch_merged(
             if !grouped(i) && changes(&lvs, lvl, i) {
                 buf.clear();
                 lim.reserve(&mut buf, node.len())?;
-                buf.extend(node.iter().map(|&(a, b)| {
-                    (
-                        resolve_patched_ref(sh, &lvs, at, l, a),
-                        resolve_patched_ref(sh, &lvs, at, r, b),
-                    )
-                }));
+                buf.extend(
+                    node.iter()
+                        .map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))),
+                );
                 match normalize(sh, c, &mut buf) {
-                    Err(t) => *x = t,
+                    Err(t) => {
+                        *x = t;
+                    }
                     Ok(()) => {
                         out.push(&buf, lim)?;
                         continue;
@@ -634,7 +495,25 @@ fn patch_merged(
             }
             out.push(node, lim)?;
         }
-        let gres = build_patched_group_results((sh, c), (&lvs, at, e), &mut out, &mut buf, lim)?;
+        let mut gres = Vec::new();
+        lim.reserve_exact(&mut gres, lvs[e].groups())?;
+        for g in 0..lvs[e].groups() {
+            buf.clear();
+            let group = lvs[e].group(g);
+            lim.reserve(&mut buf, 2 * group.len())?;
+            buf.extend(
+                group
+                    .iter()
+                    .map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))),
+            );
+            // Merged members can repeat a pair.
+            buf.sort_unstable();
+            buf.dedup();
+            gres.push(match normalize(sh, c, &mut buf) {
+                Err(t) => t,
+                Ok(()) => mk(c, out.push(&buf, lim)?),
+            });
+        }
         for (x, &g) in rm.iter_mut().zip(&lvs[e].group_of) {
             if g != NONE {
                 *x = gres[g as usize];
@@ -645,7 +524,7 @@ fn patch_merged(
         lim.release_bytes(s.levels[c as usize].bytes());
         s.levels[c as usize] = out;
     }
-    s.out = resolve_patched_ref(sh, &lvs, at, sh.root, s.out);
+    s.out = resolve(&lvs, sh.root, s.out);
     lim.discard(buf);
     let visited: Vec<u32> = lvs.iter().map(|l| l.level).collect();
     for cl in lvs {
@@ -653,65 +532,6 @@ fn patch_merged(
     }
     s.collect_in(visited, lim)?;
     Ok(s)
-}
-
-/// Resolve a side reference `x` read at `d` through any skip-joined group at `d`,
-/// or else through its node's patched result.
-#[inline]
-fn resolve_patched_ref(sh: &Shape, lvs: &[CLv], at: &[u32], d: u32, x: Ref) -> Ref {
-    if !sh.is_leaf(d) && vt(x) != d {
-        let e = at[d as usize];
-        if e != NONE
-            && !lvs[e as usize].chainmap.is_empty()
-            && let Some(&(to, g)) = lvs[e as usize].chainmap.get(&x)
-        {
-            return lvs[to as usize].gres[g as usize];
-        }
-    }
-    let v = vt(x);
-    if !sh.is_leaf(v) {
-        let e = at[v as usize];
-        if e != NONE {
-            let rm = &lvs[e as usize].rm;
-            if !rm.is_empty() && rm[ix(x) as usize] != KEEP {
-                return rm[ix(x) as usize];
-            }
-        }
-    }
-    x
-}
-
-/// Normalize and push each merged twin group of `lvs[e]` into `out`, returning
-/// each group's resolved reference.
-fn build_patched_group_results(
-    (sh, c): (&Shape, u32),
-    (lvs, at, e): (&[CLv], &[u32], usize),
-    out: &mut SLevel,
-    buf: &mut Vec<(Ref, Ref)>,
-    lim: &Limits,
-) -> Result<Vec<Ref>, OperationError> {
-    let (l, r) = sh.kids[c as usize];
-    let mut gres = Vec::new();
-    lim.reserve_exact(&mut gres, lvs[e].groups())?;
-    for g in 0..lvs[e].groups() {
-        buf.clear();
-        let group = lvs[e].group(g);
-        lim.reserve(buf, 2 * group.len())?;
-        buf.extend(group.iter().map(|&(a, b)| {
-            (
-                resolve_patched_ref(sh, lvs, at, l, a),
-                resolve_patched_ref(sh, lvs, at, r, b),
-            )
-        }));
-        // Merged members can repeat a pair.
-        buf.sort_unstable();
-        buf.dedup();
-        gres.push(match normalize(sh, c, buf) {
-            Err(t) => t,
-            Ok(()) => mk(c, out.push(buf, lim)?),
-        });
-    }
-    Ok(gres)
 }
 
 /// Dense numbers for a diagram's references: stored node `i` of level `t`

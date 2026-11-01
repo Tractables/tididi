@@ -229,7 +229,30 @@ impl Products<'_> {
         let mut out: smallvec::SmallVec<[ChildPair; 8]> = smallvec::SmallVec::new();
         let mut same = true;
         for pa in &fa {
-            same &= self.product_pair_candidates(l, r, pa, gb, sides.as_deref(), &mut out)?;
+            let mut hits = 0;
+            let cands: smallvec::SmallVec<[u32; 8]> = match &sides {
+                Some(by) => match self.meeting(l, r, pa, by)? {
+                    Some(js) => js.iter().copied().collect(),
+                    None => (0..gb.len() as u32).collect(),
+                },
+                None => (0..gb.len() as u32).collect(),
+            };
+            self.work += cands.len() as u64;
+            for &j in &cands {
+                let pb = &gb[j as usize];
+                let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
+                if cl == DEAD {
+                    continue;
+                }
+                let cr = self.product(r, pa.right.raw(), pb.right.raw())?;
+                if cr == DEAD {
+                    continue;
+                }
+                hits += 1;
+                same &= cl == pa.left.raw() && cr == pa.right.raw();
+                out.push(ChildPair::new(NodeIdx(cl), NodeIdx(cr)));
+            }
+            same &= hits == 1;
         }
         let done = if out.is_empty() {
             DEAD
@@ -242,42 +265,6 @@ impl Products<'_> {
         };
         self.memo[t.idx()].insert(key, done);
         Ok(done)
-    }
-
-    fn product_pair_candidates(
-        &mut self,
-        l: VtreeIdx,
-        r: VtreeIdx,
-        pa: &ChildPair,
-        gb: &[ChildPair],
-        sides: Option<&GSides>,
-        out: &mut smallvec::SmallVec<[ChildPair; 8]>,
-    ) -> Result<bool, OperationError> {
-        let mut hits = 0;
-        let mut same = true;
-        let cands: smallvec::SmallVec<[u32; 8]> = match sides {
-            Some(by) => match self.meeting(l, r, pa, by)? {
-                Some(js) => js.iter().copied().collect(),
-                None => (0..gb.len() as u32).collect(),
-            },
-            None => (0..gb.len() as u32).collect(),
-        };
-        self.work += cands.len() as u64;
-        for &j in &cands {
-            let pb = &gb[j as usize];
-            let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
-            if cl == DEAD {
-                continue;
-            }
-            let cr = self.product(r, pa.right.raw(), pb.right.raw())?;
-            if cr == DEAD {
-                continue;
-            }
-            hits += 1;
-            same &= cl == pa.left.raw() && cr == pa.right.raw();
-            out.push(ChildPair::new(NodeIdx(cl), NodeIdx(cr)));
-        }
-        Ok(same && hits == 1)
     }
 
     /// `g`'s node `b` at level `t` indexed by its pairs' sides, built on its
@@ -684,7 +671,17 @@ fn block_products(
         };
         let (sl, sr) = (side(&mut split, l), side(&mut split, r));
         // `g`'s pairs at `u` by their sides; at `t`, `b`'s alone.
-        let table = g_pair_table(lim, g.level(u), (u == t).then_some(b))?;
+        let gl = g.level(u);
+        let mut table: FxHashMap<u64, u32> = FxHashMap::default();
+        lim.reserve_map(&mut table, gl.live_pairs())?;
+        for i in 0..gl.node_count() {
+            if u == t && i as u32 != b {
+                continue;
+            }
+            for p in gl.pairs_iter_of_idx(i) {
+                table.insert(p.key(), i as u32);
+            }
+        }
         let level = &f.levels[u.idx()];
         let width = level.node_count();
         let mut st = Settle {
@@ -697,7 +694,59 @@ fn block_products(
         };
         lim.reserve_exact(&mut st.start, width + 1)?;
         lim.try_push(&mut st.made_at, 0)?;
-        let work = settle_level_hits(lim, level, (&sl, &sr), &table, &mut st)?;
+        let mut refused = None;
+        let mut cur: Option<usize> = None;
+        let mut read = 0u32;
+        let mut work = 0u64;
+        let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
+        level.for_each_node_pair(|x, p| {
+            if refused.is_some() {
+                return;
+            }
+            if cur != Some(x) {
+                if let Some(a) = cur
+                    && let Err(e) = st.node(lim, a, read)
+                {
+                    refused = Some(e);
+                    return;
+                }
+                cur = Some(x);
+                read = 0;
+            }
+            let (pl, pr) = (p.left.raw(), p.right.raw());
+            let (lefts, rights) = (pieces_of(&sl, pl, &mut lb), pieces_of(&sr, pr, &mut rb));
+            for &(bl, cl) in lefts {
+                for &(br, cr) in rights {
+                    if let Some(&bn) = table.get(&((u64::from(bl) << 32) | u64::from(br)))
+                        && let Err(e) = lim.try_push(
+                            &mut st.hits,
+                            (
+                                bn,
+                                read,
+                                ChildPair::new(NodeIdx(cl), NodeIdx(cr)),
+                                cl == pl && cr == pr,
+                            ),
+                        )
+                    {
+                        refused = Some(e);
+                        return;
+                    }
+                }
+            }
+            read += 1;
+            // The pair read, and a probe of `g`'s table per pair of its
+            // sides' products.
+            work += 1 + (lefts.len() * rights.len()) as u64;
+        });
+        if let Some(e) = refused {
+            return Err(e);
+        }
+        if let Some(a) = cur {
+            st.node(lim, a, read)?;
+        }
+        while st.start.len() < width + 1 {
+            lim.try_push(&mut st.start, st.pieces.len() as u32)?;
+        }
         gate.poll(work)?;
         drop((sl, sr));
         let made = st.made_at.len() - 1;
@@ -730,90 +779,6 @@ fn block_products(
     }
     gate.flush()?;
     Ok(to)
-}
-
-/// Index `gl`'s pairs by their packed child key `p.key() -> node_idx` (or only
-/// node `only` when `Some(only)`).
-fn g_pair_table(
-    lim: &Limits,
-    gl: &crate::diagram::TddLevel,
-    only: Option<u32>,
-) -> Result<FxHashMap<u64, u32>, OperationError> {
-    let mut table: FxHashMap<u64, u32> = FxHashMap::default();
-    lim.reserve_map(&mut table, gl.live_pairs())?;
-    for i in 0..gl.node_count() {
-        if only.is_some_and(|b| i as u32 != b) {
-            continue;
-        }
-        for p in gl.pairs_iter_of_idx(i) {
-            table.insert(p.key(), i as u32);
-        }
-    }
-    Ok(table)
-}
-
-/// Scan `level`'s node pairs against child splits `(sl, sr)` and `table`,
-/// settling each node's hits into `st`.
-fn settle_level_hits(
-    lim: &Limits,
-    level: &crate::diagram::TddLevel,
-    (sl, sr): (&Split, &Split),
-    table: &FxHashMap<u64, u32>,
-    st: &mut Settle,
-) -> Result<u64, OperationError> {
-    let width = level.node_count();
-    let mut refused = None;
-    let mut cur: Option<usize> = None;
-    let mut read = 0u32;
-    let mut work = 0u64;
-    let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
-    level.for_each_node_pair(|x, p| {
-        if refused.is_some() {
-            return;
-        }
-        if cur != Some(x) {
-            if let Some(a) = cur
-                && let Err(e) = st.node(lim, a, read)
-            {
-                refused = Some(e);
-                return;
-            }
-            cur = Some(x);
-            read = 0;
-        }
-        let (pl, pr) = (p.left.raw(), p.right.raw());
-        let (lefts, rights) = (pieces_of(sl, pl, &mut lb), pieces_of(sr, pr, &mut rb));
-        for &(bl, cl) in lefts {
-            for &(br, cr) in rights {
-                if let Some(&bn) = table.get(&((u64::from(bl) << 32) | u64::from(br)))
-                    && let Err(e) = lim.try_push(
-                        &mut st.hits,
-                        (
-                            bn,
-                            read,
-                            ChildPair::new(NodeIdx(cl), NodeIdx(cr)),
-                            cl == pl && cr == pr,
-                        ),
-                    )
-                {
-                    refused = Some(e);
-                    return;
-                }
-            }
-        }
-        read += 1;
-        work += 1 + (lefts.len() * rights.len()) as u64;
-    });
-    if let Some(e) = refused {
-        return Err(e);
-    }
-    if let Some(a) = cur {
-        st.node(lim, a, read)?;
-    }
-    while st.start.len() < width + 1 {
-        lim.try_push(&mut st.start, st.pieces.len() as u32)?;
-    }
-    Ok(work)
 }
 
 /// The nodes of branching level `t` and of the levels under it that no node
@@ -869,7 +834,33 @@ fn prune_under(
         }
     }
     let mut gate = lim.gate();
-    let reached = mark_reached_under(lim, vtree, f, &order, t, to, &mut gate)?;
+    // What the products reach, from `t` down.
+    let mut reached: Vec<Vec<bool>> = charged(lim, vtree.num_nodes(), Vec::new)?;
+    for &s in &order {
+        lim.try_resize(&mut reached[s.idx()], f.levels[s.idx()].node_count(), false)?;
+    }
+    for &x in to.iter().filter(|&&x| x != DEAD) {
+        reached[t.idx()][x as usize] = true;
+    }
+    for &s in &order {
+        let (l, r) = vtree.children(s);
+        let (inner_l, inner_r) = (!vtree.node(l).is_leaf(), !vtree.node(r).is_leaf());
+        let level = &f.levels[s.idx()];
+        for i in 0..level.node_count() {
+            if !reached[s.idx()][i] {
+                continue;
+            }
+            for p in level.pairs_iter_of_idx(i) {
+                if inner_l {
+                    reached[l.idx()][p.left.raw() as usize] = true;
+                }
+                if inner_r {
+                    reached[r.idx()][p.right.raw() as usize] = true;
+                }
+            }
+        }
+        gate.poll(level.node_count() as u64)?;
+    }
     // Children before parents: each level's references rewritten through
     // its children's new indices, and its unreached nodes dropped.
     let mut renumbered: Vec<Moved> = charged(lim, vtree.num_nodes(), || Moved::Same)?;
@@ -879,11 +870,12 @@ fn prune_under(
         lim.reserve_exact(&mut new, keep.len())?;
         let mut next = 0u32;
         for &k in keep {
-            new.push(if k {
-                next += 1;
-                next - 1
-            } else {
-                DEAD
+            new.push(match k {
+                true => {
+                    next += 1;
+                    next - 1
+                }
+                false => DEAD,
             });
         }
         let (l, r) = vtree.children(s);
@@ -925,46 +917,6 @@ fn prune_under(
         *x = moved.at(*x);
     }
     Ok(())
-}
-
-/// Mark the nodes of `f` reachable from the live entries of `to` at `t` down
-/// through `order`.
-fn mark_reached_under(
-    lim: &Limits,
-    vtree: &Vtree,
-    f: &Tdd,
-    order: &[VtreeIdx],
-    t: VtreeIdx,
-    to: &[u32],
-    gate: &mut crate::limits::PollGate<'_>,
-) -> Result<Vec<Vec<bool>>, OperationError> {
-    let mut reached: Vec<Vec<bool>> = charged(lim, vtree.num_nodes(), Vec::new)?;
-    for &s in order {
-        lim.try_resize(&mut reached[s.idx()], f.levels[s.idx()].node_count(), false)?;
-    }
-    for &x in to.iter().filter(|&&x| x != DEAD) {
-        reached[t.idx()][x as usize] = true;
-    }
-    for &s in order {
-        let (l, r) = vtree.children(s);
-        let (inner_l, inner_r) = (!vtree.node(l).is_leaf(), !vtree.node(r).is_leaf());
-        let level = &f.levels[s.idx()];
-        for i in 0..level.node_count() {
-            if !reached[s.idx()][i] {
-                continue;
-            }
-            for p in level.pairs_iter_of_idx(i) {
-                if inner_l {
-                    reached[l.idx()][p.left.raw() as usize] = true;
-                }
-                if inner_r {
-                    reached[r.idx()][p.right.raw() as usize] = true;
-                }
-            }
-        }
-        gate.poll(level.node_count() as u64)?;
-    }
-    Ok(reached)
 }
 
 /// The implementation behind [`Engine::and_in_place`]: the products below
@@ -1017,57 +969,84 @@ pub(crate) fn and_in_place_way(
     if role[root.idx()] == Role::True {
         return Ok(f);
     }
+    // What a later prune may walk: levels whose nodes the rewrite may leave
+    // unnamed by their parent level, read before any edit forgets them.
+    // Whether every level was closed before the edits, which mark the
+    // levels they change for the close at the end.
     let closed = f.levels.is_closed();
-    let mut loose = snapshot_loose_levels(lim, &f)?;
+    let mut loose: Option<Vec<u32>> = match f.levels.is_canonical(f.output) {
+        true => Some(Vec::new()),
+        false => match f.dirty.loose() {
+            Some(listed) => {
+                let mut copy = Vec::new();
+                lim.reserve_exact(&mut copy, listed.len())?;
+                copy.extend_from_slice(listed);
+                Some(copy)
+            }
+            None => None,
+        },
+    };
 
     // The products where `g` branches: every original node of `f` there.
     let mut moved: Vec<Moved> = charged(lim, n, || Moved::Same)?;
     let mut gate = lim.gate();
     let mut branched: Vec<VtreeIdx> = Vec::new();
-    let grown = compute_branch_products(
-        (lim, &vtree),
-        (&mut f, g),
-        (&top, &role),
-        (prune, grid),
-        (&mut moved, &mut loose, &mut branched),
-        &mut gate,
-    )?;
-    gate.flush()?;
-    mark_and_prune_branched(eng, &mut f, &vtree, &grown, branched, &mut moved)?;
-
-    // The spine, children before parents: each pair rewritten through its
-    // children's moves, a pair naming a false child dropped, and a node left
-    // with none dropped and the level renumbered.
-    for (t, l, r) in vtree.internal_bottomup() {
-        if matches!(role[t.idx()], Role::Spine(_)) {
-            rewrite_spine_level(
-                lim,
-                &mut f,
-                &vtree,
-                (t, l, r),
-                &mut moved,
-                &mut loose,
-                &mut gate,
-            )?;
+    let grown = {
+        let mut products = Products {
+            lim,
+            vtree: &vtree,
+            f: &mut f,
+            g,
+            top: &top,
+            memo: charged(lim, n, FxHashMap::default)?,
+            g_pairs: charged(lim, n, || None)?,
+            inside: charged(lim, n, Vec::new)?,
+            grown: charged(lim, n, || false)?,
+            work: 0,
+            grid: grid.unwrap_or(GRID_PAIRS),
+            sides: FxHashMap::default(),
+        };
+        for t in vtree.bottomup() {
+            let Role::Branch(b) = role[t.idx()] else {
+                continue;
+            };
+            if vtree.node(t).is_leaf() {
+                let mut to = Vec::new();
+                lim.reserve_exact(&mut to, 3)?;
+                to.extend(
+                    [ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]
+                        .iter()
+                        .map(|a| leaf_product(a.0, b)),
+                );
+                moved[t.idx()] = Moved::To(to);
+                continue;
+            }
+            let to = match grid {
+                None => block_products(lim, products.f, g, &top, t, b, &mut products.grown)?,
+                Some(_) => {
+                    let width = products.f.levels[t.idx()].node_count() as u32;
+                    let mut to = Vec::new();
+                    lim.reserve_exact(&mut to, width as usize)?;
+                    for x in 0..width {
+                        to.push(products.product(t, x, b)?);
+                        gate.poll(std::mem::take(&mut products.work))?;
+                    }
+                    to
+                }
+            };
+            moved[t.idx()] = Moved::To(to);
+            if let Some(loose) = loose.as_mut() {
+                lim.try_push(loose, t.0)?;
+            }
+            if !prune {
+                lim.try_push(&mut branched, t)?;
+            }
         }
-    }
+        products.grown
+    };
     gate.flush()?;
-    let out_local = moved[root.idx()].at(f.output.local.0);
-    finish_in_place(eng, f, out_local, loose, prune, closed)
-}
-
-/// Mark grown levels changed/invalidated and prune each unpruned branching
-/// level's region on its own.
-fn mark_and_prune_branched(
-    eng: &Engine,
-    f: &mut Tdd,
-    vtree: &Vtree,
-    grown: &[bool],
-    branched: Vec<VtreeIdx>,
-    moved: &mut [Moved],
-) -> Result<(), OperationError> {
-    for (t, &grew) in grown.iter().enumerate() {
-        if grew {
+    for (t, grew) in grown.iter().enumerate() {
+        if *grew {
             let t = VtreeIdx(t as u32);
             f.levels.mark_changed(t);
             f.try_invalidate(eng, t)?;
@@ -1078,21 +1057,21 @@ fn mark_and_prune_branched(
         let Moved::To(to) = &mut moved[t.idx()] else {
             unreachable!("a branching level maps its nodes")
         };
-        prune_under(eng, f, vtree, t, to)?;
+        prune_under(eng, &mut f, &vtree, t, to)?;
     }
-    Ok(())
-}
 
-/// Settle `f`'s output, loose-level list, and final prune/close after the
-/// spine rewrite of [`and_in_place_way`].
-fn finish_in_place(
-    eng: &Engine,
-    mut f: Tdd,
-    out: u32,
-    loose: Option<Vec<u32>>,
-    prune: bool,
-    closed: bool,
-) -> Result<Tdd, OperationError> {
+    // The spine, children before parents: each pair rewritten through its
+    // children's moves, a pair naming a false child dropped, and a node left
+    // with none dropped and the level renumbered. A level held as a
+    // description is stored first, as `prune_under` stores one, and the
+    // close describes it again where it fits.
+    for (t, _, _) in vtree.internal_bottomup() {
+        if matches!(role[t.idx()], Role::Spine(_)) {
+            rewrite_spine_level(lim, &mut f, &vtree, t, &mut moved, &mut loose, &mut gate)?;
+        }
+    }
+    gate.flush()?;
+    let out = moved[root.idx()].at(f.output.local.0);
     if out == DEAD {
         // Unsatisfiable: the canonical false, not a root over dead levels.
         return crate::build::constant_like(eng, &f, false);
@@ -1108,84 +1087,6 @@ fn finish_in_place(
         false => f.close_marked_levels(closed),
     }
     Ok(f)
-}
-
-/// Snapshot `f`'s loose-level list before any in-place edits mutate `f.dirty`.
-fn snapshot_loose_levels(lim: &Limits, f: &Tdd) -> Result<Option<Vec<u32>>, OperationError> {
-    if f.levels.is_canonical(f.output) {
-        return Ok(Some(Vec::new()));
-    }
-    let Some(listed) = f.dirty.loose() else {
-        return Ok(None);
-    };
-    let mut copy = Vec::new();
-    lim.reserve_exact(&mut copy, listed.len())?;
-    copy.extend_from_slice(listed);
-    Ok(Some(copy))
-}
-
-/// Compute products at every [`Role::Branch`] level of `g`, returning the
-/// per-level `grown` flags.
-fn compute_branch_products(
-    (lim, vtree): (&Limits, &Vtree),
-    (f, g): (&mut Tdd, &Tdd),
-    (top, role): (&[Option<u32>], &[Role]),
-    (prune, grid): (bool, Option<usize>),
-    (moved, loose, branched): (&mut [Moved], &mut Option<Vec<u32>>, &mut Vec<VtreeIdx>),
-    gate: &mut crate::limits::PollGate<'_>,
-) -> Result<Vec<bool>, OperationError> {
-    let n = vtree.num_nodes();
-    let mut products = Products {
-        lim,
-        vtree,
-        f,
-        g,
-        top,
-        memo: charged(lim, n, FxHashMap::default)?,
-        g_pairs: charged(lim, n, || None)?,
-        inside: charged(lim, n, Vec::new)?,
-        grown: charged(lim, n, || false)?,
-        work: 0,
-        grid: grid.unwrap_or(GRID_PAIRS),
-        sides: FxHashMap::default(),
-    };
-    for t in vtree.bottomup() {
-        let Role::Branch(b) = role[t.idx()] else {
-            continue;
-        };
-        if vtree.node(t).is_leaf() {
-            let mut to = Vec::new();
-            lim.reserve_exact(&mut to, 3)?;
-            to.extend(
-                [ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]
-                    .iter()
-                    .map(|a| leaf_product(a.0, b)),
-            );
-            moved[t.idx()] = Moved::To(to);
-            continue;
-        }
-        let to = match grid {
-            None => block_products(lim, products.f, g, top, t, b, &mut products.grown)?,
-            Some(_) => {
-                let width = products.f.levels[t.idx()].node_count() as u32;
-                let mut to = Vec::new();
-                lim.reserve_exact(&mut to, width as usize)?;
-                for x in 0..width {
-                    to.push(products.product(t, x, b)?);
-                    gate.poll(std::mem::take(&mut products.work))?;
-                }
-                to
-            }
-        };
-        moved[t.idx()] = Moved::To(to);
-        if let Some(loose) = loose.as_mut() {
-            lim.try_push(loose, t.0)?;
-        }
-        if !prune {
-            lim.try_push(branched, t)?;
-        }
-    }
-    Ok(products.grown)
 }
 
 /// Classify `g`'s levels into [`Role::True`], [`Role::Spine`], and
@@ -1228,11 +1129,12 @@ fn rewrite_spine_level(
     lim: &Limits,
     f: &mut Tdd,
     vtree: &Vtree,
-    (t, l, r): (VtreeIdx, VtreeIdx, VtreeIdx),
+    t: VtreeIdx,
     moved: &mut [Moved],
     loose: &mut Option<Vec<u32>>,
     gate: &mut crate::limits::PollGate,
 ) -> Result<(), OperationError> {
+    let (l, r) = vtree.children(t);
     let (ml, mr) = (&moved[l.idx()], &moved[r.idx()]);
     let emptied = f.rewrite_level(t, |level| {
         rewrite_level_pairs(lim, level, |_, _, _, p| {

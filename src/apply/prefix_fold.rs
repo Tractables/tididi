@@ -823,8 +823,6 @@ struct Fold<'a, M: FoldMonoid> {
     reached_at: FxHashMap<u32, u32>,
 }
 
-type PathGroups = (Vec<[u32; 2]>, Vec<[u32; 4]>);
-
 impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// The id of `v`.
     fn intern(&mut self, v: M::Value) -> Result<u32, OperationError> {
@@ -993,10 +991,60 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// each operand holds on the path side.
     fn path_level(&mut self, at: usize) -> Result<(), OperationError> {
         let (u, x, right) = self.layout.path[at];
-        let vtree = self.ops[0].vtree();
+        let ops = self.ops;
+        let vtree = ops[0].vtree();
         let leaf_key = vtree.node(x).is_leaf();
         let lim = self.lim;
-        let (groups, spans) = self.collect_path_groups(at, (u, right, leaf_key))?;
+        // Per state and operand, its groups: a key and the set it leads to.
+        let mut groups: Vec<[u32; 2]> = Vec::new();
+        let mut spans: Vec<[u32; 4]> = Vec::new();
+        let mut scratch: Vec<[u32; 2]> = Vec::new();
+        let mut buf: Vec<u32> = Vec::new();
+        {
+            let (here, below) = self.levels.split_at_mut(at + 1);
+            let (here, below) = (&here[at], &mut below[0]);
+            lim.reserve(&mut spans, here.states.len())?;
+            for state in &here.states {
+                let mut span = [0u32; 4];
+                for side in 0..2 {
+                    let start = groups.len();
+                    let nodes = here.sets[side].get(state[side]);
+                    scratch.clear();
+                    for &n in nodes {
+                        for pair in ops[side].level(u).pairs_iter_of_idx(n as usize) {
+                            self.gate.poll(1)?;
+                            let (key, next) = match right {
+                                true => (pair.left.raw(), pair.right.raw()),
+                                false => (pair.right.raw(), pair.left.raw()),
+                            };
+                            // A ⊤ leaf is both of its literals.
+                            if leaf_key && key == ONE_LEAF_IDX.0 {
+                                lim.try_push(&mut scratch, [POS_LEAF_IDX.0, next])?;
+                                lim.try_push(&mut scratch, [NEG_LEAF_IDX.0, next])?;
+                            } else {
+                                lim.try_push(&mut scratch, [key, next])?;
+                            }
+                        }
+                    }
+                    scratch.sort_unstable();
+                    scratch.dedup();
+                    let mut i = 0;
+                    while i < scratch.len() {
+                        let key = scratch[i][0];
+                        buf.clear();
+                        while i < scratch.len() && scratch[i][0] == key {
+                            lim.try_push(&mut buf, scratch[i][1])?;
+                            i += 1;
+                        }
+                        let set = below.sets[side].intern(lim, &buf)?;
+                        lim.try_push(&mut groups, [key, set])?;
+                    }
+                    span[2 * side] = start as u32;
+                    span[2 * side + 1] = (groups.len() - start) as u32;
+                }
+                spans.push(span);
+            }
+        }
         let range = |span: &[u32; 4], side: usize| {
             let start = span[2 * side] as usize;
             start..start + span[2 * side + 1] as usize
@@ -1067,64 +1115,6 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         Ok(())
     }
 
-    /// Group each state at path level `at` by its key-side child for both
-    /// operands, interning each group's path-side node set into `levels[at + 1]`.
-    fn collect_path_groups(
-        &mut self,
-        at: usize,
-        (u, right, leaf_key): (VtreeIdx, bool, bool),
-    ) -> Result<PathGroups, OperationError> {
-        let (lim, ops) = (self.lim, self.ops);
-        let mut groups: Vec<[u32; 2]> = Vec::new();
-        let mut spans: Vec<[u32; 4]> = Vec::new();
-        let mut scratch: Vec<[u32; 2]> = Vec::new();
-        let mut buf: Vec<u32> = Vec::new();
-        let (here, below) = self.levels.split_at_mut(at + 1);
-        let (here, below) = (&here[at], &mut below[0]);
-        lim.reserve(&mut spans, here.states.len())?;
-        for state in &here.states {
-            let mut span = [0u32; 4];
-            for side in 0..2 {
-                let start = groups.len();
-                let nodes = here.sets[side].get(state[side]);
-                scratch.clear();
-                for &n in nodes {
-                    for pair in ops[side].level(u).pairs_iter_of_idx(n as usize) {
-                        self.gate.poll(1)?;
-                        let (key, next) = match right {
-                            true => (pair.left.raw(), pair.right.raw()),
-                            false => (pair.right.raw(), pair.left.raw()),
-                        };
-                        // A ⊤ leaf is both of its literals.
-                        if leaf_key && key == ONE_LEAF_IDX.0 {
-                            lim.try_push(&mut scratch, [POS_LEAF_IDX.0, next])?;
-                            lim.try_push(&mut scratch, [NEG_LEAF_IDX.0, next])?;
-                        } else {
-                            lim.try_push(&mut scratch, [key, next])?;
-                        }
-                    }
-                }
-                scratch.sort_unstable();
-                scratch.dedup();
-                let mut i = 0;
-                while i < scratch.len() {
-                    let key = scratch[i][0];
-                    buf.clear();
-                    while i < scratch.len() && scratch[i][0] == key {
-                        lim.try_push(&mut buf, scratch[i][1])?;
-                        i += 1;
-                    }
-                    let set = below.sets[side].intern(lim, &buf)?;
-                    lim.try_push(&mut groups, [key, set])?;
-                }
-                span[2 * side] = start as u32;
-                span[2 * side + 1] = (groups.len() - start) as u32;
-            }
-            spans.push(span);
-        }
-        Ok((groups, spans))
-    }
-
     /// The products of path level `at`'s key side `x`: per internal node of
     /// its subtree, children first, every satisfiable pair of a node each
     /// operand reaches from `roots` (its nodes at `x`), with its pairs below.
@@ -1169,7 +1159,25 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 found.clear();
                 for pair in ops[0].level(t).pairs_iter_of_idx(na as usize) {
                     let (l, r) = (pair.left.raw(), pair.right.raw());
-                    collect_side_products(lim, below, cl, l, &mut lefts)?;
+                    // The products on the left, each with its other node.
+                    lefts.clear();
+                    match cl {
+                        None => {
+                            for lit in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
+                                if CONJOIN_GRID[l as usize][lit as usize] != NO_PRODUCT {
+                                    lim.try_push(
+                                        &mut lefts,
+                                        [lit, CONJOIN_GRID[l as usize][lit as usize]],
+                                    )?;
+                                }
+                            }
+                        }
+                        Some(c) => {
+                            for p in below[c].run(l) {
+                                lim.try_push(&mut lefts, [below[c].keys[p][1], p as u32])?;
+                            }
+                        }
+                    }
                     let rights = match cr {
                         None => 3,
                         Some(c) => below[c].run(r).len(),
@@ -1184,19 +1192,74 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         if width == 0 {
                             continue;
                         }
-                        let run = &b_pairs[first..first + width];
-                        join_right_products(
-                            lim,
-                            &mut self.gate,
-                            below,
-                            cr,
-                            (r, pl, rights),
-                            run,
-                            &mut found,
-                        )?;
+                        if width <= rights {
+                            for &[_, rb, nb] in &b_pairs[first..first + width] {
+                                self.gate.poll(1)?;
+                                let pr = match cr {
+                                    None => match CONJOIN_GRID[r as usize][rb as usize] {
+                                        NO_PRODUCT => continue,
+                                        label => label,
+                                    },
+                                    Some(c) => match below[c].index.get(&[r, rb]) {
+                                        Some(&p) => p,
+                                        None => continue,
+                                    },
+                                };
+                                lim.try_push(&mut found, [nb, pl, pr])?;
+                            }
+                        } else {
+                            let run = &b_pairs[first..first + width];
+                            let mut meet = |rb: u32, pr: u32| -> Result<(), OperationError> {
+                                self.gate.poll(1)?;
+                                // A pair of `values` belongs to one node at most.
+                                if let Ok(i) = run.binary_search_by_key(&rb, |q| q[1]) {
+                                    lim.try_push(&mut found, [run[i][2], pl, pr])?;
+                                }
+                                Ok(())
+                            };
+                            match cr {
+                                None => {
+                                    for rb in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
+                                        if CONJOIN_GRID[r as usize][rb as usize] != NO_PRODUCT {
+                                            meet(rb, CONJOIN_GRID[r as usize][rb as usize])?;
+                                        }
+                                    }
+                                }
+                                Some(c) => {
+                                    for p in below[c].run(r) {
+                                        meet(below[c].keys[p][1], p as u32)?;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                record_found_products(lim, here, na, &mut found)?;
+                if found.is_empty() {
+                    continue;
+                }
+                found.sort_unstable();
+                found.dedup();
+                let first = here.keys.len() as u32;
+                let mut i = 0;
+                while i < found.len() {
+                    let nb = found[i][0];
+                    let start = here.pairs.len();
+                    while i < found.len() && found[i][0] == nb {
+                        lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
+                        i += 1;
+                    }
+                    let id = here.keys.len() as u32;
+                    lim.try_push(&mut here.keys, [na, nb])?;
+                    lim.try_push(
+                        &mut here.ranges,
+                        [start as u32, (here.pairs.len() - start) as u32],
+                    )?;
+                    lim.reserve_map(&mut here.index, 1)?;
+                    here.index.insert([na, nb], id);
+                }
+                lim.reserve_map(&mut here.of_a, 1)?;
+                here.of_a
+                    .insert(na, [first, here.keys.len() as u32 - first]);
             }
             let products = here.keys.len();
             lim.try_resize(&mut here.used, products, false)?;
@@ -1316,13 +1379,35 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     fn chain_level(&mut self, at: usize, j: usize) -> Result<(), OperationError> {
         let d = self.layout.chain[j];
         let last = j + 1 == self.layout.chain.len();
-        let lim = self.lim;
+        let (lim, ops) = (self.lim, self.ops);
         let mut halves: [[Vec<u32>; 2]; 2] = Default::default();
         let n = self.levels[at].states.len();
         lim.reserve(&mut self.levels[at].ranges, n)?;
         for s in 0..n {
             let state = self.levels[at].states[s];
-            self.collect_chain_halves(at, d, state, &mut halves)?;
+            // Per operand, the nodes below with `order[j]` false, then true.
+            for side in 0..2 {
+                let [zero, one] = &mut halves[side];
+                zero.clear();
+                one.clear();
+                let level = ops[side].level(d);
+                for &node in self.levels[at].sets[side].get(state[side]) {
+                    for pair in level.pairs_iter_of_idx(node as usize) {
+                        self.gate.poll(1)?;
+                        let (lit, next) = (pair.left.raw(), pair.right.raw());
+                        if lit != POS_LEAF_IDX.0 {
+                            lim.try_push(zero, next)?;
+                        }
+                        if lit != NEG_LEAF_IDX.0 {
+                            lim.try_push(one, next)?;
+                        }
+                    }
+                }
+                for half in [zero, one] {
+                    half.sort_unstable();
+                    half.dedup();
+                }
+            }
             let start = self.levels[at].moves.len();
             let descending = self.range.descending();
             for (bit, lit) in [(0, NEG_LEAF_IDX.0), (1, POS_LEAF_IDX.0)] {
@@ -1340,8 +1425,37 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     _ => state[2],
                 };
                 self.gate.poll(1)?;
-                let Some(next) = self.advance_chain_bit(at, j, last, bit, passed, &halves)? else {
-                    continue;
+                let next = match last {
+                    true => {
+                        let fold = match self.range.strict() {
+                            true => passed,
+                            false => {
+                                let here = self.fold_of(j + 1, &halves[1][bit])?;
+                                self.plus(passed, here)?
+                            }
+                        };
+                        if fold == NONE {
+                            continue;
+                        }
+                        match self.reached_at.get(&fold) {
+                            Some(&i) => i,
+                            None => {
+                                let i = self.reached.len() as u32;
+                                lim.try_push(&mut self.reached, fold)?;
+                                lim.reserve_map(&mut self.reached_at, 1)?;
+                                self.reached_at.insert(fold, i);
+                                i
+                            }
+                        }
+                    }
+                    // No model left below and none passed: no fold.
+                    false if halves[1][bit].is_empty() && passed == NONE => continue,
+                    false => {
+                        let below = &mut self.levels[at + 1];
+                        let a = below.sets[0].intern(lim, &halves[0][bit])?;
+                        let b = below.sets[1].intern(lim, &halves[1][bit])?;
+                        below.add(lim, [a, b, passed])?
+                    }
                 };
                 lim.try_push(&mut self.levels[at].moves, [lit, next])?;
             }
@@ -1350,83 +1464,6 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 .push([start as u32, (here.moves.len() - start) as u32]);
         }
         Ok(())
-    }
-
-    fn collect_chain_halves(
-        &mut self,
-        at: usize,
-        d: VtreeIdx,
-        state: [u32; 3],
-        halves: &mut [[Vec<u32>; 2]; 2],
-    ) -> Result<(), OperationError> {
-        let (lim, ops) = (self.lim, self.ops);
-        for side in 0..2 {
-            let [zero, one] = &mut halves[side];
-            zero.clear();
-            one.clear();
-            let level = ops[side].level(d);
-            for &node in self.levels[at].sets[side].get(state[side]) {
-                for pair in level.pairs_iter_of_idx(node as usize) {
-                    self.gate.poll(1)?;
-                    let (lit, next) = (pair.left.raw(), pair.right.raw());
-                    if lit != POS_LEAF_IDX.0 {
-                        lim.try_push(zero, next)?;
-                    }
-                    if lit != NEG_LEAF_IDX.0 {
-                        lim.try_push(one, next)?;
-                    }
-                }
-            }
-            for half in [zero, one] {
-                half.sort_unstable();
-                half.dedup();
-            }
-        }
-        Ok(())
-    }
-
-    fn advance_chain_bit(
-        &mut self,
-        at: usize,
-        j: usize,
-        last: bool,
-        bit: usize,
-        passed: u32,
-        halves: &[[Vec<u32>; 2]; 2],
-    ) -> Result<Option<u32>, OperationError> {
-        let lim = self.lim;
-        match last {
-            true => {
-                let fold = match self.range.strict() {
-                    true => passed,
-                    false => {
-                        let here = self.fold_of(j + 1, &halves[1][bit])?;
-                        self.plus(passed, here)?
-                    }
-                };
-                if fold == NONE {
-                    return Ok(None);
-                }
-                let next = match self.reached_at.get(&fold) {
-                    Some(&i) => i,
-                    None => {
-                        let i = self.reached.len() as u32;
-                        lim.try_push(&mut self.reached, fold)?;
-                        lim.reserve_map(&mut self.reached_at, 1)?;
-                        self.reached_at.insert(fold, i);
-                        i
-                    }
-                };
-                Ok(Some(next))
-            }
-            false if halves[1][bit].is_empty() && passed == NONE => Ok(None),
-            false => {
-                let below = &mut self.levels[at + 1];
-                let a = below.sets[0].intern(lim, &halves[0][bit])?;
-                let b = below.sets[1].intern(lim, &halves[1][bit])?;
-                Ok(Some(below.add(lim, [a, b, passed])?))
-            }
-        }
     }
 
     /// The result on `into`: a cube per code, the products on the keys'
@@ -1458,51 +1495,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             )?;
             cubes.push(node);
         }
-        self.emit_side_products(eng, vtree, &mut assembly, coding)?;
-        // The levels, bottom-up: per state, the nodes its moves lead to.
-        let (r, m) = (layout.path.len(), layout.chain.len());
-        let mut root = Vec::new();
-        let mut below: (Vec<u32>, Vec<[u32; 2]>) = (Vec::new(), Vec::new());
-        for at in (0..r + m).rev() {
-            let (t, label_side, right) = match at.checked_sub(r) {
-                Some(j) => (layout.chain[j], None, true),
-                None => {
-                    let (u, x, right) = layout.path[at];
-                    (u, Some(child_slot(vtree, &self.slot, x)), right)
-                }
-            };
-            let bottom = at + 1 == r + m;
-            below = self.emit_level_states(
-                (eng, coding),
-                &mut assembly,
-                (at, t, label_side, right, bottom),
-                &cubes,
-                &below,
-                &mut root,
-            )?;
-        }
-        if root.is_empty() {
-            return Ok(crate::build::constant_zero(eng, into));
-        }
-        let top = assembly.push(eng, into.root(), &root)?;
-        self.gate.flush()?;
-        let mut result = assembly.finish(TddNodeId {
-            vtree: into.root(),
-            local: top,
-        })?;
-        eng.minimize(&mut result)?;
-        Ok(result)
-    }
-
-    /// Emit the side-product nodes, children first, into `assembly`.
-    fn emit_side_products(
-        &mut self,
-        eng: &Engine,
-        vtree: &Vtree,
-        assembly: &mut Assembly<'_>,
-        coding: &Coding,
-    ) -> Result<(), OperationError> {
-        let lim = self.lim;
+        // The products, children first.
         for side in &mut self.products {
             for k in 0..side.order.len() {
                 let t = side.order[k];
@@ -1532,63 +1525,76 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 side.at[k].out = out;
             }
         }
-        Ok(())
-    }
-
-    /// Emit all states of level `at`, returning `(items, ranges)` for the
-    /// parent level above (or appending root pairs into `root` when `at == 0`).
-    fn emit_level_states(
-        &mut self,
-        (eng, coding): (&Engine, &Coding),
-        assembly: &mut Assembly<'_>,
-        (at, t, label_side, right, bottom): (usize, VtreeIdx, Option<Option<usize>>, bool, bool),
-        cubes: &[u32],
-        below: &(Vec<u32>, Vec<[u32; 2]>),
-        root: &mut Vec<ChildPair>,
-    ) -> Result<(Vec<u32>, Vec<[u32; 2]>), OperationError> {
-        let lim = self.lim;
-        let level = &self.levels[at];
-        let mut index: FxHashMap<[u32; 2], u32> = FxHashMap::default();
-        let mut items = Vec::new();
-        let mut ranges = Vec::new();
-        lim.reserve(&mut ranges, level.states.len())?;
-        for s in 0..level.states.len() {
-            let start = items.len();
-            for &[label, next] in level.moves_of(s) {
-                let label = match label_side {
-                    Some(Some(k)) => self.products[at].at[k].out[label as usize],
-                    _ => label,
-                };
-                let children: &[u32] = match bottom {
-                    true => std::slice::from_ref(&cubes[next as usize]),
-                    false => {
-                        let [start, len] = below.1[next as usize];
-                        &below.0[start as usize..(start + len) as usize]
-                    }
-                };
-                for &c in children {
-                    self.gate.poll(1)?;
-                    let pair = if right { [label, c] } else { [c, label] };
-                    let pair_of = ChildPair::new(NodeIdx(pair[0]), NodeIdx(pair[1]));
-                    if at == 0 {
-                        lim.try_push(root, pair_of)?;
-                        continue;
-                    }
-                    let node = match index.get(&pair) {
-                        Some(&node) => node,
-                        None => {
-                            let node = assembly.push(eng, coding.image[t.idx()], &[pair_of])?.0;
-                            lim.reserve_map(&mut index, 1)?;
-                            index.insert(pair, node);
-                            node
+        // The levels, bottom-up: per state, the nodes its moves lead to.
+        let (r, m) = (layout.path.len(), layout.chain.len());
+        let mut root = Vec::new();
+        let mut below: (Vec<u32>, Vec<[u32; 2]>) = (Vec::new(), Vec::new());
+        for at in (0..r + m).rev() {
+            let (t, label_side, right) = match at.checked_sub(r) {
+                Some(j) => (layout.chain[j], None, true),
+                None => {
+                    let (u, x, right) = layout.path[at];
+                    (u, Some(child_slot(vtree, &self.slot, x)), right)
+                }
+            };
+            let bottom = at + 1 == r + m;
+            let level = &self.levels[at];
+            let mut index: FxHashMap<[u32; 2], u32> = FxHashMap::default();
+            let mut items = Vec::new();
+            let mut ranges = Vec::new();
+            lim.reserve(&mut ranges, level.states.len())?;
+            for s in 0..level.states.len() {
+                let start = items.len();
+                for &[label, next] in level.moves_of(s) {
+                    let label = match label_side {
+                        Some(Some(k)) => self.products[at].at[k].out[label as usize],
+                        _ => label,
+                    };
+                    let children: &[u32] = match bottom {
+                        true => std::slice::from_ref(&cubes[next as usize]),
+                        false => {
+                            let [start, len] = below.1[next as usize];
+                            &below.0[start as usize..(start + len) as usize]
                         }
                     };
-                    lim.try_push(&mut items, node)?;
+                    for &c in children {
+                        self.gate.poll(1)?;
+                        let pair = match right {
+                            true => [label, c],
+                            false => [c, label],
+                        };
+                        let pair_of = ChildPair::new(NodeIdx(pair[0]), NodeIdx(pair[1]));
+                        if at == 0 {
+                            lim.try_push(&mut root, pair_of)?;
+                            continue;
+                        }
+                        let node = match index.get(&pair) {
+                            Some(&node) => node,
+                            None => {
+                                let node = assembly.push(eng, coding.image[t.idx()], &[pair_of])?.0;
+                                lim.reserve_map(&mut index, 1)?;
+                                index.insert(pair, node);
+                                node
+                            }
+                        };
+                        lim.try_push(&mut items, node)?;
+                    }
                 }
+                ranges.push([start as u32, (items.len() - start) as u32]);
             }
-            ranges.push([start as u32, (items.len() - start) as u32]);
+            below = (items, ranges);
         }
-        Ok((items, ranges))
+        if root.is_empty() {
+            return Ok(crate::build::constant_zero(eng, into));
+        }
+        let top = assembly.push(eng, into.root(), &root)?;
+        self.gate.flush()?;
+        let mut result = assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local: top,
+        })?;
+        eng.minimize(&mut result)?;
+        Ok(result)
     }
 }
 
@@ -1624,123 +1630,6 @@ fn cube(
 #[inline]
 fn child_slot(vtree: &Vtree, slot: &[u32], c: VtreeIdx) -> Option<usize> {
     (!vtree.node(c).is_leaf()).then(|| slot[c.idx()] as usize)
-}
-
-/// Fill `lefts` with the `(other_node, product_id)` pairs of left child `l`
-/// at `cl` (`None` for a leaf).
-fn collect_side_products(
-    lim: &Limits,
-    below: &[Products],
-    cl: Option<usize>,
-    l: u32,
-    lefts: &mut Vec<[u32; 2]>,
-) -> Result<(), OperationError> {
-    lefts.clear();
-    match cl {
-        None => {
-            for lit in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
-                if CONJOIN_GRID[l as usize][lit as usize] != NO_PRODUCT {
-                    lim.try_push(lefts, [lit, CONJOIN_GRID[l as usize][lit as usize]])?;
-                }
-            }
-        }
-        Some(c) => {
-            for p in below[c].run(l) {
-                lim.try_push(lefts, [below[c].keys[p][1], p as u32])?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Match `run` of `values` pairs sharing left child `lb` against right products
-/// of `r` at `cr`, appending `[nb, pl, pr]` triples to `found`.
-fn join_right_products(
-    lim: &Limits,
-    gate: &mut PollGate<'_>,
-    below: &[Products],
-    cr: Option<usize>,
-    (r, pl, rights): (u32, u32, usize),
-    run: &[[u32; 3]],
-    found: &mut Vec<[u32; 3]>,
-) -> Result<(), OperationError> {
-    if run.len() <= rights {
-        for &[_, rb, nb] in run {
-            gate.poll(1)?;
-            let pr = match cr {
-                None => match CONJOIN_GRID[r as usize][rb as usize] {
-                    NO_PRODUCT => continue,
-                    label => label,
-                },
-                Some(c) => match below[c].index.get(&[r, rb]) {
-                    Some(&p) => p,
-                    None => continue,
-                },
-            };
-            lim.try_push(found, [nb, pl, pr])?;
-        }
-    } else {
-        let mut meet = |rb: u32, pr: u32| -> Result<(), OperationError> {
-            gate.poll(1)?;
-            // A pair of `values` belongs to one node at most.
-            if let Ok(i) = run.binary_search_by_key(&rb, |q| q[1]) {
-                lim.try_push(found, [run[i][2], pl, pr])?;
-            }
-            Ok(())
-        };
-        match cr {
-            None => {
-                for rb in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
-                    if CONJOIN_GRID[r as usize][rb as usize] != NO_PRODUCT {
-                        meet(rb, CONJOIN_GRID[r as usize][rb as usize])?;
-                    }
-                }
-            }
-            Some(c) => {
-                for p in below[c].run(r) {
-                    meet(below[c].keys[p][1], p as u32)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Sort, deduplicate, and record the `found` product triples `[nb, pl, pr]` of
-/// node `na` into `here`.
-fn record_found_products(
-    lim: &Limits,
-    here: &mut Products,
-    na: u32,
-    found: &mut Vec<[u32; 3]>,
-) -> Result<(), OperationError> {
-    if found.is_empty() {
-        return Ok(());
-    }
-    found.sort_unstable();
-    found.dedup();
-    let first = here.keys.len() as u32;
-    let mut i = 0;
-    while i < found.len() {
-        let nb = found[i][0];
-        let start = here.pairs.len();
-        while i < found.len() && found[i][0] == nb {
-            lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
-            i += 1;
-        }
-        let id = here.keys.len() as u32;
-        lim.try_push(&mut here.keys, [na, nb])?;
-        lim.try_push(
-            &mut here.ranges,
-            [start as u32, (here.pairs.len() - start) as u32],
-        )?;
-        lim.reserve_map(&mut here.index, 1)?;
-        here.index.insert([na, nb], id);
-    }
-    lim.reserve_map(&mut here.of_a, 1)?;
-    here.of_a
-        .insert(na, [first, here.keys.len() as u32 - first]);
-    Ok(())
 }
 
 #[cfg(test)]

@@ -261,7 +261,36 @@ pub(super) fn exists_leaves_structural(
         return crate::build::constant_like(eng, &tdd, true);
     }
 
-    let mut remap = sweep_structural_roles(&mut work, &mut tdd, &vtree, &role, collapsed)?;
+    let mut remap: Vec<Option<Remap>> = Vec::new();
+    lim.reserve_exact(&mut remap, vtree.num_nodes())?;
+    remap.resize_with(vtree.num_nodes(), || None);
+    for &level in vtree.bottomup_slice() {
+        work.poll()?;
+        remap[level.idx()] = match role[level.idx()] {
+            Role::Free => None,
+            Role::Whole => {
+                let above = vtree.node(level).parent();
+                let wanted = above.is_some_and(|p| role[p.idx()] == Role::Split);
+                free_subtree_level(&mut work, &mut tdd, &vtree, level, wanted, collapsed)?
+            }
+            Role::Split => {
+                let (left, right) = vtree.children(level);
+                let below_left = remap[left.idx()].take().map(|v| Transient::new(lim, v));
+                let below_right = remap[right.idx()].take().map(|v| Transient::new(lim, v));
+                if below_left.is_none() && below_right.is_none() {
+                    None
+                } else {
+                    regroup(
+                        &mut work,
+                        &mut tdd,
+                        level,
+                        below_left.as_deref(),
+                        below_right.as_deref(),
+                    )?
+                }
+            }
+        };
+    }
 
     if let Some(root_cells) = remap[root_vi.idx()].take() {
         let root_cells = Transient::new(lim, root_cells);
@@ -295,49 +324,6 @@ pub(super) fn exists_leaves_structural(
     tdd.dirty.set_loose(loose);
     eng.reduce(&mut tdd, reduction)?;
     Ok(tdd)
-}
-
-/// Sweep every vtree level bottom-up, freeing whole-subtree levels and
-/// regrouping split levels.
-fn sweep_structural_roles(
-    work: &mut Rewrite<'_>,
-    tdd: &mut Tdd,
-    vtree: &Vtree,
-    role: &[Role],
-    collapsed: bool,
-) -> Result<Vec<Option<Remap>>, OperationError> {
-    let lim = work.eng.limits();
-    let mut remap: Vec<Option<Remap>> = Vec::new();
-    lim.reserve_exact(&mut remap, vtree.num_nodes())?;
-    remap.resize_with(vtree.num_nodes(), || None);
-    for &level in vtree.bottomup_slice() {
-        work.poll()?;
-        remap[level.idx()] = match role[level.idx()] {
-            Role::Free => None,
-            Role::Whole => {
-                let above = vtree.node(level).parent();
-                let wanted = above.is_some_and(|p| role[p.idx()] == Role::Split);
-                free_subtree_level(work, tdd, vtree, level, wanted, collapsed)?
-            }
-            Role::Split => {
-                let (left, right) = vtree.children(level);
-                let below_left = remap[left.idx()].take().map(|v| Transient::new(lim, v));
-                let below_right = remap[right.idx()].take().map(|v| Transient::new(lim, v));
-                if below_left.is_none() && below_right.is_none() {
-                    None
-                } else {
-                    regroup(
-                        work,
-                        tdd,
-                        level,
-                        below_left.as_deref(),
-                        below_right.as_deref(),
-                    )?
-                }
-            }
-        };
-    }
-    Ok(remap)
 }
 
 /// Label every vtree node by how many of its leaves `targets` names.
@@ -610,8 +596,27 @@ fn regroup(
         (None, Some(right)) => (Side::Left, None, right),
         (Some(left), Some(right)) => (Side::Left, Some(left), right),
     };
-    if n_nodes == 1 && try_regroup_single_node(work, tdd, parent, left_remap, right_remap)? {
-        return Ok(None);
+    if n_nodes == 1 {
+        if left_remap.is_none() && regroup_single_by_left(work, tdd, parent, None, right_remap)? {
+            return Ok(None);
+        }
+        // An implicit level's one node's pairs are generated into `buf`.
+        let mut buf = Vec::new();
+        let plan = RowPlan::of(
+            work,
+            tdd.levels[parent.idx()].pairs_read(0, &mut buf),
+            left_remap,
+            right_remap,
+        )?;
+        if plan.pays {
+            regroup_single_rows(work, tdd, parent, left_remap, right_remap, &plan)?;
+            return Ok(None);
+        }
+        if left_remap.is_some()
+            && regroup_single_by_left(work, tdd, parent, left_remap, right_remap)?
+        {
+            return Ok(None);
+        }
     }
     if let OneAtom::Done(remap) = regroup_atom_per_pair(work, tdd, parent, left_remap, right_remap)?
     {
@@ -635,118 +640,6 @@ fn regroup(
         return Ok(None);
     }
 
-    let (atoms, first, owners) = expand_level_atoms(work, owned, buckets, by, stamped)?;
-
-    // Group atoms by owner set → one cell per distinct owner set, and keep
-    // in each cell the atom the scan reaches first.
-    let (cell_of, n_cells) = group_by_owners(work, &owners)?;
-    let cell_first = keep_earliest_cell_atoms(lim, n_cells, &cell_of, &first, &atoms)?;
-
-    let (fanout, cell_pairs) = number_owner_cells(
-        work,
-        n_cells,
-        &cell_first,
-        &first,
-        &atoms,
-        &owners,
-        &cell_of,
-    )?;
-
-    // One cell per node and one owner per cell: the owner sets are singletons
-    // and pairwise distinct, and cells are numbered in node order, so cell `i`
-    // is node `i` expanded. Every reference from above still names the node
-    // it named, and the level above would hand back its own pairs.
-    let unchanged = n_cells == n_nodes && fanout.len() == n_nodes;
-    let _ = (lim.discard(atoms), lim.discard(owners));
-    let _ = (lim.discard(first), lim.discard(cell_first), drop(cell_of));
-    let counts = (n_nodes, n_cells, unchanged);
-    finish_regrouped_cells(work, tdd, parent, counts, cell_pairs, fanout)
-}
-
-fn finish_regrouped_cells(
-    work: &mut Rewrite<'_>,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    (n_nodes, n_cells, unchanged): (usize, usize, bool),
-    cell_pairs: Vec<(u32, ChildPair)>,
-    fanout: Vec<(u32, u32)>,
-) -> Result<Option<Remap>, OperationError> {
-    let lim = work.eng.limits();
-    let mut new_nodes = Transient::new(lim, Runs::pack(lim, n_cells, &cell_pairs, TRUE_PAIR)?);
-    lim.discard(cell_pairs);
-    write_level(work, tdd, parent, &mut new_nodes)?;
-    if unchanged {
-        lim.discard(fanout);
-        return Ok(None);
-    }
-    let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
-    lim.discard(fanout);
-    Ok(Some(remap))
-}
-
-/// Record in `cell_first[cell]` the atom in each owner-set cell that the level
-/// scan reaches first.
-fn keep_earliest_cell_atoms(
-    lim: &crate::limits::Limits,
-    n_cells: usize,
-    cell_of: &[u32],
-    first: &[u32],
-    atoms: &[ChildPair],
-) -> Result<Vec<u32>, OperationError> {
-    let scan_key = |atom: u32| (first[atom as usize], atoms[atom as usize]);
-    let mut cell_first: Vec<u32> = Vec::new();
-    lim.try_resize(&mut cell_first, n_cells, NONE)?;
-    for (atom, &cell) in cell_of.iter().enumerate() {
-        let atom = atom as u32;
-        let kept = &mut cell_first[cell as usize];
-        if *kept == NONE || scan_key(atom) < scan_key(*kept) {
-            *kept = atom;
-        }
-    }
-    Ok(cell_first)
-}
-
-/// Try the single-node fast paths (`regroup_single_by_left` and
-/// `regroup_single_rows`) on `parent`.
-fn try_regroup_single_node(
-    work: &mut Rewrite<'_>,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    left_remap: Option<&Remap>,
-    right_remap: Option<&Remap>,
-) -> Result<bool, OperationError> {
-    if left_remap.is_none() && regroup_single_by_left(work, tdd, parent, None, right_remap)? {
-        return Ok(true);
-    }
-    let mut buf = Vec::new();
-    let plan = RowPlan::of(
-        work,
-        tdd.levels[parent.idx()].pairs_read(0, &mut buf),
-        left_remap,
-        right_remap,
-    )?;
-    if plan.pays {
-        regroup_single_rows(work, tdd, parent, left_remap, right_remap, &plan)?;
-        return Ok(true);
-    }
-    if left_remap.is_some() && regroup_single_by_left(work, tdd, parent, left_remap, right_remap)? {
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-type ExpandedLevelAtoms = (Vec<ChildPair>, Vec<u32>, Runs<u32>);
-
-/// Expand the bucketed pairs of a level into distinct atoms, the index of the
-/// first pair each atom came from, and each atom's sorted owner set.
-fn expand_level_atoms(
-    work: &mut Rewrite<'_>,
-    owned: Vec<Owned>,
-    buckets: Vec<(u32, u32)>,
-    by: Side,
-    stamped: &Remap,
-) -> Result<ExpandedLevelAtoms, OperationError> {
-    let lim = work.eng.limits();
     // Each atom gets an index, and its owner set — the old nodes contributing
     // it — is accumulated as a run of (atom, owner) entries. A bucket lists
     // its pairs in scan order and holds every pair an atom filed under it
@@ -804,30 +697,31 @@ fn expand_level_atoms(
     // increasing owner order, and the stable scatter keeps each run sorted.
     let owners = Runs::pack(lim, atoms.len(), &entries, 0u32)?;
     lim.discard(entries);
-    Ok((atoms, first, owners))
-}
 
-type NumberedCells = (Vec<(u32, u32)>, Vec<(u32, ChildPair)>);
+    // Group atoms by owner set → one cell per distinct owner set, and keep
+    // in each cell the atom the scan reaches first.
+    let scan_key = |atom: u32| (first[atom as usize], atoms[atom as usize]);
+    let (cell_of, n_cells) = group_by_owners(work, &owners)?;
+    let mut cell_first: Vec<u32> = Vec::new();
+    lim.try_resize(&mut cell_first, n_cells, NONE)?;
+    for (atom, &cell) in cell_of.iter().enumerate() {
+        let atom = atom as u32;
+        let kept = &mut cell_first[cell as usize];
+        if *kept == NONE || scan_key(atom) < scan_key(*kept) {
+            *kept = atom;
+        }
+    }
 
-/// Number the cells in scan order of their first atoms, returning the owner
-/// fan-out entries `(owner, new_cell)` and the cell-pair entries
-/// `(new_cell, pair)`.
-fn number_owner_cells(
-    work: &mut Rewrite<'_>,
-    n_cells: usize,
-    cell_first: &[u32],
-    first: &[u32],
-    atoms: &[ChildPair],
-    owners: &Runs<u32>,
-    cell_of: &[u32],
-) -> Result<NumberedCells, OperationError> {
-    let lim = work.eng.limits();
+    // Number the cells in the order the scan reaches them, which is the order
+    // of their first atoms, and list each cell's owners in that order: the
+    // fan-out of a node then comes out ascending.
     let mut numbered = Vec::new();
     lim.reserve_exact(&mut numbered, n_cells)?;
     for (cell, &atom) in cell_first.iter().enumerate() {
+        let (first_pair, pair) = scan_key(atom);
         numbered.push((
-            first[atom as usize],
-            atoms[atom as usize],
+            first_pair,
+            pair,
             u32::try_from(cell).map_err(|_| OperationError::IndexOverflow)?,
         ));
     }
@@ -855,14 +749,35 @@ fn number_owner_cells(
     }
     let mut cell_pairs: Vec<(u32, ChildPair)> = Vec::new();
     lim.reserve_exact(&mut cell_pairs, atoms.len())?;
-    for (&cell, &pair) in cell_of.iter().zip(atoms) {
+    for (&cell, &pair) in cell_of.iter().zip(&atoms) {
         // `atoms` holds distinct atoms and the pair is injective in the
         // atom, so every pair within a cell is already distinct.
         cell_pairs.push((number[cell as usize], pair));
     }
+
+    // One cell per node and one owner per cell: the owner sets are singletons
+    // and pairwise distinct, and cells are numbered in node order, so cell `i`
+    // is node `i` expanded. Every reference from above still names the node
+    // it named, and the level above would hand back its own pairs.
+    let unchanged = n_cells == n_nodes && fanout.len() == n_nodes;
+
+    lim.discard(atoms);
+    lim.discard(first);
+    lim.discard(owners);
+    lim.discard(cell_first);
+    drop(cell_of);
     lim.discard(numbered);
     lim.discard(number);
-    Ok((fanout, cell_pairs))
+    let mut new_nodes = Transient::new(lim, Runs::pack(lim, n_cells, &cell_pairs, TRUE_PAIR)?);
+    lim.discard(cell_pairs);
+    write_level(work, tdd, parent, &mut new_nodes)?;
+    if unchanged {
+        lim.discard(fanout);
+        return Ok(None);
+    }
+    let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
+    lim.discard(fanout);
+    Ok(Some(remap))
 }
 
 /// Group items `0..owners.len()` by their owner set in `owners`, numbering
@@ -955,84 +870,6 @@ fn regroup_atom_per_pair(
     if n < 2 || u32::try_from(n_pairs).is_err() || u32::try_from(n).is_err() {
         return Ok(OneAtom::Declined);
     }
-    let Some((mut atoms, starts, bounds)) =
-        scan_one_atom_pairs(work, level, left_remap, right_remap)?
-    else {
-        return Ok(OneAtom::Declined);
-    };
-    let (shared_of, shared_atoms) = find_shared_one_atom(work, &atoms, &starts, bounds)?;
-
-    if shared_atoms.is_empty() {
-        // Each node keeps one cell, its own atoms: the partition is kept and
-        // the level is written over in node order.
-        let level = &mut tdd.levels[parent.idx()];
-        level.clear();
-        lim.reserve_exact(level.nodes.stored_mut(), n)?;
-        for node in starts.windows(2) {
-            write_cell(work, level, &mut atoms[node[0] as usize..node[1] as usize])?;
-        }
-        lim.level_done(work.emitted)?;
-        tdd.try_invalidate(work.eng, parent)?;
-        return Ok(OneAtom::Done(None));
-    }
-
-    // The shared atoms grouped by owner set as [`regroup`] groups them. When
-    // every node has one pair, distinct atoms have disjoint owner sets, and
-    // each shared atom is a group of its own.
-    let shared: &[u32] = &shared_of;
-    let n_shared = shared_atoms.len();
-    let one_pair_each = n_pairs == n;
-    let (group_of, n_groups) = if one_pair_each {
-        (Transient::new(lim, Vec::new()), n_shared)
-    } else {
-        let owners = owners_of_shared_atoms(work, &starts, shared, n_shared)?;
-        group_by_owners(work, &owners)?
-    };
-    let group_ix: &[u32] = &group_of;
-    u32::try_from(n + n_groups).map_err(|_| OperationError::IndexOverflow)?;
-
-    let (order, remap) = number_one_atom_cells(
-        work,
-        n,
-        &starts,
-        shared,
-        (group_ix, n_groups),
-        one_pair_each,
-    )?;
-    emit_one_atom_nodes(
-        work,
-        tdd,
-        parent,
-        (&atoms, &starts, shared),
-        shared_atoms,
-        (group_ix, n_groups),
-        &order,
-    )?;
-    drop(order);
-    drop(group_of);
-    drop(shared_of);
-    drop(atoms);
-    drop(starts);
-    Ok(OneAtom::Done(Some(remap)))
-}
-
-type ScannedOneAtom<'a> = (
-    Transient<'a, Vec<ChildPair>>,
-    Transient<'a, Vec<u32>>,
-    (u32, u32),
-);
-
-/// Scan `level`'s pairs when every pair maps to a single atom and the smaller
-/// side's value span fits the stamp allowance.
-fn scan_one_atom_pairs<'a>(
-    work: &mut Rewrite<'a>,
-    level: &TddLevel,
-    left_remap: Option<&Remap>,
-    right_remap: Option<&Remap>,
-) -> Result<Option<ScannedOneAtom<'a>>, OperationError> {
-    let lim = work.eng.limits();
-    let n = level.nodes().len();
-    let n_pairs = level.live_pairs();
     // A map of one cell per node is read at its item alone.
     let (left_each, right_each) = (
         left_remap.is_some_and(Remap::one_each),
@@ -1063,7 +900,7 @@ fn scan_one_atom_pairs<'a>(
         for i in 0..n {
             let pairs = level.pairs_read_next(&mut cursor, i, &mut buf);
             if pairs.is_empty() {
-                return Ok(None);
+                return Ok(OneAtom::Declined);
             }
             work.gate.poll(pairs.len() as u64)?;
             // The pairs were counted in a `u32`.
@@ -1073,7 +910,7 @@ fn scan_one_atom_pairs<'a>(
                     one_cell(left_remap, left_each, pair.left),
                     one_cell(right_remap, right_each, pair.right),
                 ) else {
-                    return Ok(None);
+                    return Ok(OneAtom::Declined);
                 };
                 left_max = left_max.max(left);
                 right_max = right_max.max(right);
@@ -1091,22 +928,38 @@ fn scan_one_atom_pairs<'a>(
             .saturating_mul(ONE_ATOM_STAMP_PER_PAIR)
             .saturating_add(1 << 16)
     {
-        return Ok(None);
+        return Ok(OneAtom::Declined);
     }
-    Ok(Some((atoms, starts, (left_max, right_max))))
-}
+    let (shared_of, shared_atoms) =
+        find_shared_one_atom(work, &atoms, &starts, left_max, right_max)?;
 
-/// Number the cells of [`regroup_atom_per_pair`] in scan order and build the
-/// node-to-cells [`Remap`].
-fn number_one_atom_cells<'a>(
-    work: &mut Rewrite<'a>,
-    n: usize,
-    starts: &[u32],
-    shared: &[u32],
-    (group_ix, n_groups): (&[u32], usize),
-    one_pair_each: bool,
-) -> Result<(Transient<'a, Vec<u32>>, Remap), OperationError> {
-    let lim = work.eng.limits();
+    if shared_atoms.is_empty() {
+        // Each node keeps one cell, its own atoms: the partition is kept and
+        // the level is written over in node order.
+        let level = &mut tdd.levels[parent.idx()];
+        level.clear();
+        lim.reserve_exact(level.nodes.stored_mut(), n)?;
+        for node in starts.windows(2) {
+            write_cell(work, level, &mut atoms[node[0] as usize..node[1] as usize])?;
+        }
+        lim.level_done(work.emitted)?;
+        tdd.try_invalidate(work.eng, parent)?;
+        return Ok(OneAtom::Done(None));
+    }
+
+    // The shared atoms grouped by owner set as [`regroup`] groups them. When
+    // every node has one pair, distinct atoms have disjoint owner sets, and
+    // each shared atom is a group of its own.
+    let shared: &[u32] = &shared_of;
+    let n_shared = shared_atoms.len();
+    let one_pair_each = n_pairs == n;
+    let (group_of, n_groups) = if one_pair_each {
+        (Transient::new(lim, Vec::new()), n_shared)
+    } else {
+        let owners = owners_of_shared_atoms(work, &starts, shared, n_shared)?;
+        group_by_owners(work, &owners)?
+    };
+    let group_ix: &[u32] = &group_of;
     let group = |atom: u32| {
         if one_pair_each {
             atom
@@ -1114,6 +967,8 @@ fn number_one_atom_cells<'a>(
             group_ix[atom as usize]
         }
     };
+    u32::try_from(n + n_groups).map_err(|_| OperationError::IndexOverflow)?;
+
     // Number the cells in the order the scan reaches them — a node's own
     // cell at its first unshared pair, a group's at its first pair — and map
     // each node to its cells, ascending. A cell before numbering is a node
@@ -1138,93 +993,101 @@ fn number_one_atom_cells<'a>(
             atom => n + group(atom) as usize,
         };
         if one_pair_each {
-            number_one_pair_cells(lim, &mut work.gate, n, cell_of, &mut reach)?
+            // One cell per node, the pair's.
+            let mut items = Transient::new(lim, Vec::new());
+            lim.reserve_exact(&mut items, n)?;
+            {
+                let items: &mut Vec<u32> = &mut items;
+                for g in 0..n {
+                    if g % 4096 == 0 {
+                        work.gate.poll(4096)?;
+                    }
+                    // Node `g`'s one pair is pair `g`, which fits a `u32`.
+                    items.push(reach(cell_of(g, g as u32))?);
+                }
+            }
+            let mut starts_out = Transient::new(lim, Vec::new());
+            lim.reserve_exact(&mut starts_out, n + 1)?;
+            // The nodes were counted in a `u32`.
+            starts_out.extend(0..=n as u32);
+            Runs {
+                starts: starts_out.keep(),
+                items: items.keep(),
+            }
         } else {
-            number_multi_pair_cells(lim, &mut work.gate, n, starts, cell_of, &mut reach)?
+            let mut fanout: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
+            lim.reserve_exact(&mut fanout, n)?;
+            let mut mine: Vec<u32> = Vec::new();
+            for (g, node) in starts.windows(2).enumerate() {
+                work.gate.poll(u64::from(node[1] - node[0]))?;
+                mine.clear();
+                for p in node[0]..node[1] {
+                    let numbered = reach(cell_of(g, p))?;
+                    if mine.last() != Some(&numbered) {
+                        lim.try_push(&mut mine, numbered)?;
+                    }
+                }
+                mine.sort_unstable();
+                mine.dedup();
+                for &cell in &mine {
+                    // `g` fits: the nodes were counted in a `u32`.
+                    lim.try_push(&mut fanout, (g as u32, cell))?;
+                }
+            }
+            lim.discard(mine);
+            Runs::pack(lim, n, &fanout, 0u32)?
         }
     };
     drop(number);
-    Ok((order, remap))
-}
 
-fn number_one_pair_cells(
-    lim: &crate::limits::Limits,
-    gate: &mut crate::limits::PollGate<'_>,
-    n: usize,
-    cell_of: impl Fn(usize, u32) -> usize,
-    reach: &mut impl FnMut(usize) -> Result<u32, OperationError>,
-) -> Result<Remap, OperationError> {
-    // One cell per node, the pair's.
-    let mut items = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut items, n)?;
-    for g in 0..n {
-        if g % 4096 == 0 {
-            gate.poll(4096)?;
-        }
-        // Node `g`'s one pair is pair `g`, which fits a `u32`.
-        items.push(reach(cell_of(g, g as u32))?);
-    }
-    let mut starts_out = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut starts_out, n + 1)?;
-    starts_out.extend(0..=n as u32);
-    Ok(Runs {
-        starts: starts_out.keep(),
-        items: items.keep(),
-    })
-}
-
-fn number_multi_pair_cells(
-    lim: &crate::limits::Limits,
-    gate: &mut crate::limits::PollGate<'_>,
-    n: usize,
-    starts: &[u32],
-    cell_of: impl Fn(usize, u32) -> usize,
-    reach: &mut impl FnMut(usize) -> Result<u32, OperationError>,
-) -> Result<Remap, OperationError> {
-    let mut fanout: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut fanout, n)?;
-    let mut mine: Vec<u32> = Vec::new();
-    for (g, node) in starts.windows(2).enumerate() {
-        gate.poll(u64::from(node[1] - node[0]))?;
-        mine.clear();
-        for p in node[0]..node[1] {
-            let numbered = reach(cell_of(g, p))?;
-            if mine.last() != Some(&numbered) {
-                lim.try_push(&mut mine, numbered)?;
+    // Each group's atoms, then every cell in its number's order: a node's
+    // own cell is its unshared atoms, read in scan order again.
+    let mut grouped: Transient<'_, Vec<(u32, ChildPair)>> = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut grouped, n_shared)?;
+    grouped.extend(
+        shared_atoms
+            .iter()
+            .enumerate()
+            .map(|(atom, &pair)| (group(atom as u32), pair)),
+    );
+    drop(shared_atoms);
+    drop(group_of);
+    let mut groups = Transient::new(lim, Runs::pack(lim, n_groups, &grouped, TRUE_PAIR)?);
+    drop(grouped);
+    let mut own: Vec<ChildPair> = Vec::new();
+    let level = &mut tdd.levels[parent.idx()];
+    level.clear();
+    lim.reserve_exact(level.nodes.stored_mut(), order.len())?;
+    for &cell in order.iter() {
+        match (cell as usize).checked_sub(n) {
+            Some(group) => write_cell(work, level, groups.get_mut(group))?,
+            None => {
+                own.clear();
+                let (from, to) = (
+                    starts[cell as usize] as usize,
+                    starts[cell as usize + 1] as usize,
+                );
+                for (p, &atom) in shared[from..to].iter().enumerate() {
+                    if atom == NONE {
+                        lim.try_push(&mut own, atoms[from + p])?;
+                    }
+                }
+                write_cell(work, level, &mut own)?;
             }
         }
-        mine.sort_unstable();
-        mine.dedup();
-        for &cell in &mine {
-            // `g` fits: the nodes were counted in a `u32`.
-            lim.try_push(&mut fanout, (g as u32, cell))?;
-        }
     }
-    lim.discard(mine);
-    Runs::pack(lim, n, &fanout, 0u32)
+    lim.discard(own);
+    drop(groups);
+    drop(order);
+    drop(shared_of);
+    drop(atoms);
+    drop(starts);
+    lim.level_done(work.emitted)?;
+    tdd.try_invalidate(work.eng, parent)?;
+    Ok(OneAtom::Done(Some(remap)))
 }
 
 type SharedOneAtoms<'a> = (Transient<'a, Vec<u32>>, Transient<'a, Vec<ChildPair>>);
-
-/// A pair's atom in [`find_shared_one_atom`], its sides ordered as the sort and
-/// the stamp read them, with the pair's position in the scan and the node
-/// holding it.
-#[derive(Copy, Clone)]
-struct KeyedOneAtom {
-    sorted: u32,
-    stamped: u32,
-    pair: u32,
-    owner: u32,
-}
-
-/// An atom while its run is read in [`find_shared_one_atom`]: the node of its
-/// first pair, and its number among the shared atoms once a second node is
-/// found to have it.
-#[derive(Copy, Clone)]
-struct SeenOneAtom {
-    owner: u32,
-    shared: u32,
-}
 
 /// Sort `atoms` by one side and stamp the other within each run to find the
 /// atoms that belong to more than one node. Returns each pair's shared-atom
@@ -1233,8 +1096,25 @@ fn find_shared_one_atom<'a>(
     work: &mut Rewrite<'a>,
     atoms: &[ChildPair],
     starts: &[u32],
-    (left_max, right_max): (u32, u32),
+    left_max: u32,
+    right_max: u32,
 ) -> Result<SharedOneAtoms<'a>, OperationError> {
+    /// A pair's atom, its sides ordered as the sort and the stamp read them,
+    /// with the pair's position in the scan and the node holding it.
+    #[derive(Copy, Clone)]
+    struct Keyed {
+        sorted: u32,
+        stamped: u32,
+        pair: u32,
+        owner: u32,
+    }
+    /// An atom while its run is read: the node of its first pair, and its
+    /// number among the shared atoms once a second node is found to have it.
+    #[derive(Copy, Clone)]
+    struct Seen {
+        owner: u32,
+        shared: u32,
+    }
     let lim = work.eng.limits();
     let n_pairs = atoms.len();
     let stamp_left = left_max <= right_max;
@@ -1250,7 +1130,7 @@ fn find_shared_one_atom<'a>(
                 (atom.left.0, atom.right.0)
             };
             // `owner` fits: the nodes were counted in a `u32`.
-            keyed.push(KeyedOneAtom {
+            keyed.push(Keyed {
                 sorted,
                 stamped,
                 pair: p,
@@ -1261,24 +1141,17 @@ fn find_shared_one_atom<'a>(
     work.gate.poll(n_pairs as u64)?;
     let bits = u32::BITS - left_max.max(right_max).leading_zeros();
     sort_by_key_stable(work, &mut keyed, bits, |k| k.sorted)?;
-    collect_shared_one_atoms_from_runs(work, atoms, &keyed, span)
-}
 
-/// Scan the sorted `keyed` runs and number the atoms that belong to two or more
-/// nodes.
-fn collect_shared_one_atoms_from_runs<'a>(
-    work: &mut Rewrite<'a>,
-    atoms: &[ChildPair],
-    keyed: &[KeyedOneAtom],
-    span: usize,
-) -> Result<SharedOneAtoms<'a>, OperationError> {
-    let lim = work.eng.limits();
-    let n_pairs = atoms.len();
+    // The atoms of several owners. A run holds every pair of each of its
+    // atoms, in scan order, so an atom's later owners differ from its first
+    // exactly when it is shared; a second read of a run that found one lists
+    // every pair of its shared atoms, numbering those atoms as it goes.
     let mut stamp = Transient::new(lim, Vec::new());
     lim.try_resize(&mut stamp, span, 0u32)?;
     let mut slot = Transient::new(lim, Vec::new());
     lim.try_resize(&mut slot, span, 0u32)?;
-    let mut seen: Transient<'_, Vec<SeenOneAtom>> = Transient::new(lim, Vec::new());
+    let mut seen: Transient<'_, Vec<Seen>> = Transient::new(lim, Vec::new());
+    // Each pair's shared atom, `NONE` for a pair whose atom has one owner.
     let mut shared_of = Transient::new(lim, Vec::new());
     lim.try_resize(&mut shared_of, n_pairs, NONE)?;
     let mut shared_atoms: Transient<'_, Vec<ChildPair>> = Transient::new(lim, Vec::new());
@@ -1286,7 +1159,7 @@ fn collect_shared_one_atoms_from_runs<'a>(
         let (stamp, slot, seen, shared_of): (
             &mut Vec<u32>,
             &mut Vec<u32>,
-            &mut Vec<SeenOneAtom>,
+            &mut Vec<Seen>,
             &mut Vec<u32>,
         ) = (&mut stamp, &mut slot, &mut seen, &mut shared_of);
         let mut run = 0u32;
@@ -1299,10 +1172,11 @@ fn collect_shared_one_atoms_from_runs<'a>(
                 let s = k.stamped as usize;
                 if stamp[s] != run {
                     stamp[s] = run;
+                    // A run's atoms number no more than its pairs.
                     slot[s] = seen.len() as u32;
                     lim.try_push(
                         seen,
-                        SeenOneAtom {
+                        Seen {
                             owner: k.owner,
                             shared: NONE,
                         },
@@ -1360,67 +1234,6 @@ fn owners_of_shared_atoms<'a>(
         lim,
         Runs::pack(lim, n_shared, &entries, 0u32)?,
     ))
-}
-
-/// Pack each shared-atom group's atoms and write every cell of `parent` in its
-/// number's order: a node's own cell is its unshared atoms, read in scan order
-/// again.
-fn emit_one_atom_nodes(
-    work: &mut Rewrite<'_>,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    (atoms, starts, shared): (&[ChildPair], &[u32], &[u32]),
-    shared_atoms: Transient<'_, Vec<ChildPair>>,
-    (group_ix, n_groups): (&[u32], usize),
-    order: &[u32],
-) -> Result<(), OperationError> {
-    let lim = work.eng.limits();
-    let n = starts.len() - 1;
-    let one_pair_each = atoms.len() == n;
-    let group = |atom: u32| {
-        if one_pair_each {
-            atom
-        } else {
-            group_ix[atom as usize]
-        }
-    };
-    let mut grouped: Transient<'_, Vec<(u32, ChildPair)>> = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut grouped, shared_atoms.len())?;
-    grouped.extend(
-        shared_atoms
-            .iter()
-            .enumerate()
-            .map(|(atom, &pair)| (group(atom as u32), pair)),
-    );
-    drop(shared_atoms);
-    let mut groups = Transient::new(lim, Runs::pack(lim, n_groups, &grouped, TRUE_PAIR)?);
-    drop(grouped);
-    let mut own: Vec<ChildPair> = Vec::new();
-    let level = &mut tdd.levels[parent.idx()];
-    level.clear();
-    lim.reserve_exact(level.nodes.stored_mut(), order.len())?;
-    for &cell in order {
-        match (cell as usize).checked_sub(n) {
-            Some(group) => write_cell(work, level, groups.get_mut(group))?,
-            None => {
-                own.clear();
-                let (from, to) = (
-                    starts[cell as usize] as usize,
-                    starts[cell as usize + 1] as usize,
-                );
-                for (p, &atom) in shared[from..to].iter().enumerate() {
-                    if atom == NONE {
-                        lim.try_push(&mut own, atoms[from + p])?;
-                    }
-                }
-                write_cell(work, level, &mut own)?;
-            }
-        }
-    }
-    lim.discard(own);
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
-    Ok(())
 }
 
 /// Write one cell into `level` from its atoms, sorted and without repeats,
@@ -1510,36 +1323,14 @@ fn regroup_single_by_left(
     if out.is_empty() {
         return Ok(false);
     }
-    compact_merged_left_runs(work, &mut out, reordered, merged)?;
-    debug_assert!(
-        out.is_sorted() && out.windows(2).all(|w| w[0] != w[1]),
-        "a single cell's atoms are distinct and in canonical order"
-    );
-    let level = &mut tdd.levels[parent.idx()];
-    level.clear();
-    level.push_node(lim, &out)?;
-    drop(out);
-    work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
-    Ok(true)
-}
-
-/// Sort `out` by left cell when `reordered` and deduplicate each left run in
-/// place when `reordered || merged`.
-fn compact_merged_left_runs(
-    work: &mut Rewrite<'_>,
-    out: &mut Vec<ChildPair>,
-    reordered: bool,
-    merged: bool,
-) -> Result<(), OperationError> {
     if reordered {
         let widest = out.iter().map(|pair| pair.left.0).max().unwrap_or(0);
-        sort_by_key_stable(work, out, u32::BITS - widest.leading_zeros(), |pair| {
+        sort_by_key_stable(work, &mut out, u32::BITS - widest.leading_zeros(), |pair| {
             pair.left.0
         })?;
     }
     if reordered || merged {
+        let out: &mut Vec<ChildPair> = &mut out;
         let (mut kept, mut from) = (0, 0);
         while from < out.len() {
             let left = out[from].left;
@@ -1560,7 +1351,18 @@ fn compact_merged_left_runs(
         }
         out.truncate(kept);
     }
-    Ok(())
+    debug_assert!(
+        out.is_sorted() && out.windows(2).all(|w| w[0] != w[1]),
+        "a single cell's atoms are distinct and in canonical order"
+    );
+    let level = &mut tdd.levels[parent.idx()];
+    level.clear();
+    level.push_node(lim, &out)?;
+    drop(out);
+    work.emitted += 1;
+    lim.level_done(work.emitted)?;
+    tdd.try_invalidate(work.eng, parent)?;
+    Ok(true)
 }
 
 /// [`regroup_single_by_left`]'s expansion of a level whose left side was not
@@ -1643,7 +1445,28 @@ fn expand_by_rewritten_left(
         for &cell in lefts {
             let left = EncodedChildRef::from_raw(cell);
             let start = out.len();
-            extend_left_cell_pairs(lim, out, left, same, right_remap, right_each)?;
+            // A left reference of several cells writes past the first
+            // reservation.
+            if (right_remap.is_none() || right_each) && out.capacity() - out.len() < same.len() {
+                lim.reserve(out, same.len())?;
+            }
+            match right_remap {
+                None => out.extend(same.iter().map(|pair| ChildPair::new(left, pair.right))),
+                Some(map) if right_each => out.extend(same.iter().map(|pair| {
+                    let right = map.items[ChildDecoder::structural().node(pair.right).idx()];
+                    ChildPair::new(left, EncodedChildRef::from_raw(right))
+                })),
+                Some(map) => {
+                    for pair in same {
+                        for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
+                            lim.try_push(
+                                out,
+                                ChildPair::new(left, EncodedChildRef::from_raw(right)),
+                            )?;
+                        }
+                    }
+                }
+            }
             let added = out.len() - start;
             work.gate.poll(added as u64 + 1)?;
             if added == 0 {
@@ -1673,36 +1496,6 @@ fn expand_by_rewritten_left(
         }
     }
     Ok((reordered, merged, stored_unsorted))
-}
-
-#[inline]
-fn extend_left_cell_pairs(
-    lim: &crate::limits::Limits,
-    out: &mut Vec<ChildPair>,
-    left: EncodedChildRef,
-    same: &[ChildPair],
-    right_remap: Option<&Remap>,
-    right_each: bool,
-) -> Result<(), OperationError> {
-    // A left reference of several cells writes past the first reservation.
-    if (right_remap.is_none() || right_each) && out.capacity() - out.len() < same.len() {
-        lim.reserve(out, same.len())?;
-    }
-    match right_remap {
-        None => out.extend(same.iter().map(|pair| ChildPair::new(left, pair.right))),
-        Some(map) if right_each => out.extend(same.iter().map(|pair| {
-            let right = map.items[ChildDecoder::structural().node(pair.right).idx()];
-            ChildPair::new(left, EncodedChildRef::from_raw(right))
-        })),
-        Some(map) => {
-            for pair in same {
-                for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
-                    lim.try_push(out, ChildPair::new(left, EncodedChildRef::from_raw(right)))?;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Keep the first of each run of equal items in the sorted `items`, moved to
@@ -1909,23 +1702,95 @@ fn regroup_single_rows(
     plan: &RowPlan,
 ) -> Result<(), OperationError> {
     let lim = work.eng.limits();
+    let mut buf = Vec::new();
+    let pairs = tdd.levels[parent.idx()].pairs_read(0, &mut buf);
     let mut row = Row::new(lim, plan.words)?;
     if let Some(only) = plan.single {
-        mark_single_row_only(
-            work,
-            (left_remap, right_remap),
-            (only, plan.most),
-            &mut row,
-            &mut tdd.levels[parent.idx()],
-        )?;
+        // A pair whose left side expands to no cell has no atom. When every
+        // left reference expands to one, the left sides are not read.
+        let every_left_expands =
+            left_remap.is_none_or(|map| map.starts.windows(2).all(|w| w[0] < w[1]));
+        if every_left_expands {
+            for pair in pairs {
+                let marked = row.mark(std::slice::from_ref(&pair.right.0), right_remap);
+                work.gate.poll(marked + 1)?;
+            }
+        } else {
+            for pair in pairs {
+                let expands = left_remap.is_none_or(|map| {
+                    !map.get(ChildDecoder::structural().node(pair.left).idx())
+                        .is_empty()
+                });
+                let marked = if expands {
+                    row.mark(std::slice::from_ref(&pair.right.0), right_remap)
+                } else {
+                    0
+                };
+                work.gate.poll(marked + 1)?;
+            }
+        }
+        let level = &mut tdd.levels[parent.idx()];
+        level.clear();
+        let read = row.drain(lim, only, level.pairs.stored_mut(), 0, 1, plan.most)?;
+        work.gate.poll(read)?;
     } else {
-        mark_multi_rows(
-            work,
-            (left_remap, right_remap),
-            plan,
-            &mut row,
-            &mut tdd.levels[parent.idx()],
-        )?;
+        let filed = |pair: &ChildPair| match left_remap {
+            Some(_) => (ChildDecoder::structural().node(pair.left).0, pair.right.0),
+            None => (pair.left.0, pair.right.0),
+        };
+        let groups = Transient::new(
+            lim,
+            Runs::pack_by(lim, plan.left_keys as usize, pairs, filed, 0u32)?,
+        );
+        let (inverse, dense) = match left_remap {
+            Some(map) => (
+                Some(Transient::new(lim, map.transpose(lim, plan.rows as usize)?)),
+                Transient::new(
+                    lim,
+                    dense_groups(work, &groups, map, right_remap, plan.words)?,
+                ),
+            ),
+            None => (
+                None,
+                Transient::new(
+                    lim,
+                    Runs {
+                        starts: Vec::new(),
+                        items: Vec::new(),
+                    },
+                ),
+            ),
+        };
+        let level = &mut tdd.levels[parent.idx()];
+        level.clear();
+        for left in 0..plan.rows {
+            // Rows are left references, which are `u32`.
+            let left = left as u32;
+            let own = [left];
+            let nodes = match inverse.as_deref() {
+                Some(inverse) => inverse.get(left as usize),
+                None => &own[..],
+            };
+            for &node in nodes {
+                let bits = dense.get(node as usize);
+                if bits.is_empty() {
+                    let marked = row.mark(groups.get(node as usize), right_remap);
+                    work.gate.poll(marked + 1)?;
+                } else {
+                    row.or_words(bits);
+                    work.gate.poll(plan.words)?;
+                }
+            }
+            let read = row.drain(
+                lim,
+                left,
+                level.pairs.stored_mut(),
+                u64::from(left),
+                plan.rows,
+                plan.most,
+            )?;
+            work.gate.poll(read)?;
+        }
     }
     lim.discard(row.words);
     lim.discard(row.marks);
@@ -1953,115 +1818,6 @@ fn regroup_single_rows(
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, parent)?;
     Ok(())
-}
-
-/// Mark and drain the multi-row (`plan.single.is_none()`) case of
-/// [`regroup_single_rows`].
-fn mark_multi_rows(
-    work: &mut Rewrite<'_>,
-    (left_remap, right_remap): (Option<&Remap>, Option<&Remap>),
-    plan: &RowPlan,
-    row: &mut Row,
-    level: &mut TddLevel,
-) -> Result<(), OperationError> {
-    let lim = work.eng.limits();
-    let mut buf = Vec::new();
-    let pairs = level.pairs_read(0, &mut buf);
-    let filed = |pair: &ChildPair| match left_remap {
-        Some(_) => (ChildDecoder::structural().node(pair.left).0, pair.right.0),
-        None => (pair.left.0, pair.right.0),
-    };
-    let groups = Transient::new(
-        lim,
-        Runs::pack_by(lim, plan.left_keys as usize, pairs, filed, 0u32)?,
-    );
-    let (inverse, dense) = match left_remap {
-        Some(map) => (
-            Some(Transient::new(lim, map.transpose(lim, plan.rows as usize)?)),
-            Transient::new(
-                lim,
-                dense_groups(work, &groups, map, right_remap, plan.words)?,
-            ),
-        ),
-        None => (
-            None,
-            Transient::new(
-                lim,
-                Runs {
-                    starts: Vec::new(),
-                    items: Vec::new(),
-                },
-            ),
-        ),
-    };
-    level.clear();
-    for left in 0..plan.rows {
-        // Rows are left references, which are `u32`.
-        let left = left as u32;
-        let own = [left];
-        let nodes = match inverse.as_deref() {
-            Some(inverse) => inverse.get(left as usize),
-            None => &own[..],
-        };
-        for &node in nodes {
-            let bits = dense.get(node as usize);
-            if bits.is_empty() {
-                let marked = row.mark(groups.get(node as usize), right_remap);
-                work.gate.poll(marked + 1)?;
-            } else {
-                row.or_words(bits);
-                work.gate.poll(plan.words)?;
-            }
-        }
-        let read = row.drain(
-            lim,
-            left,
-            level.pairs.stored_mut(),
-            u64::from(left),
-            plan.rows,
-            plan.most,
-        )?;
-        work.gate.poll(read)?;
-    }
-    Ok(())
-}
-
-/// Mark and drain the single-row (`plan.single == Some(only)`) case of
-/// [`regroup_single_rows`].
-fn mark_single_row_only(
-    work: &mut Rewrite<'_>,
-    (left_remap, right_remap): (Option<&Remap>, Option<&Remap>),
-    (only, most): (u32, u64),
-    row: &mut Row,
-    level: &mut TddLevel,
-) -> Result<(), OperationError> {
-    let lim = work.eng.limits();
-    let mut buf = Vec::new();
-    let pairs = level.pairs_read(0, &mut buf);
-    let every_left_expands =
-        left_remap.is_none_or(|map| map.starts.windows(2).all(|w| w[0] < w[1]));
-    if every_left_expands {
-        for pair in pairs {
-            let marked = row.mark(std::slice::from_ref(&pair.right.0), right_remap);
-            work.gate.poll(marked + 1)?;
-        }
-    } else {
-        for pair in pairs {
-            let expands = left_remap.is_none_or(|map| {
-                !map.get(ChildDecoder::structural().node(pair.left).idx())
-                    .is_empty()
-            });
-            let marked = if expands {
-                row.mark(std::slice::from_ref(&pair.right.0), right_remap)
-            } else {
-                0
-            };
-            work.gate.poll(marked + 1)?;
-        }
-    }
-    level.clear();
-    let read = row.drain(lim, only, level.pairs.stored_mut(), 0, 1, most)?;
-    work.gate.poll(read)
 }
 
 /// The groups of [`regroup_single_rows`] worth marking once: run `g` holds a
