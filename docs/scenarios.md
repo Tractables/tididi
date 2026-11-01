@@ -460,7 +460,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 54bba6db514899e24f4ba090c48f596e093ffdf019b2f30822077d45915833c1 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 93a1ab679130c1aa34ca8da7f3fc433a141b21875c46ad8860502d23ef4b9b66 -->
 
 ## Reusable components
 

@@ -462,6 +462,14 @@ fn by_f_node<'a>(lim: Option<&'a Limits>, side: &Side<'_>) -> Result<(Column<'a,
     Ok((starts, partners))
 }
 
+/// A pair count whose scratch column was refused is no count (`Ok(None)`).
+fn counted(pairs: Result<Option<Pairs>, OperationError>) -> Result<Option<Pairs>, OperationError> {
+    match pairs {
+        Err(OperationError::OverBudget) => Ok(None),
+        other => other,
+    }
+}
+
 /// Price a level a dense route builds, before it claims its grid: the grid
 /// cells it and its ungridded children claim, and, on a route whose children
 /// hold no marginal level, the pairs its output holds. Refuses a level that
@@ -475,13 +483,6 @@ fn by_f_node<'a>(lim: Option<&'a Limits>, side: &Side<'_>) -> Result<(Column<'a,
 /// meters ([`Limits::refuse_level`]), or a refused scratch column.
 /// A count whose own scratch the memory left refused is no count: the level
 /// is then priced without it, and a refusal is always the level's, named.
-fn counted(pairs: Result<Option<Pairs>, OperationError>) -> Result<Option<Pairs>, OperationError> {
-    match pairs {
-        Err(OperationError::OverBudget) => Ok(None),
-        other => other,
-    }
-}
-
 pub(super) fn price_dense_level(
     lim: &Limits,
     run: &ApplyRun,

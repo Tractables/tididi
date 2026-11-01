@@ -1022,7 +1022,7 @@ impl Child {
 
 /// Compact one structural level: rewrite its references into a child that
 /// lost a slot through that child's new indices, and drop its own unmarked
-/// nodes. `own` starts at the level's block of marks, and `marks` holds the
+/// nodes. `v.base` starts at the level's block of marks, and `marks` holds the
 /// children's. Returns whether the level lost a node.
 ///
 /// A level held as the description of its pairs is kept as `plan`, decided

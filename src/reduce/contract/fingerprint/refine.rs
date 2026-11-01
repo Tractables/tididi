@@ -833,7 +833,7 @@ impl Partition<'_> {
     /// it where its nodes' sibling sets are nested; one whose pairs do not
     /// come in node order is split sibling by sibling
     /// ([`Self::split_by_siblings`]). Else the pairs
-    /// of its nodes not alone are sorted in `keys`, so that each node's
+    /// of its nodes not alone are sorted in `wide.keys`, so that each node's
     /// siblings are a run in ascending order; each run of a node that can
     /// have a twin keyed by its node's class and a hash of its siblings,
     /// and grouped with the runs of its key in a table, by
@@ -932,7 +932,7 @@ impl Partition<'_> {
     /// parent node left [`Degrees::Unordered`]. The kept runs' siblings are
     /// then counted. The first sum is read off the degrees' histogram (the
     /// nodes of degree at least v, for each v, taken two at a time), the
-    /// second added as each sibling's count rises. `column` and `reach` are
+    /// second added as each sibling's count rises. `wide.column` and `wide.reach` are
     /// zero between calls: every count written is cleared before the call
     /// returns, and nothing fallible runs while one is held. A parent node
     /// holds fewer than 2^32 pairs, as a run's degree in the low half of its
@@ -1016,12 +1016,12 @@ impl Partition<'_> {
     /// a class exactly when they shared one before and the parent node pairs
     /// them with the same siblings, as a split by sibling sets leaves them,
     /// with no sort, hash or compare. The nodes not alone are first
-    /// bucketed by sibling in `bucket`: where the pairs come in sibling
+    /// bucketed by sibling in `wide.bucket`: where the pairs come in sibling
     /// order, each run's as it is read, in one pass that also finds the
     /// order; else in two passes over the pairs after that one stops
     /// ([`Self::split_scattered`]), unless the pairs name at most
     /// [`FEW_SIBLINGS`] siblings and the nodes are split by their codes
-    /// instead ([`Self::split_by_codes`]). `column` is zero between calls,
+    /// instead ([`Self::split_by_codes`]). `wide.column` is zero between calls,
     /// as [`Self::split_by_degree`] reads it.
     fn split_by_siblings(
         &mut self,

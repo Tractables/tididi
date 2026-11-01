@@ -212,7 +212,7 @@ it does not substitute into the replacement functions.
 | [`vtree`] | Variable grouping, traversal orders, construction and vtree edits. |
 | [`diagram`] | Diagram storage, child references, weights and level pools. |
 | [`limits`] | Resource limits, cancellation, memory hooks and measurements. |
-| `value` | Count arithmetic, value domains, column storage and the shared value traversal. |
+| `value` | Shared count, exact-weight and scaled-float column domains (`FloatCol`) and sum-of-products fold kernels. |
 | `sort` | Radix and comparison sorting over pair keys and scratch buffers. |
 | `isa` | Architecture-specific bit, table and arithmetic primitives. |
 | `skip` | Canonical [`SkipTdd`] diagrams whose pairs skip pass-through levels, with their conversions, Boolean operations and model counter. |

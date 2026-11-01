@@ -1731,7 +1731,7 @@ fn emit_mixed_apart(
     emit_mixed(eng, emit, out, owners)
 }
 
-/// [`emit_mixed`] out of line on the candidates at `base` of a node of
+/// [`emit_mixed`] out of line on the candidates at `out.base` of a node of
 /// [`owner_walk_nodes`] whose g parents take turns, `owner` the next one's
 /// and `turn` the two's exclusive or, where [`emit_alternating`] cannot
 /// take them: the owners written out.
@@ -3104,8 +3104,8 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
     ChildPair::new(EncodedChildRef::from_raw(entry.left_prod), EncodedChildRef::from_raw(entry.right_prod))
 }
 
-/// Make f parent `p1`'s products of the candidates a walk wrote into
-/// `level`'s pair arena from `base` on, the g parent of each in `owners`,
+/// Make f parent `out.p1`'s products of the candidates a walk wrote into
+/// `out.level`'s pair arena from `out.base` on, the g parent of each in `owners`,
 /// and push each product's node, holding its candidates' pairs.
 ///
 /// Products are numbered in the order their g parent first appears among
@@ -3117,7 +3117,7 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 ///
 /// No sort and no dedup: pair lists are order-free, and canonical child
 /// levels make the lookups injective, so a duplicate in a purely Boolean
-/// diagram is an upstream canonicity violation. `duplicates_legal` says a
+/// diagram is an upstream canonicity violation. `out.duplicates_legal` says a
 /// node's pair list may repeat a pair: some level of an operand, or of the
 /// output so far, is marginal, so pair lists are multisets feeding a sum.
 /// Read only by the debug duplicate checks.
@@ -3271,7 +3271,7 @@ pub(super) fn emit_two(
     Ok(())
 }
 
-/// [`emit_mixed`] where the `n` candidates at `base`, an even number up to
+/// [`emit_mixed`] where the `n` candidates at `out.base`, an even number up to
 /// [`FEW_CANDIDATES`], alternate between g parents `a` and `b`, the usual
 /// node of f pairs whose leaf label meets both of g's: the products of `a`
 /// and `b`, and their nodes as [`emit_few`] makes them, the pairs of each
@@ -3494,7 +3494,7 @@ pub(super) fn gather_by_product(pairs: &[ChildPair], owners: &[u32], cursors: &m
 /// by comparing their g parents, rather than through [`emit_owned`]'s map.
 const FEW_CANDIDATES: usize = 8;
 
-/// Make f parent `p1`'s products of two to [`FEW_CANDIDATES`] candidates of
+/// Make f parent `out.p1`'s products of two to [`FEW_CANDIDATES`] candidates of
 /// more than one g parent, candidate `i` the pair `pairs[i]` of g parent
 /// `owners[i]`: the products, nodes and pair ranges [`emit_owned`] makes
 /// through its map, found by comparing the g parents with each other.

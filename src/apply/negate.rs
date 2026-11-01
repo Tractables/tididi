@@ -590,7 +590,7 @@ fn missing_by_cover(
 }
 
 /// Append to `out` the cells of `lefts x rights` that name a child's added
-/// node, `fill_l` on the left and `fill_r` on the right, in ascending
+/// node, `fill[0]` on the left and `fill[1]` on the right, in ascending
 /// `(l, r)` order and in the leaf form `form`, as
 /// [`Cover::missing_into`] writes them: the missing cells of a level whose
 /// pairs cover every other cell.
