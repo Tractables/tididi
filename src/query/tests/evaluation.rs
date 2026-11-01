@@ -14,6 +14,41 @@ fn fixture() -> Tdd {
     f
 }
 
+/// Sweep `cut` across `0..128`, stopping at the `cut`-th callback invocation,
+/// and assert that every stopped call returns `OperationError::Stopped` while
+/// an unstopped retry returns `expected`.
+fn assert_stops_across_cuts<V: PartialEq + std::fmt::Debug>(
+    eng: &Engine,
+    expected: V,
+    eval: impl Fn() -> Result<V, OperationError>,
+) {
+    let mut completed = false;
+    for cut in 0..128 {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = calls.clone();
+        let result = {
+            let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
+                StopCallback::new(move |_, _| {
+                    let call = callback_calls.fetch_add(1, Ordering::Relaxed);
+                    if call == cut { StopDecision::Stop } else { StopDecision::Continue }
+                }),
+            )));
+            eval()
+        };
+        assert_eq!(eval().unwrap(), expected);
+        match result {
+            Ok(value) => {
+                assert_eq!(value, expected);
+                assert!(cut > 2);
+                completed = true;
+                break;
+            }
+            Err(error) => assert_eq!(error, OperationError::Stopped),
+        }
+    }
+    assert!(completed);
+}
+
 #[test]
 fn algebra_evaluation_recovers_from_every_buffer_refusal() {
     let eng = Engine::new();
@@ -45,25 +80,9 @@ fn algebra_evaluation_stops_at_entry_during_work_and_before_return() {
     eng.limits().pin_reduce_poll_stride(Some(1));
     let f = fixture();
     let algebra = RationalWeights::unit(8);
-    let mut completed = false;
-    for cut in 0..128 {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let callback_calls = calls.clone();
-        let result = {
-            let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
-                StopCallback::new(move |_, _| {
-                    let call = callback_calls.fetch_add(1, Ordering::Relaxed);
-                    if call == cut { StopDecision::Stop } else { StopDecision::Continue }
-                }))));
-            eng.evaluate(&f, &algebra)
-        };
-        assert_eq!(eng.evaluate(&f, &algebra).unwrap(), crate::test_helpers::rat(224, 1));
-        match result {
-            Ok(_) => { assert!(cut > 2); completed = true; break; }
-            Err(error) => assert_eq!(error, OperationError::Stopped),
-        }
-    }
-    assert!(completed);
+    assert_stops_across_cuts(&eng, crate::test_helpers::rat(224, 1), || {
+        eng.evaluate(&f, &algebra)
+    });
     // A short walk must flush its final work even below the default stride.
     eng.limits().pin_reduce_poll_stride(None);
     for f in [Tdd::one(&Arc::new(Vtree::leaf(VarId(1)))), Tdd::zero(&Arc::new(Vtree::balanced(3)))] {
@@ -188,27 +207,11 @@ fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
     // product taken with the wrong partner shows. The override sums the
     // left values of the pairs that name one right child, by the value's
     // address, and multiplies each sum once.
-    fn weight(var: VarId, label: LeafLabel) -> u128 {
-        match label {
-            LeafLabel::Zero => 0,
-            LeafLabel::Neg => 1,
-            LeafLabel::Pos => 2 + var.0 as u128,
-            LeafLabel::One => 3 + var.0 as u128,
-        }
-    }
-    struct Plain;
-    impl EvalAlgebra for Plain {
-        type Value = u128;
-        fn zero(&self) -> u128 { 0 }
-        fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { weight(var, label) }
-        fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
-        fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
-    }
     struct Regrouped { pairs: Cell<usize>, products: Cell<usize> }
     impl EvalAlgebra for Regrouped {
         type Value = u128;
         fn zero(&self) -> u128 { 0 }
-        fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { weight(var, label) }
+        fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { column_weight(var, label) }
         fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
         fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
         fn sum_of_products<'v>(&self, pairs: impl ExactSizeIterator<Item = (&'v u128, &'v u128)>) -> u128 {
@@ -239,7 +242,7 @@ fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
             let regrouped = Regrouped { pairs: Cell::new(0), products: Cell::new(0) };
             let value = eng.evaluate(&f, &regrouped).unwrap();
             assert!(regrouped.pairs.get() > 0, "the fold sums its products through sum_of_products");
-            assert_eq!(value, eng.evaluate(&f, &Plain).unwrap(), "round {round}");
+            assert_eq!(value, eng.evaluate(&f, &PlainCounts).unwrap(), "round {round}");
         }
     }
 }
@@ -404,25 +407,7 @@ fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
     let f = fixture();
     let counts = || ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
     let expected = eng.evaluate(&f, &PlainCounts).unwrap();
-    let mut completed = false;
-    for cut in 0..128 {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let callback_calls = calls.clone();
-        let result = {
-            let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
-                StopCallback::new(move |_, _| {
-                    let call = callback_calls.fetch_add(1, Ordering::Relaxed);
-                    if call == cut { StopDecision::Stop } else { StopDecision::Continue }
-                }))));
-            eng.evaluate_columns(&f, &counts())
-        };
-        assert_eq!(eng.evaluate_columns(&f, &counts()).unwrap(), expected);
-        match result {
-            Ok(value) => { assert_eq!(value, expected); assert!(cut > 2); completed = true; break; }
-            Err(error) => assert_eq!(error, OperationError::Stopped),
-        }
-    }
-    assert!(completed);
+    assert_stops_across_cuts(&eng, expected, || eng.evaluate_columns(&f, &counts()));
     eng.limits().pin_reduce_poll_stride(None);
     {
         let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));

@@ -162,38 +162,42 @@ fn columns_charge_and_release_the_soft_budget() {
 /// `cell_pairs` with zero accounting and abort the process under a memory
 /// cap, so every push routes
 /// through `try_push` like the rest of the module.
+/// Always resolves children to a live (non-`NO_PRODUCT`) node, so every
+/// `(p1, p2)` combination emits one pair.
+struct AliveLookup;
+impl crate::apply::conjoin::child_lookup::ChildLookup for AliveLookup {
+    type Row = ();
+    fn row(&self, _row: u32) {}
+    fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
+}
+
+/// An unmasked `CellCtx` for a width-1 structural right level.
+fn unmasked_single_right_ctx() -> super::CellCtx<'static> {
+    let side = ChildPlan {
+        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
+        base: 0, stride: 1, live_cols: &[], reach: &[], reach_cols: &[], row_cols: &[], rows: false,
+    };
+    super::CellCtx {
+        output_grid_base: 0, right_width: 1,
+        masked: false,
+        sides: Sides { left: side, right: side },
+        right_cols: None,
+    }
+}
+
 #[test]
 fn collect_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::diagram::{ChildPair, NodeIdx, TddLevel, EncodedNode};
-    use super::{process_cell, CellCtx, CollectSink, OperationError};
-    use crate::apply::conjoin::child_lookup::ChildLookup;
-
-    // Always resolves children to a live (non-`NO_PRODUCT`) node, so every
-    // (p1, p2) combination emits one pair.
-    struct AliveLookup;
-    impl ChildLookup for AliveLookup {
-        type Row = ();
-        fn row(&self, _row: u32) {}
-        fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
-    }
+    use super::{process_cell, CollectSink, OperationError};
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair f_pairs into the N×1 arm.
     let mut g = TddLevel::new();
     g.nodes.stored_mut().push(EncodedNode::inline(ChildPair::new(NodeIdx(2), NodeIdx(3))));
 
-    let side = ChildPlan {
-        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
-        base: 0, stride: 1, live_cols: &[], reach: &[], reach_cols: &[], row_cols: &[], rows: false,
-    };
-    let ctx = CellCtx {
-        output_grid_base: 0, right_width: 1,
-        masked: false,
-        sides: Sides { left: side, right: side },
-        right_cols: None,
-    };
+    let ctx = unmasked_single_right_ctx();
     let mut scratch: Vec<ChildPair> = Vec::new();
     let mut node_idx: Vec<u32> = Vec::new();
 
@@ -252,19 +256,11 @@ fn collect_sink_respects_soft_budget() {
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     use crate::apply::conjoin::child_lookup::ChildLookup;
     use crate::diagram::{ChildPair, NodeIdx, TddLevel};
-    use super::{CellAction, CellArgs, CellCtx, CollectSink, process_cell, run_level_rows};
+    use super::{CellAction, CellArgs, CollectSink, process_cell, run_level_rows};
 
     const K1: usize = 256;
     const PAIRS_PER_ROW: usize = 1024;
     let expected_pairs = (K1 * PAIRS_PER_ROW) as u64;
-
-    // Every child ref resolves live, so no cull short-circuits the walk.
-    struct AliveLookup;
-    impl ChildLookup for AliveLookup {
-        type Row = ();
-        fn row(&self, _row: u32) {}
-        fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
-    }
 
     // The pair-collecting sink, driven through the shared row loop so the
     // level's residual charge is flushed the way the real routes flush it.
@@ -292,16 +288,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     let mut g = TddLevel::new();
     g.push_internal_node(&[pair]);
 
-    let side = ChildPlan {
-        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
-        base: 0, stride: 1, live_cols: &[], reach: &[], reach_cols: &[], row_cols: &[], rows: false,
-    };
-    let ctx = CellCtx {
-        output_grid_base: 0, right_width: 1,
-        masked: false,
-        sides: Sides { left: side, right: side },
-        right_cols: None,
-    };
+    let ctx = unmasked_single_right_ctx();
 
     let eng = Engine::new();
     eng.limits().reset_meters();

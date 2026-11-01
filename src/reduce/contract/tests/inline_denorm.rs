@@ -8,6 +8,47 @@ use crate::test_helpers::BIG;
 
 use super::sweep::contract_all_twins;
 
+/// Build a 4-variable balanced vtree fixture with root output at `NodeIdx(0)`,
+/// tag inline marginal refs, and seed the root onto the contraction worklist.
+fn balanced4_fixture(
+    setup: impl FnOnce(VtreeIdx, VtreeIdx, VtreeIdx, &mut [TddLevel]),
+) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    assert!(matches!(*vtree.node(v_left), crate::vtree::VtreeNode::Internal { .. }));
+    assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }));
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    setup(root, v_left, v_right, &mut levels);
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    tdd.seed_contract_worklist([root.0]);
+    (tdd, root, v_left, v_right)
+}
+
+/// Build the explicit-left / marginal-right twin fixture with two explicit
+/// nodes `A` and `B` at `v_left`, marginal `counts` at `v_right`, and root
+/// pairs `(A, slot_a)` and `(B, slot_b)`.
+fn marginal_sibling_twins(
+    counts: Vec<u128>,
+    slot_a: u32,
+    slot_b: u32,
+) -> (Tdd, VtreeIdx, VtreeIdx) {
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let (tdd, root, v_left, _) = balanced4_fixture(|root, v_left, v_right, levels| {
+        let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+        let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
+        levels[v_right.idx()].become_marginal(counts, None);
+        levels[root.idx()].push_internal_node(&[
+            ChildPair::new(a, NodeIdx(ValueRef::slot_raw(slot_a))),
+            ChildPair::new(b, NodeIdx(ValueRef::slot_raw(slot_b))),
+        ]);
+    });
+    (tdd, root, v_left)
+}
+
 // ── Test: explicit twin contraction when the SIBLING side is marginal ───
 
 /// Two nodes at an explicit (non-marginal) target level are structural twins
@@ -24,58 +65,7 @@ use super::sweep::contract_all_twins;
 #[test]
 fn twins_with_marginal_sibling_are_contracted() {
     let eng = Engine::new();
-
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    // v_left must be internal (so its diagram nodes can be explicit internal nodes).
-    assert!(matches!(
-        *vtree.node(v_left),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-    assert!(matches!(
-        *vtree.node(v_right),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> = (0..vtree.num_nodes())
-        .map(|_| crate::diagram::TddLevel::new())
-        .collect();
-
-    // Two explicit twin nodes A and B at v_left, each with one pair.
-    // Their content differs but they will be twins because the parent
-    // pairs them with the identical sibling ref.
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-
-
-    // v_right: marginal sibling with a single slot. The count is too wide to fit
-    // a ref, so the sibling side stays a bare slot index — the scenario this
-    // test is about.
-    levels[v_right.idx()].become_marginal(vec![BIG], None);
-    // Tag the marginal side so slot 0's raw ref is `slot_raw(0)`.
-    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
-
-    // Root: one multi-pair node with two pairs — both A and B use the same
-    // sibling slot 0. This makes A and B structural twins.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sib_slot0),
-        ChildPair::new(b, sib_slot0),
-    ]);
-
-    let output = crate::diagram::TddNodeId {
-        vtree: root,
-        local: NodeIdx(0),
-    };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-
-    // Tag marginal-side refs so the boundary decode is consistent.
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
-    // Declare root dirty so `contract_all_twins` picks it up.
-    tdd.seed_contract_worklist([root.0]);
+    let (mut tdd, root, v_left) = marginal_sibling_twins(vec![BIG], 0, 0);
 
     // Run the full contraction pipeline.
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
@@ -115,50 +105,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 #[test]
 fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let eng = Engine::new();
-
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    assert!(matches!(
-        *vtree.node(v_left),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-    assert!(matches!(
-        *vtree.node(v_right),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> = (0..vtree.num_nodes())
-        .map(|_| crate::diagram::TddLevel::new())
-        .collect();
-
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-
-
-    // Two sibling slots with EQUAL counts but DIFFERENT raw indices. The count
-    // is too wide to fit a ref, so the tagger leaves both refs bare slots.
-    levels[v_right.idx()].become_marginal(vec![BIG, BIG], None);
-    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
-    let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
-
-    // Root: A paired with slot0, B paired with slot1 — different sibling raws.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sib_slot0),
-        ChildPair::new(b, sib_slot1),
-    ]);
-
-    let output = crate::diagram::TddNodeId {
-        vtree: root,
-        local: NodeIdx(0),
-    };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
-    tdd.seed_contract_worklist([root.0]);
+    let (mut tdd, _, v_left) = marginal_sibling_twins(vec![BIG, BIG], 0, 1);
 
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
@@ -184,47 +131,15 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
 #[test]
 fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let eng = Engine::new();
-
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> = (0..vtree.num_nodes())
-        .map(|_| crate::diagram::TddLevel::new())
-        .collect();
-
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-
-
-    // Two DISTINCT slots carrying EQUAL counts (5) — the configuration the
-    // slot-form test proves is not contracted when refs stay bare slots.
-    levels[v_right.idx()].become_marginal(vec![5u128, 5u128], None);
-    let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
-    let sib_slot1 = NodeIdx(ValueRef::slot_raw(1));
-
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sib_slot0),
-        ChildPair::new(b, sib_slot1),
-    ]);
-
-    let output = crate::diagram::TddNodeId {
-        vtree: root,
-        local: NodeIdx(0),
-    };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
+    let (mut tdd, root, v_left) = marginal_sibling_twins(vec![5u128, 5u128], 0, 1);
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     for p in tdd.levels[root.idx()].pairs_vec(0) {
         match ChildDecoder::marginal().value(p.right) {
             ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
     }
-    tdd.seed_contract_worklist([root.0]);
 
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
@@ -272,49 +187,16 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     const C0: u128 = u128::MAX - 2;
     const F: u128 = 10u128;
 
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    assert!(matches!(
-        *vtree.node(v_left),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-    assert!(matches!(
-        *vtree.node(v_right),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> = (0..vtree.num_nodes())
-        .map(|_| crate::diagram::TddLevel::new())
-        .collect();
-
-    // v_left: marginal level with two slots — both referenced from root.
-    levels[v_left.idx()].become_marginal(vec![C0, F], None);
-
-    // v_right: explicit internal with one node `n` (single pair, leaf children).
-    let n = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-
-    // root: one multi-pair node with two pairs — both reference the same
-    // explicit sibling `n` but different marginal refs (slot0, slot1). This is
-    // a pair fusion redex: same-x-different-marginal-ref pairs at the same node.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(ValueRef::slot_raw(0)), n),
-        ChildPair::new(NodeIdx(ValueRef::slot_raw(1)), n),
-    ]);
-
-    let output = crate::diagram::TddNodeId {
-        vtree: root,
-        local: NodeIdx(0),
-    };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-
-    // Tag marginal-side refs and mark root dirty; the full pipeline closes the redex.
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
-    tdd.seed_contract_worklist([root.0]);
+    let (mut tdd, root, v_left, _) = balanced4_fixture(|root, v_left, v_right, levels| {
+        levels[v_left.idx()].become_marginal(vec![C0, F], None);
+        let n = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+        levels[root.idx()].push_internal_node(&[
+            ChildPair::new(NodeIdx(ValueRef::slot_raw(0)), n),
+            ChildPair::new(NodeIdx(ValueRef::slot_raw(1)), n),
+        ]);
+    });
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     // The parent must have had its duplicate pair fused (2 → 1) by pair fusion.
@@ -400,54 +282,17 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     const COUNT_B: u128 = 2_000_000_000_000u128;
     const COUNT_SUM: u128 = COUNT_A + COUNT_B;
 
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-    assert!(matches!(
-        *vtree.node(v_left),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-    assert!(matches!(
-        *vtree.node(v_right),
-        crate::vtree::VtreeNode::Internal { .. }
-    ));
-
-
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> = (0..vtree.num_nodes())
-        .map(|_| crate::diagram::TddLevel::new())
-        .collect();
-
-    // v_left: explicit internal with one node `n` (single pair child nodes).
-    let n = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-
-    // v_right: marginal sibling with two slots carrying different large counts.
-    levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B], None);
-    let slot_a = NodeIdx(ValueRef::slot_raw(0));
-    let slot_b = NodeIdx(ValueRef::slot_raw(1));
-
-    // Root: one multi-pair node with two pairs — both use the same explicit
-    // node `n` but different marginal refs (slot_a and slot_b). This is both
-    // a pair fusion redex (same-x-different-marginal at root) and a twin contraction
-    // redex (slot_a and slot_b have identical parent context {(root_node, n)}).
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(n, slot_a),
-        ChildPair::new(n, slot_b),
-    ]);
-
-    let output = crate::diagram::TddNodeId {
-        vtree: root,
-        local: NodeIdx(0),
-    };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-
-    // Tag marginal-side refs so the boundary decode is consistent.
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
-    // Mark root dirty so `contract_all_twins` picks it up.
-    tdd.seed_contract_worklist([root.0]);
+    let mut n = NodeIdx(0);
+    let (mut tdd, root, _, v_right) = balanced4_fixture(|root, v_left, v_right, levels| {
+        n = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+        levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B], None);
+        levels[root.idx()].push_internal_node(&[
+            ChildPair::new(n, NodeIdx(ValueRef::slot_raw(0))),
+            ChildPair::new(n, NodeIdx(ValueRef::slot_raw(1))),
+        ]);
+    });
 
     // Run the full pipeline — must close the redex in one call.
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");

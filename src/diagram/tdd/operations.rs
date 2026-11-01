@@ -19,6 +19,11 @@ impl Tdd {
         self.vtree().context()
     }
 
+    #[inline]
+    fn context_arc(&self) -> Arc<Context> {
+        Arc::clone(self.context())
+    }
+
     /// Return the Boolean complement of this structural diagram in minimized form.
     ///
     /// Consumes the operand on success and error, retaining its vtree and attached
@@ -41,8 +46,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn negate(self) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.negate(self))
+        self.context_arc().run(|eng| eng.negate(self))
     }
 
     /// Complement the diagram using an explicit reduction plan.
@@ -59,8 +63,7 @@ impl Tdd {
     ///
     /// As [`negate`](Self::negate).
     pub fn negate_with(self, plan: crate::reduce::ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.negate_with(self, plan))
+        self.context_arc().run(|eng| eng.negate_with(self, plan))
     }
 
     /// Conjoin a disjunction of literals without building a separate diagram.
@@ -92,8 +95,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn and_clause<L: crate::LiteralInput>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.and_clause(self, clause.as_ref()))
+        self.context_arc().run(|eng| eng.and_clause(self, clause.as_ref()))
     }
 
     /// Disjoin a conjunction of literals without building a separate diagram.
@@ -137,8 +139,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn or_cube<L: crate::LiteralInput>(self, cube: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.or_cube(self, cube.as_ref()))
+        self.context_arc().run(|eng| eng.or_cube(self, cube.as_ref()))
     }
 
     /// Substitute an assignment into this function and return its minimized cofactor.
@@ -178,8 +179,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn condition(self, assignment: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.condition(self, assignment))
+        self.context_arc().run(|eng| eng.condition(self, assignment))
     }
 
     /// Substitute `value` for one variable and return its minimized cofactor.
@@ -208,8 +208,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn condition_var(self, var: VarId, value: bool) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.condition_var(self, var, value))
+        self.context_arc().run(|eng| eng.condition_var(self, var, value))
     }
 
     /// Substitute the same Boolean value for every variable in `vars`.
@@ -240,8 +239,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn condition_vars(self, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.condition_vars(self, vars, value))
+        self.context_arc().run(|eng| eng.condition_vars(self, vars, value))
     }
 
     /// Existentially quantify one variable.
@@ -269,8 +267,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn exists_var(self, var: VarId) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.exists_var(self, var))
+        self.context_arc().run(|eng| eng.exists_var(self, var))
     }
 
     /// Remove dependence on variables by allowing either value of each one.
@@ -313,8 +310,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn exists_vars(self, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.exists_vars(self, vars))
+        self.context_arc().run(|eng| eng.exists_vars(self, vars))
     }
 
     /// Remove dependence on variables by requiring both values of each one.
@@ -350,8 +346,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn forall_vars(self, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.forall_vars(self, vars))
+        self.context_arc().run(|eng| eng.forall_vars(self, vars))
     }
 
     /// Rename variable occurrences simultaneously within the existing vtree.
@@ -386,8 +381,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn rename_vars(self, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.rename_vars(self, renames))
+        self.context_arc().run(|eng| eng.rename_vars(self, renames))
     }
 
     /// Simultaneously replace variables with structural Boolean functions.
@@ -420,8 +414,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn substitute(self, replacements: &[(VarId, &Tdd)]) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.substitute(self, replacements))
+        self.context_arc().run(|eng| eng.substitute(self, replacements))
     }
 
     /// Simplify this function where only assignments satisfying `care` matter.
@@ -456,8 +449,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn restrict_to_care(self, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.restrict_to_care(self, care))
+        self.context_arc().run(|eng| eng.restrict_to_care(self, care))
     }
 
     /// Remove the structural internal nodes `keep` rejects, together with every
@@ -515,8 +507,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn filter_nodes(&self, keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<crate::apply::FilterOutcome, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.filter_nodes(self, keep))
+        self.context_arc().run(|eng| eng.filter_nodes(self, keep))
     }
 
     /// Whether two structural diagrams represent the same Boolean function.
@@ -546,8 +537,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn equivalent(&self, other: &Tdd) -> Result<bool, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.equivalent(self, other))
+        self.context_arc().run(|eng| eng.equivalent(self, other))
     }
 
     /// Whether every model of this structural function satisfies `other`.
@@ -576,8 +566,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn implies(&self, other: &Tdd) -> Result<bool, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.implies(self, other))
+        self.context_arc().run(|eng| eng.implies(self, other))
     }
 
     /// Return variables that can change this Boolean function, sorted by identifier.
@@ -602,8 +591,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn support(&self) -> Result<Vec<VarId>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.support(self))
+        self.context_arc().run(|eng| eng.support(self))
     }
 
     /// Return literals true in every model, sorted by variable identifier.
@@ -628,8 +616,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn implied_literals(&self) -> Result<Vec<Literal>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.implied_literals(self))
+        self.context_arc().run(|eng| eng.implied_literals(self))
     }
 
     /// Count satisfying assignments over every variable in this diagram's vtree.
@@ -655,8 +642,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn model_count(&self) -> Result<num_bigint::BigUint, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.model_count(self))
+        self.context_arc().run(|eng| eng.model_count(self))
     }
 
     /// Count every internal level's nodes once and keep the counts with the
@@ -714,8 +700,7 @@ impl Tdd {
     /// [`Engine::attach_level_counts`](crate::Engine::attach_level_counts)
     /// inside a batch with resource limits.
     pub fn attach_level_counts(&mut self) -> Result<(), OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.attach_level_counts(self))
+        self.context_arc().run(|eng| eng.attach_level_counts(self))
     }
 
     /// Whether the diagram keeps its levels' model counts
@@ -770,8 +755,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn projected_model_count(&self, vars: &[VarId]) -> Result<num_bigint::BigUint, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.projected_model_count(self, vars))
+        self.context_arc().run(|eng| eng.projected_model_count(self, vars))
     }
 
     /// Return per-node counts, saturating values above `u128::MAX`.
@@ -790,8 +774,7 @@ impl Tdd {
     /// levels, [`OperationError::OverBudget`] if an allocation is refused,
     /// or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self) -> Result<Vec<Vec<u128>>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.node_counts_u128(self))
+        self.context_arc().run(|eng| eng.node_counts_u128(self))
     }
 
     /// Whether the function has at least one satisfying assignment.
@@ -822,8 +805,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn is_sat(&self) -> Result<bool, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.is_sat(self))
+        self.context_arc().run(|eng| eng.is_sat(self))
     }
 
     /// Return a complete satisfying assignment, or `None` if the function is false.
@@ -853,8 +835,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn satisfying_assignment(&self) -> Result<Option<Vec<Literal>>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.satisfying_assignment(self))
+        self.context_arc().run(|eng| eng.satisfying_assignment(self))
     }
 
     /// Evaluate this structural diagram in a caller-supplied algebra.
@@ -912,8 +893,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn evaluate<S: EvalAlgebra>(&self, algebra: &S) -> Result<S::Value, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.evaluate(self, algebra))
+        self.context_arc().run(|eng| eng.evaluate(self, algebra))
     }
 
     /// Evaluate this diagram bottom-up into columns the algebra owns.
@@ -963,8 +943,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn evaluate_columns<A: ColumnAlgebra>(&self, algebra: &A) -> Result<A::Value, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.evaluate_columns(self, algebra))
+        self.context_arc().run(|eng| eng.evaluate_columns(self, algebra))
     }
 
     /// Evaluate every node of the level at vtree node `at` over the
@@ -1023,8 +1002,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn evaluate_at<S: EvalAlgebra>(&self, at: VtreeIdx, algebra: &S) -> Result<Vec<S::Value>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.evaluate_at(self, at, algebra))
+        self.context_arc().run(|eng| eng.evaluate_at(self, at, algebra))
     }
 
     /// [`evaluate_at`](Self::evaluate_at) into a column the algebra owns:
@@ -1079,8 +1057,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.evaluate_columns_at(self, at, algebra))
+        self.context_arc().run(|eng| eng.evaluate_columns_at(self, at, algebra))
     }
 
     /// Evaluate this diagram using its attached weight store, if present.
@@ -1113,8 +1090,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn weighted_value(&self) -> Result<Option<WeightValue>, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.weighted_value(self))
+        self.context_arc().run(|eng| eng.weighted_value(self))
     }
 
     /// Minimize this diagram under its current vtree, preserving its function and count.
@@ -1153,8 +1129,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn minimize(&mut self) -> Result<(), OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.minimize(self))
+        self.context_arc().run(|eng| eng.minimize(self))
     }
 
     /// Run the reduction passes selected by `plan`, preserving function and count.
@@ -1182,8 +1157,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn reduce(&mut self, plan: crate::reduce::ReductionPlan<'_>) -> Result<(), OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.reduce(self, plan))
+        self.context_arc().run(|eng| eng.reduce(self, plan))
     }
 
     /// Replace selected subtrees with per-node counts or fixed weighted values.
@@ -1227,8 +1201,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn marginalize_levels(&mut self, levels: &[VtreeIdx]) -> Result<(), OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.marginalize_levels(self, levels))
+        self.context_arc().run(|eng| eng.marginalize_levels(self, levels))
     }
 
     /// Search nearby vtree shapes while preserving this function and its count.
@@ -1272,7 +1245,6 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn rotation_search<O: crate::restructure::search::RotationObjective>(&mut self, objective: &mut O, config: &crate::restructure::search::RotationSearchConfig) -> Result<crate::restructure::search::RotationSearchStats, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.rotation_search(self, objective, config))
+        self.context_arc().run(|eng| eng.rotation_search(self, objective, config))
     }
 }

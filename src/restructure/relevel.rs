@@ -707,7 +707,6 @@ fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (
 /// `floor` of what is still to come reach `cap`.
 fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize, cap: usize, floor: Floor) -> Result<Option<usize>, OperationError> {
     const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
-    const SIZE: u64 = 0x1405_7B7E_F767_814F;
     s.keys.clear();
     s.touched.clear();
     lim.reserve(&mut s.touched, s.marks.len())?;
@@ -746,10 +745,20 @@ fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize, cap: usize, 
             return Ok(None);
         }
     }
-    // The distinct contexts: the new inner nodes, and their cells the new
-    // outer pairs. A key of zero marks an empty slot; a context hashing to
-    // zero takes key one, which can only merge it with another, lowering
-    // the score.
+    count_distinct_contexts(lim, s, max_pairs, cap)
+}
+
+/// The distinct contexts among `s.keys`: the new inner nodes, and their cells
+/// the new outer pairs. A key of zero marks an empty slot; a context hashing
+/// to zero takes key one, which can only merge it with another, lowering the
+/// score.
+fn count_distinct_contexts(
+    lim: &Limits,
+    s: &mut ScoreScratch,
+    max_pairs: usize,
+    cap: usize,
+) -> Result<Option<usize>, OperationError> {
+    const SIZE: u64 = 0x1405_7B7E_F767_814F;
     let inner_pairs = s.keys.len();
     // What the outer pairs may reach before the pairs reach `cap`.
     let stop = cap - inner_pairs;

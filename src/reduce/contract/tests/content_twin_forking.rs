@@ -10,6 +10,36 @@ use std::sync::Arc;
 use crate::vtree::VtreeIdx;
 use super::sweep::contract_all_twins;
 
+/// Build the `boundary_internal_marginal_vtree` fixture with content-equal
+/// twins `A` and `B` at `gp` and `m_v` initialized by `init_m`.
+fn boundary_content_twins_fixture(
+    init_m: impl FnOnce(&mut TddLevel),
+) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx, VtreeIdx, NodeIdx) {
+    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (gp, sigma_v) = vtree.children(root);
+    assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
+    let (bp, s_v) = vtree.children(gp);
+    assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
+    let (_, m_v) = vtree.children(bp);
+    assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
+
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    init_m(&mut levels[m_v.idx()]);
+    let slot_0 = NodeIdx(ValueRef::slot_raw(0));
+    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
+    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let a = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
+    let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
+    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    levels[root.idx()].push_internal_node(&[ChildPair::new(a, sigma), ChildPair::new(b, sigma)]);
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    (tdd, root, gp, bp, m_v, s)
+}
+
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
 /// (`duplicate_pair`): content-equal context-twins at a PLAIN level whose merge
 /// mints a duplicate pair, resolved by scaling the marginal-carrying child.
@@ -32,50 +62,10 @@ use super::sweep::contract_all_twins;
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
-
     const COUNT: u128 = 5;
 
-    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (gp, sigma_v) = vtree.children(root);
-    assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
-    let (bp, s_v) = vtree.children(gp);
-    assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
-    let (_, m_v) = vtree.children(bp);
-    // m must be internal: a leaf marginal store cannot hold a slot.
-    assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> =
-        (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
-
-    // m: marginal leaf-side level with one slot of count 5.
-    levels[m_v.idx()].become_marginal(vec![COUNT], None);
-    let slot_0 = NodeIdx(ValueRef::slot_raw(0));
-
-    // bp: one node P = {(Pos, slot_0)}.
-    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
-
-    // s: one plain node {(Pos, One)} at gp's right child.
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-    // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
-    let a = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
-    let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
-
-    // σ: one plain node at root's right child.
-    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-    // root: {(A, σ), (B, σ)} — gives A and B the same context.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sigma),
-        ChildPair::new(b, sigma),
-    ]);
-
-    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
+    let (mut tdd, root, gp, bp, m_v, s) =
+        boundary_content_twins_fixture(|m| m.become_marginal(vec![COUNT], None));
     crate::diagram::inline_small_marginal_refs(&mut tdd, None);
 
     tdd.seed_contract_worklist([root.0]);
@@ -154,45 +144,8 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let v = BigRational::new(BigInt::from(3), BigInt::from(7)); // 3/7
     let two = BigRational::from_integer(BigInt::from(2));
 
-    let vtree = Arc::new(crate::test_helpers::boundary_internal_marginal_vtree());
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (gp, sigma_v) = vtree.children(root);
-    assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
-    let (bp, s_v) = vtree.children(gp);
-    assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
-    let (_, m_v) = vtree.children(bp);
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<crate::diagram::TddLevel> =
-        (0..vtree.num_nodes()).map(|_| crate::diagram::TddLevel::new()).collect();
-
-    // m: internal weighted marginal level with one slot holding value 3/7.
-    levels[m_v.idx()].become_marginal_weighted(1);
-    let slot_0 = NodeIdx(ValueRef::slot_raw(0));
-
-    // bp: one node P = {(Pos, slot_0)}.
-    let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
-
-    // s: one plain node {(Pos, One)} at gp's right child.
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-    // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
-    let a = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
-    let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
-
-    // σ: one plain node at root's right child.
-    let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-    // root: {(A, σ), (B, σ)} — gives A and B the same context.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sigma),
-        ChildPair::new(b, sigma),
-    ]);
-
-    let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
+    let (mut tdd, root, gp, bp, m_v, s) =
+        boundary_content_twins_fixture(|m| m.become_marginal_weighted(1));
 
     // Attach the store after building the diagram (mirrors `toy_weighted`'s
     // contract) and write the slot's value into it, so the content-twin fold takes

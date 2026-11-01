@@ -688,51 +688,10 @@ impl<'l> PoolDescent<'l> {
                 if self.known.refused[v.idx()] {
                     continue;
                 }
-                let (left, right) = self.tree.children(v);
-                let parent = self.tree.node(v).parent();
-                let mut moved = false;
-                'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
-                    let mut twin_scored = false;
-                    for &crossed in crossings {
-                        if spent(self.eng) {
-                            return Ok(false);
-                        }
-                        let slot = move_slot(kind, crossed);
-                        self.stats.probes += 1;
-                        if let Some(units) = self.known.refusals[v.idx()][slot]
-                            && replay_refusals()
-                        {
-                            self.eng.limits().charge_work(units);
-                            continue;
-                        }
-                        let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
-                        // A plain move whose crossing is to be probed scores the
-                        // crossing too; refused, it leaves the levels as they
-                        // were, and the crossing reads its scores.
-                        let twin = if crossed {
-                            if twin_scored { TwinMode::Given } else { TwinMode::Alone }
-                        } else if self.config.crossed && self.known.refusals[v.idx()][move_slot(kind, true)].is_none() {
-                            self.crossed_scores.clear();
-                            twin_scored = true;
-                            TwinMode::Fill
-                        } else {
-                            TwinMode::Alone
-                        };
-                        let before = self.eng.limits().work_units();
-                        if self.marginal || !self.probe_in_place(members, mv, twin, 0, undo.as_deref_mut())? {
-                            self.known.refusals[v.idx()][slot] = Some(self.eng.limits().work_units() - before);
-                            continue;
-                        }
-                        debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), self.marginal);
-                        self.stats.accepts += 1;
-                        kept += 1;
-                        moved = true;
-                        self.known.kept(self.tree, mv, left, right, parent);
-                        break 'pivot;
-                    }
-                }
-                if !moved {
-                    self.known.refused[v.idx()] = true;
+                match self.probe_pivot(members, v, crossings, undo.as_deref_mut())? {
+                    Some(true) => kept += 1,
+                    Some(false) => self.known.refused[v.idx()] = true,
+                    None => return Ok(false),
                 }
             }
             if kept == 0 {
@@ -740,6 +699,59 @@ impl<'l> PoolDescent<'l> {
             }
         }
         Ok(false)
+    }
+
+    /// Probe the candidate moves at pivot `v`: `Ok(Some(true))` when a move was
+    /// accepted, `Ok(Some(false))` when all moves at `v` were refused, and
+    /// `Ok(None)` when the work budget `self.until` was reached mid-pivot.
+    fn probe_pivot(
+        &mut self,
+        members: &mut [&mut Tdd],
+        v: VtreeIdx,
+        crossings: &[bool],
+        mut undo: Option<&mut Undo<'l>>,
+    ) -> Result<Option<bool>, OperationError> {
+        let (left, right) = self.tree.children(v);
+        let parent = self.tree.node(v).parent();
+        for kind in [RotationKind::Left, RotationKind::Right] {
+            let mut twin_scored = false;
+            for &crossed in crossings {
+                if self.eng.limits().work_units() >= self.until {
+                    return Ok(None);
+                }
+                let slot = move_slot(kind, crossed);
+                self.stats.probes += 1;
+                if let Some(units) = self.known.refusals[v.idx()][slot]
+                    && replay_refusals()
+                {
+                    self.eng.limits().charge_work(units);
+                    continue;
+                }
+                let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+                // A plain move whose crossing is to be probed scores the
+                // crossing too; refused, it leaves the levels as they
+                // were, and the crossing reads its scores.
+                let twin = if crossed {
+                    if twin_scored { TwinMode::Given } else { TwinMode::Alone }
+                } else if self.config.crossed && self.known.refusals[v.idx()][move_slot(kind, true)].is_none() {
+                    self.crossed_scores.clear();
+                    twin_scored = true;
+                    TwinMode::Fill
+                } else {
+                    TwinMode::Alone
+                };
+                let before = self.eng.limits().work_units();
+                if self.marginal || !self.probe_in_place(members, mv, twin, 0, undo.as_deref_mut())? {
+                    self.known.refusals[v.idx()][slot] = Some(self.eng.limits().work_units() - before);
+                    continue;
+                }
+                debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), self.marginal);
+                self.stats.accepts += 1;
+                self.known.kept(self.tree, mv, left, right, parent);
+                return Ok(Some(true));
+            }
+        }
+        Ok(Some(false))
     }
 
     /// One probe of the descent or of a restart's random moves: `mv` made on
@@ -1062,29 +1074,10 @@ fn probe_scored<'l>(
         Twin::Given(_) => mv.crossed,
     });
     let lim = eng.limits();
-    let defer = bound > 2;
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let mut before = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut before, members.len())?;
-    // Whether each member is scored: one with at most one pair on each
-    // level is not, its pairs unchanged.
-    let mut scored = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut scored, members.len())?;
-    // The least pairs each member can end with: a member scored keeps a
-    // pair for each node of its outer level ([`score_levels`]), one not
-    // scored its pairs.
-    let mut floors = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut floors, members.len())?;
-    for m in members.iter() {
-        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
-        let old = outer + inner;
-        before.push(old);
-        let scores = !(defer && outer <= 1 && inner == outer);
-        scored.push(scores);
-        floors.push(if scores { owners } else { old });
-    }
+    let (before, scored, floors) = collect_member_floors(lim, members, (v, w), bound > 2)?;
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
@@ -1104,7 +1097,6 @@ fn probe_scored<'l>(
     // scored, of the move and of its crossing where it is scored too.
     let mut rest = floors.iter().sum::<usize>();
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
-    let cap = |sum: usize, rest: usize| limit.saturating_sub(sum + rest);
     for (at, &i) in order.iter().enumerate() {
         let m = &members[i];
         rest -= floors[i];
@@ -1115,25 +1107,9 @@ fn probe_scored<'l>(
             sum_crossed = sum_crossed.map(|s| s + old);
             continue;
         }
-        #[cfg(test)]
-        tests::note_score();
-        let (kind, score) = (mv.rotation.kind, &mut scratch.score);
-        let new = match &mut twin {
-            Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
-            Twin::Fill(slots) => {
-                // A crossing refused by an earlier member's score is capped
-                // at nothing.
-                let crossed_cap = sum_crossed.map_or(0, |s| cap(s, rest));
-                let [plain, crossed] = score_levels_crossed_too(lim, m, &info, kind, score, bound, [cap(sum, rest), crossed_cap])?;
-                slots[i] = Some(crossed);
-                sum_crossed = sum_crossed.zip(crossed).map(|(s, n)| s + n);
-                plain
-            }
-            Twin::Given(slots) => match slots.get(i) {
-                Some(&Some(given)) => given,
-                _ => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
-            },
-        };
+        let new = score_member_move(
+            lim, m, i, step, &mut scratch.score, &mut twin, (sum, &mut sum_crossed), (rest, limit),
+        )?;
         let Some(new) = new else {
             // Refused, by the cap or the bound: this member and the ones
             // after it charged as if scored.
@@ -1179,6 +1155,71 @@ fn probe_scored<'l>(
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
     settle(lim, members, &info, &mut saved, outcome, undo)
+}
+
+type MemberFloors<'a> = (Transient<'a, Vec<usize>>, Transient<'a, Vec<bool>>, Transient<'a, Vec<usize>>);
+
+/// Each member's old pair total, whether it is scored (a member with at most
+/// one pair on each level is not, its pairs unchanged), and the least pairs it
+/// can end with (a pair for each outer node when scored, else its old pairs).
+fn collect_member_floors<'a>(
+    lim: &'a Limits,
+    members: &[&mut Tdd],
+    (v, w): (usize, usize),
+    defer: bool,
+) -> Result<MemberFloors<'a>, OperationError> {
+    let mut before = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut before, members.len())?;
+    let mut scored = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut scored, members.len())?;
+    let mut floors = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut floors, members.len())?;
+    for m in members.iter() {
+        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
+        let old = outer + inner;
+        before.push(old);
+        let scores = !(defer && outer <= 1 && inner == outer);
+        scored.push(scores);
+        floors.push(if scores { owners } else { old });
+    }
+    Ok((before, scored, floors))
+}
+
+/// Score one member's rebuilt pair count under `step`, updating `twin` and
+/// `sum_crossed` when the crossing move is scored alongside.
+#[expect(clippy::too_many_arguments)]
+fn score_member_move(
+    lim: &Limits,
+    m: &Tdd,
+    i: usize,
+    step: BoundedMove,
+    score: &mut crate::restructure::relevel::ScoreScratch,
+    twin: &mut Twin<'_>,
+    (sum, sum_crossed): (usize, &mut Option<usize>),
+    (rest, limit): (usize, usize),
+) -> Result<Option<usize>, OperationError> {
+    #[cfg(test)]
+    tests::note_score();
+    let BoundedMove { info, mv, bound } = step;
+    let cap = |s: usize| limit.saturating_sub(s + rest);
+    match twin {
+        Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum)),
+        Twin::Fill(slots) => {
+            // A crossing refused by an earlier member's score is capped
+            // at nothing.
+            let crossed_cap = sum_crossed.map_or(0, cap);
+            let [plain, crossed] = score_levels_crossed_too(
+                lim, m, &info, mv.rotation.kind, score, bound, [cap(sum), crossed_cap],
+            )?;
+            slots[i] = Some(crossed);
+            *sum_crossed = (*sum_crossed).zip(crossed).map(|(s, n)| s + n);
+            Ok(plain)
+        }
+        Twin::Given(slots) => match slots.get(i) {
+            Some(&Some(given)) => Ok(given),
+            _ => score_levels(lim, m, step.step(), score, cap(sum)),
+        },
+    }
 }
 
 /// A level's live pairs and the nodes that hold them.

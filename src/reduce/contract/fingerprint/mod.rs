@@ -435,30 +435,51 @@ pub(super) fn find_twin_groups(
         false
     };
     if cfg!(debug_assertions) {
-        list_members(lim, scratch)?;
-        let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
-        let exact = scratch.unnamed_exact;
-        let unnamed = std::mem::take(&mut scratch.unnamed);
-        let other = if by_fingerprints {
-            refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: false }, child)?
-                .expect("a refinement that may not give up does not")
-        } else {
-            group_twins_by_entries(eng, &entries, width, scratch)?
-        };
-        list_members(lim, scratch)?;
-        assert_eq!(
-            (found, &kept.0, &kept.1),
-            (other, &scratch.group_starts, &scratch.flat_groups),
-            "the refined twin groups differ from the fingerprinted ones",
-        );
-        // Each lists the nodes no pair names where it read every pair.
-        if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
-            assert_eq!(unnamed, scratch.unnamed, "the refinement and the fingerprints list different unnamed nodes");
-        }
-        scratch.unnamed = unnamed;
-        scratch.unnamed_exact = exact;
+        debug_check_twin_groups(
+            eng, &entries, parent_level, t1_side, lim, scratch, width, child, by_fingerprints, found,
+        )?;
     }
     Ok(found)
+}
+
+/// Cross-check the twin groups found on `parent_level` against the alternative
+/// grouping route (refinement vs. fingerprints) in debug builds.
+#[expect(clippy::too_many_arguments)]
+fn debug_check_twin_groups(
+    eng: &Engine,
+    entries: &ContextEntries<'_>,
+    parent_level: &TddLevel,
+    t1_side: ChildSide,
+    lim: &crate::limits::Limits,
+    scratch: &mut ContractScratch,
+    width: usize,
+    child: Option<&[crate::diagram::EncodedNode]>,
+    by_fingerprints: bool,
+    found: bool,
+) -> Result<(), OperationError> {
+    list_members(lim, scratch)?;
+    let kept = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+    let exact = scratch.unnamed_exact;
+    let unnamed = std::mem::take(&mut scratch.unnamed);
+    let other = if by_fingerprints {
+        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole { hand_off: false }, child)?
+            .expect("a refinement that may not give up does not")
+    } else {
+        group_twins_by_entries(eng, entries, width, scratch)?
+    };
+    list_members(lim, scratch)?;
+    assert_eq!(
+        (found, &kept.0, &kept.1),
+        (other, &scratch.group_starts, &scratch.flat_groups),
+        "the refined twin groups differ from the fingerprinted ones",
+    );
+    // Each lists the nodes no pair names where it read every pair.
+    if !unnamed.is_empty() && !scratch.unnamed.is_empty() {
+        assert_eq!(unnamed, scratch.unnamed, "the refinement and the fingerprints list different unnamed nodes");
+    }
+    scratch.unnamed = unnamed;
+    scratch.unnamed_exact = exact;
+    Ok(())
 }
 
 /// Group the `width` nodes of `level` by the multiset of their `entries`.
@@ -657,34 +678,54 @@ fn mark_partitioned_candidates(
     let mut begin = 0usize;
     for &end in &starts[..parts] {
         let end = end as usize;
-        let n = end - begin;
-        if n >= 2 {
-            let mask = (2 * n).next_power_of_two() - 1;
-            let slot_shift = u64::BITS - (mask + 1).trailing_zeros();
-            let table = &mut part_table[..=mask];
-            table.fill(u64::MAX);
-            for &record in &part_records[begin..end] {
-                let key = record >> node_bits;
-                let mut slot = (record >> slot_shift) as usize;
-                loop {
-                    let held = table[slot];
-                    if held == u64::MAX {
-                        table[slot] = record;
-                        break;
-                    }
-                    if held >> node_bits == key {
-                        is_candidate[(record & node_mask) as usize] = true;
-                        is_candidate[(held & node_mask) as usize] = true;
-                        found = true;
-                        break;
-                    }
-                    slot = (slot + 1) & mask;
-                }
-            }
+        if end - begin >= 2 {
+            found |= probe_partition_records(
+                &part_records[begin..end],
+                part_table,
+                node_bits,
+                node_mask,
+                is_candidate,
+            );
         }
         begin = end;
     }
     Ok(found)
+}
+
+/// Probe one partition's scattered `records` in `part_table` and flag any pair
+/// of nodes whose keys collide in `is_candidate`.
+#[inline]
+fn probe_partition_records(
+    records: &[u64],
+    part_table: &mut [u64],
+    node_bits: u32,
+    node_mask: u64,
+    is_candidate: &mut [bool],
+) -> bool {
+    let mask = (2 * records.len()).next_power_of_two() - 1;
+    let slot_shift = u64::BITS - (mask + 1).trailing_zeros();
+    let table = &mut part_table[..=mask];
+    table.fill(u64::MAX);
+    let mut found = false;
+    for &record in records {
+        let key = record >> node_bits;
+        let mut slot = (record >> slot_shift) as usize;
+        loop {
+            let held = table[slot];
+            if held == u64::MAX {
+                table[slot] = record;
+                break;
+            }
+            if held >> node_bits == key {
+                is_candidate[(record & node_mask) as usize] = true;
+                is_candidate[(held & node_mask) as usize] = true;
+                found = true;
+                break;
+            }
+            slot = (slot + 1) & mask;
+        }
+    }
+    found
 }
 
 /// How many fingerprints ahead the probe loop prefetches.

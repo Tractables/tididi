@@ -32,6 +32,30 @@ fn quantified_subsets(n: u32) -> Vec<Vec<VarId>> {
     out
 }
 
+/// Run both `FUSED` settings and `Quantification::Product` on `(f, g, vars)`
+/// and assert that all three produce canonical diagrams of identical shape.
+fn assert_routes_agree_on(
+    eng: &Engine,
+    f: &Tdd,
+    g: &Tdd,
+    vars: &[VarId],
+    what: &str,
+) -> Vec<Tdd> {
+    let product = eng
+        .and_exists_with(f.clone(), g.clone(), vars, Quantification::Product)
+        .unwrap();
+    assert_canonical(&product);
+    let mut out = Vec::with_capacity(3);
+    for how in FUSED {
+        let fused = eng.and_exists_with(f.clone(), g.clone(), vars, how).unwrap();
+        assert_canonical(&fused);
+        assert_same_shape(&fused, &product, &format!("{what}, quantifying {vars:?} [{how:?}]"));
+        out.push(fused);
+    }
+    out.push(product);
+    out
+}
+
 /// Split a formula's clauses in two, compile each half, and demand the two
 /// routes agree on every subset of the variables. Returns the operands and
 /// the results.
@@ -41,19 +65,7 @@ fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &
     let g = compile_clauses(vtree, &clauses[mid..]);
     let mut out = Vec::new();
     for vars in quantified_subsets(num_vars) {
-        let product = eng
-            .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-            .unwrap();
-        assert_canonical(&product);
-        for how in FUSED {
-            let fused = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, how)
-                .unwrap();
-            assert_canonical(&fused);
-            assert_same_shape(&fused, &product, &format!("{what}, quantifying {vars:?} [{how:?}]"));
-            out.push(fused);
-        }
-        out.push(product);
+        out.extend(assert_routes_agree_on(eng, &f, &g, &vars, what));
     }
     out.extend([f, g]);
     out
@@ -110,16 +122,7 @@ fn the_two_routes_agree_when_each_target_is_local_to_one_operand() {
             (1..=8).map(VarId).collect::<Vec<_>>(),
             vec![VarId(1), VarId(2)],
         ] {
-            let product = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-                .unwrap();
-            for how in FUSED {
-                let fused = eng
-                    .and_exists_with(f.clone(), g.clone(), &vars, how)
-                    .unwrap();
-                assert_canonical(&fused);
-                assert_same_shape(&fused, &product, &format!("{shape}, quantifying {vars:?} [{how:?}]"));
-            }
+            assert_routes_agree_on(&eng, &f, &g, &vars, shape);
         }
     }
 }
@@ -143,16 +146,7 @@ fn the_two_routes_agree_on_empty_and_total_quantifications() {
         ("both true", one.clone(), one.clone()),
     ] {
         for vars in [Vec::new(), all.clone(), vec![VarId(5)]] {
-            let product = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-                .unwrap();
-            for how in FUSED {
-                let fused = eng
-                    .and_exists_with(f.clone(), g.clone(), &vars, how)
-                    .unwrap();
-                assert_canonical(&fused);
-                assert_same_shape(&fused, &product, &format!("{name}, quantifying {vars:?} [{how:?}]"));
-            }
+            assert_routes_agree_on(&eng, &f, &g, &vars, name);
         }
     }
 }
@@ -206,16 +200,7 @@ fn the_two_routes_agree_when_a_quantified_block_straddles_both_operands() {
             vec![VarId(4), VarId(5)],
             vec![VarId(1), VarId(4), VarId(5), VarId(6), VarId(9)],
         ] {
-            let product = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-                .unwrap();
-            for how in FUSED {
-                let fused = eng
-                    .and_exists_with(f.clone(), g.clone(), &vars, how)
-                    .unwrap();
-                assert_canonical(&fused);
-                assert_same_shape(&fused, &product, &format!("{shape}, quantifying {vars:?} [{how:?}]"));
-            }
+            assert_routes_agree_on(&eng, &f, &g, &vars, shape);
         }
     }
 }
@@ -235,16 +220,7 @@ fn the_two_routes_agree_over_a_vtree_wider_than_the_formulas() {
         vec![VarId(9), VarId(10), VarId(11), VarId(12)],
         (1..=12).map(VarId).collect::<Vec<_>>(),
     ] {
-        let product = eng
-            .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-            .unwrap();
-        for how in FUSED {
-            let fused = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, how)
-                .unwrap();
-            assert_canonical(&fused);
-            assert_same_shape(&fused, &product, &format!("quantifying {vars:?} [{how:?}]"));
-        }
+        assert_routes_agree_on(&eng, &f, &g, &vars, "wide vtree");
     }
 }
 
@@ -270,16 +246,7 @@ fn the_two_routes_agree_with_every_subtree_of_the_vtree_quantified() {
             if vars.is_empty() {
                 continue;
             }
-            let product = eng
-                .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
-                .unwrap();
-            for how in FUSED {
-                let fused = eng
-                    .and_exists_with(f.clone(), g.clone(), &vars, how)
-                    .unwrap();
-                assert_canonical(&fused);
-                assert_same_shape(&fused, &product, &format!("{shape}, subtree {node} [{how:?}]"));
-            }
+            assert_routes_agree_on(&eng, &f, &g, &vars, &format!("{shape}, subtree {node}"));
         }
     }
 }
@@ -387,14 +354,7 @@ fn a_quantified_subtree_one_operand_ignores_is_pushed_whole() {
     let (f_changed, g_changed, _, g2) = pushed(&f, &g, &vars);
     assert!(!f_changed && g_changed, "the block went into the operand that constrains it");
     assert!(g2.equivalent(&g.clone().exists_vars(&vars).unwrap()).unwrap());
-    let eng = Engine::new();
-    for how in FUSED {
-        assert_same_shape(
-            &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
-            &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
-            "a block one operand ignores",
-        );
-    }
+    assert_routes_agree_on(&Engine::new(), &f, &g, &vars, "a block one operand ignores");
 }
 
 /// An operand with more than sixteen times the other's pairs is not
@@ -437,13 +397,7 @@ fn a_far_larger_operand_is_left_to_the_product() {
     assert!(f_changed && !g_changed, "an operand of comparable size was not quantified first");
     let eng = Engine::new();
     for (g, what) in [(&free, "beside a small operand"), (&tail, "beside a small operand it shares nothing with"), (&near, "beside a comparable operand")] {
-        for how in FUSED {
-            assert_same_shape(
-                &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
-                &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
-                what,
-            );
-        }
+        assert_routes_agree_on(&eng, &f, g, &vars, what);
     }
 }
 
@@ -471,12 +425,5 @@ fn low_bits_inside_a_quantified_block_stay_in_the_product() {
     let low: Vec<VarId> = (3..=4).map(VarId).collect();
     let (f_changed, g_changed, _, _) = pushed(&f, &g, &low);
     assert!(!f_changed && g_changed, "a whole quantified subtree was kept");
-    let eng = Engine::new();
-    for how in FUSED {
-        assert_same_shape(
-            &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
-            &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
-            "low bits one operand is constant over",
-        );
-    }
+    assert_routes_agree_on(&Engine::new(), &f, &g, &vars, "low bits one operand is constant over");
 }

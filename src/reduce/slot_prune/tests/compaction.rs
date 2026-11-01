@@ -88,15 +88,38 @@ fn weighted_prune_compacts_orphans() {
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");
 }
 
+fn sevenths(vals: &[i64]) -> Vec<crate::diagram::ScaledFloat> {
+    vals.iter()
+        .map(|&v| crate::diagram::ScaledFloat::from_rational(&crate::test_helpers::rat(v, 7)))
+        .collect()
+}
+
+/// Build `toy_weighted` with `vals[i] / 7` stored as `ScaledFloat` on its
+/// marginal level.
+fn toy_scaled_sevenths(
+    vals: &[i64],
+    nodes: &[&[(u32, u32)]],
+) -> (Tdd, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide) {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightValue};
+    use crate::test_helpers::rat;
+    let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
+    let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
+    let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
+    let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
+    let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
+    let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
+    ws.set_level(v.idx(), sevenths(vals).into_iter().map(WeightValue::scaled).collect());
+    tdd.weights = Some(ws);
+    (tdd, v, parent, side)
+}
+
 /// A scaled-float store merges equal referenced values as an exact one
 /// does, so that parent nodes differing only in which of them they name
 /// can merge; orphans drop and the rest move down in slot order.
 #[test]
 fn a_bounded_prune_merges_equal_values() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightValue};
-    use crate::test_helpers::rat;
+    use crate::diagram::ScaledFloat;
     let eng = &crate::Engine::new();
-    let sevenths = |vals: &[i64]| -> Vec<ScaledFloat> { vals.iter().map(|&v| ScaledFloat::from_rational(&rat(v, 7))).collect() };
     // The column's numerators, the parent's pairs and the numerators kept.
     type Case<'a> = (&'a [i64], &'a [&'a [(u32, u32)]], &'a [i64]);
     let cases: [Case; 2] = [
@@ -104,23 +127,14 @@ fn a_bounded_prune_merges_equal_values() {
         (&[1, 3, 5, 3], &[&[(0, 3)], &[(0, 1)]], &[3]),
     ];
     for (vals, nodes, kept) in cases {
-        // Built on an exact store, whose values the toy takes, then given a
-        // scaled-float store holding the same values as scaled floats.
-        let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
-        let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
-        let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
-        let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
-        let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-        let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
-        ws.set_level(v.idx(), sevenths(vals).into_iter().map(WeightValue::scaled).collect());
-        tdd.weights = Some(ws);
+        let (mut tdd, v, parent, side) = toy_scaled_sevenths(vals, nodes);
 
         let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
         let values = tdd.weights().unwrap().level(v.idx()).unwrap();
         let got: Vec<ScaledFloat> = values.iter().map(|v| *v.as_scaled().unwrap()).collect();
         assert_eq!(got, sevenths(kept), "{vals:?}");
-        assert_eq!(tdd.levels[v.idx()].slot_count() as usize, kept.len(), "{vals:?}");
+        assert_eq!(tdd.levels[v.idx()].slot_count(), kept.len(), "{vals:?}");
         assert_eq!(merged, vec![v.0], "{vals:?}");
         let mut buf = RefSlotScratch::default();
         let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
@@ -137,32 +151,23 @@ fn a_bounded_prune_merges_equal_values() {
 /// stride never reads together, merges to half its slots.
 #[test]
 fn a_large_bounded_level_merges_where_its_sample_repeats() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightValue};
-    use crate::test_helpers::rat;
+    use crate::diagram::ScaledFloat;
     let eng = &crate::Engine::new();
     let n = super::SAMPLE_FROM + 900;
     for (distinct, kept) in [(n, n), (7, 7), (n / 2, n / 2)] {
         let nums: Vec<i64> = (0..n).map(|i| (i % distinct) as i64 + 1).collect();
         let pairs: Vec<Vec<(u32, u32)>> = (0..n as u32).map(|s| vec![(0, s)]).collect();
         let lists: Vec<&[(u32, u32)]> = pairs.iter().map(Vec::as_slice).collect();
-        let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
-        let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
-        let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
-        let mut tdd = toy_weighted(exact, nums.iter().map(|&v| rat(v, 7)).collect(), &lists);
-        let (v, _, _) = boundary_marginal_levels(&tdd)[0];
-        let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
-        let scaled = |v: i64| ScaledFloat::from_rational(&rat(v, 7));
-        ws.set_level(v.idx(), nums.iter().map(|&v| WeightValue::scaled(scaled(v))).collect());
-        tdd.weights = Some(ws);
+        let (mut tdd, v, _, _) = toy_scaled_sevenths(&nums, &lists);
 
         let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
         let values = tdd.weights().unwrap().level(v.idx()).unwrap();
         assert_eq!(values.len(), kept, "{distinct} distinct");
-        assert_eq!(tdd.levels[v.idx()].slot_count() as usize, kept, "{distinct} distinct");
+        assert_eq!(tdd.levels[v.idx()].slot_count(), kept, "{distinct} distinct");
         assert_eq!(merged.is_empty(), kept == n, "{distinct} distinct");
         let got: Vec<ScaledFloat> = values.iter().take(distinct).map(|v| *v.as_scaled().unwrap()).collect();
-        let want: Vec<ScaledFloat> = (1..=distinct as i64).map(scaled).collect();
+        let want = sevenths(&(1..=distinct as i64).collect::<Vec<_>>());
         assert_eq!(got, want, "{distinct} distinct");
         check_slot_count_uniqueness(&tdd).unwrap();
     }

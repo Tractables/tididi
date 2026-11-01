@@ -537,9 +537,7 @@ impl Dirty {
     pub(crate) fn merge_under_kept(&mut self, mut carried: Dirty, rebuilt: &[VtreeIdx]) {
         let mut fused = carried.take_fused();
         for t in self.lists.iter().flatten().copied().chain(rebuilt.iter().map(|t| t.0)) {
-            if let Some(word) = fused.get_mut(t as usize / 64) {
-                *word &= !(1 << (t % 64));
-            }
+            Self::clear_fused_bit(&mut fused, t);
         }
         let own = std::mem::take(&mut self.fused);
         self.merge_under(carried);
@@ -566,21 +564,25 @@ impl Dirty {
 
     /// Copy pending work under the operation's allocation budget.
     pub(crate) fn clone_on(&self, eng: &crate::Engine) -> Result<Self, crate::OperationError> {
-        let mut out = Self::default();
-        for pass in Pass::ALL {
-            let from = &self.lists[pass as usize];
-            let to = out.list(pass);
+        fn copy_slice<T: Copy>(
+            eng: &crate::Engine,
+            to: &mut Vec<T>,
+            from: &[T],
+        ) -> Result<(), crate::OperationError> {
             eng.limits().reserve_exact(to, from.len())?;
             to.extend_from_slice(from);
+            Ok(())
+        }
+        let mut out = Self::default();
+        for pass in Pass::ALL {
+            copy_slice(eng, out.list(pass), &self.lists[pass as usize])?;
         }
         if let Some(from) = &self.loose {
             let mut to = Vec::new();
-            eng.limits().reserve_exact(&mut to, from.len())?;
-            to.extend_from_slice(from);
+            copy_slice(eng, &mut to, from)?;
             out.loose = Some(to);
         }
-        eng.limits().reserve_exact(&mut out.fused, self.fused.len())?;
-        out.fused.extend_from_slice(&self.fused);
+        copy_slice(eng, &mut out.fused, &self.fused)?;
         Ok(out)
     }
 
@@ -662,9 +664,7 @@ impl Dirty {
     /// level is that diagram's as it left it.
     pub(crate) fn restore_fused(&mut self, mut fused: Vec<u64>, rebuilt: &[VtreeIdx]) {
         for t in rebuilt {
-            if let Some(word) = fused.get_mut(t.idx() / 64) {
-                *word &= !(1 << (t.0 % 64));
-            }
+            Self::clear_fused_bit(&mut fused, t.0);
         }
         if self.fused.len() > fused.len() {
             std::mem::swap(&mut self.fused, &mut fused);
@@ -693,13 +693,18 @@ impl Dirty {
         self.fused[level as usize / 64] |= 1 << (level % 64);
     }
 
+    #[inline]
+    fn clear_fused_bit(fused: &mut [u64], level: u32) {
+        if let Some(word) = fused.get_mut(level as usize / 64) {
+            *word &= !(1 << (level % 64));
+        }
+    }
+
     /// Drop `level`'s fusion record, for an edit of its pair lists that pushes
     /// no level, as a rotation's inner level.
     #[inline]
     pub(crate) fn forget_fused(&mut self, level: u32) {
-        if let Some(word) = self.fused.get_mut(level as usize / 64) {
-            *word &= !(1 << (level % 64));
-        }
+        Self::clear_fused_bit(&mut self.fused, level);
     }
 
     /// The worklists an assembled diagram starts with: these lists, carried

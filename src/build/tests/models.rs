@@ -19,6 +19,48 @@ fn vars(n: u32) -> Vec<VarId> {
     (1..=n).map(VarId).collect()
 }
 
+/// Pack `table` into 64-bit words using its first row's width.
+fn pack_table(table: &[Vec<bool>]) -> Vec<u64> {
+    packed_rows(table.first().map_or(0, Vec::len), table)
+}
+
+/// The variables `1..=n` in a random Fisher-Yates order.
+fn shuffled_vars(rng: &mut Lcg, n: u32) -> Vec<VarId> {
+    let mut ids = vars(n);
+    for i in (1..ids.len()).rev() {
+        ids.swap(i, rng.below(i as u64 + 1) as usize);
+    }
+    ids
+}
+
+/// Sweep `0..cuts` reservation refusal points and verify that every refused
+/// call returns `OverBudget` and returns its level buffer to the pool.
+fn assert_refusal_sweep_returns_buffers(
+    vtree: &Arc<Vtree>,
+    cuts: u32,
+    build: impl Fn(&Engine) -> Result<Tdd, OperationError>,
+    check_ok: impl Fn(&Tdd, u32),
+) {
+    let mut refused = 0;
+    for cut in 0..cuts {
+        let eng = Engine::new();
+        // Park a level array so the pool holds exactly one either way: a build
+        // that takes it and then refuses has to hand it back.
+        Tdd::builder(&eng, vtree).unwrap().abandon(&eng);
+        eng.limits().refuse_nth_reserve(cut);
+        match build(&eng) {
+            Ok(f) => check_ok(&f, cut),
+            Err(e) => {
+                assert_eq!(e, OperationError::OverBudget, "cut {cut}");
+                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
+                refused += 1;
+            }
+        }
+        eng.limits().grant_every_reserve();
+    }
+    assert!(refused > 0, "no reservation was refused across the sweep");
+}
+
 /// The `width` bits of `code`, most significant first.
 fn code_bits(code: u32, width: u32) -> Vec<bool> {
     (0..width).map(|j| (code >> (width - 1 - j)) & 1 == 1).collect()
@@ -121,7 +163,7 @@ fn free_variables_in_the_middle_of_the_vtree_multiply_the_count() {
     let constrained = [VarId(2), VarId(5), VarId(7)];
     let table = vec![vec![false, false, true], vec![true, true, true], vec![true, false, false]];
     for (name, vtree) in vtree_shapes(8) {
-        let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+        let f = Tdd::from_models(&vtree, &constrained, &pack_table(&table)).unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), (3u32 * 32).into(), "{name}");
         assert_same_shape(&f, &table_function(&vtree, &constrained, &table), name);
@@ -142,7 +184,7 @@ fn the_canonicity_gap_of_four_nodes_and_six_edges() {
         })
         .collect();
     for (name, vtree) in vtree_shapes(4) {
-        let f = Tdd::from_models(&vtree, &vars(4), &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+        let f = Tdd::from_models(&vtree, &vars(4), &pack_table(&table)).unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), 6u32.into(), "{name}");
         let mut minimized = f.clone();
@@ -165,7 +207,7 @@ fn small_relations_match_an_or_of_cubes_and_the_enumerated_count() {
                         .map(|code| (0..width).map(|i| (code >> i) & 1 == 1).collect())
                         .collect();
                     let constrained = vars(width);
-                    let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+                    let f = Tdd::from_models(&vtree, &constrained, &pack_table(&table)).unwrap();
                     assert_canonical(&f);
                     let label = format!("{name}, {width} constrained, {free} free, round {round}");
                     let want = brute_force_count(num_vars, &blocking_clauses(&table, width));
@@ -186,7 +228,7 @@ fn a_relation_wider_than_one_word_reads_both_words() {
     let mut rng = Lcg::new(7);
     let table: Vec<Vec<bool>> =
         (0..40).map(|_| (0..70).map(|_| rng.coin()).collect()).collect();
-    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
+    let rows = pack_table(&table);
     assert_eq!(rows.len(), 2 * table.len());
 
     let f = Tdd::from_models(&vtree, &constrained, &rows).unwrap();
@@ -343,7 +385,7 @@ fn leaf_partitions_match_every_small_relation() {
             .map(|row| (0..3).map(|bit| row & (1 << bit) != 0).collect()).collect();
         for (name, vtree) in vtree_shapes(5) {
             let constrained = [VarId(1), VarId(3), VarId(5)];
-            let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+            let f = Tdd::from_models(&vtree, &constrained, &pack_table(&table)).unwrap();
             assert_canonical(&f);
             assert_same_shape(&f, &table_function(&vtree, &constrained, &table), name);
         }
@@ -386,7 +428,7 @@ fn a_closed_subtree_merges_duplicate_child_pairs_below_free_ancestors() {
         let table: Vec<Vec<bool>> = (0u32..16)
             .filter(|r| r & 0b1100 == 0 || r & 0b0011 == 0b0011)
             .map(|r| (0..4).map(|b| r & (1 << b) != 0).collect()).collect();
-        let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+        let f = Tdd::from_models(&vtree, &constrained, &pack_table(&table)).unwrap();
         assert_canonical(&f);
         assert_same_shape(&f, &table_function(&vtree, &constrained, &table), "closed proper subtree");
         assert_eq!(f.model_count().unwrap(), BigUint::from(table.len()) << 12);
@@ -407,7 +449,7 @@ fn unique_and_shared_completions_match_cube_construction() {
         for (name, vtree) in vtree_shapes(12) {
             for constrained in [vars(8), vec![VarId(1), VarId(2), VarId(4), VarId(5),
                 VarId(7), VarId(8), VarId(10), VarId(11)]] {
-                let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
+                let f = Tdd::from_models(&vtree, &constrained, &pack_table(&table)).unwrap();
                 assert_canonical(&f);
                 assert_same_shape(&f, &table_function(&vtree, &constrained, &table), name);
                 assert_eq!(f.model_count().unwrap(), 256u32.into());
@@ -422,7 +464,7 @@ fn a_tiny_budget_refuses_without_leaving_a_diagram() {
     let mut rng = Lcg::new(3);
     let table: Vec<Vec<bool>> =
         (0..200).map(|_| (0..12).map(|_| rng.coin()).collect()).collect();
-    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
+    let rows = pack_table(&table);
 
     let refused = vtree.context().with_limits(
         LimitConfig::none().with_memory_budget_bytes(Some(64)),
@@ -442,25 +484,13 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     let table: Vec<Vec<bool>> = (0..20u32)
         .map(|code| (0..6).map(|i| ((code * 7) >> i) & 1 == 1).collect())
         .collect();
-    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
-    let mut refused = 0;
-    for cut in 0..40u32 {
-        let eng = Engine::new();
-        // Park a level array so the pool holds exactly one either way: a build
-        // that takes it and then refuses has to hand it back.
-        Tdd::builder(&eng, &vtree).unwrap().abandon(&eng);
-        eng.limits().refuse_nth_reserve(cut);
-        match eng.from_models(&vtree, &vars(6), &rows) {
-            Ok(f) => assert_canonical(&f),
-            Err(e) => {
-                assert_eq!(e, OperationError::OverBudget, "cut {cut}");
-                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
-                refused += 1;
-            }
-        }
-        eng.limits().grant_every_reserve();
-    }
-    assert!(refused > 0, "no reservation was refused across the sweep");
+    let rows = pack_table(&table);
+    assert_refusal_sweep_returns_buffers(
+        &vtree,
+        40,
+        |eng| eng.from_models(&vtree, &vars(6), &rows),
+        |f, _| assert_canonical(f),
+    );
 }
 
 #[test]
@@ -574,10 +604,7 @@ fn the_direct_build_builds_the_existing_diagram_node_for_node() {
         let free = rng.below(3) as u32;
         let shapes = vtree_shapes(width + free);
         let (name, vtree) = &shapes[round % shapes.len()];
-        let mut ids: Vec<VarId> = (1..=width + free).map(VarId).collect();
-        for i in (1..ids.len()).rev() {
-            ids.swap(i, rng.below(i as u64 + 1) as usize);
-        }
+        let ids = shuffled_vars(&mut rng, width + free);
         let constrained = &ids[..width as usize];
         let table = merging_table(&mut rng, width, round % 4);
         let rows = packed_rows(width as usize, &table);
@@ -644,22 +671,12 @@ fn every_refusal_point_of_the_direct_build_returns_the_buffers() {
         .collect();
     let rows = packed_rows(8, &table);
     let want = Tdd::from_models(&vtree, &vars(8), &rows).unwrap();
-    let mut refused = 0;
-    for cut in 0..60u32 {
-        let eng = Engine::new();
-        Tdd::builder(&eng, &vtree).unwrap().abandon(&eng);
-        eng.limits().refuse_nth_reserve(cut);
-        match eng.from_models_direct(&vtree, &vars(8), &rows) {
-            Ok(f) => assert_same_levels(&f, &want, &format!("cut {cut}")),
-            Err(e) => {
-                assert_eq!(e, OperationError::OverBudget, "cut {cut}");
-                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
-                refused += 1;
-            }
-        }
-        eng.limits().grant_every_reserve();
-    }
-    assert!(refused > 0, "no reservation was refused across the sweep");
+    assert_refusal_sweep_returns_buffers(
+        &vtree,
+        60,
+        |eng| eng.from_models_direct(&vtree, &vars(8), &rows),
+        |f, cut| assert_same_levels(f, &want, &format!("cut {cut}")),
+    );
 }
 
 /// Each internal level's nodes ascend by their least pair, the right
@@ -703,10 +720,7 @@ fn a_level_numbers_its_nodes_as_a_build_level_by_level_meets_them() {
         let free = rng.below(3) as u32;
         let shapes = vtree_shapes(width + free);
         let (name, vtree) = &shapes[round % shapes.len()];
-        let mut ids: Vec<VarId> = (1..=width + free).map(VarId).collect();
-        for i in (1..ids.len()).rev() {
-            ids.swap(i, rng.below(i as u64 + 1) as usize);
-        }
+        let ids = shuffled_vars(&mut rng, width + free);
         let table = merging_table(&mut rng, width, round % 4);
         let f = Tdd::from_models(vtree, &ids[..width as usize], &packed_rows(width as usize, &table)).unwrap();
         assert_numbered_by_least_pairs(&f, &format!("round {round}, {name}"));

@@ -904,55 +904,10 @@ fn assemble_moving<'a>(
     // call, so anything that reorders a mirrored level's pairs belongs on
     // the seated result, past the last refusal.
     placement.mirror(plan);
-    let mut gate = eng.limits().gate();
-    let mut stopped = Ok(());
-    // The tops of the pass-through chains over a leaf read as `Pos`/`Neg`,
-    // whose readers are renumbered once the result stands.
-    let mut literal_tops = Vec::new();
-    // A mirrored image was changed in place by `placement.mirror`, and its
-    // seat closes it.
-    if !plan.mirrored.is_empty() {
-        for &t in into.internal_bottomup_slice() {
-            if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
-                placement.changed_at(t);
-            }
-        }
-    }
-    // The free levels when they are built, then the pass-throughs, each
-    // after the levels under it. A free level left empty costs nothing
-    // here, and a conjunction that builds it carries it as an identity
-    // level, which costs nothing there either.
-    let built: &[VtreeIdx] = match free {
-        Free::Build => into.internal_bottomup_slice(),
-        Free::Leave => &[],
+    let mut literal_tops = match build_embedded_levels(eng, into, plan, free, tdd.output().local, &mut placement) {
+        Ok(tops) => tops,
+        Err(e) => return Err(refuse(e, placement, tdd)),
     };
-    for &t in built.iter().filter(|t| plan.free[t.idx()]).chain(&plan.pass_throughs) {
-        stopped = gate.poll(1);
-        if stopped.is_err() {
-            break;
-        }
-        if plan.free[t.idx()] {
-            placement.free(t);
-            continue;
-        }
-        let (left, right) = into.children(t);
-        let (free_side, carried) = if plan.free[left.idx()] { (ChildSide::Left, right) } else { (ChildSide::Right, left) };
-        // A refused join is undone with the placement below.
-        stopped = if !into.node(carried).is_leaf() {
-            placement.pass_through(t, free_side)
-        } else if let Some(top) = literal_chain(into, plan, &placement, tdd.output().local, t) {
-            literal_tops.push(top);
-            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])
-        } else {
-            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX])
-        };
-        if stopped.is_err() {
-            break;
-        }
-    }
-    if let Err(e) = stopped.and_then(|()| gate.flush()) {
-        return Err(refuse(e, placement, tdd));
-    }
     let mut result = match placement.seat(tdd.output().local, carried) {
         Ok(result) => result,
         Err((e, placement)) => return Err(refuse(e, placement, tdd)),
@@ -977,6 +932,58 @@ fn assemble_moving<'a>(
         result.dirty.set_loose(Some(listed));
     }
     Ok(result)
+}
+
+/// Mark mirrored images as changed and build the free and pass-through levels
+/// of `plan` into `placement`, returning the tops of the pass-through chains
+/// over a leaf read as `Pos`/`Neg` whose readers must be renumbered once seated.
+fn build_embedded_levels(
+    eng: &Engine,
+    into: &Vtree,
+    plan: &Plan,
+    free: Free,
+    output_local: NodeIdx,
+    placement: &mut MovePlacement<'_>,
+) -> Result<Vec<VtreeIdx>, OperationError> {
+    let mut gate = eng.limits().gate();
+    let mut literal_tops = Vec::new();
+    // A mirrored image was changed in place by `placement.mirror`, and its
+    // seat closes it.
+    if !plan.mirrored.is_empty() {
+        for &t in into.internal_bottomup_slice() {
+            if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
+                placement.changed_at(t);
+            }
+        }
+    }
+    // The free levels when they are built, then the pass-throughs, each
+    // after the levels under it. A free level left empty costs nothing
+    // here, and a conjunction that builds it carries it as an identity
+    // level, which costs nothing there either.
+    let built: &[VtreeIdx] = match free {
+        Free::Build => into.internal_bottomup_slice(),
+        Free::Leave => &[],
+    };
+    for &t in built.iter().filter(|t| plan.free[t.idx()]).chain(&plan.pass_throughs) {
+        gate.poll(1)?;
+        if plan.free[t.idx()] {
+            placement.free(t);
+            continue;
+        }
+        let (left, right) = into.children(t);
+        let (free_side, carried) = if plan.free[left.idx()] { (ChildSide::Left, right) } else { (ChildSide::Right, left) };
+        // A refused join is undone with the placement by the caller.
+        if !into.node(carried).is_leaf() {
+            placement.pass_through(t, free_side)?;
+        } else if let Some(top) = literal_chain(into, plan, placement, output_local, t) {
+            literal_tops.push(top);
+            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])?;
+        } else {
+            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX])?;
+        }
+    }
+    gate.flush()?;
+    Ok(literal_tops)
 }
 
 /// The levels of [`assemble_moving`]'s result that may hold a node no pair

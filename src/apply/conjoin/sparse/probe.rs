@@ -468,11 +468,7 @@ fn settle_f<const SWAPPED: bool>(
             g_idx: GNodeIdx(parent(&node_pairs[0])),
             prod_idx: ProductNodeIdx(i as u32),
         };
-        if out.len() < out.capacity() {
-            out.push(product);
-        } else {
-            lim.try_push(out, product)?;
-        }
+        lim.try_push(out, product)?;
     }
     crate::apply::conjoin::note_lent();
     note_settled();
@@ -593,44 +589,75 @@ fn walk_pairs(
     level_pairs: u64,
     emit: Emit<'_>,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     let width = shape.g.right;
     let cells = shape.g.left.saturating_mul(width);
-    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
     let one_each = one_each(pl.left, shape.f.left) && one_each(pl.right, shape.f.right);
     let g_pairs: usize = pb.g_by_left[..shape.g.left].iter().map(|&n| n as usize).sum();
     let slots = (2 * g_pairs).next_power_of_two().max(16);
     let small = cells <= DENSE_PAIR_CELLS && cells as u64 <= 4 * level_pairs;
     let no_larger = cells.saturating_mul(std::mem::size_of::<u32>()) <= slots * std::mem::size_of::<PairSlot>();
     if (small || no_larger) && !pairs_hashed_forced() {
-        if !pb.dense_clean {
-            pb.dense.fill(NO_PRODUCT);
-        }
-        lim.try_resize(&mut pb.dense, cells, NO_PRODUCT)?;
-        pb.dense_clean = false;
-        for (parent, pairs) in g_level.internal_inputs_iter() {
-            for pair in pairs {
-                let at = pair.left.raw() as usize * width + pair.right.raw() as usize;
-                debug_assert_eq!(pb.dense[at], NO_PRODUCT, "a g pair in two nodes, or twice in one");
-                pb.dense[at] = parent as u32;
-            }
-        }
-        let dense = &pb.dense;
-        let pipelined = std::mem::size_of_val(&dense[..]) >= emit.thresholds.pipelined_bytes;
-        let walk = BothSides::new(pl, offsets, one_each, pipelined,
-            #[inline(always)]
-            |c: u32, d: u32| dense[c as usize * width + d as usize],
-            #[inline(always)]
-            |c: u32, d: u32| prefetch_at(dense, c as usize * width + d as usize));
-        walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
-        for (_, pairs) in g_level.internal_inputs_iter() {
-            for pair in pairs {
-                pb.dense[pair.left.raw() as usize * width + pair.right.raw() as usize] = NO_PRODUCT;
-            }
-        }
-        pb.dense_clean = true;
-        return Ok(());
+        return walk_pairs_dense(eng, ws, pb, (f_level, g_level), pl, (width, cells), one_each, emit);
     }
+    walk_pairs_hashed(eng, ws, pb, (f_level, g_level), pl, slots, one_each, emit)
+}
+
+/// [`walk_pairs`] over a dense `g.left × g.right` lookup array.
+#[expect(clippy::too_many_arguments)]
+fn walk_pairs_dense(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    pb: &mut ProbeBuffers,
+    (f_level, g_level): (&TddLevel, &TddLevel),
+    pl: Sides<&[ProductEntry]>,
+    (width, cells): (usize, usize),
+    one_each: bool,
+    emit: Emit<'_>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    if !pb.dense_clean {
+        pb.dense.fill(NO_PRODUCT);
+    }
+    lim.try_resize(&mut pb.dense, cells, NO_PRODUCT)?;
+    pb.dense_clean = false;
+    for (parent, pairs) in g_level.internal_inputs_iter() {
+        for pair in pairs {
+            let at = pair.left.raw() as usize * width + pair.right.raw() as usize;
+            debug_assert_eq!(pb.dense[at], NO_PRODUCT, "a g pair in two nodes, or twice in one");
+            pb.dense[at] = parent as u32;
+        }
+    }
+    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
+    let dense = &pb.dense;
+    let pipelined = std::mem::size_of_val(&dense[..]) >= emit.thresholds.pipelined_bytes;
+    let walk = BothSides::new(pl, offsets, one_each, pipelined,
+        #[inline(always)]
+        |c: u32, d: u32| dense[c as usize * width + d as usize],
+        #[inline(always)]
+        |c: u32, d: u32| prefetch_at(dense, c as usize * width + d as usize));
+    walk_level::<false, _>(eng, ws, &walk, f_level, emit)?;
+    for (_, pairs) in g_level.internal_inputs_iter() {
+        for pair in pairs {
+            pb.dense[pair.left.raw() as usize * width + pair.right.raw() as usize] = NO_PRODUCT;
+        }
+    }
+    pb.dense_clean = true;
+    Ok(())
+}
+
+/// [`walk_pairs`] over an open-addressing hash table of `g`'s pairs.
+#[expect(clippy::too_many_arguments)]
+fn walk_pairs_hashed(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    pb: &mut ProbeBuffers,
+    (f_level, g_level): (&TddLevel, &TddLevel),
+    pl: Sides<&[ProductEntry]>,
+    slots: usize,
+    one_each: bool,
+    emit: Emit<'_>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
     let mask = slots - 1;
     pb.table.clear();
     lim.try_resize(&mut pb.table, slots, PairSlot::default())?;
@@ -646,6 +673,7 @@ fn walk_pairs(
             table[s] = PairSlot { key, parent: parent as u32 };
         }
     }
+    let offsets = (&pb.left_offsets[..], &pb.right_offsets[..]);
     let table = &pb.table;
     let pipelined = std::mem::size_of_val(&table[..]) >= emit.thresholds.pipelined_bytes;
     let walk = BothSides::new(pl, offsets, one_each, pipelined,

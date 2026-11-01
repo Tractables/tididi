@@ -25,6 +25,20 @@ fn assignment(row: usize, n: usize) -> Vec<bool> {
     (0..n).map(|v| row & (1 << v) != 0).collect()
 }
 
+fn assert_truth_table_3(f: &Tdd, pred: impl Fn(usize, &[bool]) -> bool) {
+    for row in 0..8 {
+        let dest = assignment(row, 3);
+        assert_eq!(eval(f, &dest), pred(row, &dest));
+    }
+}
+
+fn exists_truth_table_3(bits: u16, vars: &[VarId], row: usize) -> bool {
+    (0..8).any(|witness| {
+        (0..3).all(|v| vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v))
+            && bits & (1 << witness) != 0
+    })
+}
+
 #[test]
 fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
     let eng = Engine::new();
@@ -118,14 +132,13 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
             ] {
                 let g = eng.rename_vars(f.clone(), &renames).unwrap();
                 assert_canonical(&g);
-                for row in 0..8 {
-                    let destination = assignment(row, 3);
-                    let mut source = destination.clone();
+                assert_truth_table_3(&g, |_, destination| {
+                    let mut source = destination.to_vec();
                     for &(from, to) in &renames {
                         source[from.idx()] = destination[to.idx()];
                     }
-                    assert_eq!(eval(&g, &destination), eval(&f, &source));
-                }
+                    eval(&f, &source)
+                });
             }
             let g = eng
                 .substitute(
@@ -134,22 +147,14 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
                 )
                 .unwrap();
             assert_canonical(&g);
-            for row in 0..8 {
-                let dest = assignment(row, 3);
-                assert_eq!(
-                    eval(&g, &dest),
-                    eval(&f, &[dest[1] || dest[2], !dest[0], dest[2]])
-                );
-            }
+            assert_truth_table_3(&g, |_, dest| {
+                eval(&f, &[dest[1] || dest[2], !dest[0], dest[2]])
+            });
             for constant in [Tdd::one(&tree), Tdd::zero(&tree)] {
                 let g = eng.substitute(f.clone(), &[(VarId(1), &constant)]).unwrap();
-                for row in 0..8 {
-                    let dest = assignment(row, 3);
-                    assert_eq!(
-                        eval(&g, &dest),
-                        eval(&f, &[!constant.is_zero(), dest[1], dest[2]])
-                    );
-                }
+                assert_truth_table_3(&g, |_, dest| {
+                    eval(&f, &[!constant.is_zero(), dest[1], dest[2]])
+                });
             }
         }
     }
@@ -167,17 +172,10 @@ fn ite_and_existential_conjunction_match_enumeration() {
         );
         let ite = eng.ite(f.clone(), g.clone(), h).unwrap();
         assert_canonical(&ite);
-        for row in 0..8 {
+        assert_truth_table_3(&ite, |row, _| {
             let mask = 1 << row;
-            assert_eq!(
-                eval(&ite, &assignment(row, 3)),
-                if a & mask != 0 {
-                    b & mask != 0
-                } else {
-                    c & mask != 0
-                }
-            );
-        }
+            if a & mask != 0 { b & mask != 0 } else { c & mask != 0 }
+        });
         for vars in [
             vec![],
             vec![VarId(1)],
@@ -186,14 +184,7 @@ fn ite_and_existential_conjunction_match_enumeration() {
         ] {
             let result = eng.and_exists(f.clone(), g.clone(), &vars).unwrap();
             assert_canonical(&result);
-            for row in 0..8 {
-                let expected = (0..8).any(|witness| {
-                    (0..3).all(|v| {
-                        vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
-                    }) && (a & b) & (1 << witness) != 0
-                });
-                assert_eq!(eval(&result, &assignment(row, 3)), expected);
-            }
+            assert_truth_table_3(&result, |row, _| exists_truth_table_3(a & b, &vars, row));
         }
     }
 }
@@ -221,14 +212,7 @@ fn every_quantification_entry_point_matches_enumeration() {
                 for result in results {
                     assert_canonical(&result);
                     assert!(Arc::ptr_eq(result.vtree(), &tree));
-                    for row in 0..8 {
-                        let expected = (0..8).any(|witness| {
-                            (0..3).all(|v| {
-                                vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
-                            }) && bits & (1 << witness) != 0
-                        });
-                        assert_eq!(eval(&result, &assignment(row, 3)), expected);
-                    }
+                    assert_truth_table_3(&result, |row, _| exists_truth_table_3(bits, &vars, row));
                 }
             }
         }
@@ -554,12 +538,8 @@ fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
         let substituted = eng.substitute(f.clone(), &replacements).unwrap();
         assert_canonical(&renamed);
         assert_canonical(&substituted);
-        for row in 0..8 {
-            let dest = assignment(row, 3);
-            let source = targets.map(|i| dest[i]);
-            let expected = eval(&f, &source);
-            assert_eq!(eval(&renamed, &dest), expected);
-            assert_eq!(eval(&substituted, &dest), expected);
+        for candidate in [&renamed, &substituted] {
+            assert_truth_table_3(candidate, |_, dest| eval(&f, &targets.map(|i| dest[i])));
         }
     }
 }

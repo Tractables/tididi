@@ -191,14 +191,13 @@ fn a_parent_in_node_order_is_rewritten_without_dead_pairs() {
     assert_eq!(parent.dead_pairs, 3, "node 0's tail and node 1's whole range are dead");
 }
 
-/// A refused arena reservation retains merge capacity, and retry clears its plans.
-#[test]
-fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
-    let eng = Engine::new();
+/// A 4-variable balanced vtree diagram with two twin nodes `a` and `b` at
+/// `child` paired with `s` at `sibling`.
+fn twin_pair_fixture(eng: &Engine) -> (Tdd, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx) {
     let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
     let parent = vtree.root();
     let (child, sibling) = vtree.children(parent);
-    let mut levels = take_levels(&eng, vtree.num_nodes());
+    let mut levels = take_levels(eng, vtree.num_nodes());
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -208,9 +207,17 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let output = levels[parent.idx()].push_internal_node(&[
         ChildPair::new(a, s), ChildPair::new(b, s),
     ]);
-    let mut tdd = Tdd::from_levels_unchecked(
+    let tdd = Tdd::from_levels_unchecked(
         vtree, levels, TddNodeId { vtree: parent, local: output },
     );
+    (tdd, child, parent)
+}
+
+/// A refused arena reservation retains merge capacity, and retry clears its plans.
+#[test]
+fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
+    let eng = Engine::new();
+    let (mut tdd, child, parent) = twin_pair_fixture(&eng);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
     scratch.flat_groups = vec![0, 1];
     scratch.group_starts = vec![0];
@@ -250,22 +257,7 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
 #[test]
 fn a_plain_merge_leaves_the_marginal_map_unfilled() {
     let eng = Engine::new();
-    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
-    let parent = vtree.root();
-    let (child, sibling) = vtree.children(parent);
-    let mut levels = take_levels(&eng, vtree.num_nodes());
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-    let a = levels[child.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
-    let b = levels[child.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
-    let s = levels[sibling.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let output = levels[parent.idx()].push_internal_node(&[
-        ChildPair::new(a, s), ChildPair::new(b, s),
-    ]);
-    let mut tdd = Tdd::from_levels_unchecked(
-        vtree, levels, TddNodeId { vtree: parent, local: output },
-    );
+    let (mut tdd, child, parent) = twin_pair_fixture(&eng);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
     scratch.flat_groups = vec![0, 1];
     scratch.group_starts = vec![0];
@@ -333,6 +325,20 @@ fn twins_of_a_level_of_cubes() -> Vec<Tdd> {
     vec![merged, tdd]
 }
 
+/// Groups `{0, 3, 6}` concat, `{1, 4}` concat, `{2, 5}` a content-equal
+/// redirect of 5 onto 2.
+fn three_group_buffers() -> MergeBuffers {
+    MergeBuffers {
+        sel: vec![0, 3, 6, 1, 4, 2, 5],
+        group_plans: vec![
+            GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
+            GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
+            GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
+        ],
+        ..Default::default()
+    }
+}
+
 /// The rebuild unions each group into its survivor (inline, packed and
 /// ranged members alike), drops the absorbed members and a content-equal
 /// redirected one, keeps every other node's pairs, and leaves the arena
@@ -361,17 +367,7 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     .into();
     level.note_dead_pairs(3);
     let before: Vec<Vec<ChildPair>> = content(&level);
-    // Groups {0, 3, 6} concat, {1, 4} concat, {2, 5} a content-equal
-    // redirect of 5 onto 2.
-    let mut bufs = MergeBuffers {
-        sel: vec![0, 3, 6, 1, 4, 2, 5],
-        group_plans: vec![
-            GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
-            GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
-            GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
-        ],
-        ..Default::default()
-    };
+    let mut bufs = three_group_buffers();
     let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 7], absorbed: vec![0], ..Default::default() };
     let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
     assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
@@ -421,15 +417,7 @@ fn the_reservation_off_the_census_is_exact() {
     .into();
     level.note_dead_pairs(3);
     let before: Vec<Vec<ChildPair>> = content(&level);
-    let mut bufs = MergeBuffers {
-        sel: vec![0, 3, 6, 1, 4, 2, 5],
-        group_plans: vec![
-            GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
-            GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
-            GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
-        ],
-        ..Default::default()
-    };
+    let mut bufs = three_group_buffers();
     let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 8], absorbed: vec![0], ..Default::default() };
     let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
     assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);

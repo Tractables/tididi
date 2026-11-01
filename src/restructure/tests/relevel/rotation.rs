@@ -122,12 +122,11 @@ fn left_rotation_unsat_stays_unsat() {
 /// structural cascade test above does not check. The
 /// closure-after-rotation must leave the count exactly equal to the
 /// marginalization-first count (which equals the Boolean count).
-#[test]
-fn parent_of_marginal_rotation_preserves_model_count() {
-    let eng_lim = crate::limits::Limits::new();
-    let eng = Engine::new();
-    use crate::marginal::{marginalize_batch, marginalize_closure};
-
+/// Build the 9-node vtree `v = (A, w = (B, C))` with `A` and `B` marginalized
+/// over a 5-variable clause formula.
+fn marginal_cluster_fixture(
+    eng: &Engine,
+) -> (Arc<Vtree>, Tdd, num_bigint::BigUint, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx) {
     let vt_str = "vtree 9\n\
         L 0 1\nL 1 2\nI 2 0 1\n\
         L 3 3\nL 4 4\nI 5 3 4\n\
@@ -137,17 +136,25 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let root = vtree.root();
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);
-
     let mut tdd = compile_clauses(
         &vtree,
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
     );
     let mc_bool = tdd.model_count().unwrap();
-
-    // marginalization-first: collapse A and B, then rotate the parent (gc=1).
     let mut targets = vec![a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
-    marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
+    crate::marginal::marginalize_batch(eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
+    (vtree, tdd, mc_bool, a_idx, b_idx)
+}
+
+#[test]
+fn parent_of_marginal_rotation_preserves_model_count() {
+    let eng_lim = crate::limits::Limits::new();
+    let eng = Engine::new();
+    use crate::marginal::marginalize_closure;
+
+    let (vtree, mut tdd, mc_bool, _, _) = marginal_cluster_fixture(&eng);
+    let root = vtree.root();
     let mc_marginal = tdd.model_count().unwrap();
     assert_eq!(mc_bool, mc_marginal, "marginalize_levels must preserve count");
 
@@ -178,30 +185,10 @@ fn parent_of_marginal_rotation_preserves_model_count() {
 fn cluster_rotation_frees_subsumed_child_stores() {
     let eng_lim = crate::limits::Limits::new();
     let eng = Engine::new();
-    use crate::marginal::{marginalize_batch, marginalize_closure};
+    use crate::marginal::marginalize_closure;
 
-    // Same shape as the cascade-up test: v=(A,w), w=(B,C); A,B internal.
-    let vt_str = "vtree 9\n\
-        L 0 1\nL 1 2\nI 2 0 1\n\
-        L 3 3\nL 4 4\nI 5 3 4\n\
-        L 6 5\nI 7 5 6\n\
-        I 8 2 7\n";
-    let vtree = Arc::new(Vtree::from_text(vt_str).unwrap());
+    let (vtree, mut tdd, mc_bool, a_idx, b_idx) = marginal_cluster_fixture(&eng);
     let root = vtree.root();
-    let (a_idx, w_idx) = vtree.children(root);
-    let (b_idx, _c_idx) = vtree.children(w_idx);
-
-    let mut tdd = compile_clauses(
-        &vtree,
-        &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
-    );
-    let mc_bool = tdd.model_count().unwrap();
-
-    // Collapse A and B — each becomes the top of its own marginal region
-    // (parent still structural) with a non-empty count store.
-    let mut targets = vec![a_idx, b_idx];
-    targets.sort_by_key(|t| t.idx());
-    marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
     assert!(
         tdd.levels[a_idx.idx()].slot_count() > 0 && tdd.levels[b_idx.idx()].slot_count() > 0,
         "test setup: A and B carry count stores before clustering"
@@ -404,17 +391,25 @@ fn assert_locality(
     }
 }
 
-/// Helper: apply a left rotation at `target`, run the locality check and
-/// clear the worklists, then assert locality. Returns the (v_idx, w_idx) used so the caller can
-/// chain further rotations.
-fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
+/// Helper: apply a rotation of `kind` at `target`, run the locality check and
+/// clear the worklists, then assert locality. Returns the `(v_idx, w_idx)` used
+/// so the caller can chain further rotations.
+fn rotate_and_check_locality(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    target: crate::vtree::VtreeIdx,
+    kind: RotationKind,
+) -> Option<(usize, usize)> {
     let mut vt = (*tdd.vtree).clone();
-    let info = rotate_left(&mut vt, target)?;
+    let info = match kind {
+        RotationKind::Left => rotate_left(&mut vt, target)?,
+        RotationKind::Right => rotate_right(&mut vt, target)?,
+    };
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
-    let _ = rebuild_rotated_levels(eng.limits(), tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    let _ = rebuild_rotated_levels(eng.limits(), tdd, &info, kind, &mut RestructureScratch::default(), usize::MAX);
     crate::test_helpers::check::assert_rotation_locality(eng, tdd, info.w_idx);
     let _ = tdd.take_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
@@ -422,19 +417,12 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     Some((v_idx, w_idx))
 }
 
+fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
+    rotate_and_check_locality(eng, tdd, target, RotationKind::Left)
+}
+
 fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vtree::VtreeIdx) -> Option<(usize, usize)> {
-    let mut vt = (*tdd.vtree).clone();
-    let info = rotate_right(&mut vt, target)?;
-    let v_idx = info.v_idx.idx();
-    let w_idx = info.w_idx.idx();
-    let snap = snapshot_levels(tdd);
-    tdd.vtree = Arc::new(vt);
-    let _ = rebuild_rotated_levels(eng.limits(), tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
-    crate::test_helpers::check::assert_rotation_locality(eng, tdd, info.w_idx);
-    let _ = tdd.take_worklists();
-    assert_locality(tdd, &snap, v_idx, w_idx);
-    assert_canonical(tdd);
-    Some((v_idx, w_idx))
+    rotate_and_check_locality(eng, tdd, target, RotationKind::Right)
 }
 
 #[test]
