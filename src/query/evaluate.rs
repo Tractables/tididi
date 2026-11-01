@@ -213,8 +213,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
 
     fn alloc(&self, eng: &Engine, width: usize) -> Result<Vec<S::Value>, OperationError> {
         let mut col = Vec::new();
-        eng.limits().reserve_exact(&mut col, width)?;
-        col.resize(width, self.algebra.zero());
+        eng.limits().try_resize(&mut col, width, self.algebra.zero())?;
         Ok(col)
     }
 

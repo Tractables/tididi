@@ -56,8 +56,7 @@ pub unsafe extern "C" fn tididi_counter_finish(value: *mut TididiCounter, out: *
 /// Free a counter handle, whether open or finished. NULL is accepted; active handles return BorrowConflict.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_counter_free(value: *mut TididiCounter) -> *mut TididiError {
-    boundary(|| { if !value.is_null() { drop(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?);
-        drop(unsafe { Box::from_raw(value) }); } Ok(()) })
+    unsafe { free_handle(value, |h| &h.0) }
 }
 
 
@@ -121,6 +120,5 @@ pub unsafe extern "C" fn tididi_evaluator_finish(value: *mut TididiEvaluator, ou
 /// Free an evaluator handle. NULL is accepted; active handles return BorrowConflict.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_evaluator_free(value: *mut TididiEvaluator) -> *mut TididiError {
-    boundary(|| { if !value.is_null() { drop(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?);
-        drop(unsafe { Box::from_raw(value) }); } Ok(()) })
+    unsafe { free_handle(value, |h| &h.0) }
 }

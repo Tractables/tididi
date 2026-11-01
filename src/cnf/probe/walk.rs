@@ -10,7 +10,7 @@ use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::VtreeIdx;
 use crate::Engine;
 
-use super::super::encode::{check_literal, table, NONE, TRUE};
+use super::super::encode::{check_literal, NONE, TRUE};
 use super::super::CnfEncoding;
 use super::{ProbeOrder, ProbeOutcome, ProbePoint, ProbePolicy, ProbeStats, SatOracle, SolveCall, SolveStatus, Witness};
 
@@ -66,8 +66,8 @@ pub(super) fn probe<H: SatOracle + ProbePolicy + ?Sized>(
         encoding,
         lim,
         gate: lim.gate(),
-        dead: table(lim, f, false)?,
-        seen: if reads { table(lim, f, false)? } else { Vec::new() },
+        dead: f.slot_table(lim, false)?,
+        seen: if reads { f.slot_table(lim, false)? } else { Vec::new() },
         clause: Vec::new(),
         stats: ProbeStats::default(),
     };

@@ -249,34 +249,11 @@ fn shape_of(g: &Tdd) -> u64 {
 
 /// Which nodes `g`'s output reaches, per level over its reference slots.
 fn reached(lim: &Limits, g: &Tdd) -> Result<Vec<Vec<bool>>, OperationError> {
-    let vtree = g.vtree();
-    let mut reach: Vec<Vec<bool>> = Vec::new();
-    lim.reserve_exact(&mut reach, vtree.num_nodes())?;
-    for i in 0..vtree.num_nodes() {
-        let mut level = Vec::new();
-        lim.try_resize(&mut level, g.reference_slot_count(VtreeIdx(i as u32)), false)?;
-        reach.push(level);
+    let mut reach = g.slot_table(lim, false)?;
+    if !g.is_zero() {
+        reach[g.output().vtree.idx()][g.output().local.idx()] = true;
+        g.propagate_reachability(&mut reach);
     }
-    if g.is_zero() {
-        return Ok(reach);
-    }
-    reach[g.output().vtree.idx()][g.output().local.idx()] = true;
-    let mut gate = lim.gate();
-    for (t, l, r) in vtree.internal_bottomup().rev() {
-        let level = g.level(t);
-        for i in 0..level.node_count() {
-            if !reach[t.idx()][i] {
-                continue;
-            }
-            let pairs = level.pairs_iter_of_idx(i);
-            gate.poll(pairs.len() as u64)?;
-            for p in pairs {
-                reach[l.idx()][p.left.raw() as usize] = true;
-                reach[r.idx()][p.right.raw() as usize] = true;
-            }
-        }
-    }
-    gate.flush()?;
     Ok(reach)
 }
 

@@ -754,11 +754,7 @@ impl Dirty {
         for t in rebuilt {
             gate.poll(1)?;
             for pass in SEEDED {
-                let list = self.list(pass);
-                if list.len() == list.capacity() {
-                    lim.reserve(list, 1)?;
-                }
-                list.push(t.0);
+                lim.try_push(self.list(pass), t.0)?;
             }
         }
         gate.flush()

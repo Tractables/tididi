@@ -1,6 +1,7 @@
 //! Which nodes of a diagram are reachable.
 
 use crate::diagram::ZERO;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
 use super::Tdd;
@@ -12,6 +13,18 @@ impl Tdd {
         (0..self.vtree.num_nodes())
             .map(|i| vec![false; self.reference_slot_count(VtreeIdx(i as u32))])
             .collect()
+    }
+
+    /// An all-`fill` table with one entry per reference slot of every level.
+    pub(crate) fn slot_table<T: Clone>(&self, lim: &Limits, fill: T) -> Result<Vec<Vec<T>>, OperationError> {
+        let mut rows = Vec::new();
+        lim.reserve_exact(&mut rows, self.levels.len())?;
+        for i in 0..self.levels.len() {
+            let mut row = Vec::new();
+            lim.try_resize(&mut row, self.reference_slot_count(VtreeIdx(i as u32)), fill.clone())?;
+            rows.push(row);
+        }
+        Ok(rows)
     }
 
     /// Top-down reachability propagation over a pre-seeded root set. Every root

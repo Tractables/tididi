@@ -96,6 +96,15 @@ unsafe fn text<'a>(value: *const c_char) -> Result<&'a str> {
 fn string(value: impl ToString) -> Result<*mut c_char> {
     CString::new(value.to_string()).map(CString::into_raw).map_err(invalid)
 }
+unsafe fn free_handle<H, T>(value: *mut H, cell: impl FnOnce(&H) -> &std::cell::RefCell<T>) -> *mut TididiError {
+    boundary(|| {
+        if !value.is_null() {
+            drop(cell(unsafe { required(value)? }).try_borrow_mut().map_err(|_| busy())?);
+            drop(unsafe { Box::from_raw(value) });
+        }
+        Ok(())
+    })
+}
 
 /// Return an error's code. error must be nonnull and live.
 #[unsafe(no_mangle)]

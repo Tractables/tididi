@@ -136,16 +136,12 @@ impl FloatCol {
     pub(crate) fn push(&mut self, eng: &Engine, v: ScaledFloat) -> Result<(), OperationError> {
         if let Repr::Narrow { vals, scale } = &mut self.repr {
             if let Some(x) = Self::narrow(scale, v) {
-                eng.limits().reserve(vals, 1)?;
-                vals.push(x);
-                return Ok(());
+                return eng.limits().try_push(vals, x);
             }
             self.widen(eng, 1)?;
         }
         let Repr::Wide(vals) = &mut self.repr else { unreachable!("a column that took a wide value is wide") };
-        eng.limits().reserve(vals, 1)?;
-        vals.push(v);
-        Ok(())
+        eng.limits().try_push(vals, v)
     }
 
     /// Append [`ScaledFloat::at_offset`] of `x` and `scale`, for a float

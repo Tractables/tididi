@@ -289,8 +289,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     let n = vtree.num_nodes();
     // Whether a level is summed out or has a summed-out level under it.
     let mut counted: Vec<bool> = Vec::new();
-    lim.reserve_exact(&mut counted, n)?;
-    counted.resize(n, false);
+    lim.try_resize(&mut counted, n, false)?;
     for t in vtree.bottomup() {
         counted[t.idx()] = summed(f, t)
             || (!vtree.node(t).is_leaf() && {
@@ -300,8 +299,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     }
     // Where `g`'s value slots start at each summed-out level.
     let mut shift: Vec<u32> = Vec::new();
-    lim.reserve_exact(&mut shift, n)?;
-    shift.resize(n, 0);
+    lim.try_resize(&mut shift, n, 0)?;
     let under_summed = |t: VtreeIdx| vtree.node(t).parent().is_some_and(|p| summed(f, p));
 
     let mut assembly = Assembly::new(eng, &vtree)?;

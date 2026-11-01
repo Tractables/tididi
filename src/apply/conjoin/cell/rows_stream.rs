@@ -126,6 +126,29 @@ avx2_fn! {
     }
 }
 
+/// Run [`sum_rows`] over `rows` with scratch checked out from `eng`.
+#[inline(always)]
+fn run_sum_rows<I: Isa, S: RowSum, L: ChildLookup, R: ChildLookup>(
+    isa: I,
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    (left, right): (&L, &R),
+    sum: S,
+) -> Result<(), OperationError> {
+    let pools = &eng.scratch.apply;
+    let (mut ones, mut floats, mut flags, mut slots) = (
+        pools.cell_pairs.checkout(eng),
+        pools.sum_floats.checkout(eng),
+        pools.sum_flags.checkout(eng),
+        pools.row_slots.checkout(eng),
+    );
+    let mut next = pools.cell_pairs.checkout(eng);
+    let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
+    let mut action = sum_rows(isa, eng, rows, (left, right), sum, bufs, &mut *scratch.g_pairs)?;
+    run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
+}
+
 /// [`stream_float_level`] for `isa`.
 #[inline(always)]
 fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
@@ -145,12 +168,7 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
         if cells_only() {
             return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink });
         }
-        let pools = &eng.scratch.apply;
-        let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let mut next = pools.cell_pairs.checkout(eng);
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, (left, right), sink, bufs, &mut *scratch.g_pairs)?;
-        return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
+        return run_sum_rows(isa, eng, rows, scratch, (left, right), sink);
     }
     let mut st = st;
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
@@ -163,12 +181,7 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
     {
         let products = CheckedProducts::new(l, lchild.view, r, rchild.view);
         let sum = CheckedSum { products, left: lchild, right: rchild, counts, store, cell: &mut cell_pairs };
-        let pools = &eng.scratch.apply;
-        let (mut ones, mut floats, mut flags, mut slots) = (pools.cell_pairs.checkout(eng), pools.sum_floats.checkout(eng), pools.sum_flags.checkout(eng), pools.row_slots.checkout(eng));
-        let mut next = pools.cell_pairs.checkout(eng);
-        let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-        let mut action = sum_rows(isa, eng, rows, (left, right), sum, bufs, &mut *scratch.g_pairs)?;
-        return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action);
+        return run_sum_rows(isa, eng, rows, scratch, (left, right), sum);
     }
     let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
@@ -434,12 +447,8 @@ impl PlainSink<'_> {
     #[inline(always)]
     fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
         let lim = eng.limits();
-        let len = self.out.len();
-        let slot = lim.next_slot(len)?;
-        if len == self.out.capacity() {
-            lim.reserve(self.out, 1)?;
-        }
-        self.out.push(v);
+        let slot = lim.next_slot(self.out.len())?;
+        lim.try_push(self.out, v)?;
         node_idx[grid_pos] = slot;
         Ok(())
     }

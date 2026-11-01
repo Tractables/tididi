@@ -9,12 +9,23 @@ use crate::diagram::{ScaledFloat, ScaledSum, WeightValue};
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
-use crate::diagram::{NodeChunks, Pairs, TddLevel};
+use crate::diagram::{NodeChunks, Pairs, StoredPairs, TddLevel};
 use crate::isa::prefetch_at;
 
 /// How many nodes ahead of the one it sums [`IntFold::fill_structural_u64`]
 /// asks the cache for the child counts a node reads.
 const NODES_AHEAD: usize = 8;
+
+/// Prefetch the child counts the node [`NODES_AHEAD`] after `i` reads.
+#[inline(always)]
+fn prefetch_node_inputs<T>(stored: &StoredPairs<'_>, i: usize, left: &[T], right: &[T]) {
+    if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
+        for p in stored.of(ahead).iter().take(2) {
+            prefetch_at(left, p.left.0 as usize);
+            prefetch_at(right, p.right.0 as usize);
+        }
+    }
+}
 
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
 pub(crate) struct IntFold;
@@ -139,12 +150,7 @@ impl IntFold {
             return Self::fill_described_u64(level, left, right, col, range);
         };
         col.fill_fast(range, |i| {
-            if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
-                for p in stored.of(ahead).iter().take(2) {
-                    prefetch_at(left, p.left.0 as usize);
-                    prefetch_at(right, p.right.0 as usize);
-                }
-            }
+            prefetch_node_inputs(&stored, i, left, right);
             Self::fold_structural_u64(stored.of_idx(i), left, right)
         })
     }
@@ -165,12 +171,7 @@ impl IntFold {
             return Self::fill_described_narrow(level, left, right, col, range);
         };
         for i in range.clone() {
-            if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
-                for p in stored.of(ahead).iter().take(2) {
-                    prefetch_at(left, p.left.0 as usize);
-                    prefetch_at(right, p.right.0 as usize);
-                }
-            }
+            prefetch_node_inputs(&stored, i, left, right);
             let total = match stored.of_idx(i) {
                 [p] => Some(left[p.left.0 as usize] as u128 * right[p.right.0 as usize] as u128),
                 pairs => Self::fold_structural_by(pairs.iter().copied(),

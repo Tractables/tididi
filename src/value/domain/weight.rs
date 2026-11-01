@@ -107,8 +107,7 @@ impl ValueDomain for WeightFold {
         store: &WeightStore,
     ) -> Result<Vec<WeightValue>, OperationError> {
         let mut v: Vec<WeightValue> = Vec::new();
-        eng.limits().reserve_exact(&mut v, width)?;
-        v.resize(width, store.wzero());
+        eng.limits().try_resize(&mut v, width, store.wzero())?;
         Ok(v)
     }
 
@@ -136,9 +135,7 @@ impl ValueDomain for WeightFold {
         col: &mut Vec<WeightValue>,
         v: WeightValue,
     ) -> Result<(), OperationError> {
-        eng.limits().reserve(col, 1)?;
-        col.push(v);
-        Ok(())
+        eng.limits().try_push(col, v)
     }
 
     fn col_len(col: &Vec<WeightValue>) -> usize {

@@ -66,10 +66,7 @@ pub unsafe extern "C" fn tididi_is_consumed(value: *const TididiCircuit, out: *m
 /// Returns BorrowConflict without freeing if a callback attempts to free an active handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_circuit_free(value: *mut TididiCircuit) -> *mut TididiError {
-    boundary(|| { if !value.is_null() {
-        drop(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?);
-        drop(unsafe { Box::from_raw(value) });
-    } Ok(()) })
+    unsafe { free_handle(value, |h| &h.0) }
 }
 /// Construct a signed, one-based literal; zero is invalid. out must point to NULL.
 #[unsafe(no_mangle)]
