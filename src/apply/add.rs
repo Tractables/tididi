@@ -347,7 +347,6 @@ fn init_summed_leaves(
 
 /// Copy each node of `f` and then of `g` at a non-root count level `out`,
 /// recording the single-node piece mapping in `pieces`.
-#[allow(clippy::too_many_arguments)]
 fn copy_count_level_nodes(
     eng: &Engine,
     (fl, gl): (&TddLevel, &TddLevel),

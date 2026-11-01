@@ -2,9 +2,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::limits::{Limits, OperationError, Transient};
-use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel};
 use crate::Engine;
+use crate::diagram::{ChildPair, EncodedChildRef, Tdd, TddLevel};
+use crate::limits::{Limits, OperationError, Transient};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -166,30 +166,90 @@ impl<'a> ParentRewrite<'a> {
         side: ChildSide,
         this_plans: &[PlanEntry<V>],
     ) -> Result<usize, OperationError> {
-        let ParentRewrite { fused_x, bits, bitmap_min_plans, .. } = self;
+        let ParentRewrite {
+            fused_x,
+            bits,
+            bitmap_min_plans,
+            ..
+        } = self;
         let bitmap_min_plans = *bitmap_min_plans;
-    // A plan-carrying node held ≥2 pairs (Phase 1 skips `pair_count_at < 2`),
-    // so it is arena-backed, never an inline node whose single pair lives in
-    // the node word.
-    debug_assert!(
-        level.node(n).kind().pairs_in_arena(),
-        "pair fusion: node {n} carries a plan but owns no arena range",
-    );
-    let range = level.pair_range_at(n);
-    let (start, old_len) = (range.start, range.len());
+        // A plan-carrying node held ≥2 pairs (Phase 1 skips `pair_count_at < 2`),
+        // so it is arena-backed, never an inline node whose single pair lives in
+        // the node word.
+        debug_assert!(
+            level.node(n).kind().pairs_in_arena(),
+            "pair fusion: node {n} carries a plan but owns no arena range",
+        );
+        let range = level.pair_range_at(n);
+        let (start, old_len) = (range.start, range.len());
 
-    // The bitmap's width in words, or `None` for the map: the largest planned
-    // x-ref bounds it, and a pair whose x-ref is past it carries no plan.
-    let words = match this_plans.len() >= bitmap_min_plans {
-        false => None,
-        true => {
-            let widest = this_plans.iter().map(|plan| plan.x_idx as usize).max().unwrap_or(0);
-            (widest / BITMAP_BITS_PER_PLAN < this_plans.len()).then_some(widest / 64 + 1)
+        let words =
+            prepare_node_plan_lookup(eng.limits(), this_plans, bitmap_min_plans, bits, fused_x)?;
+
+        // Keep the un-fused pairs, compacting them onto the front of the node's
+        // own range: `write` never overtakes `read` (it advances at most once
+        // per read, from the same origin), so a kept pair only ever moves down
+        // onto a slot already read past. A pair is fused away iff its x-side index
+        // carries a plan (see `fused_x` above).
+        let mut write = compact_unfused_pairs(
+            level.pairs.stored_mut(),
+            (start, old_len),
+            side,
+            words,
+            bits,
+            fused_x,
+            this_plans,
+        );
+        let arena = level.pairs.stored_mut();
+        // Append one fused pair per plan, in plan order. Every read is done, and
+        // each plan removed ≥2 pairs above, so `write + this_plans.len() ≤ start +
+        // old_len` — the appends stay inside the node's own range and cannot reach
+        // the next node's slots.
+        for plan in this_plans {
+            let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
+            let fused = match side {
+                ChildSide::Right => ChildPair::new(
+                    EncodedChildRef::from_raw(x_idx),
+                    EncodedChildRef::from_raw(r_new),
+                ),
+                ChildSide::Left => ChildPair::new(
+                    EncodedChildRef::from_raw(r_new),
+                    EncodedChildRef::from_raw(x_idx),
+                ),
+            };
+            debug_assert!(write < start + old_len, "fusion must shrink the pair list");
+            arena[write] = fused;
+            write += 1;
         }
-    };
+
+        // Re-encode via the shared epilogue: shrink in place, or inline the sole
+        // survivor.
+        Ok(level.reencode_shrunk(n, start, old_len, write - start))
+    }
+}
+
+/// Populate either the `bits` bitmap (returning `Some(words)`) or the `fused_x`
+/// map (returning `None`) for `this_plans`.
+fn prepare_node_plan_lookup<V>(
+    lim: &crate::limits::Limits,
+    this_plans: &[PlanEntry<V>],
+    bitmap_min_plans: usize,
+    bits: &mut Vec<u64>,
+    fused_x: &mut rustc_hash::FxHashMap<u32, u32>,
+) -> Result<Option<usize>, OperationError> {
+    let words = (this_plans.len() >= bitmap_min_plans)
+        .then(|| {
+            let widest = this_plans
+                .iter()
+                .map(|plan| plan.x_idx as usize)
+                .max()
+                .unwrap_or(0);
+            (widest / BITMAP_BITS_PER_PLAN < this_plans.len()).then_some(widest / 64 + 1)
+        })
+        .flatten();
     match words {
         Some(words) => {
-            eng.limits().try_resize(bits, words, 0u64)?;
+            lim.try_resize(bits, words, 0u64)?;
             for plan in this_plans {
                 let x = plan.x_idx as usize;
                 bits[x >> 6] |= 1u64 << (x & 63);
@@ -197,51 +257,18 @@ impl<'a> ParentRewrite<'a> {
         }
         None => {
             fused_x.clear();
-            // Each plan covers a distinct x_idx (Phase 1 emits one plan per
-            // (node, x_idx) group), so the map holds one entry per plan — an
-            // x_idx collision here would silently drop a fused pair's count.
-            eng.limits().reserve_map(fused_x, this_plans.len())?;
+            lim.reserve_map(fused_x, this_plans.len())?;
             for plan in this_plans {
                 fused_x.insert(plan.x_idx, plan.new_ref);
             }
-            debug_assert_eq!(fused_x.len(), this_plans.len(), "plans must have distinct x_idx per node");
+            debug_assert_eq!(
+                fused_x.len(),
+                this_plans.len(),
+                "plans must have distinct x_idx per node"
+            );
         }
     }
-
-    // Keep the un-fused pairs, compacting them onto the front of the node's
-    // own range: `write` never overtakes `read` (it advances at most once
-    // per read, from the same origin), so a kept pair only ever moves down
-    // onto a slot already read past. A pair is fused away iff its x-side index
-    // carries a plan (see `fused_x` above).
-    let mut write = compact_unfused_pairs(
-        level.pairs.stored_mut(),
-        (start, old_len),
-        side,
-        words,
-        bits,
-        fused_x,
-        this_plans,
-    );
-    let arena = level.pairs.stored_mut();
-    // Append one fused pair per plan, in plan order. Every read is done, and
-    // each plan removed ≥2 pairs above, so `write + this_plans.len() ≤ start +
-    // old_len` — the appends stay inside the node's own range and cannot reach
-    // the next node's slots.
-    for plan in this_plans {
-        let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
-        let fused = match side {
-            ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(x_idx), EncodedChildRef::from_raw(r_new)),
-            ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
-        };
-        debug_assert!(write < start + old_len, "fusion must shrink the pair list");
-        arena[write] = fused;
-        write += 1;
-    }
-
-        // Re-encode via the shared epilogue: shrink in place, or inline the sole
-        // survivor.
-        Ok(level.reencode_shrunk(n, start, old_len, write - start))
-    }
+    Ok(words)
 }
 
 /// Compact un-fused pairs in `arena[start..start + old_len]` onto the front of
@@ -276,7 +303,9 @@ fn compact_unfused_pairs<V>(
             for read in start..start + old_len {
                 let p = arena[read];
                 let x = x_of(p) as usize;
-                let fused = planned.get(x >> 6).is_some_and(|w| (w >> (x & 63)) & 1 == 1);
+                let fused = planned
+                    .get(x >> 6)
+                    .is_some_and(|w| (w >> (x & 63)) & 1 == 1);
                 if !fused {
                     arena[write] = p;
                     write += 1;

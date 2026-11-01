@@ -585,26 +585,16 @@ fn apply_and_held(
     );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
-    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
-    let mut run = apply_and_setup(
+    let (mut run, plain, operand_loose, canon_leaves) = setup_held_run(
         eng,
         &vtree,
-        Operands { f: &*f, g: &*g },
-        (targets, free),
-        kind,
-        levels,
+        (levels, ws.as_ref()),
         &mut scratch,
+        (f, g),
+        (targets, free),
+        (keep, unmarked),
     )?;
-    run.restoring = keep;
-    let plain = unmarked && !run.entry_marginality.any();
-    run.plain = plain;
-    debug_assert!(
-        free.f.is_empty() && free.g.is_empty() || plain,
-        "only a plain conjunction reads free levels",
-    );
     let cone = run.cone;
-    let (operand_loose, canon_leaves) =
-        prepare_sweep_leaves_and_regions(eng, &vtree, &mut run, f, g, ws.as_ref())?;
     let closed = Operands {
         f: f.levels.is_closed(),
         g: g.levels.is_closed(),
@@ -637,6 +627,44 @@ fn apply_and_held(
         (cone, restoring, closed, &kept),
         (output, &fused, summed),
     )
+}
+
+type HeldRunSetup<'a, 'r> = (
+    ApplyRun<'a, 'r>,
+    bool,
+    Option<Operands<Vec<u32>>>,
+    Vec<usize>,
+);
+
+fn setup_held_run<'a, 'r: 'a>(
+    eng: &Engine,
+    vtree: &'r Arc<Vtree>,
+    (levels, ws): (&'a mut [TddLevel], Option<&WeightStore>),
+    scratch: &'r mut super::scratch::ApplyWorkspace,
+    (f, g): (&mut Held<'_>, &mut Held<'_>),
+    (targets, free): (VtreeMask<'_>, Operands<VtreeMask<'r>>),
+    (keep, unmarked): (bool, bool),
+) -> Result<HeldRunSetup<'a, 'r>, OperationError> {
+    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws);
+    let mut run = apply_and_setup(
+        eng,
+        vtree,
+        Operands { f: &*f, g: &*g },
+        (targets, free),
+        kind,
+        levels,
+        scratch,
+    )?;
+    run.restoring = keep;
+    let plain = unmarked && !run.entry_marginality.any();
+    run.plain = plain;
+    debug_assert!(
+        free.f.is_empty() && free.g.is_empty() || plain,
+        "only a plain conjunction reads free levels",
+    );
+    let (operand_loose, canon_leaves) =
+        prepare_sweep_leaves_and_regions(eng, vtree, &mut run, f, g, ws)?;
+    Ok((run, plain, operand_loose, canon_leaves))
 }
 
 #[inline]
@@ -831,9 +859,13 @@ fn finish_conjoined_assembly<'a>(
 ) -> Result<Conjoined, OperationError> {
     let plain = queues.is_some();
     let finished = match queues {
-        Some(queues) => {
-            finish_plain_assembly(eng, assembly, vtree, queues, carried, closed, kept, output)
-        }
+        Some(queues) => finish_plain_assembly(
+            (eng, vtree),
+            assembly,
+            queues,
+            (carried, closed, kept),
+            output,
+        ),
         None => assembly.finish_or_return(output),
     };
     let out = match finished {
@@ -946,17 +978,20 @@ fn prepare_plain_queues(
     }
 }
 
+type PlainAssemblyMeta<'a> = (
+    &'a [(usize, bool)],
+    Operands<bool>,
+    &'a Operands<Option<crate::diagram::LevelCounts>>,
+);
+
 /// Finish `assembly` for a plain conjunction, seeding dirty/loose queues only
 /// for built levels and carrying kept pair counts from the operands.
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+#[allow(clippy::result_large_err)]
 fn finish_plain_assembly<'a>(
-    eng: &Engine,
+    (eng, vtree): (&Engine, &Vtree),
     mut assembly: diagram::Assembly<'a>,
-    vtree: &Vtree,
     queues: PlainQueues,
-    carried: &[(usize, bool)],
-    closed: Operands<bool>,
-    kept: &Operands<Option<crate::diagram::LevelCounts>>,
+    (carried, closed, kept): PlainAssemblyMeta<'_>,
     output: TddNodeId,
 ) -> Result<Tdd, (OperationError, diagram::Assembly<'a>)> {
     let PlainQueues {

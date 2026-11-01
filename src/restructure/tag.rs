@@ -14,7 +14,10 @@ use rustc_hash::FxHashMap;
 use super::{EmbedError, TagError};
 
 use crate::Engine;
-use crate::diagram::{ChildPair, LevelView, NodeIdx, Tdd, TddNodeId, Assembly, LEAF_WIDTH, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::diagram::{
+    Assembly, ChildPair, LEAF_WIDTH, LevelView, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX,
+    Tdd, TddNodeId,
+};
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -74,7 +77,7 @@ impl Engine {
     /// `tdd`'s vtree, [`OperationError::MarginalLevel`] for a diagram that has
     /// discarded the structure at a level under `at` (one beside or above it
     /// is not read), and for a refused allocation or an armed stop.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "public entry point")]
     pub fn tag_level(
         &self,
         tdd: &Tdd,
@@ -97,34 +100,16 @@ impl Engine {
             tdd.require_structure_at(s)?;
         }
         if into.node(into.root()).is_leaf() {
-            return Err(TagError::Placement(EmbedError::NotIsomorphic { source: at }));
+            return Err(TagError::Placement(EmbedError::NotIsomorphic {
+                source: at,
+            }));
         }
         let (left, right) = into.children(into.root());
         let mut gate = lim.gate();
 
         let image = match_tagged_subtree(lim, &mut gate, source, at, into, left, map)?;
         let leaf_bit = code_leaves_in_order(lim, into, right, code_vars)?;
-
-        // One tag per slot, naming a code there is.
-        let words = code_vars.len().div_ceil(64).max(1);
-        if !codes.len().is_multiple_of(words) {
-            return Err(TagError::Tags(format!("{} code words are not a whole number of {words}-word codes", codes.len())));
-        }
-        let num_codes = codes.len() / words;
-        let width = match source.node(at).is_leaf() {
-            true => LEAF_WIDTH,
-            false => tdd.level(at).nodes().len(),
-        };
-        if tags.len() != width {
-            return Err(TagError::Tags(format!("{} tags for a level of {width} slots", tags.len())));
-        }
-        // A leaf's `One` holds both literals' assignments.
-        if source.node(at).is_leaf() && tags[ONE_LEAF_IDX.idx()].is_some() && (tags[POS_LEAF_IDX.idx()].is_some() || tags[NEG_LEAF_IDX.idx()].is_some()) {
-            return Err(TagError::Tags("a leaf's true node and a literal overlap".to_string()));
-        }
-        if let Some(k) = tags.iter().flatten().find(|&&k| k as usize >= num_codes) {
-            return Err(TagError::Tags(format!("tag {k} names no code of {num_codes}")));
-        }
+        let words = validate_tag_inputs(tdd, at, tags, code_vars, codes)?;
         if tdd.is_zero() || tags.iter().all(Option::is_none) {
             return Ok(crate::build::constant_zero(self, into));
         }
@@ -140,20 +125,80 @@ impl Engine {
                 assembly.replace_level(self, d, view)?;
             }
         }
-        let cube = build_tag_cubes(self, &mut gate, into, &leaf_bit, tags, (codes, words), &mut assembly)?;
+        let cube = build_tag_cubes(
+            self,
+            &mut gate,
+            into,
+            &leaf_bit,
+            tags,
+            (codes, words),
+            &mut assembly,
+        )?;
         // The root: each tagged node beside its code's cube.
         let mut pairs = Vec::new();
         for (n, tag) in tags.iter().enumerate() {
             if let Some(k) = tag {
-                lim.try_push(&mut pairs, ChildPair::new(NodeIdx(n as u32), cube[*k as usize].expect("built above")))?;
+                lim.try_push(
+                    &mut pairs,
+                    ChildPair::new(NodeIdx(n as u32), cube[*k as usize].expect("built above")),
+                )?;
             }
         }
         let root = assembly.push(self, into.root(), &pairs)?;
         gate.flush()?;
-        let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: root })?;
+        let mut result = assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local: root,
+        })?;
         self.minimize(&mut result)?;
         Ok(result)
     }
+}
+
+/// Validate `tags`, `code_vars`, and `codes` against `tdd` at `at`, returning
+/// the number of `u64` words per code.
+fn validate_tag_inputs(
+    tdd: &Tdd,
+    at: VtreeIdx,
+    tags: &[Option<u32>],
+    code_vars: &[VarId],
+    codes: &[u64],
+) -> Result<usize, TagError> {
+    let source = tdd.vtree();
+    // One tag per slot, naming a code there is.
+    let words = code_vars.len().div_ceil(64).max(1);
+    if !codes.len().is_multiple_of(words) {
+        return Err(TagError::Tags(format!(
+            "{} code words are not a whole number of {words}-word codes",
+            codes.len()
+        )));
+    }
+    let num_codes = codes.len() / words;
+    let width = match source.node(at).is_leaf() {
+        true => LEAF_WIDTH,
+        false => tdd.level(at).nodes().len(),
+    };
+    if tags.len() != width {
+        return Err(TagError::Tags(format!(
+            "{} tags for a level of {width} slots",
+            tags.len()
+        )));
+    }
+    // A leaf's `One` holds both literals' assignments.
+    if source.node(at).is_leaf()
+        && tags[ONE_LEAF_IDX.idx()].is_some()
+        && (tags[POS_LEAF_IDX.idx()].is_some() || tags[NEG_LEAF_IDX.idx()].is_some())
+    {
+        return Err(TagError::Tags(
+            "a leaf's true node and a literal overlap".to_string(),
+        ));
+    }
+    if let Some(k) = tags.iter().flatten().find(|&&k| k as usize >= num_codes) {
+        return Err(TagError::Tags(format!(
+            "tag {k} names no code of {num_codes}"
+        )));
+    }
+    Ok(words)
 }
 
 /// The image of each node of `at`'s subtree in `source` under `left` in `into`,
@@ -177,7 +222,10 @@ fn match_tagged_subtree(
             (true, true) => {
                 let var = map(source.leaf_var(s));
                 if into.leaf_of(var).is_none() {
-                    return Err(TagError::Placement(EmbedError::VariableOutOfRange { variable: var, num_vars: into.num_vars() }));
+                    return Err(TagError::Placement(EmbedError::VariableOutOfRange {
+                        variable: var,
+                        num_vars: into.num_vars(),
+                    }));
                 }
                 if into.leaf_var(d) != var {
                     return Err(TagError::Placement(EmbedError::NotIsomorphic { source: s }));
@@ -215,14 +263,19 @@ fn code_leaves_in_order(
     for (t, v) in into.leaf_bottomup() {
         if into.in_subtree(t, right) {
             let Some(&i) = position.get(&v) else {
-                return Err(TagError::CodeVariables(VtreeError::Invalid(format!("leaf {} under the code subtree is not a code variable", v.0))));
+                return Err(TagError::CodeVariables(VtreeError::Invalid(format!(
+                    "leaf {} under the code subtree is not a code variable",
+                    v.0
+                ))));
             };
             leaf_bit[t.idx()] = i;
             leaves += 1;
         }
     }
     if leaves != code_vars.len() {
-        return Err(TagError::CodeVariables(VtreeError::Invalid("a code variable is not a leaf under the code subtree".to_string())));
+        return Err(TagError::CodeVariables(VtreeError::Invalid(
+            "a code variable is not a leaf under the code subtree".to_string(),
+        )));
     }
     Ok(leaf_bit)
 }
@@ -247,7 +300,10 @@ fn build_tag_cubes(
     let named = {
         let mut seen = Vec::new();
         lim.try_resize(&mut seen, num_codes, false)?;
-        tags.iter().flatten().filter(|&&k| !std::mem::replace(&mut seen[k as usize], true)).count()
+        tags.iter()
+            .flatten()
+            .filter(|&&k| !std::mem::replace(&mut seen[k as usize], true))
+            .count()
     };
     let mut memo = Memos::new(lim, into, right, leaf_bit, named)?;
     let mut stack = Vec::new();
@@ -341,7 +397,13 @@ enum Memo {
 impl Memos {
     /// The memos of the internal nodes under `right`, whose leaves `t` read
     /// bit `leaf_bit[t]` of a code, for a build of `named` cubes.
-    fn new(lim: &Limits, into: &Vtree, right: VtreeIdx, leaf_bit: &[usize], named: usize) -> Result<Self, OperationError> {
+    fn new(
+        lim: &Limits,
+        into: &Vtree,
+        right: VtreeIdx,
+        leaf_bit: &[usize],
+        named: usize,
+    ) -> Result<Self, OperationError> {
         let mut runs: Vec<Vec<(usize, usize)>> = Vec::new();
         lim.try_resize(&mut runs, into.num_nodes(), Vec::new())?;
         let mut memo = Vec::new();
@@ -379,7 +441,11 @@ impl Memos {
             };
             bits[t.idx()] = mine;
         }
-        Ok(Self { runs, memo, built: Vec::new() })
+        Ok(Self {
+            runs,
+            memo,
+            built: Vec::new(),
+        })
     }
 
     /// Whether the nodes of `t` are looked up by the part of the code.
@@ -405,7 +471,12 @@ impl Memos {
 
     /// The node of `t` built for the part of `code` it reads, or the slot
     /// to [`fill`](Self::fill) with the node about to be built for it.
-    fn find(&mut self, lim: &Limits, t: VtreeIdx, code: &[u64]) -> Result<Result<NodeIdx, usize>, OperationError> {
+    fn find(
+        &mut self,
+        lim: &Limits,
+        t: VtreeIdx,
+        code: &[u64],
+    ) -> Result<Result<NodeIdx, usize>, OperationError> {
         if !self.keyed(t) {
             return Ok(Err(0));
         }

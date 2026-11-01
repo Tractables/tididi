@@ -657,12 +657,21 @@ fn regroup(
     // is node `i` expanded. Every reference from above still names the node
     // it named, and the level above would hand back its own pairs.
     let unchanged = n_cells == n_nodes && fanout.len() == n_nodes;
+    let _ = (lim.discard(atoms), lim.discard(owners));
+    let _ = (lim.discard(first), lim.discard(cell_first), drop(cell_of));
+    let counts = (n_nodes, n_cells, unchanged);
+    finish_regrouped_cells(work, tdd, parent, counts, cell_pairs, fanout)
+}
 
-    lim.discard(atoms);
-    lim.discard(first);
-    lim.discard(owners);
-    lim.discard(cell_first);
-    drop(cell_of);
+fn finish_regrouped_cells(
+    work: &mut Rewrite<'_>,
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    (n_nodes, n_cells, unchanged): (usize, usize, bool),
+    cell_pairs: Vec<(u32, ChildPair)>,
+    fanout: Vec<(u32, u32)>,
+) -> Result<Option<Remap>, OperationError> {
+    let lim = work.eng.limits();
     let mut new_nodes = Transient::new(lim, Runs::pack(lim, n_cells, &cell_pairs, TRUE_PAIR)?);
     lim.discard(cell_pairs);
     write_level(work, tdd, parent, &mut new_nodes)?;
@@ -726,16 +735,17 @@ fn try_regroup_single_node(
     Ok(false)
 }
 
+type ExpandedLevelAtoms = (Vec<ChildPair>, Vec<u32>, Runs<u32>);
+
 /// Expand the bucketed pairs of a level into distinct atoms, the index of the
 /// first pair each atom came from, and each atom's sorted owner set.
-#[allow(clippy::type_complexity)]
 fn expand_level_atoms(
     work: &mut Rewrite<'_>,
     owned: Vec<Owned>,
     buckets: Vec<(u32, u32)>,
     by: Side,
     stamped: &Remap,
-) -> Result<(Vec<ChildPair>, Vec<u32>, Runs<u32>), OperationError> {
+) -> Result<ExpandedLevelAtoms, OperationError> {
     let lim = work.eng.limits();
     // Each atom gets an index, and its owner set — the old nodes contributing
     // it — is accumulated as a run of (atom, owner) entries. A bucket lists
@@ -1633,28 +1643,7 @@ fn expand_by_rewritten_left(
         for &cell in lefts {
             let left = EncodedChildRef::from_raw(cell);
             let start = out.len();
-            // A left reference of several cells writes past the first
-            // reservation.
-            if (right_remap.is_none() || right_each) && out.capacity() - out.len() < same.len() {
-                lim.reserve(out, same.len())?;
-            }
-            match right_remap {
-                None => out.extend(same.iter().map(|pair| ChildPair::new(left, pair.right))),
-                Some(map) if right_each => out.extend(same.iter().map(|pair| {
-                    let right = map.items[ChildDecoder::structural().node(pair.right).idx()];
-                    ChildPair::new(left, EncodedChildRef::from_raw(right))
-                })),
-                Some(map) => {
-                    for pair in same {
-                        for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
-                            lim.try_push(
-                                out,
-                                ChildPair::new(left, EncodedChildRef::from_raw(right)),
-                            )?;
-                        }
-                    }
-                }
-            }
+            extend_left_cell_pairs(lim, out, left, same, right_remap, right_each)?;
             let added = out.len() - start;
             work.gate.poll(added as u64 + 1)?;
             if added == 0 {
@@ -1684,6 +1673,36 @@ fn expand_by_rewritten_left(
         }
     }
     Ok((reordered, merged, stored_unsorted))
+}
+
+#[inline]
+fn extend_left_cell_pairs(
+    lim: &crate::limits::Limits,
+    out: &mut Vec<ChildPair>,
+    left: EncodedChildRef,
+    same: &[ChildPair],
+    right_remap: Option<&Remap>,
+    right_each: bool,
+) -> Result<(), OperationError> {
+    // A left reference of several cells writes past the first reservation.
+    if (right_remap.is_none() || right_each) && out.capacity() - out.len() < same.len() {
+        lim.reserve(out, same.len())?;
+    }
+    match right_remap {
+        None => out.extend(same.iter().map(|pair| ChildPair::new(left, pair.right))),
+        Some(map) if right_each => out.extend(same.iter().map(|pair| {
+            let right = map.items[ChildDecoder::structural().node(pair.right).idx()];
+            ChildPair::new(left, EncodedChildRef::from_raw(right))
+        })),
+        Some(map) => {
+            for pair in same {
+                for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
+                    lim.try_push(out, ChildPair::new(left, EncodedChildRef::from_raw(right)))?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Keep the first of each run of equal items in the sorted `items`, moved to

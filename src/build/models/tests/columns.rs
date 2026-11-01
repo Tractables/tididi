@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, Lcg};
+use crate::test_helpers::{Lcg, assert_canonical, assert_same_shape, vtree_shapes};
 use crate::vtree::Vtree;
 
 /// The chosen rows of a table of `codes` on `columns`, packed for
@@ -36,7 +36,13 @@ fn chosen(rows: RowSelection<'_>, len: usize) -> Vec<usize> {
 }
 
 /// `from_columns` against `from_models` on the same rows packed by hand.
-fn check(vtree: &Arc<Vtree>, columns: &[&[VarId]], codes: &[&[u32]], rows: RowSelection<'_>, what: &str) {
+fn check(
+    vtree: &Arc<Vtree>,
+    columns: &[&[VarId]],
+    codes: &[&[u32]],
+    rows: RowSelection<'_>,
+    what: &str,
+) {
     let got = Tdd::from_columns(vtree, columns, codes, rows).unwrap();
     assert_canonical(&got);
     let vars: Vec<VarId> = columns.iter().flat_map(|c| c.iter().copied()).collect();
@@ -66,7 +72,9 @@ fn random_table(rng: &mut Lcg, num_vars: u32, len: usize) -> (Vec<Vec<VarId>>, V
         .map(|_| {
             let values = 1 + rng.below(6);
             let spread = rng.next_u64() as u32;
-            (0..len).map(|_| (rng.below(values) as u32).wrapping_mul(spread | 1) ^ rng.below(2) as u32).collect()
+            (0..len)
+                .map(|_| (rng.below(values) as u32).wrapping_mul(spread | 1) ^ rng.below(2) as u32)
+                .collect()
         })
         .collect();
     (columns, codes)
@@ -85,12 +93,22 @@ fn random_tables_build_what_their_packed_rows_build() {
                 let (columns, codes) = random_table(&mut rng, num_vars, len);
                 let columns: Vec<&[VarId]> = columns.iter().map(|c| &c[..]).collect();
                 let codes: Vec<&[u32]> = codes.iter().map(|c| &c[..]).collect();
-                let listed: Vec<u32> = (0..rng.below(2 * len as u64)).map(|_| rng.below(len as u64) as u32).collect();
+                let listed: Vec<u32> = (0..rng.below(2 * len as u64))
+                    .map(|_| rng.below(len as u64) as u32)
+                    .collect();
                 let marked: Vec<bool> = (0..len).map(|_| rng.below(3) > 0).collect();
-                for (how, rows) in
-                    [("all", RowSelection::All), ("listed", RowSelection::Listed(&listed)), ("marked", RowSelection::Marked(&marked))]
-                {
-                    check(&vtree, &columns, &codes, rows, &format!("{num_vars} vars on {name}, round {round}, {how}"));
+                for (how, rows) in [
+                    ("all", RowSelection::All),
+                    ("listed", RowSelection::Listed(&listed)),
+                    ("marked", RowSelection::Marked(&marked)),
+                ] {
+                    check(
+                        &vtree,
+                        &columns,
+                        &codes,
+                        rows,
+                        &format!("{num_vars} vars on {name}, round {round}, {how}"),
+                    );
                 }
             }
         }
@@ -106,7 +124,10 @@ fn columns_in_leaf_order_shift_into_place_and_sorted_rows_are_only_checked() {
     let widths = [3usize, 8, 1, 17, 30];
     let total: usize = widths.iter().sum();
     let order: Vec<VarId> = (1..=total as u32).map(VarId).collect();
-    for vtree in [Vtree::balanced_over(&order).unwrap(), Vtree::linear_from_order(&order).unwrap()] {
+    for vtree in [
+        Vtree::balanced_over(&order).unwrap(),
+        Vtree::linear_from_order(&order).unwrap(),
+    ] {
         let vtree = Arc::new(vtree);
         let mut columns = Vec::new();
         let mut at = 0;
@@ -115,15 +136,28 @@ fn columns_in_leaf_order_shift_into_place_and_sorted_rows_are_only_checked() {
             at += w;
         }
         let mut rows: Vec<Vec<u32>> = (0..500)
-            .map(|_| widths.iter().map(|&w| (rng.next_u64() as u32) & ((1u64 << w) - 1) as u32 & 0x3f).collect())
+            .map(|_| {
+                widths
+                    .iter()
+                    .map(|&w| (rng.next_u64() as u32) & ((1u64 << w) - 1) as u32 & 0x3f)
+                    .collect()
+            })
             .collect();
         rows.sort();
         rows.dedup();
-        let codes: Vec<Vec<u32>> = (0..widths.len()).map(|j| rows.iter().map(|row| row[j]).collect()).collect();
+        let codes: Vec<Vec<u32>> = (0..widths.len())
+            .map(|j| rows.iter().map(|row| row[j]).collect())
+            .collect();
         let codes: Vec<&[u32]> = codes.iter().map(|c| &c[..]).collect();
         check(&vtree, &columns, &codes, RowSelection::All, "sorted");
         let reversed: Vec<u32> = (0..rows.len() as u32).rev().collect();
-        check(&vtree, &columns, &codes, RowSelection::Listed(&reversed), "reversed");
+        check(
+            &vtree,
+            &columns,
+            &codes,
+            RowSelection::Listed(&reversed),
+            "reversed",
+        );
     }
 }
 
@@ -131,13 +165,19 @@ fn columns_in_leaf_order_shift_into_place_and_sorted_rows_are_only_checked() {
 fn no_rows_is_false_and_no_columns_is_true() {
     let vtree = Arc::new(Vtree::balanced(3));
     let column: &[VarId] = &[VarId(1), VarId(2)];
-    let none = Tdd::from_columns(&vtree, &[column], &[&[1, 2]], RowSelection::Marked(&[false, false])).unwrap();
-    assert!(none.is_zero());
-    assert_canonical(&none);
-    let empty = Tdd::from_columns(&vtree, &[column], &[&[]], RowSelection::All).unwrap();
-    assert!(empty.is_zero());
-    let all = Tdd::from_columns(&vtree, &[], &[], RowSelection::Listed(&[])).unwrap();
-    assert!(all.is_zero(), "no row chosen");
+    for (cols, codes, rows) in [
+        (
+            &[column][..],
+            &[&[1u32, 2][..]][..],
+            RowSelection::Marked(&[false, false]),
+        ),
+        (&[column][..], &[&[][..]][..], RowSelection::All),
+        (&[][..], &[][..], RowSelection::Listed(&[])),
+    ] {
+        let d = Tdd::from_columns(&vtree, cols, codes, rows).unwrap();
+        assert!(d.is_zero());
+        assert_canonical(&d);
+    }
     let one: &[VarId] = &[];
     let all = Tdd::from_columns(&vtree, &[one], &[&[7, 9]], RowSelection::All).unwrap();
     assert_canonical(&all);
@@ -148,16 +188,51 @@ fn no_rows_is_false_and_no_columns_is_true() {
 fn ragged_columns_unknown_rows_and_bad_variables_are_refused() {
     let vtree = Arc::new(Vtree::balanced(40));
     let (a, b): (&[VarId], &[VarId]) = (&[VarId(1), VarId(2)], &[VarId(3)]);
-    let err = |columns: &[&[VarId]], codes: &[&[u32]], rows| Tdd::from_columns(&vtree, columns, codes, rows).unwrap_err();
-    assert_eq!(err(&[a, b], &[&[1, 2]], RowSelection::All), OperationError::RaggedColumns { column: 1, len: 0, expected: 2 });
-    assert_eq!(err(&[a, b], &[&[1, 2], &[0]], RowSelection::All), OperationError::RaggedColumns { column: 1, len: 1, expected: 2 });
+    let err = |columns: &[&[VarId]], codes: &[&[u32]], rows| {
+        Tdd::from_columns(&vtree, columns, codes, rows).unwrap_err()
+    };
+    assert_eq!(
+        err(&[a, b], &[&[1, 2]], RowSelection::All),
+        OperationError::RaggedColumns {
+            column: 1,
+            len: 0,
+            expected: 2
+        }
+    );
+    assert_eq!(
+        err(&[a, b], &[&[1, 2], &[0]], RowSelection::All),
+        OperationError::RaggedColumns {
+            column: 1,
+            len: 1,
+            expected: 2
+        }
+    );
     assert_eq!(
         err(&[a, b], &[&[1, 2], &[0, 1]], RowSelection::Marked(&[true])),
-        OperationError::RaggedColumns { column: 2, len: 1, expected: 2 }
+        OperationError::RaggedColumns {
+            column: 2,
+            len: 1,
+            expected: 2
+        }
     );
-    assert_eq!(err(&[a, b], &[&[1, 2], &[0, 1]], RowSelection::Listed(&[0, 2])), OperationError::RowOutOfRange { row: 2, rows: 2 });
+    assert_eq!(
+        err(&[a, b], &[&[1, 2], &[0, 1]], RowSelection::Listed(&[0, 2])),
+        OperationError::RowOutOfRange { row: 2, rows: 2 }
+    );
     let wide: Vec<VarId> = (1..=33).map(VarId).collect();
-    assert_eq!(err(&[&wide], &[&[0]], RowSelection::All), OperationError::ColumnTooWide { column: 0, bits: 33 });
-    assert_eq!(err(&[a, &[VarId(41)]], &[&[1], &[0]], RowSelection::All), OperationError::VariableNotInVtree(VarId(41)));
-    assert_eq!(err(&[a, &[VarId(2)]], &[&[1], &[0]], RowSelection::All), OperationError::DuplicateVariable(VarId(2)));
+    assert_eq!(
+        err(&[&wide], &[&[0]], RowSelection::All),
+        OperationError::ColumnTooWide {
+            column: 0,
+            bits: 33
+        }
+    );
+    assert_eq!(
+        err(&[a, &[VarId(41)]], &[&[1], &[0]], RowSelection::All),
+        OperationError::VariableNotInVtree(VarId(41))
+    );
+    assert_eq!(
+        err(&[a, &[VarId(2)]], &[&[1], &[0]], RowSelection::All),
+        OperationError::DuplicateVariable(VarId(2))
+    );
 }

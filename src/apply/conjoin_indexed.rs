@@ -408,6 +408,15 @@ impl Walk<'_> {
         }
         hits.sort_unstable_by_key(|h| (h.a, h.b, h.pair.key()));
         let width = self.f.reference_slot_count(t);
+        self.group_product_hits(width, by_f, &hits)
+    }
+
+    fn group_product_hits(
+        &mut self,
+        width: usize,
+        by_f: bool,
+        hits: &[Hit],
+    ) -> Result<Products, OperationError> {
         let mut out = Products {
             start: Vec::new(),
             items: Vec::new(),
@@ -416,42 +425,39 @@ impl Walk<'_> {
         };
         self.lim.reserve_exact(&mut out.made, hits.len())?;
         let mut last: Option<(u32, u32)> = None;
-        match by_f {
-            true => {
-                // One product per node of `f`, empty where nothing met it.
-                self.lim.reserve_exact(&mut out.made_at, width + 1)?;
-                let mut h = 0;
-                for x in 0..width as u32 {
-                    out.made_at.push(out.made.len() as u32);
-                    while h < hits.len() && hits[h].a == x {
-                        if last != Some((hits[h].a, hits[h].b)) {
-                            last = Some((hits[h].a, hits[h].b));
-                            self.work.products += 1;
-                        }
-                        out.made.push(hits[h].pair);
-                        h += 1;
-                    }
-                }
+        if by_f {
+            // One product per node of `f`, empty where nothing met it.
+            self.lim.reserve_exact(&mut out.made_at, width + 1)?;
+            let mut h = 0;
+            for x in 0..width as u32 {
                 out.made_at.push(out.made.len() as u32);
-            }
-            false => {
-                self.lim.try_resize(&mut out.start, width + 1, 0)?;
-                for h in &hits {
-                    if last != Some((h.a, h.b)) {
-                        last = Some((h.a, h.b));
-                        let k = out.made_at.len() as u32;
-                        self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-                        self.lim.try_push(&mut out.items, (h.b, k))?;
-                        out.start[h.a as usize + 1] += 1;
+                while h < hits.len() && hits[h].a == x {
+                    if last != Some((hits[h].a, hits[h].b)) {
+                        last = Some((hits[h].a, hits[h].b));
+                        self.work.products += 1;
                     }
-                    out.made.push(h.pair);
+                    out.made.push(hits[h].pair);
+                    h += 1;
                 }
-                self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-                for x in 0..width {
-                    out.start[x + 1] += out.start[x];
-                }
-                self.work.products += out.items.len() as u64;
             }
+            out.made_at.push(out.made.len() as u32);
+        } else {
+            self.lim.try_resize(&mut out.start, width + 1, 0)?;
+            for h in hits {
+                if last != Some((h.a, h.b)) {
+                    last = Some((h.a, h.b));
+                    let k = out.made_at.len() as u32;
+                    self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
+                    self.lim.try_push(&mut out.items, (h.b, k))?;
+                    out.start[h.a as usize + 1] += 1;
+                }
+                out.made.push(h.pair);
+            }
+            self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
+            for x in 0..width {
+                out.start[x + 1] += out.start[x];
+            }
+            self.work.products += out.items.len() as u64;
         }
         if u32::try_from(out.made.len()).is_err() {
             return Err(OperationError::IndexOverflow);

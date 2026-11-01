@@ -316,7 +316,7 @@ impl Engine {
     /// allocations, [`OperationError::MarginalLevel`] for an operand that
     /// has discarded the structure at a level, and for a refused allocation
     /// or an armed stop.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "public entry point")]
     pub fn prefix_fold<M: FoldMonoid>(
         &self,
         points: &Tdd,
@@ -823,6 +823,8 @@ struct Fold<'a, M: FoldMonoid> {
     reached_at: FxHashMap<u32, u32>,
 }
 
+type PathGroups = (Vec<[u32; 2]>, Vec<[u32; 4]>);
+
 impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// The id of `v`.
     fn intern(&mut self, v: M::Value) -> Result<u32, OperationError> {
@@ -1067,12 +1069,11 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
 
     /// Group each state at path level `at` by its key-side child for both
     /// operands, interning each group's path-side node set into `levels[at + 1]`.
-    #[allow(clippy::type_complexity)]
     fn collect_path_groups(
         &mut self,
         at: usize,
         (u, right, leaf_key): (VtreeIdx, bool, bool),
-    ) -> Result<(Vec<[u32; 2]>, Vec<[u32; 4]>), OperationError> {
+    ) -> Result<PathGroups, OperationError> {
         let (lim, ops) = (self.lim, self.ops);
         let mut groups: Vec<[u32; 2]> = Vec::new();
         let mut spans: Vec<[u32; 4]> = Vec::new();

@@ -18,24 +18,25 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
+use crate::Engine;
 use crate::apply::apply_and;
 use crate::build::constant_one;
-use crate::diagram::Tdd;
-use crate::Engine;
+use crate::diagram::{Arithmetic, RationalWeights, Tdd, WeightStore};
 use crate::marginal::marginalize_closure;
-
-use crate::diagram::RationalWeights;
-
-
 use crate::restructure::relevel::rebuild_rotated_levels;
-use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
-use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight, rand_cnf, rotate_left, rotate_right, CnfShape, Lcg};
-use crate::vtree::{VarId, Vtree};
-use crate::diagram::{Arithmetic, WeightStore};
+use crate::test_helpers::{
+    CnfShape, Lcg, assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight,
+    rand_cnf, rotate_left, rotate_right,
+};
+use crate::vtree::{RotationKind, VarId, Vtree};
 
-/// Route 1: fold the clauses left to right into one accumulator.
-fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+/// Route 1: fold `clauses` into one accumulator.
+fn build_by_folding<'a>(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    clauses: impl IntoIterator<Item = &'a Vec<i32>>,
+) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for c in clauses {
         acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
@@ -45,39 +46,44 @@ fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> T
 }
 
 /// Route 3: fold the clauses in reverse, then left-rotate the root, rebuild the
-/// levels the rotation moved, rotate back, and rebuild again. The vtree ends
-/// where it started and the diagram is one the restructure primitives produced.
+/// levels the rotation moved, rotate back, and rebuild again.
 fn build_by_rotation_round_trip(
     eng: &Engine,
     vtree: &Arc<Vtree>,
     clauses: &[Vec<i32>],
 ) -> Option<Tdd> {
-    let mut acc = constant_one(eng, vtree);
-    for c in clauses.iter().rev() {
-        acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
-    }
-    acc.minimize().unwrap();
-
+    let mut acc = build_by_folding(eng, vtree, clauses.iter().rev());
     let mut vt = (**vtree).clone();
     let root = vt.root();
-    // A left rotation needs a right child that is internal; a linear-enough
-    // vtree at the root has none, and there is nothing to round-trip.
     let left = rotate_left(&mut vt, root)?;
     acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::default();
-    rebuild_rotated_levels(eng.limits(), &mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX).expect("nothing is armed")?;
+    rebuild_rotated_levels(
+        eng.limits(),
+        &mut acc,
+        &left,
+        RotationKind::Left,
+        &mut scratch,
+        usize::MAX,
+    )
+    .unwrap()?;
     acc.minimize().unwrap();
 
-    let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
+    let right =
+        rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.vtree = Arc::new(vt);
-    rebuild_rotated_levels(eng.limits(), &mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX).expect("nothing is armed")?;
+    rebuild_rotated_levels(
+        eng.limits(),
+        &mut acc,
+        &right,
+        RotationKind::Right,
+        &mut scratch,
+        usize::MAX,
+    )
+    .unwrap()?;
     acc.minimize().unwrap();
-    let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
-        (0..v.num_nodes()).map(|i| v.node(crate::vtree::VtreeIdx(i as u32)).clone()).collect()
-    };
-    assert_eq!(
-        nodes(&acc.vtree),
-        nodes(vtree),
+    assert!(
+        acc.vtree.same_tree(vtree),
         "the round trip must land back on the vtree it started from"
     );
     acc.vtree = Arc::clone(vtree);
@@ -93,9 +99,14 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
     w.set_weights(WeightStore::new(
         RationalWeights::unit(vtree.num_leaves() as usize),
         Arithmetic::ExactRational,
-    )).unwrap();
+    ))
+    .unwrap();
     marginalize_closure(eng, &mut w).expect("no wall is installed in a test");
-    exact_weight(&w.weighted_value().unwrap().expect("a fully marginalized weighted diagram has a value"))
+    exact_weight(
+        &w.weighted_value()
+            .unwrap()
+            .expect("a fully marginalized weighted diagram has a value"),
+    )
 }
 
 /// Random 3-ish-CNFs over a small variable count, as clause literal lists.
@@ -115,20 +126,41 @@ fn every_route_to_one_function() -> Vec<Tdd> {
     let eng = Engine::new();
     let mut checked = 0u32;
     let mut rotated = 0u32;
-    for &seed in &[0x1234_5678_9abc_def0u64, 0xfeed_face_dead_1234, 0x0bad_c0de_1234_5678] {
+    for &seed in &[
+        0x1234_5678_9abc_def0u64,
+        0xfeed_face_dead_1234,
+        0x0bad_c0de_1234_5678,
+    ] {
         let mut rng = Lcg::new(seed);
         for &nvars in &[3u32, 4, 5, 6] {
             let vtree = Arc::new(Vtree::balanced(nvars));
             for _ in 0..12 {
-                let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 5, width: 3 });
+                let clauses = rand_cnf(
+                    &mut rng,
+                    nvars,
+                    CnfShape {
+                        clauses: 5,
+                        width: 3,
+                    },
+                );
                 let folded = build_by_folding(&eng, &vtree, &clauses);
                 let pairwise = compile_clauses_pairwise(&vtree, &clauses);
                 assert_canonical(&folded);
                 assert_canonical(&pairwise);
-                assert_same_shape(&folded, &pairwise, &format!("nvars={nvars} clauses={clauses:?}: folding and pairwise"));
+                assert_same_shape(
+                    &folded,
+                    &pairwise,
+                    &format!("nvars={nvars} clauses={clauses:?}: folding and pairwise"),
+                );
                 if let Some(rotated_back) = build_by_rotation_round_trip(&eng, &vtree, &clauses) {
                     assert_canonical(&rotated_back);
-                    assert_same_shape(&folded, &rotated_back, &format!("nvars={nvars} clauses={clauses:?}: folding and the rotation round trip"));
+                    assert_same_shape(
+                        &folded,
+                        &rotated_back,
+                        &format!(
+                            "nvars={nvars} clauses={clauses:?}: folding and the rotation round trip"
+                        ),
+                    );
                     rotated += 1;
                     out.push(rotated_back);
                 }
@@ -143,8 +175,14 @@ fn every_route_to_one_function() -> Vec<Tdd> {
             }
         }
     }
-    assert!(checked >= 100, "the sweep must actually run: {checked} cases");
-    assert!(rotated >= 50, "the rotation route must be exercised, not skipped: {rotated} cases");
+    assert!(
+        checked >= 100,
+        "the sweep must actually run: {checked} cases"
+    );
+    assert!(
+        rotated >= 50,
+        "the rotation route must be exercised, not skipped: {rotated} cases"
+    );
     out
 }
 
@@ -162,15 +200,31 @@ fn listed_twin_searches_reach_the_canonical_diagram() {
     for &nvars in &[6u32, 8, 10] {
         let vtree = Arc::new(Vtree::balanced(nvars));
         for _ in 0..16 {
-            let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
-            let quantified: Vec<VarId> = (1..=nvars).filter(|_| rng.below(3) == 0).map(VarId).collect();
-            let at_once = eng.exists_vars(build_by_folding(&eng, &vtree, &clauses), &quantified).unwrap();
+            let clauses = rand_cnf(
+                &mut rng,
+                nvars,
+                CnfShape {
+                    clauses: 2 * nvars as usize,
+                    width: 3,
+                },
+            );
+            let quantified: Vec<VarId> = (1..=nvars)
+                .filter(|_| rng.below(3) == 0)
+                .map(VarId)
+                .collect();
+            let at_once = eng
+                .exists_vars(build_by_folding(&eng, &vtree, &clauses), &quantified)
+                .unwrap();
             let mut one_at_a_time = compile_clauses_pairwise(&vtree, &clauses);
             for &x in &quantified {
                 one_at_a_time = eng.exists_var(one_at_a_time, x).unwrap();
             }
             assert_canonical(&at_once);
-            assert_same_shape(&at_once, &one_at_a_time, &format!("nvars={nvars} clauses={clauses:?} quantified={quantified:?}"));
+            assert_same_shape(
+                &at_once,
+                &one_at_a_time,
+                &format!("nvars={nvars} clauses={clauses:?} quantified={quantified:?}"),
+            );
         }
     }
     let listed = crate::reduce::contract::tests::listed_searches() - before;

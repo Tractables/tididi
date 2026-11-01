@@ -321,32 +321,18 @@ pub(super) fn rebuild_level(
     bufs: &MergeBuffers,
     check_disjoint: bool,
 ) {
-    let RebuiltArenas {
-        pairs: mut fresh,
-        ranges: mut fresh_ranges,
-        ..
-    } = arenas;
+    let (mut fresh, mut fresh_ranges) = (arenas.pairs, arenas.ranges);
     let reserved = fresh.capacity();
-    let TddLevel {
-        nodes,
-        pairs,
-        ranges,
-        ..
-    } = &mut *level;
-    let old = pairs.stored().expect("a merged level is stored");
-    let old_ranges: &RangeTable = ranges;
-    let nodes = nodes.stored_mut();
+    let old = level.pairs.stored().expect("a merged level is stored");
+    let old_ranges: &RangeTable = &level.ranges;
+    let nodes = level.nodes.stored_mut();
     let mut write = 0usize;
     // A survivor outside every group keeps its pairs as they are. The
     // ranges of such survivors that follow one another in the old arena
     // are one run, copied whole when the next range does not continue it,
     // each node placed at its offset in the run.
     let mut run = 0..0usize;
-    let MergeRemap {
-        final_remap,
-        absorbed: bits,
-        ..
-    } = remap;
+    let (final_remap, bits) = (&mut remap.final_remap, &remap.absorbed);
     // The next concat group, in survivor order, and its survivor (its
     // lowest member), or past every node once none is left.
     let mut plans = bufs
@@ -574,28 +560,19 @@ pub(super) fn rebuild_in_order(
     groups: InOrder<'_>,
     check_disjoint: bool,
 ) {
-    let RebuiltArenas {
-        pairs: mut fresh,
-        ranges: fresh_ranges,
-        ..
-    } = arenas;
+    let (mut fresh, fresh_ranges) = (arenas.pairs, arenas.ranges);
     debug_assert!(
         fresh_ranges.is_empty() && level.ranges.is_empty(),
         "a level rebuilt in node order has no ranged node"
     );
     let reserved = fresh.capacity();
-    let TddLevel { nodes, pairs, .. } = &mut *level;
-    let old = pairs.stored().expect("a merged level is stored");
-    let nodes = nodes.stored_mut();
+    let old = level.pairs.stored().expect("a merged level is stored");
+    let nodes = level.nodes.stored_mut();
     let mut write = 0usize;
     // As in `rebuild_level`: a run of survivors outside every group whose
     // ranges follow one another in the old arena is copied whole.
     let mut run = 0..0usize;
-    let MergeRemap {
-        final_remap,
-        absorbed: bits,
-        ..
-    } = remap;
+    let (final_remap, bits) = (&mut remap.final_remap, &remap.absorbed);
     // The groups' survivors, ascending, and the next, or past every node.
     let mut keeps = groups
         .group_starts
@@ -623,14 +600,10 @@ pub(super) fn rebuild_in_order(
             );
         }
         let h = stage_held_members(
-            merged,
-            base,
-            groups.unnamed,
+            (merged, base, groups.unnamed),
             (slots, remapped),
-            groups.member_groups,
-            &mut ahead,
-            groups.rooms,
-            &fresh,
+            (groups.member_groups, &mut ahead),
+            (groups.rooms, &fresh),
             &mut held,
         );
         compact_in_order_survivors(
@@ -794,16 +767,11 @@ fn rebuild_noncontiguous_survivor(
 }
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn stage_held_members(
-    mut merged: u64,
-    base: usize,
-    unnamed: bool,
+    (mut merged, base, unnamed): (u64, usize, bool),
     (slots, remapped): (&[EncodedNode], &[NodeIdx]),
-    member_groups: &[u32],
-    ahead: &mut usize,
-    rooms: &[u32],
-    fresh: &[ChildPair],
+    (member_groups, ahead): (&[u32], &mut usize),
+    (rooms, fresh): (&[u32], &[ChildPair]),
     held: &mut [(EncodedNode, u32); 64],
 ) -> usize {
     let mut h = 0;

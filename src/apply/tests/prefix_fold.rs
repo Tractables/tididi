@@ -210,18 +210,17 @@ fn expected<M: FoldMonoid<Value = u64>>(
     out
 }
 
+type FoldSets<'a> = (&'a BTreeSet<(u64, u64)>, &'a BTreeSet<(u64, u64, u64)>);
+
 /// Runs the fold, coding the folds by rank, and checks every assignment of
 /// `into` against the enumeration, the result canonical and the size of
 /// the diagram `from_models` builds for it. With `raw`, the operands are
 /// conjunctions of two supersets of their models, left unminimized.
-#[allow(clippy::too_many_arguments)]
 fn check<M: FoldMonoid<Value = u64>>(
     blocks: &Blocks,
     shape: Shape,
-    points: &BTreeSet<(u64, u64)>,
-    values: &BTreeSet<(u64, u64, u64)>,
-    range: FoldRange,
-    raw: bool,
+    (points, values): FoldSets<'_>,
+    (range, raw): (FoldRange, bool),
     monoid: &M,
     what: &str,
 ) {
@@ -355,40 +354,32 @@ fn folds_agree_with_enumeration() {
                         check(
                             &blocks,
                             shape,
-                            &points,
-                            &values,
-                            range,
-                            raw,
+                            (&points, &values),
+                            (range, raw),
                             &Sum,
                             &format!("sum {what}"),
                         );
                         check(
                             &blocks,
                             shape,
-                            &points,
-                            &values,
-                            range,
-                            raw,
+                            (&points, &values),
+                            (range, raw),
                             &Max,
                             &format!("max {what}"),
                         );
                         check(
                             &blocks,
                             shape,
-                            &points,
-                            &values,
-                            range,
-                            raw,
+                            (&points, &values),
+                            (range, raw),
                             &Count,
                             &format!("count {what}"),
                         );
                         check(
                             &blocks,
                             shape,
-                            &points,
-                            &values,
-                            range,
-                            raw,
+                            (&points, &values),
+                            (range, raw),
                             &Ones,
                             &format!("ones {what}"),
                         );
@@ -425,10 +416,8 @@ fn points_before_every_value_are_left_out_and_points_after_carry_the_fold() {
             check(
                 &blocks,
                 shape,
-                &points,
-                &values,
-                range,
-                false,
+                (&points, &values),
+                (range, false),
                 &Max,
                 &format!("{shape:?} {range:?}"),
             );
@@ -460,20 +449,16 @@ fn values_at_one_order_are_folded_together() {
             check(
                 &blocks,
                 shape,
-                &points,
-                &values,
-                range,
-                false,
+                (&points, &values),
+                (range, false),
                 &Sum,
                 &format!("{shape:?} {range:?}"),
             );
             check(
                 &blocks,
                 shape,
-                &points,
-                &values,
-                range,
-                false,
+                (&points, &values),
+                (range, false),
                 &Count,
                 &format!("count {shape:?} {range:?}"),
             );

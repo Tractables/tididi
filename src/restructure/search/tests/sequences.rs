@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
+use crate::Tdd;
 use crate::restructure::search::RotationMove;
 use crate::test_helpers::{assert_canonical, compile_clauses};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
-use crate::Tdd;
 
 /// A diagram with room to rotate: six variables, a cycle of clauses, and a
 /// balanced vtree.
@@ -14,7 +14,14 @@ fn fixture() -> (Arc<Vtree>, Tdd) {
     let vtree = Arc::new(Vtree::balanced(6));
     let mut tdd = compile_clauses(
         &vtree,
-        &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, -6], vec![1, -6]],
+        &[
+            vec![1, 2],
+            vec![-2, 3],
+            vec![3, 4],
+            vec![-4, 5],
+            vec![5, -6],
+            vec![1, -6],
+        ],
     );
     tdd.minimize().expect("an unarmed engine refuses nothing");
     (vtree, tdd)
@@ -43,21 +50,23 @@ fn sequences(vtree: &Vtree, k: usize) -> Vec<Vec<RotationMove>> {
     out
 }
 
+fn assert_same_size(a: &Tdd, b: &Tdd, what: &str) {
+    assert!(a.vtree().same_tree(b.vtree()), "{what}");
+    assert_eq!(a.pair_count(), b.pair_count(), "{what}");
+    assert_eq!(a.node_count(), b.node_count(), "{what}");
+}
+
 #[test]
 fn a_declined_sequence_leaves_the_diagram_and_its_vtree_exactly_as_they_were() {
     for k in 1..=3 {
         let (vtree, tdd) = fixture();
         let count = tdd.model_count().unwrap();
-        let pairs = tdd.pair_count();
-        let nodes = tdd.node_count();
         for moves in sequences(&vtree, k) {
             let mut probed = tdd.clone();
             let kept = probed.rotate_if(&moves, usize::MAX, |_| false).unwrap();
             assert!(!kept, "a closure that declines cannot keep a sequence");
-            assert!(probed.vtree().same_tree(&vtree), "k = {k}, moves {moves:?}");
+            assert_same_size(&probed, &tdd, &format!("k = {k}, moves {moves:?}"));
             assert!(probed.equivalent(&tdd).unwrap());
-            assert_eq!(probed.pair_count(), pairs);
-            assert_eq!(probed.node_count(), nodes);
             assert_eq!(probed.model_count().unwrap(), count);
             assert_canonical(&probed);
         }
@@ -74,7 +83,11 @@ fn a_kept_sequence_preserves_the_function_and_stays_canonical() {
             probed.rotate_if(&moves, usize::MAX, |_| true).unwrap();
             probed.minimize().unwrap();
             assert_canonical(&probed);
-            assert_eq!(probed.model_count().unwrap(), count, "k = {k}, moves {moves:?}");
+            assert_eq!(
+                probed.model_count().unwrap(),
+                count,
+                "k = {k}, moves {moves:?}"
+            );
         }
     }
 }
@@ -90,9 +103,7 @@ fn a_sequence_and_its_inverse_return_the_vtree_and_the_diagram() {
         let inverse: Vec<RotationMove> = moves.iter().rev().map(|mv| mv.inverse()).collect();
         assert!(probed.rotate_if(&inverse, usize::MAX, |_| true).unwrap());
         probed.minimize().unwrap();
-        assert!(probed.vtree().same_tree(&vtree), "moves {moves:?}");
-        assert_eq!(probed.pair_count(), tdd.pair_count());
-        assert_eq!(probed.node_count(), tdd.node_count());
+        assert_same_size(&probed, &tdd, &format!("moves {moves:?}"));
         assert_canonical(&probed);
     }
 }
@@ -109,9 +120,7 @@ fn a_two_move_sequence_gives_what_the_two_moves_give_one_at_a_time() {
         for mv in &moves {
             assert!(apart.rotate_if(&[*mv], usize::MAX, |_| true).unwrap());
         }
-        assert!(together.vtree().same_tree(apart.vtree()), "moves {moves:?}");
-        assert_eq!(together.pair_count(), apart.pair_count());
-        assert_eq!(together.node_count(), apart.node_count());
+        assert_same_size(&together, &apart, &format!("moves {moves:?}"));
     }
 }
 
@@ -141,7 +150,10 @@ fn a_probe_reads_the_state_before_the_first_move() {
         })
         .unwrap();
     let seen = seen.into_inner();
-    assert!(!seen.is_empty(), "a scored sequence rebuilt at least two levels");
+    assert!(
+        !seen.is_empty(),
+        "a scored sequence rebuilt at least two levels"
+    );
     // Declined, so the diagram is the one the probe called `before`.
     for (level, before, _) in seen {
         assert_eq!(tdd.level(level).live_pairs(), before);
@@ -156,9 +168,14 @@ fn a_move_that_does_not_apply_declines_without_scoring() {
         .map(|i| VtreeIdx(i as u32))
         .find(|&v| vtree.node(v).is_leaf())
         .expect("a vtree has leaves");
-    let moves = [RotationMove { pivot: leaf, kind: RotationKind::Left }];
+    let moves = [RotationMove {
+        pivot: leaf,
+        kind: RotationKind::Left,
+    }];
     let kept = tdd
-        .rotate_if(&moves, usize::MAX, |_| panic!("an inapplicable move must not be scored"))
+        .rotate_if(&moves, usize::MAX, |_| {
+            panic!("an inapplicable move must not be scored")
+        })
         .unwrap();
     assert!(!kept);
     assert!(tdd.vtree().same_tree(&vtree));
@@ -167,7 +184,9 @@ fn a_move_that_does_not_apply_declines_without_scoring() {
 #[test]
 fn an_empty_sequence_keeps_nothing() {
     let (vtree, mut tdd) = fixture();
-    let kept = tdd.rotate_if(&[], usize::MAX, |_| panic!("nothing to score")).unwrap();
+    let kept = tdd
+        .rotate_if(&[], usize::MAX, |_| panic!("nothing to score"))
+        .unwrap();
     assert!(!kept);
     assert!(tdd.vtree().same_tree(&vtree));
 }

@@ -676,45 +676,14 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // Each candidate's pair goes straight to the level's pair arena and
         // its g parent beside it; `emit_walked` makes the node's products of
         // them, each candidate one pair of one of them.
-        Collect::Nodes(Emit {
-            level,
-            out,
-            duplicates_legal,
-            live,
-            ..
-        }) => {
-            let start = level.pairs.stored_len();
-            let walked_nodes = nodes.end();
-            let mut candidates = 0;
-            try_for_each_walked(f_level, nodes, |p1, pairs| {
-                let base = level.pairs.stored_len();
-                node_owners.clear();
-                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
-                    try_push_pair_growing(
-                        eng,
-                        level.pairs.stored_mut(),
-                        candidate_pair(&entry),
-                        move |v| grow_by_nodes(eng, v, start, p1, walked_nodes),
-                    )?;
-                    lim.try_push(node_owners, entry.g_parent)
-                })?;
-                candidates += node_owners.len();
-                emit_walked(
-                    eng,
-                    emit,
-                    NodeOut {
-                        level,
-                        pl_output: out,
-                        p1,
-                        base,
-                        duplicates_legal,
-                    },
-                    node_owners,
-                )
-            })?;
-            *live = Some(candidates);
-            Ok(())
-        }
+        Collect::Nodes(to) => walk_nodes_into_emit::<SWAPPED, W>(
+            eng,
+            walk,
+            (f_level, nodes),
+            to,
+            (node_owners, emit),
+            &mut ticker,
+        ),
         // The level's one f node is walked in stretches of a
         // `PROJECT_AFTER`th of its pairs, each projected before it.
         Collect::Direct(level) => {
@@ -741,6 +710,55 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
             })
         }),
     }
+}
+
+#[inline(always)]
+fn walk_nodes_into_emit<const SWAPPED: bool, W: NodeWalk>(
+    eng: &Engine,
+    walk: &W,
+    (f_level, nodes): (&TddLevel, Walked<'_>),
+    Emit {
+        level,
+        out,
+        duplicates_legal,
+        live,
+        ..
+    }: Emit<'_>,
+    (node_owners, emit): (&mut Vec<u32>, &mut EmitScratch),
+    ticker: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let start = level.pairs.stored_len();
+    let walked_nodes = nodes.end();
+    let mut candidates = 0;
+    try_for_each_walked(f_level, nodes, |p1, pairs| {
+        let base = level.pairs.stored_len();
+        node_owners.clear();
+        walk.node::<SWAPPED>(pairs, ticker, |entry| {
+            try_push_pair_growing(
+                eng,
+                level.pairs.stored_mut(),
+                candidate_pair(&entry),
+                move |v| grow_by_nodes(eng, v, start, p1, walked_nodes),
+            )?;
+            lim.try_push(node_owners, entry.g_parent)
+        })?;
+        candidates += node_owners.len();
+        emit_walked(
+            eng,
+            emit,
+            NodeOut {
+                level,
+                pl_output: out,
+                p1,
+                base,
+                duplicates_legal,
+            },
+            node_owners,
+        )
+    })?;
+    *live = Some(candidates);
+    Ok(())
 }
 
 /// How [`leaf_walk`] finds the candidates of one f node.
@@ -920,12 +938,7 @@ fn owner_walk_nodes<
     to: Emit<'_>,
 ) -> Result<(Made, usize), OperationError> {
     let lim = eng.limits();
-    let Emit {
-        level,
-        out,
-        duplicates_legal,
-        ..
-    } = to;
+    let (level, out, duplicates_legal) = (to.level, to.out, to.duplicates_legal);
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let empty = start == 0 && level.nodes.stored().is_empty();
@@ -948,11 +961,7 @@ fn owner_walk_nodes<
     };
     let walked = f_nodes - copied;
     let ahead = walk_ahead_threshold(lim, copied, walked);
-    let from = [
-        level.pairs.stored_len(),
-        level.nodes.stored().len(),
-        out.len(),
-    ];
+    let from = [start, level.nodes.stored().len(), out.len()];
     let seeds = [
         level.pairs.capacity(),
         level.nodes.stored_mut().capacity(),
@@ -1101,6 +1110,25 @@ fn emit_walked_node(
         g_idx: GNodeIdx(owner),
         prod_idx: ProductNodeIdx(cur.prods.len as u32),
     };
+    emit_single_owner_walked_node(
+        eng,
+        (level, out, cur),
+        first,
+        product,
+        (base, count),
+        (duplicates_legal, charged),
+    )
+}
+
+#[inline(always)]
+fn emit_single_owner_walked_node(
+    eng: &Engine,
+    (level, out, cur): (&mut TddLevel, &mut Vec<ProductEntry>, &mut WalkCursor),
+    first: *mut ChildPair,
+    product: ProductEntry,
+    (base, count): (usize, usize),
+    (duplicates_legal, charged): (bool, usize),
+) -> Result<(), OperationError> {
     if cur.prods.room() > 0 && cur.nodes.room() > 0 && (count == 1 || (base | count) < 1 << 31) {
         emit_single_owner_in_room(
             first,
@@ -2155,25 +2183,8 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
                 if start as usize == n && len != 0 && n + len as usize <= range_room =>
             {
                 let end = n + len as usize;
-                // Safety: `end` is within f's arena (`range_room`) and the
-                // node holds a pair.
-                let (first, rest) = unsafe {
-                    f_arena
-                        .get_unchecked(n..end)
-                        .split_first()
-                        .unwrap_unchecked()
-                };
-                let mut sum = code(*first);
-                let mut copies = true;
-                for &pair in rest {
-                    let next = code(pair);
-                    copies &= next as u32 == sum as u32;
-                    if !PLAIN {
-                        sum += next & !u64::from(u32::MAX);
-                    }
-                }
                 (
-                    if copies { sum } else { u64::from(NO_PRODUCT) },
+                    lent_multi_node_code::<SWAPPED, ONES, PLAIN>(f_arena, n, end, entries),
                     len as usize,
                     end,
                 )
@@ -2209,6 +2220,32 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     // Safety: as above.
     unsafe { prods.settle(out) };
     Ok((taken, n, pairs))
+}
+
+#[inline(always)]
+fn lent_multi_node_code<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
+    f_arena: &[ChildPair],
+    n: usize,
+    end: usize,
+    entries: Listed<'_>,
+) -> u64 {
+    // Safety: `end` is within f's arena (`range_room`) and the node holds a pair.
+    let (first, rest) = unsafe {
+        f_arena
+            .get_unchecked(n..end)
+            .split_first()
+            .unwrap_unchecked()
+    };
+    let mut sum = lent_pair_code::<SWAPPED, ONES, PLAIN>(*first, entries);
+    let mut copies = true;
+    for &pair in rest {
+        let next = lent_pair_code::<SWAPPED, ONES, PLAIN>(pair, entries);
+        copies &= next as u32 == sum as u32;
+        if !PLAIN {
+            sum += next & !u64::from(u32::MAX);
+        }
+    }
+    if copies { sum } else { u64::from(NO_PRODUCT) }
 }
 
 /// Compute `pair`'s packed `(units << 32 | g_owner)` code in [`take_lent`].
@@ -3296,65 +3333,43 @@ fn sides<'w, const SWAPPED: bool>(
         (inner_k, outer_k, filtered_dim, outer_g_dim),
         (pl_inner, pl_outer, kept),
     )?;
-    let SparseWorkspace {
-        f_by_outer,
-        g_by_outer,
-        g_by_inner,
-        est_counts,
-        inner_offsets,
-        outer_offsets,
-        filtered,
-        filtered_touched,
-        filtered_held,
-        wanted,
-        wanted_epoch,
-        wanted_keys,
-        inner_seen,
-        inner_seen_epoch,
-        outer_keys,
-        outer_keys_epoch,
-        outer_attached,
-        routes,
-        f_marked,
-        ..
-    } = ws;
     Ok(ScatterSides {
-        f_by_outer: f_by_outer.view(),
-        f_under: f_under::<SWAPPED>(est_counts, shape),
-        f_marked: kept.then_some(&f_marked[..]),
-        g_by_outer: g_by_outer.view(),
-        g_by_inner: g_by_inner.view(),
+        f_by_outer: ws.f_by_outer.view(),
+        f_under: f_under::<SWAPPED>(&ws.est_counts, shape),
+        f_marked: kept.then_some(&ws.f_marked[..]),
+        g_by_outer: ws.g_by_outer.view(),
+        g_by_inner: ws.g_by_inner.view(),
         outer: GroupedView {
-            offsets: outer_offsets,
+            offsets: &ws.outer_offsets,
             entries: pl_outer,
         },
         inner: GroupedView {
-            offsets: inner_offsets,
+            offsets: &ws.inner_offsets,
             entries: pl_inner,
         },
         filtered: TouchedBuckets {
-            buckets: filtered,
-            touched: filtered_touched,
-            held: filtered_held,
+            buckets: &mut ws.filtered,
+            touched: &mut ws.filtered_touched,
+            held: &mut ws.filtered_held,
         },
         wanted: EpochFlags {
-            cur: *wanted_epoch,
-            stamps: wanted,
-            epoch: wanted_epoch,
+            cur: ws.wanted_epoch,
+            stamps: &mut ws.wanted,
+            epoch: &mut ws.wanted_epoch,
         },
-        wanted_keys,
+        wanted_keys: &mut ws.wanted_keys,
         inner_seen: EpochFlags {
-            cur: *inner_seen_epoch,
-            stamps: inner_seen,
-            epoch: inner_seen_epoch,
+            cur: ws.inner_seen_epoch,
+            stamps: &mut ws.inner_seen,
+            epoch: &mut ws.inner_seen_epoch,
         },
         outer_keys: EpochFlags {
-            cur: *outer_keys_epoch,
-            stamps: outer_keys,
-            epoch: outer_keys_epoch,
+            cur: ws.outer_keys_epoch,
+            stamps: &mut ws.outer_keys,
+            epoch: &mut ws.outer_keys_epoch,
         },
-        outer_attached,
-        routes,
+        outer_attached: &mut ws.outer_attached,
+        routes: &mut ws.routes,
         outer_k,
         inner_g: filtered_dim,
     })
@@ -4626,29 +4641,7 @@ fn emit_few(
         (2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n,
         "a few candidates"
     );
-    // Each product's g parent, its candidates as a bit each, and its pair
-    // count; and the pairs of the products of more than one, which take a
-    // range of the arena.
-    let mut parents = [0u32; FEW_CANDIDATES];
-    let mut members = [0u8; FEW_CANDIDATES];
-    let mut counts = [0u32; FEW_CANDIDATES];
-    let (mut products, mut ranged) = (0, 0);
-    for (i, &g_parent) in owners.iter().enumerate() {
-        let k = parents[..products]
-            .iter()
-            .position(|&p| p == g_parent)
-            .unwrap_or(products);
-        parents[k] = g_parent;
-        products += usize::from(k == products);
-        members[k] |= 1 << i;
-        let count = counts[k] + 1;
-        counts[k] = count;
-        ranged += match count {
-            1 => 0,
-            2 => 2,
-            _ => 1,
-        };
-    }
+    let (parents, members, counts, products, ranged) = partition_few_candidates(owners);
     push_product_entries(lim, pl_output, p1, &parents[..products])?;
     // One reserve for the level's pairs, and the output-pair meter
     // charged once for whatever the arena grew by.
@@ -4688,6 +4681,39 @@ fn emit_few(
     built?;
     debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
+}
+
+#[inline(always)]
+fn partition_few_candidates(
+    owners: &[u32],
+) -> (
+    [u32; FEW_CANDIDATES],
+    [u8; FEW_CANDIDATES],
+    [u32; FEW_CANDIDATES],
+    usize,
+    usize,
+) {
+    let mut parents = [0u32; FEW_CANDIDATES];
+    let mut members = [0u8; FEW_CANDIDATES];
+    let mut counts = [0u32; FEW_CANDIDATES];
+    let (mut products, mut ranged) = (0, 0);
+    for (i, &g_parent) in owners.iter().enumerate() {
+        let k = parents[..products]
+            .iter()
+            .position(|&p| p == g_parent)
+            .unwrap_or(products);
+        parents[k] = g_parent;
+        products += usize::from(k == products);
+        members[k] |= 1 << i;
+        let count = counts[k] + 1;
+        counts[k] = count;
+        ranged += match count {
+            1 => 0,
+            2 => 2,
+            _ => 1,
+        };
+    }
+    (parents, members, counts, products, ranged)
 }
 
 /// The cursor of a product of one pair ([`prefix_offsets`]'s mark): it has

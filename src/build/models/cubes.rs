@@ -537,24 +537,13 @@ fn split(
     } else {
         (fine_atoms, coarse_atoms)
     };
-    let pairs = sets.iter().enumerate().flat_map(|(a, set)| {
-        let fine_atom = &fine_atom;
-        set.iter().map(move |&item| {
-            let (f, atom) = ((item >> 32) as usize, item as u32);
-            let (h, l) = if high_coarse {
-                (a as u32, fine_atom[f])
-            } else {
-                (fine_atom[f], a as u32)
-            };
-            [atom, h, l]
-        })
-    });
-    let triples = sorted_triples(
+    let triples = emit_split_triples(
         lim,
         s,
-        sets.items.len(),
-        [parent.atoms, high_atoms, low_atoms],
-        pairs,
+        &sets,
+        &fine_atom,
+        (parent.atoms, high_atoms, low_atoms),
+        high_coarse,
     )?;
 
     let (high_atom, low_atom) = match high_coarse {
@@ -577,6 +566,34 @@ fn split(
         triples,
     };
     Ok((split, low_pieces, high_pieces))
+}
+
+fn emit_split_triples(
+    lim: &Limits,
+    s: &mut Scratch,
+    sets: &Lists,
+    fine_atom: &[u32],
+    (parent_atoms, high_atoms, low_atoms): (u32, u32, u32),
+    high_coarse: bool,
+) -> Result<Vec<[u32; 3]>, OperationError> {
+    let pairs = sets.iter().enumerate().flat_map(|(a, set)| {
+        set.iter().map(move |&item| {
+            let (f, atom) = ((item >> 32) as usize, item as u32);
+            let (h, l) = if high_coarse {
+                (a as u32, fine_atom[f])
+            } else {
+                (fine_atom[f], a as u32)
+            };
+            [atom, h, l]
+        })
+    });
+    sorted_triples(
+        lim,
+        s,
+        sets.items.len(),
+        [parent_atoms, high_atoms, low_atoms],
+        pairs,
+    )
 }
 
 /// The `count` triples `each` lists, `[atom, high atom, low atom]` below
@@ -1037,18 +1054,13 @@ fn already_disjoint(width: usize, parts: &Pieces) -> bool {
 
 /// Emit one piece per distinct lower-bit value when every cube in `(from, len)`
 /// fixes all remaining bits below `bit`.
-#[allow(clippy::too_many_arguments)]
 fn emit_fixed_runs(
     lim: &Limits,
     parts: &Pieces,
-    (from, len): (usize, usize),
-    bit: usize,
-    path: usize,
+    (from, len, bit, path): (usize, usize, usize, usize),
     paths: &[u64],
-    arena: &mut Vec<u32>,
-    masks: &mut [u64],
-    out: &mut Pieces,
-    members: &mut Vec<(u32, u32)>,
+    (arena, masks): (&mut Vec<u32>, &mut [u64]),
+    (out, members): (&mut Pieces, &mut Vec<(u32, u32)>),
 ) -> Result<(), OperationError> {
     let w = parts.words;
     let start = arena.len();
@@ -1134,44 +1146,15 @@ fn refine(
     let mut masks = vec![0u64; w];
     let mut gate = lim.gate();
     while let Some(frame) = stack.pop() {
-        let (from, len) = frame.items;
-        gate.poll(len as u64)?;
-        let top = scan.scan(&parts, &arena[from..from + len], frame.bit);
-        if len > 1 && (0..w).all(|j| scan.and_f[j] == lower_bits(j, frame.bit)) {
-            emit_fixed_runs(
-                lim,
-                &parts,
-                (from, len),
-                frame.bit,
-                frame.value,
-                &paths,
-                &mut arena,
-                &mut masks,
-                &mut out,
-                &mut members,
-            )?;
-            continue;
-        }
-        let lowest = top.map_or(0, |s| s + 1);
-        let path = frame.value;
-        for j in 0..w {
-            let keep = lower_bits(j, frame.bit) & !lower_bits(j, lowest);
-            paths[path + w + j] |= scan.and_f[j] & keep;
-            paths[path + j] |= scan.or_v[j] & scan.and_f[j] & keep;
-        }
-        match top {
-            None => emit_leaf_piece(lim, w, path, (from, len), &paths, &mut out, &mut members)?,
-            Some(s) => push_split_children(
-                lim,
-                &parts,
-                (from, len),
-                s,
-                path,
-                &mut arena,
-                &mut paths,
-                &mut stack,
-            )?,
-        }
+        gate.poll(frame.items.1 as u64)?;
+        step_refine_frame(
+            lim,
+            &parts,
+            frame,
+            &mut scan,
+            (&mut arena, &mut paths, &mut masks),
+            (&mut out, &mut members, &mut stack),
+        )?;
     }
     gate.flush()?;
 
@@ -1182,6 +1165,40 @@ fn refine(
     lim.discard(members);
     lim.discard(parts);
     Ok((out, starts, cover))
+}
+
+fn step_refine_frame(
+    lim: &Limits,
+    parts: &Pieces,
+    frame: RefineFrame,
+    scan: &mut FrameScan,
+    (arena, paths, masks): (&mut Vec<u32>, &mut Vec<u64>, &mut [u64]),
+    (out, members, stack): (&mut Pieces, &mut Vec<(u32, u32)>, &mut Vec<RefineFrame>),
+) -> Result<(), OperationError> {
+    let w = parts.words;
+    let (from, len) = frame.items;
+    let top = scan.scan(parts, &arena[from..from + len], frame.bit);
+    if len > 1 && (0..w).all(|j| scan.and_f[j] == lower_bits(j, frame.bit)) {
+        return emit_fixed_runs(
+            lim,
+            parts,
+            (from, len, frame.bit, frame.value),
+            paths,
+            (arena, masks),
+            (out, members),
+        );
+    }
+    let lowest = top.map_or(0, |s| s + 1);
+    let path = frame.value;
+    for j in 0..w {
+        let keep = lower_bits(j, frame.bit) & !lower_bits(j, lowest);
+        paths[path + w + j] |= scan.and_f[j] & keep;
+        paths[path + j] |= scan.or_v[j] & scan.and_f[j] & keep;
+    }
+    match top {
+        None => emit_leaf_piece(lim, w, path, (from, len), paths, out, members),
+        Some(s) => push_split_children(lim, parts, (from, len, s, path), (arena, paths, stack)),
+    }
 }
 
 #[inline]
@@ -1268,16 +1285,11 @@ fn disjoint_identity(
 }
 
 /// Split the cubes in `arena[from..from + len]` on bit `s` into two child frames.
-#[allow(clippy::too_many_arguments)]
 fn push_split_children(
     lim: &Limits,
     parts: &Pieces,
-    (from, len): (usize, usize),
-    s: usize,
-    path: usize,
-    arena: &mut Vec<u32>,
-    paths: &mut Vec<u64>,
-    stack: &mut Vec<RefineFrame>,
+    (from, len, s, path): (usize, usize, usize, usize),
+    (arena, paths, stack): (&mut Vec<u32>, &mut Vec<u64>, &mut Vec<RefineFrame>),
 ) -> Result<(), OperationError> {
     let w = parts.words;
     let (j, b) = (s / 64, s % 64);

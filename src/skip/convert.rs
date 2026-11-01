@@ -30,23 +30,58 @@ pub(crate) fn from_tdd(
         return Err(OperationError::MarginalLevel(VtreeIdx(t as u32)));
     }
     let sh = &*shape;
-    let n = sh.num_nodes();
     let mut form = SkipForm::zero(Arc::clone(&shape));
     if f.is_zero() {
         return Ok(form);
     }
     let root = sh.root;
-    let levels = &f.levels;
     // A canonical diagram holds only nodes its output reaches, and its skip
     // form only nodes their referrers name.
-    let canonical = levels.is_canonical(f.output);
+    let canonical = f.levels.is_canonical(f.output);
     let reach = if canonical {
         Vec::new()
     } else {
         compute_untrimmed_reach(f, sh, lim)?
     };
     // Resolve bottom-up.
-    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
+    let res = resolve_tdd_levels_to_skip(f, sh, canonical, &reach, &mut form, lim)?;
+    let o = f.output().local.0;
+    form.out = if sh.is_leaf(root) {
+        mk(root, o)
+    } else {
+        res[root as usize][o as usize]
+    };
+    for v in reach {
+        lim.discard(v);
+    }
+    for v in res {
+        lim.discard(v);
+    }
+    if canonical {
+        form.active = sh
+            .topdown
+            .iter()
+            .copied()
+            .filter(|&t| form.levels[t as usize].width() > 0)
+            .collect();
+    } else {
+        form.collect(lim)?;
+    }
+    Ok(form)
+}
+
+/// Resolve each internal level of `f` bottom-up into `form.levels`, returning
+/// the per-level resolved `Ref` tables.
+fn resolve_tdd_levels_to_skip(
+    f: &Tdd,
+    sh: &Shape,
+    canonical: bool,
+    reach: &[Vec<bool>],
+    form: &mut SkipForm,
+    lim: &Limits,
+) -> Result<Vec<Vec<Ref>>, OperationError> {
+    let levels = &f.levels;
+    let mut res: Vec<Vec<Ref>> = vec![Vec::new(); sh.num_nodes()];
     let mut buf = Vec::new();
     for &t in &sh.bottomup {
         let (l, r) = sh.kids[t as usize];
@@ -77,30 +112,8 @@ pub(crate) fn from_tdd(
         }
         res[t as usize] = out;
     }
-    let o = f.output().local.0;
-    form.out = if sh.is_leaf(root) {
-        mk(root, o)
-    } else {
-        res[root as usize][o as usize]
-    };
-    for v in reach {
-        lim.discard(v);
-    }
-    for v in res {
-        lim.discard(v);
-    }
     lim.discard(buf);
-    if canonical {
-        form.active = sh
-            .topdown
-            .iter()
-            .copied()
-            .filter(|&t| form.levels[t as usize].width() > 0)
-            .collect();
-    } else {
-        form.collect(lim)?;
-    }
-    Ok(form)
+    Ok(res)
 }
 
 /// Mark the nodes reachable from `f.output()` top-down when `f` is not

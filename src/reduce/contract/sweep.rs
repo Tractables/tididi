@@ -730,41 +730,11 @@ fn joint_contract_fixpoint(
     // The children the next round searches again.
     let (mut scan_left, mut scan_right) = (true, true);
     if !is_marginal_boundary {
-        // The first round: each child searched once, at the nodes `reach`
-        // names. Without a marginal level it is the whole fixpoint; with one
-        // (`reach` is then `Whole`), so is a round whose merges were all
-        // whole.
-        eng.limits().check_stop()?;
-        let left_once = contract_child(eng, tdd, parent, left, reach, scratch);
-        let right_once =
-            left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
-        for list in &mut scratch.reach {
-            list.clear();
-        }
-        let (left_once, right_once) = (left_once?, right_once?);
-        (left_fired, right_fired) = (left_once.fired(), right_once.fired());
-        (scan_left, scan_right) = (
-            left_once == Contracted::Part,
-            right_once == Contracted::Part,
-        );
+        (left_fired, right_fired, scan_left, scan_right) =
+            initial_non_boundary_round(eng, tdd, parent, (left, right), reach, scratch)?;
         if !(scan_left || scan_right) {
-            #[cfg(debug_assertions)]
-            if !diagram_marginal(tdd, scratch) {
-                for child in [left, right] {
-                    debug_assert_no_twins(eng, tdd, parent, child, scratch)?;
-                }
-            }
             return Ok((left_fired, right_fired));
         }
-        debug_assert!(
-            diagram_marginal(tdd, scratch),
-            "without a marginal level every group merges whole"
-        );
-        debug_assert_eq!(
-            reach,
-            Reach::Whole,
-            "a diagram with a marginal level is searched whole"
-        );
     }
     // A child that merged part of a group in a diagram with a marginal
     // level, or both children of a parent that borders one: rounds of whole
@@ -799,6 +769,54 @@ fn joint_contract_fixpoint(
         }
     }
     Ok((left_fired, right_fired))
+}
+
+/// Run the first contraction round on both children when `parent` does not
+/// border a marginal level, returning `(left_fired, right_fired, scan_left, scan_right)`.
+fn initial_non_boundary_round(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    (left, right): (VtreeIdx, VtreeIdx),
+    reach: Reach,
+    scratch: &mut ContractScratch,
+) -> Result<(bool, bool, bool, bool), OperationError> {
+    // The first round: each child searched once, at the nodes `reach`
+    // names. Without a marginal level it is the whole fixpoint; with one
+    // (`reach` is then `Whole`), so is a round whose merges were all
+    // whole.
+    eng.limits().check_stop()?;
+    let left_once = contract_child(eng, tdd, parent, left, reach, scratch);
+    let right_once =
+        left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
+    for list in &mut scratch.reach {
+        list.clear();
+    }
+    let (left_once, right_once) = (left_once?, right_once?);
+    let (left_fired, right_fired) = (left_once.fired(), right_once.fired());
+    let (scan_left, scan_right) = (
+        left_once == Contracted::Part,
+        right_once == Contracted::Part,
+    );
+    if !(scan_left || scan_right) {
+        #[cfg(debug_assertions)]
+        if !diagram_marginal(tdd, scratch) {
+            for child in [left, right] {
+                debug_assert_no_twins(eng, tdd, parent, child, scratch)?;
+            }
+        }
+    } else {
+        debug_assert!(
+            diagram_marginal(tdd, scratch),
+            "without a marginal level every group merges whole"
+        );
+        debug_assert_eq!(
+            reach,
+            Reach::Whole,
+            "a diagram with a marginal level is searched whole"
+        );
+    }
+    Ok((left_fired, right_fired, scan_left, scan_right))
 }
 
 /// Pair fusion at boundary parent `parent`, reading only the nodes its

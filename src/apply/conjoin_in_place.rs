@@ -229,30 +229,7 @@ impl Products<'_> {
         let mut out: smallvec::SmallVec<[ChildPair; 8]> = smallvec::SmallVec::new();
         let mut same = true;
         for pa in &fa {
-            let mut hits = 0;
-            let cands: smallvec::SmallVec<[u32; 8]> = match &sides {
-                Some(by) => match self.meeting(l, r, pa, by)? {
-                    Some(js) => js.iter().copied().collect(),
-                    None => (0..gb.len() as u32).collect(),
-                },
-                None => (0..gb.len() as u32).collect(),
-            };
-            self.work += cands.len() as u64;
-            for &j in &cands {
-                let pb = &gb[j as usize];
-                let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
-                if cl == DEAD {
-                    continue;
-                }
-                let cr = self.product(r, pa.right.raw(), pb.right.raw())?;
-                if cr == DEAD {
-                    continue;
-                }
-                hits += 1;
-                same &= cl == pa.left.raw() && cr == pa.right.raw();
-                out.push(ChildPair::new(NodeIdx(cl), NodeIdx(cr)));
-            }
-            same &= hits == 1;
+            same &= self.product_pair_candidates(l, r, pa, gb, sides.as_deref(), &mut out)?;
         }
         let done = if out.is_empty() {
             DEAD
@@ -265,6 +242,42 @@ impl Products<'_> {
         };
         self.memo[t.idx()].insert(key, done);
         Ok(done)
+    }
+
+    fn product_pair_candidates(
+        &mut self,
+        l: VtreeIdx,
+        r: VtreeIdx,
+        pa: &ChildPair,
+        gb: &[ChildPair],
+        sides: Option<&GSides>,
+        out: &mut smallvec::SmallVec<[ChildPair; 8]>,
+    ) -> Result<bool, OperationError> {
+        let mut hits = 0;
+        let mut same = true;
+        let cands: smallvec::SmallVec<[u32; 8]> = match sides {
+            Some(by) => match self.meeting(l, r, pa, by)? {
+                Some(js) => js.iter().copied().collect(),
+                None => (0..gb.len() as u32).collect(),
+            },
+            None => (0..gb.len() as u32).collect(),
+        };
+        self.work += cands.len() as u64;
+        for &j in &cands {
+            let pb = &gb[j as usize];
+            let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
+            if cl == DEAD {
+                continue;
+            }
+            let cr = self.product(r, pa.right.raw(), pb.right.raw())?;
+            if cr == DEAD {
+                continue;
+            }
+            hits += 1;
+            same &= cl == pa.left.raw() && cr == pa.right.raw();
+            out.push(ChildPair::new(NodeIdx(cl), NodeIdx(cr)));
+        }
+        Ok(same && hits == 1)
     }
 
     /// `g`'s node `b` at level `t` indexed by its pairs' sides, built on its
@@ -1012,15 +1025,11 @@ pub(crate) fn and_in_place_way(
     let mut gate = lim.gate();
     let mut branched: Vec<VtreeIdx> = Vec::new();
     let grown = compute_branch_products(
-        lim,
-        &vtree,
-        &mut f,
-        g,
+        (lim, &vtree),
+        (&mut f, g),
         (&top, &role),
         (prune, grid),
-        &mut moved,
-        &mut loose,
-        &mut branched,
+        (&mut moved, &mut loose, &mut branched),
         &mut gate,
     )?;
     gate.flush()?;
@@ -1117,17 +1126,12 @@ fn snapshot_loose_levels(lim: &Limits, f: &Tdd) -> Result<Option<Vec<u32>>, Oper
 
 /// Compute products at every [`Role::Branch`] level of `g`, returning the
 /// per-level `grown` flags.
-#[allow(clippy::too_many_arguments)]
 fn compute_branch_products(
-    lim: &Limits,
-    vtree: &Vtree,
-    f: &mut Tdd,
-    g: &Tdd,
+    (lim, vtree): (&Limits, &Vtree),
+    (f, g): (&mut Tdd, &Tdd),
     (top, role): (&[Option<u32>], &[Role]),
     (prune, grid): (bool, Option<usize>),
-    moved: &mut [Moved],
-    loose: &mut Option<Vec<u32>>,
-    branched: &mut Vec<VtreeIdx>,
+    (moved, loose, branched): (&mut [Moved], &mut Option<Vec<u32>>, &mut Vec<VtreeIdx>),
     gate: &mut crate::limits::PollGate<'_>,
 ) -> Result<Vec<bool>, OperationError> {
     let n = vtree.num_nodes();

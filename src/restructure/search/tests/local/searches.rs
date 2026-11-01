@@ -1,6 +1,6 @@
 use super::*;
-use std::sync::Arc;
 use crate::vtree::Vtree;
+use std::sync::Arc;
 
 use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
@@ -15,53 +15,52 @@ fn level_snapshot(tdd: &Tdd) -> Vec<crate::diagram::TddLevel> {
     tdd.levels.to_vec()
 }
 
+fn six_var_cycle() -> (Arc<Vtree>, Tdd) {
+    let vtree = Arc::new(Vtree::balanced(6));
+    let tdd = compile_clauses(
+        &vtree,
+        &[
+            vec![1, 2],
+            vec![-2, 3],
+            vec![3, 4],
+            vec![-4, 5],
+            vec![5, -6],
+            vec![1, -6],
+        ],
+    );
+    (vtree, tdd)
+}
+
 /// The size search preserves the model count, never grows the diagram, and a
 /// second call is a fixpoint (accepts nothing).
 #[test]
 fn size_search_preserves_count_shrinks_and_is_idempotent() {
-    let vtree = Arc::new(Vtree::balanced(6));
-    let mut tdd = compile_clauses(
-        &vtree,
-        &[
-            vec![1, 2], vec![-2, 3], vec![3, 4],
-            vec![-4, 5], vec![5, -6], vec![1, -6],
-        ],
-    );
+    let (_vtree, mut tdd) = six_var_cycle();
     let mc_before = tdd.model_count().unwrap();
     let size_before = tdd.pair_count();
 
-    let stats = size_descent(&mut tdd);
-
+    let _ = size_descent(&mut tdd);
     assert_canonical(&tdd);
-    assert_eq!(mc_before, tdd.model_count().unwrap(), "rotation search must preserve #F");
+    assert_eq!(
+        mc_before,
+        tdd.model_count().unwrap(),
+        "rotation search must preserve #F"
+    );
     assert!(
         tdd.pair_count() <= size_before,
-        "size search must not increase size ({} > {})",
-        tdd.pair_count(), size_before,
+        "{} > {size_before}",
+        tdd.pair_count()
     );
 
-    // Fixpoint idempotence: already at a local minimum ⇒ no further accepts.
     let stats2 = size_descent(&mut tdd);
-    assert_eq!(stats2.accepts, 0, "second search must accept nothing at a local minimum");
-    let _ = stats; // stats.probes/accepts/sweeps are informational here.
+    assert_eq!(
+        stats2.accepts, 0,
+        "second search must accept nothing at a local minimum"
+    );
 }
 
-/// Regression: the public rotation search must not panic — and must preserve
-/// the model count — when handed a diagram compiled clause-by-clause WITHOUT an
-/// intervening full minimize (the `Tdd::one` + `and_clause` pattern
-/// from the public api-guide). `and_clause` only rebuilds the clause
-/// spine; it does not run a global twin contraction, so the accumulator is
-/// correct-count but NON-canonical (residual twins survive). A rotation on a
-/// non-canonical diagram can expose an unresolved twin at a level *above*
-/// `w_idx` — twin equivalence is semantic, so the single-level locality
-/// tightening holds only for a canonical input. The contract cascade is
-/// count-exact regardless of where it fires, so the count must survive the
-/// whole search.
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
-
-
-    // Both reproducer CNFs from the onboarding bug report, over balanced(4).
     for cnf in [
         vec![vec![1, -2], vec![2, 3], vec![-1, 3]],
         vec![vec![1, -2], vec![2, 3], vec![-1, 3], vec![4, -3]],
@@ -69,42 +68,24 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let vtree = Arc::new(Vtree::balanced(4));
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
-            let lits = literals(clause);
-            acc = acc.and_clause(&lits).unwrap();
+            acc = acc.and_clause(literals(clause)).unwrap();
         }
         let count_before = acc.model_count().unwrap();
-
-        // Must not panic.
         let _ = size_descent(&mut acc);
-
-        assert_eq!(
-            count_before,
-            acc.model_count().unwrap(),
-            "rotation search on a non-canonical clause-built TDD must preserve #F (cnf={cnf:?})",
-        );
+        assert_eq!(count_before, acc.model_count().unwrap(), "cnf={cnf:?}");
     }
 }
 
-/// A custom objective that never improves (delta ≥ 0 always) pins the generic
-/// contract: the search accepts zero rotations and leaves the diagram
-/// bit-identical.
 #[test]
 fn reject_all_objective_leaves_tdd_untouched() {
     struct RejectAll;
     impl RotationObjective for RejectAll {
         fn delta(&mut self, _: &RotationProbe<'_>) -> i64 {
-            0 // never < 0 ⇒ every probe reverts
+            0
         }
     }
 
-    let vtree = Arc::new(Vtree::balanced(6));
-    let mut tdd = compile_clauses(
-        &vtree,
-        &[
-            vec![1, 2], vec![-2, 3], vec![3, 4],
-            vec![-4, 5], vec![5, -6], vec![1, -6],
-        ],
-    );
+    let (vtree, mut tdd) = six_var_cycle();
     let mc_before = tdd.model_count().unwrap();
     let snap = level_snapshot(&tdd);
 
@@ -113,13 +94,13 @@ fn reject_all_objective_leaves_tdd_untouched() {
         .expect("an unarmed engine stops nothing");
 
     assert!(Arc::ptr_eq(tdd.vtree(), &vtree));
-    assert_eq!(stats.accepts, 0, "reject-all objective must accept nothing");
-    assert!(stats.probes > 0, "test must actually exercise probes");
-    assert_eq!(mc_before, tdd.model_count().unwrap(), "count unchanged");
+    assert_eq!(stats.accepts, 0);
+    assert!(stats.probes > 0);
+    assert_eq!(mc_before, tdd.model_count().unwrap());
     let after = level_snapshot(&tdd);
     assert_eq!(snap.len(), after.len());
     for (a, b) in snap.iter().zip(&after) {
-        assert!(a.nodes == b.nodes && a.pairs == b.pairs, "every probe must revert bit-identically");
+        assert!(a.nodes == b.nodes && a.pairs == b.pairs);
     }
     assert_canonical(&tdd);
 }
@@ -128,7 +109,9 @@ fn reject_all_objective_leaves_tdd_untouched() {
 fn a_search_keeps_its_private_tree_between_rejected_probes() {
     struct Reject;
     impl ProbeRule for Reject {
-        fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { false }
+        fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool {
+            false
+        }
     }
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(8));
@@ -140,8 +123,15 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
         assert_ne!(private, Arc::as_ptr(&tree));
         let mut scratch = RestructureScratch::default();
         for kind in [RotationKind::Left, RotationKind::Right] {
-            let turn = RotationMove { pivot: tree.root(), kind };
-            assert!(!search.probe_moves(&eng, &[turn], &mut Reject, &mut scratch, usize::MAX).unwrap());
+            let turn = RotationMove {
+                pivot: tree.root(),
+                kind,
+            };
+            assert!(
+                !search
+                    .probe_moves(&eng, &[turn], &mut Reject, &mut scratch, usize::MAX)
+                    .unwrap()
+            );
             assert_eq!(private, Arc::as_ptr(search.tdd.vtree()));
         }
     }
@@ -153,7 +143,9 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
 fn a_panicking_search_restores_shared_tree_identity() {
     struct Panic;
     impl RotationObjective for Panic {
-        fn delta(&mut self, _: &RotationProbe<'_>) -> i64 { panic!("objective failed") }
+        fn delta(&mut self, _: &RotationProbe<'_>) -> i64 {
+            panic!("objective failed")
+        }
     }
     let tree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::one(&tree);

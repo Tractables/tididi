@@ -1004,24 +1004,15 @@ fn run_row_loop(
         return run_level_rows_pairs(eng, rows, scratch, level, lookups);
     }
     if let Some((words, f_rows)) = words {
-        if let Route::Stream { marginal_children } = route {
-            let state = stream_state
-                .as_mut()
-                .expect("Route::Stream implies an open stream column");
-            return run_level_rows_stream_words(
-                eng,
-                rows,
-                scratch,
-                (words, f_rows, marginal_children),
-                state,
-                env,
-            );
-        }
-        debug_assert!(
-            matches!(route, Route::PlainDense | Route::Dense),
-            "only the plain and streaming routes read cells by g-pair vectors"
+        return run_word_row_loop(
+            eng,
+            route,
+            lookups,
+            (words, f_rows),
+            (rows, scratch),
+            level,
+            (env, stream_state),
         );
-        return run_level_rows_words(eng, rows, scratch, words, level, lookups, f_rows);
     }
     if lookups != PlainLookups::Grid {
         debug_assert!(
@@ -1068,6 +1059,35 @@ fn run_row_loop(
             unreachable!("the sparse routes build their level before the row loop")
         }
     }
+}
+
+fn run_word_row_loop(
+    eng: &Engine,
+    route: Route,
+    lookups: PlainLookups,
+    (words, f_rows): (&mut WordScratch, Sides<usize>),
+    (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
+    level: &mut TddLevel,
+    (env, stream_state): (StreamEnv<'_>, &mut Option<StreamLevelState>),
+) -> Result<(), OperationError> {
+    if let Route::Stream { marginal_children } = route {
+        let state = stream_state
+            .as_mut()
+            .expect("Route::Stream implies an open stream column");
+        return run_level_rows_stream_words(
+            eng,
+            rows,
+            scratch,
+            (words, f_rows, marginal_children),
+            state,
+            env,
+        );
+    }
+    debug_assert!(
+        matches!(route, Route::PlainDense | Route::Dense),
+        "only the plain and streaming routes read cells by g-pair vectors"
+    );
+    run_level_rows_words(eng, rows, scratch, words, level, lookups, f_rows)
 }
 
 /// Run [`run_level_rows_stream_count`] for a [`Route::Stream`] level.
@@ -1419,17 +1439,10 @@ pub(super) fn build_level_dense(
     };
     let use_sparse_marginal = route == Route::SparseMarg;
     let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
+    let arena = &run.products.arena;
     let bases = Sides {
-        left: run
-            .products
-            .arena
-            .materialized(left.idx())
-            .expect("left child grid materialized"),
-        right: run
-            .products
-            .arena
-            .materialized(right.idx())
-            .expect("right child grid materialized"),
+        left: arena.materialized(left.idx()).expect("left materialized"),
+        right: arena.materialized(right.idx()).expect("right materialized"),
     };
     let (lookups, masked, pairs) = plan_dense_lookups(run, g, shape, route, &plan);
     let mut stream_state = build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
@@ -1464,7 +1477,7 @@ pub(super) fn build_level_dense(
         && !crate::diagram::stored_levels_forced())
     .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, spec.grouped))
     .flatten();
-    if run_composed_or_dense_rows(
+    if !run_composed_or_dense_rows(
         eng,
         run,
         (f, g),
@@ -1473,17 +1486,16 @@ pub(super) fn build_level_dense(
         (lookups, masked, pairs, composed),
         (&mut stream_state, sweep),
     )? {
-        return Ok(());
+        finalize_level(
+            eng,
+            stream_state,
+            shape,
+            output_grid_base,
+            passthrough,
+            run,
+            sweep,
+        );
     }
-    finalize_level(
-        eng,
-        stream_state,
-        shape,
-        output_grid_base,
-        passthrough,
-        run,
-        sweep,
-    );
     Ok(())
 }
 
@@ -1846,38 +1858,16 @@ fn try_run_described_stream(
     stream_state: &mut Option<StreamLevelState>,
     sweep: &mut Sweep<'_, '_>,
 ) -> Result<bool, OperationError> {
-    let DenseRouteSpec {
-        shape,
-        route,
-        plan,
-        passthrough,
-        grouped,
-    } = spec;
+    let (shape, route, passthrough, grouped) =
+        (spec.shape, spec.route, spec.passthrough, spec.grouped);
     let lim = eng.limits();
-    let sides = &plan.sides;
-    let LevelShape {
-        t,
-        left,
-        right,
-        f: fw,
-        g: gw,
-    } = shape;
-    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
-        !view.is_marginal()
-            || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
-    };
+    let (ti, li, ri) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     if let Some(StreamLevelState::Float(values)) = stream_state
-        && sweep.filter.is_none()
-        && !passthrough.left
-        && !passthrough.right
-        && as_they_are(li, (fw.left, gw.left), sides.left.view)
-        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
-        && !crate::diagram::stored_levels_forced()
+        && can_run_described_stream(run, spec, sweep)
         && let Some((product, work)) = super::compose::plan_sums(
             lim,
-            f.level(t),
-            g.level(t),
+            f.level(shape.t),
+            g.level(shape.t),
             shape,
             grouped,
             run.products.arena.slab(),
@@ -1918,6 +1908,31 @@ fn try_run_described_stream(
         }
     }
     Ok(false)
+}
+
+fn can_run_described_stream(
+    run: &ApplyRun,
+    spec: DenseRouteSpec<'_>,
+    sweep: &Sweep<'_, '_>,
+) -> bool {
+    let DenseRouteSpec {
+        shape,
+        plan,
+        passthrough,
+        ..
+    } = spec;
+    let sides = &plan.sides;
+    let (fw, gw) = (shape.f, shape.g);
+    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
+        !view.is_marginal()
+            || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
+    };
+    sweep.filter.is_none()
+        && !passthrough.left
+        && !passthrough.right
+        && as_they_are(shape.left.idx(), (fw.left, gw.left), sides.left.view)
+        && as_they_are(shape.right.idx(), (fw.right, gw.right), sides.right.view)
+        && !crate::diagram::stored_levels_forced()
 }
 
 /// Write a composed implicit level when the stop gate cannot fire within it;

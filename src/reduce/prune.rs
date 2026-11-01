@@ -781,13 +781,6 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
 ) -> Result<[bool; 2], OperationError> {
     let [left, right] = blocks;
     let past = [left.len().saturating_sub(1), right.len().saturating_sub(1)];
-    // Whether every node of `block` is counted, moving `next` past those that are.
-    fn all_named(block: &[u32], next: &mut usize) -> bool {
-        while *next < block.len() && block[*next] != 0 {
-            *next += 1;
-        }
-        *next == block.len()
-    }
     // A level of many pairs a node read for names them all early: a read
     // node by node stops there, where the read whole reads every pair and
     // then back to the last node that names one first.
@@ -823,33 +816,60 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         right.fill(0);
     }
     if let Some(d) = level.implicit().filter(|_| !settle_by_node()) {
-        note_settle_read(2);
-        // Each slot's count is one past the first node that names it.
-        let first = |block: &mut [u32], side| {
-            d.each_slot_on(side, |s, node| {
-                let count = &mut block[s as usize];
-                *count = count.wrapping_sub(1).min(node as u32).wrapping_add(1);
-            });
-        };
-        if LEFT {
-            first(&mut left[..], ChildSide::Left);
+        return mark_implicit_named::<LEFT, RIGHT>(d, left, right, past, gate);
+    }
+    mark_by_node_named::<LEFT, RIGHT>(level, &mut left[..past[0]], &mut right[..past[1]], gate)
+}
+
+#[inline(always)]
+fn mark_implicit_named<const LEFT: bool, const RIGHT: bool>(
+    d: &ImplicitLevel,
+    left: &mut [u32],
+    right: &mut [u32],
+    past: [usize; 2],
+    gate: &mut PollGate<'_>,
+) -> Result<[bool; 2], OperationError> {
+    note_settle_read(2);
+    // Each slot's count is one past the first node that names it.
+    let first = |block: &mut [u32], side| {
+        d.each_slot_on(side, |s, node| {
+            let count = &mut block[s as usize];
+            *count = count.wrapping_sub(1).min(node as u32).wrapping_add(1);
+        });
+    };
+    if LEFT {
+        first(&mut left[..], ChildSide::Left);
+    }
+    if RIGHT {
+        first(&mut right[..], ChildSide::Right);
+    }
+    let (left, right) = (&left[..past[0]], &right[..past[1]]);
+    let named = [!LEFT || !left.contains(&0), !RIGHT || !right.contains(&0)];
+    // Read node by node, the read takes every node up to the last one
+    // to name a node first, or every node where one is left unnamed.
+    let nodes = match named {
+        [true, true] => left.iter().chain(right).copied().max().unwrap_or(0) as usize,
+        _ => d.nodes(),
+    };
+    gate.poll((nodes * d.pairs_per_node()) as u64)?;
+    Ok(named)
+}
+
+#[inline(always)]
+fn mark_by_node_named<const LEFT: bool, const RIGHT: bool>(
+    level: &TddLevel,
+    left: &mut [u32],
+    right: &mut [u32],
+    gate: &mut PollGate<'_>,
+) -> Result<[bool; 2], OperationError> {
+    // Whether every node of `block` is counted, moving `next` past those that are.
+    fn all_named(block: &[u32], next: &mut usize) -> bool {
+        while *next < block.len() && block[*next] != 0 {
+            *next += 1;
         }
-        if RIGHT {
-            first(&mut right[..], ChildSide::Right);
-        }
-        let (left, right) = (&left[..past[0]], &right[..past[1]]);
-        let named = [!LEFT || !left.contains(&0), !RIGHT || !right.contains(&0)];
-        // Read node by node, the read takes every node up to the last one
-        // to name a node first, or every node where one is left unnamed.
-        let nodes = match named {
-            [true, true] => left.iter().chain(right).copied().max().unwrap_or(0) as usize,
-            _ => d.nodes(),
-        };
-        gate.poll((nodes * d.pairs_per_node()) as u64)?;
-        return Ok(named);
+        *next == block.len()
     }
     note_settle_read(1);
-    let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
     let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
     let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
@@ -1236,27 +1256,14 @@ fn compact_one_level(
         return false;
     }
     // The live pairs of the stored nodes it drops, where it keeps a count.
-    let mut dropped = 0usize;
     // Compact the node Vec in place, O(width) with no allocation. Dropping a
     // node abandons its pair range; the arena is swept once enough of it is
     // dead, which is legal here because no pair offset is held across the
     // call.
-    let dead = match redescribed {
-        Some(dead) => dead,
+    let (dead, dropped) = match redescribed {
+        Some(dead) => (dead, 0),
         None => {
-            // A node drops arena pairs only where the arena holds some: on
-            // a level of inline nodes alone nothing is read.
-            let mut dead = 0usize;
-            if before.is_some() && per_node.is_none() {
-                for_each_unmarked(own, width, |i| {
-                    dead += level.arena_pairs_at(i);
-                    dropped += level.pair_count_at(i);
-                });
-            } else if !level.pairs.is_empty() {
-                for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
-            }
-            keep_marked(level.nodes.stored_mut(), own);
-            dead
+            drop_unmarked_stored_nodes(level, own, width, before.is_some() && per_node.is_none())
         }
     };
     level.note_dead_pairs(dead);
@@ -1269,6 +1276,29 @@ fn compact_one_level(
         level.leave_live_pairs(pairs);
     }
     true
+}
+
+/// Count dead arena pairs (and dropped live pairs when `count_dropped`) for
+/// unmarked nodes and compact `level.nodes` in place.
+fn drop_unmarked_stored_nodes(
+    level: &mut TddLevel,
+    own: &[u64],
+    width: usize,
+    count_dropped: bool,
+) -> (usize, usize) {
+    // A node drops arena pairs only where the arena holds some: on a level of
+    // inline nodes alone nothing is read.
+    let (mut dead, mut dropped) = (0usize, 0usize);
+    if count_dropped {
+        for_each_unmarked(own, width, |i| {
+            dead += level.arena_pairs_at(i);
+            dropped += level.pair_count_at(i);
+        });
+    } else if !level.pairs.is_empty() {
+        for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
+    }
+    keep_marked(level.nodes.stored_mut(), own);
+    (dead, dropped)
 }
 
 /// Apply `plan` (for an implicit level) or rewrite child references in place
@@ -1799,55 +1829,18 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         );
     }
     let width = level.slot_count();
-    if described.is_none() {
-        // The sides staged as bytes: their slots, rounded up to whole words.
-        let marked: usize = marks[base..base + words(width)]
-            .iter()
-            .map(|w| w.count_ones() as usize)
-            .sum();
-        let staged = |on: bool, c: VtreeIdx| {
-            let slots = tdd.reference_slot_count(c);
-            (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
-                .then_some(words(slots) * 64)
-        };
-        let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
-        note_sides_marked(
-            u64::from(ls.is_some()) + u64::from(rs.is_some()),
-            u64::from(LEFT && ls.is_none()) + u64::from(RIGHT && rs.is_none()),
-        );
-        if ls.is_some() || rs.is_some() {
-            let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
-            return match (ls, rs) {
-                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (None, None) => unreachable!(),
-            };
-        }
+    if described.is_none()
+        && try_mark_staged_sides::<LEFT, RIGHT>(
+            lim,
+            tdd,
+            (t, left, right),
+            (base, child_base),
+            width,
+            marks,
+            bytes,
+        )?
+    {
+        return Ok(());
     }
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     let mut mark = |marks: &mut [u64], pair: ChildPair| {
@@ -1876,6 +1869,74 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     left_marks.finish(marks);
     right_marks.finish(marks);
     Ok(())
+}
+
+/// Stage dense child sides as bytes when worthwhile, returning `Ok(true)` if
+/// the level was marked via `mark_staged`.
+#[inline(always)]
+fn try_mark_staged_sides<const LEFT: bool, const RIGHT: bool>(
+    lim: &Limits,
+    tdd: &Tdd,
+    (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
+    (base, child_base): (usize, [usize; 2]),
+    width: usize,
+    marks: &mut [u64],
+    bytes: &mut Vec<u8>,
+) -> Result<bool, OperationError> {
+    // The sides staged as bytes: their slots, rounded up to whole words.
+    let marked: usize = marks[base..base + words(width)]
+        .iter()
+        .map(|w| w.count_ones() as usize)
+        .sum();
+    let staged = |on: bool, c: VtreeIdx| {
+        let slots = tdd.reference_slot_count(c);
+        (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE)).then_some(words(slots) * 64)
+    };
+    let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
+    note_sides_marked(
+        u64::from(ls.is_some()) + u64::from(rs.is_some()),
+        u64::from(LEFT && ls.is_none()) + u64::from(RIGHT && rs.is_none()),
+    );
+    let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
+    match (ls, rs) {
+        (Some(_), Some(_)) => {
+            mark_staged::<LEFT, RIGHT, true, true>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            )?;
+            Ok(true)
+        }
+        (Some(_), None) => {
+            mark_staged::<LEFT, RIGHT, true, false>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            )?;
+            Ok(true)
+        }
+        (None, Some(_)) => {
+            mark_staged::<LEFT, RIGHT, false, true>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            )?;
+            Ok(true)
+        }
+        (None, None) => Ok(false),
+    }
 }
 
 /// The most slots a side of a stored level has, a marked node of the level,
@@ -2019,55 +2080,8 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
     right_base: usize,
     marks: &mut [u64],
 ) -> Result<(), OperationError> {
-    /// The marks of one side: its offsets, charged while they are read,
-    /// where its block starts, and the slot the last marked node started
-    /// at there.
-    struct Side<'l> {
-        offsets: Transient<'l, Vec<i64>>,
-        base: usize,
-        marker: Marker,
-        last: Option<i64>,
-    }
-    impl<'l> Side<'l> {
-        fn new(
-            lim: &'l Limits,
-            d: &ImplicitLevel,
-            side: ChildSide,
-            on: bool,
-            base: usize,
-        ) -> Result<Side<'l>, OperationError> {
-            let mut offsets = Transient::new(lim, Vec::new());
-            if on {
-                d.side_offsets(side, lim, &mut offsets)?;
-            }
-            Ok(Side {
-                offsets,
-                base,
-                marker: Marker::new(base),
-                last: None,
-            })
-        }
-
-        /// Mark the slots of a node that starts at slot `first`.
-        #[inline(always)]
-        fn mark(&mut self, marks: &mut [u64], first: i64) {
-            for &o in self.offsets.iter() {
-                self.marker.mark(marks, self.base, (first + o) as usize);
-            }
-        }
-
-        /// [`mark`](Self::mark), once for a run of nodes that start at one
-        /// slot.
-        #[inline(always)]
-        fn mark_new(&mut self, marks: &mut [u64], first: i64) {
-            if self.last != Some(first) {
-                self.mark(marks, first);
-                self.last = Some(first);
-            }
-        }
-    }
-    let mut left = Side::new(lim, d, ChildSide::Left, LEFT, left_base)?;
-    let mut right = Side::new(lim, d, ChildSide::Right, RIGHT, right_base)?;
+    let mut left = DescribedSide::new(lim, d, ChildSide::Left, LEFT, left_base)?;
+    let mut right = DescribedSide::new(lim, d, ChildSide::Right, RIGHT, right_base)?;
     if all_marked(&marks[base..base + words(width)], width) {
         if LEFT {
             d.each_side_first(ChildSide::Left, |first, _| left.mark(marks, first));
@@ -2090,6 +2104,54 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
     left.marker.finish(marks);
     right.marker.finish(marks);
     Ok(())
+}
+
+/// The marks of one side in [`mark_described`]: its offsets, charged while
+/// they are read, where its block starts, and the slot the last marked node
+/// started at there.
+struct DescribedSide<'l> {
+    offsets: Transient<'l, Vec<i64>>,
+    base: usize,
+    marker: Marker,
+    last: Option<i64>,
+}
+
+impl<'l> DescribedSide<'l> {
+    fn new(
+        lim: &'l Limits,
+        d: &ImplicitLevel,
+        side: ChildSide,
+        on: bool,
+        base: usize,
+    ) -> Result<DescribedSide<'l>, OperationError> {
+        let mut offsets = Transient::new(lim, Vec::new());
+        if on {
+            d.side_offsets(side, lim, &mut offsets)?;
+        }
+        Ok(DescribedSide {
+            offsets,
+            base,
+            marker: Marker::new(base),
+            last: None,
+        })
+    }
+
+    /// Mark the slots of a node that starts at slot `first`.
+    #[inline(always)]
+    fn mark(&mut self, marks: &mut [u64], first: i64) {
+        for &o in self.offsets.iter() {
+            self.marker.mark(marks, self.base, (first + o) as usize);
+        }
+    }
+
+    /// [`mark`](Self::mark), once for a run of nodes that start at one slot.
+    #[inline(always)]
+    fn mark_new(&mut self, marks: &mut [u64], first: i64) {
+        if self.last != Some(first) {
+            self.mark(marks, first);
+            self.last = Some(first);
+        }
+    }
 }
 
 // ── The seeded walk ──────────────────────────────────────────────────────────
@@ -2151,17 +2213,8 @@ pub(crate) fn prune_below_root(
     } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     visits.clear();
-    let mut used = 0usize;
-    let mut slots = 0usize;
-    let mut remap_need = 0usize;
+    let (mut used, mut slots, mut remap_need, mut unmarked) = (0usize, 0usize, 0usize, 0usize);
     let clean = seed_prune_below_root(eng, tdd, start, marks, visits, (&mut used, &mut slots))?;
-    let is_clean = |c: VtreeIdx| clean.is_some_and(|s| s[c.idx()] & CLEAN != 0);
-
-    // A child the walk does not descend into, a leaf level, whose remap is
-    // the identity, or a marginal one, which is never compacted, gets no
-    // block: its marks would never be read. Such a child is charged its slots
-    // when it is wider than every one met before it, and nothing otherwise.
-    let mut unmarked = 0usize;
 
     // Marking, top-down. A level has one parent, so a level's marks are
     // complete as soon as that parent has been walked, and a queue is a valid
@@ -2174,18 +2227,22 @@ pub(crate) fn prune_below_root(
             tdd.reference_slot_count(left),
             tdd.reference_slot_count(right),
         );
-        let mut block = |c: VtreeIdx, width: usize| -> Result<Option<usize>, OperationError> {
-            // A clean child, under a seed, is all reached: no block.
-            if is_clean(c) {
-                return Ok(None);
-            }
-            if tdd.is_structural_internal(c) {
-                return alloc_block(eng, marks, &mut used, &mut slots, width).map(Some);
-            }
-            charge_unmarked_child(&mut slots, &mut unmarked, width);
-            Ok(None)
-        };
-        let (lb, rb) = (block(left, lw)?, block(right, rw)?);
+        let lb = alloc_child_mark_block(
+            eng,
+            tdd,
+            (left, lw),
+            clean,
+            marks,
+            (&mut used, &mut slots, &mut unmarked),
+        )?;
+        let rb = alloc_child_mark_block(
+            eng,
+            tdd,
+            (right, rw),
+            clean,
+            marks,
+            (&mut used, &mut slots, &mut unmarked),
+        )?;
 
         mark_children_of_level(eng.limits(), tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
 
@@ -2215,6 +2272,27 @@ pub(crate) fn prune_below_root(
     // and neither can stop partway.
     eng.limits().charge_work(2 * slots as u64);
     Ok(())
+}
+
+/// Allocate a mark block for a dirty structural child `c` or charge an
+/// unmarked leaf/marginal child.
+#[inline]
+fn alloc_child_mark_block(
+    eng: &Engine,
+    tdd: &Tdd,
+    (c, width): (VtreeIdx, usize),
+    clean: Option<&[u8]>,
+    marks: &mut Vec<u64>,
+    (used, slots, unmarked): (&mut usize, &mut usize, &mut usize),
+) -> Result<Option<usize>, OperationError> {
+    if clean.is_some_and(|s| s[c.idx()] & CLEAN != 0) {
+        return Ok(None);
+    }
+    if tdd.is_structural_internal(c) {
+        return alloc_block(eng, marks, used, slots, width).map(Some);
+    }
+    charge_unmarked_child(slots, unmarked, width);
+    Ok(None)
 }
 
 /// Enqueue marked structural children that lost a node or are marked [`FORCED`].

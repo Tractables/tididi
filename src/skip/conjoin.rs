@@ -613,6 +613,34 @@ impl AnchorScratch {
         let right = !sh.is_leaf(r);
         let (cs, co) = if right { (r, l) } else { (l, r) };
         let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
+        let skips = sh.is_leaf(co);
+        self.index_anchor_g_entries(gl, ng, right, lim)?;
+        let mut work = 0u64;
+        for i in 0..fl.width() as u32 {
+            let a = mk(u, i);
+            self.cstamp += 1;
+            for &p in fl.node(i) {
+                let (x, oa) = split(p);
+                self.collect_anchor_f_ends((sh, cs), x, nf, ng, lim)?;
+                self.match_anchor_ends((sh, u), (right, skips), (nf, ng), cone, (a, oa), lim)?;
+            }
+            work += self.batch.emit(u, out, lim)?;
+        }
+        if skips {
+            work += self.conjoin_f_skips((sh, u), (cs, right), (f, nf), (g, ng), out, lim)?;
+        }
+        Ok(work)
+    }
+
+    fn match_anchor_ends(
+        &mut self,
+        (sh, u): (&Shape, u32),
+        (right, skips): (bool, bool),
+        (nf, ng): (&Numbered, &Numbered),
+        cone: &[bool],
+        (a, oa): (Ref, Ref),
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
         let join = |anchor: Ref, other: Ref| {
             if right {
                 (other, anchor)
@@ -620,8 +648,7 @@ impl AnchorScratch {
                 (anchor, other)
             }
         };
-        let skips = sh.is_leaf(co);
-        let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
+        let other = |live: &FxHashMap<u64, Ref>, ob: Ref| -> Ref {
             if is_one(sh, ob) && !cone[vt(oa) as usize] {
                 return oa;
             }
@@ -633,52 +660,39 @@ impl AnchorScratch {
                     .unwrap_or(ZREF),
             }
         };
-        self.index_anchor_g_entries(gl, ng, right, lim)?;
-        let mut work = 0u64;
         let gbase = ng.base[u as usize];
-        for i in 0..fl.width() as u32 {
-            let a = mk(u, i);
-            self.cstamp += 1;
-            for &p in fl.node(i) {
-                let (x, oa) = split(p);
-                self.collect_anchor_f_ends((sh, cs), x, nf, ng, lim)?;
-                for &(y, res) in &self.ends {
-                    let gy = ng.id(y);
-                    if self.gmark[gy] == self.lstamp {
-                        let mut e = self.ghead[gy];
-                        while e != NIL {
-                            let (j, ob, next) = self.gent[e as usize];
-                            e = next;
-                            let o = other(&self.live, oa, ob);
-                            if o != ZREF {
-                                self.batch.push_stamped(
-                                    &mut self.cg[(gbase + j) as usize],
-                                    self.cstamp,
-                                    (a, mk(u, j)),
-                                    join(res, o),
-                                    lim,
-                                )?;
-                            }
-                        }
-                    }
-                    if skips && ng.above(sh, y, u) {
-                        // `y` is `true` on the other side here.
+        for k in 0..self.ends.len() {
+            let (y, res) = self.ends[k];
+            let gy = ng.id(y);
+            if self.gmark[gy] == self.lstamp {
+                let mut e = self.ghead[gy];
+                while e != NIL {
+                    let (j, ob, next) = self.gent[e as usize];
+                    e = next;
+                    let o = other(&self.live, ob);
+                    if o != ZREF {
                         self.batch.push_stamped(
-                            &mut self.cg[gy],
+                            &mut self.cg[(gbase + j) as usize],
                             self.cstamp,
-                            (a, y),
-                            join(res, oa),
+                            (a, mk(u, j)),
+                            join(res, o),
                             lim,
                         )?;
                     }
                 }
             }
-            work += self.batch.emit(u, out, lim)?;
+            if skips && ng.above(sh, y, u) {
+                // `y` is `true` on the other side here.
+                self.batch.push_stamped(
+                    &mut self.cg[gy],
+                    self.cstamp,
+                    (a, y),
+                    join(res, oa),
+                    lim,
+                )?;
+            }
         }
-        if skips {
-            work += self.conjoin_f_skips((sh, u), (cs, right), (f, nf), (g, ng), out, lim)?;
-        }
-        Ok(work)
+        Ok(())
     }
 
     /// Index `gl`'s pairs by their anchor reference into `self.ghead` and `self.gent`.

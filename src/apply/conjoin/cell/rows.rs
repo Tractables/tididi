@@ -1142,49 +1142,11 @@ fn relay_rows(
     slab: &mut Vec<u32>,
     level: &mut TddLevel,
 ) -> Result<bool, OperationError> {
-    let SingleRows {
-        f_level,
-        ctx,
-        f_width,
-        g_cols,
-    } = rows;
+    let (ctx, f_width, right) = (rows.ctx, rows.f_width, &rows.ctx.sides.right);
     let lim = eng.limits();
     let width = ctx.right_width;
-    let (left, right) = (&ctx.sides.left, &ctx.sides.right);
-    if !lim.memory_unbounded()
-        || crate::diagram::stored_levels_forced()
-        || left.plan.view.is_marginal()
-        || right.plan.view.is_marginal()
-        || width == 0
-    {
+    let Some((p, b, e)) = check_relayable_rows(lim, rows, slab) else {
         return Ok(false);
-    }
-    let Some(d) = f_level.implicit() else {
-        return Ok(false);
-    };
-    let digit = crate::diagram::Digit {
-        radix: f_width,
-        left: 0,
-        right: 1,
-        node: 1,
-    };
-    if d.pairs_per_node() != 1 || d.nodes() != f_width || d.within() != 0 || d.digits() != [digit] {
-        return Ok(false);
-    }
-    // A description's slots are below 2^31.
-    let (a, b) = (d.first().0 as usize, d.first().1 as usize);
-    let (c, e) = (g_cols[0].left.0, g_cols[0].right.0);
-    if c == NO_PRODUCT
-        || !g_cols
-            .iter()
-            .enumerate()
-            .all(|(j, q)| q.left.0 == c && u64::from(q.right.0) == u64::from(e) + j as u64)
-    {
-        return Ok(false);
-    }
-    let p = match slab.get(left.base + a * left.stride as usize + c as usize) {
-        Some(&p) if p != NO_PRODUCT => p,
-        _ => return Ok(false),
     };
     let stride = right.stride as usize;
     let src = |i: usize| right.base + (b + i) * stride + e as usize;
@@ -1217,6 +1179,51 @@ fn relay_rows(
     let capacity = level.pairs.capacity();
     level.pairs.describe(described, capacity, node_capacity);
     Ok(true)
+}
+
+fn check_relayable_rows(
+    lim: &crate::limits::Limits,
+    SingleRows {
+        f_level,
+        ctx,
+        f_width,
+        g_cols,
+    }: SingleRows<'_>,
+    slab: &[u32],
+) -> Option<(u32, usize, u32)> {
+    let width = ctx.right_width;
+    let (left, right) = (&ctx.sides.left, &ctx.sides.right);
+    if !lim.memory_unbounded()
+        || crate::diagram::stored_levels_forced()
+        || left.plan.view.is_marginal()
+        || right.plan.view.is_marginal()
+        || width == 0
+    {
+        return None;
+    }
+    let d = f_level.implicit()?;
+    let digit = crate::diagram::Digit {
+        radix: f_width,
+        left: 0,
+        right: 1,
+        node: 1,
+    };
+    if d.pairs_per_node() != 1 || d.nodes() != f_width || d.within() != 0 || d.digits() != [digit] {
+        return None;
+    }
+    // A description's slots are below 2^31.
+    let (a, b) = (d.first().0 as usize, d.first().1 as usize);
+    let (c, e) = (g_cols[0].left.0, g_cols[0].right.0);
+    if c == NO_PRODUCT
+        || !g_cols
+            .iter()
+            .enumerate()
+            .all(|(j, q)| q.left.0 == c && u64::from(q.right.0) == u64::from(e) + j as u64)
+    {
+        return None;
+    }
+    let &p = slab.get(left.base + a * left.stride as usize + c as usize)?;
+    (p != NO_PRODUCT).then_some((p, b, e))
 }
 
 /// Poll the work clock for a relayed level of `f_width` rows and `width`
@@ -1287,26 +1294,23 @@ fn single_rows<const W: usize>(
     slab: &mut Vec<u32>,
     sink: &mut EmitSink<'_>,
 ) -> Result<(), OperationError> {
-    let SingleRows {
-        f_level,
-        ctx,
-        f_width,
-        g_cols,
-    } = rows;
+    let (f_level, ctx, f_width, g_cols) = (rows.f_level, rows.ctx, rows.f_width, rows.g_cols);
     let lim = eng.limits();
     let right_width = ctx.right_width;
     debug_assert!(W == 0 || W == right_width);
     let width = if W == 0 { right_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     let row_units = live_cols + width as u64;
-    let left = DenseLookup {
-        base: ctx.sides.left.base,
-        stride: ctx.sides.left.stride,
-    };
-    let right = DenseLookup {
-        base: ctx.sides.right.base,
-        stride: ctx.sides.right.stride,
-    };
+    let (left, right) = (
+        DenseLookup {
+            base: ctx.sides.left.base,
+            stride: ctx.sides.left.stride,
+        },
+        DenseLookup {
+            base: ctx.sides.right.base,
+            stride: ctx.sides.right.stride,
+        },
+    );
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
@@ -1986,38 +1990,28 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     sink: &mut S,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        right_level_t,
-        g_pairs_scratch,
-        node_idx,
-        left,
-        right,
-        gate,
-    } = row;
-    let (k, width) = (f_pairs.len(), ctx.right_width);
+    let (k, width) = (row.f_pairs.len(), row.ctx.right_width);
     if k > ROW_PAIRS {
         return Ok(0);
     }
     let Some(mut out) = sink.open_row(0, width) else {
         return Ok(0);
     };
+    let (left, right, node_idx, gate) = (row.left, row.right, row.node_idx, row.gate);
     let child_rows = |p: &ChildPair| (left.row(p.left.0), right.row(p.right.0));
-    let mut rows = [child_rows(&f_pairs[0]); ROW_PAIRS];
-    for (t, p) in f_pairs.iter().enumerate().skip(1) {
+    let mut rows = [child_rows(&row.f_pairs[0]); ROW_PAIRS];
+    for (t, p) in row.f_pairs.iter().enumerate().skip(1) {
         rows[t] = child_rows(p);
     }
     let rows = &rows[..k];
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut j = 0;
     while j < width {
-        let g_pairs = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        let g_pairs = column_pairs(row.ctx, row.right_level_t, j, row.g_pairs_scratch);
         let m = g_pairs.len();
         if m == 0 {
             // A dead column's cell, as `process_cell` leaves it.
-            node_idx[row_base + j] = NO_PRODUCT;
+            node_idx[row.row_base + j] = NO_PRODUCT;
             j += 1;
             continue;
         }
@@ -2027,16 +2021,16 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             break;
         }
         super::rows_stream::charge(gate, &mut due_at, &mut due, (k * m) as u64)?;
+        let pos = row.row_base + j;
         if k * m == 1 {
-            let ((l, r), q) = (rows[0], &g_pairs[0]);
-            let lc = left.get_in_row(node_idx, l, q.left.0);
-            if !left.kills() || lc != NO_PRODUCT {
-                let rc = right.get_in_row(node_idx, r, q.right.0);
-                if !right.kills() || rc != NO_PRODUCT {
-                    // Safety: the row was opened for a node a column.
-                    unsafe { out.single(node_idx, row_base + j, lc, rc) };
-                }
-            }
+            emit_single_candidate_cell(
+                &mut out,
+                node_idx,
+                pos,
+                (left, right),
+                rows[0],
+                &g_pairs[0],
+            );
             j += 1;
             continue;
         }
@@ -2057,11 +2051,30 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             _ => g_pairs.iter().for_each(|q| cand(rows[0], q)),
         }
         // Safety: the row was opened for a node a column.
-        unsafe { out.close(node_idx, row_base + j) };
+        unsafe { out.close(node_idx, pos) };
         j += 1;
     }
     gate.add_short(due_at - due);
     Ok(j)
+}
+
+#[inline(always)]
+fn emit_single_candidate_cell<L: ChildLookup, R: ChildLookup>(
+    out: &mut ArenaRow<'_>,
+    node_idx: &mut [u32],
+    pos: usize,
+    (left, right): (&L, &R),
+    (l, r): (L::Row, R::Row),
+    q: &ChildPair,
+) {
+    let lc = left.get_in_row(node_idx, l, q.left.0);
+    if !left.kills() || lc != NO_PRODUCT {
+        let rc = right.get_in_row(node_idx, r, q.right.0);
+        if !right.kills() || rc != NO_PRODUCT {
+            // Safety: the row was opened for a node a column.
+            unsafe { out.single(node_idx, pos, lc, rc) };
+        }
+    }
 }
 
 /// The one pair of a level's g side, where it has one node and that node

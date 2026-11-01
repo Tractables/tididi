@@ -1231,16 +1231,15 @@ fn probe_scored<'l>(
             (rest, limit),
         )?;
         let Some(new) = new else {
-            // Refused, by the cap or the bound: this member and the ones
-            // after it charged as if scored.
-            for &j in &order[at..] {
-                gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
-            }
-            #[cfg(debug_assertions)]
-            debug_check_refusal(lim, members, step, limit, scratch)?;
-            gate.flush()?;
-            lim.check_stop()?;
-            return Ok(false);
+            return refuse_probed_member(
+                lim,
+                members,
+                step,
+                (&order[at..], &before, &scored),
+                limit,
+                scratch,
+                gate,
+            );
         };
         gate.poll(old as u64 + REBUILD_UNITS)?;
         after[i] = new;
@@ -1264,6 +1263,28 @@ fn probe_scored<'l>(
         limit,
         (gate, undo),
     )
+}
+
+#[allow(unused_variables)]
+fn refuse_probed_member(
+    lim: &Limits,
+    members: &[&mut Tdd],
+    step: BoundedMove,
+    (rem_order, before, scored): (&[usize], &[usize], &[bool]),
+    limit: usize,
+    scratch: &mut RestructureScratch,
+    mut gate: crate::limits::PollGate<'_>,
+) -> Result<bool, OperationError> {
+    // Refused, by the cap or the bound: this member and the ones after it
+    // charged as if scored.
+    for &j in rem_order {
+        gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+    }
+    #[cfg(debug_assertions)]
+    debug_check_refusal(lim, members, step, limit, scratch)?;
+    gate.flush()?;
+    lim.check_stop()?;
+    Ok(false)
 }
 
 type ScoreOrderBufs<'l> = (Transient<'l, Vec<usize>>, Transient<'l, Vec<usize>>);

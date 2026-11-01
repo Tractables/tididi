@@ -2,9 +2,9 @@
 //! x-refs instead of in the plan map: the level it leaves is the one the map
 //! leaves, pair for pair and in the same order.
 
+use super::super::plan::{FusionSlots, SORT_MIN, collect_fusion_plans};
+use super::super::rewrite::{BITMAP_BITS_PER_PLAN, BITMAP_MIN_PLANS, ParentRewrite};
 use super::*;
-use super::super::plan::{collect_fusion_plans, FusionSlots, SORT_MIN};
-use super::super::rewrite::{ParentRewrite, BITMAP_BITS_PER_PLAN, BITMAP_MIN_PLANS};
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ValueRef};
 use crate::test_helpers::toy;
 use crate::value::{Count, IntFold};
@@ -35,7 +35,9 @@ fn three_nodes(seed: u64) -> (Tdd, [usize; 3]) {
     let counts: Vec<u128> = (0..slots).map(|s| u128::from(s) * 5 + 2).collect();
     let mut next = draws(seed);
     let dense = 9_000u32;
-    let mut wide: Vec<(u32, u32)> = (0..(SORT_MIN as u32 + 30_000)).map(|_| (next(dense), next(slots))).collect();
+    let mut wide: Vec<(u32, u32)> = (0..(SORT_MIN as u32 + 30_000))
+        .map(|_| (next(dense), next(slots)))
+        .collect();
     wide.extend((0..500).map(|i| (dense + 1_000_000 + 7 * i, next(slots))));
     wide.extend((0..200).map(|i| (dense + 10 + i, next(slots))));
     // Shuffled, so the node does not ascend by x and is grouped by sorting.
@@ -44,8 +46,9 @@ fn three_nodes(seed: u64) -> (Tdd, [usize; 3]) {
     }
     let narrow: Vec<(u32, u32)> = vec![(3, 1), (4, 2), (3, 5), (3, 1), (9, 0)];
     let spread_xs = 6_000u32;
-    let spread: Vec<(u32, u32)> =
-        (0..3 * spread_xs).map(|_| (next(spread_xs) * 100_003, next(slots))).collect();
+    let spread: Vec<(u32, u32)> = (0..3 * spread_xs)
+        .map(|_| (next(spread_xs) * 100_003, next(slots)))
+        .collect();
     let tdd = toy(counts, &[&wide, &narrow, &spread]);
     (tdd, [wide.len(), narrow.len(), spread.len()])
 }
@@ -76,8 +79,13 @@ fn layout(tdd: &Tdd) -> (Vec<Vec<ChildPair>>, Vec<u128>) {
     let root = tdd.vtree.root();
     let (_, right) = tdd.vtree.children(root);
     let level = &tdd.levels[root.idx()];
-    let pairs = (0..level.nodes().len()).map(|n| level.pairs_vec(n).to_vec()).collect();
-    (pairs, tdd.levels[right.idx()].marginal_counts().unwrap().to_vec())
+    let pairs = (0..level.nodes().len())
+        .map(|n| level.pairs_vec(n).to_vec())
+        .collect();
+    (
+        pairs,
+        tdd.levels[right.idx()].marginal_counts().unwrap().to_vec(),
+    )
 }
 
 /// Plan, allocate and rewrite the root level as the sweep does, with the
@@ -106,20 +114,44 @@ fn the_bitmap_leaves_the_level_the_map_leaves() {
         assert_eq!(fuse_with(&mut by_default, BITMAP_MIN_PLANS), plans);
         // The wide node takes the bitmap under the default threshold, the
         // spread one is past the width cap, the narrow one under the count.
-        assert!(plans[0] >= BITMAP_MIN_PLANS, "wide node plans: {}", plans[0]);
-        assert!(plans[2] >= BITMAP_MIN_PLANS, "spread node plans: {}", plans[2]);
+        assert!(
+            plans[0] >= BITMAP_MIN_PLANS,
+            "wide node plans: {}",
+            plans[0]
+        );
+        assert!(
+            plans[2] >= BITMAP_MIN_PLANS,
+            "spread node plans: {}",
+            plans[2]
+        );
         assert!(6_000usize * 100_003 / BITMAP_BITS_PER_PLAN >= plans[2]);
         assert!(plans[1] < BITMAP_MIN_PLANS);
         let want = layout(&by_map);
-        assert_eq!(layout(&by_bits), want, "seed {seed:#x}: bitmap at every node");
-        assert_eq!(layout(&by_default), want, "seed {seed:#x}: bitmap at the default threshold");
-        assert_eq!(sums(&by_bits), before, "fusion keeps every explicit ref's summed count");
+        assert_eq!(
+            layout(&by_bits),
+            want,
+            "seed {seed:#x}: bitmap at every node"
+        );
+        assert_eq!(
+            layout(&by_default),
+            want,
+            "seed {seed:#x}: bitmap at the default threshold"
+        );
+        assert_eq!(
+            sums(&by_bits),
+            before,
+            "fusion keeps every explicit ref's summed count"
+        );
         let level = &by_bits.levels[by_bits.vtree.root().idx()];
         for n in 0..3 {
             let mut xs: Vec<u32> = level.pairs_vec(n).iter().map(|p| p.left.0).collect();
             xs.sort_unstable();
             xs.dedup();
-            assert_eq!(xs.len(), level.pair_count_at(n), "node {n} holds one pair per explicit ref");
+            assert_eq!(
+                xs.len(),
+                level.pair_count_at(n),
+                "node {n} holds one pair per explicit ref"
+            );
         }
     }
 }
@@ -131,43 +163,63 @@ fn a_second_wide_node_sees_no_bit_of_the_first() {
     let slots = 16u32;
     let counts: Vec<u128> = (0..slots).map(|s| u128::from(s) + 1).collect();
     let mut next = draws(7);
-    let first: Vec<(u32, u32)> = (0..3 * BITMAP_MIN_PLANS as u32).map(|i| (i / 3, next(slots))).collect();
+    let first: Vec<(u32, u32)> = (0..3 * BITMAP_MIN_PLANS as u32)
+        .map(|i| (i / 3, next(slots)))
+        .collect();
     // The second node repeats only the odd x's; each even x occurs once.
     let second: Vec<(u32, u32)> = (0..BITMAP_MIN_PLANS as u32 * 2)
-        .flat_map(|x| if x % 2 == 1 { vec![(x, next(slots)), (x, next(slots))] } else { vec![(x, next(slots))] })
+        .flat_map(|x| {
+            if x % 2 == 1 {
+                vec![(x, next(slots)), (x, next(slots))]
+            } else {
+                vec![(x, next(slots))]
+            }
+        })
         .collect();
     let base = toy(counts, &[&first, &second]);
     let before = sums(&base);
     let mut by_map = base.clone();
     let mut by_bits = base.clone();
-    fuse_with_two(&mut by_map, usize::MAX);
-    fuse_with_two(&mut by_bits, 1);
+    fuse_with(&mut by_map, usize::MAX);
+    fuse_with(&mut by_bits, 1);
     assert_eq!(layout(&by_bits), layout(&by_map));
     assert_eq!(sums(&by_bits), before);
 }
 
 /// The root level's plans, collected in one chunk, allocated and applied.
-fn fuse_whole(eng: &Engine, tdd: &mut Tdd, bitmap_min_plans: usize, scratch: &mut ContractScratch) -> Vec<PlanEntry<Count>> {
+fn fuse_whole(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    bitmap_min_plans: usize,
+    scratch: &mut ContractScratch,
+) -> Vec<PlanEntry<Count>> {
     let root = tdd.vtree.root();
     let (_, right) = tdd.vtree.children(root);
     let mut plans = Vec::new();
     let mut nodes = 0..tdd.levels[root.idx()].nodes().len();
-    let boundary = super::super::Boundary { v: right, parent: root, side: ChildSide::Right };
+    let boundary = super::super::Boundary {
+        v: right,
+        parent: root,
+        side: ChildSide::Right,
+    };
     let done = collect_fusion_plans::<IntFold>(
-        eng, tdd, boundary, &mut nodes, usize::MAX, &mut plans, &mut scratch.pair_fusion,
+        eng,
+        tdd,
+        boundary,
+        &mut nodes,
+        usize::MAX,
+        &mut plans,
+        &mut scratch.pair_fusion,
     )
     .expect("no limits armed");
     assert!(done, "one chunk holds the level");
-    let any_inline = FusionSlots::<IntFold>::new(eng.limits()).allocate(eng, tdd, right, &mut plans).expect("no limits armed");
+    let any_inline = FusionSlots::<IntFold>::new(eng.limits())
+        .allocate(eng, tdd, right, &mut plans)
+        .expect("no limits armed");
     let mut rewrite = ParentRewrite::new(eng.limits(), bitmap_min_plans);
-    rewrite.apply(eng, tdd, root, ChildSide::Right, any_inline, &plans).expect("no limits armed");
+    rewrite
+        .apply(eng, tdd, root, ChildSide::Right, any_inline, &plans)
+        .expect("no limits armed");
     rewrite.finish(tdd, root);
     plans
-}
-
-/// [`fuse_with`] for a root of two nodes.
-fn fuse_with_two(tdd: &mut Tdd, bitmap_min_plans: usize) {
-    let eng = Engine::new();
-    let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
-    fuse_whole(&eng, tdd, bitmap_min_plans, &mut scratch);
 }

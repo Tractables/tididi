@@ -113,56 +113,26 @@ fn the_streaming_routes_open_nothing() {
     }
 }
 
-/// A level whose cells could take the grouped walk keeps its column table
-/// however few its rows, so that it writes its pairs in the grouped order; a
-/// level whose cells cannot keeps the table only where its rows read the
-/// columns again often enough to pay for it.
 #[test]
 fn the_column_table_is_kept_wherever_a_cell_can_group() {
     use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
     let vtree = Arc::new(Vtree::balanced(2));
     let t = vtree.root();
-    let (long, short) = (
+    let (long_tdd, short_tdd) = (
         operand(&vtree, GROUPED_MIN_PAIRS),
         operand(&vtree, GROUPED_MIN_PAIRS - 1),
     );
-    let (long, short) = (long.level(t), short.level(t));
-    assert!(column_table_pays(long, long, 1, 1, true));
-    assert!(
-        !column_table_pays(long, long, 1, 1, false),
-        "a level that does not group"
-    );
-    assert!(
-        !column_table_pays(long, short, 1, 1, true),
-        "no column long enough"
-    );
-    assert!(
-        !column_table_pays(short, long, 1, 1, true),
-        "no row long enough"
-    );
-    assert!(!column_table_pays(
-        short,
-        short,
-        2,
-        COLUMN_TABLE_MIN_REREADS - 1,
-        true
-    ));
-    assert!(column_table_pays(
-        short,
-        short,
-        2,
-        COLUMN_TABLE_MIN_REREADS,
-        false
-    ));
-    assert!(column_table_pays(
-        short,
-        short,
-        3,
-        COLUMN_TABLE_MIN_REREADS / 2,
-        false
-    ));
-    assert!(
-        !column_table_pays(short, short, 1, usize::MAX, false),
-        "one row reads each column once"
-    );
+    let (long, short) = (long_tdd.level(t), short_tdd.level(t));
+    for (fl, gl, fw, gw, grouped, want) in [
+        (long, long, 1, 1, true, true),
+        (long, long, 1, 1, false, false),
+        (long, short, 1, 1, true, false),
+        (short, long, 1, 1, true, false),
+        (short, short, 2, COLUMN_TABLE_MIN_REREADS - 1, true, false),
+        (short, short, 2, COLUMN_TABLE_MIN_REREADS, false, true),
+        (short, short, 3, COLUMN_TABLE_MIN_REREADS / 2, false, true),
+        (short, short, 1, usize::MAX, false, false),
+    ] {
+        assert_eq!(column_table_pays(fl, gl, fw, gw, grouped), want);
+    }
 }

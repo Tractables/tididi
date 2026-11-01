@@ -3,8 +3,8 @@
 use crate::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::limits::{Limits, OperationError, Transient};
 use crate::diagram::{ChildPair, Tdd, ValueRef};
+use crate::limits::{Limits, OperationError, Transient};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -68,7 +68,10 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         // A node whose pairs ascend by explicit ref holds each group as one
         // run. A wide node that does not is sorted into runs: its table
         // would be too wide for the cache, and a probe per pair would miss.
-        if node.windows(2).all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side)) {
+        if node
+            .windows(2)
+            .all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side))
+        {
             group_by_runs::<D>(lim, tdd, (v, side), (n, node), out, &mut scratch.run)?;
         } else if node.len() >= SORT_MIN {
             group_by_sorting::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
@@ -197,7 +200,9 @@ pub(super) fn group_by_sorting<D: SlotValues>(
         let x_idx = keyed[at].0;
         let end = at + keyed[at..].iter().take_while(|&&(x, _)| x == x_idx).count();
         if end - at > 1 {
-            let refs = keyed[at..end].iter().map(|&(_, pos)| marginal_ref(node[pos as usize], side));
+            let refs = keyed[at..end]
+                .iter()
+                .map(|&(_, pos)| marginal_ref(node[pos as usize], side));
             let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
             lim.try_push(&mut found, (keyed[at].1, plan))?;
         }
@@ -225,7 +230,11 @@ pub(super) fn group_by_runs<D: SlotValues>(
     let mut at = 0;
     while at < node.len() {
         let x_idx = explicit_ref(node[at], side);
-        let end = at + node[at..].iter().take_while(|&&p| explicit_ref(p, side) == x_idx).count();
+        let end = at
+            + node[at..]
+                .iter()
+                .take_while(|&&p| explicit_ref(p, side) == x_idx)
+                .count();
         if end - at > 1 {
             let refs = node[at..end].iter().map(|&p| marginal_ref(p, side));
             let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
@@ -256,38 +265,8 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
-    // Bump the generation instead of clearing the cells (O(1) per-node
-    // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
-    // "never stamped" sentinel and must never equal a live `gen`).
-    sc.generation = match sc.generation.checked_add(1) {
-        Some(g) => g,
-        None => {
-            for c in sc.cells.iter_mut() {
-                c.stamp = 0;
-            }
-            1
-        }
-    };
-    let generation = sc.generation;
     let pairs = node.len();
-    // At least two cells per pair, so the table is never more than half full
-    // and a probe always ends at an unstamped cell. Grown on demand and
-    // fallibly — an OOM here becomes OverBudget, not a process abort. New
-    // cells are stamped 0 ≠ generation (which is ≥ 1) and read as empty.
-    let want = (2 * pairs).next_power_of_two();
-    if sc.cells.len() < want {
-        lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
-    }
-    // The per-pair and per-group buffers hold at least the widest node's
-    // pair count and are written by index, a node's entries over the last
-    // node's: a slice's base and length stay in registers through the loop,
-    // where a push reloads its vector's length after every store to the
-    // table, which might alias it.
-    for buf in [&mut sc.touched, &mut sc.group_ends, &mut sc.pair_slots] {
-        if buf.len() < pairs {
-            lim.try_resize(buf, pairs, 0)?;
-        }
-    }
+    let (generation, want) = prepare_scatter_scratch(lim, sc, pairs)?;
     // The node probes only the first `want` cells, a window of its own size,
     // not the whole table: after one wide node the table is as wide as it,
     // and a narrow node hashed across all of it would miss the cache on
@@ -310,7 +289,11 @@ pub(super) fn group_by_scatter<D: SlotValues>(
             if cell.stamp != generation {
                 // First occurrence of this x for this node: open a group.
                 let slot = groups;
-                cells[h] = GroupCell { stamp: generation, key: x_idx, slot: slot as u32 };
+                cells[h] = GroupCell {
+                    stamp: generation,
+                    key: x_idx,
+                    slot: slot as u32,
+                };
                 touched[slot] = x_idx;
                 group_ends[slot] = 1;
                 groups += 1;
@@ -331,6 +314,36 @@ pub(super) fn group_by_scatter<D: SlotValues>(
         return Ok(());
     }
     emit_repeated_scatter_groups::<D>(lim, tdd, (v, side), (n, node), groups, out, sc)
+}
+
+#[inline(always)]
+fn prepare_scatter_scratch(
+    lim: &Limits,
+    sc: &mut PFusionScratch,
+    pairs: usize,
+) -> Result<(u32, usize), OperationError> {
+    // Bump the generation instead of clearing the cells (O(1) per-node
+    // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
+    // "never stamped" sentinel and must never equal a live `gen`).
+    sc.generation = match sc.generation.checked_add(1) {
+        Some(g) => g,
+        None => {
+            for c in sc.cells.iter_mut() {
+                c.stamp = 0;
+            }
+            1
+        }
+    };
+    let want = (2 * pairs).next_power_of_two();
+    if sc.cells.len() < want {
+        lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
+    }
+    for buf in [&mut sc.touched, &mut sc.group_ends, &mut sc.pair_slots] {
+        if buf.len() < pairs {
+            lim.try_resize(buf, pairs, 0)?;
+        }
+    }
+    Ok((sc.generation, want))
 }
 
 /// Lay out groups of two or more occurrences in slot order, scatter their
@@ -378,12 +391,15 @@ fn emit_repeated_scatter_groups<D: SlotValues>(
             continue;
         }
         let end = end as usize;
-        lim.try_push(out, PlanEntry {
-            node_idx: n,
-            x_idx,
-            value: D::sum_refs(tdd, v, &sc.grouped[begin..end]),
-            new_ref: u32::MAX,
-        })?;
+        lim.try_push(
+            out,
+            PlanEntry {
+                node_idx: n,
+                x_idx,
+                value: D::sum_refs(tdd, v, &sc.grouped[begin..end]),
+                new_ref: u32::MAX,
+            },
+        )?;
         begin = end;
     }
     Ok(())
@@ -409,7 +425,10 @@ pub(super) struct FusionSlots<'a, D: SlotValues> {
 
 impl<'a, D: SlotValues> FusionSlots<'a, D> {
     pub(super) fn new(lim: &'a Limits) -> Self {
-        FusionSlots { by_value: Transient::new(lim, FxHashMap::default()), seeded: false }
+        FusionSlots {
+            by_value: Transient::new(lim, FxHashMap::default()),
+            seeded: false,
+        }
     }
 
     /// Fill `new_ref` for each of `plans`. Returns `true` if at least one

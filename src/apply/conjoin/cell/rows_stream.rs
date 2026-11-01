@@ -2751,27 +2751,19 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        node_idx,
-        left,
-        right,
-        gate,
-        ..
-    } = row;
-    let width = ctx.right_width;
+    let (row_base, f_pairs, node_idx, left, right, gate) = (
+        row.row_base,
+        row.f_pairs,
+        row.node_idx,
+        row.left,
+        row.right,
+        row.gate,
+    );
+    let width = row.ctx.right_width;
     let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
-    let ValueRows {
-        left: lside,
-        right: rside,
-        sums,
-        flags,
-        ..
-    } = vr;
-    let (sums, flags) = (&mut sums[..width], &mut flags[..width]);
+    let (lside, rside) = (&mut vr.left, &mut vr.right);
+    let (sums, flags) = (&mut vr.sums[..width], &mut vr.flags[..width]);
     sums.fill(0.0);
     flags.fill(0);
     let reads = |lside: &ValueSide<'_>, rside: &ValueSide<'_>, p: &ChildPair| {

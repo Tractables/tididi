@@ -170,17 +170,8 @@ pub(super) fn refine_context_groups(
     )? {
         return Ok(Some(false));
     }
-    list_refined_groups(
-        lim,
-        part,
-        width,
-        child,
-        &mut scratch.flat_groups,
-        &mut scratch.group_starts,
-        &mut scratch.remap,
-        &mut scratch.member_groups,
-        &mut scratch.marked,
-    )?;
+    let twinable = part.twinable;
+    list_refined_groups(lim, twinable, width, child, scratch)?;
     Ok(Some(true))
 }
 
@@ -308,34 +299,24 @@ fn split_level_partition(
     Ok(true)
 }
 
-/// Materialize the refined twin classes from `part` into `flat_groups` and
-/// `group_starts`, optionally marking members and recording `marked`.
-#[allow(clippy::too_many_arguments)]
+/// Materialize the refined twin classes from `scratch` into `scratch.flat_groups`
+/// and `scratch.group_starts`, optionally marking members and recording
+/// `scratch.marked`.
 fn list_refined_groups(
     lim: &Limits,
-    part: Partition<'_>,
+    twinable: usize,
     width: usize,
     child: Option<&[EncodedNode]>,
-    flat_groups: &mut Vec<u32>,
-    group_starts: &mut Vec<u32>,
-    remap: &mut MergeRemap,
-    member_groups: &mut Vec<u32>,
-    marked: &mut Option<Marks>,
+    scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
-    let Partition {
-        class,
-        bits,
-        classes,
-        twinable,
-    } = part;
-    lim.try_resize(flat_groups, twinable, 0u32)?;
-    lim.reserve_exact(group_starts, twinable / 2)?;
+    lim.try_resize(&mut scratch.flat_groups, twinable, 0u32)?;
+    lim.reserve_exact(&mut scratch.group_starts, twinable / 2)?;
     let mut list = Listing {
-        class,
-        bits,
-        classes,
-        flat_groups,
-        group_starts,
+        class: &scratch.twin_class[..width],
+        bits: &mut scratch.twin_bits[..width.div_ceil(64)],
+        classes: &mut scratch.classes,
+        flat_groups: &mut scratch.flat_groups,
+        group_starts: &mut scratch.group_starts,
         width,
     };
     match child {
@@ -345,14 +326,14 @@ fn list_refined_groups(
                 final_remap,
                 absorbed,
                 ..
-            } = remap;
+            } = &mut scratch.remap;
             lim.try_resize(final_remap, width, NodeIdx(0))?;
             lim.try_resize(absorbed, width.div_ceil(64), 0u64)?;
-            member_groups.clear();
-            lim.reserve_exact(member_groups, twinable)?;
-            *marked = Some(Marks {
+            scratch.member_groups.clear();
+            lim.reserve_exact(&mut scratch.member_groups, twinable)?;
+            scratch.marked = Some(Marks {
                 width,
-                ..list.list::<true>(final_remap, absorbed, member_groups, nodes)
+                ..list.list::<true>(final_remap, absorbed, &mut scratch.member_groups, nodes)
             });
         }
         None => {
@@ -479,30 +460,13 @@ impl Listing<'_> {
                 } else {
                     0
                 };
-                if k.pos == u32::MAX {
-                    flat_groups[next as usize] = t as u32;
-                    k.pos = if MARK {
-                        group_starts.len() as u32
-                    } else {
-                        next + 1
-                    };
-                    group_starts.push(next);
-                    next += k.size;
-                    k.dest = t as u32;
-                    k.hits = pairs;
-                } else if MARK {
-                    merged |= 1 << b;
-                    final_remap[t] = NodeIdx(k.dest | DROPPED);
-                    k.hits = k.hits.saturating_add(pairs);
-                    debug_assert!(
-                        member_groups.len() < member_groups.capacity(),
-                        "within reserve"
-                    );
-                    member_groups.push(k.pos);
-                } else {
-                    flat_groups[k.pos as usize] = t as u32;
-                    k.pos += 1;
-                }
+                merged |= record_class_member::<MARK>(
+                    k,
+                    (t, b),
+                    pairs,
+                    (&mut next, flat_groups, group_starts),
+                    (final_remap, member_groups),
+                );
             }
             if MARK {
                 absorbed[w] = merged;
@@ -514,6 +478,42 @@ impl Listing<'_> {
             "every twinable node is listed"
         );
         marks
+    }
+}
+
+#[inline(always)]
+fn record_class_member<const MARK: bool>(
+    k: &mut ClassInfo,
+    (t, b): (usize, usize),
+    pairs: u32,
+    (next, flat_groups, group_starts): (&mut u32, &mut [u32], &mut Vec<u32>),
+    (final_remap, member_groups): (&mut [NodeIdx], &mut Vec<u32>),
+) -> u64 {
+    if k.pos == u32::MAX {
+        flat_groups[*next as usize] = t as u32;
+        k.pos = if MARK {
+            group_starts.len() as u32
+        } else {
+            *next + 1
+        };
+        group_starts.push(*next);
+        *next += k.size;
+        k.dest = t as u32;
+        k.hits = pairs;
+        0
+    } else if MARK {
+        final_remap[t] = NodeIdx(k.dest | DROPPED);
+        k.hits = k.hits.saturating_add(pairs);
+        debug_assert!(
+            member_groups.len() < member_groups.capacity(),
+            "within reserve"
+        );
+        member_groups.push(k.pos);
+        1 << b
+    } else {
+        flat_groups[k.pos as usize] = t as u32;
+        k.pos += 1;
+        0
     }
 }
 

@@ -7,16 +7,16 @@ use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHasher};
 
+use crate::Engine;
 use crate::diagram::{Assembly, ChildPair, NodeIdx, Tdd, TddNodeId};
 use crate::diagram::{NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::rng::Lcg;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
-use crate::Engine;
 
 use super::super::layout::Layout;
-use super::super::rows::{words_per_row, distinct_rows, row_at};
+use super::super::rows::{distinct_rows, row_at, words_per_row};
 
 /// The diagram [`Tdd::from_models`] returns, built bottom-up.
 pub(super) fn from_models_bottom_up(
@@ -29,7 +29,10 @@ pub(super) fn from_models_bottom_up(
     let _op = lim.enter()?;
     let w = words_per_row(vars.len());
     if !rows.len().is_multiple_of(w) {
-        return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
+        return Err(OperationError::RaggedRows {
+            words: rows.len(),
+            per_row: w,
+        });
     }
 
     let mut layout = eng.scratch.model_layout.checkout(eng);
@@ -50,7 +53,12 @@ pub(super) fn from_models_bottom_up(
     let output = fill(eng, &mut assembly, vtree, &layout, &sorted, w, m)?;
     // The levels are canonical as built: seat them with nothing to reduce.
     let (levels, _) = assembly.parts_mut();
-    Ok(crate::build::seat_canonical(eng, vtree, std::mem::take(levels), output))
+    Ok(crate::build::seat_canonical(
+        eng,
+        vtree,
+        std::mem::take(levels),
+        output,
+    ))
 }
 
 /// Which atom of a finished vtree node each row belongs to.
@@ -147,7 +155,11 @@ fn value_mask(lo: usize, width: usize, word: usize) -> u64 {
         return 0;
     }
     let span = end - start;
-    let base = if span == 64 { !0u64 } else { (1u64 << span) - 1 };
+    let base = if span == 64 {
+        !0u64
+    } else {
+        (1u64 << span) - 1
+    };
     base << (start - word * 64)
 }
 
@@ -162,7 +174,9 @@ fn value_words(lo: usize, width: usize) -> std::ops::RangeInclusive<usize> {
 /// `Scratch::value`, rather than deriving it from `(lo, width)` per row.
 #[inline]
 fn same_value(x: &[u64], y: &[u64], first: usize, mask: &[u64]) -> bool {
-    mask.iter().enumerate().all(|(i, &m)| (x[first + i] ^ y[first + i]) & m == 0)
+    mask.iter()
+        .enumerate()
+        .all(|(i, &m)| (x[first + i] ^ y[first + i]) & m == 0)
 }
 
 /// Compare two rows by the `width` bits starting at `lo`, high word first,
@@ -216,13 +230,25 @@ fn fill(
                 carry_child(eng, assembly, vtree, &mut state, t, constrained)?
             }
             _ if width == num_vars => {
-                close_subtree(eng, assembly, vtree, &state, &mut scratch, t, sorted, w)?
+                close_subtree(eng, assembly, vtree, &state, &mut scratch, t, (sorted, w))?
             }
             _ => {
                 let lo = layout.lo[t.idx()] as usize;
-                let span = ValueSpan { lo, width, at_top: lo + width == num_vars };
+                let span = ValueSpan {
+                    lo,
+                    width,
+                    at_top: lo + width == num_vars,
+                };
                 let atoms = group_rows(lim, &mut scratch, sorted, w, span, m)?;
-                store_level(eng, assembly, vtree, &state, &mut scratch, t, atoms, sorted, w)?
+                store_level(
+                    eng,
+                    assembly,
+                    vtree,
+                    &state,
+                    &mut scratch,
+                    (t, atoms),
+                    (sorted, w),
+                )?
             }
         };
         if !leaf {
@@ -240,19 +266,27 @@ fn fill(
     }
 
     let root = vtree.root();
-    let done = state[root.idx()].as_ref().expect("the root was just finished");
+    let done = state[root.idx()]
+        .as_ref()
+        .expect("the root was just finished");
     debug_assert_eq!(done.locals.len(), 1, "the root level holds one atom");
-    Ok(TddNodeId { vtree: root, local: done.locals[0] })
+    Ok(TddNodeId {
+        vtree: root,
+        local: done.locals[0],
+    })
 }
 
 /// All constrained columns lie below this node, so every row has the same
 /// empty external completion. Its single atom is the union of the realized
 /// child-atom pairs; an atom index per row and completion hashing add nothing.
-#[allow(clippy::too_many_arguments)]
 fn close_subtree(
-    eng: &Engine, assembly: &mut Assembly<'_>, vtree: &Vtree,
-    state: &[Option<Finished>], scratch: &mut Scratch, t: VtreeIdx,
-    sorted: &[u64], w: usize,
+    eng: &Engine,
+    assembly: &mut Assembly<'_>,
+    vtree: &Vtree,
+    state: &[Option<Finished>],
+    scratch: &mut Scratch,
+    t: VtreeIdx,
+    (sorted, w): (&[u64], usize),
 ) -> Result<Finished, OperationError> {
     let lim = eng.limits();
     let (left, right) = vtree.children(t);
@@ -264,7 +298,10 @@ fn close_subtree(
     let mut gate = lim.gate();
     for row in 0..rows {
         gate.poll(1)?;
-        pairs.push(ChildPair::new(l.locals[l.atom_of(row, sorted, w)], r.locals[r.atom_of(row, sorted, w)]));
+        pairs.push(ChildPair::new(
+            l.locals[l.atom_of(row, sorted, w)],
+            r.locals[r.atom_of(row, sorted, w)],
+        ));
     }
     gate.flush()?;
     pairs.sort_unstable();
@@ -274,7 +311,10 @@ fn close_subtree(
     let mut locals = Vec::new();
     lim.reserve_exact(&mut locals, 1)?;
     locals.push(assembly.push(eng, t, pairs)?);
-    Ok(Finished { atoms: AtomOfRow::Uniform, locals })
+    Ok(Finished {
+        atoms: AtomOfRow::Uniform,
+        locals,
+    })
 }
 
 /// Bits that differ from the first row somewhere in the nonempty relation.
@@ -285,7 +325,9 @@ fn varying_bits(lim: &Limits, sorted: &[u64], w: usize) -> Result<Vec<u64>, Oper
     let mut gate = lim.gate();
     for row in sorted.chunks_exact(w).skip(1) {
         gate.poll(w as u64)?;
-        for j in 0..w { varying[j] |= row[j] ^ first[j]; }
+        for j in 0..w {
+            varying[j] |= row[j] ^ first[j];
+        }
     }
     gate.flush()?;
     Ok(varying)
@@ -294,13 +336,21 @@ fn varying_bits(lim: &Limits, sorted: &[u64], w: usize) -> Result<Vec<u64>, Oper
 /// A leaf has one literal atom, two literal atoms, or one free atom. The
 /// two values merge exactly when toggling the bit permutes the row set.
 fn leaf_atoms(
-    lim: &Limits, sorted: &[u64], w: usize, bit: usize, varying: &[u64],
+    lim: &Limits,
+    sorted: &[u64],
+    w: usize,
+    bit: usize,
+    varying: &[u64],
 ) -> Result<Finished, OperationError> {
     let (word, mask) = (bit / 64, 1u64 << (bit % 64));
     let mut locals = Vec::new();
     lim.reserve_exact(&mut locals, 2)?;
     let atoms = if varying[word] & mask == 0 {
-        locals.push(if sorted[word] & mask == 0 { NEG_LEAF_IDX } else { POS_LEAF_IDX });
+        locals.push(if sorted[word] & mask == 0 {
+            NEG_LEAF_IDX
+        } else {
+            POS_LEAF_IDX
+        });
         AtomOfRow::Uniform
     } else if independent_bit(lim, sorted, w, word, mask)? {
         locals.push(ONE_LEAF_IDX);
@@ -316,29 +366,41 @@ fn leaf_atoms(
 /// bit prefix, the zero and one runs must have equal lower-bit sequences.
 /// Compare those sequences exactly; a hash cannot establish independence.
 fn independent_bit(
-    lim: &Limits, sorted: &[u64], w: usize, word: usize, mask: u64,
+    lim: &Limits,
+    sorted: &[u64],
+    w: usize,
+    word: usize,
+    mask: u64,
 ) -> Result<bool, OperationError> {
     let m = sorted.len() / w;
-    if !m.is_multiple_of(2) { return Ok(false); }
+    if !m.is_multiple_of(2) {
+        return Ok(false);
+    }
     let mut gate = lim.gate();
     let answer = (|| {
         let mut start = 0;
         while start < m {
             gate.poll(1)?;
-            if sorted[start * w + word] & mask != 0 { return Ok(false); }
+            if sorted[start * w + word] & mask != 0 {
+                return Ok(false);
+            }
             let mut split = start + 1;
             while split < m && sorted[split * w + word] & mask == 0 {
                 gate.poll(1)?;
                 split += 1;
             }
             let len = split - start;
-            if len > m - split { return Ok(false); }
+            if len > m - split {
+                return Ok(false);
+            }
             for offset in 0..len {
                 gate.poll(w as u64)?;
                 let a = &sorted[(start + offset) * w..][..w];
                 let b = &sorted[(split + offset) * w..][..w];
                 for j in 0..w {
-                    if a[j] ^ b[j] != if j == word { mask } else { 0 } { return Ok(false); }
+                    if a[j] ^ b[j] != if j == word { mask } else { 0 } {
+                        return Ok(false);
+                    }
                 }
             }
             start = split + len;
@@ -385,7 +447,10 @@ fn free_subtree(
     let mut locals = Vec::new();
     eng.limits().reserve_exact(&mut locals, 1)?;
     locals.push(local);
-    Ok(Finished { atoms: AtomOfRow::Uniform, locals })
+    Ok(Finished {
+        atoms: AtomOfRow::Uniform,
+        locals,
+    })
 }
 
 /// The node a finished free subtree stored its one atom at.
@@ -395,7 +460,9 @@ fn true_node(state: &[Option<Finished>], t: VtreeIdx) -> NodeIdx {
 
 /// The finished record of a child.
 fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
-    state[t.idx()].as_ref().expect("a child is finished before its parent")
+    state[t.idx()]
+        .as_ref()
+        .expect("a child is finished before its parent")
 }
 
 /// An internal node whose constrained variables all sit under one child: its
@@ -410,7 +477,9 @@ fn carry_child(
 ) -> Result<Finished, OperationError> {
     let (left, _) = vtree.children(t);
     let free_local = true_node(state, vtree.sibling(constrained));
-    let from = state[constrained.idx()].take().expect("a child is finished before its parent");
+    let from = state[constrained.idx()]
+        .take()
+        .expect("a child is finished before its parent");
     let mut locals = vec![NodeIdx(0); from.locals.len()];
     assembly.reserve(eng, t, from.locals.len(), 0)?;
     // In the order of the child's nodes.
@@ -425,7 +494,10 @@ fn carry_child(
         };
         locals[atom] = assembly.push(eng, t, &[pair])?;
     }
-    Ok(Finished { atoms: from.atoms, locals })
+    Ok(Finished {
+        atoms: from.atoms,
+        locals,
+    })
 }
 
 /// Where one vtree node's constrained variables sit in a row: the bit range
@@ -506,7 +578,10 @@ fn group_rows(
         i = j;
     }
     gate.flush()?;
-    Ok(Atoms { count: scratch.runs.len(), of_row })
+    Ok(Atoms {
+        count: scratch.runs.len(),
+        of_row,
+    })
 }
 
 /// Order the rows by their value at this node, leaving rows of equal value in
@@ -554,7 +629,9 @@ fn order_by_value(
             scratch.keys.push(((v as u128) << 32) | k as u128);
         }
         scratch.keys.sort_unstable();
-        scratch.order.extend(scratch.keys.iter().map(|&key| key as u32));
+        scratch
+            .order
+            .extend(scratch.keys.iter().map(|&key| key as u32));
     } else {
         scratch.order.extend(0..m as u32);
         scratch
@@ -620,23 +697,23 @@ fn same_completions(
     (0..len).all(|n| {
         let x = row_at(sorted, w, scratch.order[start + n]);
         let y = row_at(sorted, w, scratch.order[other + n]);
-        x.iter().zip(y).zip(&scratch.outside).all(|((a, b), mask)| (a ^ b) & mask == 0)
+        x.iter()
+            .zip(y)
+            .zip(&scratch.outside)
+            .all(|((a, b), mask)| (a ^ b) & mask == 0)
     })
 }
 
 /// Store one node per atom, in the order of their least pairs, the right
 /// child's node compared first, and record where each landed.
-#[allow(clippy::too_many_arguments)]
 fn store_level(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     state: &[Option<Finished>],
     scratch: &mut Scratch,
-    t: VtreeIdx,
-    atoms: Atoms,
-    sorted: &[u64],
-    w: usize,
+    (t, atoms): (VtreeIdx, Atoms),
+    (sorted, w): (&[u64], usize),
 ) -> Result<Finished, OperationError> {
     let lim = eng.limits();
     let (left, right) = vtree.children(t);
@@ -650,7 +727,9 @@ fn store_level(
         // values, hence both children's atoms: one pair per run.
         let l = under_left.locals[under_left.atom_of(row as usize, sorted, w)];
         let r = under_right.locals[under_right.atom_of(row as usize, sorted, w)];
-        scratch.pairs.push(((atom as u128) << 64) | ((l.0 as u128) << 32) | r.0 as u128);
+        scratch
+            .pairs
+            .push(((atom as u128) << 64) | ((l.0 as u128) << 32) | r.0 as u128);
     }
     gate.flush()?;
     // Two values of one atom can decompose into the same pair of child atoms.
@@ -663,7 +742,13 @@ fn store_level(
         let pair = ChildPair::new(NodeIdx((packed >> 32) as u32), NodeIdx(packed as u32));
         by_atom[(packed >> 64) as usize].push(pair);
     }
-    let least = |pairs: &[ChildPair]| pairs.iter().map(|p| (p.right, p.left)).min().expect("every atom is realized by a row");
+    let least = |pairs: &[ChildPair]| {
+        pairs
+            .iter()
+            .map(|p| (p.right, p.left))
+            .min()
+            .expect("every atom is realized by a row")
+    };
     let mut order: Vec<usize> = (0..atoms.count).collect();
     order.sort_by_key(|&atom| least(&by_atom[atom]));
 
@@ -672,9 +757,11 @@ fn store_level(
     for atom in order {
         locals[atom] = assembly.push(eng, t, &by_atom[atom])?;
     }
-    Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals })
+    Ok(Finished {
+        atoms: AtomOfRow::PerRow(atoms.of_row),
+        locals,
+    })
 }
-
 
 /// Fixed and random vtree shapes over `n` variables.
 fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Arc<Vtree>)> {
@@ -682,14 +769,22 @@ fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Arc<Vtree>)> {
         ("balanced".to_string(), Arc::new(Vtree::balanced(n))),
         ("linear".to_string(), Arc::new(Vtree::linear(n))),
     ];
-    if n >= 2 { out.push(("reverse".to_string(), Arc::new(Vtree::reverse_linear(n)))); }
+    if n >= 2 {
+        out.push(("reverse".to_string(), Arc::new(Vtree::reverse_linear(n))));
+    }
     for _ in 0..3 {
         let seed = rng.next_u64() % 1000;
         out.push((format!("random({seed})"), Arc::new(Vtree::random(n, seed))));
     }
     let mut order: Vec<VarId> = (1..=n).map(VarId).collect();
-    for i in (1..order.len()).rev() { let j = (rng.next_u64() % (i as u64 + 1)) as usize; order.swap(i, j); }
-    out.push(("shuffled linear".to_string(), Arc::new(Vtree::linear_from_order(&order).unwrap())));
+    for i in (1..order.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        order.swap(i, j);
+    }
+    out.push((
+        "shuffled linear".to_string(),
+        Arc::new(Vtree::linear_from_order(&order).unwrap()),
+    ));
     out
 }
 
@@ -700,23 +795,48 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
     let set = |out: &mut Vec<u64>, r: usize, i: usize| out[r * w + i / 64] |= 1u64 << (i % 64);
     let half = k / 2;
     let set_halves = |out: &mut Vec<u64>, r: usize, x: u64, y: u64| {
-        for i in 0..half { if (x >> (i % 64)) & 1 == 1 { set(out, r, i); } }
-        for i in half..k { if (y >> (i % 64)) & 1 == 1 { set(out, r, i); } }
+        for i in 0..half {
+            if (x >> (i % 64)) & 1 == 1 {
+                set(out, r, i);
+            }
+        }
+        for i in half..k {
+            if (y >> (i % 64)) & 1 == 1 {
+                set(out, r, i);
+            }
+        }
     };
     match style % 4 {
         0 => {
             let density = rng.next_u64() % 100;
-            for r in 0..m { for i in 0..k { if rng.next_u64() % 100 < density { set(&mut out, r, i); } } }
+            for r in 0..m {
+                for i in 0..k {
+                    if rng.next_u64() % 100 < density {
+                        set(&mut out, r, i);
+                    }
+                }
+            }
         }
         1 => {
             // Columns of small domains: a few codes per column, so completions repeat.
             let cols = 1 + (rng.next_u64() % 4) as usize;
             let width = k.div_ceil(cols);
-            let codes: Vec<Vec<u64>> = (0..cols).map(|_| (0..1 + rng.next_u64() % 12).map(|_| rng.next_u64()).collect()).collect();
+            let codes: Vec<Vec<u64>> = (0..cols)
+                .map(|_| {
+                    (0..1 + rng.next_u64() % 12)
+                        .map(|_| rng.next_u64())
+                        .collect()
+                })
+                .collect();
             for r in 0..m {
                 for c in 0..cols {
                     let code = codes[c][(rng.next_u64() % codes[c].len() as u64) as usize];
-                    for j in 0..width { let i = c * width + j; if i < k && (code >> (j % 64)) & 1 == 1 { set(&mut out, r, i); } }
+                    for j in 0..width {
+                        let i = c * width + j;
+                        if i < k && (code >> (j % 64)) & 1 == 1 {
+                            set(&mut out, r, i);
+                        }
+                    }
                 }
             }
         }
@@ -731,20 +851,34 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
         }
         _ => {
             // A product of two small sets, with a few rows removed.
-            let a: Vec<u64> = (0..1 + rng.next_u64() % 6).map(|_| rng.next_u64()).collect();
-            let b: Vec<u64> = (0..1 + rng.next_u64() % 6).map(|_| rng.next_u64()).collect();
+            let a: Vec<u64> = (0..1 + rng.next_u64() % 6)
+                .map(|_| rng.next_u64())
+                .collect();
+            let b: Vec<u64> = (0..1 + rng.next_u64() % 6)
+                .map(|_| rng.next_u64())
+                .collect();
             let mut r = 0;
-            'fill: for &x in &a { for &y in &b {
-                if r == m { break 'fill; }
-                if rng.next_u64().is_multiple_of(5) { continue; }
-                set_halves(&mut out, r, x, y);
-                r += 1;
-            } }
+            'fill: for &x in &a {
+                for &y in &b {
+                    if r == m {
+                        break 'fill;
+                    }
+                    if rng.next_u64().is_multiple_of(5) {
+                        continue;
+                    }
+                    set_halves(&mut out, r, x, y);
+                    r += 1;
+                }
+            }
             out.truncate(r.max(1) * w);
         }
     }
     // Noise past the last variable must be ignored.
-    if !k.is_multiple_of(64) { for r in 0..out.len() / w { out[r * w + w - 1] |= !0u64 << (k % 64); } }
+    if !k.is_multiple_of(64) {
+        for r in 0..out.len() / w {
+            out[r * w + w - 1] |= !0u64 << (k % 64);
+        }
+    }
     out
 }
 
@@ -765,12 +899,25 @@ fn the_top_down_pass_stores_what_the_bottom_up_pass_stored() {
         for (name, vtree) in vtrees(n, &mut rng) {
             let k = 1 + (rng.next_u64() % n as u64) as usize;
             let mut pool: Vec<VarId> = (1..=n).map(VarId).collect();
-            for i in (1..pool.len()).rev() { let j = (rng.next_u64() % (i as u64 + 1)) as usize; pool.swap(i, j); }
+            for i in (1..pool.len()).rev() {
+                let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+                pool.swap(i, j);
+            }
             let vars = &pool[..k];
-            let m = match rng.next_u64() % 4 { 0 => 1 + rng.next_u64() % 4, 1 => 1 + rng.next_u64() % 64, 2 => 1 + rng.next_u64() % 600, _ => 1 + rng.next_u64() % 3000 } as usize;
+            let m = match rng.next_u64() % 4 {
+                0 => 1 + rng.next_u64() % 4,
+                1 => 1 + rng.next_u64() % 64,
+                2 => 1 + rng.next_u64() % 600,
+                _ => 1 + rng.next_u64() % 3000,
+            } as usize;
             let style = rng.next_u64();
             let rows = rows_for(k, m, style, &mut rng);
-            check(&vtree, vars, &rows, &format!("round {round} {name} n={n} k={k} m={m} style={}", style % 4));
+            check(
+                &vtree,
+                vars,
+                &rows,
+                &format!("round {round} {name} n={n} k={k} m={m} style={}", style % 4),
+            );
         }
     }
 }
@@ -782,9 +929,14 @@ fn ranked_relations_whose_groups_share_degrees_store_what_the_bottom_up_pass_sto
     // completions, and the hashed split confirms the merges it finds.
     let mut rng = Lcg::new(0x4a2e_d0c5);
     for round in 0..40u64 {
-        let (group_bits, rank_bits) = (6 + (rng.next_u64() % 8) as usize, 1 + (rng.next_u64() % 6) as usize);
+        let (group_bits, rank_bits) = (
+            6 + (rng.next_u64() % 8) as usize,
+            1 + (rng.next_u64() % 6) as usize,
+        );
         let k = group_bits + rank_bits;
-        let degrees: Vec<u64> = (0..1 + rng.next_u64() % 5).map(|_| 1 + rng.next_u64() % (1 << rank_bits)).collect();
+        let degrees: Vec<u64> = (0..1 + rng.next_u64() % 5)
+            .map(|_| 1 + rng.next_u64() % (1 << rank_bits))
+            .collect();
         let mut rows = Vec::new();
         for group in 0..1u64 << group_bits {
             if rng.next_u64().is_multiple_of(4) {
@@ -799,8 +951,16 @@ fn ranked_relations_whose_groups_share_degrees_store_what_the_bottom_up_pass_sto
         let n = k as u32 + (rng.next_u64() % 3) as u32;
         for (name, vtree) in vtrees(n, &mut rng) {
             let mut pool: Vec<VarId> = (1..=n).map(VarId).collect();
-            for i in (1..pool.len()).rev() { let j = (rng.next_u64() % (i as u64 + 1)) as usize; pool.swap(i, j); }
-            check(&vtree, &pool[..k], &rows, &format!("round {round} {name} groups of {group_bits} bits, ranks of {rank_bits}"));
+            for i in (1..pool.len()).rev() {
+                let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+                pool.swap(i, j);
+            }
+            check(
+                &vtree,
+                &pool[..k],
+                &rows,
+                &format!("round {round} {name} groups of {group_bits} bits, ranks of {rank_bits}"),
+            );
         }
     }
 }
@@ -841,7 +1001,15 @@ fn rows_ordered_on_a_trailing_subtree_sort_only_the_bits_above_it() {
         let m = 17000 + (rng.next_u64() % 20000) as usize;
         let mut rows = rows_for(n as usize, m, round as u64, &mut rng);
         rows.sort_by_key(|&row| row & mask);
-        check(vtree, &vars, &rows, &format!("ordered round {round} {name} n={n} trailing={}", trailing.len()));
+        check(
+            vtree,
+            &vars,
+            &rows,
+            &format!(
+                "ordered round {round} {name} n={n} trailing={}",
+                trailing.len()
+            ),
+        );
     }
 }
 
@@ -862,14 +1030,26 @@ fn rows_in_leaf_order_need_no_sort_and_build_the_same_levels() {
         let rows = rows_for(n as usize, m, round as u64, &mut rng);
         let mut listed: Vec<&[u64]> = rows.chunks_exact(w).collect();
         let bit = |row: &[u64], i: usize| (row[i / 64] >> (i % 64)) & 1;
-        listed.sort_by(|a, b| (0..n as usize).map(|i| bit(a, i).cmp(&bit(b, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        listed.sort_by(|a, b| {
+            (0..n as usize)
+                .map(|i| bit(a, i).cmp(&bit(b, i)))
+                .find(|o| o.is_ne())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let same = |a: &[u64], b: &[u64]| (0..n as usize).all(|i| bit(a, i) == bit(b, i));
-        let distinct = 1 + listed.windows(2).filter(|pair| !same(pair[0], pair[1])).count();
+        let distinct = 1 + listed
+            .windows(2)
+            .filter(|pair| !same(pair[0], pair[1]))
+            .count();
         let sorted: Vec<u64> = listed.concat();
         let what = format!("leaf order round {round} {name} n={n} m={m}");
         check(vtree, &vars, &sorted, &what);
         let f = Engine::new().from_models(vtree, &vars, &sorted).unwrap();
-        assert_eq!(f.model_count().unwrap(), num_bigint::BigUint::from(distinct), "{what}: models");
+        assert_eq!(
+            f.model_count().unwrap(),
+            num_bigint::BigUint::from(distinct),
+            "{what}: models"
+        );
     }
 }
 
@@ -920,11 +1100,19 @@ fn rows_ascending_in_layout_order_are_read_in_place() {
         }
         let eng = Engine::new();
         let in_place = eng.from_models(vtree, &vars, &rows).unwrap();
-        super::assert_same_levels(&in_place, &eng.from_models(vtree, &vars, &shuffled).unwrap(), &what);
+        super::assert_same_levels(
+            &in_place,
+            &eng.from_models(vtree, &vars, &shuffled).unwrap(),
+            &what,
+        );
         let mut distinct: Vec<u64> = rows.iter().map(|&row| row & mask).collect();
         distinct.sort_unstable();
         distinct.dedup();
-        assert_eq!(in_place.model_count().unwrap(), num_bigint::BigUint::from(distinct.len()), "{what}: models");
+        assert_eq!(
+            in_place.model_count().unwrap(),
+            num_bigint::BigUint::from(distinct.len()),
+            "{what}: models"
+        );
     }
 }
 
@@ -940,7 +1128,12 @@ fn large_relations_take_the_radix_paths() {
         let m = 17000 + (rng.next_u64() % 30000) as usize;
         let style = round;
         let rows = rows_for(k, m, style, &mut rng);
-        check(vtree, &vars, &rows, &format!("large round {round} {name} n={n} k={k} m={m}"));
+        check(
+            vtree,
+            &vars,
+            &rows,
+            &format!("large round {round} {name} n={n} k={k} m={m}"),
+        );
     }
 }
 
@@ -968,21 +1161,32 @@ fn table(columns: &[Column], m: usize, rng: &mut Lcg) -> Vec<u64> {
     let k: usize = columns.iter().map(|c| c.width()).sum();
     let w = k.div_ceil(64).max(1);
     let mask = |width: usize| if width == 64 { !0 } else { (1u64 << width) - 1 };
-    let dictionaries: Vec<Vec<u64>> = columns.iter().map(|&c| match c {
-        Column::Codes { width, codes } if codes > 0 => (0..codes).map(|_| rng.wide() & mask(width)).collect(),
-        _ => Vec::new(),
-    }).collect();
+    let dictionaries: Vec<Vec<u64>> = columns
+        .iter()
+        .map(|&c| match c {
+            Column::Codes { width, codes } if codes > 0 => {
+                (0..codes).map(|_| rng.wide() & mask(width)).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
     let draw = |c: usize, rng: &mut Lcg| match columns[c] {
         Column::Codes { width, .. } if dictionaries[c].is_empty() => rng.wide() & mask(width),
         Column::Codes { .. } => dictionaries[c][rng.below(dictionaries[c].len() as u64) as usize],
         Column::Rank { .. } => 0,
     };
-    let keyed = columns.iter().position(|c| matches!(c, Column::Rank { .. }));
+    let keyed = columns
+        .iter()
+        .position(|c| matches!(c, Column::Rank { .. }));
     let mut out = vec![0u64; w * m];
     let (mut key, mut rank, mut degree) = (vec![0u64; columns.len()], 0u64, 0u64);
     for r in 0..m {
-        if let Some(at) = keyed && rank == degree {
-            for (c, value) in key.iter_mut().enumerate().take(at) { *value = draw(c, rng); }
+        if let Some(at) = keyed
+            && rank == degree
+        {
+            for (c, value) in key.iter_mut().enumerate().take(at) {
+                *value = draw(c, rng);
+            }
             (rank, degree) = (0, 1 + rng.below(mask(columns[at].width()) + 1));
         }
         let mut bit = 0;
@@ -993,7 +1197,9 @@ fn table(columns: &[Column], m: usize, rng: &mut Lcg) -> Vec<u64> {
                 _ => draw(c, rng),
             };
             for j in 0..column.width() {
-                if (value >> j) & 1 == 1 { out[r * w + (bit + j) / 64] |= 1u64 << ((bit + j) % 64); }
+                if (value >> j) & 1 == 1 {
+                    out[r * w + (bit + j) / 64] |= 1u64 << ((bit + j) % 64);
+                }
             }
             bit += column.width();
         }
@@ -1013,19 +1219,76 @@ fn table_shaped_relations_store_what_the_bottom_up_pass_stored() {
     let mut rng = Lcg::new(0x7ab1e);
     for round in 0..28u64 {
         let columns: Vec<Column> = match round % 4 {
-            0 => vec![Codes { width: 2, codes: 3 }, Codes { width: 1, codes: 2 }, Codes { width: 12, codes: 2500 },
-                Codes { width: 6, codes: 50 }, Codes { width: 20, codes: 0 }, Codes { width: 4, codes: 11 }],
-            1 => vec![Codes { width: 14 + rng.below(6) as usize, codes: 0 }, Rank { width: 1 + rng.below(3) as usize }, Codes { width: 6, codes: 50 }],
-            2 => vec![Codes { width: 20, codes: 0 }, Codes { width: 18, codes: 0 }, Codes { width: 30, codes: 0 },
-                Codes { width: 25, codes: 1 + rng.below(4000) }, Codes { width: 12 + rng.below(40) as usize, codes: 0 }],
-            _ => (0..1 + rng.below(6)).map(|_| {
-                let width = 1 + rng.below(40) as usize;
-                let codes = [0, 1 + rng.below(16), 1 + rng.below(4096)][rng.below(3) as usize];
-                Codes { width, codes }
-            }).collect(),
+            0 => vec![
+                Codes { width: 2, codes: 3 },
+                Codes { width: 1, codes: 2 },
+                Codes {
+                    width: 12,
+                    codes: 2500,
+                },
+                Codes {
+                    width: 6,
+                    codes: 50,
+                },
+                Codes {
+                    width: 20,
+                    codes: 0,
+                },
+                Codes {
+                    width: 4,
+                    codes: 11,
+                },
+            ],
+            1 => vec![
+                Codes {
+                    width: 14 + rng.below(6) as usize,
+                    codes: 0,
+                },
+                Rank {
+                    width: 1 + rng.below(3) as usize,
+                },
+                Codes {
+                    width: 6,
+                    codes: 50,
+                },
+            ],
+            2 => vec![
+                Codes {
+                    width: 20,
+                    codes: 0,
+                },
+                Codes {
+                    width: 18,
+                    codes: 0,
+                },
+                Codes {
+                    width: 30,
+                    codes: 0,
+                },
+                Codes {
+                    width: 25,
+                    codes: 1 + rng.below(4000),
+                },
+                Codes {
+                    width: 12 + rng.below(40) as usize,
+                    codes: 0,
+                },
+            ],
+            _ => (0..1 + rng.below(6))
+                .map(|_| {
+                    let width = 1 + rng.below(40) as usize;
+                    let codes = [0, 1 + rng.below(16), 1 + rng.below(4096)][rng.below(3) as usize];
+                    Codes { width, codes }
+                })
+                .collect(),
         };
         let k: usize = columns.iter().map(|c| c.width()).sum();
-        let m = match rng.below(4) { 0 => 1, 1 => 1 + rng.below(100), 2 => 1 + rng.below(3000), _ => 17000 + rng.below(30000) } as usize;
+        let m = match rng.below(4) {
+            0 => 1,
+            1 => 1 + rng.below(100),
+            2 => 1 + rng.below(3000),
+            _ => 17000 + rng.below(30000),
+        } as usize;
         let w = k.div_ceil(64);
         let mut rows = table(&columns, m, &mut rng);
         if rng.coin() {
@@ -1043,18 +1306,35 @@ fn table_shaped_relations_store_what_the_bottom_up_pass_stored() {
             let mut vars = Vec::new();
             leaves(vtree, vtree.root(), &mut vars);
             vars.truncate(k);
-            if rng.below(4) == 0 { vars.reverse(); }
+            if rng.below(4) == 0 {
+                vars.reverse();
+            }
             let bit = |row: &[u64], i: usize| (row[i / 64] >> (i % 64)) & 1;
             let mut listed: Vec<&[u64]> = rows.chunks_exact(w).collect();
             let order = rng.below(4);
             match order {
                 0 => {}
-                1 => listed.sort_by(|a, b| (0..k).map(|i| bit(a, i).cmp(&bit(b, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)),
+                1 => listed.sort_by(|a, b| {
+                    (0..k)
+                        .map(|i| bit(a, i).cmp(&bit(b, i)))
+                        .find(|o| o.is_ne())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }),
                 2 => listed.sort_by(|a, b| a.iter().rev().cmp(b.iter().rev())),
-                _ => listed.sort_by(|a, b| (0..k).map(|i| bit(b, i).cmp(&bit(a, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)),
+                _ => listed.sort_by(|a, b| {
+                    (0..k)
+                        .map(|i| bit(b, i).cmp(&bit(a, i)))
+                        .find(|o| o.is_ne())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }),
             }
             let ordered: Vec<u64> = listed.concat();
-            check(vtree, &vars, &ordered, &format!("table round {round} {name} k={k} m={m} order {order}"));
+            check(
+                vtree,
+                &vars,
+                &ordered,
+                &format!("table round {round} {name} k={k} m={m} order {order}"),
+            );
         }
     }
 }

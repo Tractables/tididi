@@ -1,10 +1,13 @@
 //! Closing, rewriting and materializing implicit levels.
 
+use super::super::LevelState;
+use super::super::arena::ArenaGrowth;
+use super::{
+    ChildPair, ChildSide, ImplicitLevel, PairArena, STORED, TddLevel, floor, pair,
+    stored_levels_forced,
+};
 use crate::diagram::EncodedNode;
 use crate::limits::{Limits, OperationError};
-use super::super::arena::ArenaGrowth;
-use super::super::LevelState;
-use super::{ChildPair, ChildSide, ImplicitLevel, PairArena, TddLevel, STORED, floor, stored_levels_forced, pair};
 
 impl crate::diagram::Tdd {
     /// The end of an operation that may have built levels stored: close every
@@ -88,8 +91,16 @@ impl TddLevel {
     ///
     /// `Err(OperationError::OverBudget)` when a reservation is refused; the
     /// level is then as it was.
-    pub(crate) fn move_described(&mut self, lim: &Limits, side: ChildSide, f: impl Fn(i64) -> i64) -> Result<(), OperationError> {
-        let d = self.pairs.implicit().expect("move_described on a stored level");
+    pub(crate) fn move_described(
+        &mut self,
+        lim: &Limits,
+        side: ChildSide,
+        f: impl Fn(i64) -> i64,
+    ) -> Result<(), OperationError> {
+        let d = self
+            .pairs
+            .implicit()
+            .expect("move_described on a stored level");
         let id = |x: i64| x;
         let moved = if d.one_to_one_on(lim, side, &f)? {
             match side {
@@ -216,7 +227,10 @@ impl TddLevel {
         i: usize,
         r: usize,
     ) -> Result<Option<StoreRoom>, OperationError> {
-        let StoreRoom { mut nodes, pairs: mut arena } = match room {
+        let StoreRoom {
+            mut nodes,
+            pairs: mut arena,
+        } = match room {
             Some(room) => room,
             None => self.store_room(growth)?,
         };
@@ -226,7 +240,10 @@ impl TddLevel {
                 let (l, r) = cursor.first_of(j);
                 EncodedNode::inline(pair(l, r))
             }));
-            Ok(Some(StoreRoom { nodes, pairs: arena }))
+            Ok(Some(StoreRoom {
+                nodes,
+                pairs: arena,
+            }))
         } else {
             self.store_implied_nodes_in(nodes);
             let mut cursor = d.cursor();
@@ -255,7 +272,11 @@ impl TddLevel {
         sorted: bool,
         mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
     ) -> Result<bool, OperationError> {
-        let d = self.pairs.implicit().expect("rewrite_described on a stored level").clone();
+        let d = self
+            .pairs
+            .implicit()
+            .expect("rewrite_described on a stored level")
+            .clone();
         let (k, len) = (d.per_node, self.pairs.len());
         // A node's pairs are its first shifted by offsets every node shares,
         // so they are in order at every node or at none.
@@ -299,20 +320,8 @@ impl TddLevel {
             }
             stored += kept;
             emptied |= kept == 0;
-            if let Some(room) = words.as_mut() {
-                if kept == 0 {
-                    room.nodes.push(empty);
-                }
-                continue;
-            }
-            let arena = self.pairs.stored_mut();
-            arena.resize((i + 1) * k, filler);
-            if sorted {
-                super::super::sort_pairs(&mut arena[i * k..i * k + kept]);
-            }
-            if kept < k {
-                dead += self.reencode_shrunk(i, i * k, k, kept);
-            }
+            let meta = (filler, empty);
+            dead += self.finish_described_node_rewrite((i, k, kept), sorted, meta, &mut words);
         }
         if !built {
             return Ok(false);
@@ -333,6 +342,32 @@ impl TddLevel {
         Ok(emptied)
     }
 
+    #[inline(always)]
+    fn finish_described_node_rewrite(
+        &mut self,
+        (i, k, kept): (usize, usize, usize),
+        sorted: bool,
+        (filler, empty): (ChildPair, EncodedNode),
+        words: &mut Option<StoreRoom>,
+    ) -> usize {
+        if let Some(room) = words.as_mut() {
+            if kept == 0 {
+                room.nodes.push(empty);
+            }
+            return 0;
+        }
+        let arena = self.pairs.stored_mut();
+        arena.resize((i + 1) * k, filler);
+        if sorted {
+            super::super::sort_pairs(&mut arena[i * k..i * k + kept]);
+        }
+        if kept < k {
+            self.reencode_shrunk(i, i * k, k, kept)
+        } else {
+            0
+        }
+    }
+
     /// Build an implicit level stored where its pairs lie, before a pass
     /// changes it in place ([`store_moved`](Self::store_moved), keeping
     /// every node and moving nothing), its room reserved through `growth`;
@@ -344,7 +379,10 @@ impl TddLevel {
     /// `Err(OperationError::OverBudget)` when the room is refused; the level
     /// is then as it was.
     #[inline]
-    pub(crate) fn store_if_implicit<G: ArenaGrowth>(&mut self, growth: &G) -> Result<(), OperationError> {
+    pub(crate) fn store_if_implicit<G: ArenaGrowth>(
+        &mut self,
+        growth: &G,
+    ) -> Result<(), OperationError> {
         if self.pairs.implicit().is_some() {
             self.store_described(growth)?;
         }
@@ -375,7 +413,10 @@ impl TddLevel {
     ///
     /// `Err(OperationError::OverBudget)` when either arena is refused;
     /// nothing is held then.
-    pub(crate) fn store_room<G: ArenaGrowth>(&self, growth: &G) -> Result<StoreRoom, OperationError> {
+    pub(crate) fn store_room<G: ArenaGrowth>(
+        &self,
+        growth: &G,
+    ) -> Result<StoreRoom, OperationError> {
         let d = self.pairs.implicit().expect("store_room on a stored level");
         let nodes = match self.implied_by() {
             Some(_) => self.pairs.node_capacity().max(d.nodes),
@@ -396,9 +437,21 @@ impl TddLevel {
     /// inline. The slots of the other nodes and those past the described
     /// pairs hold copies of the first pair as described, not moved, since
     /// its children may be gone; nothing reads them.
-    pub(crate) fn store_moved(&mut self, room: StoreRoom, keep: impl Fn(usize) -> bool, left: impl Fn(i64) -> i64, right: impl Fn(i64) -> i64) {
-        let StoreRoom { nodes: mut words, pairs: mut vec } = room;
-        let d = self.pairs.implicit().expect("store_moved on a stored level");
+    pub(crate) fn store_moved(
+        &mut self,
+        room: StoreRoom,
+        keep: impl Fn(usize) -> bool,
+        left: impl Fn(i64) -> i64,
+        right: impl Fn(i64) -> i64,
+    ) {
+        let StoreRoom {
+            nodes: mut words,
+            pairs: mut vec,
+        } = room;
+        let d = self
+            .pairs
+            .implicit()
+            .expect("store_moved on a stored level");
         let fill = d.places(0).next();
         if d.per_node == 1 {
             // Each node holds its moved pair inline, those `keep` does not
@@ -418,12 +471,20 @@ impl TddLevel {
             return;
         }
         self.store_implied_nodes_in(words);
-        let d = self.pairs.implicit().expect("store_moved on a stored level");
+        let d = self
+            .pairs
+            .implicit()
+            .expect("store_moved on a stored level");
         let len = self.pairs.len();
         let mut stored = 0usize;
         for i in 0..d.nodes {
             if keep(i) {
-                vec.extend(d.places(i).map(|p| pair(left(i64::from(p.left.raw())), right(i64::from(p.right.raw())))));
+                vec.extend(d.places(i).map(|p| {
+                    pair(
+                        left(i64::from(p.left.raw())),
+                        right(i64::from(p.right.raw())),
+                    )
+                }));
                 stored += d.per_node;
             } else if let Some(fill) = fill {
                 vec.resize(vec.len() + d.per_node, fill);
@@ -440,7 +501,12 @@ impl TddLevel {
     /// implicit level of one pair a node, and `pairs`, the room reserved for
     /// its pair arena, as the stored one it stands for, of its length, its
     /// slots copies of `fill`: nothing reads them.
-    fn store_inline_nodes(&mut self, words: Vec<EncodedNode>, mut pairs: Vec<ChildPair>, fill: ChildPair) {
+    fn store_inline_nodes(
+        &mut self,
+        words: Vec<EncodedNode>,
+        mut pairs: Vec<ChildPair>,
+        fill: ChildPair,
+    ) {
         debug_assert!(self.implied_by().is_some_and(|d| d.per_node == 1));
         let len = self.pairs.len();
         self.nodes = super::super::NodeArena::from(words);
@@ -472,4 +538,3 @@ pub(crate) struct StoreRoom {
     nodes: Vec<EncodedNode>,
     pairs: Vec<ChildPair>,
 }
-

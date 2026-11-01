@@ -201,16 +201,13 @@ impl ContractWork {
     /// Search entities at level `c` under parent `p` (at index `pe` in `lvs`)
     /// for twin groups, recording local groups in `cl` and deferring skip-only
     /// groups that part below `c` to `self.pending`.
-    #[allow(clippy::too_many_arguments)]
     fn contract_under_parent(
         &mut self,
-        s: &SkipForm,
-        sh: &super::Shape,
+        (s, sh): (&SkipForm, &super::Shape),
         (c, l, r, here): (u32, u32, u32, u32),
         (p, pcl): (u32, &CLv),
         cl: &mut CLv,
-        queued: &mut [bool],
-        heap: &mut BinaryHeap<Reverse<(u32, u32)>>,
+        queue: ContractQueue<'_>,
         lim: &Limits,
     ) -> Result<(), OperationError> {
         let plvl = &s.levels[p as usize];
@@ -231,9 +228,34 @@ impl ContractWork {
                 [b, ZREF]
             }
         };
+        self.hash_parent_entities(s, left, classes(), &partners, lim)?;
+        if mark_hash_candidates(&self.ent, &mut self.cand, &mut self.seen, lim)? {
+            self.collect_candidate_occurrences(left, classes(), &partners, lim)?;
+            sort_candidate_contexts(
+                &self.ent,
+                &self.cand,
+                &mut self.order,
+                &mut self.occ,
+                &mut self.ctx,
+                lim,
+            )?;
+            self.emit_confirmed_groups((s, sh), (c, l, r, here), cl, queue, lim)?;
+        }
+        lim.charge_work(self.ent.len() as u64 + self.occ.len() as u64);
+        Ok(())
+    }
+
+    fn hash_parent_entities<'a>(
+        &mut self,
+        s: &SkipForm,
+        left: bool,
+        classes: impl Iterator<Item = (u32, &'a [(Ref, Ref)])>,
+        partners: &impl Fn(Ref) -> [Ref; 2],
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
         self.epoch += 1;
         self.ent.clear();
-        for (k, pairs) in classes() {
+        for (k, pairs) in classes {
             for &(a, b) in pairs {
                 let (e, partner) = if left { (a, b) } else { (b, a) };
                 let id = self
@@ -253,45 +275,39 @@ impl ContractWork {
                 }
             }
         }
-        let any = mark_hash_candidates(&self.ent, &mut self.cand, &mut self.seen, lim)?;
-        if any {
-            self.occ.clear();
-            for (k, pairs) in classes() {
-                for &(a, b) in pairs {
-                    let (e, partner) = if left { (a, b) } else { (b, a) };
-                    let i = self.sslot[self.ids.id(e)];
-                    if self.cand[i as usize] {
-                        for q in partners(partner) {
-                            if q != ZREF {
-                                lim.try_push(&mut self.occ, (i, k, q))?;
-                            }
+        Ok(())
+    }
+
+    fn collect_candidate_occurrences<'a>(
+        &mut self,
+        left: bool,
+        classes: impl Iterator<Item = (u32, &'a [(Ref, Ref)])>,
+        partners: &impl Fn(Ref) -> [Ref; 2],
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
+        self.occ.clear();
+        for (k, pairs) in classes {
+            for &(a, b) in pairs {
+                let (e, partner) = if left { (a, b) } else { (b, a) };
+                let i = self.sslot[self.ids.id(e)];
+                if self.cand[i as usize] {
+                    for q in partners(partner) {
+                        if q != ZREF {
+                            lim.try_push(&mut self.occ, (i, k, q))?;
                         }
                     }
                 }
             }
-            sort_candidate_contexts(
-                &self.ent,
-                &self.cand,
-                &mut self.order,
-                &mut self.occ,
-                &mut self.ctx,
-                lim,
-            )?;
-            self.emit_confirmed_groups(s, sh, (c, l, r, here), cl, queued, heap, lim)?;
         }
-        lim.charge_work(self.ent.len() as u64 + self.occ.len() as u64);
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn emit_confirmed_groups(
         &mut self,
-        s: &SkipForm,
-        sh: &super::Shape,
+        (s, sh): (&SkipForm, &super::Shape),
         (c, l, r, here): (u32, u32, u32, u32),
         cl: &mut CLv,
-        queued: &mut [bool],
-        heap: &mut BinaryHeap<Reverse<(u32, u32)>>,
+        (queued, heap): ContractQueue<'_>,
         lim: &Limits,
     ) -> Result<(), OperationError> {
         let ctx = &self.ctx;
@@ -331,39 +347,73 @@ impl ContractWork {
                 if self.members.len() < 2 {
                     continue;
                 }
-                self.merged = true;
-                if self.members.iter().all(|&e| vt(e) != c) {
-                    if self.names.is_none() {
-                        self.ids.ensure_all(s);
-                        self.names = Some(Names::of(s, &self.ids, lim)?);
-                    }
-                    let nm = self.names.as_ref().expect("names were just read");
-                    let v = parts(sh, nm, &self.ids, c, self.members.iter().copied());
-                    if v != c {
-                        let mut group = Vec::new();
-                        lim.reserve_exact(&mut group, self.members.len())?;
-                        group.extend_from_slice(&self.members);
-                        self.pending.entry(v).or_default().push((here, group));
-                        let mut u = v;
-                        while u != c && !queued[u as usize] {
-                            queued[u as usize] = true;
-                            heap.push(Reverse((sh.pre[u as usize], u)));
-                            u = sh.parent[u as usize];
-                        }
-                        continue;
-                    }
-                }
-                let g = cl.push_group(s, &self.members, l, r, lim)?;
-                lim.reserve_map(&mut cl.chainmap, self.members.len())?;
-                for &e in &self.members {
-                    if vt(e) != c {
-                        cl.chainmap.insert(e, (here, g));
-                    }
-                }
+                record_confirmed_group(
+                    (
+                        &mut self.merged,
+                        &mut self.ids,
+                        &mut self.names,
+                        &mut self.pending,
+                    ),
+                    &self.members,
+                    (s, sh),
+                    (c, l, r, here),
+                    cl,
+                    (queued, heap),
+                    lim,
+                )?;
             }
         }
         Ok(())
     }
+}
+
+type ContractQueue<'a> = (&'a mut [bool], &'a mut BinaryHeap<Reverse<(u32, u32)>>);
+type ConfirmedGroupState<'a> = (
+    &'a mut bool,
+    &'a mut Ids,
+    &'a mut Option<Names>,
+    &'a mut FxHashMap<u32, Vec<(u32, Vec<Ref>)>>,
+);
+
+fn record_confirmed_group(
+    (merged, ids, names, pending): ConfirmedGroupState<'_>,
+    members: &[Ref],
+    (s, sh): (&SkipForm, &super::Shape),
+    (c, l, r, here): (u32, u32, u32, u32),
+    cl: &mut CLv,
+    (queued, heap): ContractQueue<'_>,
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    *merged = true;
+    if members.iter().all(|&e| vt(e) != c) {
+        if names.is_none() {
+            ids.ensure_all(s);
+            *names = Some(Names::of(s, ids, lim)?);
+        }
+        let nm = names.as_ref().expect("names were just read");
+        let v = parts(sh, nm, ids, c, members.iter().copied());
+        if v != c {
+            let mut group = Vec::new();
+            lim.reserve_exact(&mut group, members.len())?;
+            group.extend_from_slice(members);
+            pending.entry(v).or_default().push((here, group));
+            let mut u = v;
+            while u != c && !queued[u as usize] {
+                queued[u as usize] = true;
+                heap.push(Reverse((sh.pre[u as usize], u)));
+                u = sh.parent[u as usize];
+            }
+            return Ok(());
+        }
+    }
+    let g = cl.push_group(s, members, l, r, lim)?;
+    lim.reserve_map(&mut cl.chainmap, members.len())?;
+    for &e in members {
+        if vt(e) != c {
+            cl.chainmap.insert(e, (here, g));
+        }
+    }
+    Ok(())
 }
 
 /// [`contract`] scoped to the upward-closed `cone` of changed levels when
@@ -405,13 +455,11 @@ pub(crate) fn contract_in(
         if pe != NONE {
             let pcl = &lvs[pe as usize];
             work.contract_under_parent(
-                &s,
-                sh,
+                (&s, sh),
                 (c, l, r, here),
                 (p, pcl),
                 &mut cl,
-                &mut queued,
-                &mut heap,
+                (&mut queued, &mut heap),
                 lim,
             )?;
         }

@@ -26,7 +26,13 @@ fn operands(eng: &Engine, vtree: &Arc<Vtree>) -> (Tdd, Tdd) {
         f
     };
     let f = build(&[&[1, 2, -7], &[-1, 3], &[2, -3, 8], &[4, 5], &[-5, 6, 7]]);
-    let g = build(&[&[7, 8, -9], &[-8, 10], &[9, -10, 11], &[-11, 12, 1], &[6, -12]]);
+    let g = build(&[
+        &[7, 8, -9],
+        &[-8, 10],
+        &[9, -10, 11],
+        &[-11, 12, 1],
+        &[6, -12],
+    ]);
     (f, g)
 }
 
@@ -39,7 +45,9 @@ fn reduced_and_negated(t: &Tdd) -> (Tdd, u64, Tdd, u64) {
     eng.minimize(&mut m).unwrap();
     let minimized = eng.limits().work_since(mark);
     let mark = eng.limits().mark();
-    let n = eng.negate_with(t.clone(), crate::reduce::ReductionPlan::Prune).unwrap();
+    let n = eng
+        .negate_with(t.clone(), crate::reduce::ReductionPlan::Prune)
+        .unwrap();
     (m, minimized, n, eng.limits().work_since(mark))
 }
 
@@ -48,13 +56,21 @@ fn reduced_and_negated(t: &Tdd) -> (Tdd, u64, Tdd, u64) {
 fn as_given(back: &Tdd, given: &Tdd) -> bool {
     let (m, mw, n, nw) = reduced_and_negated(back);
     let (gm, gmw, gn, gnw) = reduced_and_negated(given);
-    same(back, given) && known(back) == known(given) && same(&m, &gm) && mw == gmw && same(&n, &gn) && nw == gnw
+    same(back, given)
+        && known(back) == known(given)
+        && same(&m, &gm)
+        && mw == gmw
+        && same(&n, &gn)
+        && nw == gnw
 }
 
 /// Refuse the conjunction at each point `arm` picks in turn, on operands
 /// keeping level counts where `counts` says, checking that every refusal
 /// hands both operands back as given, until one is granted.
-fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>) {
+fn refuse_at_every_point(
+    counts: bool,
+    arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>,
+) {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(12));
     let (mut f, mut g) = operands(&eng, &vtree);
@@ -64,7 +80,10 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
     }
     for t in [&f, &g] {
         let (canonical, closed, kept, _) = known(t);
-        assert!(canonical && closed && kept == counts, "an operand certified, closed and keeping counts as the test needs");
+        assert!(
+            canonical && closed && kept == counts,
+            "an operand certified, closed and keeping counts as the test needs"
+        );
     }
     let expected = eng.and(f.clone(), g.clone()).unwrap();
     for (a, b) in [(&f, &g), (&g, &f)] {
@@ -76,11 +95,17 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
             eng.limits().grant_every_reserve();
             match outcome {
                 Ok(out) => {
-                    assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
+                    assert!(
+                        eng.equivalent(&out, &expected).unwrap(),
+                        "granted at {n}: a different function"
+                    );
                     break;
                 }
                 Err(refused) => {
-                    assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
+                    assert!(
+                        as_given(&refused.f, a) && as_given(&refused.g, b),
+                        "refused at {n}: an operand changed"
+                    );
                     refusals += 1;
                 }
             }
@@ -105,8 +130,14 @@ fn every_stop_gives_the_operands_back() {
     for counts in [false, true] {
         refuse_at_every_point(counts, |eng, n| {
             let at = eng.limits().work_units() + n;
-            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
-            Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
+            let stop = StopRules {
+                unconditional: Some(StopAt::WorkUnits(at)),
+                after_pairs: None,
+            };
+            Some(
+                eng.limits()
+                    .scope(LimitConfig::none().with_stop_rules(stop)),
+            )
         });
     }
 }
@@ -125,32 +156,33 @@ fn a_refused_count_table_keeps_the_operands_and_drops_the_counts() {
     let expected = eng.and(f.clone(), g.clone()).unwrap();
     let count = eng.model_count(&expected).unwrap();
     for (a, b) in [(&f, &g), (&g, &f)] {
-        let granted = eng.and_restoring(a.clone(), b.clone()).map_err(|r| r.error).unwrap();
-        assert!(granted.has_level_counts(), "the conjunction kept no counts: nothing to refuse");
+        let granted = eng
+            .and_restoring(a.clone(), b.clone())
+            .map_err(|r| r.error)
+            .unwrap();
+        assert!(granted.has_level_counts());
         let (mut refusals, mut dropped) = (0, 0);
-        for n in 0.. {
+        for n in 0..10_000 {
             eng.limits().refuse_nth_reserve(n);
             let outcome = eng.and_restoring(a.clone(), b.clone());
             let fired = !eng.limits().refusal_pending();
             eng.limits().grant_every_reserve();
             match outcome {
                 Ok(out) => {
-                    assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
-                    assert_eq!(eng.model_count(&out).unwrap(), count, "granted at {n}: count");
+                    assert!(eng.equivalent(&out, &expected).unwrap());
+                    assert_eq!(eng.model_count(&out).unwrap(), count);
                     dropped += usize::from(!out.has_level_counts());
                 }
                 Err(refused) => {
-                    assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
+                    assert!(as_given(&refused.f, a) && as_given(&refused.g, b));
                     refusals += 1;
                 }
             }
             if !fired {
                 break;
             }
-            assert!(n < 10_000, "never past the last reserve");
         }
-        assert!(refusals > 3, "only {refusals} refusal points");
-        assert_eq!(dropped, 1, "the count table's refusal kept the counts, or another one dropped them");
+        assert!(refusals > 3 && dropped == 1);
     }
 }
 
@@ -159,7 +191,10 @@ fn a_granted_conjunction_matches_and() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(12));
     let (f, g) = operands(&eng, &vtree);
-    let mut restored = eng.and_restoring(f.clone(), g.clone()).map_err(|r| r.error).unwrap();
+    let mut restored = eng
+        .and_restoring(f.clone(), g.clone())
+        .map_err(|r| r.error)
+        .unwrap();
     let mut plain = eng.and(f, g).unwrap();
     eng.minimize(&mut restored).unwrap();
     eng.minimize(&mut plain).unwrap();

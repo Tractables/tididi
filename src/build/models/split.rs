@@ -2897,83 +2897,106 @@ fn sorted_triples(
     by_mid: bool,
     each: impl Fn(&mut dyn FnMut([u32; 3])),
 ) -> Result<Vec<[u32; 3]>, OperationError> {
-    let mut out = Vec::new();
     let bits = (
         index_bits(atoms.0 as usize),
         index_bits(atoms.1 as usize),
         index_bits(atoms.2 as usize),
     );
-    if bits.0 + bits.1 + bits.2 < 64 {
-        let (low, mid) = (bits.2, bits.1 + bits.2);
-        let mut keys = std::mem::take(packed);
-        keys.clear();
-        let mut refused = Ok(());
-        each(&mut |[a, l, r]| {
-            if refused.is_ok() {
-                refused = lim.try_push(&mut keys, (a as u64) << mid | (l as u64) << low | r as u64);
-            }
-        });
-        // The keys come out grouped by one child atom, ascending. Ordering
-        // them by the child atoms is then a sort of each middle atom's small
-        // group by its last atoms, or nothing at all, and only the parent
-        // atom's bits are left to the radix sort.
-        let ordered = if by_mid {
-            let (low_mask, group_mask) = ((1u64 << low) - 1, (1u64 << (mid - low)) - 1);
-            let mut start = 0;
-            while start < keys.len() {
-                let group = (keys[start] >> low) & group_mask;
-                let mut end = start + 1;
-                while end < keys.len() && (keys[end] >> low) & group_mask == group {
-                    end += 1;
-                }
-                sort_small_by(&mut keys[start..end], low_mask);
-                start = end;
-            }
-            mid
-        } else {
-            low
-        };
-        let sorted = refused.and_then(|()| {
-            radix.sort(
-                lim,
-                &mut keys,
-                ordered as usize,
-                (bits.0 + mid - ordered) as usize,
-            )
-        });
-        keys.dedup();
-        *packed = keys;
-        sorted?;
-        lim.reserve_exact(&mut out, packed.len())?;
-        let (low_mask, mid_mask) = ((1u64 << low) - 1, (1u64 << (mid - low)) - 1);
-        out.extend(packed.iter().map(|&key| {
-            [
-                (key >> mid) as u32,
-                ((key >> low) & mid_mask) as u32,
-                (key & low_mask) as u32,
-            ]
-        }));
+    let out = if bits.0 + bits.1 + bits.2 < 64 {
+        sorted_packed_triples(lim, radix, packed, bits, by_mid, &each)?
     } else {
-        let mut keys = std::mem::take(wide);
-        keys.clear();
-        let mut refused = Ok(());
-        each(&mut |[a, l, r]| {
-            if refused.is_ok() {
-                refused =
-                    lim.try_push(&mut keys, (a as u128) << 64 | (l as u128) << 32 | r as u128);
-            }
-        });
-        keys.sort_unstable();
-        keys.dedup();
-        *wide = keys;
-        refused?;
-        lim.reserve_exact(&mut out, wide.len())?;
-        out.extend(
-            wide.iter()
-                .map(|&key| [(key >> 64) as u32, (key >> 32) as u32, key as u32]),
-        );
-    }
+        sorted_wide_triples(lim, wide, &each)?
+    };
     lim.check_stop()?;
+    Ok(out)
+}
+
+type TripleEmitter<'a> = &'a dyn Fn(&mut dyn FnMut([u32; 3]));
+
+fn sorted_packed_triples(
+    lim: &Limits,
+    radix: &mut Radix,
+    packed: &mut Vec<u64>,
+    bits: (u32, u32, u32),
+    by_mid: bool,
+    each: TripleEmitter<'_>,
+) -> Result<Vec<[u32; 3]>, OperationError> {
+    let (low, mid) = (bits.2, bits.1 + bits.2);
+    let mut keys = std::mem::take(packed);
+    keys.clear();
+    let mut refused = Ok(());
+    each(&mut |[a, l, r]| {
+        if refused.is_ok() {
+            refused = lim.try_push(&mut keys, (a as u64) << mid | (l as u64) << low | r as u64);
+        }
+    });
+    // The keys come out grouped by one child atom, ascending. Ordering
+    // them by the child atoms is then a sort of each middle atom's small
+    // group by its last atoms, or nothing at all, and only the parent
+    // atom's bits are left to the radix sort.
+    let ordered = if by_mid {
+        let (low_mask, group_mask) = ((1u64 << low) - 1, (1u64 << (mid - low)) - 1);
+        let mut start = 0;
+        while start < keys.len() {
+            let group = (keys[start] >> low) & group_mask;
+            let mut end = start + 1;
+            while end < keys.len() && (keys[end] >> low) & group_mask == group {
+                end += 1;
+            }
+            sort_small_by(&mut keys[start..end], low_mask);
+            start = end;
+        }
+        mid
+    } else {
+        low
+    };
+    let sorted = refused.and_then(|()| {
+        radix.sort(
+            lim,
+            &mut keys,
+            ordered as usize,
+            (bits.0 + mid - ordered) as usize,
+        )
+    });
+    keys.dedup();
+    *packed = keys;
+    sorted?;
+    let mut out = Vec::new();
+    lim.reserve_exact(&mut out, packed.len())?;
+    let (low_mask, mid_mask) = ((1u64 << low) - 1, (1u64 << (mid - low)) - 1);
+    out.extend(packed.iter().map(|&key| {
+        [
+            (key >> mid) as u32,
+            ((key >> low) & mid_mask) as u32,
+            (key & low_mask) as u32,
+        ]
+    }));
+    Ok(out)
+}
+
+fn sorted_wide_triples(
+    lim: &Limits,
+    wide: &mut Vec<u128>,
+    each: TripleEmitter<'_>,
+) -> Result<Vec<[u32; 3]>, OperationError> {
+    let mut keys = std::mem::take(wide);
+    keys.clear();
+    let mut refused = Ok(());
+    each(&mut |[a, l, r]| {
+        if refused.is_ok() {
+            refused = lim.try_push(&mut keys, (a as u128) << 64 | (l as u128) << 32 | r as u128);
+        }
+    });
+    keys.sort_unstable();
+    keys.dedup();
+    *wide = keys;
+    refused?;
+    let mut out = Vec::new();
+    lim.reserve_exact(&mut out, wide.len())?;
+    out.extend(
+        wide.iter()
+            .map(|&key| [(key >> 64) as u32, (key >> 32) as u32, key as u32]),
+    );
     Ok(out)
 }
 

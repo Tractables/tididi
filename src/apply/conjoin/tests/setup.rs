@@ -108,18 +108,15 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             .unwrap();
             let free_at = |t: VtreeIdx| f_plan.free[t.idx()] || g_plan.free[t.idx()];
             let under_free = |t: VtreeIdx| {
-                let mut up = into.node(t).parent();
-                while let Some(p) = up {
-                    if free_at(p) {
-                        return true;
-                    }
-                    up = into.node(p).parent();
-                }
-                false
+                std::iter::successors(into.node(t).parent(), |&p| into.node(p).parent())
+                    .any(free_at)
             };
-            let width = |d: &Tdd, free: &[bool], t: VtreeIdx| match free[t.idx()] {
-                true => 1,
-                false => d.levels[t.idx()].slot_count() as u64,
+            let width = |d: &Tdd, free: &[bool], t: VtreeIdx| {
+                if free[t.idx()] {
+                    1
+                } else {
+                    d.levels[t.idx()].slot_count() as u64
+                }
             };
             let nodes = |t: VtreeIdx| width(&f, &f_plan.free, t) * width(&g, &g_plan.free, t);
             let built: Vec<_> = internal.iter().copied().filter(|&t| !free_at(t)).collect();
@@ -138,39 +135,22 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             assert_eq!(
                 cone.free_nodes,
                 free.iter().map(|&t| nodes(t)).sum::<u64>(),
-                "{shape}: free nodes"
+                "{shape}"
             );
             for (k, &t) in built.iter().enumerate() {
-                let before = free
+                let before: u64 = free
                     .iter()
                     .filter(|&&s| into.topo_pos(s) < into.topo_pos(t))
                     .map(|&s| nodes(s))
-                    .sum::<u64>();
-                assert_eq!(
-                    cone.free_before(k),
-                    before,
-                    "{shape}: free nodes before level {}",
-                    t.0
-                );
-                assert_eq!(
-                    f_widths[t.idx()],
-                    f.levels[t.idx()].slot_count(),
-                    "{shape}: f's width at {}",
-                    t.0
-                );
-                assert_eq!(
-                    g_widths[t.idx()],
-                    g.levels[t.idx()].slot_count(),
-                    "{shape}: g's width at {}",
-                    t.0
-                );
+                    .sum();
+                assert_eq!(cone.free_before(k), before, "{shape}: free before {}", t.0);
+                assert_eq!(f_widths[t.idx()], f.levels[t.idx()].slot_count());
+                assert_eq!(g_widths[t.idx()], g.levels[t.idx()].slot_count());
             }
             for &t in &leaves {
                 assert_eq!(
                     (f_widths[t.idx()], g_widths[t.idx()]),
-                    (LEAF_WIDTH, LEAF_WIDTH),
-                    "{shape}: leaf {}",
-                    t.0
+                    (LEAF_WIDTH, LEAF_WIDTH)
                 );
             }
             regions += tops.len();

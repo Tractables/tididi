@@ -19,9 +19,8 @@
 
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, NodeIdx, Tdd, TddLevel};
 
-
-use crate::vtree::rotate::RotationInfo;
 use crate::vtree::RotationKind;
+use crate::vtree::rotate::RotationInfo;
 
 // The `marginal_ctx` branches below expand fully instead of sharing and
 // deduping; the argument is the module doc's "Marginal context" section.
@@ -29,7 +28,7 @@ use crate::vtree::RotationKind;
 use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
 use crate::execution::pool::Scratch;
 use crate::limits::{Charged, Limits, OperationError, Transient};
-use crate::sort::{Radix, RADIX_MIN_ROWS};
+use crate::sort::{RADIX_MIN_ROWS, Radix};
 
 /// Where the four fields of a packed search triple sit: `(inner.left,
 /// inner.right, axis, src)` from the highest bits down, field `k` taking
@@ -49,13 +48,24 @@ pub(super) struct Layout {
 
 impl Layout {
     /// Every field at 32 bits: the layout of a [`u128`] word.
-    pub(super) const WIDE: Layout = Layout { shift: [96, 64, 32, 0], width: [32; 4] };
+    pub(super) const WIDE: Layout = Layout {
+        shift: [96, 64, 32, 0],
+        width: [32; 4],
+    };
 
     /// Each field at the bits that `bound`, which its values do not exceed
     /// bit for bit, needs.
     pub(super) fn fitted(bound: [u32; 4]) -> Self {
         let width = bound.map(|x| 32 - x.leading_zeros());
-        Layout { shift: [width[1] + width[2] + width[3], width[2] + width[3], width[3], 0], width }
+        Layout {
+            shift: [
+                width[1] + width[2] + width[3],
+                width[2] + width[3],
+                width[3],
+                0,
+            ],
+            width,
+        }
     }
 
     fn bits(&self) -> u32 {
@@ -94,7 +104,8 @@ impl Word for u64 {
     }
     #[inline]
     fn field(self, layout: &Layout, k: usize) -> u32 {
-        (self.checked_shr(layout.shift[k]).unwrap_or(0) & !u64::MAX.checked_shl(layout.width[k]).unwrap_or(0)) as u32
+        (self.checked_shr(layout.shift[k]).unwrap_or(0)
+            & !u64::MAX.checked_shl(layout.width[k]).unwrap_or(0)) as u32
     }
     #[inline]
     fn inner_key(self, layout: &Layout) -> u64 {
@@ -111,10 +122,21 @@ impl Word for u64 {
             triples.sort_unstable();
             return Ok(());
         }
-        debug_assert!(triples.windows(2).all(|w| w[0].field(layout, 3) <= w[1].field(layout, 3)), "the triples come in ascending order of their src");
+        debug_assert!(
+            triples
+                .windows(2)
+                .all(|w| w[0].field(layout, 3) <= w[1].field(layout, 3)),
+            "the triples come in ascending order of their src"
+        );
         let src = layout.width[3];
         let mut radix = Radix::default();
-        let sorted = radix.sort_polling(lim, triples, src as usize, (layout.bits() - src) as usize, &mut |_| Ok(()));
+        let sorted = radix.sort_polling(
+            lim,
+            triples,
+            src as usize,
+            (layout.bits() - src) as usize,
+            &mut |_| Ok(()),
+        );
         radix.discard(lim);
         sorted
     }
@@ -123,8 +145,15 @@ impl Word for u64 {
 impl Word for u128 {
     #[inline]
     fn pack(layout: &Layout, inner: ChildPair, src: u32, axis: EncodedChildRef) -> Self {
-        debug_assert_eq!(layout.width, Layout::WIDE.width, "a u128 triple takes the wide layout");
-        (u128::from(inner.left.0) << 96) | (u128::from(inner.right.0) << 64) | (u128::from(axis.0) << 32) | u128::from(src)
+        debug_assert_eq!(
+            layout.width,
+            Layout::WIDE.width,
+            "a u128 triple takes the wide layout"
+        );
+        (u128::from(inner.left.0) << 96)
+            | (u128::from(inner.right.0) << 64)
+            | (u128::from(axis.0) << 32)
+            | u128::from(src)
     }
     #[inline]
     fn field(self, _: &Layout, k: usize) -> u32 {
@@ -148,7 +177,10 @@ impl Word for u128 {
 
 #[inline]
 fn tri_inner<W: Word>(p: W, layout: &Layout) -> ChildPair {
-    ChildPair::new(EncodedChildRef::from_raw(p.field(layout, 0)), EncodedChildRef::from_raw(p.field(layout, 1)))
+    ChildPair::new(
+        EncodedChildRef::from_raw(p.field(layout, 0)),
+        EncodedChildRef::from_raw(p.field(layout, 1)),
+    )
 }
 #[inline]
 fn tri_src<W: Word>(p: W, layout: &Layout) -> u32 {
@@ -202,7 +234,12 @@ pub(crate) fn rebuild_rotated_levels(
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let marginal = tdd.has_marginal_level();
-    let step = RotationStep { info, dir, crossed: false, max_pairs };
+    let step = RotationStep {
+        info,
+        dir,
+        crossed: false,
+        max_pairs,
+    };
     rebuild_levels(lim, tdd, step, marginal, scratch)
 }
 
@@ -224,7 +261,16 @@ pub(crate) fn rebuild_levels(
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let mut prepared = std::mem::take(&mut scratch.prepared);
     let rebuilt = match prepare_levels(lim, tdd, step, marginal, scratch, &mut prepared) {
-        Ok(Some(_)) => finish_levels(lim, tdd, step.info, step.dir, marginal, scratch, &mut prepared).map(Some),
+        Ok(Some(_)) => finish_levels(
+            lim,
+            tdd,
+            step.info,
+            step.dir,
+            marginal,
+            scratch,
+            &mut prepared,
+        )
+        .map(Some),
         other => other.map(|_| None),
     };
     scratch.prepared = prepared;
@@ -297,7 +343,12 @@ pub(crate) fn prepare_levels(
     scratch: &mut RestructureScratch,
     prepared: &mut Prepared,
 ) -> Result<Option<usize>, OperationError> {
-    let RotationStep { info, dir, crossed, max_pairs } = step;
+    let RotationStep {
+        info,
+        dir,
+        crossed,
+        max_pairs,
+    } = step;
     debug_assert_eq!(marginal, tdd.has_marginal_level());
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     // The group table indexes the triples with `u32` offsets;
@@ -310,15 +361,35 @@ pub(crate) fn prepare_levels(
         return Ok(None);
     }
     let fitted = Layout::fitted(bounds);
-    let Prepared { narrow, wide, layout, groups, nodes } = prepared;
+    let Prepared {
+        narrow,
+        wide,
+        layout,
+        groups,
+        nodes,
+    } = prepared;
     let table = &mut scratch.bucket.table;
     let counted = if fitted.bits() <= 64 {
         *layout = fitted;
-        let mut packed = Packed { layout: fitted, triples: narrow, groups, dir, crossed, marginal_ctx: marginal };
+        let mut packed = Packed {
+            layout: fitted,
+            triples: narrow,
+            groups,
+            dir,
+            crossed,
+            marginal_ctx: marginal,
+        };
         packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
     } else {
         *layout = Layout::WIDE;
-        let mut packed = Packed { layout: Layout::WIDE, triples: wide, groups, dir, crossed, marginal_ctx: marginal };
+        let mut packed = Packed {
+            layout: Layout::WIDE,
+            triples: wide,
+            groups,
+            dir,
+            crossed,
+            marginal_ctx: marginal,
+        };
         packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
     };
     match counted {
@@ -378,7 +449,9 @@ impl<W: Word> Packed<'_, W> {
         if nodes + inner_pairs >= max_pairs {
             return Ok(None);
         }
-        let outer_pairs: usize = filed_groups(self.groups, self.marginal_ctx).map(|g| (g.end - g.start) as usize).sum();
+        let outer_pairs: usize = filed_groups(self.groups, self.marginal_ctx)
+            .map(|g| (g.end - g.start) as usize)
+            .sum();
         Ok(Some((nodes, inner_pairs + outer_pairs)))
     }
 }
@@ -521,7 +594,14 @@ pub(crate) fn score_levels(
     cap: usize,
 ) -> Result<Option<usize>, OperationError> {
     let mut score = [None];
-    score_crossings(lim, tdd, step, (&[step.crossed], &[cap]), scratch, &mut score)?;
+    score_crossings(
+        lim,
+        tdd,
+        step,
+        (&[step.crossed], &[cap]),
+        scratch,
+        &mut score,
+    )?;
     Ok(score[0])
 }
 
@@ -542,8 +622,20 @@ pub(crate) fn score_levels_crossed_too(
     caps: [usize; 2],
 ) -> Result<[Option<usize>; 2], OperationError> {
     let mut scores = [None; 2];
-    let step = RotationStep { info, dir, crossed: false, max_pairs };
-    score_crossings(lim, tdd, step, (&[false, true], &caps), scratch, &mut scores)?;
+    let step = RotationStep {
+        info,
+        dir,
+        crossed: false,
+        max_pairs,
+    };
+    score_crossings(
+        lim,
+        tdd,
+        step,
+        (&[false, true], &caps),
+        scratch,
+        &mut scores,
+    )?;
     Ok(scores)
 }
 
@@ -557,13 +649,22 @@ fn score_crossings(
     s: &mut ScoreScratch,
     scores: &mut [Option<usize>],
 ) -> Result<(), OperationError> {
-    let RotationStep { info, dir, max_pairs, .. } = step;
+    let RotationStep {
+        info,
+        dir,
+        max_pairs,
+        ..
+    } = step;
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     let max_pairs = max_pairs.min(u32::MAX as usize);
     let left = dir == RotationKind::Left;
     // An old outer pair's `x` and inner node.
     let split_v = |vp: ChildPair| {
-        let (x, j) = if left { (vp.left, vp.right) } else { (vp.right, vp.left) };
+        let (x, j) = if left {
+            (vp.left, vp.right)
+        } else {
+            (vp.right, vp.left)
+        };
         (x.0 as usize, ChildDecoder::structural().node(j).idx())
     };
     let scored = (|| {
@@ -578,8 +679,16 @@ fn score_crossings(
             // An old inner pair's `y` and `z`, the stored sides exchanged
             // where the move is crossed.
             let split_w = |wp: ChildPair| {
-                let (wl, wr) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
-                if left { (wl.0 as usize, wr.0) } else { (wr.0 as usize, wl.0) }
+                let (wl, wr) = if crossed {
+                    (wp.right, wp.left)
+                } else {
+                    (wp.left, wp.right)
+                };
+                if left {
+                    (wl.0 as usize, wr.0)
+                } else {
+                    (wr.0 as usize, wl.0)
+                }
             };
             group_blocks(lim, old_w, split_w, s)?;
             *score = score_rows(lim, s, max_pairs, cap, floor)?;
@@ -648,7 +757,10 @@ fn file_outer_pairs_by_x(
     // most pairs one node holds for each, and counted only where that could
     // reach the bound.
     let bail = max_pairs.max(1);
-    let widest = (0..old_w.nodes().len()).map(|j| old_w.pair_count_at(j)).max().unwrap_or(0);
+    let widest = (0..old_w.nodes().len())
+        .map(|j| old_w.pair_count_at(j))
+        .max()
+        .unwrap_or(0);
     if v_pairs.saturating_mul(widest) >= bail {
         let mut triples = 0usize;
         for p in 0..n_v {
@@ -675,7 +787,12 @@ fn file_outer_pairs_by_x(
 
 /// The blocks of each old inner node into `s.blocks`, grouped by `y`, node
 /// `j`'s ending at `s.block_ends[j]`.
-fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (usize, u32), s: &mut ScoreScratch) -> Result<(), OperationError> {
+fn group_blocks(
+    lim: &Limits,
+    old_w: &TddLevel,
+    split_w: impl Fn(ChildPair) -> (usize, u32),
+    s: &mut ScoreScratch,
+) -> Result<(), OperationError> {
     const CELL: u64 = 0x5851_F42D_4C95_7F2D;
     let n_w = old_w.nodes().len();
     s.block_ends.clear();
@@ -689,8 +806,19 @@ fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (
             s.cover(lim, y)?;
             let m = &mut s.marks[y];
             if m.stamp != stamp {
-                *m = Mark { stamp, n: s.blocks.len() as u32, hash: 0 };
-                lim.try_push(&mut s.blocks, Block { y: y as u32, cells: 0, hash: 0 })?;
+                *m = Mark {
+                    stamp,
+                    n: s.blocks.len() as u32,
+                    hash: 0,
+                };
+                lim.try_push(
+                    &mut s.blocks,
+                    Block {
+                        y: y as u32,
+                        cells: 0,
+                        hash: 0,
+                    },
+                )?;
             }
             let b = &mut s.blocks[m.n as usize];
             b.hash = b.hash.wrapping_add(mix(u64::from(z) ^ CELL));
@@ -705,12 +833,28 @@ fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (
 /// pairs a row over `y`, summing the blocks its outer pairs reach, and the
 /// distinct contexts among them. `None` as soon as the pairs found and the
 /// `floor` of what is still to come reach `cap`.
-fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize, cap: usize, floor: Floor) -> Result<Option<usize>, OperationError> {
+fn score_rows(
+    lim: &Limits,
+    s: &mut ScoreScratch,
+    max_pairs: usize,
+    cap: usize,
+    floor: Floor,
+) -> Result<Option<usize>, OperationError> {
     const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
     s.keys.clear();
     s.touched.clear();
     lim.reserve(&mut s.touched, s.marks.len())?;
-    let ScoreScratch { block_ends, blocks, marks, touched, stamp, x_ends, by_x, keys, .. } = s;
+    let ScoreScratch {
+        block_ends,
+        blocks,
+        marks,
+        touched,
+        stamp,
+        x_ends,
+        by_x,
+        keys,
+        ..
+    } = s;
     let mut rows_left = floor.rows;
     let mut begin = 0usize;
     for &end in x_ends.iter() {
@@ -722,11 +866,19 @@ fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize, cap: usize, 
         for &(p, j) in &by_x[begin..end] {
             let owner = mix(u64::from(p) ^ OWNER);
             let j = j as usize;
-            let first = if j == 0 { 0 } else { block_ends[j - 1] as usize };
+            let first = if j == 0 {
+                0
+            } else {
+                block_ends[j - 1] as usize
+            };
             for b in &blocks[first..block_ends[j] as usize] {
                 let m = &mut marks[b.y as usize];
                 if m.stamp != stamp {
-                    *m = Mark { stamp, n: 0, hash: 0 };
+                    *m = Mark {
+                        stamp,
+                        n: 0,
+                        hash: 0,
+                    };
                     touched.push(b.y);
                 }
                 m.hash = m.hash.wrapping_add(owner.wrapping_mul(b.hash));
@@ -811,12 +963,32 @@ pub(crate) fn finish_levels(
     scratch: &mut RestructureScratch,
     prepared: &mut Prepared,
 ) -> Result<(TddLevel, TddLevel), OperationError> {
-    let Prepared { narrow, wide, layout, groups, nodes } = prepared;
+    let Prepared {
+        narrow,
+        wide,
+        layout,
+        groups,
+        nodes,
+    } = prepared;
     let built = if layout.bits() <= 64 {
-        let mut packed = Packed { layout: *layout, triples: narrow, groups, dir, crossed: false, marginal_ctx: marginal };
+        let mut packed = Packed {
+            layout: *layout,
+            triples: narrow,
+            groups,
+            dir,
+            crossed: false,
+            marginal_ctx: marginal,
+        };
         packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
     } else {
-        let mut packed = Packed { layout: *layout, triples: wide, groups, dir, crossed: false, marginal_ctx: marginal };
+        let mut packed = Packed {
+            layout: *layout,
+            triples: wide,
+            groups,
+            dir,
+            crossed: false,
+            marginal_ctx: marginal,
+        };
         packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
     };
     let (outer, inner) = built?;
@@ -838,7 +1010,8 @@ impl<W: Word> Packed<'_, W> {
             expand_every_pair(lim, &mut inner, self.groups)
         } else {
             // Phase 4: the inner nodes, each the inner pairs of its groups.
-            let built = cluster_by_cell_list(lim, &mut inner, self.groups, nodes, &mut scratch.bucket);
+            let built =
+                cluster_by_cell_list(lim, &mut inner, self.groups, nodes, &mut scratch.bucket);
             release_or_clear(lim, &mut scratch.bucket.ends);
             release_or_clear(lim, &mut scratch.bucket.pairs);
             built
@@ -896,7 +1069,13 @@ impl<W: Word> Packed<'_, W> {
         // marginalization-collapsed twin primes), so cell-deduping it would drop
         // count-mass. Boolean mode dedups.
         self.groups.clear();
-        group_by_inner_pair(lim, self.triples, &self.layout, self.groups, self.marginal_ctx)?;
+        group_by_inner_pair(
+            lim,
+            self.triples,
+            &self.layout,
+            self.groups,
+            self.marginal_ctx,
+        )?;
         Ok(true)
     }
 }
@@ -905,7 +1084,12 @@ impl<W: Word> Packed<'_, W> {
 /// value a field takes has no bit its bound lacks; and the number of the
 /// triples. The fields are read from the two old levels' pairs, which are
 /// fewer than the triples they expand into.
-fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKind, crossed: bool) -> ([u32; 4], usize) {
+fn field_bounds(
+    old_v_level: &TddLevel,
+    old_w_level: &TddLevel,
+    dir: RotationKind,
+    crossed: bool,
+) -> ([u32; 4], usize) {
     let mut v_axis = 0u32;
     let mut triples = 0usize;
     for i in 0..old_v_level.nodes().len() {
@@ -927,7 +1111,11 @@ fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKin
     }
     // A crossed rotation's w had its children swapped: its left side is the
     // stored right one.
-    let (w_left, w_right) = if crossed { (stored_right, stored_left) } else { (stored_left, stored_right) };
+    let (w_left, w_right) = if crossed {
+        (stored_right, stored_left)
+    } else {
+        (stored_left, stored_right)
+    };
     let src = old_v_level.nodes().len().saturating_sub(1) as u32;
     let bounds = match dir {
         RotationKind::Left => [v_axis, w_left, w_right, src],
@@ -956,22 +1144,24 @@ impl<W: Word> Packed<'_, W> {
             let src = i as u32;
             for vp in old_v_level.pairs_iter_of_idx(i) {
                 let (w_local, v_axis) = match self.dir {
-                    RotationKind::Left => (ChildDecoder::structural().node(vp.right).idx(), vp.left),
-                    RotationKind::Right => (ChildDecoder::structural().node(vp.left).idx(), vp.right),
+                    RotationKind::Left => {
+                        (ChildDecoder::structural().node(vp.right).idx(), vp.left)
+                    }
+                    RotationKind::Right => {
+                        (ChildDecoder::structural().node(vp.left).idx(), vp.right)
+                    }
                 };
                 for wp in old_w_level.pairs_iter_of_idx(w_local) {
                     // A crossed rotation's w had its children swapped: its left
                     // side is the stored right one.
-                    let (w_left, w_right) = if self.crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
+                    let (w_left, w_right) = if self.crossed {
+                        (wp.right, wp.left)
+                    } else {
+                        (wp.left, wp.right)
+                    };
                     let (inner, axis) = match self.dir {
-                        RotationKind::Left => (
-                            ChildPair::new(v_axis, w_left),
-                            w_right,
-                        ),
-                        RotationKind::Right => (
-                            ChildPair::new(w_right, v_axis),
-                            w_left,
-                        ),
+                        RotationKind::Left => (ChildPair::new(v_axis, w_left), w_right),
+                        RotationKind::Right => (ChildPair::new(w_right, v_axis), w_left),
                     };
                     lim.try_push(self.triples, W::pack(&self.layout, inner, src, axis))?;
                     // Checked per triple: one `vp` whose `w_local` fans out widely
@@ -1027,13 +1217,18 @@ fn group_by_inner_pair<W: Word>(
             if keep_cells || cell != prev_cell {
                 triples[write] = triples[read];
                 write += 1;
-                fp_hash = fp_hash.wrapping_mul(0x517cc1b727220a95)
-                    .wrapping_add(cell);
+                fp_hash = fp_hash.wrapping_mul(0x517cc1b727220a95).wrapping_add(cell);
                 prev_cell = cell;
             }
             read += 1;
         }
-        let group = PairGroup { hash: fp_hash, inner: tri_inner(first, layout), start: group_start, end: write as u32, node: NodeIdx(u32::MAX) };
+        let group = PairGroup {
+            hash: fp_hash,
+            inner: tri_inner(first, layout),
+            start: group_start,
+            end: write as u32,
+            node: NodeIdx(u32::MAX),
+        };
         lim.try_push(group_info, group)?;
     }
     triples.truncate(write);
@@ -1127,7 +1322,11 @@ fn cluster_by_cell_list(
         ends[k + 1] += ends[k];
     }
     pairs.clear();
-    lim.try_resize(pairs, group_info.len(), ChildPair::new(NodeIdx(0), NodeIdx(0)))?;
+    lim.try_resize(
+        pairs,
+        group_info.len(),
+        ChildPair::new(NodeIdx(0), NodeIdx(0)),
+    )?;
     for g in group_info {
         let at = &mut ends[g.node.idx()];
         pairs[*at as usize] = g.inner;
@@ -1244,8 +1443,20 @@ impl<W: Word> Packed<'_, W> {
         let layout = &self.layout;
         let dir = self.dir;
         let marginal_ctx = self.marginal_ctx;
-        let RestructureScratch { by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
-        let filed = || filed_groups(self.groups, marginal_ctx).flat_map(|g| self.triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
+        let RestructureScratch {
+            by_axis,
+            axis_ends,
+            outer_ends: ends,
+            outer_pairs: pairs,
+            ..
+        } = scratch;
+        let filed = || {
+            filed_groups(self.groups, marginal_ctx).flat_map(|g| {
+                self.triples[g.start as usize..g.end as usize]
+                    .iter()
+                    .map(move |&p| (g.node, p))
+            })
+        };
         // Each node's pair count, at the slot after the node's.
         ends.clear();
         lim.try_resize(ends, n_v + 1, 0)?;
@@ -1268,30 +1479,11 @@ impl<W: Word> Packed<'_, W> {
             *at += 1;
         };
         let axis_range = max_axis as usize + 1;
-        let by_axis_order = !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
+        let by_axis_order =
+            !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
         if by_axis_order {
-            axis_ends.clear();
-            lim.try_resize(axis_ends, axis_range + 1, 0)?;
-            for (_, p) in filed() {
-                axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
-            }
-            for a in 0..axis_range {
-                axis_ends[a + 1] += axis_ends[a];
-            }
-            by_axis.clear();
-            lim.try_resize(by_axis, cells, 0)?;
-            for (node, p) in filed() {
-                let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
-                by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
-                *at += 1;
-            }
-            let mut begin = 0;
-            for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
-                for &e in &by_axis[begin as usize..end as usize] {
-                    file((e >> 32) as u32, ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)));
-                }
-                begin = end;
-            }
+            let axis_bufs = (axis_ends, by_axis);
+            self.file_outer_pairs_by_axis(lim, (axis_range, cells), axis_bufs, &mut file)?;
         } else {
             for (node, p) in filed() {
                 let outer_pair = match dir {
@@ -1309,16 +1501,61 @@ impl<W: Word> Packed<'_, W> {
             }
         }
         debug_assert!(
-            marginal_ctx || (0..n_v).all(|i| {
-                let begin = if i == 0 { 0 } else { ends[i - 1] };
-                pairs[begin as usize..ends[i] as usize].windows(2).all(|w| w[0] < w[1])
-            }),
+            marginal_ctx
+                || (0..n_v).all(|i| {
+                    let begin = if i == 0 { 0 } else { ends[i - 1] };
+                    pairs[begin as usize..ends[i] as usize]
+                        .windows(2)
+                        .all(|w| w[0] < w[1])
+                }),
             "each outer node's pairs are ascending and distinct",
         );
         Ok(())
     }
-}
 
+    fn file_outer_pairs_by_axis(
+        &self,
+        lim: &Limits,
+        (axis_range, cells): (usize, usize),
+        (axis_ends, by_axis): (&mut Vec<u32>, &mut Vec<u64>),
+        file: &mut impl FnMut(u32, ChildPair),
+    ) -> Result<(), OperationError> {
+        let layout = &self.layout;
+        let filed = || {
+            filed_groups(self.groups, self.marginal_ctx).flat_map(|g| {
+                self.triples[g.start as usize..g.end as usize]
+                    .iter()
+                    .map(move |&p| (g.node, p))
+            })
+        };
+        axis_ends.clear();
+        lim.try_resize(axis_ends, axis_range + 1, 0)?;
+        for (_, p) in filed() {
+            axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
+        }
+        for a in 0..axis_range {
+            axis_ends[a + 1] += axis_ends[a];
+        }
+        by_axis.clear();
+        lim.try_resize(by_axis, cells, 0)?;
+        for (node, p) in filed() {
+            let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
+            by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
+            *at += 1;
+        }
+        let mut begin = 0;
+        for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
+            for &e in &by_axis[begin as usize..end as usize] {
+                file(
+                    (e >> 32) as u32,
+                    ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)),
+                );
+            }
+            begin = end;
+        }
+        Ok(())
+    }
+}
 
 /// Whether two groups carry the same cell list in the deduped (packed)
 /// triples array. Two cells are equal iff their `(axis, src)` parts match,
@@ -1327,7 +1564,10 @@ impl<W: Word> Packed<'_, W> {
 fn same_cells<W: Word>(triples: &[W], layout: &Layout, a: &PairGroup, b: &PairGroup) -> bool {
     let a = &triples[a.start as usize..a.end as usize];
     let b = &triples[b.start as usize..b.end as usize];
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(&x, &y)| x.cell(layout) == y.cell(layout))
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(&x, &y)| x.cell(layout) == y.cell(layout))
 }
 
 #[cfg(test)]

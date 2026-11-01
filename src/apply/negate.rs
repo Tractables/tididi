@@ -372,24 +372,36 @@ fn complement_full_at_root(
             vtree: root,
             local: neg_idx,
         };
-        let result = match owed {
-            Some(owed) => {
-                let mut result = assembly.finish_with(output, owed.carried, &owed.rebuilt, None)?;
-                // Each level under the root's children covers its children's
-                // whole basis, every cell a pair, so names each of their
-                // nodes. The complement drops the cells of an empty node, so
-                // the root's children may hold one no pair names.
-                let loose = [(left, left_is_leaf), (right, right_is_leaf)]
-                    .into_iter()
-                    .filter(|&(_, leaf)| !leaf);
-                result
-                    .dirty
-                    .set_loose(Some(loose.map(|(c, _)| c.0).collect()));
-                result
-            }
-            None => assembly.finish(output)?,
-        };
+        let result = finish_root_complement_assembly(
+            assembly,
+            output,
+            [(left, left_is_leaf), (right, right_is_leaf)],
+            owed,
+        )?;
         Ok((result, Some(out_local)))
+    }
+}
+
+fn finish_root_complement_assembly(
+    assembly: Assembly<'_>,
+    output: TddNodeId,
+    children: [(crate::vtree::VtreeIdx, bool); 2],
+    owed: Option<Owed>,
+) -> Result<Tdd, OperationError> {
+    match owed {
+        Some(owed) => {
+            let mut result = assembly.finish_with(output, owed.carried, &owed.rebuilt, None)?;
+            // Each level under the root's children covers its children's whole
+            // basis, every cell a pair, so names each of their nodes. The
+            // complement drops the cells of an empty node, so the root's
+            // children may hold one no pair names.
+            let loose = children.into_iter().filter(|&(_, leaf)| !leaf);
+            result
+                .dirty
+                .set_loose(Some(loose.map(|(c, _)| c.0).collect()));
+            Ok(result)
+        }
+        None => assembly.finish(output),
     }
 }
 

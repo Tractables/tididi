@@ -285,7 +285,7 @@ struct PairRows<'a> {
 /// With `W` columns, all of one pair, a row's cells are found and then
 /// written once, a node index or `NO_PRODUCT` each, in place of the reset
 /// and the writes of its live cells.
-fn pair_rows_of<const ONE: bool, const W: usize, L, R, S>(
+fn pair_rows_of<const ONE: bool, const W: usize, L: ChildLookup, R: ChildLookup, S: PairSink>(
     eng: &Engine,
     rows: PairRows<'_>,
     f_scratch: &mut Vec<ChildPair>,
@@ -293,18 +293,8 @@ fn pair_rows_of<const ONE: bool, const W: usize, L, R, S>(
     left: &L,
     right: &R,
     sink: &mut S,
-) -> Result<(), OperationError>
-where
-    L: ChildLookup,
-    R: ChildLookup,
-    S: PairSink,
-{
-    let PairRows {
-        f_level,
-        ctx,
-        f_width,
-        columns,
-    } = rows;
+) -> Result<(), OperationError> {
+    let (f_level, ctx, f_width, columns) = (rows.f_level, rows.ctx, rows.f_width, rows.columns);
     let g_flat = columns.g_flat;
     let lim = eng.limits();
     let right_width = ctx.right_width;
@@ -319,7 +309,6 @@ where
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let mut few_ands = [0u64; FEW_PAIRS];
     let mut many: Vec<u64> = Vec::new();
-
     let slab_fill = init_pair_row_slab::<W>(slab, ctx.output_grid_base, f_width, width);
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);

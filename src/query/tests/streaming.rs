@@ -1,176 +1,112 @@
 //! The streaming fold against the materialized count.
-//!
-//! The fixtures these read are in `mod.rs`.
 
-
-use crate::Engine;
-use crate::apply::conjoin::apply_and;
-use crate::apply::conjoin::VtreeMask;
-use crate::test_helpers::clause_to_tdd;
-use crate::build::constant_one;
-use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
-use crate::vtree::{Vtree, VtreeIdx};
-use crate::diagram::Tdd;
-use num_bigint::BigUint;
 use std::sync::Arc;
 
+use num_bigint::BigUint;
+use num_rational::BigRational;
+use num_traits::Zero;
+
+use crate::Engine;
+use crate::apply::conjoin::tests::apply_and_fallible;
+use crate::apply::conjoin::{VtreeMask, apply_and};
+use crate::build::constant_one;
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
+use crate::test_helpers::{CnfShape, Lcg, clause_to_tdd, exact_weight, literals, rand_cnf, rat};
+use crate::vtree::{Vtree, VtreeIdx};
+
+fn interior_targets(vtree: &Vtree) -> Vec<bool> {
+    (0..vtree.num_nodes())
+        .map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf())
+        .collect()
+}
+
+fn rand_unminimized_tdd(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg, nvars: u32) -> Tdd {
+    let shape = CnfShape {
+        clauses: 4,
+        width: nvars as usize,
+    };
+    let mut acc = constant_one(eng, vtree);
+    for clause in rand_cnf(rng, nvars, shape) {
+        acc = apply_and(acc, clause_to_tdd(vtree, &literals(&clause)));
+    }
+    acc
+}
 
 #[test]
 fn streaming_fold_count_matches_materialized_randomized() {
     let eng = Engine::new();
-    // The apply's streaming-marginal fold with all interior vtree levels as
-    // targets (the terminal `#F` count discipline — the apply collapses each level
-    // to Σ left_count × right_count, never keeping the full product) must equal the
-    // materialize-then-count oracle. This exercises the churn-free collapse-at-source
-    // path (`run_level_rows_stream_count`) in both its guises: dense lookups at the
-    // lowest levels whose children are leaves, marginal lookups above them.
-    // Count-identity is the regression arbiter for the streaming fold; it must hold
-    // by construction.
-    use crate::apply::conjoin::tests::apply_and_fallible;
     let mut rng = Lcg::new(0x0bad_c0de_1337_f00d);
-    let mut checked = 0u32;
-    let mut nonzero = 0u32;
+    let (mut checked, mut nonzero) = (0u32, 0u32);
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        // Every interior vtree level marginalized, so every interior level
-        // streams.
-        let targets: Vec<bool> =
-            (0..vtree.num_nodes()).map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf()).collect();
-        // Conjoined without an intervening minimize: the fold under test must
-        // agree with the materialized count on the diagrams the apply produces,
-        // not only on reduced ones.
-        let rand_fn = |rng: &mut Lcg| -> Tdd {
-            let shape = CnfShape { clauses: 4, width: nvars as usize };
-            let mut acc = constant_one(&eng, &vtree);
-            for clause in rand_cnf(rng, nvars, shape) {
-                let cl = clause_to_tdd(&vtree, &literals(&clause));
-                acc = apply_and(acc, cl);
-            }
-            acc
-        };
+        let targets = interior_targets(&vtree);
         for _ in 0..200 {
-            let a = rand_fn(&mut rng);
-            let b = rand_fn(&mut rng);
-            // `apply_and_fallible` mutates (drops) its operands — clone per call.
-            let oracle = {
-                let mut a_o = a.clone();
-                let mut b_o = b.clone();
-                (apply_and_fallible(&eng, &mut a_o, &mut b_o, VtreeMask::default(), VtreeMask::default(), None).unwrap()).model_count().unwrap()
+            let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
+            let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
+            let run = |mask: VtreeMask<'_>| {
+                let (mut a_c, mut b_c) = (a.clone(), b.clone());
+                apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default(), None)
+                    .unwrap()
+                    .model_count()
+                    .unwrap()
             };
-            let fold = {
-                let mut a_f = a.clone();
-                let mut b_f = b.clone();
-                (apply_and_fallible(&eng, &mut a_f, &mut b_f, VtreeMask::new(Some(&targets)), VtreeMask::default(), None).unwrap()).model_count().unwrap()
-            };
-            assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
+            let oracle = run(VtreeMask::default());
+            let fold = run(VtreeMask::new(Some(&targets)));
+            assert_eq!(
+                fold, oracle,
+                "nvars={nvars}: streaming fold != materialized"
+            );
             checked += 1;
-            if oracle != BigUint::ZERO {
-                nonzero += 1;
-            }
+            nonzero += u32::from(oracle != BigUint::ZERO);
         }
     }
-    assert!(checked > 0);
-    assert!(
-        nonzero > 0,
-        "test built only UNSAT formulas — the fold path was never exercised"
-    );
+    assert!(checked > 0 && nonzero > 0);
 }
 
-/// Weighted twin of `streaming_fold_count_matches_materialized_randomized`. With a weight context
-/// active (random small positive rational per-literal weights) and every
-/// interior vtree level as a marginalization target, the streamed weighted output
-/// value must equal the materialize-then-evaluate oracle.
-///
-/// The path exercised is the weighted collapse-at-source fold (`WeightFold` on
-/// the shared walker), so this parity check is the primary correctness
-/// evidence for weighted collapse.
-///
-/// A fresh weight store is attached before each of the two
-/// `apply_and_fallible` calls and read back right after, per trial, so no
-/// per-level state leaks between trials.
-///
-/// Fewer formulas per variable count than the integer twin: `BigRational`
-/// arithmetic costs more per apply, and one fold/oracle mismatch fails the
-/// check.
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();
-
-    use crate::diagram::WeightStore;
-    use crate::apply::conjoin::tests::apply_and_fallible;
-    use crate::diagram::{LiteralWeights, RationalWeights};
-    use crate::diagram::Arithmetic;
-    use crate::test_helpers::{exact_weight, rat};
-    use num_rational::BigRational;
-    use num_traits::Zero;
-
     let mut rng = Lcg::new(0x5eed_5eed_c0ff_ee11);
-    let mut checked = 0u32;
-    let mut nonzero = 0u32;
+    let (mut checked, mut nonzero) = (0u32, 0u32);
+    let rand_weight =
+        |rng: &mut Lcg| -> BigRational { rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64) };
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        let targets: Vec<bool> =
-            (0..vtree.num_nodes()).map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf()).collect();
-        // Conjoined without an intervening minimize: the fold under test must
-        // agree with the materialized count on the diagrams the apply produces,
-        // not only on reduced ones.
-        let rand_fn = |rng: &mut Lcg| -> Tdd {
-            let shape = CnfShape { clauses: 4, width: nvars as usize };
-            let mut acc = constant_one(&eng, &vtree);
-            for clause in rand_cnf(rng, nvars, shape) {
-                let cl = clause_to_tdd(&vtree, &literals(&clause));
-                acc = apply_and(acc, cl);
-            }
-            acc
-        };
-        // Random small strictly-positive rational literal weights: a weighted
-        // value of 0 can then only mean `model_count` == 0 (no zero-cancellation
-        // from a negative/zero weight muddying the fold-vs-oracle comparison).
-        let rand_weight = |rng: &mut Lcg| -> BigRational {
-            rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64)
-        };
+        let targets = interior_targets(&vtree);
         for _ in 0..50 {
-            let a = rand_fn(&mut rng);
-            let b = rand_fn(&mut rng);
-            // Per-variable (w_neg, w_pos) weights, shared by both branches below
-            // so oracle and fold evaluate the same weighted function.
+            let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
+            let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let weights: Vec<LiteralWeights<BigRational>> = (0..nvars)
-                .map(|_| LiteralWeights { negative: rand_weight(&mut rng), positive: rand_weight(&mut rng) })
+                .map(|_| LiteralWeights {
+                    negative: rand_weight(&mut rng),
+                    positive: rand_weight(&mut rng),
+                })
                 .collect();
-
-            let store = || {
-                WeightStore::new(
+            let run = |mask: VtreeMask<'_>| {
+                let (mut a_c, mut b_c) = (a.clone(), b.clone());
+                a_c.set_weights(WeightStore::new(
                     RationalWeights::from_literals(&weights),
                     Arithmetic::ExactRational,
+                ))
+                .unwrap();
+                let res =
+                    apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default(), None)
+                        .unwrap();
+                exact_weight(
+                    &res.weighted_value()
+                        .unwrap()
+                        .expect("store follows the result"),
                 )
             };
-            let oracle = {
-                let mut a_o = a.clone();
-                let mut b_o = b.clone();
-                a_o.set_weights(store()).unwrap();
-                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, VtreeMask::default(), VtreeMask::default(), None).unwrap();
-                exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
-            };
-            let fold = {
-                let mut a_f = a.clone();
-                let mut b_f = b.clone();
-                a_f.set_weights(store()).unwrap();
-                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, VtreeMask::new(Some(&targets)), VtreeMask::default(), None).unwrap();
-                exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
-            };
+            let oracle = run(VtreeMask::default());
+            let fold = run(VtreeMask::new(Some(&targets)));
             assert_eq!(
                 fold, oracle,
-                "nvars={nvars}: weighted streaming fold != materialized oracle"
+                "nvars={nvars}: weighted streaming fold != materialized"
             );
             checked += 1;
-            if !oracle.is_zero() {
-                nonzero += 1;
-            }
+            nonzero += u32::from(!oracle.is_zero());
         }
     }
-    assert!(checked > 0);
-    assert!(
-        nonzero > 0,
-        "test built only UNSAT formulas — the weighted fold path was never exercised"
-    );
+    assert!(checked > 0 && nonzero > 0);
 }

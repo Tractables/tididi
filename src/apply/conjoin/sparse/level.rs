@@ -243,15 +243,14 @@ pub(crate) fn apply_sparse_level(
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<(Made, bool), OperationError> {
     let t_idx = shape.t.idx();
-    let ProductLists {
-        left,
-        right,
-        out: pl_output,
-    } = lists;
-    let pl = Sides { left, right };
-
+    let (pl, pl_output) = (
+        Sides {
+            left: lists.left,
+            right: lists.right,
+        },
+        lists.out,
+    );
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels, passthrough);
-
     seed_output(
         eng,
         &f.levels[t_idx],

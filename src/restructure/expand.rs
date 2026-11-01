@@ -15,8 +15,8 @@ use super::{ExpandError, GraftError};
 
 use crate::Engine;
 use crate::diagram::{
-    ChildPair, ChildRef, EncodedChildRef, LevelView, Literal, NodeIdx, Tdd, TddLevel, TddNodeId,
-    NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO,
+    ChildPair, ChildRef, EncodedChildRef, LevelView, Literal, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX,
+    POS_LEAF_IDX, Tdd, TddLevel, TddNodeId, ZERO,
 };
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
@@ -48,16 +48,32 @@ impl VariableExpansion {
                 return Err(ExpandError::MissingClass { variable });
             }
         }
-        if let Some(r) = (0..self.classes.len()).find(|&r| !self.classes[r].is_empty() && vtree.leaf_of(VarId(r as u32 + 1)).is_none()) {
-            return Err(ExpandError::ClassWithoutLeaf { variable: VarId(r as u32 + 1) });
+        if let Some(r) = (0..self.classes.len())
+            .find(|&r| !self.classes[r].is_empty() && vtree.leaf_of(VarId(r as u32 + 1)).is_none())
+        {
+            return Err(ExpandError::ClassWithoutLeaf {
+                variable: VarId(r as u32 + 1),
+            });
         }
         let lim = eng.limits();
         let mut named = Vec::new();
-        let count = self.classes.iter().map(Vec::len).sum::<usize>() + self.constants.len() + self.free.len();
+        let count = self.classes.iter().map(Vec::len).sum::<usize>()
+            + self.constants.len()
+            + self.free.len();
         lim.reserve_exact(&mut named, count)?;
-        named.extend(self.classes.iter().flatten().chain(&self.constants).map(|literal| literal.var).chain(self.free.iter().copied()));
+        named.extend(
+            self.classes
+                .iter()
+                .flatten()
+                .chain(&self.constants)
+                .map(|literal| literal.var)
+                .chain(self.free.iter().copied()),
+        );
         if let Some(&variable) = named.iter().find(|var| var.0 == 0 || var.0 > self.num_vars) {
-            return Err(ExpandError::VariableOutOfRange { variable, num_vars: self.num_vars });
+            return Err(ExpandError::VariableOutOfRange {
+                variable,
+                num_vars: self.num_vars,
+            });
         }
         named.sort_unstable();
         if let Some(pair) = named.windows(2).find(|pair| pair[0] == pair[1]) {
@@ -130,7 +146,8 @@ impl Tdd {
     /// summed-out level, and a refused allocation or an armed stop. The
     /// expansion is checked before any level is built.
     pub fn expand_variables(&self, expansion: &VariableExpansion) -> Result<Tdd, ExpandError> {
-        self.context().run(|eng| eng.expand_variables(self, expansion))
+        self.context()
+            .run(|eng| eng.expand_variables(self, expansion))
     }
 }
 
@@ -145,7 +162,11 @@ impl Engine {
     ///
     /// As [`Tdd::expand_variables`], with refused work reported as
     /// [`ExpandError::Operation`].
-    pub fn expand_variables(&self, tdd: &Tdd, expansion: &VariableExpansion) -> Result<Tdd, ExpandError> {
+    pub fn expand_variables(
+        &self,
+        tdd: &Tdd,
+        expansion: &VariableExpansion,
+    ) -> Result<Tdd, ExpandError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
@@ -165,16 +186,23 @@ impl Engine {
         // each one's variable table by its id, quadratic in their number.
         if !expansion.constants.is_empty() {
             lim.next_phase()?;
-            let order: Vec<VarId> = expansion.constants.iter().map(|literal| literal.var).collect();
+            let order: Vec<VarId> = expansion
+                .constants
+                .iter()
+                .map(|literal| literal.var)
+                .collect();
             let vtree = context.bind(Vtree::balanced_over(&order)?);
             parts.push(self.cube(&vtree, expansion.constants.iter().copied())?);
         }
         lim.next_phase()?;
-        self.graft(parts, &expansion.free).map_err(|error| match error {
-            GraftError::Operation(error) => ExpandError::Operation(error),
-            GraftError::Vtree(error) => ExpandError::Vtree(error),
-            error => unreachable!("the checked expansion grafts disjoint structural parts: {error}"),
-        })
+        self.graft(parts, &expansion.free)
+            .map_err(|error| match error {
+                GraftError::Operation(error) => ExpandError::Operation(error),
+                GraftError::Vtree(error) => ExpandError::Vtree(error),
+                error => {
+                    unreachable!("the checked expansion grafts disjoint structural parts: {error}")
+                }
+            })
     }
 }
 
@@ -188,16 +216,89 @@ fn leaf_node(level: &TddLevel, side: EncodedChildRef) -> usize {
 
 /// `tdd` on `class_vtree`, its vtree with each leaf replaced by the leaf's
 /// class, before the constants and free variables are added.
-fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[Vec<Literal>]) -> Result<Tdd, OperationError> {
+fn expand_classes(
+    eng: &Engine,
+    tdd: &Tdd,
+    class_vtree: &Arc<Vtree>,
+    classes: &[Vec<Literal>],
+) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let reduced = tdd.vtree();
     let idx_map = lockstep_map(reduced, class_vtree);
     let mut out = Tdd::builder(eng, class_vtree)?;
 
-    // Which of a class leaf's three nodes the levels above reference. Only
-    // those are built, which keeps the result free of unreachable nodes, and
-    // a diagram whose output is itself a leaf builds just the output's node.
-    // A class of one positive literal renames its leaf and needs nothing.
+    let used = mark_referenced_class_leaves(lim, tdd, reduced, classes)?;
+    let output = tdd.output();
+
+    // The node each referenced leaf node became, in its class subtree.
+    let mut remap: Vec<Option<[Option<NodeIdx>; 3]>> = Vec::new();
+    lim.try_resize(&mut remap, reduced.num_nodes(), None)?;
+    for (leaf, var) in reduced.leaf_bottomup() {
+        if let Some(needed) = used[leaf.idx()] {
+            remap[leaf.idx()] = Some(build_class(
+                eng,
+                class_vtree,
+                idx_map[leaf.idx()],
+                &classes[var.idx()],
+                needed,
+                &mut out,
+            )?);
+        }
+    }
+
+    for (t, left, right) in reduced.internal_bottomup() {
+        let expanded = idx_map[t.idx()];
+        let (left_map, right_map) = (remap[left.idx()].as_ref(), remap[right.idx()].as_ref());
+        if left_map.is_none() && right_map.is_none() {
+            let level = LevelView::unweighted(tdd.level(t))
+                .expect("a structural level has no weighted column");
+            out.replace_level(eng, expanded, level)?;
+            continue;
+        }
+        // A reference into a class leaf goes to the node built for it;
+        // false and references into other levels are kept.
+        let redirect = |child: VtreeIdx,
+                        map: Option<&[Option<NodeIdx>; 3]>,
+                        side: EncodedChildRef| match map {
+            Some(map) if side != ZERO.into() => map[leaf_node(tdd.level(child), side)]
+                .expect("a referenced class node is built")
+                .into(),
+            _ => side,
+        };
+        let level = tdd.level(t);
+        let mut pairs = Vec::new();
+        for node in level.nodes() {
+            pairs.clear();
+            for pair in level.pairs_iter_of(&node) {
+                pairs.push(ChildPair::new(
+                    redirect(left, left_map, pair.left),
+                    redirect(right, right_map, pair.right),
+                ));
+            }
+            out.push(eng, expanded, &pairs)?;
+        }
+    }
+
+    let local = match &remap[output.vtree.idx()] {
+        Some(map) if output.local != ZERO => {
+            map[output.local.idx()].expect("the output's class node is built")
+        }
+        _ => output.local,
+    };
+    Ok(out.finish(TddNodeId {
+        vtree: idx_map[reduced.root().idx()],
+        local,
+    })?)
+}
+
+/// Determine which of each non-identity class leaf's three nodes (`Pos`, `Neg`, `One`)
+/// are referenced by `tdd`.
+fn mark_referenced_class_leaves(
+    lim: &crate::limits::Limits,
+    tdd: &Tdd,
+    reduced: &Vtree,
+    classes: &[Vec<Literal>],
+) -> Result<Vec<Option<[bool; 3]>>, OperationError> {
     let mut used: Vec<Option<[bool; 3]>> = Vec::new();
     lim.try_resize(&mut used, reduced.num_nodes(), None)?;
     for (leaf, var) in reduced.leaf_bottomup() {
@@ -225,48 +326,7 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
             }
         }
     }
-
-    // The node each referenced leaf node became, in its class subtree.
-    let mut remap: Vec<Option<[Option<NodeIdx>; 3]>> = Vec::new();
-    lim.try_resize(&mut remap, reduced.num_nodes(), None)?;
-    for (leaf, var) in reduced.leaf_bottomup() {
-        if let Some(needed) = used[leaf.idx()] {
-            remap[leaf.idx()] = Some(build_class(eng, class_vtree, idx_map[leaf.idx()], &classes[var.idx()], needed, &mut out)?);
-        }
-    }
-
-    for (t, left, right) in reduced.internal_bottomup() {
-        let expanded = idx_map[t.idx()];
-        let (left_map, right_map) = (remap[left.idx()].as_ref(), remap[right.idx()].as_ref());
-        if left_map.is_none() && right_map.is_none() {
-            let level = LevelView::unweighted(tdd.level(t)).expect("a structural level has no weighted column");
-            out.replace_level(eng, expanded, level)?;
-            continue;
-        }
-        // A reference into a class leaf goes to the node built for it;
-        // false and references into other levels are kept.
-        let redirect = |child: VtreeIdx, map: Option<&[Option<NodeIdx>; 3]>, side: EncodedChildRef| match map {
-            Some(map) if side != ZERO.into() => {
-                map[leaf_node(tdd.level(child), side)].expect("a referenced class node is built").into()
-            }
-            _ => side,
-        };
-        let level = tdd.level(t);
-        let mut pairs = Vec::new();
-        for node in level.nodes() {
-            pairs.clear();
-            for pair in level.pairs_iter_of(&node) {
-                pairs.push(ChildPair::new(redirect(left, left_map, pair.left), redirect(right, right_map, pair.right)));
-            }
-            out.push(eng, expanded, &pairs)?;
-        }
-    }
-
-    let local = match &remap[output.vtree.idx()] {
-        Some(map) if output.local != ZERO => map[output.local.idx()].expect("the output's class node is built"),
-        _ => output.local,
-    };
-    Ok(out.finish(TddNodeId { vtree: idx_map[reduced.root().idx()], local })?)
+    Ok(used)
 }
 
 /// Map each node of `reduced` to the node at the same position of
@@ -279,7 +339,18 @@ fn lockstep_map(reduced: &Vtree, expanded: &Vtree) -> Vec<VtreeIdx> {
         map[r.idx()] = e;
         match (reduced.node(r), expanded.node(e)) {
             (VtreeNode::Leaf { .. }, _) => {}
-            (VtreeNode::Internal { left: rl, right: rr, .. }, VtreeNode::Internal { left: el, right: er, .. }) => {
+            (
+                VtreeNode::Internal {
+                    left: rl,
+                    right: rr,
+                    ..
+                },
+                VtreeNode::Internal {
+                    left: el,
+                    right: er,
+                    ..
+                },
+            ) => {
                 stack.push((*rl, *el));
                 stack.push((*rr, *er));
             }
@@ -329,11 +400,19 @@ fn build_class(
                     let literal = class[next_leaf];
                     debug_assert_eq!(literal.var, *var, "class leaves are visited in class order");
                     next_leaf += 1;
-                    let (pos, neg) = if literal.sign { (POS_LEAF_IDX, NEG_LEAF_IDX) } else { (NEG_LEAF_IDX, POS_LEAF_IDX) };
+                    let (pos, neg) = if literal.sign {
+                        (POS_LEAF_IDX, NEG_LEAF_IDX)
+                    } else {
+                        (NEG_LEAF_IDX, POS_LEAF_IDX)
+                    };
                     results.push([Some(ONE_LEAF_IDX), Some(pos), Some(neg)]);
                     continue;
                 }
-                let child_needed = [false, needed[POS] || needed[ONE], needed[NEG] || needed[ONE]];
+                let child_needed = [
+                    false,
+                    needed[POS] || needed[ONE],
+                    needed[NEG] || needed[ONE],
+                ];
                 let (left, right) = vtree.children(t);
                 // The combination runs after both children; the left child
                 // pops first, so its result lands below the right one's.
@@ -344,10 +423,12 @@ fn build_class(
             Frame::Combine(t, needed) => {
                 let right = results.pop().expect("the right child's nodes");
                 let left = results.pop().expect("the left child's nodes");
-                let join = |side: usize| ChildPair::new(
-                    left[side].expect("a needed node's children are built"),
-                    right[side].expect("a needed node's children are built"),
-                );
+                let join = |side: usize| {
+                    ChildPair::new(
+                        left[side].expect("a needed node's children are built"),
+                        right[side].expect("a needed node's children are built"),
+                    )
+                };
                 let mut built = [None; 3];
                 if needed[POS] {
                     built[POS] = Some(out.push(eng, t, &[join(POS)])?);
