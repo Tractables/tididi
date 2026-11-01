@@ -145,10 +145,16 @@ fn exists_var_soundness_brute_force() {
 /// left_width=right_width=0, both marginal: without the fix the debug assert (debug builds)
 /// or `pairs_vec(0)` (release) panics; with it the level passes
 /// through empty and the conjunction's count is unchanged.
+fn leaf_parent(vtree: &Vtree, x: u32, y: u32) -> crate::vtree::VtreeIdx {
+    let l = vtree.leaf_of(VarId(x)).expect("leaf x");
+    let r = vtree.leaf_of(VarId(y)).expect("leaf y");
+    let p = vtree.node(l).parent().expect("leaf x has a parent");
+    assert_eq!(vtree.children(p), (l, r));
+    p
+}
+
 #[test]
 fn apply_and_zero_width_marginal_levels() {
-    use crate::vtree::VtreeIdx;
-
     let vtree = Arc::new(Vtree::balanced(8));
     // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
     let b1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
@@ -156,21 +162,8 @@ fn apply_and_zero_width_marginal_levels() {
     let baseline = (apply_and(b1, b2)).model_count().unwrap();
     assert_eq!(baseline, BigUint::from(64u32));
 
-    // Locate Internal(varX,varY) nodes by their leaf children.
-    let leaf_parent = |x: u32, y: u32| {
-        (0..vtree.num_nodes() as u32)
-            .map(VtreeIdx)
-            .find(|&i| {
-                !vtree.node(i).is_leaf() && {
-                    let (l, r) = vtree.children(i);
-                    matches!(*vtree.node(l), crate::vtree::VtreeNode::Leaf { var, .. } if var == VarId(x))
-                        && matches!(*vtree.node(r), crate::vtree::VtreeNode::Leaf { var, .. } if var == VarId(y))
-                }
-            })
-            .expect("balanced(8) must have this Internal(leaf,leaf) node")
-    };
-    let a = leaf_parent(1, 2);
-    let b = leaf_parent(3, 4);
+    let a = leaf_parent(&vtree, 1, 2);
+    let b = leaf_parent(&vtree, 3, 4);
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
@@ -300,8 +293,6 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 /// must equal projecting the non-marginal one.
 #[test]
 fn projecting_across_a_marginal_sibling_succeeds() {
-    use crate::vtree::{VtreeIdx, VtreeNode};
-
     let vtree = Arc::new(Vtree::balanced(4));
     let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])); // a∨b
     let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // x∨w
@@ -312,16 +303,7 @@ fn projecting_across_a_marginal_sibling_succeeds() {
     let ref_count = ((f).clone().exists_var(VarId(3)).unwrap()).model_count().unwrap();
 
     // Find Internal(a,b) — the root's left child, disjoint from x's path.
-    let ab = (0..vtree.num_nodes() as u32)
-        .map(VtreeIdx)
-        .find(|&i| {
-            !vtree.node(i).is_leaf() && {
-                let (l, r) = vtree.children(i);
-                matches!(*vtree.node(l), VtreeNode::Leaf { var, .. } if var == VarId(1))
-                    && matches!(*vtree.node(r), VtreeNode::Leaf { var, .. } if var == VarId(2))
-            }
-        })
-        .expect("balanced(4) has Internal(a,b)");
+    let ab = leaf_parent(&vtree, 1, 2);
 
     // Marginalize the disjoint left subtree (a,b) via the test helper, which
     // installs the correct per-node counts. This produces a real width>1
@@ -469,6 +451,23 @@ fn bulk_quantification_is_a_set_independent_of_request_order() {
     crate::test_helpers::assert_canonical(&expected);
 }
 
+fn assert_exists_vars_matches_brute_force(
+    num_vars: u32,
+    clauses: &[Vec<i32>],
+    forgotten: &[VarId],
+    kept: &[usize],
+) {
+    let expected = brute_force_pmc(clauses, num_vars as usize, kept);
+    for (shape, vtree) in vtree_shapes(num_vars) {
+        let f = compile_clauses(&vtree, clauses);
+        assert_canonical(&f);
+        let projected = f.exists_vars(forgotten).unwrap();
+        assert_canonical(&projected);
+        let count = projected.model_count().unwrap() >> forgotten.len();
+        assert_eq!(count, expected, "{shape}: projected {clauses:?} wrongly");
+    }
+}
+
 /// Projection against brute-force projected counting, on every vtree shape.
 #[test]
 fn projection_matches_the_brute_force_answer_on_every_vtree_shape() {
@@ -479,15 +478,7 @@ fn projection_matches_the_brute_force_answer_on_every_vtree_shape() {
         // Forget the odd variables and keep the even ones.
         let forgotten: Vec<VarId> = (1..=num_vars).step_by(2).map(VarId).collect();
         let kept: Vec<usize> = (2..=num_vars).step_by(2).map(|v| v as usize - 1).collect();
-        let expected = brute_force_pmc(&clauses, num_vars as usize, &kept);
-        for (shape, vtree) in vtree_shapes(num_vars) {
-            let f = compile_clauses(&vtree, &clauses);
-            assert_canonical(&f);
-            let projected = f.exists_vars(&forgotten).unwrap();
-            assert_canonical(&projected);
-            let count = projected.model_count().unwrap() >> forgotten.len();
-            assert_eq!(count, expected, "{shape}: projected {clauses:?} wrongly");
-        }
+        assert_exists_vars_matches_brute_force(num_vars, &clauses, &forgotten, &kept);
     }
 }
 
@@ -501,14 +492,7 @@ fn projection_matches_brute_force_on_random_conjunctions() {
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 8, width: 3 });
         let forgotten: Vec<VarId> = (1..=num_vars).filter(|v| v % 3 == 0).map(VarId).collect();
         let kept: Vec<usize> = (1..=num_vars).filter(|v| v % 3 != 0).map(|v| v as usize - 1).collect();
-        let expected = brute_force_pmc(&clauses, num_vars as usize, &kept);
-        for (shape, vtree) in vtree_shapes(num_vars) {
-            let f = compile_clauses(&vtree, &clauses);
-            let projected = f.exists_vars(&forgotten).unwrap();
-            assert_canonical(&projected);
-            let count = projected.model_count().unwrap() >> forgotten.len();
-            assert_eq!(count, expected, "{shape}: projected {clauses:?} wrongly");
-        }
+        assert_exists_vars_matches_brute_force(num_vars, &clauses, &forgotten, &kept);
     }
 }
 

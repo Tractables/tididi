@@ -676,19 +676,6 @@ fn store_level(
 }
 
 
-/// Assert that two diagrams store the same output and, level by level, the
-/// same nodes with the same pairs in the same order.
-fn same_storage(a: &Tdd, b: &Tdd, what: &str) {
-    assert_eq!(a.output, b.output, "{what}: output");
-    for (t, _, _) in a.vtree.internal_bottomup() {
-        let (x, y) = (&a.levels[t.idx()], &b.levels[t.idx()]);
-        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {} width", t.idx());
-        for i in 0..x.nodes().len() {
-            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {} node {i}", t.idx());
-        }
-    }
-}
-
 /// Fixed and random vtree shapes over `n` variables.
 fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Arc<Vtree>)> {
     let mut out = vec![
@@ -711,6 +698,11 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
     let w = k.div_ceil(64).max(1);
     let mut out = vec![0u64; w * m];
     let set = |out: &mut Vec<u64>, r: usize, i: usize| out[r * w + i / 64] |= 1u64 << (i % 64);
+    let half = k / 2;
+    let set_halves = |out: &mut Vec<u64>, r: usize, x: u64, y: u64| {
+        for i in 0..half { if (x >> (i % 64)) & 1 == 1 { set(out, r, i); } }
+        for i in half..k { if (y >> (i % 64)) & 1 == 1 { set(out, r, i); } }
+    };
     match style % 4 {
         0 => {
             let density = rng.next_u64() % 100;
@@ -730,26 +722,22 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
         }
         2 => {
             // A function of the first half: y = f(x), so atoms merge.
-            let half = k / 2;
             let modulus = 1 + rng.next_u64() % 7;
             for r in 0..m {
                 let x = rng.next_u64();
-                for i in 0..half { if (x >> (i % 64)) & 1 == 1 { set(&mut out, r, i); } }
                 let y = (x % modulus).wrapping_mul(0x9e3779b97f4a7c15);
-                for i in half..k { if (y >> (i % 64)) & 1 == 1 { set(&mut out, r, i); } }
+                set_halves(&mut out, r, x, y);
             }
         }
         _ => {
             // A product of two small sets, with a few rows removed.
-            let half = k / 2;
             let a: Vec<u64> = (0..1 + rng.next_u64() % 6).map(|_| rng.next_u64()).collect();
             let b: Vec<u64> = (0..1 + rng.next_u64() % 6).map(|_| rng.next_u64()).collect();
             let mut r = 0;
             'fill: for &x in &a { for &y in &b {
                 if r == m { break 'fill; }
                 if rng.next_u64().is_multiple_of(5) { continue; }
-                for i in 0..half { if (x >> (i % 64)) & 1 == 1 { set(&mut out, r, i); } }
-                for i in half..k { if (y >> (i % 64)) & 1 == 1 { set(&mut out, r, i); } }
+                set_halves(&mut out, r, x, y);
                 r += 1;
             } }
             out.truncate(r.max(1) * w);
@@ -766,7 +754,7 @@ fn check(vtree: &Arc<Vtree>, vars: &[VarId], rows: &[u64], what: &str) {
     let root_down = eng.from_models(vtree, vars, rows).unwrap();
     let bottom_up = from_models_bottom_up(&eng, vtree, vars, rows).unwrap();
     assert_canonical(&root_down);
-    same_storage(&root_down, &bottom_up, what);
+    super::assert_same_levels(&root_down, &bottom_up, what);
 }
 
 #[test]
@@ -932,7 +920,7 @@ fn rows_ascending_in_layout_order_are_read_in_place() {
         }
         let eng = Engine::new();
         let in_place = eng.from_models(vtree, &vars, &rows).unwrap();
-        same_storage(&in_place, &eng.from_models(vtree, &vars, &shuffled).unwrap(), &what);
+        super::assert_same_levels(&in_place, &eng.from_models(vtree, &vars, &shuffled).unwrap(), &what);
         let mut distinct: Vec<u64> = rows.iter().map(|&row| row & mask).collect();
         distinct.sort_unstable();
         distinct.dedup();

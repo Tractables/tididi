@@ -26,19 +26,21 @@ fn described(d: &ImplicitLevel) -> Pairs {
     all.chunks(d.pairs_per_node()).map(<[_]>::to_vec).collect()
 }
 
+/// Random prime-or-composite factors whose product is `n`.
+fn factors(rng: &mut Lcg, mut n: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    while n > 1 {
+        let divisors: Vec<usize> = (2..=n).filter(|d| n.is_multiple_of(*d)).collect();
+        let d = divisors[rng.below(divisors.len() as u64) as usize];
+        out.push(d);
+        n /= d;
+    }
+    out
+}
+
 /// A random affine level: `nodes` nodes of `per_node` pairs, the radices
 /// random factors of each, the steps random, the slots from 0.
 fn affine(rng: &mut Lcg, nodes: usize, per_node: usize) -> Pairs {
-    fn factors(rng: &mut Lcg, mut n: usize) -> Vec<usize> {
-        let mut out = Vec::new();
-        while n > 1 {
-            let divisors: Vec<usize> = (2..=n).filter(|d| n.is_multiple_of(*d)).collect();
-            let d = divisors[rng.below(divisors.len() as u64) as usize];
-            out.push(d);
-            n /= d;
-        }
-        out
-    }
     let within = factors(rng, per_node).into_iter().map(|r| (r, step(rng))).collect::<Vec<_>>();
     let across = factors(rng, nodes).into_iter().map(|r| (r, step(rng))).collect::<Vec<_>>();
     affine_of(&within, &across)
@@ -558,8 +560,7 @@ fn what_a_prune_leaves_is_read_off_the_description() {
             Some(rank)
         };
         let (left, right) = (renumber(|p| p.0), renumber(|p| p.1));
-        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
-        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let oracle = moved_oracle(&pairs, &kept, &left, &right);
         let read = d.pruned(&Limits::new(), kept.len(), |j| kept.get(j).copied(), || kept.iter().copied(), |x| moved(&left, x), |x| moved(&right, x)).unwrap();
         assert_eq!(read, ImplicitLevel::fit(&level_of(&oracle)), "round {round}");
         if let Some(r) = read {
@@ -569,6 +570,43 @@ fn what_a_prune_leaves_is_read_off_the_description() {
         }
     }
     assert!(fitted > 100 && diagonals > 10, "{fitted} fitted, {diagonals} on a diagonal");
+}
+
+fn moved(rank: &Option<Vec<i64>>, x: i64) -> i64 {
+    rank.as_ref().map_or(x, |r| r[x as usize])
+}
+
+fn moved_oracle(pairs: &Pairs, kept: &[usize], left: &Option<Vec<i64>>, right: &Option<Vec<i64>>) -> Pairs {
+    kept.iter()
+        .map(|&i| pairs[i].iter().map(|&(l, r)| (moved(left, l), moved(right, r))).collect())
+        .collect()
+}
+
+/// A side kept whole, renumbered onto the slots the kept pairs name, or
+/// renumbered onto those and one more, a slot another reference keeps.
+fn renumber_child(
+    rng: &mut Lcg,
+    pairs: &Pairs,
+    kept: &[usize],
+    modulus: u64,
+    side: fn(&(i64, i64)) -> i64,
+) -> (ChildKept, Option<Vec<i64>>, bool) {
+    let how = rng.below(modulus);
+    if how < 2 {
+        return (ChildKept::Whole, None, false);
+    }
+    let named: std::collections::BTreeSet<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
+    let top = named.iter().copied().max().unwrap() + 2;
+    let extra = (how == modulus - 1).then(|| (0..=top).find(|x| !named.contains(x)).unwrap());
+    let mut rank = vec![-1i64; top as usize + 1];
+    let mut next = 0;
+    for (x, r) in rank.iter_mut().enumerate() {
+        if named.contains(&(x as i64)) || extra == Some(x as i64) {
+            *r = next;
+            next += 1;
+        }
+    }
+    (ChildKept::Renumbered(next as usize), Some(rank), extra.is_some())
 }
 
 /// What a prune keeps of a box of an affine level, each child kept whole or
@@ -606,30 +644,9 @@ fn what_a_prune_keeps_of_a_box_is_derived_from_the_description() {
         for &i in &kept {
             own[i >> 6] |= 1 << (i & 63);
         }
-        // A side is kept whole, renumbered onto the slots the kept pairs
-        // name, or renumbered onto those and one more, a slot another
-        // reference keeps.
-        let mut child = |side: fn(&(i64, i64)) -> i64| -> (ChildKept, Option<Vec<i64>>, bool) {
-            let how = rng.below(5);
-            if how < 2 {
-                return (ChildKept::Whole, None, false);
-            }
-            let named: std::collections::BTreeSet<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
-            let top = named.iter().copied().max().unwrap() + 2;
-            let extra = (how == 4).then(|| (0..=top).find(|x| !named.contains(x)).unwrap());
-            let mut rank = vec![-1i64; top as usize + 1];
-            let mut next = 0;
-            for (x, r) in rank.iter_mut().enumerate() {
-                if named.contains(&(x as i64)) || extra == Some(x as i64) {
-                    *r = next;
-                    next += 1;
-                }
-            }
-            (ChildKept::Renumbered(next as usize), Some(rank), extra.is_some())
-        };
-        let ((lk, left, l_extra), (rk, right, r_extra)) = (child(|p| p.0), child(|p| p.1));
-        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
-        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let (lk, left, l_extra) = renumber_child(&mut rng, &pairs, &kept, 5, |p| p.0);
+        let (rk, right, r_extra) = renumber_child(&mut rng, &pairs, &kept, 5, |p| p.1);
+        let oracle = moved_oracle(&pairs, &kept, &left, &right);
         let fitted = ImplicitLevel::fit(&level_of(&oracle));
         let got = d.kept_box(&own, kept.len(), lk, rk);
         if let Some(g) = &got {
@@ -659,16 +676,6 @@ fn what_a_prune_keeps_of_a_box_is_derived_from_the_description() {
 /// slot a child keeps that no kept pair names.
 #[test]
 fn what_a_prune_keeps_of_any_nodes_is_derived_where_no_drop_bends_a_side() {
-    fn factors(rng: &mut Lcg, mut n: usize) -> Vec<usize> {
-        let mut out = Vec::new();
-        while n > 1 {
-            let divisors: Vec<usize> = (2..=n).filter(|d| n.is_multiple_of(*d)).collect();
-            let d = divisors[rng.below(divisors.len() as u64) as usize];
-            out.push(d);
-            n /= d;
-        }
-        out
-    }
     let mut rng = Lcg::new(0x1d1e_0007);
     let (mut derived, mut bent) = (0, 0);
     for round in 0..2000 {
@@ -697,27 +704,9 @@ fn what_a_prune_keeps_of_any_nodes_is_derived_where_no_drop_bends_a_side() {
         if kept.is_empty() {
             continue;
         }
-        let mut child = |side: fn(&(i64, i64)) -> i64| -> (ChildKept, Option<Vec<i64>>, bool) {
-            let how = rng.below(6);
-            if how < 2 {
-                return (ChildKept::Whole, None, false);
-            }
-            let named: std::collections::BTreeSet<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
-            let top = named.iter().copied().max().unwrap() + 2;
-            let extra = (how == 5).then(|| (0..=top).find(|x| !named.contains(x)).unwrap());
-            let mut rank = vec![-1i64; top as usize + 1];
-            let mut next = 0;
-            for (x, r) in rank.iter_mut().enumerate() {
-                if named.contains(&(x as i64)) || extra == Some(x as i64) {
-                    *r = next;
-                    next += 1;
-                }
-            }
-            (ChildKept::Renumbered(next as usize), Some(rank), extra.is_some())
-        };
-        let ((lk, left, l_extra), (rk, right, r_extra)) = (child(|p| p.0), child(|p| p.1));
-        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
-        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let (lk, left, l_extra) = renumber_child(&mut rng, &pairs, &kept, 6, |p| p.0);
+        let (rk, right, r_extra) = renumber_child(&mut rng, &pairs, &kept, 6, |p| p.1);
+        let oracle = moved_oracle(&pairs, &kept, &left, &right);
         let got = d.kept_any(kept.len(), lk, rk);
         if let Some(got) = &got {
             assert_eq!(Some(got), ImplicitLevel::fit(&level_of(&oracle)).as_ref(), "round {round}: a derived description differs from the fit");

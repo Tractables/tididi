@@ -56,6 +56,17 @@ fn triples_of(split: &Decomposition) -> (usize, Vec<[u32; 3]>) {
     }
 }
 
+fn assert_same_split(
+    got: &(Decomposition, Values<'_>, Values<'_>),
+    want: &(Decomposition, Values<'_>, Values<'_>),
+    what: &str,
+) {
+    assert_eq!(triples_of(&got.0), triples_of(&want.0), "{what}");
+    for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
+        assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "{what}");
+    }
+}
+
 #[test]
 fn a_key_without_the_index_splits_as_one_with_it() {
     // A key too wide for the index finds a value through its high value's
@@ -81,10 +92,7 @@ fn a_key_without_the_index_splits_as_one_with_it() {
         for key in [indexed, bare] {
             let got = split_words(&lim, &mut s, &parent, low_width, key).unwrap();
             sides[usize::from(from_low(parent.len(), &s))] += 1;
-            assert_eq!(triples_of(&got.0), triples_of(&want.0), "round {round}");
-            for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
-                assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "round {round}");
-            }
+            assert_same_split(&got, &want, &format!("round {round}"));
         }
     }
     assert!(sides.iter().all(|&count| count > 0), "both emission sides are taken: {sides:?}");
@@ -184,10 +192,7 @@ fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str
     }
     let ran = [sorted.is_some(), hashed.is_some()];
     for got in sorted.into_iter().chain(hashed).chain(direct) {
-        assert_eq!(triples_of(&got.0), triples_of(&want.0), "{what}");
-        for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
-            assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "{what}");
-        }
+        assert_same_split(&got, &want, what);
     }
     (want.1, want.2, ran)
 }
@@ -314,10 +319,7 @@ fn a_single_atom_split_reads_its_pairs_off_either_side() {
         let mut copy = Values { words: 1, data: parent.data.clone(), atom: parent.atom.clone(), atoms: 1 };
         let Some(got) = split_single(&lim, &mut s, &mut copy, widths).unwrap() else { continue };
         sides[usize::from(single_from_low(parent.len(), &s).is_some())] += 1;
-        assert_eq!(triples_of(&got.0), triples_of(&want.0), "round {round}");
-        for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
-            assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "round {round}");
-        }
+        assert_same_split(&got, &want, &format!("round {round}"));
     }
     assert!(sides.iter().all(|&count| count > 50), "both sides are read: {sides:?}");
 }
@@ -477,10 +479,7 @@ fn a_wide_low_part_of_few_values_splits_by_rank_as_the_general_split_does() {
             None => declined += 1,
             Some(got) => {
                 ran += 1;
-                assert_eq!(triples_of(&got.0), triples_of(&want.0), "round {round}");
-                for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
-                    assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "round {round}");
-                }
+                assert_same_split(&got, &want, &format!("round {round}"));
             }
         }
     }
@@ -550,10 +549,7 @@ fn ranks_found_through_a_table_that_grows_split_as_the_general_split_does() {
         assert_eq!(got.is_some(), take, "{lows} low parts, late {late}");
         if let Some(got) = got {
             assert!(s.exact.len() > 1 << GROWING_BITS, "the table grew");
-            assert_eq!(triples_of(&got.0), triples_of(&want.0), "{lows} low parts");
-            for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
-                assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "{lows} low parts");
-            }
+            assert_same_split(&got, &want, &format!("{lows} low parts"));
         }
     }
 }

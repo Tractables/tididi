@@ -205,6 +205,31 @@ fn restrict_runs_on_assorted_small_circuits() {
 // table (g∧c == f∧c) plus the never-larger gate, not `assert_restrict_ok`:
 // its `check_all_fast` requires a global-rooted diagram, and a re-homed
 // low-rooted operand is not one.
+/// Exhaustive truth-table soundness check (`g ∧ c == f ∧ c` over all `2^nvars`
+/// assignments), independent of the apply machinery.
+fn assert_sound_on_truth_table(f: &Tdd, c: &Tdd, g: &Tdd, nvars: u32) {
+    for mask in 0..(1u32 << nvars) {
+        let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+        let cv = eval(c, &asn);
+        assert_eq!(eval(g, &asn) && cv, eval(f, &asn) && cv, "unsound at {asn:?}");
+    }
+}
+
+/// Check truth-table soundness and return the count of distinct pairs in `f`
+/// used by models of `f ∧ c`.
+fn trace_used_pairs(f: &Tdd, c: &Tdd, g: &Tdd, nvars: u32) -> usize {
+    let mut used = std::collections::BTreeSet::new();
+    for mask in 0..(1u32 << nvars) {
+        let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+        let cv = eval(c, &asn);
+        assert_eq!(eval(g, &asn) && cv, eval(f, &asn) && cv, "unsound at {asn:?}");
+        if cv && eval(f, &asn) {
+            trace(f, f.output.vtree, f.output.local, &asn, &mut used);
+        }
+    }
+    used.len()
+}
+
 #[test]
 fn restrict_differing_root_containment_difftest() {
     let vtree = Arc::new(Vtree::balanced(8));
@@ -213,15 +238,7 @@ fn restrict_differing_root_containment_difftest() {
     // and g never larger than f. Apply-free (shares no machinery with `restrict_to_care`).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
         let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
-        for mask in 0..(1u32 << nvars) {
-            let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-            let cv = eval(c, &asn);
-            assert_eq!(
-                eval(&g, &asn) && cv,
-                eval(f, &asn) && cv,
-                "restrict_to_care unsound at {asn:?} (g∧c ≠ f∧c)"
-            );
-        }
+        assert_sound_on_truth_table(f, c, &g, nvars);
         assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict_to_care grew beyond f");
         g
     };
@@ -296,16 +313,7 @@ fn brute_force_randomized_multi_vtree() -> Vec<Tdd> {
             // Track the shrink count to keep the "levers inert" guard meaningful.
             let fp = reachable_pairs(&f);
             let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
-            // exhaustive truth-table soundness (apply-free)
-            for mask in 0..(1u32 << nvars) {
-                let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-                let cv = eval(&c, &asn);
-                assert_eq!(
-                    eval(&g, &asn) && cv,
-                    eval(&f, &asn) && cv,
-                    "unsound: nvars={nvars} asn={asn:?}"
-                );
-            }
+            assert_sound_on_truth_table(&f, &c, &g, nvars);
             let mut gm = g.clone();
             gm.minimize().unwrap();
             check_all_fast(&gm, "restrict_to_care-brute");
@@ -435,15 +443,7 @@ fn differing_root_randomized() -> Vec<Tdd> {
     let all_vars: Vec<u32> = (1..=nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {
         let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
-        for mask in 0..(1u32 << nvars) {
-            let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-            let cv = eval(c, &asn);
-            assert_eq!(
-                eval(&g, &asn) && cv,
-                eval(f, &asn) && cv,
-                "differing-root restrict_to_care unsound at {asn:?} (g∧c ≠ f∧c)"
-            );
-        }
+        assert_sound_on_truth_table(f, c, &g, nvars);
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
         assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
         out.borrow_mut().push(g);
@@ -641,17 +641,9 @@ fn keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                     continue;
                 }
                 let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
-                let mut used = std::collections::BTreeSet::new();
-                for mask in 0..(1u32 << nvars) {
-                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-                    let cv = eval(&c, &asn);
-                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
-                    if cv && eval(&f, &asn) {
-                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
-                    }
-                }
-                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
-                if used.len() < reachable_pairs(&f) {
+                let used = trace_used_pairs(&f, &c, &g, nvars);
+                assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
+                if used < reachable_pairs(&f) {
                     strict += 1;
                 }
                 cases += 1;
@@ -712,17 +704,9 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 }
                 let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
                 check_all_fast(&g, "restrict_to_care-one-subtree");
-                let mut used = std::collections::BTreeSet::new();
-                for mask in 0..(1u32 << nvars) {
-                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-                    let cv = eval(&c, &asn);
-                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
-                    if cv && eval(&f, &asn) {
-                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
-                    }
-                }
-                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
-                if used.len() < reachable_pairs(&f) {
+                let used = trace_used_pairs(&f, &c, &g, nvars);
+                assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
+                if used < reachable_pairs(&f) {
                     strict += 1;
                 }
                 cases += 1;
@@ -797,17 +781,9 @@ fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 }
                 let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
                 assert_canonical(&g);
-                let mut used = std::collections::BTreeSet::new();
-                for mask in 0..(1u32 << nvars) {
-                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-                    let cv = eval(&c, &asn);
-                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
-                    if cv && eval(&f, &asn) {
-                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
-                    }
-                }
-                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
-                if used.len() < reachable_pairs(&f) {
+                let used = trace_used_pairs(&f, &c, &g, nvars);
+                assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
+                if used < reachable_pairs(&f) {
                     strict += 1;
                 }
                 if vtree.node(u).parent() != Some(vtree.root()) {

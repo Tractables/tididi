@@ -105,14 +105,7 @@ pub(super) fn note_summed() {
 /// Run `f` with `and_marginalizing` on the two-step path: the conjunction
 /// built in full, then the target marginalized and the root's pairs fused.
 pub(super) fn two_step<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            TWO_STEP.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(TWO_STEP.with(|c| c.replace(true)));
-    f()
+    with_flag(&TWO_STEP, f)
 }
 
 /// How many `and_marginalizing` calls on this thread summed their target
@@ -144,14 +137,7 @@ pub(super) fn lone_columns_forced_off() -> bool {
 /// Run `f` with every cell reading its column's pairs, as if no level held
 /// one pair a column: the oracle the levels that do are checked against.
 pub(super) fn column_reads<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            COLUMN_READS.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(COLUMN_READS.with(|c| c.replace(true)));
-    f()
+    with_flag(&COLUMN_READS, f)
 }
 
 pub(super) fn grid_lookups_forced() -> bool {
@@ -311,14 +297,7 @@ pub(super) fn seed_pairs_forced() -> Option<usize> {
 /// Run `f` with each level's pair arena seeded with at most `pairs`
 /// pairs, so that the levels of small diagrams outgrow their seeds.
 pub(super) fn seeded_with<R>(pairs: usize, f: impl FnOnce() -> R) -> R {
-    struct Reset(Option<usize>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            SEED_PAIRS.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(SEED_PAIRS.with(|c| c.replace(Some(pairs))));
-    f()
+    with_cell(&SEED_PAIRS, Some(pairs), f)
 }
 
 pub(super) fn ahead_after_forced() -> Option<usize> {
@@ -328,14 +307,7 @@ pub(super) fn ahead_after_forced() -> Option<usize> {
 /// Run `f` with each level's arenas sized ahead once one in `share` of
 /// its walk is done, so that the levels of small diagrams are.
 pub(super) fn ahead_after<R>(share: usize, f: impl FnOnce() -> R) -> R {
-    struct Reset(Option<usize>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            AHEAD_AFTER.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(AHEAD_AFTER.with(|c| c.replace(Some(share))));
-    f()
+    with_cell(&AHEAD_AFTER, Some(share), f)
 }
 
 pub(super) fn ahead_forced_off() -> bool {
@@ -353,14 +325,7 @@ pub(super) fn note_ahead(sparse: bool) {
 /// Run `f` with every level's arenas left to grow from their seeds: the
 /// oracle the levels sized ahead are checked against.
 pub(super) fn without_ahead<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            AHEAD_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(AHEAD_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&AHEAD_OFF, f)
 }
 
 /// The levels on this thread so far whose arenas were sized ahead, on the
@@ -383,14 +348,7 @@ pub(super) fn note_pair_rows(complete: bool, one_pair: bool) {
 /// Run `f` with every masked level on the row loop of any level: the
 /// oracle the levels read by pairs are checked against.
 pub(super) fn pair_rows_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            PAIR_ROWS_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(PAIR_ROWS_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&PAIR_ROWS_OFF, f)
 }
 
 /// The levels on this thread so far read by pairs, those of them with a
@@ -419,14 +377,7 @@ pub(super) fn note_reach_tables() {
 /// columns of a word off the tables of its bytes' columns, whatever its
 /// rows.
 pub(super) fn reach_tables_on<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            REACH_TABLES_ON.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(REACH_TABLES_ON.with(|c| c.replace(true)));
-    f()
+    with_flag(&REACH_TABLES_ON, f)
 }
 
 /// The levels on this thread so far that read the columns of a word off
@@ -477,14 +428,7 @@ pub(super) fn note_word_cells(what: super::WordNote) {
 }
 
 fn word_cells_set<R>(on: bool, f: impl FnOnce() -> R) -> R {
-    struct Reset(Option<bool>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WORD_CELLS.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(WORD_CELLS.with(|c| c.replace(Some(on))));
-    f()
+    with_cell(&WORD_CELLS, Some(on), f)
 }
 
 /// Run `f` with every level that can read its cells by g-pair vectors
@@ -511,14 +455,7 @@ pub(super) fn dense_poll_stride_forced() -> Option<u64> {
 /// Run `f` with the dense levels' poll gates coming due every `stride`
 /// units.
 pub(super) fn with_dense_poll_stride<R>(stride: u64, f: impl FnOnce() -> R) -> R {
-    struct Reset(Option<u64>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            DENSE_POLL_STRIDE.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(DENSE_POLL_STRIDE.with(|c| c.replace(Some(stride))));
-    f()
+    with_cell(&DENSE_POLL_STRIDE, Some(stride), f)
 }
 
 thread_local! {
@@ -535,14 +472,7 @@ pub(super) fn word_rows_sorted_forced() -> bool {
 /// Run `f` with every row read by g-pair vectors that does not walk its
 /// live cells writing them off the sorted list of its live candidates.
 pub(super) fn word_rows_sorted<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WORD_ROWS_SORTED.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(WORD_ROWS_SORTED.with(|c| c.replace(true)));
-    f()
+    with_flag(&WORD_ROWS_SORTED, f)
 }
 
 /// The levels on this thread so far read by g-pair vectors, those of two
@@ -575,14 +505,7 @@ pub(super) fn note_single_rows() {
 /// Run `f` with every level of one-pair nodes on the row loop of any
 /// level: the oracle the loop of one-pair cells is checked against.
 pub(super) fn single_rows_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            SINGLE_ROWS_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(SINGLE_ROWS_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&SINGLE_ROWS_OFF, f)
 }
 
 /// The levels on this thread so far that the loop of one-pair cells built.
@@ -610,14 +533,7 @@ pub(super) fn note_relayed() {
 /// the oracle the levels written as a description of relayed right
 /// children are checked against.
 pub(super) fn relay_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            RELAY_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(RELAY_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&RELAY_OFF, f)
 }
 
 /// The levels on this thread so far written as the description of
@@ -638,14 +554,7 @@ pub(super) fn note_row_columns_row(whole: bool) {
 /// Run `f` with no level building row columns: a masked level of few g
 /// nodes reads its rows' live columns off the reach masks.
 pub(super) fn row_columns_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            ROW_COLUMNS_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(ROW_COLUMNS_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&ROW_COLUMNS_OFF, f)
 }
 
 /// The rows on this thread so far whose live cells were read off the row
@@ -666,14 +575,7 @@ pub(super) fn note_reach_columns_row() {
 /// testing its columns' reach masks one by one: the oracle the reach and
 /// row columns are checked against.
 pub(super) fn reach_columns_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            REACH_COLUMNS_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(REACH_COLUMNS_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&REACH_COLUMNS_OFF, f)
 }
 
 /// The rows on this thread so far whose live cells were read off the
@@ -694,14 +596,7 @@ pub(super) fn note_one_sided_masks() {
 /// operand, each such level on the row loop without masks: the oracle the
 /// one-sided masks are checked against.
 pub(super) fn one_sided_masks_off<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            ONE_SIDED_OFF.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(ONE_SIDED_OFF.with(|c| c.replace(true)));
-    f()
+    with_flag(&ONE_SIDED_OFF, f)
 }
 
 /// The levels on this thread so far that built the dead-pair masks with one
@@ -714,14 +609,7 @@ pub(super) fn one_sided_masked_levels() -> u64 {
 /// grid, as if no child were complete: the oracle the arithmetic lookups are
 /// checked against.
 pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            GRID_LOOKUPS.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(GRID_LOOKUPS.with(|c| c.replace(true)));
-    f()
+    with_flag(&GRID_LOOKUPS, f)
 }
 
 /// The levels on this thread so far that read a complete child side by
@@ -765,14 +653,7 @@ pub(super) fn note_lent() {
 /// Run `f` with the sparse walks writing every level they would take from
 /// f: the oracle the move is checked against.
 pub(super) fn no_lend<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            NO_LEND.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(NO_LEND.with(|c| c.replace(true)));
-    f()
+    with_flag(&NO_LEND, f)
 }
 
 /// The levels on this thread so far a sparse walk took from f.
@@ -863,14 +744,7 @@ pub(super) fn note_relabelled(moved: bool) {
 /// Run `f` with the relabelling route closed, every level it would take
 /// going to the general routes: the oracle it is checked against.
 pub(super) fn no_relabel<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            NO_RELABEL.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(NO_RELABEL.with(|c| c.replace(true)));
-    f()
+    with_flag(&NO_RELABEL, f)
 }
 
 /// The levels on this thread so far the relabelling route moved whole and
@@ -1009,16 +883,25 @@ pub(super) fn note_probe(probe: super::sparse::probe::Probe) {
     });
 }
 
-/// Run `f` with `flag` set on this thread, restored on the way out.
-fn with_flag<R>(flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>, f: impl FnOnce() -> R) -> R {
-    struct Reset(&'static std::thread::LocalKey<std::cell::Cell<bool>>, bool);
-    impl Drop for Reset {
+/// Run `f` with `cell` set to `val` on this thread, restored on the way out.
+fn with_cell<T: Copy + 'static, R>(
+    cell: &'static std::thread::LocalKey<std::cell::Cell<T>>,
+    val: T,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Reset<T: Copy + 'static>(&'static std::thread::LocalKey<std::cell::Cell<T>>, T);
+    impl<T: Copy + 'static> Drop for Reset<T> {
         fn drop(&mut self) {
             self.0.with(|c| c.set(self.1));
         }
     }
-    let _reset = Reset(flag, flag.with(|c| c.replace(true)));
+    let _reset = Reset(cell, cell.with(|c| c.replace(val)));
     f()
+}
+
+/// Run `f` with `flag` set on this thread, restored on the way out.
+fn with_flag<R>(flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>, f: impl FnOnce() -> R) -> R {
+    with_cell(flag, true, f)
 }
 
 /// Run `f` with the probe join closed, every level it would take going to

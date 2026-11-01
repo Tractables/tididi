@@ -281,36 +281,30 @@ fn test_vtree_format_deterministic() {
     assert_eq!(fmt1, fmt2);
 }
 
+fn assert_vtree_text_roundtrip(vtree: &Vtree, what: &str) {
+    let fmt = vtree.to_text();
+    let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
+    assert_eq!(fmt, loaded.to_text(), "roundtrip failed for {what}");
+}
+
 #[test]
 fn test_vtree_format_roundtrip_balanced() {
     for n in 1..=10 {
-        let vtree = Vtree::balanced(n);
-        let fmt = vtree.to_text();
-        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_text();
-        assert_eq!(fmt, fmt2, "roundtrip failed for balanced vtree with {} vars", n);
+        assert_vtree_text_roundtrip(&Vtree::balanced(n), &format!("balanced vtree with {n} vars"));
     }
 }
 
 #[test]
 fn test_vtree_format_roundtrip_linear() {
     for n in 1..=10 {
-        let vtree = Vtree::linear(n);
-        let fmt = vtree.to_text();
-        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_text();
-        assert_eq!(fmt, fmt2, "roundtrip failed for linear vtree with {} vars", n);
+        assert_vtree_text_roundtrip(&Vtree::linear(n), &format!("linear vtree with {n} vars"));
     }
 }
 
 #[test]
 fn test_vtree_format_roundtrip_random() {
     for seed in 0..5 {
-        let vtree = Vtree::random(8, seed);
-        let fmt = vtree.to_text();
-        let loaded = Vtree::from_text(&fmt).expect("roundtrip parse failed");
-        let fmt2 = loaded.to_text();
-        assert_eq!(fmt, fmt2, "roundtrip failed for random vtree seed {}", seed);
+        assert_vtree_text_roundtrip(&Vtree::random(8, seed), &format!("random vtree seed {seed}"));
     }
 }
 
@@ -378,18 +372,11 @@ fn test_project_to_vars_balanced_subset() {
 }
 
 fn collect_subtree_vars(vtree: &Vtree, node: VtreeIdx) -> Vec<u32> {
-    let mut out = Vec::new();
-    let mut stack = vec![node];
-    while let Some(n) = stack.pop() {
-        match vtree.node(n) {
-            VtreeNode::Leaf { var, .. } => out.push(var.0),
-            VtreeNode::Internal { left, right, .. } => {
-                stack.push(*left);
-                stack.push(*right);
-            }
-        }
-    }
-    out
+    vtree
+        .subtree(node)
+        .filter(|&n| vtree.node(n).is_leaf())
+        .map(|n| vtree.leaf_var(n).0)
+        .collect()
 }
 
 #[test]

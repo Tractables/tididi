@@ -268,9 +268,6 @@ fn regrouping_matches_the_owner_set_rule() {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
-            let keys = |child: VtreeIdx| {
-                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
-            };
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().is_empty() { continue; }
@@ -283,8 +280,8 @@ fn regrouping_matches_the_owner_set_rule() {
                         1 + rng.below(most) as u32
                     };
                     let (left_cells, right_cells) = (cells(), cells());
-                    let left = fanned.0.then(|| random_remap(&eng, &mut rng, keys(left_child), left_cells));
-                    let right = fanned.1.then(|| random_remap(&eng, &mut rng, keys(right_child), right_cells));
+                    let left = fanned.0.then(|| random_remap(&eng, &mut rng, f.reference_slot_count(left_child), left_cells));
+                    let right = fanned.1.then(|| random_remap(&eng, &mut rng, f.reference_slot_count(right_child), right_cells));
                     let (cells, fan_out) = regroup_by_definition(level, left.as_ref(), right.as_ref());
 
                     let mut rewritten = f.clone();
@@ -351,22 +348,20 @@ fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
         for (shape, vtree) in vtree_shapes(num_vars) {
             for f in [compile_clauses(&vtree, &clauses), or_of_cubes(&vtree, &vars, |row| rows[row])] {
                 if f.is_zero() { continue; }
-                let keys = |child: VtreeIdx| {
-                    if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
-                };
                 for &parent in vtree.bottomup_slice() {
                     let level = &f.levels[parent.idx()];
                     if vtree.node(parent).is_leaf() || level.nodes().len() < 2 { continue; }
                     let (left_child, right_child) = vtree.children(parent);
+                    let (left_keys, right_keys) = (f.reference_slot_count(left_child), f.reference_slot_count(right_child));
                     for fanned in [(true, false), (false, true), (true, true)] {
                         let mut cells = |keys: usize| match rng.below(3) {
                             0 => 1 + rng.below(3) as u32,
                             1 => 1 + keys as u32 / 2,
                             _ => 4 * keys as u32,
                         };
-                        let (left_cells, right_cells) = (cells(keys(left_child)), cells(keys(right_child)));
-                        let left = fanned.0.then(|| one_cell_remap(&eng, &mut rng, keys(left_child), left_cells));
-                        let right = fanned.1.then(|| one_cell_remap(&eng, &mut rng, keys(right_child), right_cells));
+                        let (left_cells, right_cells) = (cells(left_keys), cells(right_keys));
+                        let left = fanned.0.then(|| one_cell_remap(&eng, &mut rng, left_keys, left_cells));
+                        let right = fanned.1.then(|| one_cell_remap(&eng, &mut rng, right_keys, right_cells));
                         let expected = regroup_by_definition(level, left.as_ref(), right.as_ref());
 
                         let mut rewritten = f.clone();
@@ -417,17 +412,15 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
-                let keys = |child: VtreeIdx| {
-                    if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
-                };
                 let (left_child, right_child) = vtree.children(parent);
+                let (left_keys, right_keys) = (f.reference_slot_count(left_child), f.reference_slot_count(right_child));
                 let remap = |rng: &mut Lcg, keys: usize, cells: u32| {
                     if rng.coin() { one_cell_remap(&eng, rng, keys, cells) } else { random_remap(&eng, rng, keys, cells) }
                 };
                 for cells in [1, 3, 80, 400] {
-                    let right = remap(&mut rng, keys(right_child), cells);
-                    let left = remap(&mut rng, keys(left_child), cells);
-                    let right_too = rng.coin().then(|| remap(&mut rng, keys(right_child), cells));
+                    let right = remap(&mut rng, right_keys, cells);
+                    let left = remap(&mut rng, left_keys, cells);
+                    let right_too = rng.coin().then(|| remap(&mut rng, right_keys, cells));
                     for (left, right) in [(None, Some(&right)), (Some(&left), right_too.as_ref())] {
                         let expected = regroup_by_definition(level, left, right);
                         let mut rewritten = f.clone();
@@ -519,7 +512,7 @@ fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
                 }
                 let level = &stored.levels[parent.idx()];
                 let (left_child, _) = vtree.children(parent);
-                let keys = if vtree.node(left_child).is_leaf() { LEAF_WIDTH } else { f.levels[left_child.idx()].nodes().len() };
+                let keys = f.reference_slot_count(left_child);
                 let maps = [
                     ("rising", rising_remap(&eng, &mut rng, keys, &pairs)),
                     ("one cell", one_cell_remap(&eng, &mut rng, keys, 3)),
@@ -592,14 +585,12 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
-            let keys = |child: VtreeIdx| {
-                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
-            };
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
                 let pairs = &level.pairs_vec(0)[..];
                 let (left_child, right_child) = vtree.children(parent);
+                let (left_keys, right_keys) = (f.reference_slot_count(left_child), f.reference_slot_count(right_child));
                 for fanned in [(true, false), (false, true), (true, true)] {
                     // One cell makes a rewritten left side a single row.
                     let mut cells = || match rng.below(3) {
@@ -610,10 +601,10 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
                     let (left_cells, right_cells) = (cells(), cells());
                     let gaps = rng.below(4) == 0;
                     let left = fanned.0.then(|| match gaps {
-                        true => remap_with_gaps(&eng, &mut rng, keys(left_child), left_cells),
-                        false => random_remap(&eng, &mut rng, keys(left_child), left_cells),
+                        true => remap_with_gaps(&eng, &mut rng, left_keys, left_cells),
+                        false => random_remap(&eng, &mut rng, left_keys, left_cells),
                     });
-                    let right = fanned.1.then(|| random_remap(&eng, &mut rng, keys(right_child), right_cells));
+                    let right = fanned.1.then(|| random_remap(&eng, &mut rng, right_keys, right_cells));
                     let (cells, _) = regroup_by_definition(level, left.as_ref(), right.as_ref());
                     assert!(cells.len() <= 1, "{shape}, level {parent:?}: one node owns at most one cell");
                     let want = cells.first().map_or(&[][..], |cell| &cell[..]);

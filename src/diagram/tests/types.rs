@@ -40,16 +40,20 @@
         assert_eq!(it.len(), 3);
     }
 
-    #[test]
-    fn test_take_levels_fresh_allocation() {
-        let eng = &Engine::new();
-        let levels = take_levels(eng, 5);
-        assert_eq!(levels.len(), 5);
-        for level in &levels {
+    fn assert_levels_clean(levels: &[TddLevel], expected_len: usize) {
+        assert_eq!(levels.len(), expected_len);
+        for level in levels {
             assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
             assert!(!level.has_multi_pair());
         }
+    }
+
+    #[test]
+    fn test_take_levels_fresh_allocation() {
+        let eng = &Engine::new();
+        let levels = take_levels(eng, 5);
+        assert_levels_clean(&levels, 5);
     }
 
     #[test]
@@ -77,11 +81,7 @@
         assert_eq!(levels.len(), 3);
         return_levels(eng, levels);
         let levels2 = take_levels(eng, 3);
-        assert_eq!(levels2.len(), 3);
-        for level in &levels2 {
-            assert_eq!(level.nodes().len(), 0);
-            assert!(level.pairs.is_empty());
-        }
+        assert_levels_clean(&levels2, 3);
     }
 
     #[test]
@@ -97,20 +97,12 @@
         let levels = take_levels(eng, 5);
         return_levels(eng, levels);
         let levels2 = take_levels(eng, 3);
-        assert_eq!(levels2.len(), 3);
-        for level in &levels2 {
-            assert_eq!(level.nodes().len(), 0);
-            assert!(level.pairs.is_empty());
-        }
+        assert_levels_clean(&levels2, 3);
 
         // Grow: return that size-3 Vec, then request size 6.
         return_levels(eng, levels2);
         let levels3 = take_levels(eng, 6);
-        assert_eq!(levels3.len(), 6);
-        for level in &levels3 {
-            assert_eq!(level.nodes().len(), 0);
-            assert!(level.pairs.is_empty());
-        }
+        assert_levels_clean(&levels3, 6);
     }
 
     #[test]
@@ -193,11 +185,7 @@
         for level in &mut levels {
             reset_level(level, &mut room);
         }
-        for level in &levels {
-            assert_eq!(level.nodes().len(), 0);
-            assert!(level.pairs.is_empty());
-            assert!(!level.has_multi_pair());
-        }
+        assert_levels_clean(&levels, 2);
     }
 
     /// Regression test: a level returned to the pool with bloated `pairs`
@@ -256,11 +244,7 @@
         levels[1].push_internal_node(&[dummy, dummy]);
         return_levels(eng, levels);
         let levels2 = take_levels(eng, 2);
-        for level in &levels2 {
-            assert_eq!(level.nodes().len(), 0);
-            assert!(level.pairs.is_empty());
-            assert!(!level.has_multi_pair());
-        }
+        assert_levels_clean(&levels2, 2);
     }
 
     #[test]

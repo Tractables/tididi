@@ -52,6 +52,49 @@ fn rounds(full: u32, few: u32) -> u32 {
     if cfg!(miri) { few } else { full }
 }
 
+fn scratch_groups(scratch: &ContractScratch) -> Vec<Vec<u32>> {
+    scratch
+        .group_starts
+        .iter()
+        .enumerate()
+        .map(|(g, &start)| {
+            let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+            scratch.flat_groups[start as usize..end].to_vec()
+        })
+        .collect()
+}
+
+fn empty_levels(vtree: &Vtree, left: (VtreeIdx, u32), right: (VtreeIdx, u32)) -> Vec<TddLevel> {
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    for (v, w) in [left, right] {
+        for _ in 0..w {
+            levels[v.idx()].push_internal_node(&[filler]);
+        }
+    }
+    levels
+}
+
+fn side_pair(side: ChildSide, t: u32, s: u32) -> ChildPair {
+    let (l, r) = side.pick((t, s), (s, t));
+    ChildPair::new(NodeIdx(l), NodeIdx(r))
+}
+
+fn random_classes(rng: &mut Lcg, width: u32, max_span: u64) -> Vec<Vec<u32>> {
+    let mut order: Vec<u32> = (0..width).collect();
+    for i in (1..order.len()).rev() {
+        order.swap(i, rng.below(i as u64 + 1) as usize);
+    }
+    let mut classes = Vec::new();
+    let mut rest = &order[..];
+    while !rest.is_empty() {
+        let k = (1 + rng.below(max_span) as usize).min(rest.len());
+        classes.push(rest[..k].to_vec());
+        rest = &rest[k..];
+    }
+    classes
+}
+
 /// The twin search finds the groups a listing of every node's contexts
 /// gives, on either side. Parent nodes that draw from few siblings repeat
 /// contexts, and twins occur; parent nodes that draw from many seldom
@@ -63,7 +106,6 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(11);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
@@ -73,12 +115,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
         // Every third round draws siblings from a wide level, so most
         // parent nodes repeat none and the levels often have no twin.
         let widths = [1 + rng.below(40) as u32, 1 + rng.below(if round % 3 == 0 { 400 } else { 6 }) as u32];
-        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-        for (v, w) in [(v_left, widths[0]), (v_right, widths[1])] {
-            for _ in 0..w {
-                levels[v.idx()].push_internal_node(&[filler]);
-            }
-        }
+        let mut levels = empty_levels(&vtree, (v_left, widths[0]), (v_right, widths[1]));
         let mut used: HashSet<(u32, u32)> = HashSet::new();
         let mut pairs: Vec<ChildPair> = Vec::new();
         for _ in 0..1 + rng.below(30) {
@@ -108,13 +145,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
                 stopped_early += 1;
             }
             let found = twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            if found {
-                for (g, &start) in scratch.group_starts.iter().enumerate() {
-                    let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                    got.push(scratch.flat_groups[start as usize..end].to_vec());
-                }
-            }
+            let got = if found { scratch_groups(&scratch) } else { Vec::new() };
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             if let (true, Some(marks)) = (found, scratch.marked) {
@@ -192,15 +223,9 @@ fn a_wrapped_stamp_reads_no_older_cell() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
-    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     // Wider than the nodes the test sorts, so that it files them.
     let width = refine::SMALL_PAIRS as u32 + 4;
-    for v in [v_left, v_right] {
-        for _ in 0..width {
-            levels[v.idx()].push_internal_node(&[filler]);
-        }
-    }
+    let mut levels = empty_levels(&vtree, (v_left, width), (v_right, width));
     // One parent node pairing left node i with right node i: no sibling
     // repeats, and every node is named.
     let pairs: Vec<ChildPair> = (0..width).map(|i| ChildPair::new(NodeIdx(i), NodeIdx(i))).collect();
@@ -232,15 +257,9 @@ fn a_doubled_table_keeps_the_siblings_filed_before() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let width = 3 * TWIN_TABLE_START_CELLS as u32;
     for repeat in [false, true] {
-        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-        for v in [v_left, v_right] {
-            for _ in 0..width {
-                levels[v.idx()].push_internal_node(&[filler]);
-            }
-        }
+        let mut levels = empty_levels(&vtree, (v_left, width), (v_right, width));
         // Left node i paired with right node i: every left node is named
         // once, beside a sibling no other pair names. The repeating fixture's
         // last pair names right node 7 again, after the table has doubled.
@@ -273,7 +292,6 @@ fn single_entry_levels_are_grouped_by_sorting() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(23);
     let mut scratch = ContractScratch::default();
     let (mut grouped, mut with_groups, mut declined) = (0, 0, 0);
@@ -282,12 +300,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
         let width = if wide { groups::SINGLE_ENTRY_MIN_WIDTH as u32 + 4321 } else { 1 + rng.below(3000) as u32 };
         let siblings = 1 + rng.below(if round % 2 == 0 { 8 } else { 3000 }) as u32;
         let parents = 1 + rng.below(if round % 3 == 0 { 1 } else { 20 }) as usize;
-        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-        for (v, w) in [(v_left, width), (v_right, siblings)] {
-            for _ in 0..w {
-                levels[v.idx()].push_internal_node(&[filler]);
-            }
-        }
+        let mut levels = empty_levels(&vtree, (v_left, width), (v_right, siblings));
         // Each left node beside one sibling in one parent node; every fifth
         // round node 0 gets a second pair, every seventh round one node gets
         // none.
@@ -340,13 +353,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
             if side == ChildSide::Left && !wide {
                 assert!(!twice && !never, "round {round}: a node with no entry or two was grouped");
             }
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            if found {
-                for (g, &start) in scratch.group_starts.iter().enumerate() {
-                    let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                    got.push(scratch.flat_groups[start as usize..end].to_vec());
-                }
-            }
+            let got = if found { scratch_groups(&scratch) } else { Vec::new() };
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             grouped += 1;
@@ -366,33 +373,16 @@ fn wide_levels_with_planted_twins_find_every_twin() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(31);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     for round in 0..rounds(12, 1) {
         let width = 4096 + rng.below(2000) as u32;
         let siblings = if round % 3 == 0 { 8 } else { 1 + rng.below(4000) as u32 };
-        // Twin classes of one to four nodes, in a shuffled order.
-        let mut order: Vec<u32> = (0..width).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, rng.below(i as u64 + 1) as usize);
-        }
-        let mut classes: Vec<&[u32]> = Vec::new();
-        let mut rest = &order[..];
-        while !rest.is_empty() {
-            let k = (1 + rng.below(4) as usize).min(rest.len());
-            classes.push(&rest[..k]);
-            rest = &rest[k..];
-        }
+        let classes = random_classes(&mut rng, width, 4);
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             let mut used: HashSet<(usize, u32)> = HashSet::new();
             let mut pairs: Vec<ChildPair> = Vec::new();
             for p in 0..width as usize / 2 {
@@ -404,9 +394,8 @@ fn wide_levels_with_planted_twins_find_every_twin() {
                     let c = rng.below(classes.len() as u64) as usize;
                     let s = rng.below(u64::from(range)) as u32;
                     if used.insert((c, s)) {
-                        for &t in classes[c] {
-                            let (l, r) = if side == ChildSide::Left { (t, s) } else { (s, t) };
-                            pairs.push(ChildPair::new(NodeIdx(l), NodeIdx(r)));
+                        for &t in &classes[c] {
+                            pairs.push(side_pair(side, t, s));
                         }
                     }
                 }
@@ -420,11 +409,7 @@ fn wide_levels_with_planted_twins_find_every_twin() {
             // contraction checks it out.
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -446,7 +431,6 @@ fn classes_are_split_by_later_contexts() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(47);
     let mut shuffle = Lcg::new(48);
     let mut scratch = ContractScratch::default();
@@ -454,33 +438,17 @@ fn classes_are_split_by_later_contexts() {
     for round in 0..rounds(40, 4) {
         let width = 256 + rng.below(600) as u32;
         let siblings = 2 + rng.below(if round % 2 == 0 { 3 } else { 40 }) as u32;
-        let mut order: Vec<u32> = (0..width).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, rng.below(i as u64 + 1) as usize);
-        }
-        let mut classes: Vec<&[u32]> = Vec::new();
-        let mut rest = &order[..];
-        while !rest.is_empty() {
-            let k = (1 + rng.below(5) as usize).min(rest.len());
-            classes.push(&rest[..k]);
-            rest = &rest[k..];
-        }
+        let classes = random_classes(&mut rng, width, 5);
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
-            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             let mut pairs: Vec<(u32, u32)> = Vec::new();
             for p in 0..width as usize / 3 {
                 pairs.clear();
                 // Every fifteenth parent node is wide.
                 let draws = if p % 15 == 0 { 3 + rng.below(12) } else { 1 + rng.below(3) };
                 for _ in 0..draws {
-                    let class = classes[rng.below(classes.len() as u64) as usize];
+                    let class = &classes[rng.below(classes.len() as u64) as usize];
                     let s = rng.below(u64::from(siblings)) as u32;
                     match rng.below(6) {
                         // One member alone: the class splits here.
@@ -502,7 +470,7 @@ fn classes_are_split_by_later_contexts() {
                 }
                 reorder(&mut pairs, p / 15, &mut shuffle);
                 if !pairs.is_empty() {
-                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);
                 }
             }
@@ -515,11 +483,7 @@ fn classes_are_split_by_later_contexts() {
             // contraction checks it out.
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -543,7 +507,6 @@ fn nested_wide_nodes_are_split_by_degree() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(59);
     let mut shuffle = Lcg::new(60);
     let mut scratch = ContractScratch::default();
@@ -551,26 +514,10 @@ fn nested_wide_nodes_are_split_by_degree() {
     for round in 0..rounds(40, 2) {
         let width = 64 + rng.below(400) as u32;
         let siblings = 4 + rng.below(if round % 2 == 0 { 8 } else { 60 }) as u32;
-        let mut order: Vec<u32> = (0..width).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, rng.below(i as u64 + 1) as usize);
-        }
-        let mut classes: Vec<&[u32]> = Vec::new();
-        let mut rest = &order[..];
-        while !rest.is_empty() {
-            let k = (1 + rng.below(4) as usize).min(rest.len());
-            classes.push(&rest[..k]);
-            rest = &rest[k..];
-        }
+        let classes = random_classes(&mut rng, width, 4);
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
-            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             let mut pairs: Vec<(u32, u32)> = Vec::new();
             let mut by: Vec<u32> = (0..siblings).collect();
             for p in 0..width as usize / 4 {
@@ -582,7 +529,7 @@ fn nested_wide_nodes_are_split_by_degree() {
                         by.swap(i, rng.below(i as u64 + 1) as usize);
                     }
                     for _ in 0..2 + rng.below(8) {
-                        let class = classes[rng.below(classes.len() as u64) as usize];
+                        let class = &classes[rng.below(classes.len() as u64) as usize];
                         let d = 1 + rng.below(u64::from(siblings.min(8))) as usize;
                         let skip = if class.len() > 2 && rng.below(4) == 0 { rng.below(class.len() as u64) as usize } else { usize::MAX };
                         for (j, &t) in class.iter().enumerate() {
@@ -593,7 +540,7 @@ fn nested_wide_nodes_are_split_by_degree() {
                     }
                 } else {
                     for _ in 0..1 + rng.below(if p % 3 == 1 { 3 } else { 12 }) {
-                        let class = classes[rng.below(classes.len() as u64) as usize];
+                        let class = &classes[rng.below(classes.len() as u64) as usize];
                         let s = rng.below(u64::from(siblings)) as u32;
                         if rng.below(5) == 0 {
                             pairs.push((class[rng.below(class.len() as u64) as usize], s));
@@ -606,7 +553,7 @@ fn nested_wide_nodes_are_split_by_degree() {
                 pairs.dedup();
                 reorder(&mut pairs, p / 3, &mut shuffle);
                 if !pairs.is_empty() {
-                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);
                 }
             }
@@ -616,11 +563,7 @@ fn nested_wide_nodes_are_split_by_degree() {
             // contraction checks it out.
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -641,7 +584,6 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(71);
     let mut shuffle = Lcg::new(72);
     let mut scratch = ContractScratch::default();
@@ -649,36 +591,20 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
     for round in 0..rounds(40, 2) {
         let width = 200 + rng.below(300) as u32;
         let siblings = 2 + rng.below(if round % 2 == 0 { 4 } else { 50 }) as u32;
-        let mut order: Vec<u32> = (0..width).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, rng.below(i as u64 + 1) as usize);
-        }
         // Classes of one to four nodes; the nodes of the first three
         // quarters of them each have a parent node of their own.
-        let mut classes: Vec<&[u32]> = Vec::new();
-        let mut rest = &order[..];
-        while !rest.is_empty() {
-            let k = (1 + rng.below(4) as usize).min(rest.len());
-            classes.push(&rest[..k]);
-            rest = &rest[k..];
-        }
+        let classes = random_classes(&mut rng, width, 4);
         let lone: Vec<u32> = classes[..classes.len() * 3 / 4].iter().flat_map(|c| c.iter().copied()).collect();
         let kept = &classes[classes.len() * 3 / 4..];
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
-            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             for &t in &lone {
-                levels[root.idx()].push_internal_node(&[pair(t, rng.below(u64::from(siblings)) as u32)]);
+                levels[root.idx()].push_internal_node(&[side_pair(side, t, rng.below(u64::from(siblings)) as u32)]);
             }
             for class in kept {
                 let s = rng.below(u64::from(siblings)) as u32;
-                let node: Vec<ChildPair> = class.iter().map(|&t| pair(t, s)).collect();
+                let node: Vec<ChildPair> = class.iter().map(|&t| side_pair(side, t, s)).collect();
                 levels[root.idx()].push_internal_node(&node[..]);
             }
             let mut pairs: Vec<(u32, u32)> = Vec::new();
@@ -690,7 +616,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
                 let want = [0, 1, 2, 5, 20][rng.below(5) as usize];
                 let mut live = 0;
                 while live < want {
-                    let class = kept[rng.below(kept.len() as u64) as usize];
+                    let class = &kept[rng.below(kept.len() as u64) as usize];
                     let s = rng.below(u64::from(siblings)) as u32;
                     if want - live < class.len() || rng.below(3) == 0 {
                         pairs.push((class[rng.below(class.len() as u64) as usize], s));
@@ -703,7 +629,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
                 pairs.sort_unstable();
                 pairs.dedup();
                 reorder(&mut pairs, p, &mut shuffle);
-                let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
                 levels[root.idx()].push_internal_node(&node[..]);
             }
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
@@ -712,11 +638,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
             // contraction checks it out.
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -740,40 +662,23 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(71);
     let mut scratch = ContractScratch::default();
     let (mut seen_groups, mut few, mut many) = (0, 0, 0);
     for round in 0..rounds(60, 2) {
         let width = 64 + rng.below(700) as u32;
         let siblings = 1 + rng.below(6) as u32;
-        let mut order: Vec<u32> = (0..width).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, rng.below(i as u64 + 1) as usize);
-        }
-        let mut classes: Vec<&[u32]> = Vec::new();
-        let mut rest = &order[..];
-        while !rest.is_empty() {
-            let k = (1 + rng.below(6) as usize).min(rest.len());
-            classes.push(&rest[..k]);
-            rest = &rest[k..];
-        }
+        let classes = random_classes(&mut rng, width, 6);
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
-            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             let mut pairs: Vec<(u32, u32)> = Vec::new();
             for p in 0..width as usize / 4 {
                 pairs.clear();
                 // Most parent nodes are wide.
                 let draws = if p % 4 == 0 { 1 + rng.below(2) } else { 3 + rng.below(10) };
                 for _ in 0..draws {
-                    let class = classes[rng.below(classes.len() as u64) as usize];
+                    let class = &classes[rng.below(classes.len() as u64) as usize];
                     let code = 1 + rng.below((1u64 << siblings) - 1);
                     let set: Vec<u32> = (0..siblings).filter(|&s| code >> s & 1 == 1).collect();
                     let give = |pairs: &mut Vec<(u32, u32)>, t: u32, set: &[u32]| pairs.extend(set.iter().map(|&s| (t, s)));
@@ -818,7 +723,7 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
                     }
                 }
                 if !pairs.is_empty() {
-                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);
                 }
             }
@@ -826,11 +731,7 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -850,7 +751,6 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(83);
     let mut scratch = ContractScratch::default();
     let (mut seen_groups, mut two_two) = (0, 0);
@@ -858,14 +758,8 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
         let width = 2 + rng.below(12) as u32;
         let siblings = 1 + rng.below(3) as u32;
         for side in [ChildSide::Left, ChildSide::Right] {
-            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-            for (v, w) in [(target, width), (other, siblings)] {
-                for _ in 0..w {
-                    levels[v.idx()].push_internal_node(&[filler]);
-                }
-            }
-            let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
             // Nodes 2k and 2k + 1 are twins unless a parent node of the
             // last kind below names one without the other.
             let mut pairs: Vec<(u32, u32)> = Vec::new();
@@ -910,7 +804,7 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
                     two_two += 1;
                 }
                 if !pairs.is_empty() {
-                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+                    let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);
                 }
             }
@@ -918,11 +812,7 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
             scratch.prepare();
             let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
-            let mut got: Vec<Vec<u32>> = Vec::new();
-            for (g, &start) in scratch.group_starts.iter().enumerate() {
-                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-                got.push(scratch.flat_groups[start as usize..end].to_vec());
-            }
+            let got = scratch_groups(&scratch);
             assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
             assert_eq!(got, want, "round {round}, {side:?}");
             seen_groups += want.len();
@@ -942,7 +832,6 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(29);
     let mut scratch = ContractScratch::default();
     let (width, siblings) = (4096u32, 80u32);
@@ -950,24 +839,18 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
     // draw the same two are twins.
     let skips: Vec<(u32, u32)> = (0..width).map(|_| (rng.below(siblings as u64) as u32, rng.below(siblings as u64) as u32)).collect();
     for side in [ChildSide::Left, ChildSide::Right] {
-        let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
-        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-        for (v, w) in [(target, width), (other, siblings)] {
-            for _ in 0..w {
-                levels[v.idx()].push_internal_node(&[filler]);
-            }
-        }
-        let pair = |t: u32, s: u32| if side == ChildSide::Left { ChildPair::new(NodeIdx(t), NodeIdx(s)) } else { ChildPair::new(NodeIdx(s), NodeIdx(t)) };
+        let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+        let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         for (t, &(a, b)) in skips.iter().enumerate() {
             pairs.extend((0..siblings).filter(|&s| s != a && s != b).map(|s| (t as u32, s)));
         }
         assert!(pairs.len() >= refine::HAND_OFF_PAIRS, "the parent node is large: {}", pairs.len());
         reorder(&mut pairs, 2, &mut rng);
-        let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
+        let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
         levels[root.idx()].push_internal_node(&node[..]);
         // A narrow parent node in node order splits some groups first.
-        let few: Vec<ChildPair> = (0..width).step_by(3).map(|t| pair(t, 0)).collect();
+        let few: Vec<ChildPair> = (0..width).step_by(3).map(|t| side_pair(side, t, 0)).collect();
         levels[root.idx()].push_internal_node(&few[..]);
         let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
         let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
@@ -989,11 +872,7 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
         }
         scratch.prepare();
         let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
-        let mut got: Vec<Vec<u32>> = Vec::new();
-        for (g, &start) in scratch.group_starts.iter().enumerate() {
-            let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
-            got.push(scratch.flat_groups[start as usize..end].to_vec());
-        }
+        let got = scratch_groups(&scratch);
         assert!(found, "{side:?}");
         assert_eq!(got, want, "{side:?}");
     }

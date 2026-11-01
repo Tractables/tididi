@@ -146,16 +146,7 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
                 prune_unreachable(eng, &mut whole, PruneScope::Whole).unwrap();
 
                 assert_eq!(layout(&walked), layout(&whole), "the two walks left different diagrams");
-                for &t in walked.vtree.bottomup_slice() {
-                    if walked.is_structural_internal(t) {
-                        assert_eq!(
-                            walked.levels[t.idx()].slot_count(),
-                            reached[t.idx()].len(),
-                            "level {} keeps other than the nodes the output reaches",
-                            t.0
-                        );
-                    }
-                }
+                assert_slot_counts_match_reached(&walked, &reached, "the walk from the root");
                 assert_eq!(walked.model_count().unwrap(), count);
                 cases += 1;
             }
@@ -407,14 +398,10 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
             // A loose level under another: the levels between them, and
             // the upper one, are forced and not clean.
             let under_loose = |b: u32| {
-                let mut up = conj.vtree.node(crate::vtree::VtreeIdx(b)).parent();
-                while let Some(p) = up {
-                    if settled.contains(&p.0) {
-                        return true;
-                    }
-                    up = conj.vtree.node(p).parent();
-                }
-                false
+                conj.vtree
+                    .node(crate::vtree::VtreeIdx(b))
+                    .parent()
+                    .is_some_and(|parent| settled.iter().any(|&p| conj.vtree.in_subtree(parent, crate::vtree::VtreeIdx(p))))
             };
             nested += usize::from(root_clean && settled.iter().any(|&b| under_loose(b)));
         }
@@ -524,11 +511,7 @@ fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) ->
                 assert_eq!(layout(&moved), layout(&walked), "{what}: the two prunes left different diagrams");
                 assert_eq!(held(&moved), held(&walked), "{what}: the two prunes hold the levels otherwise");
                 let reached = reached_by_level(&moved);
-                for &t in moved.vtree.bottomup_slice() {
-                    if moved.is_structural_internal(t) {
-                        assert_eq!(moved.levels[t.idx()].slot_count(), reached[t.idx()].len(), "{what}: level {} keeps an unreached node", t.0);
-                    }
-                }
+                assert_slot_counts_match_reached(&moved, &reached, &what);
                 let mut minimized = walked.clone();
                 eng.minimize(&mut minimized).unwrap();
                 assert_eq!(sorted_layout(&moved), sorted_layout(&minimized), "{what}: the complement is not minimal");
@@ -580,18 +563,28 @@ fn sorted_layout(tdd: &crate::Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
     out
 }
 
+fn assert_slot_counts_match_reached(tdd: &crate::Tdd, reached: &[std::collections::BTreeSet<usize>], what: &str) {
+    for &t in tdd.vtree.bottomup_slice() {
+        if tdd.is_structural_internal(t) {
+            assert_eq!(tdd.levels[t.idx()].slot_count(), reached[t.idx()].len(), "{what}: level {} keeps an unreached node", t.0);
+        }
+    }
+}
+
+fn xorshift64(x: &mut u64) -> u64 {
+    *x ^= *x << 13;
+    *x ^= *x >> 7;
+    *x ^= *x << 17;
+    *x
+}
+
 /// The rank select gives the marked slot of every rank, read in rising
 /// order, again, and out of order, over blocks of no marks, every mark and
 /// random marks, and nothing past the last mark.
 #[test]
 fn the_rank_select_reads_every_marked_slot() {
     let mut x = 0x9e37_79b9_7f4a_7c15u64;
-    let mut next = || {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        x
-    };
+    let mut next = || xorshift64(&mut x);
     let mut blocks = vec![vec![0u64; 3], vec![u64::MAX; 3], vec![1u64 << 63, 0, 1]];
     for _ in 0..20 {
         let words = 1 + (next() % 5) as usize;
@@ -616,12 +609,7 @@ fn the_rank_select_reads_every_marked_slot() {
 fn the_word_passes_number_and_keep_every_marked_slot() {
     use crate::diagram::{ChildPair, EncodedChildRef, EncodedNode};
     let mut x = 0x2545_f491_4f6c_dd1du64;
-    let mut next = || {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        x
-    };
+    let mut next = || xorshift64(&mut x);
     let mut blocks = vec![vec![0u64; 3], vec![u64::MAX; 3], vec![u64::MAX, 0, 1 << 5], vec![1u64 << 63, u64::MAX, 0]];
     for _ in 0..30 {
         let words = 1 + (next() % 5) as usize;

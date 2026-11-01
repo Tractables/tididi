@@ -289,21 +289,13 @@ fn a_probe_charges_its_rebuilds_to_the_work_clock() {
 /// six to eight variables some probes do.
 #[test]
 fn a_refused_score_charges_the_pairs_it_reads() {
-    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0xca9);
     let mut pools = vec![pool()];
     for n in 6..9 {
         for (_, vtree) in vtree_shapes(n) {
-            pools.push(
-                (0..4)
-                    .map(|_| {
-                        let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-                        f.minimize().expect("an unarmed engine refuses nothing");
-                        f
-                    })
-                    .collect(),
-            );
+            pools.push(seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 }));
         }
     }
     let (mut refused, mut capped) = (0, 0);
@@ -697,6 +689,33 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
     won
 }
 
+fn seeded_pool(
+    eng: &crate::Engine,
+    rng: &mut crate::test_helpers::Lcg,
+    vtree: &Arc<Vtree>,
+    n: u32,
+    shape: crate::test_helpers::CnfShape,
+) -> Vec<Tdd> {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf};
+    (0..4)
+        .map(|_| {
+            let mut f = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
+            f.minimize().expect("an unarmed engine refuses nothing");
+            f
+        })
+        .collect()
+}
+
+fn assert_same_pool_outcome(searched: &[Tdd], full: &[Tdd], label: &str) {
+    assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
+    let first = Arc::clone(searched[0].vtree());
+    for (s, f) in searched.iter().zip(full) {
+        assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
+        assert_eq!(s.pair_count(), f.pair_count(), "{label}");
+        assert_canonical(s);
+    }
+}
+
 /// Seeded pools of four functions on every vtree shape of six to nine
 /// variables: a search whose restarts descend only where their random moves
 /// changed a level, and put the pool back from what the moves replaced, ends
@@ -704,19 +723,13 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
 /// from scratch and puts the pool back from a copy.
 #[test]
 fn restarts_end_where_restarts_descending_from_scratch_end() {
-    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x7e57);
     let (mut restarts, mut won, mut pools) = (0, 0, 0);
     for n in 6..10 {
         for (shape, vtree) in vtree_shapes(n) {
-            let members: Vec<Tdd> = (0..4)
-                .map(|_| {
-                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-                    f.minimize().expect("an unarmed engine refuses nothing");
-                    f
-                })
-                .collect();
+            let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for (crossed, min_gain_permille) in [(false, 0), (true, 0), (true, 100)] {
                 let config = PoolSearchConfig {
                     max_sweeps: usize::MAX,
@@ -730,13 +743,7 @@ fn restarts_end_where_restarts_descending_from_scratch_end() {
                 let mut full = members.clone();
                 let kept = full_search_with_restarts(&eng, &mut full, &config);
                 assert_eq!((stats.restarts_kept, stats.accepts), (kept.restarts, kept.moves), "{label}");
-                assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
-                let first = Arc::clone(searched[0].vtree());
-                for (s, f) in searched.iter().zip(&full) {
-                    assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
-                    assert_eq!(s.pair_count(), f.pair_count(), "{label}");
-                    assert_canonical(s);
-                }
+                assert_same_pool_outcome(&searched, &full, &label);
                 restarts += stats.restarts;
                 won += kept.restarts;
                 pools += 1;
@@ -753,19 +760,13 @@ fn restarts_end_where_restarts_descending_from_scratch_end() {
 /// search written out.
 #[test]
 fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
-    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x7e57);
     let (mut by_their_random_moves, mut pools) = (0, 0);
     for n in 6..9 {
         for (shape, vtree) in vtree_shapes(n) {
-            let members: Vec<Tdd> = (0..4)
-                .map(|_| {
-                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 2, width: 2 }));
-                    f.minimize().expect("an unarmed engine refuses nothing");
-                    f
-                })
-                .collect();
+            let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: 2, width: 2 });
             for seed in 0..8 {
                 let config = PoolSearchConfig {
                     max_sweeps: usize::MAX,
@@ -778,13 +779,7 @@ fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
                 let mut full = members.clone();
                 let kept = full_search_with_restarts(&eng, &mut full, &config);
                 assert_eq!((stats.restarts_kept, stats.accepts), (kept.restarts, kept.moves), "{label}");
-                assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
-                let first = Arc::clone(searched[0].vtree());
-                for (s, f) in searched.iter().zip(&full) {
-                    assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
-                    assert_eq!(s.pair_count(), f.pair_count(), "{label}");
-                    assert_canonical(s);
-                }
+                assert_same_pool_outcome(&searched, &full, &label);
                 by_their_random_moves += kept.by_their_random_moves;
                 pools += 1;
             }
@@ -836,20 +831,14 @@ fn skipping_refused_moves_keeps_the_moves_of_the_full_descent() {
 /// last changed keeps the moves of the descent that probes every one.
 #[test]
 fn skipping_refused_moves_keeps_the_moves_of_the_full_descent_on_seeded_pools() {
-    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x9e11);
     let config = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
     let (mut kept, mut skipped) = (0, 0);
     for n in 6..10 {
         for (shape, vtree) in vtree_shapes(n) {
-            let members: Vec<Tdd> = (0..4)
-                .map(|_| {
-                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-                    f.minimize().expect("an unarmed engine refuses nothing");
-                    f
-                })
-                .collect();
+            let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             let mut searched = members.clone();
             let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
             let mut full = members;
@@ -872,19 +861,13 @@ fn skipping_refused_moves_keeps_the_moves_of_the_full_descent_on_seeded_pools() 
 /// probes and charges exactly what the descent that probes it does.
 #[test]
 fn a_replayed_refusal_decides_and_charges_as_probing_again() {
-    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x51ee);
     let mut replayed = 0;
     for n in 6..10 {
         for (shape, vtree) in vtree_shapes(n) {
-            let members: Vec<Tdd> = (0..4)
-                .map(|_| {
-                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-                    f.minimize().expect("an unarmed engine refuses nothing");
-                    f
-                })
-                .collect();
+            let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for budget in [u64::MAX, 4000, 1500, 600] {
                 let config = PoolSearchConfig { max_sweeps: usize::MAX, max_work_units: budget, ..PoolSearchConfig::default() };
                 let run = |replay: bool| {
