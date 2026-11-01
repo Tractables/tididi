@@ -440,7 +440,37 @@ fn survey<'r>(
         let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
         return Ok((snapshot, cone));
     }
-    let lim = eng.limits();
+    let free_nodes = survey_masked_cone(
+        eng.limits(),
+        vtree,
+        ops,
+        masks,
+        (f_widths, g_widths),
+        lists,
+        &mut level,
+        &mut cells,
+    )?;
+    let ConeLists { built, free_before, tops, free, leaves } = lists;
+    let cone = Cone { built, free_before, tops, free, leaves, free_nodes, masks };
+    let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
+    Ok((snapshot, cone))
+}
+
+/// Populate `lists` and `(f_widths, g_widths)` when at least one operand has
+/// free levels in `masks`, returning `free_nodes`.
+#[allow(clippy::too_many_arguments)]
+fn survey_masked_cone<'r>(
+    lim: &crate::limits::Limits,
+    vtree: &'r Vtree,
+    ops: Operands<&Tdd>,
+    masks: Operands<VtreeMask<'r>>,
+    (f_widths, g_widths): (&mut [usize], &mut [usize]),
+    lists: &mut ConeLists,
+    mut level: impl FnMut(VtreeIdx, &mut [usize], &mut [usize]) -> (usize, usize),
+    mut cells: impl FnMut(usize, usize, u128) -> u64,
+) -> Result<u64, OperationError> {
+    let Operands { f, g } = ops;
+    let internal = vtree.internal_bottomup_slice();
     let ConeLists { built, free_before, tops, free, leaves } = lists;
     built.clear();
     free_before.clear();
@@ -484,8 +514,6 @@ fn survey<'r>(
             }
         }
     }
-    // A free root is the top of its region, under no built level; a leaf
-    // root is the one level.
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
         level(root, f_widths, g_widths);
@@ -493,9 +521,7 @@ fn survey<'r>(
     } else if free_at(root) {
         tops.push(root);
     }
-    let cone = Cone { built, free_before, tops, free, leaves, free_nodes, masks };
-    let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
-    Ok((snapshot, cone))
+    Ok(free_nodes)
 }
 
 /// Conservative per-cell byte factor for the apply's product grid:

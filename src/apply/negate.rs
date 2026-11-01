@@ -287,46 +287,7 @@ fn complement_full_at_root(
         let mut marked = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
         let mut target = Target { levels, source };
-        let lefts = ChildBasis::of(vtree, &target.levels[..], left);
-        let rights = ChildBasis::of(vtree, &target.levels[..], right);
-        let leaf = LeafForm { left_one: left_is_leaf, right_one: right_is_leaf };
-        let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
-        // The other root nodes are dropped with the old output, so the
-        // complement takes the leaf form the output uses.
-        let mut form = LeafForm::LITERAL;
-        let root_level = target.read(root_idx);
-        let covered = areas(root_level.pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
-        neg_pairs.clear();
-        // The work clock is charged a scan of the root's basis, by either
-        // route.
-        charge_scan(eng, lefts, rights)?;
-        if covered == old_cells(lefts, rights, fill) {
-            // The output covers every cell of the children's old nodes: its
-            // complement is the lines of their added nodes.
-            fill_lines_into(eng, lefts, rights, fill, form, &mut neg_pairs)?;
-            #[cfg(debug_assertions)]
-            {
-                let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
-                cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
-                let mut by_cover = Vec::new();
-                cover.missing_into(eng, &mut by_cover)?;
-                debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
-            }
-        } else {
-            let mut cover = Cover::reset(eng, &mut marked, lefts, rights, form)?;
-            cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
-            cover.missing_into(eng, &mut neg_pairs)?;
-        }
-
-        // Drop the pairs whose child computes the Zero function (an internal
-        // node with no pairs), which a fill node of `expand_full` can be.
-        neg_pairs.retain(|pair| {
-            let left_alive = left_is_leaf
-                || !empty_node(&target.levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
-            let right_alive = right_is_leaf
-                || !empty_node(&target.levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
-            left_alive && right_alive
-        });
+        collect_root_complement_pairs(eng, vtree, &target, out_local, filled, &mut marked, &mut neg_pairs)?;
 
         if neg_pairs.is_empty() {
             return Ok((crate::build::constant_on(eng, vtree, false)?, None));
@@ -353,6 +314,63 @@ fn complement_full_at_root(
         };
         Ok((result, Some(out_local)))
     }
+}
+
+/// Populate `neg_pairs` with the live root-level pairs missing from `out_local`.
+fn collect_root_complement_pairs(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    target: &Target<'_, '_>,
+    out_local: NodeIdx,
+    filled: &[bool],
+    marked: &mut Vec<u8>,
+    neg_pairs: &mut Vec<ChildPair>,
+) -> Result<(), OperationError> {
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+    let left_is_leaf = vtree.node(left).is_leaf();
+    let right_is_leaf = vtree.node(right).is_leaf();
+    let lefts = ChildBasis::of(vtree, target.levels, left);
+    let rights = ChildBasis::of(vtree, target.levels, right);
+    let leaf = LeafForm { left_one: left_is_leaf, right_one: right_is_leaf };
+    let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
+    // The other root nodes are dropped with the old output, so the
+    // complement takes the leaf form the output uses.
+    let mut form = LeafForm::LITERAL;
+    let root_level = target.read(root.idx());
+    let covered = areas(root_level.pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
+    neg_pairs.clear();
+    // The work clock is charged a scan of the root's basis, by either
+    // route.
+    charge_scan(eng, lefts, rights)?;
+    if covered == old_cells(lefts, rights, fill) {
+        // The output covers every cell of the children's old nodes: its
+        // complement is the lines of their added nodes.
+        fill_lines_into(eng, lefts, rights, fill, form, neg_pairs)?;
+        #[cfg(debug_assertions)]
+        {
+            let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
+            cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
+            let mut by_cover = Vec::new();
+            cover.missing_into(eng, &mut by_cover)?;
+            debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
+        }
+    } else {
+        let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
+        cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
+        cover.missing_into(eng, neg_pairs)?;
+    }
+
+    // Drop the pairs whose child computes the Zero function (an internal
+    // node with no pairs), which a fill node of `expand_full` can be.
+    neg_pairs.retain(|pair| {
+        let left_alive = left_is_leaf
+            || !empty_node(&target.levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
+        let right_alive = right_is_leaf
+            || !empty_node(&target.levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
+        left_alive && right_alive
+    });
+    Ok(())
 }
 
 // ── `expand_full`: explicit fill-node materialization ────────────────────────────

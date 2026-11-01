@@ -1308,7 +1308,49 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             let node = cube(eng, &mut assembly, &mut self.gate, into, code_root, code, &coding.code_bit)?;
             cubes.push(node);
         }
-        // The products, children first.
+        self.emit_side_products(eng, vtree, &mut assembly, coding)?;
+        // The levels, bottom-up: per state, the nodes its moves lead to.
+        let (r, m) = (layout.path.len(), layout.chain.len());
+        let mut root = Vec::new();
+        let mut below: (Vec<u32>, Vec<[u32; 2]>) = (Vec::new(), Vec::new());
+        for at in (0..r + m).rev() {
+            let (t, label_side, right) = match at.checked_sub(r) {
+                Some(j) => (layout.chain[j], None, true),
+                None => {
+                    let (u, x, right) = layout.path[at];
+                    (u, Some(child_slot(vtree, &self.slot, x)), right)
+                }
+            };
+            let bottom = at + 1 == r + m;
+            below = self.emit_level_states(
+                eng,
+                &mut assembly,
+                coding,
+                (at, t, label_side, right, bottom),
+                &cubes,
+                &below,
+                &mut root,
+            )?;
+        }
+        if root.is_empty() {
+            return Ok(crate::build::constant_zero(eng, into));
+        }
+        let top = assembly.push(eng, into.root(), &root)?;
+        self.gate.flush()?;
+        let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: top })?;
+        eng.minimize(&mut result)?;
+        Ok(result)
+    }
+
+    /// Emit the side-product nodes, children first, into `assembly`.
+    fn emit_side_products(
+        &mut self,
+        eng: &Engine,
+        vtree: &Vtree,
+        assembly: &mut Assembly<'_>,
+        coding: &Coding,
+    ) -> Result<(), OperationError> {
+        let lim = self.lim;
         for side in &mut self.products {
             for k in 0..side.order.len() {
                 let t = side.order[k];
@@ -1335,73 +1377,65 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 side.at[k].out = out;
             }
         }
-        // The levels, bottom-up: per state, the nodes its moves lead to.
-        let (r, m) = (layout.path.len(), layout.chain.len());
-        let mut root = Vec::new();
-        let mut below: (Vec<u32>, Vec<[u32; 2]>) = (Vec::new(), Vec::new());
-        for at in (0..r + m).rev() {
-            let (t, label_side, right) = match at.checked_sub(r) {
-                Some(j) => (layout.chain[j], None, true),
-                None => {
-                    let (u, x, right) = layout.path[at];
-                    (u, Some(child_slot(vtree, &self.slot, x)), right)
-                }
-            };
-            let bottom = at + 1 == r + m;
-            let level = &self.levels[at];
-            let mut index: FxHashMap<[u32; 2], u32> = FxHashMap::default();
-            let mut items = Vec::new();
-            let mut ranges = Vec::new();
-            lim.reserve(&mut ranges, level.states.len())?;
-            for s in 0..level.states.len() {
-                let start = items.len();
-                for &[label, next] in level.moves_of(s) {
-                    let label = match label_side {
-                        Some(Some(k)) => self.products[at].at[k].out[label as usize],
-                        _ => label,
-                    };
-                    let children: &[u32] = match bottom {
-                        true => std::slice::from_ref(&cubes[next as usize]),
-                        false => {
-                            let [start, len] = below.1[next as usize];
-                            &below.0[start as usize..(start + len) as usize]
-                        }
-                    };
-                    for &c in children {
-                        self.gate.poll(1)?;
-                        let pair = match right {
-                            true => [label, c],
-                            false => [c, label],
-                        };
-                        let pair_of = ChildPair::new(NodeIdx(pair[0]), NodeIdx(pair[1]));
-                        if at == 0 {
-                            lim.try_push(&mut root, pair_of)?;
-                            continue;
-                        }
-                        let node = match index.get(&pair) {
-                            Some(&node) => node,
-                            None => {
-                                let node = assembly.push(eng, coding.image[t.idx()], &[pair_of])?.0;
-                                lim.reserve_map(&mut index, 1)?;
-                                index.insert(pair, node);
-                                node
-                            }
-                        };
-                        lim.try_push(&mut items, node)?;
+        Ok(())
+    }
+
+    /// Emit all states of level `at`, returning `(items, ranges)` for the
+    /// parent level above (or appending root pairs into `root` when `at == 0`).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_level_states(
+        &mut self,
+        eng: &Engine,
+        assembly: &mut Assembly<'_>,
+        coding: &Coding,
+        (at, t, label_side, right, bottom): (usize, VtreeIdx, Option<Option<usize>>, bool, bool),
+        cubes: &[u32],
+        below: &(Vec<u32>, Vec<[u32; 2]>),
+        root: &mut Vec<ChildPair>,
+    ) -> Result<(Vec<u32>, Vec<[u32; 2]>), OperationError> {
+        let lim = self.lim;
+        let level = &self.levels[at];
+        let mut index: FxHashMap<[u32; 2], u32> = FxHashMap::default();
+        let mut items = Vec::new();
+        let mut ranges = Vec::new();
+        lim.reserve(&mut ranges, level.states.len())?;
+        for s in 0..level.states.len() {
+            let start = items.len();
+            for &[label, next] in level.moves_of(s) {
+                let label = match label_side {
+                    Some(Some(k)) => self.products[at].at[k].out[label as usize],
+                    _ => label,
+                };
+                let children: &[u32] = match bottom {
+                    true => std::slice::from_ref(&cubes[next as usize]),
+                    false => {
+                        let [start, len] = below.1[next as usize];
+                        &below.0[start as usize..(start + len) as usize]
                     }
+                };
+                for &c in children {
+                    self.gate.poll(1)?;
+                    let pair = if right { [label, c] } else { [c, label] };
+                    let pair_of = ChildPair::new(NodeIdx(pair[0]), NodeIdx(pair[1]));
+                    if at == 0 {
+                        lim.try_push(root, pair_of)?;
+                        continue;
+                    }
+                    let node = match index.get(&pair) {
+                        Some(&node) => node,
+                        None => {
+                            let node = assembly.push(eng, coding.image[t.idx()], &[pair_of])?.0;
+                            lim.reserve_map(&mut index, 1)?;
+                            index.insert(pair, node);
+                            node
+                        }
+                    };
+                    lim.try_push(&mut items, node)?;
                 }
-                ranges.push([start as u32, (items.len() - start) as u32]);
             }
-            below = (items, ranges);
+            ranges.push([start as u32, (items.len() - start) as u32]);
         }
-        if root.is_empty() {
-            return Ok(crate::build::constant_zero(eng, into));
-        }
-        let top = assembly.push(eng, into.root(), &root)?;
-        self.gate.flush()?;
-        let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: top })?;
-        eng.minimize(&mut result)?;
-        Ok(result)
+        Ok((items, ranges))
     }
 }
 

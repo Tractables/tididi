@@ -15,6 +15,21 @@ fn marginal_slots(tdd: &Tdd) -> usize {
     tdd.levels[right.idx()].marginal_counts().unwrap().len()
 }
 
+/// Decode `right_ref` against the root's right child marginal counts.
+fn decode_right_marginal_count(tdd: &Tdd, right_ref: EncodedChildRef) -> u128 {
+    let (_, right) = tdd.vtree.children(tdd.vtree.root());
+    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
+    match ChildDecoder::marginal().value(right_ref) {
+        ValueRef::Inline(v) => v as u128,
+        ValueRef::Slot(s) => counts[s as usize],
+    }
+}
+
+/// Root level's node 0 pairs.
+fn root_pairs(tdd: &Tdd) -> Vec<ChildPair> {
+    tdd.levels[tdd.vtree.root().idx()].pairs_vec(0)
+}
+
 /// Build a minimal diagram with one boundary-marginal level carrying a single
 /// fusable group: the root holds one internal node with two pairs sharing
 /// the same x-side index and distinct marginal-side indices `{0, 1}`.
@@ -92,19 +107,9 @@ fn fusion_sums_inline_inline_pairs() {
     // Sum 12 fits inline (12 ≤ `MARGINAL_INLINE_MAX` in default env) → no new slot.
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
     // The surviving pair's marginal-side ref must decode to count 12.
-    let root = tdd.vtree.root();
-    let right = match tdd.vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("root must be internal"),
-    };
-    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_vec(0);
+    let pairs = root_pairs(&tdd);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
-    let fused_raw = pairs[0].right.0;
-    let fused_count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(fused_raw)) {
-        ValueRef::Inline(v) => v as u128,
-        ValueRef::Slot(s) => counts[s as usize],
-    };
+    let fused_count = decode_right_marginal_count(&tdd, pairs[0].right);
     assert_eq!(fused_count, 12u128, "fused inline+inline count must be 5+7=12; got {fused_count}");
 }
 
@@ -146,17 +151,13 @@ fn fusion_groups_by_inline_explicit_refs() {
     assert_eq!(stats.fusion_groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 1);
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
-    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_vec(0);
+    let pairs = root_pairs(&tdd);
     assert_eq!(pairs.len(), 2, "the two pairs sharing Inline(3) fuse; the third stays");
     let fused = pairs
         .iter()
         .find(|p| p.left.0 == inline_3)
         .expect("the fused pair keeps its explicit-side ref");
-    let fused_count = match ChildDecoder::marginal().value(fused.right) {
-        ValueRef::Inline(v) => v as u128,
-        ValueRef::Slot(s) => counts[s as usize],
-    };
+    let fused_count = decode_right_marginal_count(&tdd, fused.right);
     assert_eq!(fused_count, 12u128, "fused count must be 5+7=12; got {fused_count}");
     assert!(
         pairs.iter().any(|p| p.left.0 == inline_4 && p.right.0 == ValueRef::slot_raw(2)),
@@ -225,8 +226,6 @@ fn fusion_sums_identical_ref_occurrences() {
     // One marginal slot, count 6; the root node holds two IDENTICAL pairs
     // (x=0, slot 0).
     let mut tdd = toy(vec![6], &[&[(0, 0), (0, 0)]]);
-    let root = tdd.vtree.root();
-    let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
@@ -234,13 +233,9 @@ fn fusion_sums_identical_ref_occurrences() {
     assert_eq!(size_before - tdd.pair_count(), 1, "a group of size 2 removes one pair");
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 inlines under the default threshold");
 
-    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_vec(0);
+    let pairs = root_pairs(&tdd);
     assert_eq!(pairs.len(), 1, "fusion must collapse the two identical pairs to one");
-    let fused_count = match ChildDecoder::marginal().value(pairs[0].right) {
-        ValueRef::Inline(v) => v as u128,
-        ValueRef::Slot(s) => counts[s as usize],
-    };
+    let fused_count = decode_right_marginal_count(&tdd, pairs[0].right);
     assert_eq!(
         fused_count, 12u128,
         "two occurrences of slot-0 (count 6) must sum to 12, not dedup to 6; got {fused_count}",
@@ -259,8 +254,6 @@ fn fusion_partitions_two_independent_x_groups() {
     // Five slots: x=0 → {0:3, 1:5, 2:7} (sum 15); x=1 → {3:11, 4:13} (sum 24).
     // The two groups are interleaved: grouping must be by x, not by pair order.
     let mut tdd = toy(vec![3, 5, 7, 11, 13], &[&[(0, 0), (1, 3), (0, 1), (1, 4), (0, 2)]]);
-    let root = tdd.vtree.root();
-    let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("two-group fusion must not over-budget");
@@ -269,17 +262,12 @@ fn fusion_partitions_two_independent_x_groups() {
     assert_eq!(size_before - tdd.pair_count(), 3);
     assert_eq!(marginal_slots(&tdd), slots_before, "sums 15 and 24 both inline under the default threshold");
 
-    let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_vec(0);
+    let pairs = root_pairs(&tdd);
     assert_eq!(pairs.len(), 2, "five pairs in two groups collapse to two fused pairs");
     // Map each surviving fused pair by its preserved x-side (left) index.
     let mut by_left: std::collections::HashMap<u32, u128> = std::collections::HashMap::new();
     for p in pairs {
-        let c = match ChildDecoder::marginal().value(p.right) {
-            ValueRef::Inline(v) => v as u128,
-            ValueRef::Slot(s) => counts[s as usize],
-        };
-        by_left.insert(p.left.0, c);
+        by_left.insert(p.left.0, decode_right_marginal_count(&tdd, p.right));
     }
     assert_eq!(by_left.get(&0).copied(), Some(15u128), "x=0 group must sum 3+5+7=15");
     assert_eq!(by_left.get(&1).copied(), Some(24u128), "x=1 group must sum 11+13=24");

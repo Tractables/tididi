@@ -288,53 +288,26 @@ where
     A: CellAction<L, R>,
 {
     let RowLoop { f_level: left_level_t, g_level: right_level_t, ctx, f_width: left_width, .. } = rows;
-    // Named once, ahead of the row loop, so the loop body indexes locals rather
-    // than reaching back through the bundle at every cell.
     let RowScratch { f_pairs: f_pairs_scratch, g_pairs: g_pairs_scratch, node_idx: slab } = scratch;
     let lim = eng.limits();
-    // Amortized wall-deadline/cancel poll: one read per ~65k cell iterations
-    // so an expired deadline cuts within a fraction of a level rather than
-    // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     debug_assert!(!A::ONE_COLUMN || ctx.right_width == 1, "a one-column action runs on a level of one column");
     let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
-    // Whether the per-column cull below can fire at all: the reach masks exist
-    // only on a masked level, a pass-through side has no grid to be dead in,
-    // and `DENSE` is the regime where the masks are not folded.
     let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
     let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
-    // Whether a row may read its live columns off the reach columns: every
-    // culling side built them.
     let (left_cols, right_cols) = (ctx.sides.left.reach_cols, ctx.sides.right.reach_cols);
     let by_columns = (cull_left || cull_right)
         && (!cull_left || !left_cols.is_empty())
         && (!cull_right || !right_cols.is_empty());
     let words = right_width.div_ceil(64);
     let culls = usize::from(cull_left) + usize::from(cull_right);
-    // Whether a row reads its live columns off the row columns: every
-    // culling side built them, and a side that culls nothing is read whole.
     let (left_rows, right_rows) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
     let by_rows = (cull_left || cull_right) && ctx.sides.left.rows && ctx.sides.right.rows;
     debug_assert!(!by_rows || right_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
-    // A side read whole: every g node, and a live cell in the row.
     let whole = if by_rows { ROW_LIVE | ((1u64 << right_width) - 1) } else { 0 };
 
-    // One slab fill instead of `left_width` row fills. On a dense-slab action the
-    // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
-    // (`grid_row(i) == i`), so hoisting them into a single `fill` writes the same
-    // cells with the same byte pattern; only the order changes, and nothing reads
-    // this level's slab between rows (the child lookups read the child levels'
-    // disjoint slabs). Above the size gate the per-row form stays: interleaving
-    // the reset with the row's cell work is what keeps the active row L1-resident
-    // on a large grid.
-    //
-    // Where neither side can kill a candidate, a dense-slab action writes a
-    // node at every cell of a live row and a live column, so only a dead row
-    // is reset, and a dead column's cell is reset by the cell
-    // ([`process_cell`]): no cell is written twice.
     let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
     let slab_fill = A::DENSE_SLAB && !every_cell && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    // A side that cannot kill is a complete one ([`mark_dead_out_of_line`]).
     let reset = |cells: &mut [u32]| {
         if left.kills() && right.kills() { mark_dead(cells) } else { mark_dead_out_of_line(cells) }
     };
@@ -345,13 +318,10 @@ where
         }
     }
 
-    // An implicit f level's rows generated before the loop reads them; a
-    // stored level's rows are slices of its arena.
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, left_level_t, left_width, left_view, right_view, f_pairs_scratch);
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
-        // A row the slab is extended over is `NO_PRODUCT` already.
         let fresh = extend_slab(slab, row_base, row_base + right_width);
         let node_idx = &mut slab[..];
         if !slab_fill && !every_cell && !fresh {
@@ -362,7 +332,6 @@ where
             Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
             None => left_level_t.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
         };
-        // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell && !fresh {
                 reset(&mut node_idx[row_base..row_base + right_width]);
@@ -370,149 +339,167 @@ where
             continue;
         }
 
-        // The first column the cells below start at.
-        let mut first = 0;
-        if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
-            // The row's every column is a cell, as the loop below would
-            // find once the masks' fold kept the row.
-            if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
-                continue;
-            }
-            let row = WholeRow {
-                row_base, f_pairs, ctx, right_level_t,
-                g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, left, right, gate: &mut poll,
-            };
-            first = action.whole_row(eng, row)?;
-            if first == right_width {
-                poll.poll(right_width as u64)?;
-                continue;
-            }
+        run_nonempty_level_row::<DENSE, L, R, A>(
+            eng,
+            action,
+            (i, row_base, right_width),
+            (f_pairs, ctx, right_level_t),
+            (left, right),
+            (&mut *g_pairs_scratch, &mut *node_idx, &mut poll),
+            (by_rows, whole, (cull_left, cull_right), (by_columns, words, culls), (left_rows, right_rows), (left_cols, right_cols)),
+        )?;
+    }
+    poll.flush()?;
+    Ok(())
+}
+
+/// Evaluate and emit one non-empty `f` row `i` in [`run_level_rows`].
+#[inline(always)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn run_nonempty_level_row<'a, const DENSE: bool, L, R, A>(
+    eng: &Engine,
+    action: &mut A,
+    (i, row_base, right_width): (usize, usize, usize),
+    (f_pairs, ctx, right_level_t): (&[ChildPair], &CellCtx<'a>, &TddLevel),
+    (left, right): (&L, &R),
+    (g_pairs_scratch, node_idx, poll): (&mut Vec<ChildPair>, &mut [u32], &mut crate::limits::PollGate<'a>),
+    (by_rows, whole, (cull_left, cull_right), (by_columns, words, culls), (left_rows, right_rows), (left_cols, right_cols)): (
+        bool,
+        u64,
+        (bool, bool),
+        (bool, usize, usize),
+        (&[u64], &[u64]),
+        (&[u64], &[u64]),
+    ),
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    A: CellAction<L, R>,
+{
+    let mut first = 0;
+    if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
+        if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
+            return Ok(());
         }
-        let mut cell = |j: usize| {
-            action.cell(
-                eng,
-                CellArgs {
-                    j,
-                    i,
-                    row_base,
-                    f_pairs,
-                    ctx,
-                    right_level_t,
-                    left,
-                    right,
-                    g_pairs_scratch: &mut *g_pairs_scratch,
-                    node_idx: &mut *node_idx,
-                    gate: &mut poll,
-                },
-            )
+        let row = WholeRow {
+            row_base, f_pairs, ctx, right_level_t,
+            g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, left, right, gate: &mut *poll,
         };
-        if by_rows {
-            // The row's pairs' row columns folded on each culling side:
-            // their intersection is the g nodes the reach scan below would find, and
-            // a side without a live child row skips the row, as the alive
-            // masks' fold would. An OR a pair a side, in place of the
-            // masks' fold and a test a g node. A side that culls nothing
-            // has a live cell in every child row, its child having columns.
-            let l = if cull_left { f_pairs.iter().fold(0, |l, p| l | left_rows[p.left.raw() as usize]) } else { whole };
-            let r = if cull_right { f_pairs.iter().fold(0, |r, p| r | right_rows[p.right.raw() as usize]) } else { whole };
-            if l & r & ROW_LIVE == 0 {
-                continue;
+        first = action.whole_row(eng, row)?;
+        if first == right_width {
+            return poll.poll(right_width as u64);
+        }
+    }
+    let mut cell = |j: usize| {
+        action.cell(
+            eng,
+            CellArgs {
+                j, i, row_base, f_pairs, ctx, right_level_t, left, right,
+                g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, gate: &mut *poll,
+            },
+        )
+    };
+    if by_rows {
+        if enter_row_by_row_cols(f_pairs, (cull_left, cull_right), (left_rows, right_rows), whole, &mut cell)? {
+            poll.poll(right_width as u64)?;
+        }
+        return Ok(());
+    }
+    let Some((left_alive_mask, right_alive_mask)) = (if DENSE {
+        Some((0u128, u128::MAX))
+    } else {
+        row_alive_masks(ctx, f_pairs)
+    }) else {
+        return Ok(());
+    };
+    if cull_left || cull_right {
+        enter_row_by_cull(
+            ctx, (cull_left, cull_right), (left_alive_mask, right_alive_mask),
+            (by_columns, words, culls, right_width), (left_cols, right_cols), &mut cell,
+        )?;
+    } else {
+        for j in first..right_width {
+            cell(j)?;
+        }
+    }
+    poll.poll(right_width as u64)
+}
+
+/// Enter a row's live columns via folded `row_cols` bitmasks, returning `Ok(true)`
+/// when the row had at least one live child row and should book its poll charge.
+#[inline(always)]
+fn enter_row_by_row_cols(
+    f_pairs: &[ChildPair],
+    (cull_left, cull_right): (bool, bool),
+    (left_rows, right_rows): (&[u64], &[u64]),
+    whole: u64,
+    mut cell: impl FnMut(usize) -> Result<(), OperationError>,
+) -> Result<bool, OperationError> {
+    let l = if cull_left { f_pairs.iter().fold(0, |l, p| l | left_rows[p.left.raw() as usize]) } else { whole };
+    let r = if cull_right { f_pairs.iter().fold(0, |r, p| r | right_rows[p.right.raw() as usize]) } else { whole };
+    if l & r & ROW_LIVE == 0 {
+        return Ok(false);
+    }
+    super::super::note_row_columns_row(!(cull_left && cull_right));
+    let mut live = l & r & !ROW_LIVE;
+    while live != 0 {
+        let j = live.trailing_zeros() as usize;
+        live &= live - 1;
+        cell(j)?;
+    }
+    Ok(true)
+}
+
+/// Enter a row's live columns under `cull_left || cull_right`, choosing between
+/// the transposed `reach_cols` words and 64-column `reaching` scans.
+#[inline(always)]
+fn enter_row_by_cull(
+    ctx: &CellCtx<'_>,
+    (cull_left, cull_right): (bool, bool),
+    (left_alive_mask, right_alive_mask): (u128, u128),
+    (by_columns, words, culls, right_width): (bool, usize, usize, usize),
+    (left_cols, right_cols): (&[u64], &[u64]),
+    mut cell: impl FnMut(usize) -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    let bits = if cull_left { left_alive_mask.count_ones() } else { 0 }
+        + if cull_right { right_alive_mask.count_ones() } else { 0 };
+    if by_columns && 2 * bits as usize * words < 3 * culls * right_width {
+        super::super::note_reach_columns_row();
+        for w in 0..words {
+            let n = (right_width - w * 64).min(64);
+            let mut live = u64::MAX >> (64 - n);
+            if cull_left {
+                live &= reach_word(left_alive_mask, left_cols, words, w);
             }
-            super::super::note_row_columns_row(!(cull_left && cull_right));
-            let mut live = l & r & !ROW_LIVE;
+            if cull_right && live != 0 {
+                live &= reach_word(right_alive_mask, right_cols, words, w);
+            }
             while live != 0 {
-                let j = live.trailing_zeros() as usize;
+                let j = w * 64 + live.trailing_zeros() as usize;
                 live &= live - 1;
                 cell(j)?;
             }
-            poll.poll(right_width as u64)?;
-            continue;
         }
-        let (left_alive_mask, right_alive_mask) = if DENSE {
-            (0u128, u128::MAX)
-        } else {
-            match row_alive_masks(ctx, f_pairs) {
-                Some(masks) => masks,
-                // Row skip: if f[i]'s pairs all reference dead child rows,
-                // no cell in this row can produce output.
-                None => continue,
-            }
-        };
-        if cull_left || cull_right {
-            // The cell's own dead-cell test, taken before the cell is entered.
-            // A column whose g node reaches no live child of this row cannot
-            // produce anything, whatever arm the cell would have taken, so the
-            // cheapest place to find that out is here — ahead of the column's
-            // pair slice, the empty test and the arm dispatch. Both sides read
-            // the row's mask, which is the union over the row's references, so
-            // a clear intersection proves every cell of the column dead.
-            //
-            // The tests run 64 columns at a time into a word of live columns,
-            // and the cells are entered in column order from its bits. Tested
-            // ahead of each cell, most of a row's columns failing them, the
-            // loop reloaded the context's reach slices at every column, the
-            // cell's stores being able to change them as far as the compiler
-            // knew, and branched on every test.
-            //
-            // A row whose masks have few bits reads its live columns off the
-            // reach columns instead, a word a mask bit for 64 columns, where
-            // the scan tests every column: about two thirds the instructions
-            // a word as a column's test takes.
-            let bits = if cull_left { left_alive_mask.count_ones() } else { 0 }
-                + if cull_right { right_alive_mask.count_ones() } else { 0 };
-            if by_columns && 2 * bits as usize * words < 3 * culls * right_width {
-                super::super::note_reach_columns_row();
-                for w in 0..words {
-                    let n = (right_width - w * 64).min(64);
-                    let mut live = u64::MAX >> (64 - n);
-                    if cull_left {
-                        live &= reach_word(left_alive_mask, left_cols, words, w);
-                    }
-                    if cull_right && live != 0 {
-                        live &= reach_word(right_alive_mask, right_cols, words, w);
-                    }
-                    while live != 0 {
-                        let j = w * 64 + live.trailing_zeros() as usize;
-                        live &= live - 1;
-                        cell(j)?;
-                    }
-                }
-                poll.poll(right_width as u64)?;
-                continue;
-            }
-            let mut j0 = 0;
-            while j0 < right_width {
-                let n = (right_width - j0).min(64);
-                let mut live = u64::MAX >> (64 - n);
-                if cull_left {
-                    live &= reaching(left_alive_mask, &ctx.sides.left.reach[j0..j0 + n]);
-                }
-                if cull_right && live != 0 {
-                    live &= reaching(right_alive_mask, &ctx.sides.right.reach[j0..j0 + n]);
-                }
-                while live != 0 {
-                    let j = j0 + live.trailing_zeros() as usize;
-                    live &= live - 1;
-                    cell(j)?;
-                }
-                j0 += n;
-            }
-        } else {
-            for j in first..right_width {
-                cell(j)?;
-            }
-        }
-        // One `poll(right_width)` per row instead of one per cell: the gate only
-        // meters accumulated work, so the same total is booked either way. A row
-        // wider than the stride now polls once rather than once per stride's worth
-        // of cells — the poll is an idempotent deadline read, so firing once per
-        // crossing is equivalent, and a row that skipped the `j` loop (empty or
-        // dead) books nothing, exactly as before (`right_width == 0` books nothing either).
-        poll.poll(right_width as u64)?;
+        return Ok(());
     }
-    // The level's residual: what the gate holds is under one stride by
-    // construction, and on a level narrower than a stride it is everything.
-    poll.flush()?;
+    let mut j0 = 0;
+    while j0 < right_width {
+        let n = (right_width - j0).min(64);
+        let mut live = u64::MAX >> (64 - n);
+        if cull_left {
+            live &= reaching(left_alive_mask, &ctx.sides.left.reach[j0..j0 + n]);
+        }
+        if cull_right && live != 0 {
+            live &= reaching(right_alive_mask, &ctx.sides.right.reach[j0..j0 + n]);
+        }
+        while live != 0 {
+            let j = j0 + live.trailing_zeros() as usize;
+            live &= live - 1;
+            cell(j)?;
+        }
+        j0 += n;
+    }
     Ok(())
 }
 
@@ -924,32 +911,9 @@ fn relay_rows(
             slab.copy_within(src(i)..src(i) + width, dst + i * width);
         }
     }
-    let out = &mut slab[dst..end];
-    let Some(&v) = out.iter().find(|&&x| x != NO_PRODUCT) else { return Ok(false) };
-    let mut next = v;
-    for run in out.chunks(1 << 12) {
-        let ordered = run.iter().fold(true, |ordered, &x| {
-            let live = x != NO_PRODUCT;
-            let at = x == next;
-            next += u32::from(live);
-            ordered & (!live | at)
-        });
-        if !ordered {
-            return Ok(false);
-        }
-    }
-    let nodes = (next - v) as usize;
-    if nodes < crate::diagram::floor().max(2) {
-        return Ok(false);
-    }
-    let Some(described) = crate::diagram::ImplicitLevel::one_step(nodes, (i64::from(p), i64::from(v)), (0, 1)) else {
+    let Some((nodes, described)) = fit_relayed_slab(&mut slab[dst..end], p) else {
         return Ok(false);
     };
-    if v != 0 {
-        for x in out.iter_mut().filter(|x| **x != NO_PRODUCT) {
-            *x -= v;
-        }
-    }
     // The row loop's polls: a row's units, a unit a live cell and its
     // width, added while the gate does not come due inside the row, and the
     // row's cells polled one at a time and then its width where it does.
@@ -974,6 +938,36 @@ fn relay_rows(
     Ok(true)
 }
 
+/// Check that the relayed cells in `out` hold contiguous increasing node
+/// indices starting at some `v`, rebase them to `0..nodes`, and build the
+/// one-step [`ImplicitLevel`] description.
+fn fit_relayed_slab(out: &mut [u32], p: u32) -> Option<(usize, crate::diagram::ImplicitLevel)> {
+    let &v = out.iter().find(|&&x| x != NO_PRODUCT)?;
+    let mut next = v;
+    for run in out.chunks(1 << 12) {
+        let ordered = run.iter().fold(true, |ordered, &x| {
+            let live = x != NO_PRODUCT;
+            let at = x == next;
+            next += u32::from(live);
+            ordered & (!live | at)
+        });
+        if !ordered {
+            return None;
+        }
+    }
+    let nodes = (next - v) as usize;
+    if nodes < crate::diagram::floor().max(2) {
+        return None;
+    }
+    let described = crate::diagram::ImplicitLevel::one_step(nodes, (i64::from(p), i64::from(v)), (0, 1))?;
+    if v != 0 {
+        for x in out.iter_mut().filter(|x| **x != NO_PRODUCT) {
+            *x -= v;
+        }
+    }
+    Some((nodes, described))
+}
+
 /// The row loop of [`run_level_rows_single`] on a level of `W` columns, or
 /// of any number for `W = 0`.
 ///
@@ -995,22 +989,18 @@ fn single_rows<const W: usize>(
     debug_assert!(W == 0 || W == right_width);
     let width = if W == 0 { right_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
-    // A row's charge: a unit a live cell and the row's width.
     let row_units = live_cols + width as u64;
     let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
     let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
-    // The f nodes, where a row's pair is its node's.
     let f_nodes = match f_level.stored() {
         Some(stored) if f_described.is_none() && !left_view.is_marginal() && !right_view.is_marginal() => Some(stored.nodes()),
         _ => None,
     };
     let g: [ChildPair; W] = std::array::from_fn(|j| g_cols[j]);
 
-    // The resets of `run_level_rows`, where the rows' cells are not written
-    // once: one fill of a small grid, a row at a time on a larger one.
     let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if W == 0 && slab_fill {
         let end = ctx.output_grid_base + f_width * right_width;
@@ -1018,8 +1008,6 @@ fn single_rows<const W: usize>(
             mark_dead(&mut slab[ctx.output_grid_base..end]);
         }
     }
-    // With `W` columns and the f nodes stored, the grid extended over the
-    // level's rows ahead of them, each row's cells written in place.
     let extended = W > 0 && f_nodes.is_some() && {
         let end = ctx.output_grid_base + f_width * width;
         if slab.len() < end && slab.capacity() >= end {
@@ -1029,61 +1017,15 @@ fn single_rows<const W: usize>(
     };
     let mut next = 0;
     'rows: while next < f_width {
-        // The rows' nodes are written straight into the node arena, open
-        // across rows, while it has room for a node a column; a row it has
-        // no room for goes through the sink, which grows it.
         let mut out = sink.open_row(0, 0);
-        // The rows the node arena has room for, read with no test of the
-        // room, the grid's length or the gate a row: the gate's units
-        // counted down here, and polled as below at the row it comes due.
         if extended
             && let (Some(nodes), Some(o)) = (f_nodes, out.as_mut())
             && o.node_room() >= width
         {
-            let end = f_width.min(next + o.node_room() / width);
-            let (mut due_at, mut due) = (poll.due_in(), poll.due_in());
-            while next < end {
-                let i = next;
-                next += 1;
-                let row_base = ctx.output_grid_base + i * width;
-                let p = match nodes[i].kind() {
-                    NodeKind::Inline(p) => Some(p),
-                    _ => f_level.pairs_read(i, f_scratch).first().copied(),
-                };
-                let mut cells = [NO_PRODUCT; W];
-                if let Some(p) = p {
-                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                    for (cell, q) in cells.iter_mut().zip(&g) {
-                        if q.left.0 == NO_PRODUCT {
-                            continue;
-                        }
-                        let lc = left.get_in_row(slab, lrow, q.left.0);
-                        if lc == NO_PRODUCT {
-                            continue;
-                        }
-                        let rc = right.get_in_row(slab, rrow, q.right.0);
-                        if rc != NO_PRODUCT {
-                            // Safety: the arena has room for a node a column
-                            // of the rows up to `end`.
-                            *cell = unsafe { o.single_node(lc, rc) };
-                        }
-                    }
-                }
-                debug_assert!(row_base + W <= slab.len(), "the grid is extended over the level");
-                // Safety: the grid was extended over every row of the level.
-                unsafe { slab.get_unchecked_mut(row_base..row_base + W) }.copy_from_slice(&cells);
-                if p.is_none() {
-                    continue;
-                }
-                if row_units < due {
-                    due -= row_units;
-                } else {
-                    poll.add_short(due_at - due);
-                    poll = poll_each_then_due(poll, live_cols, width as u64)?;
-                    (due_at, due) = (poll.due_in(), poll.due_in());
-                }
-            }
-            poll.add_short(due_at - due);
+            poll = single_rows_extended_run::<W>(
+                f_level, nodes, f_scratch, (&left, &right), &g, slab, o,
+                (&mut next, f_width, width, ctx.output_grid_base), (row_units, live_cols), poll,
+            )?;
             continue 'rows;
         }
         while next < f_width {
@@ -1099,78 +1041,176 @@ fn single_rows<const W: usize>(
                 (None, None) => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view).first().copied(),
             };
             debug_assert!(f_level.pairs_view_decoded(i, &mut Vec::new(), left_view, right_view).len() <= 1, "an f node of one pair at most");
-            if W == 0 {
-                let fresh = extend_slab(slab, row_base, row_base + width);
-                if !slab_fill && !fresh {
-                    mark_dead(&mut slab[row_base..row_base + width]);
-                }
+            if W == 0 && !extend_slab(slab, row_base, row_base + width) && !slab_fill {
+                mark_dead(&mut slab[row_base..row_base + width]);
             }
-            // A dead f node's row stays dead.
             let Some(p) = p else {
-                if W > 0 {
-                    write_cells(slab, row_base, [NO_PRODUCT; W]);
-                }
+                if W > 0 { write_cells(slab, row_base, [NO_PRODUCT; W]); }
                 continue;
             };
-            let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-            // A cell's product: `NO_PRODUCT` where a side has none.
-            let product = |node_idx: &[u32], q: &ChildPair| {
-                if q.left.0 == NO_PRODUCT {
-                    return None;
-                }
-                let lc = left.get_in_row(node_idx, lrow, q.left.0);
-                if lc == NO_PRODUCT {
-                    return None;
-                }
-                let rc = right.get_in_row(node_idx, rrow, q.right.0);
-                (rc != NO_PRODUCT).then_some((lc, rc))
-            };
             if let Some(o) = out.as_mut().filter(|o| o.has_room(0, width)) {
-                if W > 0 {
-                    let mut cells = [NO_PRODUCT; W];
-                    for (cell, q) in cells.iter_mut().zip(&g) {
-                        if let Some((lc, rc)) = product(slab, q) {
-                            // Safety: the arena has room for a node a column.
-                            *cell = unsafe { o.single_node(lc, rc) };
-                        }
-                    }
-                    write_cells(slab, row_base, cells);
-                } else {
-                    for (j, q) in g_cols.iter().enumerate() {
-                        if let Some((lc, rc)) = product(slab, q) {
-                            // Safety: as above.
-                            unsafe { o.single(slab, row_base + j, lc, rc) };
-                        }
-                    }
-                }
-                // A unit a live cell, polled as the row loop polls them,
-                // in one add where the gate does not come due inside.
-                if row_units < poll.due_in() {
-                    poll.add_short(row_units);
-                } else {
-                    poll = poll_each_then_due(poll, live_cols, width as u64)?;
-                }
+                poll = write_single_row_in_room::<W>(o, p, (&left, &right), (g_cols, &g), slab, (row_base, width), (row_units, live_cols), poll)?;
                 continue;
             }
             drop(out);
-            if W > 0 {
-                write_cells(slab, row_base, [NO_PRODUCT; W]);
-            }
-            for (j, q) in g_cols.iter().enumerate() {
-                if let Some((lc, rc)) = product(slab, q) {
-                    sink.single(eng, slab, row_base + j, lc, rc)?;
-                }
-            }
-            if row_units < poll.due_in() {
-                poll.add_short(row_units);
-            } else {
-                poll = poll_each_then_due(poll, live_cols, width as u64)?;
-            }
+            poll = emit_single_row_via_sink::<W>(eng, sink, p, (&left, &right), g_cols, slab, (row_base, width), (row_units, live_cols), poll)?;
             continue 'rows;
         }
     }
     poll.flush()?;
     Ok(())
+}
+
+/// Write a run of single-pair stored `f` rows into an already-extended slab
+/// while `o.node_room()` holds at least `width` nodes per row.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn single_rows_extended_run<'a, const W: usize>(
+    f_level: &TddLevel,
+    nodes: &[EncodedNode],
+    f_scratch: &mut Vec<ChildPair>,
+    (left, right): (&DenseLookup, &DenseLookup),
+    g: &[ChildPair; W],
+    slab: &mut [u32],
+    o: &mut ArenaRow<'_>,
+    (next, f_width, width, output_grid_base): (&mut usize, usize, usize, usize),
+    (row_units, live_cols): (u64, u64),
+    mut poll: crate::limits::PollGate<'a>,
+) -> Result<crate::limits::PollGate<'a>, OperationError> {
+    let end = f_width.min(*next + o.node_room() / width);
+    let (mut due_at, mut due) = (poll.due_in(), poll.due_in());
+    while *next < end {
+        let i = *next;
+        *next += 1;
+        let row_base = output_grid_base + i * width;
+        let p = match nodes[i].kind() {
+            NodeKind::Inline(p) => Some(p),
+            _ => f_level.pairs_read(i, f_scratch).first().copied(),
+        };
+        let mut cells = [NO_PRODUCT; W];
+        if let Some(p) = p {
+            let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+            for (cell, q) in cells.iter_mut().zip(g) {
+                if q.left.0 == NO_PRODUCT {
+                    continue;
+                }
+                let lc = left.get_in_row(slab, lrow, q.left.0);
+                if lc == NO_PRODUCT {
+                    continue;
+                }
+                let rc = right.get_in_row(slab, rrow, q.right.0);
+                if rc != NO_PRODUCT {
+                    // Safety: the arena has room for a node a column of the rows up to `end`.
+                    *cell = unsafe { o.single_node(lc, rc) };
+                }
+            }
+        }
+        debug_assert!(row_base + W <= slab.len(), "the grid is extended over the level");
+        // Safety: the grid was extended over every row of the level.
+        unsafe { slab.get_unchecked_mut(row_base..row_base + W) }.copy_from_slice(&cells);
+        if p.is_none() {
+            continue;
+        }
+        if row_units < due {
+            due -= row_units;
+        } else {
+            poll.add_short(due_at - due);
+            poll = poll_each_then_due(poll, live_cols, width as u64)?;
+            (due_at, due) = (poll.due_in(), poll.due_in());
+        }
+    }
+    poll.add_short(due_at - due);
+    Ok(poll)
+}
+
+/// Look up the child product `(lc, rc)` of `(p, q)` in `(lrow, rrow)` when live.
+#[inline(always)]
+fn single_row_product(
+    node_idx: &[u32],
+    (left, right): (&DenseLookup, &DenseLookup),
+    (lrow, rrow): (usize, usize),
+    q: &ChildPair,
+) -> Option<(u32, u32)> {
+    if q.left.0 == NO_PRODUCT {
+        return None;
+    }
+    let lc = left.get_in_row(node_idx, lrow, q.left.0);
+    if lc == NO_PRODUCT {
+        return None;
+    }
+    let rc = right.get_in_row(node_idx, rrow, q.right.0);
+    (rc != NO_PRODUCT).then_some((lc, rc))
+}
+
+/// Write one live single-pair row `p` across `g_cols` in-place into `o`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn write_single_row_in_room<'a, const W: usize>(
+    o: &mut ArenaRow<'_>,
+    p: ChildPair,
+    (left, right): (&DenseLookup, &DenseLookup),
+    (g_cols, g): (&[ChildPair], &[ChildPair; W]),
+    slab: &mut Vec<u32>,
+    (row_base, width): (usize, usize),
+    (row_units, live_cols): (u64, u64),
+    mut poll: crate::limits::PollGate<'a>,
+) -> Result<crate::limits::PollGate<'a>, OperationError> {
+    let rows = (left.row(p.left.0), right.row(p.right.0));
+    if W > 0 {
+        let mut cells = [NO_PRODUCT; W];
+        for (cell, q) in cells.iter_mut().zip(g) {
+            if let Some((lc, rc)) = single_row_product(slab, (left, right), rows, q) {
+                // Safety: the arena has room for a node a column.
+                *cell = unsafe { o.single_node(lc, rc) };
+            }
+        }
+        write_cells(slab, row_base, cells);
+    } else {
+        for (j, q) in g_cols.iter().enumerate() {
+            if let Some((lc, rc)) = single_row_product(slab, (left, right), rows, q) {
+                // Safety: as above.
+                unsafe { o.single(slab, row_base + j, lc, rc) };
+            }
+        }
+    }
+    if row_units < poll.due_in() {
+        poll.add_short(row_units);
+    } else {
+        poll = poll_each_then_due(poll, live_cols, width as u64)?;
+    }
+    Ok(poll)
+}
+
+/// Emit one live single-pair row `p` across `g_cols` via `sink.single` after
+/// `out` ran out of room.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn emit_single_row_via_sink<'a, const W: usize>(
+    eng: &Engine,
+    sink: &mut EmitSink<'_>,
+    p: ChildPair,
+    (left, right): (&DenseLookup, &DenseLookup),
+    g_cols: &[ChildPair],
+    slab: &mut Vec<u32>,
+    (row_base, width): (usize, usize),
+    (row_units, live_cols): (u64, u64),
+    mut poll: crate::limits::PollGate<'a>,
+) -> Result<crate::limits::PollGate<'a>, OperationError> {
+    let rows = (left.row(p.left.0), right.row(p.right.0));
+    if W > 0 {
+        write_cells(slab, row_base, [NO_PRODUCT; W]);
+    }
+    for (j, q) in g_cols.iter().enumerate() {
+        if let Some((lc, rc)) = single_row_product(slab, (left, right), rows, q) {
+            sink.single(eng, slab, row_base + j, lc, rc)?;
+        }
+    }
+    if row_units < poll.due_in() {
+        poll.add_short(row_units);
+    } else {
+        poll = poll_each_then_due(poll, live_cols, width as u64)?;
+    }
+    Ok(poll)
 }
 
 /// Write `cells` at `start` of `slab`, extending it into the capacity a

@@ -70,6 +70,40 @@ fn value(eng: &Engine, d: &Tdd) -> crate::diagram::WeightValue {
     eng.weighted_value(d).unwrap().expect("a weighted diagram has a value")
 }
 
+fn build_weighted_clauses(eng: &Engine, tree: &Arc<Vtree>, store: &WeightStore, clauses: &[Vec<i32>]) -> Tdd {
+    let mut d = eng.one(tree);
+    d.set_weights(store.empty_like()).unwrap();
+    for clause in clauses {
+        let mut c = eng.clause(tree, clause.iter().copied()).unwrap();
+        c.set_weights(store.empty_like()).unwrap();
+        d = eng.and(d, c).unwrap();
+    }
+    d
+}
+
+fn assert_scaled_matches_exact(
+    eng: &Engine,
+    tree: &Arc<Vtree>,
+    clauses: &[Vec<i32>],
+    weights: RationalWeights,
+    tolerance: f64,
+    zero_tol: f64,
+    label: &str,
+) {
+    let exact = walk(eng, tree, clauses, &WeightStore::new(weights.clone(), Arithmetic::ExactRational));
+    let scaled = walk(eng, tree, clauses, &WeightStore::new(weights, Arithmetic::ScaledFloat));
+    let exact: BigRational = value(eng, &exact).into_rational();
+    let got = *value(eng, &scaled).as_scaled().expect("a scaled value");
+    let want = ScaledFloat::from_rational(&exact);
+    let context = format!("{label}: {got:?} against {want:?}");
+    if want.is_zero() {
+        assert!(got.to_f64().abs() <= zero_tol, "{context}");
+        return;
+    }
+    let ratio = got.mantissa() / want.mantissa() * f64::powi(2.0, (got.exponent() - want.exponent()) as i32);
+    assert!((ratio - 1.0).abs() < tolerance, "{context}");
+}
+
 /// The scaled-float walk agrees with the exact one to within the rounding
 /// of its operations, on formulas whose subtrees finish at every depth.
 #[test]
@@ -81,21 +115,16 @@ fn nested_targets_match_the_exact_value() {
             for round in 0..4 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: num_vars as usize + 2, width: 3 });
                 let weights = draw_weights(&mut rng, num_vars, round % 2 == 1);
-                let exact = walk(&eng, &tree, &clauses, &WeightStore::new(weights.clone(), Arithmetic::ExactRational));
-                let scaled = walk(&eng, &tree, &clauses, &WeightStore::new(weights, Arithmetic::ScaledFloat));
-                let exact: BigRational = value(&eng, &exact).into_rational();
-                let got = *value(&eng, &scaled).as_scaled().expect("a scaled value");
-                let want = ScaledFloat::from_rational(&exact);
-                let context = format!("{shape}, {num_vars} vars, round {round}: {got:?} against {want:?}");
-                if want.is_zero() {
-                    assert!(got.to_f64().abs() < 1e-9, "{context}");
-                    continue;
-                }
-                // Positive weights cannot cancel; signed ones can, by little
-                // on these sizes.
                 let tolerance = if round % 2 == 1 { 1e-9 } else { 1e-13 };
-                let ratio = got.mantissa() / want.mantissa() * f64::powi(2.0, (got.exponent() - want.exponent()) as i32);
-                assert!((ratio - 1.0).abs() < tolerance, "{context}");
+                assert_scaled_matches_exact(
+                    &eng,
+                    &tree,
+                    &clauses,
+                    weights,
+                    tolerance,
+                    1e-9,
+                    &format!("{shape}, {num_vars} vars, round {round}"),
+                );
             }
         }
     }
@@ -126,18 +155,7 @@ fn values_beyond_one_scale_match_the_exact_value() {
                     })
                     .collect::<Vec<_>>(),
             );
-            let exact = walk(&eng, &tree, &clauses, &WeightStore::new(weights.clone(), Arithmetic::ExactRational));
-            let scaled = walk(&eng, &tree, &clauses, &WeightStore::new(weights, Arithmetic::ScaledFloat));
-            let exact: BigRational = value(&eng, &exact).into_rational();
-            let got = *value(&eng, &scaled).as_scaled().expect("a scaled value");
-            let want = ScaledFloat::from_rational(&exact);
-            let context = format!("{shape}, {num_vars} vars: {got:?} against {want:?}");
-            if want.is_zero() {
-                assert!(got.is_zero(), "{context}");
-                continue;
-            }
-            let ratio = got.mantissa() / want.mantissa() * f64::powi(2.0, (got.exponent() - want.exponent()) as i32);
-            assert!((ratio - 1.0).abs() < 1e-13, "{context}");
+            assert_scaled_matches_exact(&eng, &tree, &clauses, weights, 1e-13, 0.0, &format!("{shape}, {num_vars} vars"));
         }
     }
     assert!(crate::value::float_col::tests::widenings() > widened, "no column widened");
@@ -205,21 +223,9 @@ fn every_refused_reserve_leaves_the_walk_repeatable() {
     let mut rng = Lcg::new(17);
     let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
     let store = WeightStore::new(draw_weights(&mut rng, num_vars, false), Arithmetic::ScaledFloat);
-    let mut f = eng.one(&tree);
-    f.set_weights(store.empty_like()).unwrap();
     let half = clauses.len() / 2;
-    for clause in &clauses[..half] {
-        let mut g = eng.clause(&tree, clause.iter().copied()).unwrap();
-        g.set_weights(store.empty_like()).unwrap();
-        f = eng.and(f, g).unwrap();
-    }
-    let mut g = eng.one(&tree);
-    g.set_weights(store.empty_like()).unwrap();
-    for clause in &clauses[half..] {
-        let mut c = eng.clause(&tree, clause.iter().copied()).unwrap();
-        c.set_weights(store.empty_like()).unwrap();
-        g = eng.and(g, c).unwrap();
-    }
+    let f = build_weighted_clauses(&eng, &tree, &store, &clauses[..half]);
+    let g = build_weighted_clauses(&eng, &tree, &store, &clauses[half..]);
     let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
     let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
     let mut refusals = 0;
@@ -258,18 +264,12 @@ fn full_sum_out_agrees_with_the_signed_log_domain() {
         for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
             let store = WeightStore::new(weights.clone(), arithmetic);
             let (a, b) = clauses.split_at(clauses.len() / 2);
-            let build = |part: &[Vec<i32>]| {
-                let mut d = eng.one(&tree);
-                d.set_weights(store.empty_like()).unwrap();
-                for clause in part {
-                    let mut c = eng.clause(&tree, clause.iter().copied()).unwrap();
-                    c.set_weights(store.empty_like()).unwrap();
-                    d = eng.and(d, c).unwrap();
-                }
-                d
-            };
             let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
-            let out = eng.and_marginalizing(build(a), build(b), &targets).unwrap();
+            let out = eng.and_marginalizing(
+                build_weighted_clauses(&eng, &tree, &store, a),
+                build_weighted_clauses(&eng, &tree, &store, b),
+                &targets,
+            ).unwrap();
             let v = value(&eng, &out);
             values.push(match (v.as_log(), v.as_scaled()) {
                 (Some(l), _) => (l.log10_abs(), l.sign >= 0),

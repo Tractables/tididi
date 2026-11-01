@@ -141,24 +141,12 @@ fn right_rotate_works_immediately_on_balanced() {
 /// vtrees satisfying the topo invariants. The two `topo` arrays may
 /// differ (fixup doesn't promise strict postorder), but each must be a
 /// valid bottom-up order satisfying the root-last property.
-fn check_fixup_equivalence_left(mut vtree: Vtree, v: VtreeIdx) {
+fn check_fixup_equivalence(mut vtree: Vtree, v: VtreeIdx, kind: RotationKind) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_pointers(&mut vtree, v, RotationKind::Left).expect("applicable").commit(&mut vtree);
+    let info_a = rotate_pointers(&mut vtree, v, kind).expect("applicable").commit(&mut vtree);
     assert_invariants(&vtree);
 
-    let info_b = rotate_pointers(&mut via_rebuild, v, RotationKind::Left).expect("applicable").abandon();
-    rebuild_topo(&mut via_rebuild);
-    assert_invariants(&via_rebuild);
-    assert_eq!(info_a.v_idx, info_b.v_idx);
-    assert_eq!(info_a.w_idx, info_b.w_idx);
-}
-
-fn check_fixup_equivalence_right(mut vtree: Vtree, v: VtreeIdx) {
-    let mut via_rebuild = vtree.clone();
-    let info_a = rotate_pointers(&mut vtree, v, RotationKind::Right).expect("applicable").commit(&mut vtree);
-    assert_invariants(&vtree);
-
-    let info_b = rotate_pointers(&mut via_rebuild, v, RotationKind::Right).expect("applicable").abandon();
+    let info_b = rotate_pointers(&mut via_rebuild, v, kind).expect("applicable").abandon();
     rebuild_topo(&mut via_rebuild);
     assert_invariants(&via_rebuild);
     assert_eq!(info_a.v_idx, info_b.v_idx);
@@ -167,7 +155,7 @@ fn check_fixup_equivalence_right(mut vtree: Vtree, v: VtreeIdx) {
 
 #[test]
 fn fixup_equivalence_left_at_root() {
-    check_fixup_equivalence_left(Vtree::linear(5), Vtree::linear(5).root);
+    check_fixup_equivalence(Vtree::linear(5), Vtree::linear(5).root, RotationKind::Left);
 }
 
 #[test]
@@ -175,12 +163,12 @@ fn fixup_equivalence_right_at_root_balanced() {
     // balanced(4) is the case the early exit cannot take: before the fixup a
     // right rotation leaves C after w in topological order, so this takes the
     // slice-rotate path.
-    check_fixup_equivalence_right(Vtree::balanced(4), Vtree::balanced(4).root);
+    check_fixup_equivalence(Vtree::balanced(4), Vtree::balanced(4).root, RotationKind::Right);
 }
 
 #[test]
 fn fixup_equivalence_right_at_root_balanced_8() {
-    check_fixup_equivalence_right(Vtree::balanced(8), Vtree::balanced(8).root);
+    check_fixup_equivalence(Vtree::balanced(8), Vtree::balanced(8).root, RotationKind::Right);
 }
 
 #[test]
@@ -201,8 +189,8 @@ fn fixup_equivalence_at_internal_non_root() {
             else { false }
         })
         .expect("balanced(8) has at least one such node");
-    check_fixup_equivalence_left(vtree.clone(), target);
-    check_fixup_equivalence_right(vtree, target);
+    check_fixup_equivalence(vtree.clone(), target, RotationKind::Left);
+    check_fixup_equivalence(vtree, target, RotationKind::Right);
 }
 
 /// Round-trip: a sequence of rotations followed by their inverses (via

@@ -4,6 +4,37 @@ use crate::query::boolean::visit_leaf_labels;
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
 
+fn random_cnf_diagram(
+    eng: &Engine,
+    tree: &Arc<Vtree>,
+    vars: &[VarId],
+    seed: &mut u64,
+    num_clauses: usize,
+    modulus: u64,
+) -> Tdd {
+    let mut f = Tdd::one(tree);
+    for _ in 0..num_clauses {
+        let clause: Vec<Literal> = vars
+            .iter()
+            .filter_map(|&var| {
+                *seed ^= *seed << 13;
+                *seed ^= *seed >> 7;
+                *seed ^= *seed << 17;
+                match *seed % modulus {
+                    0 => Some(Literal::pos(var)),
+                    1 => Some(Literal::neg(var)),
+                    _ => None,
+                }
+            })
+            .collect();
+        if !clause.is_empty() {
+            f = eng.and(f, eng.clause(tree, clause).unwrap()).unwrap();
+        }
+    }
+    f.minimize().unwrap();
+    f
+}
+
 #[test]
 fn support_and_backbone_match_sparse_id_truth_tables() {
     let eng = Engine::new();
@@ -161,23 +192,7 @@ fn support_and_backbone_charge_every_pair_of_a_leaf_parent_however_far_they_read
     let lim = eng.limits();
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
     for _ in 0..40 {
-        let mut f = Tdd::one(&tree);
-        for _ in 0..4 {
-            let clause: Vec<Literal> = vars.iter().filter_map(|&var| {
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                match seed % 4 {
-                    0 => Some(Literal::pos(var)),
-                    1 => Some(Literal::neg(var)),
-                    _ => None,
-                }
-            }).collect();
-            if !clause.is_empty() {
-                f = eng.and(f, eng.clause(&tree, clause).unwrap()).unwrap();
-            }
-        }
-        f.minimize().unwrap();
+        let f = random_cnf_diagram(&eng, &tree, &vars, &mut seed, 4, 4);
         assert_canonical(&f);
         if f.is_zero() || tree.node(f.output().vtree).is_leaf() {
             continue;
@@ -225,23 +240,7 @@ fn an_implicit_leaf_parent_names_the_labels_of_its_stored_copy() {
     let mut described = 0;
     crate::test_helpers::with_floor(crate::test_helpers::LOW_FLOOR, || {
         for _ in 0..60 {
-            let mut f = Tdd::one(&tree);
-            for _ in 0..3 {
-                let clause: Vec<Literal> = vars.iter().filter_map(|&var| {
-                    seed ^= seed << 13;
-                    seed ^= seed >> 7;
-                    seed ^= seed << 17;
-                    match seed % 3 {
-                        0 => Some(Literal::pos(var)),
-                        1 => Some(Literal::neg(var)),
-                        _ => None,
-                    }
-                }).collect();
-                if !clause.is_empty() {
-                    f = eng.and(f, eng.clause(&tree, clause).unwrap()).unwrap();
-                }
-            }
-            f.minimize().unwrap();
+            let f = random_cnf_diagram(&eng, &tree, &vars, &mut seed, 3, 3);
             if f.is_zero() {
                 continue;
             }

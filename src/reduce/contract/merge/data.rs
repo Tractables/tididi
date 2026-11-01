@@ -506,32 +506,7 @@ pub(super) fn rebuild_in_order(
         );
         let mut live = !word & valid;
         loop {
-            // A run of the nodes kept that are no group's survivor and
-            // whose pairs, if in the arena, follow the run's: each takes
-            // its word or its new offset, and nothing is appended, so the
-            // loop holds no more than it reads.
-            let delta = fresh.len().wrapping_sub(run.start);
-            let mut end = run.end;
-            while live != 0 {
-                let read = base + live.trailing_zeros() as usize;
-                if read == next {
-                    break;
-                }
-                let node = slots[read];
-                let rebuilt = match node.kind() {
-                    NodeKind::Inline(_) => node,
-                    NodeKind::Multi { start, len } if start as usize == end => {
-                        end += len as usize;
-                        EncodedNode::multi_pair((start as usize).wrapping_add(delta) as u32, len)
-                    }
-                    _ => break,
-                };
-                live &= live - 1;
-                remapped[read] = NodeIdx(write as u32);
-                slots[write] = rebuilt;
-                write += 1;
-            }
-            run.end = end;
+            advance_contiguous_survivors(base, next, &mut live, slots, remapped, &mut write, &fresh, &mut run);
             if live == 0 {
                 break;
             }
@@ -541,36 +516,9 @@ pub(super) fn rebuild_in_order(
             let node = slots[read];
             let rebuilt = if read == next {
                 next = keeps.next().unwrap_or(usize::MAX);
-                append(&mut fresh, &old[run.clone()]);
-                run = run.end..run.end;
-                let start = fresh.len();
-                match node.kind() {
-                    NodeKind::Inline(pair) => fresh.push(pair),
-                    NodeKind::Multi { start, len } => append(&mut fresh, &old[start as usize..(start + len) as usize]),
-                    NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
-                }
-                let total = classes[class[read] as usize].hits as usize;
-                debug_assert!(total >= 2 && fresh.len() <= start + total, "a group holds two pairs or more");
-                rooms[group] = fresh.len() as u32;
-                group += 1;
-                let filler = fresh[start];
-                fresh.resize(start + total, filler);
-                EncodedNode::multi_pair(start as u32, total as u32)
+                rebuild_group_survivor(&mut fresh, old, &mut run, node, classes[class[read] as usize].hits as usize, rooms, &mut group)
             } else {
-                match node.kind() {
-                    NodeKind::Inline(_) => node,
-                    NodeKind::Multi { start, len } => {
-                        let src = start as usize..(start + len) as usize;
-                        if src.start != run.end {
-                            append(&mut fresh, &old[run.clone()]);
-                            run = src.start..src.start;
-                        }
-                        let at = fresh.len() + (src.start - run.start);
-                        run.end = src.end;
-                        EncodedNode::multi_pair(at as u32, len)
-                    }
-                    NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
-                }
+                rebuild_noncontiguous_survivor(&mut fresh, old, &mut run, node)
             };
             slots[write] = rebuilt;
             write += 1;
@@ -587,6 +535,96 @@ pub(super) fn rebuild_in_order(
     *pairs.stored_mut() = fresh;
     level.dead_pairs = 0;
     level.shrink_arrays();
+}
+
+/// Advance `live` over a contiguous run of kept non-group-survivor nodes whose
+/// pair ranges follow `run.end` in the old arena.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn advance_contiguous_survivors(
+    base: usize,
+    next: usize,
+    live: &mut u64,
+    slots: &mut [EncodedNode],
+    remapped: &mut [NodeIdx],
+    write: &mut usize,
+    fresh: &[ChildPair],
+    run: &mut std::ops::Range<usize>,
+) {
+    let delta = fresh.len().wrapping_sub(run.start);
+    let mut end = run.end;
+    while *live != 0 {
+        let read = base + live.trailing_zeros() as usize;
+        if read == next {
+            break;
+        }
+        let node = slots[read];
+        let rebuilt = match node.kind() {
+            NodeKind::Inline(_) => node,
+            NodeKind::Multi { start, len } if start as usize == end => {
+                end += len as usize;
+                EncodedNode::multi_pair((start as usize).wrapping_add(delta) as u32, len)
+            }
+            _ => break,
+        };
+        *live &= *live - 1;
+        remapped[read] = NodeIdx(*write as u32);
+        slots[*write] = rebuilt;
+        *write += 1;
+    }
+    run.end = end;
+}
+
+/// Flush `run`, copy `node`'s own pairs, and reserve `total` pairs in `fresh`
+/// for `group`'s members.
+#[inline(always)]
+fn rebuild_group_survivor(
+    fresh: &mut Vec<ChildPair>,
+    old: &[ChildPair],
+    run: &mut std::ops::Range<usize>,
+    node: EncodedNode,
+    total: usize,
+    rooms: &mut [u32],
+    group: &mut usize,
+) -> EncodedNode {
+    append(fresh, &old[run.clone()]);
+    *run = run.end..run.end;
+    let start = fresh.len();
+    match node.kind() {
+        NodeKind::Inline(pair) => fresh.push(pair),
+        NodeKind::Multi { start, len } => append(fresh, &old[start as usize..(start + len) as usize]),
+        NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+    }
+    debug_assert!(total >= 2 && fresh.len() <= start + total, "a group holds two pairs or more");
+    rooms[*group] = fresh.len() as u32;
+    *group += 1;
+    let filler = fresh[start];
+    fresh.resize(start + total, filler);
+    EncodedNode::multi_pair(start as u32, total as u32)
+}
+
+/// Rebuild a survivor outside any group whose arena range broke contiguity with `run`.
+#[inline(always)]
+fn rebuild_noncontiguous_survivor(
+    fresh: &mut Vec<ChildPair>,
+    old: &[ChildPair],
+    run: &mut std::ops::Range<usize>,
+    node: EncodedNode,
+) -> EncodedNode {
+    match node.kind() {
+        NodeKind::Inline(_) => node,
+        NodeKind::Multi { start, len } => {
+            let src = start as usize..(start + len) as usize;
+            if src.start != run.end {
+                append(fresh, &old[run.clone()]);
+                *run = src.start..src.start;
+            }
+            let at = fresh.len() + (src.start - run.start);
+            run.end = src.end;
+            EncodedNode::multi_pair(at as u32, len)
+        }
+        NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+    }
 }
 
 #[inline(always)]

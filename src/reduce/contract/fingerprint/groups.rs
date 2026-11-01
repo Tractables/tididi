@@ -349,6 +349,20 @@ pub(super) fn group_single_entries(
         *record = (key << node_bits) | node as u64;
     }
 
+    let sorted = radix_sort_packed_entries(lim, width, (node_bits, key_bits), records, other, counts)?;
+    emit_packed_entry_runs(lim, sorted, width, node_bits, candidates, group_starts, flat_groups)
+}
+
+/// Stable least-significant-digit radix sort of `records[..width]` over the key
+/// bits `node_bits..node_bits + key_bits`.
+fn radix_sort_packed_entries<'a>(
+    lim: &crate::limits::Limits,
+    width: usize,
+    (node_bits, key_bits): (u32, u32),
+    records: &'a mut [u64],
+    other: &'a mut Vec<u64>,
+    counts: &mut Vec<u32>,
+) -> Result<&'a [u64], OperationError> {
     lim.try_resize(other, width, 0u64)?;
     lim.try_resize(counts, 1 << SINGLE_ENTRY_DIGIT_BITS, 0u32)?;
     let (mut src, mut dst): (&mut [u64], &mut [u64]) = (&mut records[..width], &mut other[..width]);
@@ -374,9 +388,20 @@ pub(super) fn group_single_entries(
         }
         shift += digit_bits;
     }
-    let sorted: &[u64] = src;
+    Ok(src)
+}
 
-    // The runs of two or more, by their lowest member.
+/// Collect runs of two or more equal keys in `sorted`, ordered by their lowest
+/// member index, into `group_starts` and `flat_groups`.
+fn emit_packed_entry_runs(
+    lim: &crate::limits::Limits,
+    sorted: &[u64],
+    width: usize,
+    node_bits: u32,
+    candidates: &mut Vec<u32>,
+    group_starts: &mut Vec<u32>,
+    flat_groups: &mut Vec<u32>,
+) -> Result<Option<bool>, OperationError> {
     let node_mask = (1u64 << node_bits) - 1;
     let run_end = |start: usize| {
         let key = sorted[start] >> node_bits;

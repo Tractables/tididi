@@ -270,6 +270,39 @@ pub(crate) fn apply_sparse_level(
         return Ok((Made::Written, held));
     }
 
+    if let Some((made, live)) = try_probe_sparse_level(
+        eng,
+        ws,
+        (f, g),
+        shape,
+        levels,
+        (pl, &mut *pl_output, cells),
+        (duplicates_legal, thresholds, passthrough, complete),
+    )? {
+        let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
+        return Ok((made, false));
+    }
+
+    let mut live = None;
+    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
+    let made = scatter_level(eng, ws, (f, g), (shape, pl), Collect::Nodes(emit), (passthrough, complete))?;
+    let held = ws.outer_held;
+    let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
+    Ok((made, held))
+}
+
+/// Try the `f`-node probe walk (`probe_level`) when neither child is a leaf or
+/// pass-through side.
+#[allow(clippy::type_complexity)]
+fn try_probe_sparse_level(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    (f, g): (&Held<'_>, &Tdd),
+    shape: LevelShape,
+    levels: &mut [TddLevel],
+    (pl, pl_output, cells): (Sides<&[ProductEntry]>, &mut Vec<ProductEntry>, Sides<CellLookup<'_>>),
+    (duplicates_legal, thresholds, passthrough, complete): (bool, SparseThresholds, Option<Passthrough>, Option<Complete>),
+) -> Result<Option<(Made, Option<usize>)>, OperationError> {
     // A level of many products, each found by a lookup or two, is walked by
     // `f` node instead of scattered (`probe_level`). It joins both children,
     // so a pass-through side, and a leaf, which the leaf arm already reads by
@@ -279,38 +312,29 @@ pub(crate) fn apply_sparse_level(
     let joined = passthrough.is_none()
         && !f.vtree.node(shape.left).is_leaf()
         && !f.vtree.node(shape.right).is_leaf();
-    if joined {
-        // Whether any level of the operands or of the output is marginal,
-        // a scan of every level: read only where the probe would run, past
-        // its size gate, so that a diagram of many levels does not pay a
-        // scan on each of its small ones. The level being built is split
-        // out of the scan, and read on its own.
-        let (below, rest) = levels.split_at_mut(t_idx);
-        let (level, above) = rest.split_first_mut().expect("the level is one of the levels");
-        let here = level.is_marginal();
-        let multisets = || {
-            here || f.levels.iter().any(|l| l.is_marginal())
-                || g.levels.iter().any(|l| l.is_marginal())
-                || below.iter().chain(above.iter()).any(|l| l.is_marginal())
-        };
-        let listed = Sides {
-            left: complete.is_none_or(|c| c.side != ChildSide::Left),
-            right: complete.is_none_or(|c| c.side != ChildSide::Right),
-        };
-        let mut live = None;
-        let emit = Emit { level, out: &mut *pl_output, duplicates_legal, thresholds, live: &mut live };
-        if let Some(made) = probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)? {
-            let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
-            return Ok((made, false));
-        }
+    if !joined {
+        return Ok(None);
     }
-
+    // Whether any level of the operands or of the output is marginal,
+    // a scan of every level: read only where the probe would run, past
+    // its size gate, so that a diagram of many levels does not pay a
+    // scan on each of its small ones. The level being built is split
+    // out of the scan, and read on its own.
+    let (below, rest) = levels.split_at_mut(shape.t.idx());
+    let (level, above) = rest.split_first_mut().expect("the level is one of the levels");
+    let here = level.is_marginal();
+    let multisets = || {
+        here || f.levels.iter().any(|l| l.is_marginal())
+            || g.levels.iter().any(|l| l.is_marginal())
+            || below.iter().chain(above.iter()).any(|l| l.is_marginal())
+    };
+    let listed = Sides {
+        left: complete.is_none_or(|c| c.side != ChildSide::Left),
+        right: complete.is_none_or(|c| c.side != ChildSide::Right),
+    };
     let mut live = None;
-    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
-    let made = scatter_level(eng, ws, (f, g), (shape, pl), Collect::Nodes(emit), (passthrough, complete))?;
-    let held = ws.outer_held;
-    let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
-    Ok((made, held))
+    let emit = Emit { level, out: pl_output, duplicates_legal, thresholds, live: &mut live };
+    Ok(probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)?.map(|made| (made, live)))
 }
 
 /// Complete a probe- or scatter-emitted level: install `f`'s level if `made == Made::F`,

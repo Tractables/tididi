@@ -54,6 +54,24 @@ fn targets(rng: &mut Lcg, vtree: &Vtree) -> Vec<VtreeIdx> {
     }
 }
 
+/// Compile two random formulas on `vtree`, marginalize `summed`, and minimize both.
+fn random_marginal_pair(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    rng: &mut Lcg,
+    n: u32,
+    shape: CnfShape,
+    summed: &[VtreeIdx],
+) -> (Tdd, Tdd) {
+    let mut f = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
+    let mut g = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
+    for d in [&mut f, &mut g] {
+        eng.marginalize_levels(d, summed).unwrap();
+        eng.minimize(d).unwrap();
+    }
+    (f, g)
+}
+
 /// Random functions summed out over the same subtrees add to the sum of
 /// their counts, on every vtree shape and assignment.
 #[test]
@@ -65,12 +83,7 @@ fn adds_the_counts_of_functions_summed_out_alike() {
         for (name, vtree) in vtree_shapes(n) {
             let eng = Engine::new();
             let summed = targets(&mut rng, &vtree);
-            let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            let mut g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            for d in [&mut f, &mut g] {
-                eng.marginalize_levels(d, &summed).unwrap();
-                eng.minimize(d).unwrap();
-            }
+            let (f, g) = random_marginal_pair(&eng, &vtree, &mut rng, n, shape, &summed);
             let sum = eng.add(f.clone(), g.clone()).unwrap();
             assert_sum(&sum, &f, &g, n, &format!("round {round}, {name}, summed {summed:?}"));
             if !f.is_zero() && !g.is_zero() {
@@ -246,12 +259,7 @@ fn a_sum_conjoins_with_a_filter_on_its_structural_variables() {
         let eng = Engine::new();
         let summed = targets(&mut rng, &vtree);
         let shape = CnfShape { clauses: n as usize, width: 3 };
-        let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-        let mut g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-        for d in [&mut f, &mut g] {
-            eng.marginalize_levels(d, &summed).unwrap();
-            eng.minimize(d).unwrap();
-        }
+        let (f, g) = random_marginal_pair(&eng, &vtree, &mut rng, n, shape, &summed);
         let sum = eng.add(f, g).unwrap();
         let free = crate::test_helpers::free_vars(&sum);
         let Some(v) = (1..=n).find(|&v| free[v as usize - 1]) else { continue };

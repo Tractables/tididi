@@ -1073,34 +1073,7 @@ fn compact_one_level(
     };
     tdd.levels.mark_changed(t);
 
-    let redescribed = match plan {
-        Some(Kept::Described(d, dead)) => {
-            tdd.levels[t_idx].pairs.redescribe(d);
-            Some(dead)
-        }
-        Some(Kept::Stored(room)) => {
-            let (lm, rm) = child_remaps(marks, remap, left, right);
-            store_kept(tdd, t, room, own, lm, rm);
-            None
-        }
-        None if left.dirty || right.dirty => {
-            // A level that keeps most of its nodes, over children that each
-            // dropped few slots, moves its references in one pass over its
-            // words; otherwise its kept nodes' references are read through
-            // the children's new indices.
-            let kept = own.iter().map(|w| w.count_ones() as usize).sum::<usize>();
-            let dropped = |c: Child| if c.dirty { few_dropped(&marks[c.base..], c.span) } else { Some(Dropped::NONE) };
-            match (2 * kept >= width).then(|| (dropped(left), dropped(right))) {
-                Some((Some(l), Some(r))) => move_past_dropped(&mut tdd.levels[t_idx], &l, &r),
-                _ => {
-                    let (lm, rm) = child_remaps(marks, remap, left, right);
-                    rewrite_child_refs(tdd, t, own, lm, rm);
-                }
-            }
-            None
-        }
-        None => None,
-    };
+    let redescribed = apply_child_rewrites(tdd, (t, width), own, marks, remap, (left, right), plan);
 
     let level = &mut tdd.levels[t_idx];
     if !lost {
@@ -1143,6 +1116,49 @@ fn compact_one_level(
         level.leave_live_pairs(pairs);
     }
     true
+}
+
+/// Apply `plan` (for an implicit level) or rewrite child references in place
+/// (for a stored level with dirty children), returning `Some(dead)` when an
+/// implicit level was redescribed in place.
+fn apply_child_rewrites(
+    tdd: &mut Tdd,
+    (t, width): (VtreeIdx, usize),
+    own: &[u64],
+    marks: &[u64],
+    remap: &mut [u32],
+    (left, right): (Child, Child),
+    plan: Option<Kept>,
+) -> Option<usize> {
+    let t_idx = t.idx();
+    match plan {
+        Some(Kept::Described(d, dead)) => {
+            tdd.levels[t_idx].pairs.redescribe(d);
+            Some(dead)
+        }
+        Some(Kept::Stored(room)) => {
+            let (lm, rm) = child_remaps(marks, remap, left, right);
+            store_kept(tdd, t, room, own, lm, rm);
+            None
+        }
+        None if left.dirty || right.dirty => {
+            // A level that keeps most of its nodes, over children that each
+            // dropped few slots, moves its references in one pass over its
+            // words; otherwise its kept nodes' references are read through
+            // the children's new indices.
+            let kept = own.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+            let dropped = |c: Child| if c.dirty { few_dropped(&marks[c.base..], c.span) } else { Some(Dropped::NONE) };
+            match (2 * kept >= width).then(|| (dropped(left), dropped(right))) {
+                Some((Some(l), Some(r))) => move_past_dropped(&mut tdd.levels[t_idx], &l, &r),
+                _ => {
+                    let (lm, rm) = child_remaps(marks, remap, left, right);
+                    rewrite_child_refs(tdd, t, own, lm, rm);
+                }
+            }
+            None
+        }
+        None => None,
+    }
 }
 
 /// The new indices of the children that lost a slot, `left` and `right`,

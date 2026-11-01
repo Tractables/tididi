@@ -173,12 +173,37 @@ pub(super) fn refine_context_groups(
     classes.push(ClassInfo::new(first as u32));
     let twinable = if first >= 2 { first } else { 0 };
     let mut part = Partition { class: &mut twin_class[..width], bits, classes, twinable };
-    // A stored level's wide parent nodes are refined after the narrow ones,
-    // narrowest first by the power of two of their widths, and in arena
-    // order within one, so that their pairs are read forward: by then most
-    // nodes have left the partition, and a wide node sorts only the pairs
-    // of the nodes still in it. The refinement stops once no node can have
-    // a twin.
+    if !split_level_partition(level, side, lim, &mut part, refine_wide, &mut wide, hand_off)? {
+        return Ok(None);
+    }
+    // A node leaves the first class once a parent node names it, so a
+    // refinement from the whole level that ends with no node there, or with
+    // the two or more it lists, has every other node named.
+    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
+    *unnamed_exact = whole && left_unnamed != 1;
+    debug_assert_eq!(
+        part.twinable,
+        part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
+        "the count of nodes that can have a twin"
+    );
+    if part.twinable == 0 {
+        return Ok(Some(false));
+    }
+    list_refined_groups(lim, part, width, child, flat_groups, group_starts, remap, member_groups, marked)?;
+    Ok(Some(true))
+}
+
+/// Split `part` across all parent nodes of `level` on `side`, returning
+/// `Ok(false)` when `hand_off` aborts before a scattered wide parent node.
+fn split_level_partition(
+    level: &TddLevel,
+    side: ChildSide,
+    lim: &Limits,
+    part: &mut Partition<'_>,
+    refine_wide: &mut Vec<u64>,
+    wide: &mut Wide<'_>,
+    hand_off: bool,
+) -> Result<bool, OperationError> {
     let stored = level.stored();
     refine_wide.clear();
     match (stored, side) {
@@ -197,44 +222,28 @@ pub(super) fn refine_context_groups(
                     2 => part.split_two(pairs, side),
                     3 | 4 if part.split_few(pairs, side) => {}
                     n if n <= SMALL_PAIRS => part.split_small(pairs, side),
-                    _ => part.split_wide(lim, pairs, side, &mut wide)?,
+                    _ => part.split_wide(lim, pairs, side, wide)?,
                 }
             }
         }
     }
     if let Some(stored) = stored {
         refine_wide.sort_unstable();
-        // The widest come last, past every node of fewer than
-        // `HAND_OFF_PAIRS` pairs.
         if hand_off
             && refine_wide.last().is_some_and(|&w| w >= LARGE_WIDE)
             && part.twinable != 0
             && any_scattered(stored, refine_wide, side)
         {
-            return Ok(None);
+            return Ok(false);
         }
         for &w in refine_wide.iter() {
             if part.twinable == 0 {
                 break;
             }
-            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
+            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, wide)?;
         }
     }
-    // A node leaves the first class once a parent node names it, so a
-    // refinement from the whole level that ends with no node there, or with
-    // the two or more it lists, has every other node named.
-    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
-    *unnamed_exact = whole && left_unnamed != 1;
-    debug_assert_eq!(
-        part.twinable,
-        part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
-        "the count of nodes that can have a twin"
-    );
-    if part.twinable == 0 {
-        return Ok(Some(false));
-    }
-    list_refined_groups(lim, part, width, child, flat_groups, group_starts, remap, member_groups, marked)?;
-    Ok(Some(true))
+    Ok(true)
 }
 
 /// Materialize the refined twin classes from `part` into `flat_groups` and

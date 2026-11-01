@@ -169,42 +169,7 @@ impl<'a> RightColumns<'a> {
                 cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len(), run_range: (0, 0) });
             }
         } else {
-            // Pass 1: every column's pairs into the arena, recording only
-            // lengths — the arena's base is not final until it is full: a
-            // stored level's slices, and an implicit level's nodes, `k`
-            // pairs each, generated in order off its description. Then
-            // decoded in place under a marginal view.
-            match right_level.pair_view() {
-                Pairs::Implicit(d) => {
-                    d.pairs_of_first(right_width, &mut flat);
-                    let column = ColumnSlice { ptr: std::ptr::null(), len: d.pairs_per_node(), run_range: (0, 0) };
-                    cols.extend(std::iter::repeat_n(column, right_width));
-                }
-                Pairs::Stored(stored) => {
-                    for j in 0..right_width {
-                        let pairs = stored.of_idx(j);
-                        flat.extend_from_slice(pairs);
-                        cols.push(ColumnSlice { ptr: std::ptr::null(), len: pairs.len(), run_range: (0, 0) });
-                    }
-                }
-            }
-            if left_view.is_marginal() || right_view.is_marginal() {
-                for p in flat.iter_mut() {
-                    *p = decoded(*p, left_view, right_view);
-                }
-            }
-            // Pass 2: point each descriptor at its subrange of the finished
-            // arena. The lengths sum to `flat.len()` by construction, so the
-            // running offset never passes the end.
-            let base = flat.as_ptr();
-            let mut off = 0usize;
-            for c in cols.iter_mut() {
-                // Safety: `off <= flat.len() <= flat.capacity()` at every step,
-                // so `base.add(off)` is inside the allocation (or exactly
-                // one-past-the-end for a trailing empty column).
-                c.ptr = unsafe { base.add(off) };
-                off += c.len;
-            }
+            fill_owned_column_arena(right_level, right_width, (left_view, right_view), &mut flat, &mut cols);
         }
 
         let mut table = RightColumns { flat, cols, run_ends: Transient::new(lim, Vec::new()), eng };
@@ -266,5 +231,45 @@ impl Drop for RightColumns<'_> {
             .apply
             .right_cols
             .put(self.eng, std::mem::take(&mut self.cols));
+    }
+}
+
+/// Populate `flat` and `cols` for an owned column arena (implicit level or
+/// marginal child views), decoding in place and pointing each `ColumnSlice` at
+/// its finished subrange.
+fn fill_owned_column_arena(
+    right_level: &TddLevel,
+    right_width: usize,
+    (left_view, right_view): (ChildDecoder, ChildDecoder),
+    flat: &mut Vec<ChildPair>,
+    cols: &mut Vec<ColumnSlice>,
+) {
+    match right_level.pair_view() {
+        Pairs::Implicit(d) => {
+            d.pairs_of_first(right_width, flat);
+            let column = ColumnSlice { ptr: std::ptr::null(), len: d.pairs_per_node(), run_range: (0, 0) };
+            cols.extend(std::iter::repeat_n(column, right_width));
+        }
+        Pairs::Stored(stored) => {
+            for j in 0..right_width {
+                let pairs = stored.of_idx(j);
+                flat.extend_from_slice(pairs);
+                cols.push(ColumnSlice { ptr: std::ptr::null(), len: pairs.len(), run_range: (0, 0) });
+            }
+        }
+    }
+    if left_view.is_marginal() || right_view.is_marginal() {
+        for p in flat.iter_mut() {
+            *p = decoded(*p, left_view, right_view);
+        }
+    }
+    let base = flat.as_ptr();
+    let mut off = 0usize;
+    for c in cols.iter_mut() {
+        // Safety: `off <= flat.len() <= flat.capacity()` at every step,
+        // so `base.add(off)` is inside the allocation (or exactly
+        // one-past-the-end for a trailing empty column).
+        c.ptr = unsafe { base.add(off) };
+        off += c.len;
     }
 }

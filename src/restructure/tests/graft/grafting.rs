@@ -4,12 +4,20 @@ use std::sync::Arc;
 
 
 
-use crate::diagram::Tdd;
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, TddBuildError, WeightStore};
 use crate::vtree::{VarId, Vtree, VtreeError};
-use crate::test_helpers::assert_canonical;
+use crate::test_helpers::{assert_canonical, compile_clauses, rat};
 
 fn count(t: &Tdd) -> u64 {
     t.model_count().unwrap().try_into().expect("small count")
+}
+
+fn test_literal_weight(v: usize) -> LiteralWeights<num_rational::BigRational> {
+    LiteralWeights { negative: rat(v as i64 + 1, 7), positive: rat(2, v as i64 + 3) }
+}
+
+fn rational_value(t: &Tdd) -> num_rational::BigRational {
+    t.weighted_value().unwrap().expect("a weighted diagram has a value").as_rational().into_owned()
 }
 
 #[test]
@@ -127,14 +135,7 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
 /// the reduction that follows a graft.
 #[test]
 fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-
-
-
-    use crate::test_helpers::{compile_clauses, rat};
-
-    let weight_of = |v: usize| LiteralWeights { negative: rat(v as i64 + 1, 7), positive: rat(2, v as i64 + 3) };
-    let global = RationalWeights::from_literals(&(0..7).map(weight_of).collect::<Vec<_>>());
+    let global = RationalWeights::from_literals(&(0..7).map(test_literal_weight).collect::<Vec<_>>());
 
     let eng = Engine::new();
     let local = Arc::new(Vtree::balanced(3));
@@ -153,7 +154,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         // A part's semiring is in its OWN variable space, which is why the
         // merged store cannot be derived from the parts.
         let localized = RationalWeights::from_literals(
-            &l2g.iter().map(|g| weight_of(g.idx())).collect::<Vec<_>>(),
+            &l2g.iter().map(|g| test_literal_weight(g.idx())).collect::<Vec<_>>(),
         );
         let mut part = compile_clauses(&local, cs);
         part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational)).unwrap();
@@ -186,16 +187,10 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         .collect();
     let want = (Tdd::graft(global_parts, &[VarId(7)]).expect("disjoint parts")).evaluate(&global).unwrap();
 
-    let got = |t: &Tdd| {
-        t.weighted_value().unwrap()
-            .expect("the merged diagram is weighted")
-            .as_rational()
-            .into_owned()
-    };
-    assert_eq!(got(&grafted), want, "the graft lost or misplaced a part's weights");
+    assert_eq!(rational_value(&grafted), want, "the graft lost or misplaced a part's weights");
     grafted.minimize().unwrap();
     assert_canonical(&grafted);
-    assert_eq!(got(&grafted), want, "reduction after the graft moved the store off its levels");
+    assert_eq!(rational_value(&grafted), want, "reduction after the graft moved the store off its levels");
 }
 
 /// [`Tdd::take_weights`] is the one public way to separate a store from its
@@ -210,27 +205,17 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
 /// away would leave that level reading values nothing holds any more.
 #[test]
 fn a_part_whose_levels_still_read_the_store_keeps_it() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore};
-
-
-    use crate::test_helpers::{compile_clauses, rat};
-
     let eng = Engine::new();
     let local = Arc::new(Vtree::balanced(3));
     let (_, inner) = local.children(local.root());
-    let table = RationalWeights::from_literals(
-        &(0..3).map(|v| LiteralWeights { negative: rat(v + 1, 7), positive: rat(2, v + 3) }).collect::<Vec<_>>(),
-    );
+    let table = RationalWeights::from_literals(&(0..3).map(test_literal_weight).collect::<Vec<_>>());
     let store = || WeightStore::new(table.clone(), Arithmetic::ExactRational);
     let clauses = [vec![1, 2], vec![2, -3]];
-    let value = |t: &Tdd| {
-        t.weighted_value().unwrap().expect("a weighted diagram has a value").as_rational().into_owned()
-    };
 
     // Held aside and given back, which is what the component graft does.
     let mut part = compile_clauses(&local, &clauses);
     part.set_weights(store()).unwrap();
-    let want = value(&part);
+    let want = rational_value(&part);
     let held = part.take_weights().expect("no level of this part reads the store");
     assert!(held.is_some(), "the part was put in weighted mode, so it had a store to give");
     assert!(part.weights().is_none(), "a granted detach leaves the diagram in integer mode");
@@ -238,14 +223,14 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     let (grafted, _) =
         Tdd::graft_over(&eng, vec![(part, vec![VarId(1), VarId(2), VarId(3)])], &[], 3, Some(store()))
             .expect("one part covers every variable exactly once");
-    assert_eq!(value(&grafted), want, "the store did not survive the round trip through the graft");
+    assert_eq!(rational_value(&grafted), want, "the store did not survive the round trip through the graft");
 
     // A marginalized level's values live in the store, so the detach is refused.
     let mut part = compile_clauses(&local, &clauses);
     part.set_weights(store()).unwrap();
     eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");
     assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: the part must carry values");
-    let want = value(&part);
+    let want = rational_value(&part);
     match part.take_weights() {
         Err(TddBuildError::WeightedLevelWithoutStore { level }) => {
             assert_eq!(level, inner, "the refusal names the level that would be stranded");
@@ -253,7 +238,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
         other => panic!("a level reading the store must refuse the detach, got {other:?}"),
     }
     assert!(part.weights().is_some(), "a refused detach leaves the store where it was");
-    assert_eq!(value(&part), want, "a refused detach left the diagram readable");
+    assert_eq!(rational_value(&part), want, "a refused detach left the diagram readable");
 }
 
 #[test]

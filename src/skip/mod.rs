@@ -379,29 +379,7 @@ impl SkipForm {
         }
         for (i, &t) in cand.iter().enumerate() {
             let lslice = &live[base[i] as usize..base[i + 1] as usize];
-            // Compacted in place: a kept node moves down to its new number.
-            let lvl = &mut self.levels[t as usize];
-            let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
-            for &new_k in lslice {
-                let hi = lvl.start[lo + 1] as usize;
-                let pair_lo = lvl.start[lo] as usize;
-                if new_k != NONE {
-                    for q in pair_lo..hi {
-                        let (a, b) = lvl.pairs[q];
-                        lvl.pairs[w] = (fix(&live, a), fix(&live, b));
-                        w += 1;
-                    }
-                    j += 1;
-                    lvl.start[j] = w as u32;
-                }
-                lo += 1;
-            }
-            if j == 0 {
-                lim.release_bytes(lvl.bytes());
-                *lvl = SLevel::default();
-            } else {
-                lvl.pairs.truncate(w);
-                lvl.start.truncate(j + 1);
+            if compact_candidate_level(&mut self.levels[t as usize], lslice, fix, &live, lim) {
                 active.push(t);
             }
         }
@@ -590,5 +568,40 @@ pub(crate) fn cells_label(cells: u8) -> u32 {
         3 => ONE,
         1 => POS,
         _ => NEG,
+    }
+}
+
+/// Compact `lvl` in place onto the live nodes in `lslice`, rewriting pair
+/// references through `fix`, and return `true` when at least one node survives.
+fn compact_candidate_level(
+    lvl: &mut SLevel,
+    lslice: &[u32],
+    fix: impl Fn(&[u32], Ref) -> Ref,
+    live: &[u32],
+    lim: &Limits,
+) -> bool {
+    let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
+    for &new_k in lslice {
+        let hi = lvl.start[lo + 1] as usize;
+        let pair_lo = lvl.start[lo] as usize;
+        if new_k != NONE {
+            for q in pair_lo..hi {
+                let (a, b) = lvl.pairs[q];
+                lvl.pairs[w] = (fix(live, a), fix(live, b));
+                w += 1;
+            }
+            j += 1;
+            lvl.start[j] = w as u32;
+        }
+        lo += 1;
+    }
+    if j == 0 {
+        lim.release_bytes(lvl.bytes());
+        *lvl = SLevel::default();
+        false
+    } else {
+        lvl.pairs.truncate(w);
+        lvl.start.truncate(j + 1);
+        true
     }
 }

@@ -8,11 +8,22 @@ use crate::Engine;
 use crate::marginal::transition::free_subsumed_marginal_children;
 
 use crate::diagram::{
-    ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
+    ChildPair, ChildSide, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId, assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
-use crate::diagram::ChildSide;
+
+fn leaf_nodes() -> (NodeIdx, NodeIdx, NodeIdx) {
+    (
+        NodeIdx(LeafLabel::Pos as u32),
+        NodeIdx(LeafLabel::Neg as u32),
+        NodeIdx(LeafLabel::One as u32),
+    )
+}
+
+fn empty_levels(n: usize) -> Vec<TddLevel> {
+    (0..n).map(|_| TddLevel::new()).collect()
+}
 
 /// Two boundary-parent nodes P and Q with identical pair lists {(X, Inline(1))}
 /// referenced by a root node with DIFFERENT siblings — the SHARABLE shape.
@@ -56,9 +67,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
         "v_marginal must be a leaf vtree node"
     );
 
-    let n = vtree.num_nodes();
-    let mut levels: Vec<crate::diagram::TddLevel> =
-        (0..n).map(|_| crate::diagram::TddLevel::new()).collect();
+    let mut levels = empty_levels(vtree.num_nodes());
 
     // v_marginal: empty store — all marginal-side refs from v_parent4 are inline.
     levels[v_marginal.idx()].set_counts_state(vec![], None);
@@ -66,7 +75,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     levels[v_parent4.idx()].set_has_value_refs(ChildSide::Right, true);
 
     let inline_ref = ValueRef::Inline(INLINE_VAL).side().unwrap();
-    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let (pos, neg, one) = leaf_nodes();
 
     // P and Q: IDENTICAL pair lists [(Pos, Inline(1))].
     // slot-prune never sees them (inline, not slot) -> values_merged == 0.
@@ -79,8 +88,6 @@ fn test_inline_ref_twins_merged_by_minimize() {
     ]);
 
     // v_right5: two DISTINCT siblings so root refs P and Q with different contexts.
-    let one  = NodeIdx(LeafLabel::One as u32);
-    let neg  = NodeIdx(LeafLabel::Neg as u32);
     let s0 = levels[v_right5.idx()].push_internal_node(&[
         ChildPair::new(pos, one),
     ]);

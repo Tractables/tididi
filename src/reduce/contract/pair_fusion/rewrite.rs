@@ -178,10 +178,6 @@ impl<'a> ParentRewrite<'a> {
     let range = level.pair_range_at(n);
     let (start, old_len) = (range.start, range.len());
 
-    let x_of = |p: ChildPair| match side {
-        ChildSide::Right => p.left.0,
-        ChildSide::Left => p.right.0,
-    };
     // The bitmap's width in words, or `None` for the map: the largest planned
     // x-ref bounds it, and a pair whose x-ref is past it carries no plan.
     let words = match this_plans.len() >= bitmap_min_plans {
@@ -217,8 +213,54 @@ impl<'a> ParentRewrite<'a> {
     // per read, from the same origin), so a kept pair only ever moves down
     // onto a slot already read past. A pair is fused away iff its x-side index
     // carries a plan (see `fused_x` above).
-    let mut write = start;
+    let mut write = compact_unfused_pairs(
+        level.pairs.stored_mut(),
+        (start, old_len),
+        side,
+        words,
+        bits,
+        fused_x,
+        this_plans,
+    );
     let arena = level.pairs.stored_mut();
+    // Append one fused pair per plan, in plan order. Every read is done, and
+    // each plan removed ≥2 pairs above, so `write + this_plans.len() ≤ start +
+    // old_len` — the appends stay inside the node's own range and cannot reach
+    // the next node's slots.
+    for plan in this_plans {
+        let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
+        let fused = match side {
+            ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(x_idx), EncodedChildRef::from_raw(r_new)),
+            ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
+        };
+        debug_assert!(write < start + old_len, "fusion must shrink the pair list");
+        arena[write] = fused;
+        write += 1;
+    }
+
+        // Re-encode via the shared epilogue: shrink in place, or inline the sole
+        // survivor.
+        Ok(level.reencode_shrunk(n, start, old_len, write - start))
+    }
+}
+
+/// Compact un-fused pairs in `arena[start..start + old_len]` onto the front of
+/// the range, returning the `write` cursor after the kept pairs.
+#[inline(always)]
+fn compact_unfused_pairs<V>(
+    arena: &mut [ChildPair],
+    (start, old_len): (usize, usize),
+    side: ChildSide,
+    words: Option<usize>,
+    bits: &mut [u64],
+    fused_x: &rustc_hash::FxHashMap<u32, u32>,
+    this_plans: &[PlanEntry<V>],
+) -> usize {
+    let x_of = |p: ChildPair| match side {
+        ChildSide::Right => p.left.0,
+        ChildSide::Left => p.right.0,
+    };
+    let mut write = start;
     match words {
         None => {
             for read in start..start + old_len {
@@ -246,27 +288,5 @@ impl<'a> ParentRewrite<'a> {
             }
         }
     }
-    // Append one fused pair per plan, in plan order. Every read is done, and
-    // each plan removed ≥2 pairs above, so `write + this_plans.len() ≤ start +
-    // old_len` — the appends stay inside the node's own range and cannot reach
-    // the next node's slots.
-    for plan in this_plans {
-        // `new_ref` is the fully-encoded marginal-side ref from Phase 2 —
-        // either a tagged inline count (bit-30 set) or a bare slot
-        // index (bit-30 clear), self-describing. Write it verbatim;
-        // `x_idx` is the non-marginal side.
-        let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
-        let fused = match side {
-            ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(x_idx), EncodedChildRef::from_raw(r_new)),
-            ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
-        };
-        debug_assert!(write < start + old_len, "fusion must shrink the pair list");
-        arena[write] = fused;
-        write += 1;
-    }
-
-        // Re-encode via the shared epilogue: shrink in place, or inline the sole
-        // survivor.
-        Ok(level.reencode_shrunk(n, start, old_len, write - start))
-    }
+    write
 }

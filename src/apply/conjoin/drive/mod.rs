@@ -482,18 +482,8 @@ fn apply_and_held(
 
     let _op = lim.begin_operation();
 
-    // The weight store follows the diagram: the operands' stores merge into the
-    // result's, and every level this apply marginalizes writes its values there.
-    // Their marginal levels are the two disjoint subtrees they were built over,
-    // so the merge loses nothing.
     let ws = merge_held_weights(lim, f, g)?;
-    // Nothing but pairs changes hands: no weights, no summed-out level, no
-    // level quantified or filtered, and, as the setup finds, no marginal
-    // level.
     let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
-
-    // Early return for zero inputs: `x ∧ 0 = 0`.
-    // Avoids allocating the output's levels and arenas for unsatisfiable operands.
     let vtree = Arc::clone(&f.vtree);
     let num_nodes = vtree.num_nodes();
     if f.is_zero() || g.is_zero() {
@@ -519,41 +509,9 @@ fn apply_and_held(
         "only a plain conjunction reads free levels",
     );
     let cone = run.cone;
-
-    // `g_identity[t]` is true when `g` computes constant-true over subtree
-    // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
-    // construction can `mem::swap` them into the output instead of running
-    // the per-node inner loop; `f_identity` is the symmetric case, where
-    // `g`'s nodes are cloned across. A leaf is identity iff only the One label
-    // is referenced by parent pairs; an internal node iff it is width-1 with
-    // both children identity, which the sweep accretes as it goes up. The
-    // predicate is incomplete; a miss only sends a small grid down the dense
-    // path.
-    //
-    // The levels under a free level are read by no level the sweep builds.
-    init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
-    init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
-
-    apply_leaf_levels(eng, &mut run)?;
-
-    // The operands' loose levels as a prune would settle them, read before
-    // the sweep drops the operands' levels.
-    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
-        (Some(lf), Some(lg)) if plain => Some(Operands { f: settle_loose(eng, f, lf)?, g: settle_loose(eng, g, lg)? }),
-        _ => None,
-    };
-
-    let canon_leaves = super::leaf_seed::seed_output_leaves(
-        f, g, cone.leaves, run.levels,
-        Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
-        ws.as_ref(),
-    );
-    // Taken here, after the setup and before the regions or the sweep move
-    // or drop any operand level: an access that changed a level would have
-    // dropped them.
+    let (operand_loose, canon_leaves) = prepare_sweep_leaves_and_regions(eng, &vtree, &mut run, f, g, ws.as_ref())?;
     let kept = Operands { f: f.levels.counts().cloned(), g: g.levels.counts().cloned() };
     let closed = Operands { f: f.levels.is_closed(), g: g.levels.is_closed() };
-    region::take_regions(&vtree, lim, &mut run, f, g)?;
     let mut sweep = Sweep {
         vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
         sum_child, summed: None, kept,
@@ -575,48 +533,80 @@ fn apply_and_held(
     } else {
         Vec::new()
     };
-
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
-
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
-    let out_vtree = f.output.vtree;
+    let output = TddNodeId { vtree: f.output.vtree, local: out_local };
     let carried = std::mem::take(&mut run.carried);
     let relabel_moved = std::mem::take(&mut run.relabel_moved);
     let lent = std::mem::take(&mut run.lent);
     let restoring = run.restoring;
-    let output = TddNodeId { vtree: out_vtree, local: out_local };
+    let queues = plain.then(|| prepare_plain_queues(&vtree, &mut run, (f, g), (&carried, &relabel_moved), operand_loose));
+    finish_conjoined_assembly(
+        eng, assembly, &vtree, (f, g), queues, (&carried, &relabel_moved, &lent),
+        (cone, restoring, closed, &kept), (output, &fused, summed),
+    )
+}
 
-    let finished = if plain {
-        let queues = prepare_plain_queues(&vtree, &mut run, (f, g), (&carried, &relabel_moved), operand_loose);
-        finish_plain_assembly(
-            eng,
-            assembly,
-            &vtree,
-            queues,
-            &carried,
-            closed,
-            &kept,
-            output,
-        )
-    } else {
-        assembly.finish_or_return(output)
+/// Initialize leaf identity tables, apply leaf levels, settle loose operand
+/// levels, seed output leaves, and take regions before the level sweep.
+#[allow(clippy::type_complexity)]
+fn prepare_sweep_leaves_and_regions(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    run: &mut ApplyRun<'_, '_>,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    ws: Option<&WeightStore>,
+) -> Result<(Option<Operands<Vec<u32>>>, Vec<usize>), OperationError> {
+    let cone = run.cone;
+    init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
+    init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
+    apply_leaf_levels(eng, run)?;
+    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
+        (Some(lf), Some(lg)) if run.plain => Some(Operands { f: settle_loose(eng, f, lf)?, g: settle_loose(eng, g, lg)? }),
+        _ => None,
+    };
+    let canon_leaves = super::leaf_seed::seed_output_leaves(
+        f, g, cone.leaves, run.levels,
+        Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
+        ws,
+    );
+    region::take_regions(vtree, eng.limits(), run, f, g)?;
+    Ok((operand_loose, canon_leaves))
+}
+
+/// Finalize `assembly` (restoring carried/lent levels on refusal when
+/// `restoring`) and run [`finalize_conjoined_diagram`].
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn finish_conjoined_assembly<'a>(
+    eng: &Engine,
+    assembly: diagram::Assembly<'a>,
+    vtree: &Vtree,
+    (f, g): (&mut Held<'_>, &mut Held<'_>),
+    queues: Option<PlainQueues>,
+    (carried, relabel_moved, lent): (&[(usize, bool)], &[usize], &[usize]),
+    (cone, restoring, closed, kept): (super::setup::Cone<'_>, bool, Operands<bool>, &Operands<Option<crate::diagram::LevelCounts>>),
+    (output, fused, summed): (TddNodeId, &[VtreeIdx], Option<Vec<VtreeIdx>>),
+) -> Result<Conjoined, OperationError> {
+    let plain = queues.is_some();
+    let finished = match queues {
+        Some(queues) => finish_plain_assembly(eng, assembly, vtree, queues, carried, closed, kept, output),
+        None => assembly.finish_or_return(output),
     };
     let out = match finished {
         Ok(out) => out,
         Err((e, mut assembly)) => {
             if restoring {
-                // A level the relabelling route moved goes back keeping the
-                // count its carrier kept, which is the count left on it.
-                for &t in &relabel_moved {
+                for &t in relabel_moved {
                     assembly.parts_mut().0[t].settle_held_pairs();
                 }
-                give_back(assembly.parts_mut().0, f, g, &carried, &lent);
+                give_back(assembly.parts_mut().0, f, g, carried, lent);
                 region::give_back_regions(assembly.parts_mut().0, cone, f, g);
             }
             return Err(e);
         }
     };
-    finalize_conjoined_diagram(eng, &vtree, out, plain, &fused, summed)
+    finalize_conjoined_diagram(eng, vtree, out, plain, fused, summed)
 }
 
 /// Merge or clone the weight stores of `f` and `g`.

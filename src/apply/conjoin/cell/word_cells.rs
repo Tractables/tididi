@@ -568,60 +568,87 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
         // not come due inside the row, and otherwise as the row loop polls
         // it, cell by cell.
         let units = candidates + width as u64;
-        match a.take_row(i, f_pairs, slab, left, right)? {
-            RowMode::Bits => {
-                for k in 0..a.w.live_cols.len() {
-                    let j = a.w.live_cols[k] as usize;
-                    a.emit_bits(eng, (i, j, row_base + j), f_pairs, ctx, slab, (left, right))?;
-                }
-                let col_start = &a.w.col_start;
-                poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
-            }
-            RowMode::Sorted => {
-                while let Some(j) = a.next_column() {
-                    let (from, to) = a.take_column(j);
-                    a.emit_sorted((eng, ctx), (i, j, row_base + j), f_pairs, slab, (left, right), (from, to))?;
-                }
-                let col_start = &a.w.col_start;
-                poll_row_as_walked(&mut poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))?;
-            }
-            RowMode::Cells if units >= poll.due_in() => {
-                // The live cells' walks and the others' charges in column
-                // order, as the row loop polls them.
-                for j in 0..width {
-                    if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
-                        process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
-                    } else {
-                        let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
-                        if n2 != 0 {
-                            poll_cell_as_walked(&mut poll, ctx, j, f_pairs, n2)?;
-                        }
-                    }
-                }
-                poll.poll(width as u64)?;
-            }
-            RowMode::Cells => {
-                // The walks charge their cells; the row charges the rest,
-                // none of it bringing the gate due.
-                let mut walked = 0u64;
-                for k in 0..a.w.live_cols.len() {
-                    let j = a.w.live_cols[k] as usize;
-                    walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
-                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
-                }
-                poll.poll(units - walked)?;
-            }
-            RowMode::Walk => {
-                for j in 0..width {
-                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, &mut poll))?;
-                }
-                poll.poll(width as u64)?;
-            }
-        }
+        dispatch_word_row(
+            (eng, ctx),
+            &mut a,
+            (i, row_base, units),
+            f_pairs,
+            (g_level, g_scratch),
+            slab,
+            (left, right),
+            &mut poll,
+        )?;
     }
     poll.flush()?;
     a.finish();
     Ok(())
+}
+
+/// Evaluate and emit one non-empty `f` row `i` in [`rows_by_words`] according
+/// to the [`RowMode`] selected by [`ByWords::take_row`].
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn dispatch_word_row<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSink>(
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    a: &mut ByWords<'_, S, SLAB>,
+    (i, row_base, units): (usize, usize, u64),
+    f_pairs: &[ChildPair],
+    (g_level, g_scratch): (&TddLevel, &mut Vec<ChildPair>),
+    slab: &mut [u32],
+    (left, right): (&L, &R),
+    poll: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    let width = ctx.right_width;
+    match a.take_row(i, f_pairs, slab, left, right)? {
+        RowMode::Bits => {
+            for k in 0..a.w.live_cols.len() {
+                let j = a.w.live_cols[k] as usize;
+                a.emit_bits(eng, (i, j, row_base + j), f_pairs, ctx, slab, (left, right))?;
+            }
+            let col_start = &a.w.col_start;
+            poll_row_as_walked(poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))
+        }
+        RowMode::Sorted => {
+            while let Some(j) = a.next_column() {
+                let (from, to) = a.take_column(j);
+                a.emit_sorted((eng, ctx), (i, j, row_base + j), f_pairs, slab, (left, right), (from, to))?;
+            }
+            let col_start = &a.w.col_start;
+            poll_row_as_walked(poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))
+        }
+        RowMode::Cells if units >= poll.due_in() => {
+            // The live cells' walks and the others' charges in column
+            // order, as the row loop polls them.
+            for j in 0..width {
+                if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
+                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
+                } else {
+                    let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
+                    if n2 != 0 {
+                        poll_cell_as_walked(poll, ctx, j, f_pairs, n2)?;
+                    }
+                }
+            }
+            poll.poll(width as u64)
+        }
+        RowMode::Cells => {
+            // The walks charge their cells; the row charges the rest,
+            // none of it bringing the gate due.
+            let mut walked = 0u64;
+            for k in 0..a.w.live_cols.len() {
+                let j = a.w.live_cols[k] as usize;
+                walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
+                process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
+            }
+            poll.poll(units - walked)
+        }
+        RowMode::Walk => {
+            for j in 0..width {
+                process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
+            }
+            poll.poll(width as u64)
+        }
+    }
 }
 
 /// The vectors and the sink of [`rows_by_words`].

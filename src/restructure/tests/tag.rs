@@ -9,11 +9,9 @@ use crate::{Engine, OperationError, Tdd};
 /// Two-bit codes, the first and the last equal so that two nodes share one.
 const CODES: [u64; 4] = [0b01, 0b10, 0b11, 0b01];
 
-/// `at`'s subtree of `f`'s vtree, its variables renumbered `1..=m` in leaf
-/// order, joined with a two-leaf code subtree over `m + 1` and `m + 2`;
-/// with the renaming.
-fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId; 2]) {
-    let vtree = f.vtree();
+/// Project `at`'s subtree of `vtree` onto variables `1..=m` in leaf order,
+/// returning `(subtree, local_map, m)`.
+fn subtree_projection(vtree: &Vtree, at: VtreeIdx) -> (Vtree, Vec<Option<VarId>>, u32) {
     let mut local = vec![None; vtree.num_vars() as usize];
     let mut m = 0u32;
     for (t, v) in vtree.leaf_bottomup() {
@@ -23,6 +21,14 @@ fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId
         }
     }
     let sub = vtree.project_to_vars(|v| local[v.idx()], m).unwrap();
+    (sub, local, m)
+}
+
+/// `at`'s subtree of `f`'s vtree, its variables renumbered `1..=m` in leaf
+/// order, joined with a two-leaf code subtree over `m + 1` and `m + 2`;
+/// with the renaming.
+fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId; 2]) {
+    let (sub, local, m) = subtree_projection(f.vtree(), at);
     let code = [VarId(m + 1), VarId(m + 2)];
     let into = Vtree::join(&sub, &Vtree::balanced_over(&code).unwrap()).unwrap();
     (Arc::new(into), local, code)
@@ -259,15 +265,7 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
             continue;
         }
         let slots = f.level(at).nodes().len();
-        let mut local = vec![None; vtree.num_vars() as usize];
-        let mut m = 0u32;
-        for (t, v) in vtree.leaf_bottomup() {
-            if vtree.in_subtree(t, at) {
-                m += 1;
-                local[v.idx()] = Some(VarId(m));
-            }
-        }
-        let sub = vtree.project_to_vars(|v| local[v.idx()], m).unwrap();
+        let (sub, local, m) = subtree_projection(&vtree, at);
         // Widths under one word, over one, and past the widest key.
         for width in [5, 23, 70, 140] {
             let codes = agreeing_codes(slots, width, &mut rng);

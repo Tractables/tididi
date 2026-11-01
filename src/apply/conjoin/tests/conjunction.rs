@@ -13,6 +13,22 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
 use num_bigint::BigUint;
 
+fn fold_clauses(vtree: &Arc<Vtree>, clauses: &[&[i32]], minimize_each: bool) -> Tdd {
+    let eng = &crate::Engine::new();
+    let mut acc = constant_one(eng, vtree);
+    for literals in clauses {
+        let clause: Vec<Literal> = literals
+            .iter()
+            .map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0))
+            .collect();
+        acc = apply_and(acc, clause_to_tdd(vtree, &clause));
+        if minimize_each {
+            acc.minimize().unwrap();
+        }
+    }
+    acc
+}
+
 #[test]
 fn test_apply_and_with_constant_one() {
     let eng = &crate::Engine::new();
@@ -124,38 +140,14 @@ fn test_apply_and_self_conjunction_owned() {
 
 #[test]
 fn test_apply_and_stick_vtree_conjunction() {
-    let eng = &crate::Engine::new();
     // A stick (right-linear) vtree: every internal level has a leaf left
     // child, so every level takes the leaf route of the conjunction.
     //
     // Both operands are folded clause by clause over the one vtree `Arc`.
     let vtree = Arc::new(Vtree::linear(8));
 
-    let clauses1 = [
-        vec![Literal::pos(VarId(1)), Literal::neg(VarId(3))],
-        vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))],
-        vec![Literal::pos(VarId(5)), Literal::neg(VarId(6))],
-        vec![Literal::neg(VarId(7)), Literal::pos(VarId(8))],
-    ];
-    let mut f = constant_one(eng, &vtree);
-    for clause in &clauses1 {
-        let cl = clause_to_tdd(&vtree, clause);
-        f = apply_and(f, cl);
-        f.minimize().unwrap();
-    }
-
-    let clauses2 = [
-        vec![Literal::neg(VarId(1)), Literal::pos(VarId(2))],
-        vec![Literal::pos(VarId(3)), Literal::pos(VarId(5))],
-        vec![Literal::neg(VarId(4)), Literal::neg(VarId(6))],
-        vec![Literal::pos(VarId(7)), Literal::neg(VarId(8))],
-    ];
-    let mut g = constant_one(eng, &vtree);
-    for clause in &clauses2 {
-        let cl = clause_to_tdd(&vtree, clause);
-        g = apply_and(g, cl);
-        g.minimize().unwrap();
-    }
+    let f = fold_clauses(&vtree, &[&[1, -3], &[-2, 4], &[5, -6], &[-7, 8]], true);
+    let g = fold_clauses(&vtree, &[&[-1, 2], &[3, 5], &[-4, -6], &[7, -8]], true);
 
     let mut result = apply_and(f, g);
     result.minimize().unwrap();
@@ -196,22 +188,6 @@ fn conjunction_rejects_a_constrained_marginal_level() {
 /// run would also complete — the cap is what makes it bail.
 #[test]
 fn test_apply_output_node_cap_bails_cleanly() {
-    // Build a diagram by folding clauses with `apply_and` — every operand shares the
-    // same `vtree` Arc (`clause_to_tdd` / `constant_one` clone it), so the final
-    // conjoin's pointer-identical-vtree precondition holds.
-    fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-        let eng = &crate::Engine::new();
-        let mut acc = constant_one(eng, vtree);
-        for literals in clauses {
-            let clause: Vec<Literal> = literals.iter()
-                .map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0))
-                .collect();
-            let c = clause_to_tdd(vtree, &clause);
-            acc = apply_and(acc, c);
-        }
-        acc
-    }
-
     // Two non-trivial functions whose conjunction has a multi-node intermediate
     // diagram (well above a 1-node cap).
     let vtree = Arc::new(Vtree::balanced(14));
@@ -228,8 +204,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     ];
 
     // Control: no cap → the conjoin completes.
-    let mut a = build(&vtree, fa);
-    let mut b = build(&vtree, fb);
+    let mut a = fold_clauses(&vtree, fa, false);
+    let mut b = fold_clauses(&vtree, fb, false);
     let uncapped = {
         let eng = Engine::new();
         apply_and_fallible(&eng, &mut a, &mut b, VtreeMask::default(), VtreeMask::default(), None)
@@ -237,8 +213,8 @@ fn test_apply_output_node_cap_bails_cleanly() {
     assert!(uncapped.is_ok(), "no cap: conjoin should complete, got {:?}", uncapped.err());
 
     // Armed with a tiny cap → the apply bails as a deliberate output cut.
-    let mut a = build(&vtree, fa);
-    let mut b = build(&vtree, fb);
+    let mut a = fold_clauses(&vtree, fa, false);
+    let mut b = fold_clauses(&vtree, fb, false);
     let capped = {
         let eng = Engine::new();
         let _prior = eng.limits().install(LimitConfig::none().with_output_node_cap(Some(1)));

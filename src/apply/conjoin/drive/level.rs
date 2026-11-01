@@ -1108,8 +1108,8 @@ pub(super) fn build_level_dense(
     let lim = eng.limits();
     let LevelBuild { shape, route, plan } = level;
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
-    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let MarginalPlan { sides, both_multi_pair, one_sided_masks, single_pair } = plan;
+    let (li, ri) = (left.idx(), right.idx());
+    let MarginalPlan { sides, both_multi_pair, one_sided_masks, .. } = plan;
     let passthrough = Sides { left: sides.left.is_passthrough(), right: sides.right.is_passthrough() };
     let use_sparse_marginal = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
@@ -1123,24 +1123,16 @@ pub(super) fn build_level_dense(
         right: run.products.arena.materialized(ri).expect("the right child's grid is materialized"),
     };
 
-    let mut lookups = plain_lookups(
+    let lookups = plain_lookups(
         route,
         Sides { left: run.products.is_complete(li), right: run.products.is_complete(ri) },
     );
-    // Only the grid-reading dead-pair liveness masks are deferred this far: they need
-    // the materialized child grids, and either flag implies a route that has them.
-    // With both sides complete no mask can clear, and the row loop reads none; on a
-    // grid of fewer than `MASK_MIN_CELLS` cells they cost more than they cull. With
-    // one multi-pair operand they are built for the row loop over two grids only: a
-    // level with a complete side keeps the loop it had.
     let masked = !matches!(lookups, PlainLookups::Complete { .. })
         && if both_multi_pair {
             fw.here.saturating_mul(gw.here) >= liveness::MASK_MIN_CELLS
         } else {
             one_sided_masks && route == Route::Dense && lookups == PlainLookups::Grid
         };
-    // A masked level of the dense route whose g level has few pairs in
-    // all is read by pairs (`run_level_rows_pairs`).
     let pairs = masked
         && route == Route::Dense
         && !super::super::pair_rows_forced_off()
@@ -1152,32 +1144,17 @@ pub(super) fn build_level_dense(
                 right: matches!(lookups, PlainLookups::CompleteRight { .. }),
             },
         );
-    let mut stream_state: Option<StreamLevelState> =
-        build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
-
+    let mut stream_state = build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
-    if try_run_described_stream(
-        eng,
-        run,
-        (f, g),
-        (shape, route, &plan, passthrough, grouped),
-        output_grid_base,
-        bases,
-        &mut stream_state,
-        sweep,
-    )? {
+    if try_run_described_stream(eng, run, (f, g), (shape, route, &plan, passthrough, grouped), output_grid_base, bases, &mut stream_state, sweep)? {
         return Ok(());
     }
-
     if masked {
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases, (lookups, pairs))?;
     }
-    // A level of two complete sides whose operand levels are affine takes
-    // the implicit route; any other reads its operands' pairs, an implicit
-    // operand's generated from its description.
     let composed = (matches!(lookups, PlainLookups::Complete { .. })
         && !use_sparse_marginal
         && stream_state.is_none()
@@ -1185,12 +1162,6 @@ pub(super) fn build_level_dense(
         && !crate::diagram::stored_levels_forced())
     .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, grouped))
     .flatten();
-    // The arenas the implicit route opened before it found it would have to
-    // stop inside the level, or grow the arena in bounded steps, which the
-    // row loop does on the written pairs: the capacity the meter was charged
-    // for. The planned route runs only with nothing bounding memory, so the
-    // column table built after the arenas changes nothing either reads.
-    // Both routes end in the one per-level tail below the block.
     let mut opened = None;
     'routes: {
         if let Some(product) = composed {
@@ -1200,112 +1171,92 @@ pub(super) fn build_level_dense(
                 break 'routes;
             }
         }
-
-        // `t` and its two vtree children are three distinct tree nodes, so these
-        // are three disjoint level slots: the streaming row loops read the child
-        // columns in place while the output level is exclusively borrowed. The
-        // split's borrow ends with the block, before the per-level tail retakes
-        // `levels`.
-        let [level, left_level, right_level] = run.levels
-            .get_disjoint_mut([ti, li, ri])
-            .expect("a vtree node and its two children are distinct level indices");
-        let (left_level, right_level) = (&*left_level, &*right_level);
-
-        let right_cols = column_table_pays(f.level(t), g.level(t), fw.here, gw.here, grouped)
-            .then(|| RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped))
-            .flatten();
-        let masks = masked.then_some(&*run.prefilter_masks);
-        let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
-
-        match opened {
-            Some(charged) => lookups = PlainLookups::Complete { charged },
-            None => {
-                open_level_arenas(lim, f, g, shape, level, route)?;
-                if let PlainLookups::Complete { charged }
-                | PlainLookups::CompleteLeft { charged }
-                | PlainLookups::CompleteRight { charged } = &mut lookups
-                {
-                    *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
-                }
-                note_lookups(lookups);
-            }
+        if execute_dense_row_routes(
+            eng, run, (f, g), (shape, route, &plan, passthrough, grouped),
+            (output_grid_base, bases), (lookups, masked, pairs, opened), &mut stream_state, sweep,
+        )? {
+            return Ok(());
         }
-
-        let rows = RowLoop {
-            f_level: f.level(t), g_level: g.level(t),
-            children: Sides { left: left_level, right: right_level },
-            ctx: &cell_ctx, f_width: fw.here,
-        };
-        let f_rows = Sides { left: fw.left, right: fw.right };
-
-        if use_sparse_marginal {
-            // Read by g-pair vectors where they pay.
-            let words = !(passthrough.left && passthrough.right)
-                && super::super::word_cells_forced().unwrap_or_else(|| {
-                    words_pay_marginal(eng, rows, &mut *run.words, true, f_rows, run.products.arena.slab())
-                });
-            return finish_sparse_marginal_level(
-                eng, shape, rows,
-                output_grid_base, level,
-                SparseMargScratch {
-                    f_pairs: run.f_pairs_scratch,
-                    g_pairs: run.g_pairs_scratch,
-                    products: run.products,
-                    words: words.then_some((&mut *run.words, f_rows)),
-                },
-                passthrough,
-            );
-        }
-
-        // A level of the plain or streaming routes whose candidates
-        // outnumber what the vectors of its child rows cost reads its cells
-        // by g-pair vectors (`run_level_rows_words`,
-        // `run_level_rows_stream_words`); a streaming level needs a side
-        // that is not carried through.
-        let words = !pairs
-            && match route {
-                Route::PlainDense => !single_pair && stream_state.is_none(),
-                Route::Dense => stream_state.is_none(),
-                Route::Stream { .. } => !(passthrough.left && passthrough.right),
-                _ => false,
-            }
-            && !matches!(lookups, PlainLookups::Complete { .. })
-            && super::super::word_cells_forced().unwrap_or_else(|| {
-                let slab = run.products.arena.slab();
-                match route {
-                    Route::Stream { marginal_children } => words_pay_marginal(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
-                    _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
-                }
-            });
-        // Nothing filters the level's nodes or folds them into counts.
-        let relay = sweep.filter.is_none() && stream_state.is_none();
-        run_row_loop(
-            eng, (route, lookups, single_pair, pairs, relay),
-            words.then_some((&mut *run.words, f_rows)),
-            (
-                rows,
-                RowScratch {
-                    f_pairs: run.f_pairs_scratch,
-                    g_pairs: run.g_pairs_scratch,
-                    node_idx: run.products.arena.slab_vec(),
-                },
-            ),
-            level,
-            StreamEnv {
-                left_idx: li,
-                right_idx: ri,
-                vtree: sweep.vtree,
-                cache: run.stream_cache,
-                ws: sweep.ws.as_deref(),
-            },
-            &mut stream_state,
-        )?;
     }
-
-    // Per-level tail: stream commit, live_counts, grid tag, shrink,
-    // pass-through flags. See `finalize_level`.
     finalize_level(eng, stream_state, shape, output_grid_base, passthrough, run, sweep);
     Ok(())
+}
+
+/// Build the cell context, open arenas, and run either `finish_sparse_marginal_level`
+/// (returning `Ok(true)`) or `run_row_loop` (returning `Ok(false)`).
+#[allow(clippy::too_many_arguments)]
+fn execute_dense_row_routes(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    (shape, route, plan, passthrough, grouped): (LevelShape, Route, &MarginalPlan, Sides<bool>, bool),
+    (output_grid_base, bases): (GridBase, Sides<GridBase>),
+    (mut lookups, masked, pairs, opened): (PlainLookups, bool, bool, Option<usize>),
+    stream_state: &mut Option<StreamLevelState>,
+    sweep: &mut Sweep<'_, '_>,
+) -> Result<bool, OperationError> {
+    let lim = eng.limits();
+    let LevelShape { t, left, right, f: fw, g: gw } = shape;
+    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
+    let (sides, single_pair) = (&plan.sides, plan.single_pair);
+    let [level, left_level, right_level] = run.levels
+        .get_disjoint_mut([ti, li, ri])
+        .expect("a vtree node and its two children are distinct level indices");
+    let right_cols = column_table_pays(f.level(t), g.level(t), fw.here, gw.here, grouped)
+        .then(|| RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped))
+        .flatten();
+    let cell_ctx = build_cell_ctx(shape, plan, output_grid_base.idx(), bases, masked.then_some(&*run.prefilter_masks), right_cols.as_ref());
+    match opened {
+        Some(charged) => lookups = PlainLookups::Complete { charged },
+        None => {
+            open_level_arenas(lim, f, g, shape, level, route)?;
+            if let PlainLookups::Complete { charged }
+            | PlainLookups::CompleteLeft { charged }
+            | PlainLookups::CompleteRight { charged } = &mut lookups
+            {
+                *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+            }
+            note_lookups(lookups);
+        }
+    }
+    let rows = RowLoop {
+        f_level: f.level(t), g_level: g.level(t),
+        children: Sides { left: &*left_level, right: &*right_level },
+        ctx: &cell_ctx, f_width: fw.here,
+    };
+    let f_rows = Sides { left: fw.left, right: fw.right };
+    if route == Route::SparseMarg {
+        let words = !(passthrough.left && passthrough.right)
+            && super::super::word_cells_forced().unwrap_or_else(|| {
+                words_pay_marginal(eng, rows, &mut *run.words, true, f_rows, run.products.arena.slab())
+            });
+        let scratch = SparseMargScratch {
+            f_pairs: run.f_pairs_scratch, g_pairs: run.g_pairs_scratch,
+            products: run.products, words: words.then_some((&mut *run.words, f_rows)),
+        };
+        finish_sparse_marginal_level(eng, shape, rows, output_grid_base, level, scratch, passthrough)?;
+        return Ok(true);
+    }
+    let words = !pairs
+        && match route {
+            Route::PlainDense => !single_pair && stream_state.is_none(),
+            Route::Dense => stream_state.is_none(),
+            Route::Stream { .. } => !(passthrough.left && passthrough.right),
+            _ => false,
+        }
+        && !matches!(lookups, PlainLookups::Complete { .. })
+        && super::super::word_cells_forced().unwrap_or_else(|| {
+            let slab = run.products.arena.slab();
+            match route {
+                Route::Stream { marginal_children } => words_pay_marginal(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
+                _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
+            }
+        });
+    let relay = sweep.filter.is_none() && stream_state.is_none();
+    let scratch = RowScratch { f_pairs: run.f_pairs_scratch, g_pairs: run.g_pairs_scratch, node_idx: run.products.arena.slab_vec() };
+    let env = StreamEnv { left_idx: li, right_idx: ri, vtree: sweep.vtree, cache: run.stream_cache, ws: sweep.ws.as_deref() };
+    run_row_loop(eng, (route, lookups, single_pair, pairs, relay), words.then_some((&mut *run.words, f_rows)), (rows, scratch), level, env, stream_state)?;
+    Ok(false)
 }
 
 /// Try to sum an affine level over complete child grids directly from its pair

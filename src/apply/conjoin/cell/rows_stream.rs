@@ -1025,14 +1025,31 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         _ => (false, 0),
     };
     let aw = if ll || rl { (LANES - 1) * width } else { 0 };
+    let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
+    alloc_value_row_slices(
+        lim,
+        ((sl, lfixed, kl + spares, ll, nl), (sr, rfixed, kr + spares, rl, nr)),
+        (spares, ones, aw, gright, gw),
+        (floats, flags, slots),
+    )
+    .map(Some)
+}
+
+/// Resize and slice `floats`, `flags`, and `slots` into the per-side and
+/// level-wide buffers of [`ValueRows`].
+#[allow(clippy::type_complexity)]
+fn alloc_value_row_slices<'b>(
+    lim: &crate::limits::Limits,
+    ((sl, lfixed, ls, ll, nl), (sr, rfixed, rs, rl, nr)): ((usize, bool, usize, bool, usize), (usize, bool, usize, bool, usize)),
+    (spares, ones, aw, gright, gw): (usize, usize, usize, bool, usize),
+    (floats, flags, slots): (&'b mut Vec<f64>, &'b mut Vec<u8>, &'b mut Vec<u32>),
+) -> Result<ValueRows<'b>, OperationError> {
     let (ml, mr) = (if ll { sl + 1 } else { 0 }, if rl { sr + 1 } else { 0 });
-    let (ls, rs) = (kl + spares, kr + spares);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
     let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr) + gw;
     lim.try_resize(floats, nf, 0.0)?;
     let nd = wl + wr + ones + aw + ml + mr + gw;
     lim.try_resize(flags, nd, 0)?;
-    let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
     let ns = nl + nr;
     slots.clear();
     lim.try_resize(slots, ns, NO_SLOT)?;
@@ -1056,7 +1073,7 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
     let ahead = Ahead { sums: ahead_sums, flags: ahead_flags, rows: [(0, none); LANES - 1], got: 0, held: 0 };
     let gather = Gather { vals: gvals, dead: gdead, right: gright, held: None, last: None };
-    Ok(Some(ValueRows { left, right, sums, flags, ahead, gather }))
+    Ok(ValueRows { left, right, sums, flags, ahead, gather })
 }
 
 /// Each child side's [`SideReads`] over the level's f pairs, its rows
