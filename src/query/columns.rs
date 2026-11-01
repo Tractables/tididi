@@ -46,9 +46,9 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::diagram::{LeafLabel, Tdd};
-use crate::limits::OperationError;
-use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+use crate::diagram::{LeafLabel, Tdd, TddLevel};
+use crate::limits::{Limits, OperationError, PollGate};
+use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use crate::Engine;
 
 /// The widest column a code holds.
@@ -116,6 +116,196 @@ impl Tdd {
     }
 }
 
+/// Per vtree node, the column touch slices (`levels`) and flattened [`Touch`]
+/// entries (`touched`).
+fn level_touches(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> (Vec<Level>, Vec<Touch>) {
+    let num_nodes = vtree.num_nodes();
+    let mut level_touch: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_nodes];
+    for t in vtree.bottomup() {
+        level_touch[t.idx()] = match vtree.node(t) {
+            VtreeNode::Leaf { var, .. } => match role[var.0 as usize] {
+                Some((j, bit)) => vec![(j, 1u32 << bit)],
+                None => Vec::new(),
+            },
+            VtreeNode::Internal { left, right, .. } => {
+                merge_masks(&level_touch[left.idx()], &level_touch[right.idx()])
+            }
+        };
+    }
+    let full = |j: u32| match widths[j as usize] {
+        32 => u32::MAX,
+        w => (1u32 << w) - 1,
+    };
+    let mut touched = Vec::new();
+    let mut levels = Vec::with_capacity(num_nodes);
+    for list in &level_touch {
+        let start = touched.len() as u32;
+        touched.extend(list.iter().map(|&(j, mask)| Touch { column: j, mask, whole: mask == full(j) }));
+        let closed = match list.as_slice() {
+            [(j, mask)] if *mask == full(*j) => *j,
+            _ => NONE,
+        };
+        levels.push(Level { touch: start, touches: list.len() as u32, closed });
+    }
+    (levels, touched)
+}
+
+/// Whether the leaves, left to right, read the listed variables as column 0's
+/// bits from the most significant down, then column 1's, and so on: the layout
+/// under which the fixed order can be the rows' ascending order.
+fn is_lexicographic(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> bool {
+    let mut in_order = Vec::new();
+    let mut stack = vec![vtree.root()];
+    while let Some(t) = stack.pop() {
+        match *vtree.node(t) {
+            VtreeNode::Leaf { var, .. } => in_order.extend(role[var.0 as usize]),
+            VtreeNode::Internal { left, right, .. } => stack.extend([right, left]),
+        }
+    }
+    in_order
+        .iter()
+        .copied()
+        .eq(widths.iter().enumerate().flat_map(|(j, &w)| (0..w).rev().map(move |bit| (j as u32, bit))))
+}
+
+/// Mark the slots reachable from `tdd.output()` (setting each reachable slot to
+/// `0` and leaving unreachable slots at `NONE`) and return the table alongside
+/// the total pair count across reachable internal nodes.
+fn number_reachable_slots(
+    lim: &Limits,
+    tdd: &Tdd,
+    gate: &mut PollGate,
+) -> Result<(Vec<Vec<u32>>, usize), OperationError> {
+    let vtree = tdd.vtree();
+    let num_nodes = vtree.num_nodes();
+    let mut gid: Vec<Vec<u32>> = (0..num_nodes)
+        .map(|t| {
+            let t = VtreeIdx(t as u32);
+            let width = match vtree.node(t).is_leaf() {
+                true => crate::diagram::LEAF_WIDTH,
+                false => tdd.level(t).slot_count(),
+            };
+            let mut map = Vec::new();
+            lim.try_resize(&mut map, width, NONE)?;
+            Ok(map)
+        })
+        .collect::<Result<_, OperationError>>()?;
+    let out = tdd.output();
+    gid[out.vtree.idx()][out.local.idx()] = 0;
+    for t in vtree.bottomup().rev() {
+        gate.poll(1)?;
+        let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
+        let level = tdd.level(t);
+        let [here, left_map, right_map] = gid
+            .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
+            .expect("three distinct vtree nodes in range");
+        for (i, &mark) in here.iter().enumerate() {
+            if mark == NONE {
+                continue;
+            }
+            for p in level.pairs_iter_of_idx(i) {
+                left_map[p.left.raw() as usize] = 0;
+                right_map[p.right.raw() as usize] = 0;
+            }
+        }
+    }
+    let mut total_pairs = 0usize;
+    for t in vtree.bottomup() {
+        if !vtree.node(t).is_leaf() {
+            let level = tdd.level(t);
+            for (i, &mark) in gid[t.idx()].iter().enumerate() {
+                if mark != NONE {
+                    total_pairs += level.pair_count_at(i);
+                }
+            }
+        }
+    }
+    Ok((gid, total_pairs))
+}
+
+impl ModelColumns {
+    /// Emit the reachable leaf labels at `t` into `self.nodes`, recording their
+    /// assigned node IDs in `here`.
+    fn push_leaf_level(
+        &mut self,
+        t: VtreeIdx,
+        var: VarId,
+        role: Option<(u32, u32)>,
+        here: &mut [u32],
+    ) -> Result<(), OperationError> {
+        for label in [LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg] {
+            if here[label as usize] == NONE {
+                continue;
+            }
+            let id = self.nodes.len() as u32;
+            here[label as usize] = id;
+            let node = match (role, label) {
+                (Some((j, bit)), LeafLabel::One) => {
+                    Node { count: 2, level: t.0, kind: Kind::Free, a: j, b: bit, refs: 0 }
+                }
+                (Some((j, bit)), LeafLabel::Pos) => {
+                    let at = self.konst.len() as u32;
+                    self.konst.push((j, 1u32 << bit));
+                    Node { count: 1, level: t.0, kind: Kind::Const, a: at, b: 1, refs: 0 }
+                }
+                (Some(_), _) | (None, LeafLabel::One) => {
+                    Node { count: 1, level: t.0, kind: Kind::Const, a: 0, b: 0, refs: 0 }
+                }
+                (None, _) => return Err(OperationError::UnlistedLiteral(var)),
+            };
+            self.nodes.push(node);
+        }
+        Ok(())
+    }
+
+    /// Emit the reachable internal nodes of `level` at `t` into `self.nodes`
+    /// and `self.pairs`, recording their assigned node IDs in `here`.
+    fn push_internal_level(
+        &mut self,
+        t: VtreeIdx,
+        level: &TddLevel,
+        here: &mut [u32],
+        left_map: &[u32],
+        right_map: &[u32],
+    ) -> Result<(), OperationError> {
+        for (i, mark) in here.iter_mut().enumerate() {
+            if *mark == NONE {
+                continue;
+            }
+            let id = self.nodes.len() as u32;
+            *mark = id;
+            let first = self.pairs.len() as u32;
+            let mut count: u64 = 0;
+            for p in level.pairs_iter_of_idx(i) {
+                let (l, r) = (left_map[p.left.raw() as usize], right_map[p.right.raw() as usize]);
+                let product = self.nodes[l as usize]
+                    .count
+                    .checked_mul(self.nodes[r as usize].count)
+                    .ok_or(OperationError::IndexOverflow)?;
+                self.pairs.push([l, r]);
+                for c in [l, r] {
+                    let refs = &mut self.nodes[c as usize].refs;
+                    *refs = (*refs + 1).min(2);
+                }
+                count = count.checked_add(product).ok_or(OperationError::IndexOverflow)?;
+            }
+            let n = self.pairs.len() as u32 - first;
+            let node = match count {
+                1 => {
+                    // One pair, each side one row: the constants of both.
+                    let [l, r] = self.pairs[first as usize];
+                    self.pairs.truncate(first as usize);
+                    let (a, b) = self.merge_konst(l, r);
+                    Node { count: 1, level: t.0, kind: Kind::Const, a, b, refs: 0 }
+                }
+                _ => Node { count, level: t.0, kind: Kind::Pairs, a: first, b: n, refs: 0 },
+            };
+            self.nodes.push(node);
+        }
+        Ok(())
+    }
+}
+
 impl Engine {
     /// Run [`Tdd::model_columns`] using this batch's resource limits.
     ///
@@ -129,58 +319,11 @@ impl Engine {
         tdd.require_structure()?;
         let mut gate = lim.gate();
         let vtree = Arc::clone(tdd.vtree());
-        let num_nodes = vtree.num_nodes();
 
         let role = super::column_layout::roles(&vtree, columns)?;
         let widths: Vec<u32> = columns.iter().map(|vars| vars.len() as u32).collect();
-
-        // Per vtree node, the bits of each column its variables own.
-        let mut level_touch: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_nodes];
-        for t in vtree.bottomup() {
-            level_touch[t.idx()] = match vtree.node(t) {
-                VtreeNode::Leaf { var, .. } => match role[var.0 as usize] {
-                    Some((j, bit)) => vec![(j, 1u32 << bit)],
-                    None => Vec::new(),
-                },
-                VtreeNode::Internal { left, right, .. } => {
-                    merge_masks(&level_touch[left.idx()], &level_touch[right.idx()])
-                }
-            };
-        }
-        let full = |j: u32| match widths[j as usize] {
-            32 => u32::MAX,
-            w => (1u32 << w) - 1,
-        };
-        let mut touched = Vec::new();
-        let mut levels = Vec::with_capacity(num_nodes);
-        for list in &level_touch {
-            let start = touched.len() as u32;
-            touched.extend(list.iter().map(|&(j, mask)| Touch { column: j, mask, whole: mask == full(j) }));
-            let closed = match list.as_slice() {
-                [(j, mask)] if *mask == full(*j) => *j,
-                _ => NONE,
-            };
-            levels.push(Level { touch: start, touches: list.len() as u32, closed });
-        }
-        drop(level_touch);
-
-        // Whether the leaves, left to right, read the listed variables as
-        // column 0's bits from the most significant down, then column 1's,
-        // and so on: the layout under which the fixed order can be the rows'
-        // ascending order.
-        let mut in_order = Vec::new();
-        let mut stack = vec![vtree.root()];
-        while let Some(t) = stack.pop() {
-            match *vtree.node(t) {
-                VtreeNode::Leaf { var, .. } => in_order.extend(role[var.0 as usize]),
-                VtreeNode::Internal { left, right, .. } => stack.extend([right, left]),
-            }
-        }
-        let lexicographic = in_order
-            .iter()
-            .copied()
-            .eq(widths.iter().enumerate().flat_map(|(j, &w)| (0..w).rev().map(move |bit| (j as u32, bit))));
-        drop(in_order);
+        let (levels, touched) = level_touches(&vtree, &role, &widths);
+        let lexicographic = is_lexicographic(&vtree, &role, &widths);
 
         let mut table = ModelColumns {
             widths,
@@ -203,122 +346,24 @@ impl Engine {
             return Ok(table);
         }
 
-        // Reachable nodes, marked from the output down.
-        let mut gid: Vec<Vec<u32>> = (0..num_nodes)
-            .map(|t| {
-                let t = VtreeIdx(t as u32);
-                let width = match vtree.node(t).is_leaf() {
-                    true => crate::diagram::LEAF_WIDTH,
-                    false => tdd.level(t).slot_count(),
-                };
-                let mut map = Vec::new();
-                lim.reserve_exact(&mut map, width)?;
-                map.resize(width, NONE);
-                Ok(map)
-            })
-            .collect::<Result<_, OperationError>>()?;
-        let out = tdd.output();
-        gid[out.vtree.idx()][out.local.idx()] = 0;
-        for t in vtree.bottomup().rev() {
-            gate.poll(1)?;
-            let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
-            let level = tdd.level(t);
-            let [here, left_map, right_map] = gid
-                .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
-                .expect("three distinct vtree nodes in range");
-            for (i, &mark) in here.iter().enumerate() {
-                if mark == NONE {
-                    continue;
-                }
-                for p in level.pairs_iter_of_idx(i) {
-                    left_map[p.left.raw() as usize] = 0;
-                    right_map[p.right.raw() as usize] = 0;
-                }
-            }
-        }
-
-        // Number them bottom-up, with each node's count and pairs.
-        let mut total_pairs = 0usize;
-        for t in vtree.bottomup() {
-            if !vtree.node(t).is_leaf() {
-                let level = tdd.level(t);
-                for (i, &mark) in gid[t.idx()].iter().enumerate() {
-                    if mark != NONE {
-                        total_pairs += level.pair_count_at(i);
-                    }
-                }
-            }
-        }
+        let (mut gid, total_pairs) = number_reachable_slots(lim, tdd, &mut gate)?;
         lim.reserve_exact(&mut table.pairs, total_pairs)?;
         for t in vtree.bottomup() {
             gate.poll(1)?;
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
-                    for label in [LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg] {
-                        if gid[t.idx()][label as usize] == NONE {
-                            continue;
-                        }
-                        let id = table.nodes.len() as u32;
-                        gid[t.idx()][label as usize] = id;
-                        let node = match (role[var.0 as usize], label) {
-                            (Some((j, bit)), LeafLabel::One) => {
-                                Node { count: 2, level: t.0, kind: Kind::Free, a: j, b: bit, refs: 0 }
-                            }
-                            (Some((j, bit)), LeafLabel::Pos) => {
-                                let at = table.konst.len() as u32;
-                                table.konst.push((j, 1u32 << bit));
-                                Node { count: 1, level: t.0, kind: Kind::Const, a: at, b: 1, refs: 0 }
-                            }
-                            (Some(_), _) | (None, LeafLabel::One) => {
-                                Node { count: 1, level: t.0, kind: Kind::Const, a: 0, b: 0, refs: 0 }
-                            }
-                            (None, _) => return Err(OperationError::UnlistedLiteral(var)),
-                        };
-                        table.nodes.push(node);
-                    }
+                    table.push_leaf_level(t, var, role[var.0 as usize], &mut gid[t.idx()])?;
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = tdd.level(t);
                     let [here, left_map, right_map] = gid
                         .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
                         .expect("three distinct vtree nodes in range");
-                    for (i, mark) in here.iter_mut().enumerate() {
-                        if *mark == NONE {
-                            continue;
-                        }
-                        let id = table.nodes.len() as u32;
-                        *mark = id;
-                        let first = table.pairs.len() as u32;
-                        let mut count: u64 = 0;
-                        for p in level.pairs_iter_of_idx(i) {
-                            let (l, r) = (left_map[p.left.raw() as usize], right_map[p.right.raw() as usize]);
-                            let product = table.nodes[l as usize]
-                                .count
-                                .checked_mul(table.nodes[r as usize].count)
-                                .ok_or(OperationError::IndexOverflow)?;
-                            table.pairs.push([l, r]);
-                            for c in [l, r] {
-                                let refs = &mut table.nodes[c as usize].refs;
-                                *refs = (*refs + 1).min(2);
-                            }
-                            count = count.checked_add(product).ok_or(OperationError::IndexOverflow)?;
-                        }
-                        let n = table.pairs.len() as u32 - first;
-                        let node = match count {
-                            1 => {
-                                // One pair, each side one row: the constants of both.
-                                let [l, r] = table.pairs[first as usize];
-                                table.pairs.truncate(first as usize);
-                                let (a, b) = table.merge_konst(l, r);
-                                Node { count: 1, level: t.0, kind: Kind::Const, a, b, refs: 0 }
-                            }
-                            _ => Node { count, level: t.0, kind: Kind::Pairs, a: first, b: n, refs: 0 },
-                        };
-                        table.nodes.push(node);
-                    }
+                    table.push_internal_level(t, level, here, left_map, right_map)?;
                 }
             }
         }
+        let out = tdd.output();
         table.root = gid[out.vtree.idx()][out.local.idx()];
         table.rows = table.nodes[table.root as usize].count;
         table.memo_of = vec![NONE; table.nodes.len()];

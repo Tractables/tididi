@@ -30,7 +30,7 @@
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{ChildDecoder, ChildRef, EncodedChildRef, LeafLabel, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
+use crate::diagram::{ChildDecoder, ChildPair, ChildRef, EncodedChildRef, LeafLabel, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
 use crate::limits::{Limits, OperationError, PollGate, Transient};
 use crate::value::CountRead;
 use crate::vtree::{VtreeIdx, VtreeNode};
@@ -422,6 +422,16 @@ impl<'t> Level<'t> {
         };
         range.map(move |i| (i as u32, level.pairs_iter_of_idx(i)))
     }
+
+    /// Split `p` into `(kept node, summed ref, summed view)` according to whether the left side is kept.
+    #[inline]
+    fn split_factored(&self, p: ChildPair, keep_left: bool) -> (u32, EncodedChildRef, ChildDecoder) {
+        if keep_left {
+            (node(self.left, p.left), p.right, self.right)
+        } else {
+            (node(self.right, p.right), p.left, self.left)
+        }
+    }
 }
 
 /// `Σ_{x ∈ {0,1}^(X_l ∩ X_r)} m_l(x) · m_r(x)` under arithmetic `V`.
@@ -624,6 +634,16 @@ impl<'f, V: Arith> Row<'f, V> {
     }
 }
 
+/// Ensure `map` has room for at least one more entry, growing in batches of at least 16.
+#[inline]
+fn reserve_map_slot<K: Eq + std::hash::Hash, V>(lim: &Limits, map: &mut FxHashMap<K, V>) -> Result<(), OperationError> {
+    if map.len() == map.capacity() {
+        let grow = map.len().max(16);
+        lim.reserve_map(map, grow)?;
+    }
+    Ok(())
+}
+
 /// Group one operand's pairs at a level by the node one side names, summing
 /// the other side's factored values: `(side node, level node) → Σ value`,
 /// sorted by side node.
@@ -639,11 +659,7 @@ fn contract<'a, V: Arith>(
         gate.poll(pairs.len() as u64 + 1)?;
         lim.reserve_map(&mut acc, pairs.len())?;
         for p in pairs {
-            let (kept, summed, view) = if keep_left {
-                (node(level.left, p.left), p.right, level.right)
-            } else {
-                (node(level.right, p.right), p.left, level.left)
-            };
+            let (kept, summed, view) = level.split_factored(p, keep_left);
             acc.entry(key(kept, u)).or_default().plus(&value_at(vals, view, summed))?;
         }
     }
@@ -679,11 +695,7 @@ fn root_contract<V: Arith>(
         for (_, pairs) in level.nodes() {
             gate.poll(pairs.len() as u64 + 1)?;
             for p in pairs {
-                let (kept, summed, view) = if right_factored {
-                    (node(level.left, p.left), p.right, level.right)
-                } else {
-                    (node(level.right, p.right), p.left, level.left)
-                };
+                let (kept, summed, view) = level.split_factored(p, right_factored);
                 col[kept as usize].plus(&value_at(vals, view, summed))?;
             }
         }
@@ -709,6 +721,109 @@ fn root_contract<V: Arith>(
     Ok(sum)
 }
 
+/// Sum `a[p.left] · b[p.right]` per node of `level` when both children are factored.
+fn side_sums<'a, V: Arith>(
+    lim: &'a Limits,
+    level: &Level<'_>,
+    a: &[V],
+    b: &[V],
+    gate: &mut PollGate,
+) -> Result<Transient<'a, Vec<V>>, Halt> {
+    let mut out = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut out, level.level.nodes().len(), V::default())?;
+    for (u, pairs) in level.nodes() {
+        gate.poll(pairs.len() as u64 + 1)?;
+        let mut acc = V::default();
+        for p in pairs {
+            acc.plus(&value_at(a, level.left, p.left).times(&value_at(b, level.right, p.right))?)?;
+        }
+        out[u as usize] = acc;
+    }
+    Ok(out)
+}
+
+/// Add `w` to `acc[(u, v)]`, reserving map capacity through `lim`.
+fn add_entry<V: Arith>(lim: &Limits, acc: &mut FxHashMap<u64, V>, u: u32, v: u32, w: V) -> Result<(), Halt> {
+    reserve_map_slot(lim, acc)?;
+    acc.entry(key(u, v)).or_default().plus(&w)?;
+    Ok(())
+}
+
+/// Populate `acc` at a level where exactly one child (`(a, b)`, on the right iff
+/// `right_factored`) is factored and `other` is the unfactored child's form.
+fn combine_one_factored<V: Arith>(
+    lim: &Limits,
+    (ll, lr): (&Level<'_>, &Level<'_>),
+    (a, b): (&[V], &[V]),
+    other: &Form<'_, V>,
+    right_factored: bool,
+    acc: &mut FxHashMap<u64, V>,
+    gate: &mut PollGate,
+) -> Result<(), Halt> {
+    let gl = contract(lim, ll, a, right_factored, gate)?;
+    let gr = contract(lim, lr, b, right_factored, gate)?;
+    for &(k, ref x) in gl.iter() {
+        let (p, u) = ((k >> 32) as u32, k as u32);
+        gate.poll(1)?;
+        Row::of(other, p).for_each(|p2, w| {
+            let xw = x.times(w)?;
+            for &(k2, ref y) in row(&gr, p2) {
+                add_entry(lim, acc, u, k2 as u32, xw.times(y)?)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Populate `acc` at a level where neither child is factored: every pair of
+/// `ll` meets the pairs of `lr` whose children pair with its own in `fl` and `fr`.
+fn combine_unfactored<V: Arith>(
+    lim: &Limits,
+    (ll, lr): (&Level<'_>, &Level<'_>),
+    (fl, fr): (&Form<'_, V>, &Form<'_, V>),
+    acc: &mut FxHashMap<u64, V>,
+    gate: &mut PollGate,
+) -> Result<(), Halt> {
+    // `r`'s pairs by their two children. Over summed-out storage a
+    // node may repeat a pair, and each copy counts.
+    let mut pairs_r: Transient<'_, Vec<(u64, u32)>> = Transient::new(lim, Vec::new());
+    for (v, pairs) in lr.nodes() {
+        gate.poll(pairs.len() as u64 + 1)?;
+        for p in pairs {
+            lim.try_push(&mut pairs_r, (key(node(lr.left, p.left), node(lr.right, p.right)), v))?;
+        }
+    }
+    pairs_r.sort_unstable();
+    let mut index: Transient<'_, FxHashMap<u64, (u32, u32)>> = Transient::new(lim, FxHashMap::default());
+    let mut start = 0;
+    while start < pairs_r.len() {
+        let k = pairs_r[start].0;
+        let end = start + pairs_r[start..].partition_point(|e| e.0 == k);
+        reserve_map_slot(lim, &mut index)?;
+        index.insert(k, (start as u32, (end - start) as u32));
+        start = end;
+    }
+    for (u, pairs) in ll.nodes() {
+        gate.poll(pairs.len() as u64 + 1)?;
+        for p in pairs {
+            let (rows_l, rows_r) = (Row::of(fl, node(ll.left, p.left)), Row::of(fr, node(ll.right, p.right)));
+            rows_l.for_each(|p2, wl| {
+                rows_r.for_each(|q2, wr| {
+                    if let Some(&(at, len)) = index.get(&key(p2, q2)) {
+                        let w = wl.times(wr)?;
+                        for &(_, v) in &pairs_r[at as usize..(at + len) as usize] {
+                            add_entry(lim, acc, u, v, w.clone())?;
+                        }
+                    }
+                    Ok(())
+                })
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// `M_t` at a level both operands keep, from its children's forms.
 fn combine<'a, V: Arith>(
     lim: &'a Limits,
@@ -718,95 +833,20 @@ fn combine<'a, V: Arith>(
     fr: &Form<'_, V>,
     gate: &mut PollGate,
 ) -> Result<Combined<'a, V>, Halt> {
-    // Both children factored: so is the level, one sum per node.
     if let (Form::Factor(al, bl), Form::Factor(ar, br)) = (fl, fr) {
-        let side_sums = |level: &Level<'_>, a: &[V], b: &[V], gate: &mut PollGate| -> Result<Transient<'a, Vec<V>>, Halt> {
-            let mut out = Transient::new(lim, Vec::new());
-            lim.try_resize(&mut out, level.level.nodes().len(), V::default())?;
-            for (u, pairs) in level.nodes() {
-                gate.poll(pairs.len() as u64 + 1)?;
-                let mut acc = V::default();
-                for p in pairs {
-                    acc.plus(&value_at(a, level.left, p.left).times(&value_at(b, level.right, p.right))?)?;
-                }
-                out[u as usize] = acc;
-            }
-            Ok(out)
-        };
-        return Ok(Combined::Factor(side_sums(ll, al, ar, gate)?, side_sums(lr, bl, br, gate)?));
+        return Ok(Combined::Factor(
+            side_sums(lim, ll, al, ar, gate)?,
+            side_sums(lim, lr, bl, br, gate)?,
+        ));
     }
     let mut acc: Transient<'a, FxHashMap<u64, V>> = Transient::new(lim, FxHashMap::default());
-    let add = |acc: &mut Transient<'a, FxHashMap<u64, V>>, u: u32, v: u32, w: V| -> Result<(), Halt> {
-        if acc.len() == acc.capacity() {
-            let grow = acc.len().max(16);
-            lim.reserve_map(acc, grow)?;
-        }
-        acc.entry(key(u, v)).or_default().plus(&w)?;
-        Ok(())
-    };
     match (fl, fr) {
-        // One child factored: contract it over its side, then join the
-        // other side's entries through the nodes they name.
         (_, Form::Factor(a, b)) | (Form::Factor(a, b), _) => {
             let right_factored = matches!(fr, Form::Factor(..));
             let other = if right_factored { fl } else { fr };
-            let gl = contract(lim, ll, a, right_factored, gate)?;
-            let gr = contract(lim, lr, b, right_factored, gate)?;
-            for &(k, ref x) in gl.iter() {
-                let (p, u) = ((k >> 32) as u32, k as u32);
-                gate.poll(1)?;
-                Row::of(other, p).for_each(|p2, w| {
-                    let xw = x.times(w)?;
-                    for &(k2, ref y) in row(&gr, p2) {
-                        add(&mut acc, u, k2 as u32, xw.times(y)?)?;
-                    }
-                    Ok(())
-                })?;
-            }
+            combine_one_factored(lim, (ll, lr), (a, b), other, right_factored, &mut acc, gate)?;
         }
-        // Neither: every pair of `l` meets the pairs of `r` whose children
-        // pair with its own in the children's entries.
-        _ => {
-            // `r`'s pairs by their two children. Over summed-out storage a
-            // node may repeat a pair, and each copy counts.
-            let mut pairs_r: Transient<'a, Vec<(u64, u32)>> = Transient::new(lim, Vec::new());
-            for (v, pairs) in lr.nodes() {
-                gate.poll(pairs.len() as u64 + 1)?;
-                for p in pairs {
-                    lim.try_push(&mut pairs_r, (key(node(lr.left, p.left), node(lr.right, p.right)), v))?;
-                }
-            }
-            pairs_r.sort_unstable();
-            let mut index: Transient<'a, FxHashMap<u64, (u32, u32)>> = Transient::new(lim, FxHashMap::default());
-            let mut start = 0;
-            while start < pairs_r.len() {
-                let k = pairs_r[start].0;
-                let end = start + pairs_r[start..].partition_point(|e| e.0 == k);
-                if index.len() == index.capacity() {
-                    let grow = index.len().max(16);
-                    lim.reserve_map(&mut index, grow)?;
-                }
-                index.insert(k, (start as u32, (end - start) as u32));
-                start = end;
-            }
-            for (u, pairs) in ll.nodes() {
-                gate.poll(pairs.len() as u64 + 1)?;
-                for p in pairs {
-                    let (rows_l, rows_r) = (Row::of(fl, node(ll.left, p.left)), Row::of(fr, node(ll.right, p.right)));
-                    rows_l.for_each(|p2, wl| {
-                        rows_r.for_each(|q2, wr| {
-                            if let Some(&(at, len)) = index.get(&key(p2, q2)) {
-                                let w = wl.times(wr)?;
-                                for &(_, v) in &pairs_r[at as usize..(at + len) as usize] {
-                                    add(&mut acc, u, v, w.clone())?;
-                                }
-                            }
-                            Ok(())
-                        })
-                    })?;
-                }
-            }
-        }
+        _ => combine_unfactored(lim, (ll, lr), (fl, fr), &mut acc, gate)?,
     }
     let mut out = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut out, acc.len())?;

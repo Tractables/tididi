@@ -35,18 +35,6 @@ enum Side {
     Literal(i32),
 }
 
-/// An all-`fill` table with one entry per reference slot of every level.
-pub(super) fn table<T: Clone>(lim: &Limits, f: &Tdd, fill: T) -> Result<Vec<Vec<T>>, OperationError> {
-    let mut rows = Vec::new();
-    lim.reserve_exact(&mut rows, f.levels.len())?;
-    for i in 0..f.levels.len() {
-        let mut row = Vec::new();
-        lim.try_resize(&mut row, f.reference_slot_count(VtreeIdx(i as u32)), fill.clone())?;
-        rows.push(row);
-    }
-    Ok(rows)
-}
-
 /// Whether a side into a summed-out level can be true: its count is positive.
 fn value_positive(f: &Tdd, child: VtreeIdx, raw: EncodedChildRef) -> bool {
     let counts = f.levels[child.idx()].count_column().expect("weighted levels are refused");
@@ -83,16 +71,16 @@ fn define_and<K: ClauseSink + ?Sized>(sink: &mut K, x: i32, l: Side, r: Side) {
     }
 }
 
-/// The encoding of [`CnfScheme::Equivalence`](super::CnfScheme::Equivalence).
-pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activation: i32, sink: &mut K) -> Result<CnfEncoding, OperationError> {
-    let lim = eng.limits();
+/// Allocate and populate the literal table for leaves, summed-out slots, and
+/// reachable internal nodes before any node definition is emitted.
+fn assign_literals<K: ClauseSink + ?Sized>(
+    lim: &Limits,
+    f: &Tdd,
+    reachable: &[Vec<bool>],
+    sink: &mut K,
+) -> Result<Vec<Vec<i32>>, OperationError> {
     let vtree = &*f.vtree;
-    let mut reachable = table(lim, f, false)?;
-    if !f.is_zero() {
-        reachable[f.output.vtree.idx()][f.output.local.idx()] = true;
-        f.propagate_reachability(&mut reachable);
-    }
-    let mut literals = table(lim, f, NONE)?;
+    let mut literals = f.slot_table(lim, NONE)?;
 
     // Leaves: one true variable, made at the first structural leaf.
     let mut truth = None;
@@ -126,6 +114,51 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
             if reachable[t.idx()][i] { literals[t.idx()][i] = check_literal(sink.fresh_var())?; }
         }
     }
+    Ok(literals)
+}
+
+/// Emit the equivalence clauses for one reachable internal node `y` whose
+/// stored pair count is `count` and whose satisfiable pairs are `live`.
+fn emit_node_clauses<K: ClauseSink + ?Sized>(
+    lim: &Limits,
+    sink: &mut K,
+    y: i32,
+    count: usize,
+    live: &[(Side, Side)],
+    zs: &mut Vec<i32>,
+    body: &mut Vec<i32>,
+) -> Result<(), OperationError> {
+    if live.is_empty() {
+        sink.clause(&[-y]);
+    } else if count == 1 {
+        define_and(sink, y, live[0].0, live[0].1);
+    } else {
+        zs.clear();
+        for &(l, r) in live {
+            let z = check_literal(sink.fresh_var())?;
+            define_and(sink, z, l, r);
+            lim.try_push(zs, z)?;
+        }
+        body.clear();
+        lim.reserve(body, zs.len() + 1)?;
+        body.push(-y);
+        body.extend_from_slice(zs);
+        sink.clause(body);
+        for &z in zs.iter() { sink.clause(&[y, -z]); }
+    }
+    Ok(())
+}
+
+/// The encoding of [`CnfScheme::Equivalence`](super::CnfScheme::Equivalence).
+pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activation: i32, sink: &mut K) -> Result<CnfEncoding, OperationError> {
+    let lim = eng.limits();
+    let vtree = &*f.vtree;
+    let mut reachable = f.slot_table(lim, false)?;
+    if !f.is_zero() {
+        reachable[f.output.vtree.idx()][f.output.local.idx()] = true;
+        f.propagate_reachability(&mut reachable);
+    }
+    let mut literals = assign_literals(lim, f, &reachable, sink)?;
     let erasure_certified = erasure_certified(lim, f, &reachable)?;
 
     let mut stop = None;
@@ -163,24 +196,7 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
                 let sides = side(&literals[left.idx()], pair.left, left_marginal).zip(side(&literals[right.idx()], pair.right, right_marginal));
                 if let Some(sides) = sides { lim.try_push(&mut live, sides)?; }
             }
-            if live.is_empty() {
-                sink.clause(&[-y]);
-            } else if count == 1 {
-                define_and(sink, y, live[0].0, live[0].1);
-            } else {
-                zs.clear();
-                for &(l, r) in &live {
-                    let z = check_literal(sink.fresh_var())?;
-                    define_and(sink, z, l, r);
-                    lim.try_push(&mut zs, z)?;
-                }
-                body.clear();
-                lim.reserve(&mut body, zs.len() + 1)?;
-                body.push(-y);
-                body.extend_from_slice(&zs);
-                sink.clause(&body);
-                for &z in &zs { sink.clause(&[y, -z]); }
-            }
+            emit_node_clauses(lim, sink, y, count, &live, &mut zs, &mut body)?;
         }
         complete += 1;
     }

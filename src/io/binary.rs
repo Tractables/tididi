@@ -765,10 +765,9 @@ impl PairReader<'_> {
     }
 }
 
-/// Check the stored vtree against `vtree`, then read the levels and seat the
-/// diagram.
-fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
-    let mut body = Body { bytes, at: 0 };
+/// Check the stored vtree header in `body` against `vtree` and return `vtree`'s
+/// postorder traversal.
+fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx>, IoError> {
     let leaves = body.varint("leaf count")?;
     let nodes = body.varint("vtree node count")?;
     if nodes != vtree.num_nodes() as u64 || leaves != u64::from(vtree.num_leaves()) {
@@ -795,6 +794,14 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
             )));
         }
     }
+    Ok(order)
+}
+
+/// Check the stored vtree against `vtree`, then read the levels and seat the
+/// diagram.
+fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
+    let mut body = Body { bytes, at: 0 };
+    let order = check_vtree_header(&mut body, vtree)?;
 
     let root = vtree.root();
     let output = body.varint("output")?;
@@ -874,6 +881,47 @@ fn read_counts(body: &mut Body<'_>, vtree: &Vtree, order: &[VtreeIdx], width: &[
     Ok(counts)
 }
 
+/// Read the multi-pair node bitmap and pair lengths for a level with `nodes`
+/// nodes, `multi` multi-pair nodes, and `pairs` total pairs.
+fn read_multi_lengths<'a>(
+    body: &mut Body<'a>,
+    nodes: usize,
+    multi: usize,
+    pairs: usize,
+) -> Result<(&'a [u8], Vec<u64>), IoError> {
+    if multi == 0 {
+        if pairs != nodes {
+            return Err(malformed(format!(
+                "{nodes} single-pair nodes cannot hold {pairs} pairs"
+            )));
+        }
+        return Ok((&[], Vec::new()));
+    }
+    let bitmap = body.take(nodes.div_ceil(8), "the multi-pair bitmap")?;
+    let marked: usize = bitmap.iter().map(|b| b.count_ones() as usize).sum();
+    if marked != multi || (!nodes.is_multiple_of(8) && bitmap[nodes / 8] >> (nodes % 8) != 0) {
+        return Err(malformed(format!(
+            "the multi-pair bitmap marks {marked} nodes, the section declares {multi}"
+        )));
+    }
+    let mut lengths = Vec::new();
+    lengths.try_reserve_exact(multi).map_err(|_| malformed("no memory for the pair counts"))?;
+    let mut in_arena = 0u64;
+    for _ in 0..multi {
+        let extra = body.varint("pair count of a multi-pair node")?;
+        let len = extra.checked_add(2).ok_or_else(|| malformed("a node's pair count overflows"))?;
+        in_arena = in_arena.saturating_add(len);
+        lengths.push(len);
+    }
+    if in_arena.checked_add((nodes - multi) as u64) != Some(pairs as u64) {
+        return Err(malformed(format!(
+            "the nodes' pair counts sum to {}, the section declares {pairs}",
+            in_arena.saturating_add((nodes - multi) as u64)
+        )));
+    }
+    Ok((bitmap, lengths))
+}
+
 /// One internal level's section, its pair sides checked against the widths
 /// of its child levels.
 fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Result<TddLevel, IoError> {
@@ -902,38 +950,7 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
         return Err(malformed(format!("{nodes} nodes cannot hold only {pairs} pairs")));
     }
 
-    let (bitmap, lengths) = if multi > 0 {
-        let bitmap = body.take(nodes.div_ceil(8), "the multi-pair bitmap")?;
-        let marked: usize = bitmap.iter().map(|b| b.count_ones() as usize).sum();
-        if marked != multi || (!nodes.is_multiple_of(8) && bitmap[nodes / 8] >> (nodes % 8) != 0) {
-            return Err(malformed(format!(
-                "the multi-pair bitmap marks {marked} nodes, the section declares {multi}"
-            )));
-        }
-        let mut lengths = Vec::new();
-        lengths.try_reserve_exact(multi).map_err(|_| malformed("no memory for the pair counts"))?;
-        let mut in_arena = 0u64;
-        for _ in 0..multi {
-            let extra = body.varint("pair count of a multi-pair node")?;
-            let len = extra.checked_add(2).ok_or_else(|| malformed("a node's pair count overflows"))?;
-            in_arena = in_arena.saturating_add(len);
-            lengths.push(len);
-        }
-        if in_arena.checked_add((nodes - multi) as u64) != Some(pairs as u64) {
-            return Err(malformed(format!(
-                "the nodes' pair counts sum to {}, the section declares {pairs}",
-                in_arena.saturating_add((nodes - multi) as u64)
-            )));
-        }
-        (bitmap, lengths)
-    } else {
-        if pairs != nodes {
-            return Err(malformed(format!(
-                "{nodes} single-pair nodes cannot hold {pairs} pairs"
-            )));
-        }
-        (&[][..], Vec::new())
-    };
+    let (bitmap, lengths) = read_multi_lengths(body, nodes, multi, pairs)?;
 
     let stream = body.take(stream_bytes, "the stream of pairs")?;
     let mut reader = PairReader { bytes: stream, at: 0, left_bits, right_bits, left_max: 0, right_max: 0 };

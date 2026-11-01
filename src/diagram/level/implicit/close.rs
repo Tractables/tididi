@@ -204,6 +204,41 @@ impl TddLevel {
         self.rewrite_described_in(growth, None, sorted, rewrite_pair)
     }
 
+    /// Materialize the unchanged prefix of `d` up to `(i, r)` into `room` (or a
+    /// freshly reserved [`StoreRoom`]), returning `Some(StoreRoom)` when
+    /// `d.per_node == 1` (inline nodes) or `None` after installing the stored
+    /// node and pair arenas on `self`.
+    fn materialize_described_prefix<G: ArenaGrowth>(
+        &mut self,
+        growth: &G,
+        room: Option<StoreRoom>,
+        d: &ImplicitLevel,
+        i: usize,
+        r: usize,
+    ) -> Result<Option<StoreRoom>, OperationError> {
+        let StoreRoom { mut nodes, pairs: mut arena } = match room {
+            Some(room) => room,
+            None => self.store_room(growth)?,
+        };
+        if d.per_node == 1 {
+            let mut cursor = d.cursor();
+            nodes.extend((0..i).map(|j| {
+                let (l, r) = cursor.first_of(j);
+                EncodedNode::inline(pair(l, r))
+            }));
+            Ok(Some(StoreRoom { nodes, pairs: arena }))
+        } else {
+            self.store_implied_nodes_in(nodes);
+            let mut cursor = d.cursor();
+            for j in 0..i {
+                d.places_from(cursor.first_of(j)).write_into(&mut arena);
+            }
+            arena.extend(d.places(i).take(r));
+            self.pairs = PairArena::from(arena);
+            Ok(None)
+        }
+    }
+
     /// [`rewrite_described`](Self::rewrite_described) in `room`, reserved
     /// before through `growth` ([`store_room`](Self::store_room)), for a
     /// pass that reserves everything before it changes anything: with a
@@ -230,7 +265,7 @@ impl TddLevel {
         // Once built at one pair a node: the nodes' words, which hold their
         // pairs, and the room of the arena the level keeps; at more, the
         // level's arena is stored and its pairs written into it.
-        let mut words: Option<(Vec<EncodedNode>, Vec<ChildPair>)> = None;
+        let mut words: Option<StoreRoom> = None;
         let mut built = false;
         // The pair node 0 is left with, and what the nodes keep.
         let mut first = filler;
@@ -241,38 +276,18 @@ impl TddLevel {
                 let np = rewrite_pair(i, r, k, p);
                 if !built && (np != Some(p) || reorder) {
                     // Every pair before this one stood as it was.
-                    let StoreRoom { nodes, pairs: mut arena } = match room.take() {
-                        Some(room) => room,
-                        None => self.store_room(growth)?,
-                    };
+                    words = self.materialize_described_prefix(growth, room.take(), &d, i, r)?;
                     stored = i * k;
-                    if k == 1 {
-                        let mut nodes = nodes;
-                        let mut cursor = d.cursor();
-                        nodes.extend((0..i).map(|j| {
-                            let (l, r) = cursor.first_of(j);
-                            EncodedNode::inline(pair(l, r))
-                        }));
-                        words = Some((nodes, arena));
-                    } else {
-                        self.store_implied_nodes_in(nodes);
-                        let mut cursor = d.cursor();
-                        for j in 0..i {
-                            d.places_from(cursor.first_of(j)).write_into(&mut arena);
-                        }
-                        arena.extend(d.places(i).take(r));
-                        self.pairs = PairArena::from(arena);
-                    }
                     kept = r;
                     built = true;
                 }
                 if built && let Some(np) = np {
                     match words.as_mut() {
-                        Some((words, _)) => {
+                        Some(room) => {
                             if i == 0 {
                                 first = np;
                             }
-                            words.push(EncodedNode::inline(np));
+                            room.nodes.push(EncodedNode::inline(np));
                         }
                         None => self.pairs.stored_mut().push(np),
                     }
@@ -284,9 +299,9 @@ impl TddLevel {
             }
             stored += kept;
             emptied |= kept == 0;
-            if let Some((words, _)) = words.as_mut() {
+            if let Some(room) = words.as_mut() {
                 if kept == 0 {
-                    words.push(empty);
+                    room.nodes.push(empty);
                 }
                 continue;
             }
@@ -307,7 +322,7 @@ impl TddLevel {
             // Every node held its pair inline, and holds what is left of it
             // inline, or the empty placeholder; the arena keeps its length,
             // its slots copies of node 0's pair.
-            Some((words, arena)) => self.store_inline_nodes(words, arena, first),
+            Some(StoreRoom { nodes, pairs }) => self.store_inline_nodes(nodes, pairs, first),
             None => {
                 let arena = self.pairs.stored_mut();
                 let first = arena[0];

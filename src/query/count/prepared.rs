@@ -1,8 +1,8 @@
 //! Immutable compact reads for a retained counter.
 
 use crate::{Engine, Tdd, OperationError};
-use crate::diagram::{ChildPair, EncodedChildRef};
-use crate::limits::{Charged, PollGate, Transient};
+use crate::diagram::{ChildPair, EncodedChildRef, StoredPairs};
+use crate::limits::{Charged, Limits, PollGate, Transient};
 use crate::vtree::VtreeIdx;
 use crate::value::{Count, IntFold};
 use super::column::CountColumn;
@@ -139,10 +139,93 @@ impl Charged for Summaries {
 
 impl Summary {
     fn mask(&self, slot: u32) -> u32 { self.masks.get(slot as usize).copied().unwrap_or(0) as u32 }
+
+    fn from_stored<'a>(
+        lim: &'a Limits,
+        stored: &StoredPairs<'_>,
+        left: &Summary,
+        right: &Summary,
+        gate: &mut PollGate,
+    ) -> Result<(Transient<'a, Self>, usize), OperationError> {
+        let mut masks = Transient::new(lim, Vec::<u32>::new());
+        lim.reserve_exact(&mut masks, stored.nodes().len())?;
+        let mut frequency = [0u64; 2 * TRACKED];
+        for node in stored.nodes() {
+            let pairs = stored.of(node);
+            gate.poll(pairs.len() as u64 + 1)?;
+            let mut mask = if pairs.is_empty() { 0 } else { u32::MAX };
+            for pair in pairs {
+                mask &= left.mask(pair.left.raw()) | (right.mask(pair.right.raw()) << 16);
+            }
+            masks.push(mask);
+            let mut implied = (mask | (mask >> 1)) & 0x5555_5555;
+            while implied != 0 {
+                let i = (implied.trailing_zeros() / 2) as usize;
+                frequency[i] = frequency[i].saturating_add(pairs.len() as u64);
+                implied &= implied - 1;
+            }
+        }
+        let mut candidates = std::array::from_fn::<_, { 2 * TRACKED }, _>(|i| i);
+        candidates.sort_unstable_by_key(|&i| (std::cmp::Reverse(frequency[i]), i));
+        let tracked = candidates.iter().take(TRACKED).take_while(|&&i| frequency[i] != 0).count();
+        let selected = &candidates[..tracked];
+        let mut summary = Transient::new(lim, Summary::default());
+        for (i, &from) in selected.iter().enumerate() {
+            summary.vars[i] = if from < TRACKED { left.vars[from] } else { right.vars[from - TRACKED] };
+        }
+        lim.reserve_exact(&mut summary.masks, masks.len())?;
+        summary.masks.extend(masks.iter().map(|&mask| project(mask, selected)));
+        Ok((summary, tracked))
+    }
 }
 
 fn project(mask: u32, selected: &[usize]) -> u16 {
     selected.iter().enumerate().fold(0, |out, (i, &from)| out | (((mask >> (2 * from)) & 3) as u16) << (2 * i))
+}
+
+impl Packed {
+    fn from_stored(
+        eng: &Engine,
+        stored: &StoredPairs<'_>,
+        layout: Layout,
+        (left, right): (&Summary, &Summary),
+        (summary, tracked, reorder): (&mut Summary, usize, bool),
+        gate: &mut PollGate,
+    ) -> Result<Self, OperationError> {
+        let lim = eng.limits();
+        let n_nodes = stored.nodes().len();
+        let header_tracked = tracked.min(((layout.node_word - layout.payload) / 2) as usize);
+        let mut order = Transient::new(lim, Vec::<u32>::new());
+        if reorder && header_tracked != 0 {
+            lim.reserve_exact(&mut order, n_nodes)?;
+            order.extend(0..u32::try_from(n_nodes).map_err(|_| OperationError::IndexOverflow)?);
+            let mask = (1u32 << (2 * header_tracked)) - 1;
+            order.sort_unstable_by_key(|&i| (u32::from(summary.masks[i as usize]) & mask, i));
+            lim.try_resize(&mut summary.remap, n_nodes, 0)?;
+            for (new, &old) in order.iter().enumerate() { summary.remap[old as usize] = new as u32; }
+        }
+        let nodes = Transient::new(lim, Words::new(eng, layout.node_word, n_nodes)?);
+        let pairs = Words::new(eng, layout.pair_word, layout.pairs)?;
+        let mut packed = Transient::new(lim, Packed { nodes: nodes.keep(), pairs, layout, vars: summary.vars, tracked: header_tracked });
+        let mut at = 0usize;
+        for new in 0..n_nodes {
+            let old = if order.is_empty() { new } else { order[new] as usize };
+            let pairs = stored.of_idx(old);
+            gate.poll(pairs.len() as u64 + 1)?;
+            let encode = |p: ChildPair| u64::from(translated(&left.remap, p.left.raw()))
+                | (u64::from(translated(&right.remap, p.right.raw())) << layout.left);
+            let raw = if pairs.len() == 1 { encode(pairs[0]) << 1 } else {
+                let start = at;
+                for &pair in pairs { packed.pairs.push(encode(pair)); }
+                at += pairs.len();
+                1 | (((start as u64) | ((pairs.len() as u64) << layout.start)) << 1)
+            };
+            let mask = u64::from(summary.masks[old]) & ((1u64 << (2 * header_tracked)) - 1);
+            packed.nodes.push(if header_tracked == 0 { raw } else { raw | (mask << layout.payload) });
+        }
+        debug_assert_eq!(at, layout.pairs);
+        Ok(packed.keep())
+    }
 }
 
 impl Prepared {
@@ -152,8 +235,7 @@ impl Prepared {
         let n = tdd.vtree.num_nodes();
         let mut result = Transient::new(lim, Self::default());
         let mut layouts = Transient::new(lim, Vec::new());
-        lim.reserve_exact(&mut layouts, n)?;
-        layouts.resize(n, None);
+        lim.try_resize(&mut layouts, n, None)?;
         for t in tdd.vtree.bottomup() {
             gate.poll(1)?;
             layouts[t.idx()] = Layout::read(tdd, t, &mut gate)?;
@@ -183,72 +265,22 @@ impl Prepared {
             // Arithmetic levels already avoid storing their products. Do not
             // expand them just to collect optional implications.
             if let Some(stored) = level.stored() {
-                let left = &summaries.0[l.idx()];
-                let right = &summaries.0[r.idx()];
-                let mut masks = Transient::new(lim, Vec::<u32>::new());
-                lim.reserve_exact(&mut masks, stored.nodes().len())?;
-                let mut frequency = [0u64; 2 * TRACKED];
-                for node in stored.nodes() {
-                    let pairs = stored.of(node);
-                    gate.poll(pairs.len() as u64 + 1)?;
-                    let mut mask = if pairs.is_empty() { 0 } else { u32::MAX };
-                    for pair in pairs {
-                        mask &= left.mask(pair.left.raw()) | (right.mask(pair.right.raw()) << 16);
-                    }
-                    masks.push(mask);
-                    let mut implied = (mask | (mask >> 1)) & 0x5555_5555;
-                    while implied != 0 {
-                        let i = (implied.trailing_zeros() / 2) as usize;
-                        frequency[i] = frequency[i].saturating_add(pairs.len() as u64);
-                        implied &= implied - 1;
-                    }
-                }
-                let mut candidates = std::array::from_fn::<_, { 2 * TRACKED }, _>(|i| i);
-                candidates.sort_unstable_by_key(|&i| (std::cmp::Reverse(frequency[i]), i));
-                let tracked = candidates.iter().take(TRACKED).take_while(|&&i| frequency[i] != 0).count();
-                let selected = &candidates[..tracked];
-                let mut summary = Transient::new(lim, Summary::default());
-                for (i, &from) in selected.iter().enumerate() {
-                    summary.vars[i] = if from < TRACKED { left.vars[from] } else { right.vars[from - TRACKED] };
-                }
-                lim.reserve_exact(&mut summary.masks, masks.len())?;
-                summary.masks.extend(masks.iter().map(|&mask| project(mask, selected)));
+                let (left, right) = (&summaries.0[l.idx()], &summaries.0[r.idx()]);
+                let (mut summary, tracked) = Summary::from_stored(lim, &stored, left, right, &mut gate)?;
                 if let Some(layout) = layouts[ti] {
-                    let header_tracked = tracked.min(((layout.node_word - layout.payload) / 2) as usize);
-                    let mut order = Transient::new(lim, Vec::<u32>::new());
-                    let reorder = header_tracked != 0 && tdd.vtree.node(t).parent().is_none_or(|parent| layouts[parent.idx()].is_some());
-                    if reorder {
-                        lim.reserve_exact(&mut order, masks.len())?;
-                        order.extend(0..u32::try_from(masks.len()).map_err(|_| OperationError::IndexOverflow)?);
-                        let mask = (1u32 << (2 * header_tracked)) - 1;
-                        order.sort_unstable_by_key(|&i| (u32::from(summary.masks[i as usize]) & mask, i));
-                        lim.try_resize(&mut summary.remap, masks.len(), 0)?;
-                        for (new, &old) in order.iter().enumerate() { summary.remap[old as usize] = new as u32; }
-                    }
-                    let nodes = Transient::new(lim, Words::new(eng, layout.node_word, masks.len())?);
-                    let pairs = Words::new(eng, layout.pair_word, layout.pairs)?;
-                    let mut packed = Transient::new(lim, Packed { nodes: nodes.keep(), pairs, layout, vars: summary.vars, tracked: header_tracked });
-                    let mut at = 0usize;
-                    for new in 0..masks.len() {
-                        let old = if order.is_empty() { new } else { order[new] as usize };
-                        let pairs = stored.of_idx(old);
-                        gate.poll(pairs.len() as u64 + 1)?;
-                        let encode = |p: ChildPair| u64::from(translated(&left.remap, p.left.raw()))
-                            | (u64::from(translated(&right.remap, p.right.raw())) << layout.left);
-                        let raw = if pairs.len() == 1 { encode(pairs[0]) << 1 } else {
-                            let start = at;
-                            for &pair in pairs { packed.pairs.push(encode(pair)); }
-                            at += pairs.len();
-                            1 | (((start as u64) | ((pairs.len() as u64) << layout.start)) << 1)
-                        };
-                        let mask = u64::from(summary.masks[old]) & ((1u64 << (2 * header_tracked)) - 1);
-                        packed.nodes.push(if header_tracked == 0 { raw } else { raw | (mask << layout.payload) });
-                    }
-                    debug_assert_eq!(at, layout.pairs);
+                    let reorder = tdd.vtree.node(t).parent().is_none_or(|parent| layouts[parent.idx()].is_some());
+                    let packed = Packed::from_stored(
+                        eng,
+                        &stored,
+                        layout,
+                        (left, right),
+                        (&mut summary, tracked, reorder),
+                        &mut gate,
+                    )?;
                     if t == tdd.output.vtree && !tdd.is_zero() {
                         result.output = Some(translated(&summary.remap, tdd.output.local.0) as usize);
                     }
-                    result.levels[ti] = Some(packed.keep());
+                    result.levels[ti] = Some(packed);
                 }
                 summaries.0[ti] = summary.keep();
             }
