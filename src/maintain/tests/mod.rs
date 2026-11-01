@@ -21,6 +21,10 @@ fn rebuilt(vtree: &Arc<Vtree>, f: &Tdd, model: &[i32], insert: bool) -> Tdd {
     out
 }
 
+fn apply_update(batch: &mut Maintenance<'_>, model: &[i32], insert: bool) -> Result<(), OperationError> {
+    if insert { batch.insert_model(model) } else { batch.remove_model(model) }
+}
+
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn an_edit_and_a_rebuild_reach_the_same_diagram() {
@@ -44,8 +48,7 @@ fn an_edit_and_a_rebuild() -> Vec<Tdd> {
                 for insert in [true, false] {
                     let mut got = f.clone();
                     let mut batch = got.maintain().expect("the index fits");
-                    if insert { batch.insert_model(&model) } else { batch.remove_model(&model) }
-                        .expect("the update fits");
+                    apply_update(&mut batch, &model, insert).expect("the update fits");
                     let took_the_edit = batch.rebuilds() == 0;
                     drop(batch);
                     if took_the_edit {
@@ -297,7 +300,7 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
             {
                 let mut batch = eng.maintain(&mut got).unwrap();
                 eng.limits().refuse_nth_reserve(cut);
-                let result = if insert { batch.insert_model(&model) } else { batch.remove_model(&model) };
+                let result = apply_update(&mut batch, &model, insert);
                 eng.limits().grant_every_reserve();
                 match result {
                     Err(error) => {
@@ -309,7 +312,7 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
                 }
                 // The same batch must be usable after refusal, including when
                 // a new unreachable node was appended before the refusal.
-                if insert { batch.insert_model(&model) } else { batch.remove_model(&model) }.unwrap();
+                apply_update(&mut batch, &model, insert).unwrap();
             }
             got.minimize().unwrap();
             assert_canonical(&got);
@@ -389,7 +392,7 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
             {
                 let mut batch = eng.maintain(&mut f).unwrap();
                 eng.limits().refuse_nth_reserve(cut);
-                let outcome = if insert { batch.insert_model(&model) } else { batch.remove_model(&model) };
+                let outcome = apply_update(&mut batch, &model, insert);
                 eng.limits().grant_every_reserve();
                 match outcome {
                     Err(e) => {
@@ -399,7 +402,7 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
                     }
                     Ok(()) => succeeded = true,
                 }
-                if insert { batch.insert_model(&model) } else { batch.remove_model(&model) }.unwrap();
+                apply_update(&mut batch, &model, insert).unwrap();
             }
             f.minimize().unwrap();
             assert_canonical(&f);

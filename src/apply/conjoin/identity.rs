@@ -97,54 +97,58 @@ pub(super) fn init_leaf_identity_over(
             if refute(stored.of(node), &mut want, buf, [left, right]) { break; }
         }
     }
-    // Marginal-level case: for any marginal level whose value isn't
-    // constant-true at t, every leaf descendant *that isn't itself sheltered
-    // by a constant-true marginal child* Must be non-identity. The pair-scan
-    // above couldn't see those references — the pairs no longer exist — so
-    // we correct here using the surviving per-node counts.
-    //
-    // Walk each marginal forest top-down from its root (a marginal level
-    // whose vtree parent is not marginal). At each node:
-    //   - marginal & constant-true → prune (entire subtree is identity)
-    //   - marginal & non-CT        → recurse into both children
-    //   - leaf reached             → mark non-identity
     if has_any_marginal {
-        let mut subvars = eng.scratch.apply.subvars.checkout(eng);
-        lim.try_resize(&mut subvars, num_nodes, 0u32)?;
-        for (t, _) in vtree.leaf_bottomup() {
-            subvars[t.idx()] = 1;
-        }
-        for (t, left, right) in vtree.internal_bottomup() {
-            subvars[t.idx()] = subvars[left.idx()] + subvars[right.idx()];
-        }
-        let mut stack = eng.scratch.apply.marginal_stack.checkout(eng);
-        stack.clear();
-        for (t, _, _) in vtree.internal_bottomup() {
-            let level = &tdd.levels[t.idx()];
-            if !level.is_marginal() { continue; }
-            // Process only marginal-subtree roots (parent is non-marginal or
-            // the level has no parent). Children of a marginal level reach
-            // their leaves through the top-down recursion below.
-            if let Some(p) = vtree.node(t).parent()
-                && tdd.levels[p.idx()].is_marginal() { continue; }
-            // Root-prune: if the root itself is CT, the whole subtree is
-            // identity; nothing to mark.
-            if level_marginal_is_constant_true(level, subvars[t.idx()]) { continue; }
-            stack.push(t);
-            while let Some(node) = stack.pop() {
-                match vtree.node(node) {
-                    crate::vtree::VtreeNode::Leaf { .. } => buf[node.idx()] = false,
-                    crate::vtree::VtreeNode::Internal { left, right, .. } => {
-                        // Children of a marginal level are marginal by the
-                        // invariant — but a child may itself be CT, in which
-                        // case its leaf descendants stay identity.
-                        for &child in [left, right] {
-                            let child_lvl = &tdd.levels[child.idx()];
-                            if !(child_lvl.is_marginal()
-                                && level_marginal_is_constant_true(child_lvl, subvars[child.idx()]))
-                            {
-                                stack.push(child);
-                            }
+        refute_marginal_leaves(eng, tdd, buf)?;
+    }
+    Ok(())
+}
+
+/// Walk each marginal forest top-down from its root (a marginal level whose
+/// vtree parent is not marginal) and clear `buf` for every leaf descendant
+/// not sheltered by a constant-true marginal level.
+fn refute_marginal_leaves(
+    eng: &Engine,
+    tdd: &Tdd,
+    buf: &mut [bool],
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let vtree = tdd.vtree();
+    let num_nodes = vtree.num_nodes();
+    let mut subvars = eng.scratch.apply.subvars.checkout(eng);
+    lim.try_resize(&mut subvars, num_nodes, 0u32)?;
+    for (t, _) in vtree.leaf_bottomup() {
+        subvars[t.idx()] = 1;
+    }
+    for (t, left, right) in vtree.internal_bottomup() {
+        subvars[t.idx()] = subvars[left.idx()] + subvars[right.idx()];
+    }
+    let mut stack = eng.scratch.apply.marginal_stack.checkout(eng);
+    stack.clear();
+    for (t, _, _) in vtree.internal_bottomup() {
+        let level = &tdd.levels[t.idx()];
+        if !level.is_marginal() { continue; }
+        // Process only marginal-subtree roots (parent is non-marginal or
+        // the level has no parent). Children of a marginal level reach
+        // their leaves through the top-down recursion below.
+        if let Some(p) = vtree.node(t).parent()
+            && tdd.levels[p.idx()].is_marginal() { continue; }
+        // Root-prune: if the root itself is CT, the whole subtree is
+        // identity; nothing to mark.
+        if level_marginal_is_constant_true(level, subvars[t.idx()]) { continue; }
+        stack.push(t);
+        while let Some(node) = stack.pop() {
+            match vtree.node(node) {
+                crate::vtree::VtreeNode::Leaf { .. } => buf[node.idx()] = false,
+                crate::vtree::VtreeNode::Internal { left, right, .. } => {
+                    // Children of a marginal level are marginal by the
+                    // invariant — but a child may itself be CT, in which
+                    // case its leaf descendants stay identity.
+                    for &child in [left, right] {
+                        let child_lvl = &tdd.levels[child.idx()];
+                        if !(child_lvl.is_marginal()
+                            && level_marginal_is_constant_true(child_lvl, subvars[child.idx()]))
+                        {
+                            stack.push(child);
                         }
                     }
                 }

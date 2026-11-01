@@ -1156,46 +1156,17 @@ pub(super) fn build_level_dense(
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
-    // A summed level of two affine operand levels over complete child grids
-    // is summed off the description of its pairs, where its child columns
-    // keep every product a float; the row loop sums any other. The
-    // description's words are the operands' pair words, which the row loop
-    // reads as they are through a structural view, and through the
-    // marginal view of a child summed in this apply with bit 30 cleared
-    // (`ChildDecoder::coord`), which leaves the words of operand levels
-    // structural at entry and narrower than 2^30 as they are.
-    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
-        !view.is_marginal() || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
-    };
-    if let Some(StreamLevelState::Float(values)) = &mut stream_state
-        && sweep.filter.is_none()
-        && !passthrough.left
-        && !passthrough.right
-        && as_they_are(li, (fw.left, gw.left), sides.left.view)
-        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
-        && !crate::diagram::stored_levels_forced()
-        && let Some((product, work)) =
-            super::compose::plan_sums(lim, f.level(t), g.level(t), shape, grouped, run.products.arena.slab(), bases)
-    {
-        let [level, left_level, right_level] = run.levels
-            .get_disjoint_mut([ti, li, ri])
-            .expect("a vtree node and its two children are distinct level indices");
-        open_level_arenas(lim, f, g, shape, level, route)?;
-        let env = StreamEnv {
-            left_idx: li,
-            right_idx: ri,
-            vtree: sweep.vtree,
-            cache: run.stream_cache,
-            ws: sweep.ws.as_deref(),
-        };
-        let children = Sides { left: &*left_level, right: &*right_level };
-        let slab = run.products.arena.slab_vec();
-        if run_level_described_stream(eng, &product, children, slab, output_grid_base.idx(), values, env)? {
-            lim.charge_work(work);
-            lim.check_stop()?;
-            finalize_level(eng, stream_state, shape, output_grid_base, passthrough, run, sweep);
-            return Ok(());
-        }
+    if try_run_described_stream(
+        eng,
+        run,
+        (f, g),
+        (shape, route, &plan, passthrough, grouped),
+        output_grid_base,
+        bases,
+        &mut stream_state,
+        sweep,
+    )? {
+        return Ok(());
     }
 
     if masked {
@@ -1223,24 +1194,11 @@ pub(super) fn build_level_dense(
     let mut opened = None;
     'routes: {
         if let Some(product) = composed {
-            let level = &mut run.levels[ti];
-            open_level_arenas(lim, f, g, shape, level, route)?;
-            // The capacity the reservation of the level's arenas starts
-            // from, which the meter is charged from. The description is
-            // written without the reservation, which it would drop: its
-            // capacities are charged as reserved and not allocated.
-            let charged = if lim.bounded_growth() { usize::MAX } else { level.pairs.capacity() };
-            note_lookups(PlainLookups::Complete { charged });
-            let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
-            if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
-                let size = complete_level_size(f.level(t), g.level(t))?;
-                let cells = fw.here * gw.here;
-                run.products.arena.fill_to(eng, output_grid_base.idx() + cells)?;
-                let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
-                super::compose::write(eng, product, &mut run.levels[ti], size, slab, work, (meter, doublings))?;
+            if let Some(charged) = try_write_composed_level(eng, run, (f, g), (shape, route), output_grid_base, product)? {
+                opened = Some(charged);
+            } else {
                 break 'routes;
             }
-            opened = Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?);
         }
 
         // `t` and its two vtree children are three distinct tree nodes, so these
@@ -1348,6 +1306,90 @@ pub(super) fn build_level_dense(
     // pass-through flags. See `finalize_level`.
     finalize_level(eng, stream_state, shape, output_grid_base, passthrough, run, sweep);
     Ok(())
+}
+
+/// Try to sum an affine level over complete child grids directly from its pair
+/// description (`plan_sums`), returning `Ok(true)` when the level is finished.
+#[allow(clippy::too_many_arguments)]
+fn try_run_described_stream(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    (shape, route, plan, passthrough, grouped): (LevelShape, Route, &MarginalPlan, Sides<bool>, bool),
+    output_grid_base: GridBase,
+    bases: Sides<GridBase>,
+    stream_state: &mut Option<StreamLevelState>,
+    sweep: &mut Sweep<'_, '_>,
+) -> Result<bool, OperationError> {
+    let lim = eng.limits();
+    let sides = &plan.sides;
+    let LevelShape { t, left, right, f: fw, g: gw } = shape;
+    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
+    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
+        !view.is_marginal() || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
+    };
+    if let Some(StreamLevelState::Float(values)) = stream_state
+        && sweep.filter.is_none()
+        && !passthrough.left
+        && !passthrough.right
+        && as_they_are(li, (fw.left, gw.left), sides.left.view)
+        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
+        && !crate::diagram::stored_levels_forced()
+        && let Some((product, work)) =
+            super::compose::plan_sums(lim, f.level(t), g.level(t), shape, grouped, run.products.arena.slab(), bases)
+    {
+        let [level, left_level, right_level] = run.levels
+            .get_disjoint_mut([ti, li, ri])
+            .expect("a vtree node and its two children are distinct level indices");
+        open_level_arenas(lim, f, g, shape, level, route)?;
+        let env = StreamEnv {
+            left_idx: li,
+            right_idx: ri,
+            vtree: sweep.vtree,
+            cache: run.stream_cache,
+            ws: sweep.ws.as_deref(),
+        };
+        let children = Sides { left: &*left_level, right: &*right_level };
+        let slab = run.products.arena.slab_vec();
+        if run_level_described_stream(eng, &product, children, slab, output_grid_base.idx(), values, env)? {
+            lim.charge_work(work);
+            lim.check_stop()?;
+            let taken = stream_state.take();
+            finalize_level(eng, taken, shape, output_grid_base, passthrough, run, sweep);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Write a composed implicit level when the stop gate cannot fire within it;
+/// returns `Ok(None)` when written, or `Ok(Some(charged))` when the caller
+/// must fall back to the row loop with the reserved complete level.
+fn try_write_composed_level(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    (shape, route): (LevelShape, Route),
+    output_grid_base: GridBase,
+    product: crate::diagram::ImplicitLevel,
+) -> Result<Option<usize>, OperationError> {
+    let lim = eng.limits();
+    let LevelShape { t, f: fw, g: gw, .. } = shape;
+    let ti = t.idx();
+    let level = &mut run.levels[ti];
+    open_level_arenas(lim, f, g, shape, level, route)?;
+    let charged = if lim.bounded_growth() { usize::MAX } else { level.pairs.capacity() };
+    note_lookups(PlainLookups::Complete { charged });
+    let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
+    if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
+        let size = complete_level_size(f.level(t), g.level(t))?;
+        let cells = fw.here * gw.here;
+        run.products.arena.fill_to(eng, output_grid_base.idx() + cells)?;
+        let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
+        super::compose::write(eng, product, &mut run.levels[ti], size, slab, work, (meter, doublings))?;
+        return Ok(None);
+    }
+    reserve_complete_level(lim, f.level(t), g.level(t), level).map(Some)
 }
 
 #[cfg(test)]

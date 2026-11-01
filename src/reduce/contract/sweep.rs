@@ -130,28 +130,7 @@ fn contract_child(
     }
 
     scratch.unnamed.clear();
-    let found = match reach {
-        Reach::Listed => {
-            note_listed_search();
-            let listed = std::mem::take(&mut scratch.reach[side]);
-            let found = find_listed_twin_groups(eng, tdd, t1, parent, t1_side, &listed, scratch);
-            scratch.reach[side] = listed;
-            let found = found?;
-            if cfg!(debug_assertions) {
-                check_listed_search(eng, tdd, t1, parent, t1_side, found, scratch)?;
-            }
-            found
-        }
-        // Under a parent level a merge of this sweep changed, most nodes
-        // have a twin (they are cascades); under any other, almost none
-        // has, and the search first tests whether any two nodes share a
-        // context. A diagram with a marginal level keeps lists for fusion
-        // only, and screens every search.
-        Reach::Whole => {
-            let screen = diagram_marginal(tdd, scratch) || !scratch.listing.changed(parent.idx());
-            find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, screen)?
-        }
-    };
+    let found = search_child_twins(eng, tdd, t1, parent, t1_side, reach, scratch)?;
     // A whole search that read every pair also lists the nodes no pair
     // names, two or more of them: nothing reaches them, and their pairs give
     // their children contexts the prune would take away. The merge drops
@@ -201,6 +180,52 @@ fn contract_child(
     if tight && drops {
         unlist_loose(tdd, t1);
     }
+    record_contracted_child(t1, parent, (lists, fused_but, drops), scratch);
+    Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
+}
+
+/// Run the listed or whole twin search on `t1` under `parent`.
+fn search_child_twins(
+    eng: &Engine,
+    tdd: &Tdd,
+    t1: VtreeIdx,
+    parent: VtreeIdx,
+    t1_side: ChildSide,
+    reach: Reach,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
+    let side = t1_side as usize;
+    match reach {
+        Reach::Listed => {
+            note_listed_search();
+            let listed = std::mem::take(&mut scratch.reach[side]);
+            let found = find_listed_twin_groups(eng, tdd, t1, parent, t1_side, &listed, scratch);
+            scratch.reach[side] = listed;
+            let found = found?;
+            if cfg!(debug_assertions) {
+                check_listed_search(eng, tdd, t1, parent, t1_side, found, scratch)?;
+            }
+            Ok(found)
+        }
+        // Under a parent level a merge of this sweep changed, most nodes
+        // have a twin (they are cascades); under any other, almost none
+        // has, and the search first tests whether any two nodes share a
+        // context. A diagram with a marginal level keeps lists for fusion
+        // only, and screens every search.
+        Reach::Whole => {
+            let screen = diagram_marginal(tdd, scratch) || !scratch.listing.changed(parent.idx());
+            find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, screen)
+        }
+    }
+}
+
+/// Update `scratch.listing` after `contract_twins` merged nodes at `t1`.
+fn record_contracted_child(
+    t1: VtreeIdx,
+    parent: VtreeIdx,
+    (lists, fused_but, drops): (bool, bool, bool),
+    scratch: &mut ContractScratch,
+) {
     if lists || fused_but {
         note_survivors(t1, scratch);
     }
@@ -215,7 +240,6 @@ fn contract_child(
             scratch.listing.set_fused_but(parent.idx(), false);
         }
     }
-    Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
 }
 
 /// Take `t1` off the loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)),
@@ -385,65 +409,7 @@ fn sweep_twins(
     // fixed point.
     while let Some(pos) = scratch.pending.pop() {
         let p_raw = tdd.vtree.bottomup_slice()[pos as usize].0;
-        let p_idx = p_raw as usize;
-        // Preemption point, metered in nodes of the parent's level, the unit
-        // `contract_child`'s work scales with. On `Err` the popped parent and
-        // the rest pending go back to the worklist.
-        if let Err(e) = poll.poll(tdd.levels[p_idx].slot_count() as u64 + 1) {
-            restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
-            return Err(e);
-        }
-
-        // Guard against stale state (a prior contraction may have flipped
-        // `has_multi_pair` or the node is a leaf after a structural change).
-        if tdd.vtree.node(VtreeIdx(p_idx as u32)).is_leaf() || !tdd.levels[p_idx].has_multi_pair() {
-            continue;
-        }
-        let parent = VtreeIdx(p_raw);
-        let (left, right) = tdd.vtree.children(parent);
-
-        let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
-            || tdd.levels[right.idx()].is_marginal();
-        let reach = if scratch.listing.whole(p_idx) || diagram_marginal(tdd, &mut scratch) {
-            Reach::Whole
-        } else {
-            match list_changed_children(eng, tdd, parent, &mut scratch) {
-                Ok(reach) => reach,
-                Err(e) => {
-                    restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
-                    return Err(e);
-                }
-            }
-        };
-        let (left_fired, right_fired) = match joint_contract_fixpoint(
-            eng,
-            tdd, parent, is_marginal_boundary, reach, &mut scratch,
-        ) {
-            Ok(v) => v,
-            Err(e) => {
-                restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
-                return Err(e);
-            }
-        };
-
-        // A child that fired had its own pairs unioned, moving its children's
-        // contexts — so enqueue it as a (deeper) parent. Strictly downward, so
-        // the pending set only ever grows toward the leaves and the
-        // single-pass invariant holds.
-        if left_fired {
-            push_parent(tdd, &mut scratch.pending, num_nodes, left.idx());
-        }
-        if right_fired {
-            push_parent(tdd, &mut scratch.pending, num_nodes, right.idx());
-        }
-        // The children's searches read their nodes, which the poll above,
-        // metered by the parent, does not see. Charged once the fired
-        // children are pending, so a stop here hands every pending parent
-        // back.
-        if let Err(e) = poll.poll(std::mem::take(&mut scratch.searched)) {
-            restore_pending_dirty(tdd, &mut scratch.pending, None);
-            return Err(e);
-        }
+        step_pending_parent(eng, tdd, p_raw, num_nodes, &mut poll, &mut scratch)?;
     }
 
     // What the list holds now is what the merges above pushed: each the
@@ -456,6 +422,77 @@ fn sweep_twins(
     tdd.dirty.clear(Pass::Contract);
     #[cfg(debug_assertions)]
     debug_assert_loose_listed(tdd);
+    Ok(())
+}
+
+/// Process one popped parent `p_raw` in [`sweep_twins`], restoring pending
+/// dirty levels on preemption or error.
+fn step_pending_parent(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    p_raw: u32,
+    num_nodes: usize,
+    poll: &mut crate::limits::PollGate<'_>,
+    scratch: &mut ContractScratch,
+) -> Result<(), OperationError> {
+    let p_idx = p_raw as usize;
+    // Preemption point, metered in nodes of the parent's level, the unit
+    // `contract_child`'s work scales with. On `Err` the popped parent and
+    // the rest pending go back to the worklist.
+    if let Err(e) = poll.poll(tdd.levels[p_idx].slot_count() as u64 + 1) {
+        restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
+        return Err(e);
+    }
+
+    // Guard against stale state (a prior contraction may have flipped
+    // `has_multi_pair` or the node is a leaf after a structural change).
+    if tdd.vtree.node(VtreeIdx(p_idx as u32)).is_leaf() || !tdd.levels[p_idx].has_multi_pair() {
+        return Ok(());
+    }
+    let parent = VtreeIdx(p_raw);
+    let (left, right) = tdd.vtree.children(parent);
+
+    let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
+        || tdd.levels[right.idx()].is_marginal();
+    let reach = if scratch.listing.whole(p_idx) || diagram_marginal(tdd, scratch) {
+        Reach::Whole
+    } else {
+        match list_changed_children(eng, tdd, parent, scratch) {
+            Ok(reach) => reach,
+            Err(e) => {
+                restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
+                return Err(e);
+            }
+        }
+    };
+    let (left_fired, right_fired) = match joint_contract_fixpoint(
+        eng, tdd, parent, is_marginal_boundary, reach, scratch,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
+            return Err(e);
+        }
+    };
+
+    // A child that fired had its own pairs unioned, moving its children's
+    // contexts — so enqueue it as a (deeper) parent. Strictly downward, so
+    // the pending set only ever grows toward the leaves and the
+    // single-pass invariant holds.
+    if left_fired {
+        push_parent(tdd, &mut scratch.pending, num_nodes, left.idx());
+    }
+    if right_fired {
+        push_parent(tdd, &mut scratch.pending, num_nodes, right.idx());
+    }
+    // The children's searches read their nodes, which the poll above,
+    // metered by the parent, does not see. Charged once the fired
+    // children are pending, so a stop here hands every pending parent
+    // back.
+    if let Err(e) = poll.poll(std::mem::take(&mut scratch.searched)) {
+        restore_pending_dirty(tdd, &mut scratch.pending, None);
+        return Err(e);
+    }
     Ok(())
 }
 

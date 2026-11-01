@@ -623,67 +623,13 @@ fn block_products(
         };
         let (sl, sr) = (side(&mut split, l), side(&mut split, r));
         // `g`'s pairs at `u` by their sides; at `t`, `b`'s alone.
-        let gl = g.level(u);
-        let mut table: FxHashMap<u64, u32> = FxHashMap::default();
-        lim.reserve_map(&mut table, gl.live_pairs())?;
-        for i in 0..gl.node_count() {
-            if u == t && i as u32 != b {
-                continue;
-            }
-            for p in gl.pairs_iter_of_idx(i) {
-                table.insert(p.key(), i as u32);
-            }
-        }
+        let table = g_pair_table(lim, g.level(u), (u == t).then_some(b))?;
         let level = &f.levels[u.idx()];
         let width = level.node_count();
         let mut st = Settle { width: width as u32, hits: std::mem::take(&mut hits), start: Vec::new(), pieces: Vec::new(), made: Vec::new(), made_at: Vec::new() };
         lim.reserve_exact(&mut st.start, width + 1)?;
         lim.try_push(&mut st.made_at, 0)?;
-        let mut refused = None;
-        let mut cur: Option<usize> = None;
-        let mut read = 0u32;
-        let mut work = 0u64;
-        let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
-        level.for_each_node_pair(|x, p| {
-            if refused.is_some() {
-                return;
-            }
-            if cur != Some(x) {
-                if let Some(a) = cur
-                    && let Err(e) = st.node(lim, a, read)
-                {
-                    refused = Some(e);
-                    return;
-                }
-                cur = Some(x);
-                read = 0;
-            }
-            let (pl, pr) = (p.left.raw(), p.right.raw());
-            let (lefts, rights) = (pieces_of(&sl, pl, &mut lb), pieces_of(&sr, pr, &mut rb));
-            for &(bl, cl) in lefts {
-                for &(br, cr) in rights {
-                    if let Some(&bn) = table.get(&((u64::from(bl) << 32) | u64::from(br)))
-                        && let Err(e) = lim.try_push(&mut st.hits, (bn, read, ChildPair::new(NodeIdx(cl), NodeIdx(cr)), cl == pl && cr == pr))
-                    {
-                        refused = Some(e);
-                        return;
-                    }
-                }
-            }
-            read += 1;
-            // The pair read, and a probe of `g`'s table per pair of its
-            // sides' products.
-            work += 1 + (lefts.len() * rights.len()) as u64;
-        });
-        if let Some(e) = refused {
-            return Err(e);
-        }
-        if let Some(a) = cur {
-            st.node(lim, a, read)?;
-        }
-        while st.start.len() < width + 1 {
-            lim.try_push(&mut st.start, st.pieces.len() as u32)?;
-        }
+        let work = settle_level_hits(lim, level, (&sl, &sr), &table, &mut st)?;
         gate.poll(work)?;
         drop((sl, sr));
         let made = st.made_at.len() - 1;
@@ -707,6 +653,82 @@ fn block_products(
     }
     gate.flush()?;
     Ok(to)
+}
+
+/// Index `gl`'s pairs by their packed child key `p.key() -> node_idx` (or only
+/// node `only` when `Some(only)`).
+fn g_pair_table(
+    lim: &Limits,
+    gl: &crate::diagram::TddLevel,
+    only: Option<u32>,
+) -> Result<FxHashMap<u64, u32>, OperationError> {
+    let mut table: FxHashMap<u64, u32> = FxHashMap::default();
+    lim.reserve_map(&mut table, gl.live_pairs())?;
+    for i in 0..gl.node_count() {
+        if only.is_some_and(|b| i as u32 != b) {
+            continue;
+        }
+        for p in gl.pairs_iter_of_idx(i) {
+            table.insert(p.key(), i as u32);
+        }
+    }
+    Ok(table)
+}
+
+/// Scan `level`'s node pairs against child splits `(sl, sr)` and `table`,
+/// settling each node's hits into `st`.
+fn settle_level_hits(
+    lim: &Limits,
+    level: &crate::diagram::TddLevel,
+    (sl, sr): (&Split, &Split),
+    table: &FxHashMap<u64, u32>,
+    st: &mut Settle,
+) -> Result<u64, OperationError> {
+    let width = level.node_count();
+    let mut refused = None;
+    let mut cur: Option<usize> = None;
+    let mut read = 0u32;
+    let mut work = 0u64;
+    let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
+    level.for_each_node_pair(|x, p| {
+        if refused.is_some() {
+            return;
+        }
+        if cur != Some(x) {
+            if let Some(a) = cur
+                && let Err(e) = st.node(lim, a, read)
+            {
+                refused = Some(e);
+                return;
+            }
+            cur = Some(x);
+            read = 0;
+        }
+        let (pl, pr) = (p.left.raw(), p.right.raw());
+        let (lefts, rights) = (pieces_of(sl, pl, &mut lb), pieces_of(sr, pr, &mut rb));
+        for &(bl, cl) in lefts {
+            for &(br, cr) in rights {
+                if let Some(&bn) = table.get(&((u64::from(bl) << 32) | u64::from(br)))
+                    && let Err(e) = lim.try_push(&mut st.hits, (bn, read, ChildPair::new(NodeIdx(cl), NodeIdx(cr)), cl == pl && cr == pr))
+                {
+                    refused = Some(e);
+                    return;
+                }
+            }
+        }
+        read += 1;
+        work += 1 + (lefts.len() * rights.len()) as u64;
+    });
+    if let Some(e) = refused {
+        return Err(e);
+    }
+    if let Some(a) = cur {
+        st.node(lim, a, read)?;
+    }
+    while st.start.len() < width + 1 {
+        lim.try_push(&mut st.start, st.pieces.len() as u32)?;
+    }
+    Ok(work)
 }
 
 /// The nodes of branching level `t` and of the levels under it that no node
@@ -894,53 +916,18 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
     let mut moved: Vec<Moved> = charged(lim, n, || Moved::Same)?;
     let mut gate = lim.gate();
     let mut branched: Vec<VtreeIdx> = Vec::new();
-    let grown = {
-        let mut products = Products {
-            lim,
-            vtree: &vtree,
-            f: &mut f,
-            g,
-            top: &top,
-            memo: charged(lim, n, FxHashMap::default)?,
-            g_pairs: charged(lim, n, || None)?,
-            inside: charged(lim, n, Vec::new)?,
-            grown: charged(lim, n, || false)?,
-            work: 0,
-            grid: grid.unwrap_or(GRID_PAIRS),
-            sides: FxHashMap::default(),
-        };
-        for t in vtree.bottomup() {
-            let Role::Branch(b) = role[t.idx()] else { continue };
-            if vtree.node(t).is_leaf() {
-                let mut to = Vec::new();
-                lim.reserve_exact(&mut to, 3)?;
-                to.extend([ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX].iter().map(|a| leaf_product(a.0, b)));
-                moved[t.idx()] = Moved::To(to);
-                continue;
-            }
-            let to = match grid {
-                None => block_products(lim, products.f, g, &top, t, b, &mut products.grown)?,
-                Some(_) => {
-                    let width = products.f.levels[t.idx()].node_count() as u32;
-                    let mut to = Vec::new();
-                    lim.reserve_exact(&mut to, width as usize)?;
-                    for x in 0..width {
-                        to.push(products.product(t, x, b)?);
-                        gate.poll(std::mem::take(&mut products.work))?;
-                    }
-                    to
-                }
-            };
-            moved[t.idx()] = Moved::To(to);
-            if let Some(loose) = loose.as_mut() {
-                lim.try_push(loose, t.0)?;
-            }
-            if !prune {
-                lim.try_push(&mut branched, t)?;
-            }
-        }
-        products.grown
-    };
+    let grown = compute_branch_products(
+        lim,
+        &vtree,
+        &mut f,
+        g,
+        (&top, &role),
+        (prune, grid),
+        &mut moved,
+        &mut loose,
+        &mut branched,
+        &mut gate,
+    )?;
     gate.flush()?;
     for (t, grew) in grown.iter().enumerate() {
         if *grew {
@@ -982,6 +969,69 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
         false => f.close_marked_levels(closed),
     }
     Ok(f)
+}
+
+/// Compute products at every [`Role::Branch`] level of `g`, returning the
+/// per-level `grown` flags.
+#[allow(clippy::too_many_arguments)]
+fn compute_branch_products(
+    lim: &Limits,
+    vtree: &Vtree,
+    f: &mut Tdd,
+    g: &Tdd,
+    (top, role): (&[Option<u32>], &[Role]),
+    (prune, grid): (bool, Option<usize>),
+    moved: &mut [Moved],
+    loose: &mut Option<Vec<u32>>,
+    branched: &mut Vec<VtreeIdx>,
+    gate: &mut crate::limits::PollGate<'_>,
+) -> Result<Vec<bool>, OperationError> {
+    let n = vtree.num_nodes();
+    let mut products = Products {
+        lim,
+        vtree,
+        f,
+        g,
+        top,
+        memo: charged(lim, n, FxHashMap::default)?,
+        g_pairs: charged(lim, n, || None)?,
+        inside: charged(lim, n, Vec::new)?,
+        grown: charged(lim, n, || false)?,
+        work: 0,
+        grid: grid.unwrap_or(GRID_PAIRS),
+        sides: FxHashMap::default(),
+    };
+    for t in vtree.bottomup() {
+        let Role::Branch(b) = role[t.idx()] else { continue };
+        if vtree.node(t).is_leaf() {
+            let mut to = Vec::new();
+            lim.reserve_exact(&mut to, 3)?;
+            to.extend([ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX].iter().map(|a| leaf_product(a.0, b)));
+            moved[t.idx()] = Moved::To(to);
+            continue;
+        }
+        let to = match grid {
+            None => block_products(lim, products.f, g, top, t, b, &mut products.grown)?,
+            Some(_) => {
+                let width = products.f.levels[t.idx()].node_count() as u32;
+                let mut to = Vec::new();
+                lim.reserve_exact(&mut to, width as usize)?;
+                for x in 0..width {
+                    to.push(products.product(t, x, b)?);
+                    gate.poll(std::mem::take(&mut products.work))?;
+                }
+                to
+            }
+        };
+        moved[t.idx()] = Moved::To(to);
+        if let Some(loose) = loose.as_mut() {
+            lim.try_push(loose, t.0)?;
+        }
+        if !prune {
+            lim.try_push(branched, t)?;
+        }
+    }
+    Ok(products.grown)
 }
 
 /// Classify `g`'s levels into [`Role::True`], [`Role::Spine`], and

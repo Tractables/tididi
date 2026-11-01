@@ -270,6 +270,16 @@ fn named_whole(out: &Tdd, c: crate::vtree::VtreeIdx) -> bool {
     named.iter().all(|&n| n)
 }
 
+fn prepare_minimized_pair(mut f: Tdd, mut g: Tdd) -> (Tdd, Tdd) {
+    let eng = Engine::new();
+    eng.minimize(&mut f).unwrap();
+    eng.minimize(&mut g).unwrap();
+    // A minimized diagram has no loose level.
+    f.dirty.set_loose(Some(Vec::new()));
+    g.dirty.set_loose(Some(Vec::new()));
+    (f, g)
+}
+
 /// A level under one built as an operand holds it is left off the loose
 /// levels where the operand's is tight and it has as many nodes: every
 /// level the result does not list is tight, and some under levels built as
@@ -279,13 +289,7 @@ fn a_level_under_one_built_as_an_operand_is_tight_where_the_operand_s_is() {
     let mut unlisted = 0;
     for nvars in [10, 14] {
         for (what, vtree, f, g) in cases(nvars, 0x7167_0a5f + u64::from(nvars)) {
-            let eng = Engine::new();
-            let (mut f, mut g) = (f, g);
-            eng.minimize(&mut f).unwrap();
-            eng.minimize(&mut g).unwrap();
-            // A minimized diagram has no loose level.
-            f.dirty.set_loose(Some(Vec::new()));
-            g.dirty.set_loose(Some(Vec::new()));
+            let (f, g) = prepare_minimized_pair(f, g);
             for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
                 for sparse in [true, false] {
                     take_as_operand();
@@ -326,13 +330,7 @@ fn a_level_whose_products_the_leaf_arm_finds_held_for_every_label_is_tight() {
     let before = held_tight_levels();
     for nvars in [10, 14] {
         for (what, _, f, g) in cases(nvars, 0x4e1d_7a11 + u64::from(nvars)) {
-            let eng = Engine::new();
-            let (mut f, mut g) = (f, g);
-            eng.minimize(&mut f).unwrap();
-            eng.minimize(&mut g).unwrap();
-            // A minimized diagram has no loose level.
-            f.dirty.set_loose(Some(Vec::new()));
-            g.dirty.set_loose(Some(Vec::new()));
+            let (f, g) = prepare_minimized_pair(f, g);
             for (a, b, order) in [(&f, &g, "f and g"), (&g, &f, "g and f")] {
                 let (out, _) = conjoin(a, b);
                 if out.is_zero() {

@@ -454,36 +454,56 @@ pub(crate) fn expand_full(
 
         // Mark the cells the pairs cover and read the fill off the rest, in
         // the level's form.
-        let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
-        // On a canonical diagram the fill holds the cells the pairs leave,
-        // so its room is known before the cover is read. Written first, a
-        // level whose arena moves or is copied for it is read from its new
-        // place, which the write has just made.
-        let level = if canonical {
-            let missing = cover.len.saturating_sub(pairs as usize);
-            &*target.write(eng, t.idx(), (missing > 0).then_some(missing))?
-        } else {
-            level
-        };
-        cover.mark_level(eng, level, pairs)?;
-        cells.clear();
-        cover.missing_into(eng, cells)?;
-        debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
-        debug_assert!(!canonical || cells.len() + pairs as usize == cover.len, "negate: the fill is not the cells the pairs leave");
-        if !cells.is_empty() {
-            charge_scan(eng, lefts, rights)?;
-            // Written with its room before the cover where the diagram is
-            // canonical.
-            let level = if canonical { &mut target.levels[t.idx()] } else { target.write(eng, t.idx(), Some(cells.len()))? };
-            level.push_node(eng.limits(), cells)?;
-            filled[t.idx()] = true;
-        } else if !canonical {
-            target.write(eng, t.idx(), None)?;
-        }
-        target.levels[t.idx()].leave_live_pairs(pairs as usize + cells.len());
-        eng.limits().check_stop()?;
+        expand_level_by_cover(
+            eng, target, t, (lefts, rights), form, pairs, canonical, marked, cells, filled,
+        )?;
     }
     Ok(())
+}
+
+/// Mark the cells `target.read(t)` covers and append a fill node for any
+/// uncovered cells.
+#[allow(clippy::too_many_arguments)]
+fn expand_level_by_cover(
+    eng: &Engine,
+    target: &mut Target<'_, '_>,
+    t: crate::vtree::VtreeIdx,
+    (lefts, rights): (ChildBasis, ChildBasis),
+    form: LeafForm,
+    pairs: u64,
+    canonical: bool,
+    marked: &mut Vec<u8>,
+    cells: &mut Vec<ChildPair>,
+    filled: &mut [bool],
+) -> Result<(), OperationError> {
+    let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
+    // On a canonical diagram the fill holds the cells the pairs leave,
+    // so its room is known before the cover is read. Written first, a
+    // level whose arena moves or is copied for it is read from its new
+    // place, which the write has just made.
+    let level = if canonical {
+        let missing = cover.len.saturating_sub(pairs as usize);
+        &*target.write(eng, t.idx(), (missing > 0).then_some(missing))?
+    } else {
+        target.read(t.idx())
+    };
+    cover.mark_level(eng, level, pairs)?;
+    cells.clear();
+    cover.missing_into(eng, cells)?;
+    debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
+    debug_assert!(!canonical || cells.len() + pairs as usize == cover.len, "negate: the fill is not the cells the pairs leave");
+    if !cells.is_empty() {
+        charge_scan(eng, lefts, rights)?;
+        // Written with its room before the cover where the diagram is
+        // canonical.
+        let level = if canonical { &mut target.levels[t.idx()] } else { target.write(eng, t.idx(), Some(cells.len()))? };
+        level.push_node(eng.limits(), cells)?;
+        filled[t.idx()] = true;
+    } else if !canonical {
+        target.write(eng, t.idx(), None)?;
+    }
+    target.levels[t.idx()].leave_live_pairs(pairs as usize + cells.len());
+    eng.limits().check_stop()
 }
 
 /// The arena pairs a fill node of `len` pairs takes: none for one pair,

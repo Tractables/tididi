@@ -230,6 +230,23 @@ fn test_minimize_contracts_marginal_twins() {
     assert_canonical(&tdd);
 }
 
+fn assert_contracts_to_width(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    root: VtreeIdx,
+    target: VtreeIdx,
+    before_width: usize,
+    after_width: usize,
+) {
+    assert_eq!(tdd.levels[target.idx()].slot_count(), before_width);
+    let count_before = tdd.model_count().unwrap();
+    tdd.seed_contract_worklist([root.0]);
+    contract_all_twins(eng, tdd).expect("contraction must not OOM");
+    assert_eq!(tdd.levels[target.idx()].slot_count(), after_width);
+    assert_eq!(tdd.model_count().unwrap(), count_before, "merge must preserve model count");
+    assert_canonical(tdd);
+}
+
 /// A,B are scrambled-order twins (`[r0,r1]` vs `[r1,r0]`); a distinct node C
 /// (paired only with r0) breaks sibling symmetry so no cascade masks the bug.
 /// Exercises the open-addressing hash-bucket exact comparison; width 3 → 2.
@@ -267,19 +284,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
         levels,
         TddNodeId { vtree: root, local: root_node },
     );
-    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 3, "setup: A, B (twins) + C (distinct)");
-    let count_before = tdd.model_count().unwrap();
-
-    tdd.seed_contract_worklist([root.0]);
-    contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
-
-    assert_eq!(
-        tdd.levels[v_left.idx()].slot_count(), 2,
-        "the scrambled-order twins A,B must merge via the hash-bucket exact \
-         comparison while the distinct node C survives → width 3 → 2",
-    );
-    assert_eq!(tdd.model_count().unwrap(), count_before, "merge must preserve model count");
-    assert_canonical(&tdd);
+    assert_contracts_to_width(&eng, &mut tdd, root, v_left, 3, 2);
 }
 
 /// Stronger scramble: A and B are twins over THREE shared siblings in fully
@@ -328,18 +333,5 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
         levels,
         TddNodeId { vtree: root, local: root_node },
     );
-    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 4, "setup: A,B (twins) + C,D (distinct)");
-    let count_before = tdd.model_count().unwrap();
-
-    tdd.seed_contract_worklist([root.0]);
-    contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
-
-    assert_eq!(
-        tdd.levels[v_left.idx()].slot_count(), 3,
-        "twins over a 3-element reversed signature must merge while C,D survive \
-         → width 4 → 3. The pre-fix order-sensitive `==` compared [s0,s1,s2] to \
-         [s2,s1,s0], missed the twin, and left all 4 nodes (under-contraction).",
-    );
-    assert_eq!(tdd.model_count().unwrap(), count_before, "merge must preserve model count");
-    assert_canonical(&tdd);
+    assert_contracts_to_width(&eng, &mut tdd, root, v_left, 4, 3);
 }

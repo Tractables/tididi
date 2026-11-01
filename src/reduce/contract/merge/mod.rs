@@ -78,8 +78,8 @@ pub(super) fn contract_twins(
     }
     let marked = scratch.marked.take().is_some();
     let ContractScratch {
-        remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
-        diagram_marginal, unnamed, listing, twin_class, classes, member_groups, rooms, ..
+        remap, merge: bufs, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
+        diagram_marginal, unnamed, twin_class, classes, member_groups, rooms, ..
     } = scratch;
     if !marked {
         lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
@@ -145,36 +145,7 @@ pub(super) fn contract_twins(
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
     };
-    // The parent's pair lists are remapped and deduplicated below; t1's nodes
-    // were merged, so its pair lists and the identity of its nodes changed.
-    // The parent's fusion record stands unless a group redirects
-    // ([`redirects`]).
-    // A level that only lost nodes no pair names keeps its fusion record.
-    //
-    // Without a marginal level the loose levels stay known
-    // ([`Dirty::loose`](crate::diagram::Dirty::loose)): no node its parent
-    // level named before the merge is left unnamed by it. A survivor takes
-    // its members' pairs, so their children stay named; a parent pair
-    // dropped for naming a member has its sibling named beside the
-    // survivor, twins having equal contexts; and the parent keeps its
-    // nodes. Only the children of the dropped unnamed nodes can lose their
-    // last name, and are listed loose after the rebuild.
-    let loose = match diagram_marginal {
-        true => None,
-        false => tdd.dirty.take_loose(),
-    };
-    if merged_members == 0 {
-        tdd.invalidate_shrunk(t1);
-    } else {
-        tdd.invalidate(t1);
-    }
-    if redirects(&bufs.group_plans) {
-        tdd.invalidate(parent);
-    } else {
-        tdd.invalidate_shrunk(parent);
-    }
-    tdd.dirty.set_loose(loose);
-    tdd.levels.mark_changed(parent);
+    invalidate_merged_levels(tdd, t1, parent, diagram_marginal, merged_members, &bufs.group_plans);
 
     // A repeated pair is legal where a level of the diagram is marginal, and
     // where fork-down resolves it right after the rebuild; elsewhere debug
@@ -198,6 +169,71 @@ pub(super) fn contract_twins(
         }
         None => rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint),
     }
+    finish_merged_levels(
+        eng,
+        tdd,
+        (t1, parent, t1_side),
+        diagram_marginal,
+        (t1_pairs, parent_room),
+        scratch,
+    )?;
+    Ok(merged_members + scratch.unnamed.len())
+}
+
+/// Invalidate `t1` and `parent` before rebuilding `t1`, preserving `tdd.dirty.loose()`
+/// when the diagram has no marginal level.
+fn invalidate_merged_levels(
+    tdd: &mut Tdd,
+    t1: VtreeIdx,
+    parent: VtreeIdx,
+    diagram_marginal: bool,
+    merged_members: usize,
+    plans: &[GroupPlan],
+) {
+    // The parent's pair lists are remapped and deduplicated below; t1's nodes
+    // were merged, so its pair lists and the identity of its nodes changed.
+    // The parent's fusion record stands unless a group redirects
+    // ([`redirects`]).
+    // A level that only lost nodes no pair names keeps its fusion record.
+    //
+    // Without a marginal level the loose levels stay known
+    // ([`Dirty::loose`](crate::diagram::Dirty::loose)): no node its parent
+    // level named before the merge is left unnamed by it. A survivor takes
+    // its members' pairs, so their children stay named; a parent pair
+    // dropped for naming a member has its sibling named beside the
+    // survivor, twins having equal contexts; and the parent keeps its
+    // nodes. Only the children of the dropped unnamed nodes can lose their
+    // last name, and are listed loose after the rebuild.
+    let loose = match diagram_marginal {
+        true => None,
+        false => tdd.dirty.take_loose(),
+    };
+    if merged_members == 0 {
+        tdd.invalidate_shrunk(t1);
+    } else {
+        tdd.invalidate(t1);
+    }
+    if redirects(plans) {
+        tdd.invalidate(parent);
+    } else {
+        tdd.invalidate_shrunk(parent);
+    }
+    tdd.dirty.set_loose(loose);
+    tdd.levels.mark_changed(parent);
+}
+
+/// Rewrite `parent`, compact stale pair lists, run fork-down duplicate
+/// resolution, and leave live pair counts on `t1` and `parent`.
+fn finish_merged_levels(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    (t1, parent, t1_side): (VtreeIdx, VtreeIdx, ChildSide),
+    diagram_marginal: bool,
+    (t1_pairs, parent_room): (usize, Option<crate::diagram::StoreRoom>),
+    scratch: &mut ContractScratch,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let ContractScratch { remap, merge: bufs, duplicate, unnamed, listing, .. } = scratch;
     // Without a marginal level a rebuilt level, and a parent the rewrite
     // leaves in node order, stay so for the rest of the sweep
     // (`Listing::ordered`), and a later rewrite of either reads no order.
@@ -232,7 +268,7 @@ pub(super) fn contract_twins(
         tdd.levels[t1.idx()].leave_census();
     }
     tdd.levels[parent.idx()].leave_live_pairs(parent_pairs);
-    Ok(merged_members + unnamed.len())
+    Ok(())
 }
 
 /// Whether a planned group redirects content-equal members onto its

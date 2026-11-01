@@ -266,20 +266,23 @@ fn a_file_from_a_later_version_is_refused_naming_both_versions() {
     );
 }
 
+fn write_tdd_string(tdd: &Tdd) -> String {
+    let mut out = Vec::new();
+    write_tdd(&mut out, tdd).expect("an explicit diagram writes");
+    String::from_utf8(out).expect("the format is text")
+}
+
 /// The two halves of what a version buys: a comment line a reader does not
 /// recognize is ignored, so a writer may annotate a file freely, while a record
 /// letter it does not recognize is refused, so a new record has to raise the
 /// version rather than pass unnoticed.
 #[test]
 fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
-    use crate::io::{read_tdd, write_tdd, IoError};
-
+    use crate::io::{read_tdd, IoError};
 
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
-    let mut bytes: Vec<u8> = Vec::new();
-    write_tdd(&mut bytes, &f).expect("an explicit diagram writes");
-    let text = String::from_utf8(bytes).expect("the format is text");
+    let text = write_tdd_string(&f);
 
     let annotated = format!("c written by something else\nc\n{text}");
     let back = read_tdd(&mut annotated.as_bytes(), &vtree)
@@ -300,9 +303,7 @@ fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     assert_canonical(&tdd);
-    let mut out = Vec::new();
-    write_tdd(&mut out, &tdd).unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = write_tdd_string(&tdd);
     let lines: Vec<&str> = text.lines().collect();
 
     assert!(lines[0].starts_with("c "), "the file opens with a comment line");
@@ -325,9 +326,7 @@ fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
     let vtree = Arc::new(Vtree::balanced(2));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1], vec![-1], vec![2]]);
     assert_canonical(&tdd);
-    let mut out = Vec::new();
-    write_tdd(&mut out, &tdd).unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = write_tdd_string(&tdd);
 
     assert!(text.contains("ZERO"), "the output names the zero constant");
     assert_eq!(text.lines().filter(|l| l.starts_with("I ")).count(), 0);

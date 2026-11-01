@@ -54,18 +54,24 @@ fn random_cube(nvars: u32, rng: &mut Lcg) -> Vec<Literal> {
     lits
 }
 
-/// Every model of `got` and of `f ∧ g` agree, over the whole truth table,
-/// and the result keeps the structural invariants.
-fn agrees(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
+fn agrees_inner(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, check_det: bool, label: &str) {
     for mask in 0..1u32 << nvars {
         let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
         assert_eq!(eval(got, &asn), eval(f, &asn) && eval(g, &asn), "{label}: models differ at {asn:?}");
     }
     check_no_false_nodes(got).unwrap_or_else(|e| panic!("{label}: {e}"));
-    check_determinism(got).unwrap_or_else(|e| panic!("{label}: {e}"));
+    if check_det {
+        check_determinism(got).unwrap_or_else(|e| panic!("{label}: {e}"));
+    }
     let mut minimized = got.clone();
     minimized.minimize().unwrap();
     check_all_fast(&minimized, label);
+}
+
+/// Every model of `got` and of `f ∧ g` agree, over the whole truth table,
+/// and the result keeps the structural invariants.
+fn agrees(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
+    agrees_inner(f, g, got, nvars, true, label);
 }
 
 /// [`agrees`] without its determinism check. That check conjoins every two
@@ -74,14 +80,7 @@ fn agrees(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
 /// (the product lookup at a level with no stored products), so it says
 /// nothing about what this module builds.
 fn agrees_wide(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
-    for mask in 0..1u32 << nvars {
-        let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
-        assert_eq!(eval(got, &asn), eval(f, &asn) && eval(g, &asn), "{label}: models differ at {asn:?}");
-    }
-    check_no_false_nodes(got).unwrap_or_else(|e| panic!("{label}: {e}"));
-    let mut minimized = got.clone();
-    minimized.minimize().unwrap();
-    check_all_fast(&minimized, label);
+    agrees_inner(f, g, got, nvars, false, label);
 }
 
 /// The cases: per vtree shape and size, random diagrams conjoined in place
@@ -194,6 +193,11 @@ fn a_node_inside_the_filter_is_kept_whole() {
     assert!(got.level(left).nodes().len() <= before, "no product was appended under the filter's block");
 }
 
+fn random_model_tdd(vtree: &Arc<Vtree>, vars: &[VarId], nvars: u32, count: usize, rng: &mut Lcg) -> Tdd {
+    let rows: Vec<u64> = (0..count).map(|_| rng.below(1 << nvars)).collect();
+    Tdd::from_models(vtree, vars, &rows).unwrap()
+}
+
 /// Wide nodes in both operands: a product of two nodes of many pairs finds
 /// `g`'s pairs by their sides, where a side of `f`'s pair lies inside one
 /// node of `g`, instead of trying each pair against each; the result is
@@ -209,8 +213,8 @@ fn wide_products_find_the_pairs_they_meet_by_their_sides() {
         let (left, _) = vtree.children(vtree.root());
         let low = vars_under(&vtree, left);
         for round in 0..3 {
-            let f = Tdd::from_models(&vtree, &vars, &(0..700).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
-            let all = Tdd::from_models(&vtree, &vars, &(0..400).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+            let f = random_model_tdd(&vtree, &vars, nvars, 700, &mut rng);
+            let all = random_model_tdd(&vtree, &vars, nvars, 400, &mut rng);
             let codes: Vec<u64> = (0..1 + (1u64 << low.len()) / 3).map(|_| rng.below(1 << low.len())).collect();
             let on_left = or_of_cubes(&vtree, &low, |m| codes.contains(&(m as u64)));
             for (name, g) in [("all", &all), ("left", &on_left)] {
@@ -254,12 +258,12 @@ fn bottom_up_products_are_the_top_down_products() {
     let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
     for (shape, vtree) in vtree_shapes(nvars) {
         for round in 0..3 {
-            let f = Tdd::from_models(&vtree, &vars, &(0..400).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+            let f = random_model_tdd(&vtree, &vars, nvars, 400, &mut rng);
             let dense = block_set(&vtree, 2, &mut rng);
             let sparse = block_set(&vtree, 9, &mut rng);
             let two = eng.and(block_set(&vtree, 2, &mut rng), block_set(&vtree, 3, &mut rng)).unwrap();
             let cube = Tdd::cube(&vtree, random_cube(nvars, &mut rng)).unwrap();
-            let any = Tdd::from_models(&vtree, &vars, &(0..150).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+            let any = random_model_tdd(&vtree, &vars, nvars, 150, &mut rng);
             for (name, g) in [("dense", &dense), ("sparse", &sparse), ("two", &two), ("cube", &cube), ("any", &any)] {
                 for prune in [true, false] {
                     let label = format!("{shape} round {round} {name} prune {prune}");
@@ -289,7 +293,7 @@ fn every_refused_reservation_comes_back_as_a_refusal() {
     let nvars = 10u32;
     let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
     for (shape, vtree) in vtree_shapes(nvars) {
-        let f = Tdd::from_models(&vtree, &vars, &(0..300).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+        let f = random_model_tdd(&vtree, &vars, nvars, 300, &mut rng);
         // A set that is neither false nor true, so that the operation runs.
         let set = loop {
             let set = block_set(&vtree, 2, &mut rng);

@@ -316,20 +316,25 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     let out_base = level_base[out_vtree.idx()];
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
     let out_local = if ct_out != NO_PRODUCT { NodeIdx(ct_out) } else { ZERO };
+    finish_spine_rebuild(eng, f, levels, f_weights, TddNodeId { vtree: out_vtree, local: out_local }, &spine_internal)
+}
 
-    // Contract seed: this clause's spine, which is ancestor-closed, so an
-    // off-spine level and its whole subtree are the accumulator's own bytes;
-    // whatever the accumulator still owed is carried over, which keeps this
-    // exact for a caller that does not minimize between clauses. The spine
-    // is also all the walk changed, and so all the seat closes.
-    // The pair fusion records (`Dirty::is_fused`) off the spine are the
-    // accumulator's too.
-    let vtree = Arc::clone(vtree);
+/// Assemble the rebuilt spine levels into the output diagram, carrying over
+/// `f`'s off-spine worklists and pair-fusion records.
+fn finish_spine_rebuild(
+    eng: &Engine,
+    f: &mut Tdd,
+    levels: Vec<TddLevel>,
+    f_weights: Option<WeightStore>,
+    output: TddNodeId,
+    spine_internal: &[VtreeIdx],
+) -> Result<Tdd, OperationError> {
+    let vtree = Arc::clone(&f.vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights)
-        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal, Some(&spine_internal[..]))?;
-    out.dirty.restore_fused(fused, &spine_internal);
+        .finish_with(output, carried, spine_internal, Some(spine_internal))?;
+    out.dirty.restore_fused(fused, spine_internal);
     #[cfg(debug_assertions)]
     {
         let recorded: Vec<VtreeIdx> =

@@ -280,6 +280,66 @@ fn summed(f: &Tdd, t: VtreeIdx) -> bool {
     f.levels[t.idx()].is_marginal()
 }
 
+/// Populate summed-out leaf levels in `assembly` with their label count column
+/// when not under a summed-out parent.
+fn init_summed_leaves(eng: &Engine, vtree: &Vtree, f: &Tdd, g: &Tdd, assembly: &mut Assembly<'_>) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let under_summed = |t: VtreeIdx| vtree.node(t).parent().is_some_and(|p| summed(f, p));
+    for (leaf, _) in vtree.leaf_bottomup() {
+        if !summed(f, leaf) {
+            continue;
+        }
+        let column = !under_summed(leaf)
+            && [f, g].iter().any(|d| d.levels[leaf.idx()].marginal_counts().is_some_and(|c| !c.is_empty()));
+        let mut store: Vec<u128> = Vec::new();
+        if column {
+            lim.reserve_exact(&mut store, LEAF_COUNTS.len())?;
+            store.extend_from_slice(&LEAF_COUNTS);
+        }
+        let (levels, _) = assembly.parts_mut();
+        levels[leaf.idx()].become_marginal(store, None);
+    }
+    Ok(())
+}
+
+/// Copy each node of `f` and then of `g` at a non-root count level `out`,
+/// recording the single-node piece mapping in `pieces`.
+#[allow(clippy::too_many_arguments)]
+fn copy_count_level_nodes(
+    eng: &Engine,
+    (fl, gl): (&TddLevel, &TddLevel),
+    (ls, rs): (&Side<'_>, &Side<'_>),
+    out: &mut TddLevel,
+    pieces: &mut Pieces,
+    pairs: &mut Vec<ChildPair>,
+    poll: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let (fw, gw) = (fl.slot_count(), gl.slot_count());
+    for (level, width, of_g) in [(fl, fw, false), (gl, gw, true)] {
+        lim.reserve_exact(if of_g { &mut pieces.g_start } else { &mut pieces.f_start }, width + 1)?;
+        for a in 0..width {
+            pairs.clear();
+            rewrite_node(eng, level, a, (ls, rs), of_g, pairs, poll)?;
+            crate::diagram::sort_pairs(pairs);
+            let o = out.push_node(lim, pairs)?.0;
+            let (start, items_len) = match of_g {
+                true => (&mut pieces.g_start, pieces.g_items.len() as u32),
+                false => (&mut pieces.f_start, pieces.f_items.len() as u32),
+            };
+            start.push(items_len);
+            let (f_node, g_node) = if of_g { (ABSENT, a as u32) } else { (a as u32, ABSENT) };
+            pieces.push_piece(lim, o, f_node, g_node, of_g)?;
+        }
+        let (start, items) = match of_g {
+            true => (&mut pieces.g_start, &pieces.g_items),
+            false => (&mut pieces.f_start, &pieces.f_items),
+        };
+        start.push(items.len() as u32);
+    }
+    Ok(())
+}
+
 /// The sum of two nonfalse unweighted operands that have summed out the
 /// same levels, at least one, before its reduction.
 fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
@@ -303,22 +363,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     let under_summed = |t: VtreeIdx| vtree.node(t).parent().is_some_and(|p| summed(f, p));
 
     let mut assembly = Assembly::new(eng, &vtree)?;
-    // A summed-out leaf holds its label column, or nothing when every
-    // reference to it is inline; it is never shifted.
-    for (leaf, _) in vtree.leaf_bottomup() {
-        if !summed(f, leaf) {
-            continue;
-        }
-        let column = !under_summed(leaf)
-            && [f, g].iter().any(|d| d.levels[leaf.idx()].marginal_counts().is_some_and(|c| !c.is_empty()));
-        let mut store: Vec<u128> = Vec::new();
-        if column {
-            lim.reserve_exact(&mut store, LEAF_COUNTS.len())?;
-            store.extend_from_slice(&LEAF_COUNTS);
-        }
-        let (levels, _) = assembly.parts_mut();
-        levels[leaf.idx()].become_marginal(store, None);
-    }
+    init_summed_leaves(eng, &vtree, f, g, &mut assembly)?;
 
     let mut built: Vec<Option<Pieces>> = Vec::new();
     lim.reserve_exact(&mut built, n)?;
@@ -385,29 +430,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                 lim.level_done(out_nodes + 1)?;
                 return assembly.finish_asserted(TddNodeId { vtree: root, local }, None);
             }
-            // A count level: a copy of each node of `f`, then of `g`.
-            let (fw, gw) = (fl.slot_count(), gl.slot_count());
-            for (level, width, of_g) in [(fl, fw, false), (gl, gw, true)] {
-                lim.reserve_exact(if of_g { &mut pieces.g_start } else { &mut pieces.f_start }, width + 1)?;
-                for a in 0..width {
-                    pairs.clear();
-                    rewrite_node(eng, level, a, (&ls, &rs), of_g, &mut pairs, &mut poll)?;
-                    crate::diagram::sort_pairs(&mut pairs);
-                    let o = out.push_node(lim, &pairs)?.0;
-                    let (start, items_len) = match of_g {
-                        true => (&mut pieces.g_start, pieces.g_items.len() as u32),
-                        false => (&mut pieces.f_start, pieces.f_items.len() as u32),
-                    };
-                    start.push(items_len);
-                    let (f_node, g_node) = if of_g { (ABSENT, a as u32) } else { (a as u32, ABSENT) };
-                    pieces.push_piece(lim, o, f_node, g_node, of_g)?;
-                }
-                let (start, items) = match of_g {
-                    true => (&mut pieces.g_start, &pieces.g_items),
-                    false => (&mut pieces.f_start, &pieces.f_items),
-                };
-                start.push(items.len() as u32);
-            }
+            copy_count_level_nodes(eng, (fl, gl), (&ls, &rs), out, &mut pieces, &mut pairs, &mut poll)?;
             poll.flush()?;
         }
         out_nodes += pieces.f_part.len() as u64;

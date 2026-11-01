@@ -98,6 +98,15 @@ fn negated(clauses: &[Vec<i32>]) -> Vec<Vec<i32>> {
     clauses.iter().map(|c| c.iter().map(|l| -l).collect()).collect()
 }
 
+fn minimized_pair(small: &Arc<Vtree>, clauses: &[Vec<i32>]) -> (Tdd, Tdd) {
+    let minimized = |clauses: &[Vec<i32>]| {
+        let mut f = compile_clauses(small, clauses);
+        f.minimize().unwrap();
+        f
+    };
+    (minimized(clauses), minimized(&negated(clauses)))
+}
+
 #[test]
 fn every_shape_conjoins_onto_as_embeddings_and_conjunction_do() {
     let eng = Engine::new();
@@ -108,12 +117,7 @@ fn every_shape_conjoins_onto_as_embeddings_and_conjunction_do() {
         let space = 2 * num_vars + 2;
         let spare = Vtree::balanced_over(&[VarId(space - 1), VarId(space)]).unwrap();
         for (label, small) in vtree_shapes(num_vars) {
-            let minimized = |clauses: &[Vec<i32>]| {
-                let mut f = compile_clauses(&small, clauses);
-                f.minimize().unwrap();
-                f
-            };
-            let (f, g) = (minimized(&clauses), minimized(&negated(&clauses)));
+            let (f, g) = minimized_pair(&small, &clauses);
             let low = |v: VarId| v;
             let high = move |v: VarId| VarId(v.0 + num_vars);
             let image_low = renamed_shape(&small, low, space);
@@ -151,12 +155,7 @@ fn every_shape_conjoins_onto_mirrors_as_mirrored_embeddings_and_conjunction_do()
         let space = 2 * num_vars + 2;
         let spare = Vtree::balanced_over(&[VarId(space - 1), VarId(space)]).unwrap();
         for (label, small) in vtree_shapes(num_vars) {
-            let minimized = |clauses: &[Vec<i32>]| {
-                let mut f = compile_clauses(&small, clauses);
-                f.minimize().unwrap();
-                f
-            };
-            let (f, g) = (minimized(&clauses), minimized(&negated(&clauses)));
+            let (f, g) = minimized_pair(&small, &clauses);
             let low = |v: VarId| v;
             let high = move |v: VarId| VarId(v.0 + num_vars);
             for pick in 0..4u32 {

@@ -32,26 +32,36 @@ fn conjoin(f: &Tdd, g: &Tdd, grid: bool, floor: Option<u64>) -> (Result<Tdd, Ope
     (out, eng.limits().work_units())
 }
 
+/// Require `run(false, floor)` to match the oracle `run(true, floor)` in both
+/// diagram and work units at `floor = None` and across a geometric sweep of
+/// output-pair stop floors up to `4 * total_pairs`.
+fn assert_agrees_across_pair_floors(
+    run: impl Fn(bool, Option<u64>) -> (Result<Tdd, OperationError>, u64),
+    what: &str,
+) -> Tdd {
+    let (oracle, oracle_work) = run(true, None);
+    let (out, work) = run(false, None);
+    let (oracle, out) = (oracle.unwrap(), out.unwrap());
+    assert_canonical(&out);
+    assert!(is_self_conjunction(&out, &oracle), "{what}: built another diagram");
+    assert_eq!(work, oracle_work, "{what}: did other work");
+    let total: usize = out.levels.iter().map(|l| l.pairs.len()).sum();
+    let mut floor = 1u64;
+    while floor <= 4 * total as u64 {
+        let (oracle, oracle_work) = run(true, Some(floor));
+        let (stopped, work) = run(false, Some(floor));
+        assert_eq!(stopped.is_ok(), oracle.is_ok(), "{what}: a stop at {floor} pairs fell differently");
+        assert_eq!(work, oracle_work, "{what}: a stop at {floor} pairs fell at other work");
+        floor = floor * 3 / 2 + 1;
+    }
+    out
+}
+
 /// Conjoin `f` and `g` both ways and require the same diagram and the same
 /// work; then, under a stop at each output-pair floor up to the result's
 /// size, the same stop at the same work. Returns the conjunction.
 fn same_both_ways(f: &Tdd, g: &Tdd) -> Tdd {
-    let (oracle, oracle_work) = conjoin(f, g, true, None);
-    let (out, work) = conjoin(f, g, false, None);
-    let (oracle, out) = (oracle.unwrap(), out.unwrap());
-    assert_canonical(&out);
-    assert!(is_self_conjunction(&out, &oracle), "the arithmetic lookups built another diagram");
-    assert_eq!(work, oracle_work, "the arithmetic lookups did other work");
-    let total: usize = out.levels.iter().map(|l| l.pairs.len()).sum();
-    let mut floor = 1u64;
-    while floor <= 4 * total as u64 {
-        let (oracle, oracle_work) = conjoin(f, g, true, Some(floor));
-        let (stopped, work) = conjoin(f, g, false, Some(floor));
-        assert_eq!(stopped.is_ok(), oracle.is_ok(), "a stop at {floor} pairs fell differently");
-        assert_eq!(work, oracle_work, "a stop at {floor} pairs fell at other work");
-        floor = floor * 3 / 2 + 1;
-    }
-    out
+    assert_agrees_across_pair_floors(|grid, floor| conjoin(f, g, grid, floor), "the arithmetic lookups")
 }
 
 /// `f` over the odd variables and `g` over the even ones of a balanced
@@ -233,21 +243,10 @@ fn one_pair_columns_read_as_their_columns() {
             let f = function_of(&vtree, fvars, &mut rng);
             let g = function_of(&vtree, gvars, &mut rng);
             for grid in [false, true] {
-                let (oracle, oracle_work) = conjoin_by_columns(&f, &g, true, grid, None);
-                let (out, work) = conjoin_by_columns(&f, &g, false, grid, None);
-                let (oracle, out) = (oracle.unwrap(), out.unwrap());
-                assert_canonical(&out);
-                assert!(is_self_conjunction(&out, &oracle), "{shape}: reading one pair a column built another diagram");
-                assert_eq!(work, oracle_work, "{shape}: reading one pair a column did other work");
-                let total: usize = out.levels.iter().map(|l| l.pairs.len()).sum();
-                let mut floor = 1u64;
-                while floor <= 4 * total as u64 {
-                    let (oracle, oracle_work) = conjoin_by_columns(&f, &g, true, grid, Some(floor));
-                    let (stopped, work) = conjoin_by_columns(&f, &g, false, grid, Some(floor));
-                    assert_eq!(stopped.is_ok(), oracle.is_ok(), "{shape}: a stop at {floor} pairs fell differently");
-                    assert_eq!(work, oracle_work, "{shape}: a stop at {floor} pairs fell at other work");
-                    floor = floor * 3 / 2 + 1;
-                }
+                assert_agrees_across_pair_floors(
+                    |columns, floor| conjoin_by_columns(&f, &g, columns, grid, floor),
+                    &format!("{shape}: reading one pair a column"),
+                );
             }
         }
         let census = complete_census();
@@ -283,18 +282,20 @@ fn cross_blocks() -> [Vec<crate::vtree::VarId>; 4] {
     })
 }
 
+fn cross_block_subtrees(balanced: bool) -> [Vtree; 4] {
+    cross_blocks().map(|vars| match balanced {
+        true => Vtree::balanced_over(&vars).unwrap(),
+        false => Vtree::linear_from_order(&vars).unwrap(),
+    })
+}
+
 /// Vtrees on which `m` and `t` are the two sides of one level, its parent
 /// joining them with `c`, `((c (m t)) x)`, with the cross on either side
 /// and with `x` above or beside it, on balanced and linear blocks.
 fn cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
-    let [c, m, t, x] = cross_blocks();
     let mut out = Vec::new();
     for (blocks_name, balanced) in [("balanced", true), ("linear", false)] {
-        let sub = |vars: &[crate::vtree::VarId]| match balanced {
-            true => Vtree::balanced_over(vars).unwrap(),
-            false => Vtree::linear_from_order(vars).unwrap(),
-        };
-        let (c, m, t, x) = (sub(&c), sub(&m), sub(&t), sub(&x));
+        let [c, m, t, x] = cross_block_subtrees(balanced);
         let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
         for (name, vtree) in [
             ("((c (m t)) x)", join(&join(&c, &join(&m, &t)), &x)),
@@ -374,14 +375,9 @@ fn a_sparse_parent_reads_a_complete_child_by_arithmetic() {
 /// on balanced and linear blocks: each operand is one node at the root, so
 /// the root is the one product a sum takes.
 fn root_cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
-    let [c, m, t, x] = cross_blocks();
     let mut out = Vec::new();
     for (blocks_name, balanced) in [("balanced", true), ("linear", false)] {
-        let sub = |vars: &[crate::vtree::VarId]| match balanced {
-            true => Vtree::balanced_over(vars).unwrap(),
-            false => Vtree::linear_from_order(vars).unwrap(),
-        };
-        let (c, m, t, x) = (sub(&c), sub(&m), sub(&t), sub(&x));
+        let [c, m, t, x] = cross_block_subtrees(balanced);
         let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
         for (name, vtree) in [
             ("((m t) (c x))", join(&join(&m, &t), &join(&c, &x))),

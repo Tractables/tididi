@@ -486,23 +486,7 @@ fn apply_and_held(
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
-    let take_weights = |op: &mut Held<'_>| match op {
-        Held::Owned(op) => Ok(op.weights.take()),
-        Held::Borrowed(op) => op.weights.as_ref().map(|ws| ws.try_clone_on(lim)).transpose(),
-    };
-    let ws: Option<crate::diagram::WeightStore> =
-        match (take_weights(f)?, take_weights(g)?) {
-            (Some(mut a), Some(b)) => {
-                a.absorb(b);
-                Some(a)
-            }
-            (a, b) => a.or(b),
-        };
-    debug_assert!(
-        ws.is_some()
-            || !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_weight_marginal()),
-        "an operand has weight-marginal levels but neither carries a weight store"
-    );
+    let ws = merge_held_weights(lim, f, g)?;
     // Nothing but pairs changes hands: no weights, no summed-out level, no
     // level quantified or filtered, and, as the setup finds, no marginal
     // level.
@@ -602,75 +586,22 @@ fn apply_and_held(
     let restoring = run.restoring;
     let output = TddNodeId { vtree: out_vtree, local: out_local };
 
-    // A plain conjunction changed no level an identity fast path carried,
-    // and such a level brings its whole subtree along, since the other
-    // operand is the identity under it. So the result owes contraction the
-    // levels it built and whatever the operands owed; seeding every level
-    // made the minimization after a join as long as the diagram. A level the
-    // relabelling route moved is its carrier's, but some subtree under it is
-    // a product, so it is owed as built.
     let finished = if plain {
-        // Which operand each level the sweep carried came from: 1 for `f`,
-        // 2 for `g`, 0 for a level the conjunction built and for every
-        // level outside the cone.
-        let mut carrier = vec![0u8; num_nodes];
-        identity_carriers(&carried, &relabel_moved, &mut carrier);
-        // The result's loose levels (`loose::loose_levels`): a carried level
-        // where its carrier has it loose, and a level under one the
-        // conjunction built where the operands and the sibling's product
-        // grid do not prove it tight. The other operand's entry at a carried
-        // level is for a level the result did not take: an operand embedded
-        // onto a wider scope has every level it gained loose, and a small
-        // factor joined to a large diagram gained the large one's levels,
-        // which made the prune after the join walk it. Listing every level
-        // the conjunction built made that prune walk every one of them.
-        // In level order, for the lookups of the loose levels and the
-        // contraction's worklists.
-        run.as_operand.sort_unstable();
-        run.outer_held.sort_unstable();
-        let loose = operand_loose
-            .map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
-        // The levels it built are also all it changed, and so all the seat
-        // closes: a carried level, and a free one, is as the operand's end
-        // left it.
-        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
-        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
-        // The contraction is owed the built levels under which the
-        // conjunction can have given two nodes equal contexts
-        // ([`adds_no_twins`]); the leaf contraction every built level. A
-        // level built as an operand holds it gives the nodes of its children
-        // the operand's contexts there, which the operand, not owing the
-        // contraction the level, holds once each; where it owes it, so does
-        // the result.
-        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
-            run.as_operand.binary_search_by_key(&t.idx(), |e| e.0).is_err()
-                && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
-        });
-        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
-        owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));
-        // A level the relabelling route moved is as its carrier's last close
-        // left it; where that diagram was closed when the sweep began, the
-        // live pairs it keeps are left for the seat's close.
-        let levels = assembly.parts_mut().0;
-        for &(t, from_f) in &carried {
-            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
-                levels[t].leave_kept_pairs();
-            }
-        }
-        assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
-            if let Some(loose) = loose {
-                out.dirty.set_loose(Some(loose));
-                out.dirty.dedup_above(num_nodes);
-            }
-            #[cfg(debug_assertions)]
-            crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
-            carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
-            out
-        })
+        let queues = prepare_plain_queues(&vtree, &mut run, (f, g), (&carried, &relabel_moved), operand_loose);
+        finish_plain_assembly(
+            eng,
+            assembly,
+            &vtree,
+            queues,
+            &carried,
+            closed,
+            &kept,
+            output,
+        )
     } else {
         assembly.finish_or_return(output)
     };
-    let mut out = match finished {
+    let out = match finished {
         Ok(out) => out,
         Err((e, mut assembly)) => {
             if restoring {
@@ -685,16 +616,127 @@ fn apply_and_held(
             return Err(e);
         }
     };
-    // Apply emits self-describing marginal refs — bit-30 set is an inline count,
-    // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
-    // so a bit-30-clear ref here is never an already-inline count. A plain
-    // conjunction has no marginal level, and so no ref to inline; leaving its
-    // levels alone keeps them known closed.
+    finalize_conjoined_diagram(eng, &vtree, out, plain, &fused, summed)
+}
+
+/// Merge or clone the weight stores of `f` and `g`.
+fn merge_held_weights(
+    lim: &crate::limits::Limits,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+) -> Result<Option<crate::diagram::WeightStore>, OperationError> {
+    let take_weights = |op: &mut Held<'_>| match op {
+        Held::Owned(op) => Ok(op.weights.take()),
+        Held::Borrowed(op) => op.weights.as_ref().map(|ws| ws.try_clone_on(lim)).transpose(),
+    };
+    let ws: Option<crate::diagram::WeightStore> =
+        match (take_weights(f)?, take_weights(g)?) {
+            (Some(mut a), Some(b)) => {
+                a.absorb(b);
+                Some(a)
+            }
+            (a, b) => a.or(b),
+        };
+    debug_assert!(
+        ws.is_some()
+            || !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_weight_marginal()),
+        "an operand has weight-marginal levels but neither carries a weight store"
+    );
+    Ok(ws)
+}
+
+struct PlainQueues {
+    carrier: Vec<u8>,
+    loose: Option<Vec<u32>>,
+    built: Vec<VtreeIdx>,
+    owed_twins: Vec<VtreeIdx>,
+    twin_free: Vec<VtreeIdx>,
+    owed: crate::diagram::Dirty,
+}
+
+/// Compute the carrier map, loose-level list, and dirty/twin queues for a plain
+/// conjunction before `assembly` is finalized.
+fn prepare_plain_queues(
+    vtree: &Vtree,
+    run: &mut ApplyRun<'_, '_>,
+    (f, g): (&Held<'_>, &Held<'_>),
+    (carried, relabel_moved): (&[(usize, bool)], &[usize]),
+    operand_loose: Option<Operands<Vec<u32>>>,
+) -> PlainQueues {
+    let num_nodes = vtree.num_nodes();
+    // Which operand each level the sweep carried came from: 1 for `f`,
+    // 2 for `g`, 0 for a level the conjunction built and for every
+    // level outside the cone.
+    let mut carrier = vec![0u8; num_nodes];
+    identity_carriers(carried, relabel_moved, &mut carrier);
+    // In level order, for the lookups of the loose levels and the
+    // contraction's worklists.
+    run.as_operand.sort_unstable();
+    run.outer_held.sort_unstable();
+    let loose = operand_loose
+        .map(|ops| loose::loose_levels(vtree, run, &carrier, ops));
+    // The levels it built are also all it changed, and so all the seat
+    // closes: a carried level, and a free one, is as the operand's end
+    // left it.
+    let mut built: Vec<VtreeIdx> = Vec::with_capacity(run.cone.built.len());
+    built.extend(run.cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
+    let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) = built.iter().partition(|&&t| {
+        run.as_operand.binary_search_by_key(&t.idx(), |e| e.0).is_err()
+            && !adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t)
+    });
+    let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
+    owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));
+    PlainQueues { carrier, loose, built, owed_twins, twin_free, owed }
+}
+
+/// Finish `assembly` for a plain conjunction, seeding dirty/loose queues only
+/// for built levels and carrying kept pair counts from the operands.
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+fn finish_plain_assembly<'a>(
+    eng: &Engine,
+    mut assembly: diagram::Assembly<'a>,
+    vtree: &Vtree,
+    queues: PlainQueues,
+    carried: &[(usize, bool)],
+    closed: Operands<bool>,
+    kept: &Operands<Option<crate::diagram::LevelCounts>>,
+    output: TddNodeId,
+) -> Result<Tdd, (OperationError, diagram::Assembly<'a>)> {
+    let PlainQueues { carrier, loose, built, owed_twins, twin_free, owed } = queues;
+    let num_nodes = vtree.num_nodes();
+    let levels = assembly.parts_mut().0;
+    for &(t, from_f) in carried {
+        if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
+            levels[t].leave_kept_pairs();
+        }
+    }
+    assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
+        if let Some(loose) = loose {
+            out.dirty.set_loose(Some(loose));
+            out.dirty.dedup_above(num_nodes);
+        }
+        #[cfg(debug_assertions)]
+        crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
+        carry_kept_counts(eng, &mut out, carried, &carrier, kept);
+        out
+    })
+}
+
+/// Inline small marginal refs, record pair-fusion saturation marks, and wrap
+/// `out` as [`Conjoined::Summed`] or [`Conjoined::Built`].
+fn finalize_conjoined_diagram(
+    eng: &Engine,
+    vtree: &Vtree,
+    mut out: Tdd,
+    plain: bool,
+    fused: &[VtreeIdx],
+    summed: Option<Vec<VtreeIdx>>,
+) -> Result<Conjoined, OperationError> {
     if !plain {
         crate::diagram::inline_small_marginal_refs(&mut out, None);
     }
     // Recorded where the level's marginal child is still its only one.
-    for &t in &fused {
+    for &t in fused {
         let (left, right) = vtree.children(t);
         let marginal = |c: VtreeIdx| out.levels[c.idx()].is_marginal();
         if !marginal(t) && marginal(left) != marginal(right) {

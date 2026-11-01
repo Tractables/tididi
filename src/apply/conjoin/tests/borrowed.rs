@@ -107,6 +107,11 @@ fn minimized(out: &Tdd) -> (Tdd, u64) {
     })
 }
 
+fn assert_borrowed_matches_owned(out: &Tdd, work: u64, owned: &Tdd, owned_work: u64, at: &str) {
+    assert!(same_storage(out, owned), "{at}: a different diagram");
+    assert_eq!(outcome(out, work), outcome(owned, owned_work), "{at}: worklists, kept counts, certificate, closed form or work");
+}
+
 /// [`Engine::and`] and [`Engine::and_restoring`] with each operand borrowed
 /// in turn and both, both ways round, against the same call with both
 /// owned; with `counts`, on operands keeping level counts. The number of
@@ -133,8 +138,7 @@ fn check_against_owned(cases: &[(String, Tdd, Tdd)], counts: bool) -> usize {
                     for (borrow_a, borrow_b) in BORROWS {
                         let at = format!("{what}, {order}, sparse {sparse}, restoring {restoring}, borrowing ({borrow_a}, {borrow_b})");
                         let (out, work) = on_fresh(sparse, |eng| conjoin(eng, given(a, borrow_a), given(b, borrow_b)));
-                        assert!(same_storage(&out, &owned), "{at}: a different diagram");
-                        assert_eq!(outcome(&out, work), outcome(&owned, owned_work), "{at}: worklists, kept counts, certificate, closed form or work");
+                        assert_borrowed_matches_owned(&out, work, &owned, owned_work, &at);
                         let (out_min, out_min_work) = minimized(&out);
                         assert!(same_storage(&out_min, &owned_min), "{at}: minimized to a different diagram");
                         assert_eq!(out_min_work, owned_min_work, "{at}: minimized for other work");
@@ -188,8 +192,7 @@ fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
             for (borrow_x, borrow_y) in BORROWS {
                 let at = format!("{what}, borrowing ({borrow_x}, {borrow_y})");
                 let (out, work) = on_fresh(false, |eng| eng.and(given(x, borrow_x), given(y, borrow_y)).unwrap());
-                assert!(same_storage(&out, &owned), "{at}: a different diagram");
-                assert_eq!(outcome(&out, work), outcome(&owned, owned_work), "{at}: worklists, kept counts, certificate, closed form or work");
+                assert_borrowed_matches_owned(&out, work, &owned, owned_work, &at);
             }
         }
     }
@@ -268,8 +271,7 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
             for (borrow_a, borrow_b) in BORROWS {
                 let at = format!("case {case}, {what}, borrowing ({borrow_a}, {borrow_b})");
                 let (out, work) = on_fresh(false, |eng| eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into).map_err(|r| r.error).unwrap());
-                assert!(same_storage(&out, &owned), "{at}: a different diagram");
-                assert_eq!(outcome(&out, work), outcome(&owned, owned_work), "{at}: worklists, kept counts, certificate, closed form or work");
+                assert_borrowed_matches_owned(&out, work, &owned, owned_work, &at);
                 for n in 0..=owned_work {
                     let refused_at = |borrow: (bool, bool)| {
                         let eng = Engine::new();

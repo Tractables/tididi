@@ -450,181 +450,250 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     todo.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
     todo.dedup();
     let mut next_seed = 0;
-    // True products, per reference of each side: the other side's
-    // reference and the result.
-    let (mut pf, mut pg) = (Lists::new(nf.len(), lim)?, Lists::new(ng.len(), lim)?);
-    // Both references to the result, where a level looks products up so.
-    let mut live: FxHashMap<u64, Ref> = FxHashMap::default();
-    let key = |a: usize, b: usize| ((a as u64) << 32) | b as u64;
-    // `g`'s pairs of the current level by their anchor-side reference.
-    let (mut gmark, mut ghead) = (filled(lim, ng.len(), 0u32)?, filled(lim, ng.len(), NIL)?);
-    let mut gent: Vec<(u32, Ref, u32)> = Vec::new();
-    // The current node's products, by the other side's reference.
-    let (mut cg, mut cf) = (filled(lim, ng.len(), (0u32, 0u32))?, filled(lim, nf.len(), (0u32, 0u32))?);
-    let (mut lstamp, mut cstamp) = (0u32, 0u32);
-    // One node's products against the other side and their pair
-    // combinations, built as soon as the node is done; the level's
-    // products, listed once the level is done.
-    let mut batch = NodeBatch::default();
-    let mut ends: Vec<(Ref, Ref)> = Vec::new();
+    let mut work = AnchorScratch::new(nf.len(), ng.len(), lim)?;
     for &u in &todo {
         // The products with `true` the levels below would have listed.
         while next_seed < seeds.len() && seeds[next_seed].0 > sh.pre[u as usize] {
             let (_, x, t) = seeds[next_seed];
-            pf.push(nf.id(x), t, x, lim)?;
-            pg.push(ng.id(t), x, x, lim)?;
+            work.pf.push(nf.id(x), t, x, lim)?;
+            work.pg.push(ng.id(t), x, x, lim)?;
             next_seed += 1;
         }
         let (l, r) = sh.kids[u as usize];
-        batch.made.clear();
-        let mut work = 0u64;
-        let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
-        if sh.is_leaf(l) && sh.is_leaf(r) {
-            work += conjoin_leaf_pair(sh, u, (f, &nf), (g, &ng), &mut batch, &mut out, lim)?;
+        work.batch.made.clear();
+        let steps = if sh.is_leaf(l) && sh.is_leaf(r) {
+            conjoin_leaf_pair(sh, u, (f, &nf), (g, &ng), &mut work.batch, &mut out, lim)?
         } else {
-            // The anchor: the right child unless it is a leaf.
-            let right = !sh.is_leaf(r);
-            let (cs, co) = if right { (r, l) } else { (l, r) };
-            let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
-            let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
-            let skips = sh.is_leaf(co);
-            let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
-                if is_one(sh, ob) && free(oa) {
-                    return oa;
-                }
-                match land_pair(sh, oa, ob) {
-                    Some(x) => x,
-                    None => live.get(&key(nf.id(oa), ng.id(ob))).copied().unwrap_or(ZREF),
-                }
-            };
-            lstamp += 1;
-            gent.clear();
-            for j in 0..gl.width() as u32 {
-                for &p in gl.node(j) {
-                    let (y, ob) = split(p);
-                    let gy = ng.id(y);
-                    if gmark[gy] != lstamp {
-                        gmark[gy] = lstamp;
-                        ghead[gy] = NIL;
-                    }
-                    lim.try_push(&mut gent, (j, ob, ghead[gy]))?;
-                    ghead[gy] = (gent.len() - 1) as u32;
-                }
-            }
-            let gbase = ng.base[u as usize];
-            for i in 0..fl.width() as u32 {
-                let a = mk(u, i);
-                cstamp += 1;
-                for &p in fl.node(i) {
-                    let (x, oa) = split(p);
-                    // The true products of `x` with references of `g` read
-                    // at the anchor.
-                    ends.clear();
-                    pf.scan(nf.id(x), &mut ends, lim, |y| {
-                        let keep = ng.read_at(sh, y, cs);
-                        (keep, keep)
-                    })?;
-                    if sh.is_leaf(vt(x)) {
-                        for y in ng.leaf_refs(sh, vt(x), cs) {
-                            let res = leaf_and(vt(x), ix(x), ix(y));
-                            if res != ZREF {
-                                lim.try_push(&mut ends, (y, res))?;
-                            }
-                        }
-                    }
-                    for &(y, res) in &ends {
-                        let gy = ng.id(y);
-                        if gmark[gy] == lstamp {
-                            let mut e = ghead[gy];
-                            while e != NIL {
-                                let (j, ob, next) = gent[e as usize];
-                                e = next;
-                                let o = other(&live, oa, ob);
-                                if o != ZREF {
-                                    batch.push_stamped(
-                                        &mut cg[(gbase + j) as usize],
-                                        cstamp,
-                                        (a, mk(u, j)),
-                                        join(res, o),
-                                        lim,
-                                    )?;
-                                }
-                            }
-                        }
-                        if skips && ng.above(sh, y, u) {
-                            // `y` is `true` on the other side here.
-                            batch.push_stamped(&mut cg[gy], cstamp, (a, y), join(res, oa), lim)?;
-                        }
-                    }
-                }
-                work += batch.emit(u, &mut out, lim)?;
-            }
-            if skips {
-                // Skips of `f` through this level against `g`'s nodes.
-                for j in 0..gl.width() as u32 {
-                    let b = mk(u, j);
-                    cstamp += 1;
-                    for &p in gl.node(j) {
-                        let (y, ob) = split(p);
-                        ends.clear();
-                        pg.scan(ng.id(y), &mut ends, lim, |x| {
-                            let keep = nf.read_at(sh, x, cs);
-                            (keep, keep && nf.above(sh, x, u))
-                        })?;
-                        if sh.is_leaf(vt(y)) {
-                            for x in nf.leaf_refs(sh, vt(y), u) {
-                                let res = leaf_and(vt(y), ix(x), ix(y));
-                                if res != ZREF {
-                                    lim.try_push(&mut ends, (x, res))?;
-                                }
-                            }
-                        }
-                        for &(x, res) in &ends {
-                            batch.push_stamped(&mut cf[nf.id(x)], cstamp, (x, b), join(res, ob), lim)?;
-                        }
-                    }
-                    work += batch.emit(u, &mut out, lim)?;
-                }
-            }
-        }
-        lim.charge_work(work);
+            work.conjoin_anchor_level(sh, u, (f, &nf), (g, &ng), &cone, &mut out, lim)?
+        };
+        lim.charge_work(steps);
         lim.check_stop()?;
-        let lookup = sh.looked_up[u as usize];
-        if lookup {
-            lim.reserve_map(&mut live, batch.made.len())?;
-        }
-        for &(a, b, res) in &batch.made {
-            let (fa, gb) = (nf.id(a), ng.id(b));
-            pf.push(fa, b, res, lim)?;
-            pg.push(gb, a, res, lim)?;
-            if lookup {
-                live.insert(key(fa, gb), res);
-            }
-        }
+        work.record_made(sh, u, &nf, &ng, lim)?;
     }
     out.out = match land_pair(sh, f.out, g.out) {
         Some(r) => r,
         None if is_one(sh, g.out) && free(f.out) => f.out,
-        None => pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
+        None => work.pf.find(nf.id(f.out), g.out).unwrap_or(ZREF),
     };
     lim.discard(seeds);
-    pf.discard(lim);
-    pg.discard(lim);
-    lim.discard(live);
-    for v in [gmark, ghead] {
-        lim.discard(v);
-    }
-    for v in [cg, cf] {
-        lim.discard(v);
-    }
-    lim.discard(gent);
-    batch.discard(lim);
-    lim.discard(ends);
+    work.discard(lim);
     ng.discard(lim);
     out.collect_pushed(lim)?;
     lim.discard(todo);
     splice_outside_cone(f, nf, f_cone, &mut out, &mut cone, lim)?;
     Ok((out, cone))
+}
+
+/// Reusable product lists and per-level scratch for [`and_scoped`].
+struct AnchorScratch {
+    /// True products per reference of `f`: `(g_ref, result)`.
+    pf: Lists,
+    /// True products per reference of `g`: `(f_ref, result)`.
+    pg: Lists,
+    /// Both references to the result, where a level looks products up so.
+    live: FxHashMap<u64, Ref>,
+    /// `g`'s pairs of the current level by their anchor-side reference.
+    gmark: Vec<u32>,
+    ghead: Vec<u32>,
+    gent: Vec<(u32, Ref, u32)>,
+    /// The current node's products, by the other side's reference.
+    cg: Vec<(u32, u32)>,
+    cf: Vec<(u32, u32)>,
+    lstamp: u32,
+    cstamp: u32,
+    /// One node's products against the other side and their pair combinations.
+    batch: NodeBatch,
+    ends: Vec<(Ref, Ref)>,
+}
+
+impl AnchorScratch {
+    fn new(nf_len: usize, ng_len: usize, lim: &Limits) -> Result<Self, OperationError> {
+        Ok(Self {
+            pf: Lists::new(nf_len, lim)?,
+            pg: Lists::new(ng_len, lim)?,
+            live: FxHashMap::default(),
+            gmark: filled(lim, ng_len, 0u32)?,
+            ghead: filled(lim, ng_len, NIL)?,
+            gent: Vec::new(),
+            cg: filled(lim, ng_len, (0u32, 0u32))?,
+            cf: filled(lim, nf_len, (0u32, 0u32))?,
+            lstamp: 0,
+            cstamp: 0,
+            batch: NodeBatch::default(),
+            ends: Vec::new(),
+        })
+    }
+
+    fn discard(self, lim: &Limits) {
+        self.pf.discard(lim);
+        self.pg.discard(lim);
+        lim.discard(self.live);
+        for v in [self.gmark, self.ghead] {
+            lim.discard(v);
+        }
+        for v in [self.cg, self.cf] {
+            lim.discard(v);
+        }
+        lim.discard(self.gent);
+        self.batch.discard(lim);
+        lim.discard(self.ends);
+    }
+
+    fn record_made(&mut self, sh: &Shape, u: u32, nf: &Numbered, ng: &Numbered, lim: &Limits) -> Result<(), OperationError> {
+        let lookup = sh.looked_up[u as usize];
+        if lookup {
+            lim.reserve_map(&mut self.live, self.batch.made.len())?;
+        }
+        for &(a, b, res) in &self.batch.made {
+            let (fa, gb) = (nf.id(a), ng.id(b));
+            self.pf.push(fa, b, res, lim)?;
+            self.pg.push(gb, a, res, lim)?;
+            if lookup {
+                self.live.insert(((fa as u64) << 32) | gb as u64, res);
+            }
+        }
+        Ok(())
+    }
+
+    /// Conjoin a level `u` that has at least one internal child (the anchor).
+    #[allow(clippy::too_many_arguments)]
+    fn conjoin_anchor_level(
+        &mut self,
+        sh: &Shape,
+        u: u32,
+        (f, nf): (&SkipForm, &Numbered),
+        (g, ng): (&SkipForm, &Numbered),
+        cone: &[bool],
+        out: &mut SkipForm,
+        lim: &Limits,
+    ) -> Result<u64, OperationError> {
+        let (l, r) = sh.kids[u as usize];
+        let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
+        // The anchor: the right child unless it is a leaf.
+        let right = !sh.is_leaf(r);
+        let (cs, co) = if right { (r, l) } else { (l, r) };
+        let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
+        let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
+        let skips = sh.is_leaf(co);
+        let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
+            if is_one(sh, ob) && !cone[vt(oa) as usize] {
+                return oa;
+            }
+            match land_pair(sh, oa, ob) {
+                Some(x) => x,
+                None => live.get(&(((nf.id(oa) as u64) << 32) | ng.id(ob) as u64)).copied().unwrap_or(ZREF),
+            }
+        };
+        self.lstamp += 1;
+        self.gent.clear();
+        for j in 0..gl.width() as u32 {
+            for &p in gl.node(j) {
+                let (y, ob) = split(p);
+                let gy = ng.id(y);
+                if self.gmark[gy] != self.lstamp {
+                    self.gmark[gy] = self.lstamp;
+                    self.ghead[gy] = NIL;
+                }
+                lim.try_push(&mut self.gent, (j, ob, self.ghead[gy]))?;
+                self.ghead[gy] = (self.gent.len() - 1) as u32;
+            }
+        }
+        let mut work = 0u64;
+        let gbase = ng.base[u as usize];
+        for i in 0..fl.width() as u32 {
+            let a = mk(u, i);
+            self.cstamp += 1;
+            for &p in fl.node(i) {
+                let (x, oa) = split(p);
+                // The true products of `x` with references of `g` read at the anchor.
+                self.ends.clear();
+                self.pf.scan(nf.id(x), &mut self.ends, lim, |y| {
+                    let keep = ng.read_at(sh, y, cs);
+                    (keep, keep)
+                })?;
+                if sh.is_leaf(vt(x)) {
+                    for y in ng.leaf_refs(sh, vt(x), cs) {
+                        let res = leaf_and(vt(x), ix(x), ix(y));
+                        if res != ZREF {
+                            lim.try_push(&mut self.ends, (y, res))?;
+                        }
+                    }
+                }
+                for &(y, res) in &self.ends {
+                    let gy = ng.id(y);
+                    if self.gmark[gy] == self.lstamp {
+                        let mut e = self.ghead[gy];
+                        while e != NIL {
+                            let (j, ob, next) = self.gent[e as usize];
+                            e = next;
+                            let o = other(&self.live, oa, ob);
+                            if o != ZREF {
+                                self.batch.push_stamped(
+                                    &mut self.cg[(gbase + j) as usize],
+                                    self.cstamp,
+                                    (a, mk(u, j)),
+                                    join(res, o),
+                                    lim,
+                                )?;
+                            }
+                        }
+                    }
+                    if skips && ng.above(sh, y, u) {
+                        // `y` is `true` on the other side here.
+                        self.batch.push_stamped(&mut self.cg[gy], self.cstamp, (a, y), join(res, oa), lim)?;
+                    }
+                }
+            }
+            work += self.batch.emit(u, out, lim)?;
+        }
+        if skips {
+            work += self.conjoin_f_skips(sh, u, (cs, right), (f, nf), (g, ng), out, lim)?;
+        }
+        Ok(work)
+    }
+
+    /// Skips of `f` through `u` against `g`'s nodes when the non-anchor child is a leaf.
+    #[allow(clippy::too_many_arguments)]
+    fn conjoin_f_skips(
+        &mut self,
+        sh: &Shape,
+        u: u32,
+        (cs, right): (u32, bool),
+        (_f, nf): (&SkipForm, &Numbered),
+        (g, ng): (&SkipForm, &Numbered),
+        out: &mut SkipForm,
+        lim: &Limits,
+    ) -> Result<u64, OperationError> {
+        let gl = &g.levels[u as usize];
+        let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
+        let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
+        let mut work = 0u64;
+        for j in 0..gl.width() as u32 {
+            let b = mk(u, j);
+            self.cstamp += 1;
+            for &p in gl.node(j) {
+                let (y, ob) = split(p);
+                self.ends.clear();
+                self.pg.scan(ng.id(y), &mut self.ends, lim, |x| {
+                    let keep = nf.read_at(sh, x, cs);
+                    (keep, keep && nf.above(sh, x, u))
+                })?;
+                if sh.is_leaf(vt(y)) {
+                    for x in nf.leaf_refs(sh, vt(y), u) {
+                        let res = leaf_and(vt(y), ix(x), ix(y));
+                        if res != ZREF {
+                            lim.try_push(&mut self.ends, (x, res))?;
+                        }
+                    }
+                }
+                for &(x, res) in &self.ends {
+                    self.batch.push_stamped(&mut self.cf[nf.id(x)], self.cstamp, (x, b), join(res, ob), lim)?;
+                }
+            }
+            work += self.batch.emit(u, out, lim)?;
+        }
+        Ok(work)
+    }
 }
 
 /// Conjoin a level `u` whose children are both leaves: every reference each
@@ -746,49 +815,65 @@ fn splice_outside_cone(
         if out_outside == f_outside {
             out.active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
         } else {
-            let mut dirty = filled(lim, sh.num_nodes(), false)?;
-            dirty.copy_from_slice(cone);
-            let mut dropped_roots = filled(lim, sh.num_nodes(), false)?;
-            for &x in &boundary {
-                if mark_out[nf.id(x)] == 1 {
-                    let v = vt(x);
-                    dropped_roots[v as usize] = true;
-                    let mut u = v;
-                    while u != NONE && !dirty[u as usize] {
-                        dirty[u as usize] = true;
-                        u = sh.parent[u as usize];
-                    }
-                }
-            }
-            for &t in &f.active {
-                if !dirty[t as usize] {
-                    let mut u = t;
-                    while u != NONE && !cone[u as usize] {
-                        if dropped_roots[u as usize] {
-                            dirty[t as usize] = true;
-                            break;
-                        }
-                        u = sh.parent[u as usize];
-                    }
-                }
-            }
-            lim.discard(dropped_roots);
-            let cand: Vec<u32> = out.active.iter().copied().filter(|&t| dirty[t as usize]).collect();
-            out.collect_in(cand, lim)?;
-            for &t in &f.active {
-                if !cone[t as usize] && dirty[t as usize] && out.levels[t as usize].width() < f.levels[t as usize].width() {
-                    let mut u = t;
-                    while u != NONE && !cone[u as usize] {
-                        cone[u as usize] = true;
-                        u = sh.parent[u as usize];
-                    }
-                }
-            }
-            lim.discard(dirty);
+            prune_outside_cone(f, &nf, &boundary, &mark_out, out, cone, lim)?;
         }
     }
     lim.discard(boundary);
     lim.discard(mark_out);
     nf.discard(lim);
+    Ok(())
+}
+
+/// Prune outside-cone levels whose boundary references were dropped, and grow
+/// `cone` to include any outside-cone level whose width shrank.
+fn prune_outside_cone(
+    f: &SkipForm,
+    nf: &Numbered,
+    boundary: &[Ref],
+    mark_out: &[u8],
+    out: &mut SkipForm,
+    cone: &mut [bool],
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    let sh = &*f.shape;
+    let mut dirty = filled(lim, sh.num_nodes(), false)?;
+    dirty.copy_from_slice(cone);
+    let mut dropped_roots = filled(lim, sh.num_nodes(), false)?;
+    for &x in boundary {
+        if mark_out[nf.id(x)] == 1 {
+            let v = vt(x);
+            dropped_roots[v as usize] = true;
+            let mut u = v;
+            while u != NONE && !dirty[u as usize] {
+                dirty[u as usize] = true;
+                u = sh.parent[u as usize];
+            }
+        }
+    }
+    for &t in &f.active {
+        if !dirty[t as usize] {
+            let mut u = t;
+            while u != NONE && !cone[u as usize] {
+                if dropped_roots[u as usize] {
+                    dirty[t as usize] = true;
+                    break;
+                }
+                u = sh.parent[u as usize];
+            }
+        }
+    }
+    lim.discard(dropped_roots);
+    let cand: Vec<u32> = out.active.iter().copied().filter(|&t| dirty[t as usize]).collect();
+    out.collect_in(cand, lim)?;
+    for &t in &f.active {
+        if !cone[t as usize] && dirty[t as usize] && out.levels[t as usize].width() < f.levels[t as usize].width() {
+            let mut u = t;
+            while u != NONE && !cone[u as usize] {
+                cone[u as usize] = true;
+                u = sh.parent[u as usize];
+            }
+        }
+    }
+    lim.discard(dirty);
     Ok(())
 }

@@ -192,6 +192,12 @@ fn check_levels(eng: &Engine, m: &Tdd, w: &Weighted, context: &str) {
     }
 }
 
+fn assert_eval_matches(eng: &Engine, m: &Tdd, w: &Weighted, expected: u64, context: &str) {
+    assert_eq!(eng.evaluate(m, w).unwrap(), expected, "{context}");
+    assert_eq!(eng.evaluate_columns(m, &Columns(w)).unwrap(), expected, "{context}");
+    check_levels(eng, m, w, context);
+}
+
 #[test]
 fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
     let eng = Engine::new();
@@ -225,9 +231,7 @@ fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
                         assert_marginal_canonical(&m);
                     }
                     let context = format!("round {round}, targets {targets:?}, regroup {regroup}, minimized {minimized}");
-                    assert_eq!(eng.evaluate(&m, &w).unwrap(), expected, "{context}");
-                    assert_eq!(eng.evaluate_columns(&m, &Columns(&w)).unwrap(), expected, "{context}");
-                    check_levels(&eng, &m, &w, &context);
+                    assert_eval_matches(&eng, &m, &w, expected, &context);
                     let seen = reach(&m);
                     (inline, slots, cases) = (inline + seen.inline, slots + seen.slots, cases + 1);
                 }
@@ -262,9 +266,7 @@ fn a_marginalizing_conjunction_evaluates_as_the_plain_one() {
             let m = eng.and_marginalizing(g, h, &targets).unwrap();
             let context = format!("round {round}, targets {targets:?}");
             let expected = eng.evaluate(&both, &w).unwrap();
-            assert_eq!(eng.evaluate(&m, &w).unwrap(), expected, "{context}");
-            assert_eq!(eng.evaluate_columns(&m, &Columns(&w)).unwrap(), expected, "{context}");
-            check_levels(&eng, &m, &w, &context);
+            assert_eval_matches(&eng, &m, &w, expected, &context);
             marginal += usize::from(m.levels().iter().any(|l| l.is_marginal()));
         }
     }
@@ -291,9 +293,7 @@ fn a_count_past_u128_is_valued_exactly() {
         eng.marginalize_levels(&mut m, &[right]).unwrap();
         assert!(m.level(right).marginal_counts().unwrap().contains(&u128::MAX), "the count overflowed");
         assert!(reach(&m).slots > 0, "the root reads the count from its slot");
-        assert_eq!(eng.evaluate(&m, &w).unwrap(), expected);
-        assert_eq!(eng.evaluate_columns(&m, &Columns(&w)).unwrap(), expected);
-        check_levels(&eng, &m, &w, "past u128");
+        assert_eval_matches(&eng, &m, &w, expected, "past u128");
     }
 }
 
@@ -321,9 +321,7 @@ fn hand_built_marginal_levels_read_their_counts() {
             mul(mul(x(1, LeafLabel::Pos), (counts[0] % u128::from(P)) as u64), right),
             mul(mul(x(1, second), (counts[1] % u128::from(P)) as u64), right),
         );
-        assert_eq!(eng.evaluate(&f, &w).unwrap(), expected, "{second:?}");
-        assert_eq!(eng.evaluate_columns(&f, &Columns(&w)).unwrap(), expected, "{second:?}");
-        check_levels(&eng, &f, &w, "boundary");
+        assert_eval_matches(&eng, &f, &w, expected, &format!("boundary {second:?}"));
     }
 }
 

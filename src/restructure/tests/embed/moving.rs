@@ -10,31 +10,36 @@ use crate::test_helpers::{assert_same_shape, compile_clauses, known, same_storag
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, Tdd};
 
-/// Move `f` into `into` and check it against the copying embedding: the same
-/// diagram once minimized, and the same placement of levels.
-fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
-    let (copied, copied_levels) = eng.embed(f, into, map).unwrap();
-    let (mut moved, moved_levels) = eng.embed_moving(f.clone(), into, map).map_err(|r| r.error).unwrap();
+/// Check `moved` against `copied`: the same placement of levels, deterministic
+/// before any minimization, and the same diagram once minimized.
+fn assert_moved_matches_copied(
+    eng: &Engine,
+    (mut moved, moved_levels): (Tdd, crate::restructure::Embedding),
+    (mut copied, copied_levels): (Tdd, crate::restructure::Embedding),
+    what: &str,
+) {
     assert_eq!(moved_levels.levels, copied_levels.levels, "{what}");
     // Unminimized, the result is already a diagram every operation takes.
     check_determinism(&moved).unwrap_or_else(|e| panic!("{what}: {e}"));
     eng.minimize(&mut moved).unwrap();
-    let mut copied = copied;
     eng.minimize(&mut copied).unwrap();
     assert_same_shape(&moved, &copied, what);
+}
+
+/// Move `f` into `into` and check it against the copying embedding: the same
+/// diagram once minimized, and the same placement of levels.
+fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
+    let copied = eng.embed(f, into, map).unwrap();
+    let moved = eng.embed_moving(f.clone(), into, map).map_err(|r| r.error).unwrap();
+    assert_moved_matches_copied(eng, moved, copied, what);
 }
 
 /// [`check_against_copy`] up to mirrors: `embed_moving_mirrored` against
 /// `embed_mirrored`.
 fn check_mirrored_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
-    let (copied, copied_levels) = eng.embed_mirrored(f, into, map).unwrap();
-    let (mut moved, moved_levels) = eng.embed_moving_mirrored(f.clone(), into, map).map_err(|r| r.error).unwrap();
-    assert_eq!(moved_levels.levels, copied_levels.levels, "{what}");
-    check_determinism(&moved).unwrap_or_else(|e| panic!("{what}: {e}"));
-    eng.minimize(&mut moved).unwrap();
-    let mut copied = copied;
-    eng.minimize(&mut copied).unwrap();
-    assert_same_shape(&moved, &copied, what);
+    let copied = eng.embed_mirrored(f, into, map).unwrap();
+    let moved = eng.embed_moving_mirrored(f.clone(), into, map).map_err(|r| r.error).unwrap();
+    assert_moved_matches_copied(eng, moved, copied, what);
 }
 
 /// Which children of a source node a mirrored destination swaps, by pick.

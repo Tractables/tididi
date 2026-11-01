@@ -822,16 +822,11 @@ fn expand_coarse_lists(
     Ok(expanded)
 }
 
-/// Cut distinct cubes of `width` bits, ascending by value, into disjoint
-/// pieces, each cube the union of the pieces it covers. Returns the pieces
-/// (their atoms unset), and where each cube's pieces start in the list of
-/// covered pieces, with that list.
-fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>, Vec<u32>), OperationError> {
+/// Whether `parts` of `width` bits, ascending by value, are already pairwise
+/// disjoint: either single-word power-of-two intervals that end before the next
+/// begins, or distinct cubes that fix every bit.
+fn already_disjoint(width: usize, parts: &Pieces) -> bool {
     let (k, w) = (parts.value.len() / parts.words, parts.words);
-    // The parts ascend by value. Where each fixes a leading run of the bits
-    // and leaves the rest free, an interval aligned to a power of two, and
-    // each such interval ends before the next begins, they are disjoint
-    // already.
     let aligned_and_apart = w == 1 && {
         let mut end = 0u128;
         (0..k).all(|p| {
@@ -841,33 +836,85 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
             apart
         })
     };
-    if aligned_and_apart || (0..k).all(|p| (0..w).all(|j| parts.fixed[p * w + j] == lower_bits(j, width))) {
-        // Distinct cubes that fix every bit are disjoint already.
-        let mut starts = Vec::new();
-        lim.reserve_exact(&mut starts, k + 1)?;
-        starts.extend(0..=k as u32);
-        let mut cover = Vec::new();
-        lim.reserve_exact(&mut cover, k)?;
-        cover.extend(0..k as u32);
-        let mut parts = parts;
-        parts.atom = filled(lim, k, 0u32)?;
-        return Ok((parts, starts, cover));
+    aligned_and_apart || (0..k).all(|p| (0..w).all(|j| parts.fixed[p * w + j] == lower_bits(j, width)))
+}
+
+/// Emit one piece per distinct lower-bit value when every cube in `(from, len)`
+/// fixes all remaining bits below `bit`.
+#[allow(clippy::too_many_arguments)]
+fn emit_fixed_runs(
+    lim: &Limits,
+    parts: &Pieces,
+    (from, len): (usize, usize),
+    bit: usize,
+    path: usize,
+    paths: &[u64],
+    arena: &mut Vec<u32>,
+    masks: &mut [u64],
+    out: &mut Pieces,
+    members: &mut Vec<(u32, u32)>,
+) -> Result<(), OperationError> {
+    let w = parts.words;
+    let start = arena.len();
+    lim.reserve(arena, len)?;
+    arena.extend_from_within(from..from + len);
+    for (j, mask) in masks.iter_mut().enumerate() {
+        *mask = lower_bits(j, bit);
+    }
+    let values = &parts.value;
+    let lower = |p: u32| {
+        let masks = &*masks;
+        (0..w).rev().map(move |j| values[p as usize * w + j] & masks[j])
+    };
+    arena[start..].sort_unstable_by(|&a, &b| lower(a).cmp(lower(b)));
+    let mut at = start;
+    while at < arena.len() {
+        let mut end = at + 1;
+        while end < arena.len() && lower(arena[end]).eq(lower(arena[at])) {
+            end += 1;
+        }
+        let p = arena[at] as usize;
+        lim.reserve_exact(&mut out.value, w)?;
+        lim.reserve_exact(&mut out.fixed, w)?;
+        for j in 0..w {
+            out.value.push(paths[path + j] | (parts.value[p * w + j] & lower_bits(j, bit)));
+        }
+        for j in 0..w {
+            out.fixed.push(paths[path + w + j] | lower_bits(j, bit));
+        }
+        lim.try_push(members, (at as u32, (end - at) as u32))?;
+        at = end;
+    }
+    Ok(())
+}
+
+/// A stack frame of [`refine`]: a set of cubes that agree on the bits above
+/// `bit` and the piece they share there.
+struct RefineFrame {
+    items: (usize, usize),
+    bit: usize,
+    value: usize,
+}
+
+/// Cut distinct cubes of `width` bits, ascending by value, into disjoint
+/// pieces, each cube the union of the pieces it covers. Returns the pieces
+/// (their atoms unset), and where each cube's pieces start in the list of
+/// covered pieces, with that list.
+fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>, Vec<u32>), OperationError> {
+    let (k, w) = (parts.value.len() / parts.words, parts.words);
+    if already_disjoint(width, &parts) {
+        return disjoint_identity(lim, k, parts);
     }
 
     // Depth first over the bits, highest first, each frame a set of cubes
     // that agree on the bits above `bit` and the piece they share there.
-    struct Frame {
-        items: (usize, usize),
-        bit: usize,
-        value: usize,
-    }
     let mut arena: Vec<u32> = Vec::new();
     lim.reserve(&mut arena, k)?;
     arena.extend(0..k as u32);
     // Path values and masks of the open frames, two `w`-word slots apiece.
     let mut paths: Vec<u64> = Vec::new();
     lim.try_resize(&mut paths, 2 * w, 0u64)?;
-    let mut stack = vec![Frame { items: (0, k), bit: width, value: 0 }];
+    let mut stack = vec![RefineFrame { items: (0, k), bit: width, value: 0 }];
     let mut out = Pieces { words: w, value: Vec::new(), fixed: Vec::new(), atom: Vec::new(), atoms: 0 };
     // Each piece's cubes, as ranges of the arena.
     let mut members: Vec<(u32, u32)> = Vec::new();
@@ -899,39 +946,9 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
             split_bits[j] = ((or_f[j] & !and_f[j]) | (and_f[j] & (or_v[j] ^ and_v[j]))) & below;
         }
         if len > 1 && (0..w).all(|j| and_f[j] == lower_bits(j, frame.bit)) {
-            // Every cube here fixes every bit left, so the cubes of one
-            // value below the path are one piece, and different values are
-            // disjoint: no bit needs splitting one at a time.
-            let start = arena.len();
-            lim.reserve(&mut arena, len)?;
-            arena.extend_from_within(from..from + len);
-            for (j, mask) in masks.iter_mut().enumerate() {
-                *mask = lower_bits(j, frame.bit);
-            }
-            let values = &parts.value;
-            let lower = |p: u32| {
-                let masks = &masks;
-                (0..w).rev().map(move |j| values[p as usize * w + j] & masks[j])
-            };
-            arena[start..].sort_unstable_by(|&a, &b| lower(a).cmp(lower(b)));
-            let mut at = start;
-            while at < arena.len() {
-                let mut end = at + 1;
-                while end < arena.len() && lower(arena[end]).eq(lower(arena[at])) {
-                    end += 1;
-                }
-                let p = arena[at] as usize;
-                lim.reserve_exact(&mut out.value, w)?;
-                lim.reserve_exact(&mut out.fixed, w)?;
-                for j in 0..w {
-                    out.value.push(paths[frame.value + j] | (parts.value[p * w + j] & lower_bits(j, frame.bit)));
-                }
-                for j in 0..w {
-                    out.fixed.push(paths[frame.value + w + j] | lower_bits(j, frame.bit));
-                }
-                lim.try_push(&mut members, (at as u32, (end - at) as u32))?;
-                at = end;
-            }
+            emit_fixed_runs(
+                lim, &parts, (from, len), frame.bit, frame.value, &paths, &mut arena, &mut masks, &mut out, &mut members,
+            )?;
             continue;
         }
         let top = (0..w).rev().find(|&j| split_bits[j] != 0).map(|j| 64 * j + 63 - split_bits[j].leading_zeros() as usize);
@@ -953,24 +970,7 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
                 lim.try_push(&mut members, (from as u32, len as u32))?;
             }
             Some(s) => {
-                let (j, b) = (s / 64, s % 64);
-                // A cube free at the split goes to both sides.
-                for side in [1u64, 0] {
-                    let start = arena.len();
-                    for i in from..from + len {
-                        let p = arena[i] as usize;
-                        let (f, v) = (parts.fixed[p * w + j] >> b & 1, parts.value[p * w + j] >> b & 1);
-                        if f == 0 || v == side {
-                            lim.try_push(&mut arena, p as u32)?;
-                        }
-                    }
-                    let slot = paths.len();
-                    lim.reserve(&mut paths, 2 * w)?;
-                    paths.extend_from_within(path..path + 2 * w);
-                    paths[slot + w + j] |= 1 << b;
-                    paths[slot + j] |= side << b;
-                    stack.push(Frame { items: (start, arena.len() - start), bit: s, value: slot });
-                }
+                push_split_children(lim, &parts, (from, len), s, path, &mut arena, &mut paths, &mut stack)?;
             }
         }
     }
@@ -983,6 +983,56 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
     lim.discard(members);
     lim.discard(parts);
     Ok((out, starts, cover))
+}
+
+/// Identity refinement for `k` cubes that are already pairwise disjoint.
+fn disjoint_identity(
+    lim: &Limits,
+    k: usize,
+    mut parts: Pieces,
+) -> Result<(Pieces, Vec<u32>, Vec<u32>), OperationError> {
+    let mut starts = Vec::new();
+    lim.reserve_exact(&mut starts, k + 1)?;
+    starts.extend(0..=k as u32);
+    let mut cover = Vec::new();
+    lim.reserve_exact(&mut cover, k)?;
+    cover.extend(0..k as u32);
+    parts.atom = filled(lim, k, 0u32)?;
+    Ok((parts, starts, cover))
+}
+
+/// Split the cubes in `arena[from..from + len]` on bit `s` into two child frames.
+#[allow(clippy::too_many_arguments)]
+fn push_split_children(
+    lim: &Limits,
+    parts: &Pieces,
+    (from, len): (usize, usize),
+    s: usize,
+    path: usize,
+    arena: &mut Vec<u32>,
+    paths: &mut Vec<u64>,
+    stack: &mut Vec<RefineFrame>,
+) -> Result<(), OperationError> {
+    let w = parts.words;
+    let (j, b) = (s / 64, s % 64);
+    // A cube free at the split goes to both sides.
+    for side in [1u64, 0] {
+        let start = arena.len();
+        for i in from..from + len {
+            let p = arena[i] as usize;
+            let (f, v) = (parts.fixed[p * w + j] >> b & 1, parts.value[p * w + j] >> b & 1);
+            if f == 0 || v == side {
+                lim.try_push(arena, p as u32)?;
+            }
+        }
+        let slot = paths.len();
+        lim.reserve(paths, 2 * w)?;
+        paths.extend_from_within(path..path + 2 * w);
+        paths[slot + w + j] |= 1 << b;
+        paths[slot + j] |= side << b;
+        stack.push(RefineFrame { items: (start, arena.len() - start), bit: s, value: slot });
+    }
+    Ok(())
 }
 
 /// Invert each piece's cube slice `(from, len)` in `arena` into each cube's

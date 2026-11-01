@@ -41,6 +41,24 @@ fn fresh_root(retention: Retention,
     c.model_count().unwrap()
 }
 
+fn random_pin(rng: &mut Lcg) -> Option<bool> {
+    match rng.below(3) {
+        0 => None,
+        1 => Some(true),
+        _ => Some(false),
+    }
+}
+
+fn rand_unminimized_cnf(eng: &Engine, vtree: &Arc<Vtree>, nvars: u32, rng: &mut Lcg) -> Tdd {
+    let shape = CnfShape { clauses: 4, width: nvars as usize };
+    let mut acc = constant_one(eng, vtree);
+    for clause in rand_cnf(rng, nvars, shape) {
+        let cl = clause_to_tdd(vtree, &literals(&clause));
+        acc = apply_and(acc, cl);
+    }
+    acc
+}
+
 /// Pins `ModelCounter` against its two `BigUint` oracles: `pinned_counts`
 /// under both seed conventions.
 ///
@@ -58,20 +76,11 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        // Conjoined without an intervening minimize: the counter must agree
-        // with its oracle on the diagrams the apply produces, not only on
-        // reduced ones.
-        let rand_fn = |rng: &mut Lcg| -> Tdd {
-            let shape = CnfShape { clauses: 4, width: nvars as usize };
-            let mut acc = constant_one(&eng, &vtree);
-            for clause in rand_cnf(rng, nvars, shape) {
-                let cl = clause_to_tdd(&vtree, &literals(&clause));
-                acc = apply_and(acc, cl);
-            }
-            acc
-        };
         for _ in 0..100 {
-            let tdd = rand_fn(&mut rng);
+            // Conjoined without an intervening minimize: the counter must agree
+            // with its oracle on the diagrams the apply produces, not only on
+            // reduced ones.
+            let tdd = rand_unminimized_cnf(&eng, &vtree, nvars, &mut rng);
             // Structurally-zero diagrams have a sentinel output (local == u32::MAX)
             // and no count slot — `model_count` has an implicit `!is_zero` precondition,
             // which every production wrapper (`model_count`, `pinned_counts`)
@@ -81,13 +90,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 continue;
             }
             for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
-                let mut pins: Vec<Option<bool>> = (0..nvars)
-                    .map(|_| match rng.below(3) {
-                        0 => None,
-                        1 => Some(true),
-                        _ => Some(false),
-                    })
-                    .collect();
+                let mut pins: Vec<Option<bool>> = (0..nvars).map(|_| random_pin(&mut rng)).collect();
                 // `Retention::All`: the incremental dirty-cone half of this test
                 // re-reads cached child columns.
                 let mut ctr = eng.counter_with(&tdd, Retention::All, convention,
@@ -96,11 +99,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     ctr.set_pin(VarId(v as u32 + 1), p).unwrap();
                 }
 
-                let expected = if convention == PinSemantics::Evidence {
-                    pinned_counts(&tdd, &pins, PinSemantics::Evidence)
-                } else {
-                    pinned_counts(&tdd, &pins, PinSemantics::Cofactor)
-                };
+                let expected = pinned_counts(&tdd, &pins, convention);
                 assert_eq!(
                     ctr.model_count().unwrap(),
                     expected,
@@ -116,20 +115,11 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                 // pins.
                 for _ in 0..8 {
                     let v = rng.below(u64::from(nvars)) as u32;
-                    let new_pin = match rng.below(3) {
-                        0 => None,
-                        1 => Some(true),
-                        _ => Some(false),
-                    };
+                    let new_pin = random_pin(&mut rng);
                     pins[v as usize] = new_pin;
                     ctr.set_pin(VarId(v + 1), new_pin).unwrap();
 
-
-                    let expected = if convention == PinSemantics::Evidence {
-                        pinned_counts(&tdd, &pins, PinSemantics::Evidence)
-                    } else {
-                        pinned_counts(&tdd, &pins, PinSemantics::Cofactor)
-                    };
+                    let expected = pinned_counts(&tdd, &pins, convention);
                     assert_eq!(
                         ctr.model_count().unwrap(),
                         expected,
@@ -298,15 +288,7 @@ fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
         for _ in 0..40 {
             // Random conjunction of clauses, same shape as the explicit-diagram
             // differential test above.
-            let mut tdd = {
-                let shape = CnfShape { clauses: 4, width: nvars as usize };
-                let mut acc = constant_one(&eng, &vtree);
-                for clause in rand_cnf(&mut rng, nvars, shape) {
-                    let cl = clause_to_tdd(&vtree, &literals(&clause));
-                    acc = apply_and(acc, cl);
-                }
-                acc
-            };
+            let mut tdd = rand_unminimized_cnf(&eng, &vtree, nvars, &mut rng);
             if tdd.is_zero() {
                 continue;
             }
@@ -340,18 +322,10 @@ fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
                     let pins: Vec<Option<bool>> = (0..nvars)
                         .map(|v| {
                             if is_summed_out(&tdd, VarId(v + 1)) { return None; }
-                            match rng.below(3) {
-                                0 => None,
-                                1 => Some(true),
-                                _ => Some(false),
-                            }
+                            random_pin(&mut rng)
                         })
                         .collect();
-                    let expected = if convention == PinSemantics::Evidence {
-                        pinned_counts(&tdd, &pins, PinSemantics::Evidence)
-                    } else {
-                        pinned_counts(&tdd, &pins, PinSemantics::Cofactor)
-                    };
+                    let expected = pinned_counts(&tdd, &pins, convention);
 
                     for (v, &p) in pins.iter().enumerate() {
                         if !is_summed_out(&tdd, VarId(v as u32 + 1)) {

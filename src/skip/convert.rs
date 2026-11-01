@@ -107,24 +107,16 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
     Ok(form)
 }
 
-/// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
-/// from): every level a skip crosses holds the node `true` on the skipped
-/// variable makes, one per (level, target). The stored form of a canonical
-/// skip form is canonical, but it is not certified as such here.
-pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+/// Collect all numbered references in `s` together with the flat `(start, pts)`
+/// lists of pass-through reference numbers needed at each level.
+#[allow(clippy::type_complexity)]
+fn collect_passthroughs(
+    s: &SkipForm,
+    nb: &Numbered,
+    lim: &Limits,
+) -> Result<(Vec<Ref>, Vec<u32>, Vec<u32>), OperationError> {
     let sh = &*s.shape;
     let n = sh.num_nodes();
-    if s.out == ZREF {
-        return Ok(Tdd::zero(vtree));
-    }
-    if sh.is_leaf(sh.root) {
-        return Tdd::builder(eng, vtree)?
-            .finish(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(ix(s.out)) })
-            .map_err(|_| OperationError::IndexOverflow);
-    }
-    let lim = eng.limits();
-    let nb = Numbered::of(s, lim)?;
-    // Every reference, by number.
     let mut refs = filled(lim, nb.len(), ZREF)?;
     for &t in &s.active {
         let b = nb.base[t as usize];
@@ -138,9 +130,6 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
             refs[(b + k) as usize] = mk(c, k);
         }
     }
-    // A reference read at a level above its own has a pass-through node at
-    // every level from the highest one it is read at down to its own:
-    // per level, those references, numbered after the level's own nodes.
     let mut start = vec![0u32; n + 1];
     let chain = |x: Ref, top: u32, f: &mut dyn FnMut(u32)| {
         let mut c = top;
@@ -169,6 +158,26 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
             });
         }
     }
+    Ok((refs, start, pts))
+}
+
+/// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
+/// from): every level a skip crosses holds the node `true` on the skipped
+/// variable makes, one per (level, target). The stored form of a canonical
+/// skip form is canonical, but it is not certified as such here.
+pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+    let sh = &*s.shape;
+    if s.out == ZREF {
+        return Ok(Tdd::zero(vtree));
+    }
+    if sh.is_leaf(sh.root) {
+        return Tdd::builder(eng, vtree)?
+            .finish(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(ix(s.out)) })
+            .map_err(|_| OperationError::IndexOverflow);
+    }
+    let lim = eng.limits();
+    let nb = Numbered::of(s, lim)?;
+    let (refs, start, pts) = collect_passthroughs(s, &nb, lim)?;
     // Per reference, its pass-through's index at the last level of its
     // chain written: the levels are written children first, and a
     // reference's next level up its chain is the parent of the last.

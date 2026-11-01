@@ -233,6 +233,24 @@ pub(super) fn refine_context_groups(
     if part.twinable == 0 {
         return Ok(Some(false));
     }
+    list_refined_groups(lim, part, width, child, flat_groups, group_starts, remap, member_groups, marked)?;
+    Ok(Some(true))
+}
+
+/// Materialize the refined twin classes from `part` into `flat_groups` and
+/// `group_starts`, optionally marking members and recording `marked`.
+#[allow(clippy::too_many_arguments)]
+fn list_refined_groups(
+    lim: &Limits,
+    part: Partition<'_>,
+    width: usize,
+    child: Option<&[EncodedNode]>,
+    flat_groups: &mut Vec<u32>,
+    group_starts: &mut Vec<u32>,
+    remap: &mut MergeRemap,
+    member_groups: &mut Vec<u32>,
+    marked: &mut Option<Marks>,
+) -> Result<(), OperationError> {
     let Partition { class, bits, classes, twinable } = part;
     lim.try_resize(flat_groups, twinable, 0u32)?;
     lim.reserve_exact(group_starts, twinable / 2)?;
@@ -251,7 +269,7 @@ pub(super) fn refine_context_groups(
             list.list::<false>(&mut [], &mut [], &mut Vec::new(), &[]);
         }
     }
-    Ok(Some(true))
+    Ok(())
 }
 
 /// The least entry in the list of wide parent nodes

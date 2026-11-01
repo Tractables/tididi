@@ -903,60 +903,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// each operand holds on the path side.
     fn path_level(&mut self, at: usize) -> Result<(), OperationError> {
         let (u, x, right) = self.layout.path[at];
-        let ops = self.ops;
-        let vtree = ops[0].vtree();
+        let vtree = self.ops[0].vtree();
         let leaf_key = vtree.node(x).is_leaf();
         let lim = self.lim;
-        // Per state and operand, its groups: a key and the set it leads to.
-        let mut groups: Vec<[u32; 2]> = Vec::new();
-        let mut spans: Vec<[u32; 4]> = Vec::new();
-        let mut scratch: Vec<[u32; 2]> = Vec::new();
-        let mut buf: Vec<u32> = Vec::new();
-        {
-            let (here, below) = self.levels.split_at_mut(at + 1);
-            let (here, below) = (&here[at], &mut below[0]);
-            lim.reserve(&mut spans, here.states.len())?;
-            for state in &here.states {
-                let mut span = [0u32; 4];
-                for side in 0..2 {
-                    let start = groups.len();
-                    let nodes = here.sets[side].get(state[side]);
-                    scratch.clear();
-                    for &n in nodes {
-                        for pair in ops[side].level(u).pairs_iter_of_idx(n as usize) {
-                            self.gate.poll(1)?;
-                            let (key, next) = match right {
-                                true => (pair.left.raw(), pair.right.raw()),
-                                false => (pair.right.raw(), pair.left.raw()),
-                            };
-                            // A ⊤ leaf is both of its literals.
-                            if leaf_key && key == ONE_LEAF_IDX.0 {
-                                lim.try_push(&mut scratch, [POS_LEAF_IDX.0, next])?;
-                                lim.try_push(&mut scratch, [NEG_LEAF_IDX.0, next])?;
-                            } else {
-                                lim.try_push(&mut scratch, [key, next])?;
-                            }
-                        }
-                    }
-                    scratch.sort_unstable();
-                    scratch.dedup();
-                    let mut i = 0;
-                    while i < scratch.len() {
-                        let key = scratch[i][0];
-                        buf.clear();
-                        while i < scratch.len() && scratch[i][0] == key {
-                            lim.try_push(&mut buf, scratch[i][1])?;
-                            i += 1;
-                        }
-                        let set = below.sets[side].intern(lim, &buf)?;
-                        lim.try_push(&mut groups, [key, set])?;
-                    }
-                    span[2 * side] = start as u32;
-                    span[2 * side + 1] = (groups.len() - start) as u32;
-                }
-                spans.push(span);
-            }
-        }
+        let (groups, spans) = self.collect_path_groups(at, (u, right, leaf_key))?;
         let range = |span: &[u32; 4], side: usize| {
             let start = span[2 * side] as usize;
             start..start + span[2 * side + 1] as usize
@@ -1026,6 +976,65 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         Ok(())
     }
 
+    /// Group each state at path level `at` by its key-side child for both
+    /// operands, interning each group's path-side node set into `levels[at + 1]`.
+    #[allow(clippy::type_complexity)]
+    fn collect_path_groups(
+        &mut self,
+        at: usize,
+        (u, right, leaf_key): (VtreeIdx, bool, bool),
+    ) -> Result<(Vec<[u32; 2]>, Vec<[u32; 4]>), OperationError> {
+        let (lim, ops) = (self.lim, self.ops);
+        let mut groups: Vec<[u32; 2]> = Vec::new();
+        let mut spans: Vec<[u32; 4]> = Vec::new();
+        let mut scratch: Vec<[u32; 2]> = Vec::new();
+        let mut buf: Vec<u32> = Vec::new();
+        let (here, below) = self.levels.split_at_mut(at + 1);
+        let (here, below) = (&here[at], &mut below[0]);
+        lim.reserve(&mut spans, here.states.len())?;
+        for state in &here.states {
+            let mut span = [0u32; 4];
+            for side in 0..2 {
+                let start = groups.len();
+                let nodes = here.sets[side].get(state[side]);
+                scratch.clear();
+                for &n in nodes {
+                    for pair in ops[side].level(u).pairs_iter_of_idx(n as usize) {
+                        self.gate.poll(1)?;
+                        let (key, next) = match right {
+                            true => (pair.left.raw(), pair.right.raw()),
+                            false => (pair.right.raw(), pair.left.raw()),
+                        };
+                        // A ⊤ leaf is both of its literals.
+                        if leaf_key && key == ONE_LEAF_IDX.0 {
+                            lim.try_push(&mut scratch, [POS_LEAF_IDX.0, next])?;
+                            lim.try_push(&mut scratch, [NEG_LEAF_IDX.0, next])?;
+                        } else {
+                            lim.try_push(&mut scratch, [key, next])?;
+                        }
+                    }
+                }
+                scratch.sort_unstable();
+                scratch.dedup();
+                let mut i = 0;
+                while i < scratch.len() {
+                    let key = scratch[i][0];
+                    buf.clear();
+                    while i < scratch.len() && scratch[i][0] == key {
+                        lim.try_push(&mut buf, scratch[i][1])?;
+                        i += 1;
+                    }
+                    let set = below.sets[side].intern(lim, &buf)?;
+                    lim.try_push(&mut groups, [key, set])?;
+                }
+                span[2 * side] = start as u32;
+                span[2 * side + 1] = (groups.len() - start) as u32;
+            }
+            spans.push(span);
+        }
+        Ok((groups, spans))
+    }
+
     /// The products of path level `at`'s key side `x`: per internal node of
     /// its subtree, children first, every satisfiable pair of a node each
     /// operand reaches from `roots` (its nodes at `x`), with its pairs below.
@@ -1065,22 +1074,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 found.clear();
                 for pair in ops[0].level(t).pairs_iter_of_idx(na as usize) {
                     let (l, r) = (pair.left.raw(), pair.right.raw());
-                    // The products on the left, each with its other node.
-                    lefts.clear();
-                    match cl {
-                        None => {
-                            for lit in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
-                                if CONJOIN_GRID[l as usize][lit as usize] != NO_PRODUCT {
-                                    lim.try_push(&mut lefts, [lit, CONJOIN_GRID[l as usize][lit as usize]])?;
-                                }
-                            }
-                        }
-                        Some(c) => {
-                            for p in below[c].run(l) {
-                                lim.try_push(&mut lefts, [below[c].keys[p][1], p as u32])?;
-                            }
-                        }
-                    }
+                    collect_side_products(lim, below, cl, l, &mut lefts)?;
                     let rights = match cr {
                         None => 3,
                         Some(c) => below[c].run(r).len(),
@@ -1095,70 +1089,11 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         if width == 0 {
                             continue;
                         }
-                        if width <= rights {
-                            for &[_, rb, nb] in &b_pairs[first..first + width] {
-                                self.gate.poll(1)?;
-                                let pr = match cr {
-                                    None => match CONJOIN_GRID[r as usize][rb as usize] {
-                                        NO_PRODUCT => continue,
-                                        label => label,
-                                    },
-                                    Some(c) => match below[c].index.get(&[r, rb]) {
-                                        Some(&p) => p,
-                                        None => continue,
-                                    },
-                                };
-                                lim.try_push(&mut found, [nb, pl, pr])?;
-                            }
-                        } else {
-                            let run = &b_pairs[first..first + width];
-                            let mut meet = |rb: u32, pr: u32| -> Result<(), OperationError> {
-                                self.gate.poll(1)?;
-                                // A pair of `values` belongs to one node at most.
-                                if let Ok(i) = run.binary_search_by_key(&rb, |q| q[1]) {
-                                    lim.try_push(&mut found, [run[i][2], pl, pr])?;
-                                }
-                                Ok(())
-                            };
-                            match cr {
-                                None => {
-                                    for rb in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
-                                        if CONJOIN_GRID[r as usize][rb as usize] != NO_PRODUCT {
-                                            meet(rb, CONJOIN_GRID[r as usize][rb as usize])?;
-                                        }
-                                    }
-                                }
-                                Some(c) => {
-                                    for p in below[c].run(r) {
-                                        meet(below[c].keys[p][1], p as u32)?;
-                                    }
-                                }
-                            }
-                        }
+                        let run = &b_pairs[first..first + width];
+                        join_right_products(lim, &mut self.gate, below, cr, (r, pl, rights), run, &mut found)?;
                     }
                 }
-                if found.is_empty() {
-                    continue;
-                }
-                found.sort_unstable();
-                found.dedup();
-                let first = here.keys.len() as u32;
-                let mut i = 0;
-                while i < found.len() {
-                    let nb = found[i][0];
-                    let start = here.pairs.len();
-                    while i < found.len() && found[i][0] == nb {
-                        lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
-                        i += 1;
-                    }
-                    let id = here.keys.len() as u32;
-                    lim.try_push(&mut here.keys, [na, nb])?;
-                    lim.try_push(&mut here.ranges, [start as u32, (here.pairs.len() - start) as u32])?;
-                    lim.reserve_map(&mut here.index, 1)?;
-                    here.index.insert([na, nb], id);
-                }
-                lim.reserve_map(&mut here.of_a, 1)?;
-                here.of_a.insert(na, [first, here.keys.len() as u32 - first]);
+                record_found_products(lim, here, na, &mut found)?;
             }
             let products = here.keys.len();
             lim.try_resize(&mut here.used, products, false)?;
@@ -1500,6 +1435,119 @@ fn cube(
 #[inline]
 fn child_slot(vtree: &Vtree, slot: &[u32], c: VtreeIdx) -> Option<usize> {
     (!vtree.node(c).is_leaf()).then(|| slot[c.idx()] as usize)
+}
+
+/// Fill `lefts` with the `(other_node, product_id)` pairs of left child `l`
+/// at `cl` (`None` for a leaf).
+fn collect_side_products(
+    lim: &Limits,
+    below: &[Products],
+    cl: Option<usize>,
+    l: u32,
+    lefts: &mut Vec<[u32; 2]>,
+) -> Result<(), OperationError> {
+    lefts.clear();
+    match cl {
+        None => {
+            for lit in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
+                if CONJOIN_GRID[l as usize][lit as usize] != NO_PRODUCT {
+                    lim.try_push(lefts, [lit, CONJOIN_GRID[l as usize][lit as usize]])?;
+                }
+            }
+        }
+        Some(c) => {
+            for p in below[c].run(l) {
+                lim.try_push(lefts, [below[c].keys[p][1], p as u32])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Match `run` of `values` pairs sharing left child `lb` against right products
+/// of `r` at `cr`, appending `[nb, pl, pr]` triples to `found`.
+fn join_right_products(
+    lim: &Limits,
+    gate: &mut PollGate<'_>,
+    below: &[Products],
+    cr: Option<usize>,
+    (r, pl, rights): (u32, u32, usize),
+    run: &[[u32; 3]],
+    found: &mut Vec<[u32; 3]>,
+) -> Result<(), OperationError> {
+    if run.len() <= rights {
+        for &[_, rb, nb] in run {
+            gate.poll(1)?;
+            let pr = match cr {
+                None => match CONJOIN_GRID[r as usize][rb as usize] {
+                    NO_PRODUCT => continue,
+                    label => label,
+                },
+                Some(c) => match below[c].index.get(&[r, rb]) {
+                    Some(&p) => p,
+                    None => continue,
+                },
+            };
+            lim.try_push(found, [nb, pl, pr])?;
+        }
+    } else {
+        let mut meet = |rb: u32, pr: u32| -> Result<(), OperationError> {
+            gate.poll(1)?;
+            // A pair of `values` belongs to one node at most.
+            if let Ok(i) = run.binary_search_by_key(&rb, |q| q[1]) {
+                lim.try_push(found, [run[i][2], pl, pr])?;
+            }
+            Ok(())
+        };
+        match cr {
+            None => {
+                for rb in [ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0] {
+                    if CONJOIN_GRID[r as usize][rb as usize] != NO_PRODUCT {
+                        meet(rb, CONJOIN_GRID[r as usize][rb as usize])?;
+                    }
+                }
+            }
+            Some(c) => {
+                for p in below[c].run(r) {
+                    meet(below[c].keys[p][1], p as u32)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sort, deduplicate, and record the `found` product triples `[nb, pl, pr]` of
+/// node `na` into `here`.
+fn record_found_products(
+    lim: &Limits,
+    here: &mut Products,
+    na: u32,
+    found: &mut Vec<[u32; 3]>,
+) -> Result<(), OperationError> {
+    if found.is_empty() {
+        return Ok(());
+    }
+    found.sort_unstable();
+    found.dedup();
+    let first = here.keys.len() as u32;
+    let mut i = 0;
+    while i < found.len() {
+        let nb = found[i][0];
+        let start = here.pairs.len();
+        while i < found.len() && found[i][0] == nb {
+            lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
+            i += 1;
+        }
+        let id = here.keys.len() as u32;
+        lim.try_push(&mut here.keys, [na, nb])?;
+        lim.try_push(&mut here.ranges, [start as u32, (here.pairs.len() - start) as u32])?;
+        lim.reserve_map(&mut here.index, 1)?;
+        here.index.insert([na, nb], id);
+    }
+    lim.reserve_map(&mut here.of_a, 1)?;
+    here.of_a.insert(na, [first, here.keys.len() as u32 - first]);
+    Ok(())
 }
 
 #[cfg(test)]

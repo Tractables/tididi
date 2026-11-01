@@ -300,26 +300,12 @@ pub(super) fn rebuild_level(
     let TddLevel { nodes, pairs, ranges, .. } = &mut *level;
     let old = pairs.stored().expect("a merged level is stored");
     let old_ranges: &RangeTable = ranges;
-    // A node's range in the old arena, read off its word once.
     let source = |kind: NodeKind| -> std::ops::Range<usize> {
-        match kind {
-            NodeKind::Multi { start, len } => start as usize..(start + len) as usize,
-            NodeKind::MultiRanged(idx) => {
-                let e = &old_ranges[idx as usize];
-                e.start as usize..(e.start + e.len) as usize
-            }
-            NodeKind::Inline(_) => unreachable!("an inline node owns no range"),
-        }
+        source_range(kind, old_ranges)
     };
     // A node of `len` pairs at `start` in the rebuilt arena.
     let mut place = |start: usize, len: usize| -> EncodedNode {
-        if start < PACKED_LIMIT && len < PACKED_LIMIT {
-            return EncodedNode::multi_pair(start as u32, len as u32);
-        }
-        let idx = fresh_ranges.len();
-        debug_assert!(idx < fresh_ranges.capacity(), "ranged entries reserved");
-        fresh_ranges.push(PairRange { start: start as u64, len: len as u64 });
-        EncodedNode::multi_ranged(idx as u32)
+        place_rebuilt_node(start, len, &mut fresh_ranges)
     };
     let nodes = nodes.stored_mut();
     let mut write = 0usize;
@@ -391,8 +377,40 @@ pub(super) fn rebuild_level(
     }
     fresh.extend_from_slice(&old[run]);
     debug_assert!(plan.is_none(), "every concat group met its survivor");
-    // A content-equal redirect keeps its parent pairs, renamed onto its
-    // survivor's new number.
+    redirect_dup_groups(final_remap, bufs);
+    debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
+    nodes.truncate(write);
+    *pairs.stored_mut() = fresh;
+    *ranges = fresh_ranges;
+    level.dead_pairs = 0;
+    level.shrink_arrays();
+}
+
+#[inline(always)]
+fn source_range(kind: NodeKind, old_ranges: &RangeTable) -> std::ops::Range<usize> {
+    match kind {
+        NodeKind::Multi { start, len } => start as usize..(start + len) as usize,
+        NodeKind::MultiRanged(idx) => {
+            let e = &old_ranges[idx as usize];
+            e.start as usize..(e.start + e.len) as usize
+        }
+        NodeKind::Inline(_) => unreachable!("an inline node owns no range"),
+    }
+}
+
+#[inline(always)]
+fn place_rebuilt_node(start: usize, len: usize, fresh_ranges: &mut RangeTable) -> EncodedNode {
+    if start < PACKED_LIMIT && len < PACKED_LIMIT {
+        return EncodedNode::multi_pair(start as u32, len as u32);
+    }
+    let idx = fresh_ranges.len();
+    debug_assert!(idx < fresh_ranges.capacity(), "ranged entries reserved");
+    fresh_ranges.push(PairRange { start: start as u64, len: len as u64 });
+    EncodedNode::multi_ranged(idx as u32)
+}
+
+/// Rename content-equal redirect members onto their survivor's new number.
+fn redirect_dup_groups(final_remap: &mut [NodeIdx], bufs: &MergeBuffers) {
     for p in bufs.group_plans.iter().filter(|p| p.action == GroupAction::DupRedirect) {
         let members = &bufs.sel[p.start as usize..p.end as usize];
         let to = final_remap[members[0] as usize];
@@ -400,12 +418,6 @@ pub(super) fn rebuild_level(
             final_remap[m as usize] = to;
         }
     }
-    debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
-    nodes.truncate(write);
-    *pairs.stored_mut() = fresh;
-    *ranges = fresh_ranges;
-    level.dead_pairs = 0;
-    level.shrink_arrays();
 }
 
 /// What a search that marked the members leaves for [`rebuild_in_order`]:
@@ -481,23 +493,17 @@ pub(super) fn rebuild_in_order(
         }
         // Each member's place in its room is asked of the cache as the
         // member is read, to have arrived when the member is put there.
-        let mut m = merged;
-        let mut h = 0;
-        while m != 0 {
-            let t = base + m.trailing_zeros() as usize;
-            m &= m - 1;
-            // A node no pair names is dropped with its pairs.
-            let g = if unnamed && remapped[t].0 == DISCARDED {
-                NO_GROUP
-            } else {
-                let g = member_groups[ahead];
-                ahead += 1;
-                prefetch_line(fresh.as_ptr().wrapping_add(rooms[g as usize] as usize));
-                g
-            };
-            held[h] = (slots[t], g);
-            h += 1;
-        }
+        let h = stage_held_members(
+            merged,
+            base,
+            unnamed,
+            (slots, remapped),
+            member_groups,
+            &mut ahead,
+            rooms,
+            &fresh,
+            &mut held,
+        );
         let mut live = !word & valid;
         loop {
             // A run of the nodes kept that are no group's survivor and
@@ -569,43 +575,100 @@ pub(super) fn rebuild_in_order(
             slots[write] = rebuilt;
             write += 1;
         }
-        for &(node, g) in &held[..h] {
-            if g == NO_GROUP {
-                continue;
-            }
-            let room = &mut rooms[g as usize];
-            let at = *room as usize;
-            *room += match node.kind() {
-                NodeKind::Inline(pair) => {
-                    fresh[at] = pair;
-                    1
-                }
-                NodeKind::Multi { start, len } => put(&mut fresh[at..], &old[start as usize..(start + len) as usize]) as u32,
-                NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
-            };
-        }
+        put_held_members(&mut fresh, old, rooms, &held[..h]);
     }
     fresh.extend_from_slice(&old[run]);
     debug_assert_eq!(next, usize::MAX, "every group met its survivor");
     if cfg!(debug_assertions) {
-        debug_assert_eq!(ahead, member_groups.len(), "every member met");
-        for (g, &s) in group_starts.iter().enumerate() {
-            let keep = flat_groups[s as usize];
-            let NodeKind::Multi { start, len } = nodes[final_remap[keep as usize].idx()].kind() else {
-                unreachable!("a group holds two pairs or more");
-            };
-            let room = start as usize..(start + len) as usize;
-            assert_eq!(rooms[g] as usize, room.end, "every member put its pairs");
-            if check_disjoint {
-                assert_disjoint_pairs(&fresh[room]);
-            }
-        }
+        assert_in_order_groups(ahead, member_groups, group_starts, flat_groups, nodes, final_remap, rooms, &fresh, check_disjoint);
     }
     debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
     nodes.truncate(write);
     *pairs.stored_mut() = fresh;
     level.dead_pairs = 0;
     level.shrink_arrays();
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn stage_held_members(
+    mut merged: u64,
+    base: usize,
+    unnamed: bool,
+    (slots, remapped): (&[EncodedNode], &[NodeIdx]),
+    member_groups: &[u32],
+    ahead: &mut usize,
+    rooms: &[u32],
+    fresh: &[ChildPair],
+    held: &mut [(EncodedNode, u32); 64],
+) -> usize {
+    let mut h = 0;
+    while merged != 0 {
+        let t = base + merged.trailing_zeros() as usize;
+        merged &= merged - 1;
+        // A node no pair names is dropped with its pairs.
+        let g = if unnamed && remapped[t].0 == DISCARDED {
+            NO_GROUP
+        } else {
+            let g = member_groups[*ahead];
+            *ahead += 1;
+            prefetch_line(fresh.as_ptr().wrapping_add(rooms[g as usize] as usize));
+            g
+        };
+        held[h] = (slots[t], g);
+        h += 1;
+    }
+    h
+}
+
+#[inline(always)]
+fn put_held_members(
+    fresh: &mut [ChildPair],
+    old: &[ChildPair],
+    rooms: &mut [u32],
+    held: &[(EncodedNode, u32)],
+) {
+    for &(node, g) in held {
+        if g == NO_GROUP {
+            continue;
+        }
+        let room = &mut rooms[g as usize];
+        let at = *room as usize;
+        *room += match node.kind() {
+            NodeKind::Inline(pair) => {
+                fresh[at] = pair;
+                1
+            }
+            NodeKind::Multi { start, len } => put(&mut fresh[at..], &old[start as usize..(start + len) as usize]) as u32,
+            NodeKind::MultiRanged(_) => unreachable!("a level rebuilt in node order has no ranged node"),
+        };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_in_order_groups(
+    ahead: usize,
+    member_groups: &[u32],
+    group_starts: &[u32],
+    flat_groups: &[u32],
+    nodes: &[EncodedNode],
+    final_remap: &[NodeIdx],
+    rooms: &[u32],
+    fresh: &[ChildPair],
+    check_disjoint: bool,
+) {
+    debug_assert_eq!(ahead, member_groups.len(), "every member met");
+    for (g, &s) in group_starts.iter().enumerate() {
+        let keep = flat_groups[s as usize];
+        let NodeKind::Multi { start, len } = nodes[final_remap[keep as usize].idx()].kind() else {
+            unreachable!("a group holds two pairs or more");
+        };
+        let room = start as usize..(start + len) as usize;
+        assert_eq!(rooms[g] as usize, room.end, "every member put its pairs");
+        if check_disjoint {
+            assert_disjoint_pairs(&fresh[room]);
+        }
+    }
 }
 
 /// Point the output at its survivor if it is at `t1`, then run fork-down

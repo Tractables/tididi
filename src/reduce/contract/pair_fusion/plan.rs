@@ -330,8 +330,25 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     if !repeated {
         return Ok(());
     }
-    let touched = &touched[..groups];
-    let group_ends = &mut group_ends[..groups];
+    emit_repeated_scatter_groups::<D>(lim, tdd, (v, side), (n, node), groups, out, sc)
+}
+
+/// Lay out groups of two or more occurrences in slot order, scatter their
+/// marginal refs, and emit a [`PlanEntry`] per repeated group in
+/// first-occurrence order.
+fn emit_repeated_scatter_groups<D: SlotValues>(
+    lim: &Limits,
+    tdd: &Tdd,
+    (v, side): (VtreeIdx, ChildSide),
+    (n, node): (usize, &[ChildPair]),
+    groups: usize,
+    out: &mut Vec<PlanEntry<D::Value>>,
+    sc: &mut PFusionScratch,
+) -> Result<(), OperationError> {
+    let pairs = node.len();
+    let touched = &sc.touched[..groups];
+    let group_ends = &mut sc.group_ends[..groups];
+    let pair_slots = &sc.pair_slots[..pairs];
     // Lay the groups of two or more out in slot order: a slot's entry
     // becomes its group's write cursor, and after the second pass its end.
     let mut total = 0u32;

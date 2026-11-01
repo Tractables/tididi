@@ -142,13 +142,21 @@ fn col(eng: &Engine, values: Vec<Count>) -> CountVec {
     cv
 }
 
+fn fold_structural(pairs: &[crate::diagram::ChildPair], left: &CountVec, right: &CountVec) -> Count {
+    IntFold::fold(
+        pairs.iter().copied(),
+        |k| left.get(ChildDecoder::structural().node(k).idx()),
+        |k| right.get(ChildDecoder::structural().node(k).idx()),
+    )
+}
+
 #[test]
 fn int_fold_stays_fast_within_u128() {
     let eng = Engine::new();
     let left = col(&eng, vec![Count::Fast(3), Count::Fast(5)]);
     let right = col(&eng, vec![Count::Fast(7), Count::Fast(11)]);
     let pairs = [pair(0, 0), pair(1, 1)];
-    match IntFold::fold(pairs.iter().copied(), |k| left.get(ChildDecoder::structural().node(k).idx()), |k| right.get(ChildDecoder::structural().node(k).idx())) {
+    match fold_structural(&pairs, &left, &right) {
         Count::Fast(v) => assert_eq!(v, 3 * 7 + 5 * 11),
         Count::Big(b) => panic!("spurious overflow: {b}"),
     }
@@ -178,7 +186,7 @@ fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
     let expected = BigUint::from(huge) * BigUint::from(huge)
         + &big_child * BigUint::from(5u32)
         + BigUint::from(77u32);
-    match IntFold::fold(pairs.iter().copied(), |k| left.get(ChildDecoder::structural().node(k).idx()), |k| right.get(ChildDecoder::structural().node(k).idx())) {
+    match fold_structural(&pairs, &left, &right) {
         Count::Big(b) => assert_eq!(b, expected),
         Count::Fast(v) => panic!("expected overflow → Big, got Fast({v})"),
     }
@@ -193,7 +201,7 @@ fn int_fold_exact_max_total_promotes_to_big() {
     let left = col(&eng, vec![Count::Fast((1u128 << 64) + 1)]);
     let right = col(&eng, vec![Count::Fast((1u128 << 64) - 1)]);
     let pairs = [pair(0, 0)];
-    match IntFold::fold(pairs.iter().copied(), |k| left.get(ChildDecoder::structural().node(k).idx()), |k| right.get(ChildDecoder::structural().node(k).idx())) {
+    match fold_structural(&pairs, &left, &right) {
         Count::Big(b) => assert_eq!(b, BigUint::from(u128::MAX)),
         Count::Fast(v) => panic!("exact-max total must promote to Big, got Fast({v})"),
     }

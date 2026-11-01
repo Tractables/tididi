@@ -66,20 +66,30 @@ fn check(f: &Tdd, num_vars: u32, truth: &[bool], columns: &[Vec<VarId>], rng: &m
             true => f.model_columns(&refs).unwrap(),
             false => table.clone(),
         };
-        let mut batched: Vec<Vec<u32>> = vec![Vec::new(); columns.len()];
-        let mut at = 0u64;
-        while at < table.rows() {
-            let end = (at + 1 + rng.below(7)).min(table.rows());
-            let mut bufs: Vec<Vec<u32>> = vec![vec![u32::MAX; (end - at) as usize]; columns.len()];
-            let mut out: Vec<&mut [u32]> = bufs.iter_mut().map(Vec::as_mut_slice).collect();
-            table.write(at..end, &mut out);
-            for (b, part) in batched.iter_mut().zip(bufs) {
-                b.extend(part);
-            }
-            at = end;
-        }
+        let batched = read_in_random_batches(&mut table, columns.len(), rng, 7);
         assert_eq!(batched, whole, "{what}: batches differ from the whole table (fresh {fresh})");
     }
+}
+
+fn read_in_random_batches(
+    table: &mut crate::query::ModelColumns,
+    ncols: usize,
+    rng: &mut Lcg,
+    max_step: u64,
+) -> Vec<Vec<u32>> {
+    let mut batched: Vec<Vec<u32>> = vec![Vec::new(); ncols];
+    let mut at = 0u64;
+    while at < table.rows() {
+        let end = (at + 1 + rng.below(max_step)).min(table.rows());
+        let mut bufs: Vec<Vec<u32>> = vec![vec![u32::MAX; (end - at) as usize]; ncols];
+        let mut out: Vec<&mut [u32]> = bufs.iter_mut().map(Vec::as_mut_slice).collect();
+        table.write(at..end, &mut out);
+        for (b, part) in batched.iter_mut().zip(bufs) {
+            b.extend(part);
+        }
+        at = end;
+    }
+    batched
 }
 
 #[test]
@@ -327,17 +337,7 @@ fn ascending_is_exact_on_lexicographic_layouts() {
                     assert!(!sorted || table.ascending(), "{what}, {form}: sorting pairs undid the order");
                     // The batches still tile the renumbered table.
                     check(g, num_vars, &truth, &columns, &mut rng, &format!("{what}, {form}"));
-                    let mut batched: Vec<Vec<u32>> = vec![Vec::new(); columns.len()];
-                    let mut at = 0u64;
-                    while at < table.rows() {
-                        let end = (at + 1 + rng.below(5)).min(table.rows());
-                        let mut bufs: Vec<Vec<u32>> = vec![vec![u32::MAX; (end - at) as usize]; columns.len()];
-                        table.write(at..end, &mut bufs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>());
-                        for (b, part) in batched.iter_mut().zip(bufs) {
-                            b.extend(part);
-                        }
-                        at = end;
-                    }
+                    let batched = read_in_random_batches(&mut table, columns.len(), &mut rng, 5);
                     assert_eq!(batched, whole, "{what}, {form}: batches after sorting pairs");
                     cases += 1;
                     before += usize::from(sorted);
