@@ -971,8 +971,7 @@ impl PairSink for CollectSink<'_> {
         lc: u32,
         rc: u32,
     ) -> Result<(), OperationError> {
-        let lim = eng.limits();
-        lim.try_push(self.out, ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))
+        self.pair(eng, lc, rc)
     }
 
     #[inline(always)]

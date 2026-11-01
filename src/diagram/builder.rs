@@ -203,6 +203,47 @@ impl TddBuilder {
         &self.levels[t.idx()]
     }
 
+    #[inline]
+    fn check_push_width(&self, eng: &Engine, t: VtreeIdx) -> Result<(), OperationError> {
+        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
+            return Err(OperationError::IndexOverflow);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn update_intern_cache(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        cached: Option<InternTable>,
+        pairs: &[ChildPair],
+        index: NodeIdx,
+    ) -> Result<(), OperationError> {
+        if let Some(mut table) = cached {
+            table.insert_on(eng.limits(), &self.levels[t.idx()], pairs, index)?;
+            self.interned[t.idx()] = Some(table);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn update_intern_cache_read(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        cached: Option<InternTable>,
+        index: NodeIdx,
+    ) -> Result<(), OperationError> {
+        if let Some(mut table) = cached {
+            let level = &self.levels[t.idx()];
+            let mut buf = Vec::new();
+            table.insert_on(eng.limits(), level, level.pairs_read(index.idx(), &mut buf), index)?;
+            self.interned[t.idx()] = Some(table);
+        }
+        Ok(())
+    }
+
     /// Append a node with these pairs to level `t`, and return its index.
     ///
     /// Build bottom-up: both sides of a pair name a child node that already
@@ -225,17 +266,12 @@ impl TddBuilder {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
         }
-        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
-            return Err(OperationError::IndexOverflow);
-        }
+        self.check_push_width(eng, t)?;
         // Keep the cache only if both the append and its index update succeed.
         // Either can refuse after changing storage; the next intern then rebuilds.
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node(eng.limits(), pairs)?;
-        if let Some(mut table) = cached {
-            table.insert_on(eng.limits(), &self.levels[t.idx()], pairs, index)?;
-            self.interned[t.idx()] = Some(table);
-        }
+        self.update_intern_cache(eng, t, cached, pairs, index)?;
         Ok(index)
     }
 
@@ -254,21 +290,15 @@ impl TddBuilder {
         len: usize,
         pairs: impl Iterator<Item = ChildPair>,
     ) -> Result<NodeIdx, OperationError> {
-        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
-            return Err(OperationError::IndexOverflow);
-        }
+        self.check_push_width(eng, t)?;
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node_from(eng.limits(), len, pairs)?;
-        let level = &self.levels[t.idx()];
-        let mut buf = Vec::new();
-        let written = level.pairs_read(index.idx(), &mut buf);
         if cfg!(debug_assertions) {
+            let mut buf = Vec::new();
+            let written = self.levels[t.idx()].pairs_read(index.idx(), &mut buf);
             debug_assert_pairs(&self.vtree, &self.levels, t, written);
         }
-        if let Some(mut table) = cached {
-            table.insert_on(eng.limits(), level, written, index)?;
-            self.interned[t.idx()] = Some(table);
-        }
+        self.update_intern_cache_read(eng, t, cached, index)?;
         Ok(index)
     }
 
@@ -288,17 +318,10 @@ impl TddBuilder {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, &pairs);
         }
-        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
-            return Err(OperationError::IndexOverflow);
-        }
+        self.check_push_width(eng, t)?;
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node_owned(eng.limits(), pairs)?;
-        if let Some(mut table) = cached {
-            let level = &self.levels[t.idx()];
-            let mut buf = Vec::new();
-            table.insert_on(eng.limits(), level, level.pairs_read(index.idx(), &mut buf), index)?;
-            self.interned[t.idx()] = Some(table);
-        }
+        self.update_intern_cache_read(eng, t, cached, index)?;
         Ok(index)
     }
 

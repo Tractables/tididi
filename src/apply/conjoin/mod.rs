@@ -869,11 +869,7 @@ impl crate::Engine {
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.
         let vtree = Arc::clone(f.vtree());
-        let mut mask = Vec::new();
-        self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
-        for &t in targets {
-            mask[t.idx()] = !vtree.node(t).is_leaf();
-        }
+        let mask = target_mask(self, &vtree, targets, true)?;
         // One internal target, on an unweighted conjunction: where each
         // operand has one node at the target's parent, that level may sum
         // the target out as it is built (`ConjoinMode::Sum`).
@@ -966,14 +962,10 @@ impl crate::Engine {
         }
         crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
         let vtree = Arc::clone(f.vtree());
-        let mut mask = Vec::new();
-        self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
         // A target at the root sums the whole conjunction into its count,
         // which is what is returned anyway: it is dropped, so the root can be
         // counted instead of built.
-        for &t in targets {
-            mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
-        }
+        let mask = target_mask(self, &vtree, targets, false)?;
         // With no target left the sweep is given none, so no route reads a
         // set mask that names nothing as one that sums levels out.
         let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
@@ -997,6 +989,22 @@ impl crate::Engine {
             Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),
         }
     }
+}
+
+/// Membership mask of internal vtree nodes in `targets`, optionally including
+/// the vtree root.
+fn target_mask(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    targets: &[VtreeIdx],
+    include_root: bool,
+) -> Result<Vec<bool>, OperationError> {
+    let mut mask = Vec::new();
+    eng.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
+    for &t in targets {
+        mask[t.idx()] = !vtree.node(t).is_leaf() && (include_root || t != vtree.root());
+    }
+    Ok(mask)
 }
 
 #[cfg(test)]

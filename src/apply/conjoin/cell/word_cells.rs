@@ -674,6 +674,18 @@ fn anded(w: &WordScratch, words: usize, kills: (bool, bool), slots: (u32, u32), 
     }
 }
 
+/// Summary word `k` for an f pair whose vectors are in `slots`.
+#[inline(always)]
+fn summary_word(w: &WordScratch, sum_words: usize, kills: (bool, bool), slots: (u32, u32), k: usize) -> u64 {
+    let at = |v: &[u64], s: u32| v[s as usize * sum_words + k];
+    match kills {
+        (true, true) => at(&w.summaries.left, slots.0) & at(&w.summaries.right, slots.1),
+        (true, false) => at(&w.summaries.left, slots.0),
+        (false, true) => at(&w.summaries.right, slots.1),
+        (false, false) => unreachable!("a level of two complete sides kills no candidate"),
+    }
+}
+
 /// The words of the live candidates of an f pair whose vectors are in
 /// `slots` that are not zero, each with its index, in order: those its
 /// vectors' summaries leave.
@@ -685,14 +697,8 @@ fn live_words(
     slots: (u32, u32),
     mut each: impl FnMut(usize, u64),
 ) {
-    let at = |v: &[u64], s: u32, k: usize| v[s as usize * sum_words + k];
     for k in 0..sum_words {
-        let mut sum = match kills {
-            (true, true) => at(&w.summaries.left, slots.0, k) & at(&w.summaries.right, slots.1, k),
-            (true, false) => at(&w.summaries.left, slots.0, k),
-            (false, true) => at(&w.summaries.right, slots.1, k),
-            (false, false) => unreachable!("a level of two complete sides kills no candidate"),
-        };
+        let mut sum = summary_word(w, sum_words, kills, slots, k);
         while sum != 0 {
             let word = k * 64 + sum.trailing_zeros() as usize;
             sum &= sum - 1;
@@ -731,14 +737,8 @@ fn live_words_between(
         }
         return;
     }
-    let at = |v: &[u64], s: u32, k: usize| v[s as usize * sum_words + k];
     for k in w0 / 64..=w1 / 64 {
-        let mut sum = match kills {
-            (true, true) => at(&w.summaries.left, slots.0, k) & at(&w.summaries.right, slots.1, k),
-            (true, false) => at(&w.summaries.left, slots.0, k),
-            (false, true) => at(&w.summaries.right, slots.1, k),
-            (false, false) => unreachable!("a level of two complete sides kills no candidate"),
-        };
+        let mut sum = summary_word(w, sum_words, kills, slots, k);
         sum &= span(if k == w0 / 64 { w0 % 64 } else { 0 }, if k == w1 / 64 { w1 % 64 + 1 } else { 64 });
         while sum != 0 {
             let word = k * 64 + sum.trailing_zeros() as usize;
@@ -957,8 +957,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         }
         let base = vectors.len();
         slots[r as usize] = (base / words) as u32;
-        lim.reserve(vectors, words)?;
-        vectors.resize(base + words, 0);
+        lim.try_resize(vectors, base + words, 0)?;
         let v = &mut vectors[base..];
         let row = lookup.row(r);
         for (k, &c) in named.iter().enumerate() {
@@ -969,8 +968,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
             }
         }
         let sum_base = summaries.len();
-        lim.reserve(summaries, words.div_ceil(64))?;
-        summaries.resize(sum_base + words.div_ceil(64), 0);
+        lim.try_resize(summaries, sum_base + words.div_ceil(64), 0)?;
         for (word, &x) in v.iter().enumerate() {
             summaries[sum_base + word / 64] |= u64::from(x != 0) << (word % 64);
         }

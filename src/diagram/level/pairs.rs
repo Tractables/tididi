@@ -247,27 +247,12 @@ impl TddLevel {
     /// out of line ([`NodeChunks`]); `f` is called in a loop here either way.
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
-        match self.stored() {
-            Some(stored) => {
-                for (i, node) in stored.nodes().iter().enumerate() {
-                    for &pair in stored.of(node) {
-                        f(i, pair);
-                    }
-                }
+        let _: Result<(), std::convert::Infallible> = self.try_for_each_node(0..self.nodes().len(), |i, pairs| {
+            for &pair in pairs {
+                f(i, pair);
             }
-            None => {
-                let d = self.described();
-                let k = d.pairs_per_node();
-                let (mut chunks, mut buf) = (NodeChunks::new(d, 0..d.nodes()), Vec::new());
-                while let Some(start) = chunks.fill(&mut buf) {
-                    for (j, pairs) in buf.chunks_exact(k).enumerate() {
-                        for &pair in pairs {
-                            f(start + j, pair);
-                        }
-                    }
-                }
-            }
-        }
+            Ok(())
+        });
     }
 
     /// Calls `f(i, pairs)` with every node `i` of `range` and its pairs, in

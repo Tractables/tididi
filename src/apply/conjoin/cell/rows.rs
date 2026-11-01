@@ -1252,53 +1252,42 @@ pub(crate) fn run_level_rows_complete(
                 &complete(&sides.left), &complete(&sides.right),
                 &mut EmitBesideOne { sink: ReservedEmitSink { level, charged, inline: &mut inline }, g: [g] },
             ),
-            None => {
-                let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
-                let (left, right) = (complete(&sides.left), complete(&sides.right));
-                match &lone {
-                    Some(lone) => run_level_rows::<true, _, _, _>(
-                        eng, rows, scratch, &left, &right,
-                        &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
-                    ),
-                    None => run_level_rows::<true, _, _, _>(
-                        eng, rows, scratch, &left, &right,
-                        &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
-                    ),
-                }
-            }
+            None => run_complete_or_lone::<true, _, _>(
+                eng, rows, scratch,
+                (&complete(&sides.left), &complete(&sides.right)),
+                ReservedEmitSink { level, charged, inline: &mut inline },
+            ),
         },
-        PlainLookups::CompleteLeft { charged } => {
-            let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
-            let (left, right) = (complete(&sides.left), grid(&sides.right));
-            match &lone {
-                Some(lone) => run_level_rows::<false, _, _, _>(
-                    eng, rows, scratch, &left, &right,
-                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
-                ),
-                None => run_level_rows::<false, _, _, _>(
-                    eng, rows, scratch, &left, &right,
-                    &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
-                ),
-            }
-        }
-        PlainLookups::CompleteRight { charged } => {
-            let lone = lone_columns(eng, rows, &mut *scratch.g_pairs)?;
-            let (left, right) = (grid(&sides.left), complete(&sides.right));
-            match &lone {
-                Some(lone) => run_level_rows::<false, _, _, _>(
-                    eng, rows, scratch, &left, &right,
-                    &mut EmitLoneColumns { sink: ReservedEmitSink { level, charged, inline: &mut inline }, lone },
-                ),
-                None => run_level_rows::<false, _, _, _>(
-                    eng, rows, scratch, &left, &right,
-                    &mut Emit { sink: ReservedEmitSink { level, charged, inline: &mut inline } },
-                ),
-            }
-        }
+        PlainLookups::CompleteLeft { charged } => run_complete_or_lone::<false, _, _>(
+            eng, rows, scratch,
+            (&complete(&sides.left), &grid(&sides.right)),
+            ReservedEmitSink { level, charged, inline: &mut inline },
+        ),
+        PlainLookups::CompleteRight { charged } => run_complete_or_lone::<false, _, _>(
+            eng, rows, scratch,
+            (&grid(&sides.left), &complete(&sides.right)),
+            ReservedEmitSink { level, charged, inline: &mut inline },
+        ),
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
     }?;
     level.leave_written_pairs(inline);
     Ok(())
+}
+
+/// [`run_level_rows_complete`] through [`EmitLoneColumns`] when every g node
+/// has one pair, or [`Emit`] otherwise.
+#[inline(always)]
+fn run_complete_or_lone<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    (left, right): (&L, &R),
+    sink: ReservedEmitSink<'_>,
+) -> Result<(), OperationError> {
+    match &lone_columns(eng, rows, &mut *scratch.g_pairs)? {
+        Some(lone) => run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut EmitLoneColumns { sink, lone }),
+        None => run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink }),
+    }
 }
 
 /// Each column's g pair, where every column of the level holds one: the
@@ -1422,13 +1411,7 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     let units = K as u64;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     for (j, q) in lone.iter().enumerate() {
-        if units >= due {
-            gate.add_short(due_at - due);
-            gate.poll(units)?;
-            (due_at, due) = (gate.due_in(), gate.due_in());
-        } else {
-            due -= units;
-        }
+        super::rows_stream::charge(gate, &mut due_at, &mut due, units)?;
         let (c, d) = (q.left.0, q.right.0);
         // An f pair's product with the column's pair: `None` where a side
         // has none.
@@ -1507,14 +1490,7 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
         if (k > 1 && m > 1) || (k * m > 1 && !out.fits(k * m)) {
             break;
         }
-        let units = (k * m) as u64;
-        if units >= due {
-            gate.add_short(due_at - due);
-            gate.poll(units)?;
-            (due_at, due) = (gate.due_in(), gate.due_in());
-        } else {
-            due -= units;
-        }
+        super::rows_stream::charge(gate, &mut due_at, &mut due, (k * m) as u64)?;
         if k * m == 1 {
             let ((l, r), q) = (rows[0], &g_pairs[0]);
             let lc = left.get_in_row(node_idx, l, q.left.0);

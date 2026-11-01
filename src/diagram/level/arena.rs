@@ -456,6 +456,17 @@ impl TddLevel {
         self.push_node(&Untracked, input_pairs).expect("out of memory pushing a node")
     }
 
+    /// Ensure `self.nodes` has capacity for one more node and return its index.
+    #[inline]
+    fn ensure_node_slot<G: ArenaGrowth>(&mut self, growth: &G) -> Result<NodeIdx, OperationError> {
+        let nodes = self.nodes.stored_mut();
+        let idx = NodeIdx(nodes.len() as u32);
+        if nodes.len() == nodes.capacity() {
+            growth.grow(nodes, 1)?;
+        }
+        Ok(idx)
+    }
+
     /// Append a node with these pairs and return its index, taking the arena
     /// growth it needs from `growth`: the engine's [`Limits`] inside an
     /// operation, [`Untracked`] outside one. A single pair is stored inline;
@@ -473,11 +484,7 @@ impl TddLevel {
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
         self.store_if_implicit(growth)?;
-        let nodes = self.nodes.stored_mut();
-        let idx = NodeIdx(nodes.len() as u32);
-        if nodes.len() == nodes.capacity() {
-            growth.grow(nodes, 1)?;
-        }
+        let idx = self.ensure_node_slot(growth)?;
         let node = if let [pair] = pairs {
             EncodedNode::inline(*pair)
         } else {
@@ -517,11 +524,7 @@ impl TddLevel {
             debug_assert!(pairs.next().is_none(), "one pair");
             return self.push_node(growth, &[pair]);
         }
-        let nodes = self.nodes.stored_mut();
-        let idx = NodeIdx(nodes.len() as u32);
-        if nodes.len() == nodes.capacity() {
-            growth.grow(nodes, 1)?;
-        }
+        let idx = self.ensure_node_slot(growth)?;
         let arena = self.pairs.stored_mut();
         let start = arena.len();
         if arena.capacity() - start < len {
@@ -555,11 +558,7 @@ impl TddLevel {
             lim.discard(pairs);
             return pushed;
         }
-        let nodes = self.nodes.stored_mut();
-        let idx = NodeIdx(nodes.len() as u32);
-        if nodes.len() == nodes.capacity() {
-            lim.grow(nodes, 1)?;
-        }
+        let idx = self.ensure_node_slot(lim)?;
         let len = pairs.len();
         drop(std::mem::replace(self.pairs.stored_mut(), pairs));
         let node = match self.try_encode_multi(lim, 0, len) {

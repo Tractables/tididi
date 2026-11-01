@@ -357,8 +357,7 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(env, rows.children, counts);
-            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
+            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
@@ -368,15 +367,27 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
                 let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
                 return super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink);
             }
-            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
+            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
         }
         StreamLevelState::Int(counts) => {
             let mut st = attach_children::<IntFold>(env, rows.children, counts);
-            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
+            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
         }
     }
+}
+
+/// [`stream_words`] through [`FoldSink`].
+#[inline(always)]
+fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
+    (words, f_rows): (&mut WordScratch, Sides<usize>),
+    (left, right): (&L, &R),
+    st: &mut StreamState<'_, F>,
+    cell_pairs: &mut Vec<ChildPair>,
+) -> Result<(), OperationError> {
+    let sink = FoldSink { fold: st, cell: CollectSink { out: cell_pairs } };
+    super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
 }
 
 /// Collapse at the source: each live cell's pairs gathered into a reused
@@ -1018,16 +1029,13 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     let (ls, rs) = (kl + spares, kr + spares);
     let (wl, wr) = ((sl + 1) * ls, (sr + 1) * rs);
     let nf = wl + 3 * ls + wr + 3 * rs + ones + aw + LANES * (ml + mr) + gw;
-    lim.reserve(floats, nf)?;
-    floats.resize(nf, 0.0);
+    lim.try_resize(floats, nf, 0.0)?;
     let nd = wl + wr + ones + aw + ml + mr + gw;
-    lim.reserve(flags, nd)?;
-    flags.resize(nd, 0);
+    lim.try_resize(flags, nd, 0)?;
     let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
     let ns = nl + nr;
     slots.clear();
-    lim.reserve(slots, ns)?;
-    slots.resize(ns, NO_SLOT);
+    lim.try_resize(slots, ns, NO_SLOT)?;
     let (lv, rest) = floats.split_at_mut(wl);
     let (lst, rest) = rest.split_at_mut(3 * ls);
     let (rv, rest) = rest.split_at_mut(wr);
@@ -1078,8 +1086,7 @@ fn side_reads(
     if cl || cr {
         let (nl, nr) = (if cl { reads.left.rows } else { 0 }, if cr { reads.right.rows } else { 0 });
         slots.clear();
-        lim.reserve(slots, nl + nr)?;
-        slots.resize(nl + nr, 0);
+        lim.try_resize(slots, nl + nr, 0)?;
         let (ml, mr) = slots.split_at_mut(nl);
         each_f_pair(rows, scratch, |p| {
             if cl {
@@ -1521,13 +1528,62 @@ const SUM_COLUMNS: usize = 128;
 /// Charge `units` to `gate` as one poll would, counting down `due` from
 /// `due_at`, the gate's `due_in` when the count began.
 #[inline(always)]
-fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, units: u64) -> Result<(), OperationError> {
+pub(super) fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, units: u64) -> Result<(), OperationError> {
     if units >= *due {
         gate.add_short(*due_at - *due);
         gate.poll(units)?;
         (*due_at, *due) = (gate.due_in(), gate.due_in());
     } else {
         *due -= units;
+    }
+    Ok(())
+}
+
+/// Push a live cell's accumulated sum `acc` when exact, or refold its
+/// pairs through the cell sink when a checked sum overflowed or was inexact.
+#[inline(always)]
+fn finish_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    eng: &Engine,
+    (node_idx, pos): (&mut [u32], usize),
+    (acc, live, exact): (f64, bool, bool),
+    (f_pairs, g): (&[ChildPair], &[ChildPair]),
+    (left, right): (&L, &R),
+) -> Result<(), OperationError> {
+    if !live {
+        return Ok(());
+    }
+    if !S::CHECKED || (exact && acc < f64::INFINITY) {
+        return sum.push(eng, node_idx, pos, acc);
+    }
+    refold(sum, eng, (node_idx, pos), (f_pairs, g), (left, right))
+}
+
+/// Append the cell sums `(sums, flags)` for columns starting at `row_base`
+/// against one-pair columns `block`.
+#[inline(always)]
+fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    eng: &Engine,
+    (node_idx, row_base): (&mut [u32], usize),
+    (f_pairs, block): (&[ChildPair], &[ChildPair]),
+    (sums, flags): (&[f64], &[u8]),
+    (left, right): (&L, &R),
+    (gate, due_at, due): (&mut crate::limits::PollGate<'_>, &mut u64, &mut u64),
+) -> Result<(), OperationError> {
+    let k = f_pairs.len() as u64;
+    for (x, q) in block.iter().enumerate() {
+        if q.left.0 == DEAD_COLUMN {
+            node_idx[row_base + x] = NO_PRODUCT;
+            continue;
+        }
+        charge(gate, due_at, due, k)?;
+        let (acc, fl) = (sums[x], flags[x]);
+        finish_cell(
+            sum, eng, (node_idx, row_base + x),
+            (acc, fl & LIVE != 0, fl & INEXACT == 0),
+            (f_pairs, std::slice::from_ref(q)), (left, right),
+        )?;
     }
     Ok(())
 }
@@ -1634,14 +1690,7 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             live = true;
             exact &= ok;
         }
-        if !live {
-            continue;
-        }
-        if !S::CHECKED || (exact && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
+        finish_cell(sum, eng, (node_idx, row_base + j), (acc, live, exact), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1687,14 +1736,8 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
                 flags |= INEXACT;
             }
         }
-        if TRACK && flags & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (flags & INEXACT == 0 && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
+        let live = !TRACK || flags & LIVE != 0;
+        finish_cell(sum, eng, (node_idx, row_base + j), (acc, live, flags & INEXACT == 0), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1875,14 +1918,7 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
             sums[(k - 1) * width + j] = acc[k];
             flags[(k - 1) * width + j] = (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
         }
-        if live & 1 == 0 {
-            continue;
-        }
-        if !S::CHECKED || (bad & 1 == 0 && acc[0] < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc[0])?;
-            continue;
-        }
-        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
+        finish_cell(sum, eng, (node_idx, row_base + j), (acc[0], live & 1 != 0, bad & 1 == 0), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1910,14 +1946,7 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
         charge(gate, &mut due_at, &mut due, g.len() as u64)?;
         let (acc, fl) = (sums[j], flags[j]);
-        if fl & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (fl & INEXACT == 0 && acc < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, acc)?;
-            continue;
-        }
-        refold(sum, eng, (node_idx, row_base + j), (f_pairs, g), (left, right))?;
+        finish_cell(sum, eng, (node_idx, row_base + j), (acc, fl & LIVE != 0, fl & INEXACT == 0), (f_pairs, g), (left, right))?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1934,7 +1963,6 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
 ) -> Result<usize, OperationError> {
     let WholeRow { row_base, f_pairs, ctx, node_idx, left, right, gate, .. } = row;
     let width = ctx.right_width;
-    let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut sums = [0.0f64; SUM_COLUMNS];
@@ -1948,22 +1976,10 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         for p1 in f_pairs {
             add_grid(sum, (&mut sums[..n], &mut flags[..n]), block, node_idx, (left, right), (p1.left.0, p1.right.0));
         }
-        for (x, q) in block.iter().enumerate() {
-            let j = j0 + x;
-            if q.left.0 == DEAD_COLUMN {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, k as u64)?;
-            if flags[x] & LIVE == 0 {
-                continue;
-            }
-            if !S::CHECKED || (flags[x] & INEXACT == 0 && sums[x] < f64::INFINITY) {
-                sum.push(eng, node_idx, row_base + j, sums[x])?;
-                continue;
-            }
-            refold(sum, eng, (node_idx, row_base + j), (f_pairs, std::slice::from_ref(q)), (left, right))?;
-        }
+        flush_ones_block(
+            sum, eng, (node_idx, row_base + j0), (f_pairs, block),
+            (&sums[..n], &flags[..n]), (left, right), (gate, &mut due_at, &mut due),
+        )?;
         j0 += n;
     }
     gate.add_short(due_at - due);
@@ -2036,21 +2052,10 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
     }
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    for (j, q) in ones.iter().enumerate() {
-        if q.left.0 == DEAD_COLUMN {
-            node_idx[row_base + j] = NO_PRODUCT;
-            continue;
-        }
-        charge(gate, &mut due_at, &mut due, k as u64)?;
-        if flags[j] & LIVE == 0 {
-            continue;
-        }
-        if !S::CHECKED || (flags[j] & INEXACT == 0 && sums[j] < f64::INFINITY) {
-            sum.push(eng, node_idx, row_base + j, sums[j])?;
-            continue;
-        }
-        refold(sum, eng, (node_idx, row_base + j), (f_pairs, std::slice::from_ref(q)), (left, right))?;
-    }
+    flush_ones_block(
+        sum, eng, (node_idx, row_base), (f_pairs, ones),
+        (sums, flags), (left, right), (gate, &mut due_at, &mut due),
+    )?;
     gate.add_short(due_at - due);
     Ok(width)
 }

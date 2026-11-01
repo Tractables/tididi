@@ -469,25 +469,15 @@ where
                     let j = cells.trailing_zeros() as usize;
                     cells &= cells - 1;
                     let col = cols[j];
-                    for (p, &and) in f_pairs.iter().zip(ands) {
-                        let mut m = and & col;
-                        if ONE {
-                            if m != 0 {
-                                let q = &g_flat[j];
-                                // Safety: the arenas have room for a pair an
-                                // f pair and a g pair.
-                                unsafe { o.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
-                            }
-                            continue;
-                        }
-                        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                        while m != 0 {
-                            let q = &g_flat[m.trailing_zeros() as usize];
-                            m &= m - 1;
-                            // Safety: as above.
-                            unsafe { o.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
-                        }
-                    }
+                    let _: Result<(), std::convert::Infallible> = try_for_each_cell_candidate::<ONE, _, _, _>(
+                        (f_pairs, ands), (g_flat, j, col), node_idx, (left, right),
+                        |lc, rc| {
+                            // Safety: the arenas have room for a pair an
+                            // f pair and a g pair.
+                            unsafe { o.push(lc, rc) };
+                            Ok(())
+                        },
+                    );
                     // Safety: the arenas have room for a node a column.
                     unsafe { o.close(node_idx, row_base + j) };
                 }
@@ -514,54 +504,59 @@ where
                 // Every candidate of the cell an intersection keeps survives.
                 let bound = if ONE { n1 } else { n1 * usize::from(col_pairs[j]) };
                 if let Some(mut cell) = sink.open_cell(bound) {
-                    for (p, &and) in f_pairs.iter().zip(ands) {
-                        let mut m = and & col;
-                        if ONE {
-                            if m != 0 {
-                                let q = &g_flat[j];
-                                // Safety: the cell was opened for a pair an f pair.
-                                unsafe { cell.push(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0)) };
-                            }
-                            continue;
-                        }
-                        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                        while m != 0 {
-                            let q = &g_flat[m.trailing_zeros() as usize];
-                            m &= m - 1;
+                    let _: Result<(), std::convert::Infallible> = try_for_each_cell_candidate::<ONE, _, _, _>(
+                        (f_pairs, ands), (g_flat, j, col), node_idx, (left, right),
+                        |lc, rc| {
                             // Safety: the cell was opened for each f pair
                             // against each of the column's pairs.
-                            unsafe { cell.push(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0)) };
-                        }
-                    }
+                            unsafe { cell.push(lc, rc) };
+                            Ok(())
+                        },
+                    );
                     cell.close(eng, node_idx, grid_pos)?;
                     continue;
                 }
                 let start = sink.begin();
-                for (p, &and) in f_pairs.iter().zip(ands) {
-                    let mut m = and & col;
-                    if m == 0 {
-                        continue;
-                    }
-                    if ONE {
-                        let q = &g_flat[j];
-                        sink.pair(eng, left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
-                        continue;
-                    }
-                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                    while m != 0 {
-                        let q = &g_flat[m.trailing_zeros() as usize];
-                        m &= m - 1;
-                        let lc = left.get_in_row(node_idx, lrow, q.left.0);
-                        let rc = right.get_in_row(node_idx, rrow, q.right.0);
-                        sink.pair(eng, lc, rc)?;
-                    }
-                }
+                try_for_each_cell_candidate::<ONE, _, _, _>(
+                    (f_pairs, ands), (g_flat, j, col), node_idx, (left, right),
+                    |lc, rc| sink.pair(eng, lc, rc),
+                )?;
                 sink.end(eng, node_idx, grid_pos, start)?;
             }
             continue 'rows;
         }
     }
     poll.flush()?;
+    Ok(())
+}
+
+/// Call `emit(lc, rc)` for each live candidate of a cell at column `j` with
+/// column mask `col` against `f_pairs` and their row masks `ands`.
+#[inline(always)]
+fn try_for_each_cell_candidate<const ONE: bool, L: ChildLookup, R: ChildLookup, E>(
+    (f_pairs, ands): (&[ChildPair], &[u64]),
+    (g_flat, j, col): (&[ChildPair], usize, u64),
+    node_idx: &[u32],
+    (left, right): (&L, &R),
+    mut emit: impl FnMut(u32, u32) -> Result<(), E>,
+) -> Result<(), E> {
+    for (p, &and) in f_pairs.iter().zip(ands) {
+        let mut m = and & col;
+        if m == 0 {
+            continue;
+        }
+        if ONE {
+            let q = &g_flat[j];
+            emit(left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
+            continue;
+        }
+        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+        while m != 0 {
+            let q = &g_flat[m.trailing_zeros() as usize];
+            m &= m - 1;
+            emit(left.get_in_row(node_idx, lrow, q.left.0), right.get_in_row(node_idx, rrow, q.right.0))?;
+        }
+    }
     Ok(())
 }
 

@@ -475,16 +475,16 @@ impl<const N: usize> Odometer<N> {
     fn advance(&mut self, digits: &[Digit], by: usize) {
         debug_assert!(digits.len() <= N, "a digit not counted in place");
         let mut carry = by;
-        for (c, d) in self.counts.iter_mut().zip(digits) {
+        for (j, d) in digits.iter().enumerate() {
             if carry == 0 {
                 return;
             }
-            let sum = *c as usize + carry;
+            let sum = self.counts[j] as usize + carry;
             let is = sum % d.radix;
             carry = sum / d.radix;
-            let times = is as i64 - i64::from(*c);
-            *c = is as u32;
-            self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
+            let times = is as i64 - i64::from(self.counts[j]);
+            self.counts[j] = is as u32;
+            self.add(d, times);
         }
     }
 }
@@ -525,8 +525,7 @@ impl Places<'_> {
     /// The pair at `offset` from the current run's first.
     #[inline(always)]
     fn shifted(&self, offset: (u32, u32)) -> ChildPair {
-        let (l, r) = self.at.at;
-        ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(offset.0)), EncodedChildRef::from_raw(r.wrapping_add(offset.1)))
+        pair_at(self.at.at, offset)
     }
 
     /// Appends the pairs still to come to `buf`, room made for them at
@@ -536,10 +535,8 @@ impl Places<'_> {
         buf.reserve(self.len());
         loop {
             let run = std::mem::replace(&mut self.run, [].iter());
-            let (l, r) = self.at.at;
-            buf.extend(run.map(|&(a, b)| {
-                ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(a)), EncodedChildRef::from_raw(r.wrapping_add(b)))
-            }));
+            let at = self.at.at;
+            buf.extend(run.map(|&offset| pair_at(at, offset)));
             if self.rest == 0 {
                 return;
             }

@@ -469,10 +469,7 @@ impl ImplicitLevel {
     /// `Err(OperationError::OverBudget)` when the table's growth is refused:
     /// it holds up to as many slots as the child level has on that side.
     fn one_to_one_on(&self, lim: &Limits, side: ChildSide, f: impl Fn(i64) -> i64) -> Result<bool, OperationError> {
-        let first = match side {
-            ChildSide::Left => self.first.0,
-            ChildSide::Right => self.first.1,
-        };
+        let first = self.first_on_side(side);
         let mut from = Transient::new(lim, rustc_hash::FxHashMap::default());
         let (mut one, mut refused) = (true, Ok(()));
         Self::each_on_side(&self.digits, side, first, |s, _| {
@@ -489,6 +486,15 @@ impl ImplicitLevel {
             one = *from.entry(f(s)).or_insert(s) == s;
         });
         refused.map(|()| one)
+    }
+
+    /// The first pair's child slot on `side`.
+    #[inline(always)]
+    fn first_on_side(&self, side: ChildSide) -> i64 {
+        match side {
+            ChildSide::Left => self.first.0,
+            ChildSide::Right => self.first.1,
+        }
     }
 
     /// Calls `f` with every slot on `side` that one of `digits`, read from
@@ -539,11 +545,7 @@ impl ImplicitLevel {
     /// slot, and a node that starts there: every slot on that side the
     /// level's nodes start at.
     pub(crate) fn each_side_first(&self, side: ChildSide, f: impl FnMut(i64, usize)) {
-        let start = match side {
-            ChildSide::Left => self.first.0,
-            ChildSide::Right => self.first.1,
-        };
-        Self::each_on_side(&self.digits[self.within..], side, start, f);
+        Self::each_on_side(&self.digits[self.within..], side, self.first_on_side(side), f);
     }
 
     /// Calls `f` with the child slot on `side` of a pair of the level and
@@ -554,11 +556,7 @@ impl ImplicitLevel {
     /// At most the level's pairs calls, the product of the radices of the
     /// digits that move the side's slot.
     pub(crate) fn each_slot_on(&self, side: ChildSide, f: impl FnMut(i64, usize)) {
-        let start = match side {
-            ChildSide::Left => self.first.0,
-            ChildSide::Right => self.first.1,
-        };
-        Self::each_on_side(&self.digits, side, start, f);
+        Self::each_on_side(&self.digits, side, self.first_on_side(side), f);
     }
 
     /// The child slots every pair of a node adds to its first, in their

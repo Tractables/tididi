@@ -285,17 +285,27 @@ impl Engine {
             streams.ensure(vtree.root(), root, at + 1)?;
             gate.poll(std::mem::take(&mut streams.work))?;
             let Some(&(key, _)) = streams.of(vtree.root(), root).out.get(at) else { break };
-            layout.decode(key, &role, |j, bit, b| {
-                let c = &mut cur[j as usize];
-                *c = (*c & !(1u32 << bit)) | (b << bit);
-            });
-            for (column, &code) in out.iter_mut().zip(&cur) {
-                column.push(code);
-            }
+            layout.decode(key, &role, |j, bit, b| set_code_bit(&mut cur, j, bit, b));
+            push_row(&mut out, &cur);
             gate.poll(1)?;
         }
         gate.finish()?;
         Ok(Some(out))
+    }
+}
+
+/// Set bit `bit` of column `j` in `cur` to `b`.
+#[inline]
+fn set_code_bit(cur: &mut [u32], j: u32, bit: u32, b: u32) {
+    let c = &mut cur[j as usize];
+    *c = (*c & !(1u32 << bit)) | (b << bit);
+}
+
+/// Append one row of column codes `cur` to `out`.
+#[inline]
+fn push_row(out: &mut [Vec<u32>], cur: &[u32]) {
+    for (column, &code) in out.iter_mut().zip(cur) {
+        column.push(code);
     }
 }
 
@@ -555,24 +565,7 @@ impl<'a> Streams<'a> {
         let pairs = self.tdd.level(t).pairs_iter_of_idx(n as usize);
         if !stream.open {
             stream.open = true;
-            self.work += pairs.len() as u64;
-            // Each pair enters at its least key — where both sides hold key
-            // bits, at the bound its left child's least key gives, the right
-            // child's read only once the pair reaches the top.
-            let entering: Vec<Reverse<Next>> = pairs
-                .clone()
-                .enumerate()
-                .map(|(p, pair)| {
-                    let (l, r) = (pair.left.raw(), pair.right.raw());
-                    let (key, bound) = match (hl, hr) {
-                        (0, _) => (self.least(right, r), false),
-                        (_, 0) => (self.least(left, l), false),
-                        _ => (self.least(left, l) << hr, true),
-                    };
-                    Reverse((key, p as u32, 0, 0, bound))
-                })
-                .collect();
-            stream.heap = BinaryHeap::from(entering);
+            stream.heap = self.open_stream_heap(pairs.clone(), (left, right), (hl, hr));
         }
         while stream.out.len() < count {
             let Some(Reverse((key, p, i, j, bound))) = stream.heap.pop() else { break };
@@ -619,6 +612,33 @@ impl<'a> Streams<'a> {
         }
         Ok(())
     }
+
+    /// Seed a node stream's heap with each pair at its least key or left-key
+    /// bound.
+    fn open_stream_heap(
+        &mut self,
+        pairs: crate::diagram::PairsIter<'_>,
+        (left, right): (VtreeIdx, VtreeIdx),
+        (hl, hr): (u32, u32),
+    ) -> BinaryHeap<Reverse<Next>> {
+        self.work += pairs.len() as u64;
+        // Each pair enters at its least key — where both sides hold key
+        // bits, at the bound its left child's least key gives, the right
+        // child's read only once the pair reaches the top.
+        let entering: Vec<Reverse<Next>> = pairs
+            .enumerate()
+            .map(|(p, pair)| {
+                let (l, r) = (pair.left.raw(), pair.right.raw());
+                let (key, bound) = match (hl, hr) {
+                    (0, _) => (self.least(right, r), false),
+                    (_, 0) => (self.least(left, l), false),
+                    _ => (self.least(left, l) << hr, true),
+                };
+                Reverse((key, p as u32, 0, 0, bound))
+            })
+            .collect();
+        BinaryHeap::from(entering)
+    }
 }
 
 /// One pending node of a model under construction: node `n` of vtree node
@@ -653,9 +673,7 @@ impl Walk<'_> {
         let vtree = Arc::clone(self.tdd.vtree());
         loop {
             if list == NIL {
-                for (column, &code) in self.out.iter_mut().zip(&self.cur) {
-                    column.push(code);
-                }
+                push_row(&mut self.out, &self.cur);
                 self.gate.poll(1)?;
                 return Ok(self.out[0].len() as u64 >= self.limit);
             }
@@ -712,8 +730,7 @@ impl Walk<'_> {
 
     /// Sets bit `bit` of column `j` to `b`.
     fn set(&mut self, j: u32, bit: u32, b: u32) {
-        let c = &mut self.cur[j as usize];
-        *c = (*c & !(1u32 << bit)) | (b << bit);
+        set_code_bit(&mut self.cur, j, bit, b);
     }
 
     /// A pending list of the left node, the right node, then `next`.

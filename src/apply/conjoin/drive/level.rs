@@ -184,26 +184,15 @@ pub(super) fn count_sparse_root(
     sweep: &Sweep<'_, '_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
     let vtree = sweep.vtree;
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    use crate::value::{IntFold, ValueDomain};
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
     run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
 
     let lim = eng.limits();
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    seed_kept_counts(eng, run, sweep, &mut computed, &[left, right])?;
+    let computed = fold_child_counts(eng, run, sweep, &[left, right])?;
     let levels: &[TddLevel] = run.levels;
-    let marginal = |i: usize| levels[i].is_marginal();
-    let input = FoldInput { vtree, levels, store: &() };
-    let mut gate = lim.gate();
-    for child in [left, right] {
-        IntFold::ensure(eng, child, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
-    }
-    gate.flush()?;
-
     let mut fold = CandidateFold::new(
         lim,
         IntFold::child_view(li, vtree, &levels[li], &computed, &()),
@@ -216,6 +205,32 @@ pub(super) fn count_sparse_root(
         None, &mut fold,
     )?;
     Ok(fold.finish())
+}
+
+/// Fold `roots`' integer count columns over `run.levels`, seeded from any
+/// kept operand counts ([`seed_kept_counts`]).
+fn fold_child_counts(
+    eng: &Engine,
+    run: &ApplyRun,
+    sweep: &Sweep<'_, '_>,
+    roots: &[VtreeIdx],
+) -> Result<Vec<Option<crate::value::CountVec>>, OperationError> {
+    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    let vtree = sweep.vtree;
+    let lim = eng.limits();
+    let mut computed: Vec<Option<CountVec>> = Vec::new();
+    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
+    computed.resize_with(vtree.num_nodes(), || None);
+    seed_kept_counts(eng, run, sweep, &mut computed, roots)?;
+    let levels: &[TddLevel] = run.levels;
+    let marginal = |i: usize| levels[i].is_marginal();
+    let input = FoldInput { vtree, levels, store: &() };
+    let mut gate = lim.gate();
+    for &root in roots {
+        IntFold::ensure(eng, root, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
+    }
+    gate.flush()?;
+    Ok(computed)
 }
 
 /// Seed `computed` with the operands' kept counts ([`Sweep::kept`]) for the
@@ -577,7 +592,7 @@ pub(super) fn count_streamed_root(
     root: (VtreeIdx, VtreeIdx, VtreeIdx),
     c: (VtreeIdx, VtreeIdx, VtreeIdx),
 ) -> Result<Option<num_bigint::BigUint>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    use crate::value::{IntFold, ValueDomain};
     let vtree = sweep.vtree;
     let (t, root_left, root_right) = root;
     let (c_t, cl, cr) = c;
@@ -597,18 +612,8 @@ pub(super) fn count_streamed_root(
         return Ok(None);
     };
 
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    seed_kept_counts(eng, run, sweep, &mut computed, &[o, cl, cr])?;
+    let computed = fold_child_counts(eng, run, sweep, &[o, cl, cr])?;
     let levels: &[TddLevel] = run.levels;
-    let marginal = |i: usize| levels[i].is_marginal();
-    let input = FoldInput { vtree, levels, store: &() };
-    let mut gate = lim.gate();
-    for x in [o, cl, cr] {
-        IntFold::ensure(eng, x, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
-    }
-    gate.flush()?;
     let column = |x: VtreeIdx| {
         let side = IntFold::child_view(x.idx(), vtree, &levels[x.idx()], &computed, &());
         (!side.view.is_marginal() && side.col.all_u64()).then(|| side.col.fast_slice())
