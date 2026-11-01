@@ -20,16 +20,18 @@
 //! below it in that order, so the walk visits the positions from the root
 //! down once ([`Pending`]).
 
-use crate::diagram::{ChildSide, Pass, Tdd};
 use crate::Engine;
+use crate::diagram::{ChildSide, Pass, Tdd};
 
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
 
-use super::scratch::{ContractScratch, Pending};
-use super::fingerprint::{find_listed_twin_groups, find_twin_groups, list_members, named_by, pair_mass};
+use super::fingerprint::{
+    find_listed_twin_groups, find_twin_groups, list_members, named_by, pair_mass,
+};
 use super::merge::{contract_twins, merged_redirects, merged_whole, survivor};
+use super::scratch::{ContractScratch, Pending};
 
 /// Which nodes of a child level a twin search reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -93,24 +95,9 @@ fn contract_child(
     reach: Reach,
     scratch: &mut ContractScratch,
 ) -> Result<Contracted, OperationError> {
-    if tdd.vtree.node(t1).is_leaf() {
+    let Some(t1_side) = can_search_child_twins(tdd, parent, t1) else {
         return Ok(Contracted::Nothing);
-    }
-    // Marginal-side twins (slots sharing a parent context) are pair-fusion
-    // redexes, and fusion merges them by summing through the seeded slot map,
-    // which keeps slot-count uniqueness (invariant 10). Summing counts here
-    // would not, so a marginal child is left to fusion.
-    if tdd.levels[t1.idx()].is_marginal() {
-        return Ok(Contracted::Nothing);
-    }
-    if tdd.levels[t1.idx()].slot_count() <= 1 {
-        return Ok(Contracted::Nothing);
-    }
-    if !tdd.levels[parent.idx()].has_multi_pair() {
-        return Ok(Contracted::Nothing);
-    }
-    let (parent_left, _parent_right) = tdd.vtree.children(parent);
-    let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
+    };
     let side = t1_side as usize;
     let width = tdd.levels[t1.idx()].slot_count();
     // The search reads the nodes `reach` names. Charged before a parent's
@@ -131,23 +118,7 @@ fn contract_child(
 
     scratch.unnamed.clear();
     let found = search_child_twins(eng, tdd, t1, parent, t1_side, reach, scratch)?;
-    // A whole search that read every pair also lists the nodes no pair
-    // names, two or more of them: nothing reaches them, and their pairs give
-    // their children contexts the prune would take away. The merge drops
-    // them, and their children are searched whole after. The diagram's
-    // output is named by no pair, and stays.
-    let listed_unnamed = scratch.unnamed.len();
-    if reach == Reach::Listed || !scratch.drop_unnamed {
-        scratch.unnamed.clear();
-    } else if tdd.output.vtree == t1 {
-        let output = tdd.output.local.0;
-        scratch.unnamed.retain(|&u| u != output);
-    }
-    let drops = !scratch.unnamed.is_empty();
-    // Where the search knows every node it did not list is named, the level
-    // holds no node its parent level does not name once the merge drops the
-    // listed ones, and leaves the loose levels.
-    let tight = reach == Reach::Whole && scratch.unnamed_exact && scratch.unnamed.len() == listed_unnamed;
+    let (drops, tight) = filter_unnamed_nodes(tdd, t1, reach, scratch);
     if tight && !drops {
         unlist_loose(tdd, t1);
     }
@@ -181,7 +152,61 @@ fn contract_child(
         unlist_loose(tdd, t1);
     }
     record_contracted_child(t1, parent, (lists, fused_but, drops), scratch);
-    Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
+    Ok(if merged_whole(scratch) {
+        Contracted::Whole
+    } else {
+        Contracted::Part
+    })
+}
+
+/// Check whether `t1` is an eligible structural internal child of `parent` for
+/// twin contraction, returning its [`ChildSide`] when it is.
+#[inline]
+fn can_search_child_twins(tdd: &Tdd, parent: VtreeIdx, t1: VtreeIdx) -> Option<ChildSide> {
+    if tdd.vtree.node(t1).is_leaf() {
+        return None;
+    }
+    // Marginal-side twins (slots sharing a parent context) are pair-fusion
+    // redexes, and fusion merges them by summing through the seeded slot map,
+    // which keeps slot-count uniqueness (invariant 10). Summing counts here
+    // would not, so a marginal child is left to fusion.
+    if tdd.levels[t1.idx()].is_marginal()
+        || tdd.levels[t1.idx()].slot_count() <= 1
+        || !tdd.levels[parent.idx()].has_multi_pair()
+    {
+        return None;
+    }
+    let (parent_left, _parent_right) = tdd.vtree.children(parent);
+    Some(if parent_left == t1 {
+        ChildSide::Left
+    } else {
+        ChildSide::Right
+    })
+}
+
+/// Filter `scratch.unnamed` after a twin search, returning `(drops, tight)`.
+///
+/// A whole search that read every pair also lists the nodes no pair names, two
+/// or more of them: nothing reaches them, and their pairs give their children
+/// contexts the prune would take away. The merge drops them, and their children
+/// are searched whole after. The diagram's output is named by no pair, and stays.
+fn filter_unnamed_nodes(
+    tdd: &Tdd,
+    t1: VtreeIdx,
+    reach: Reach,
+    scratch: &mut ContractScratch,
+) -> (bool, bool) {
+    let listed_unnamed = scratch.unnamed.len();
+    if reach == Reach::Listed || !scratch.drop_unnamed {
+        scratch.unnamed.clear();
+    } else if tdd.output.vtree == t1 {
+        let output = tdd.output.local.0;
+        scratch.unnamed.retain(|&u| u != output);
+    }
+    let drops = !scratch.unnamed.is_empty();
+    let tight =
+        reach == Reach::Whole && scratch.unnamed_exact && scratch.unnamed.len() == listed_unnamed;
+    (drops, tight)
 }
 
 /// Run the listed or whole twin search on `t1` under `parent`.
@@ -266,7 +291,11 @@ fn check_listed_search(
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
     list_members(eng.limits(), scratch)?;
-    let listed = (found, scratch.group_starts.clone(), scratch.flat_groups.clone());
+    let listed = (
+        found,
+        scratch.group_starts.clone(),
+        scratch.flat_groups.clone(),
+    );
     let whole = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, false)?;
     list_members(eng.limits(), scratch)?;
     assert_eq!(
@@ -284,8 +313,16 @@ fn check_listed_search(
 /// Before a contraction at `t1`, where the sweep lists: room in what the
 /// sweep has changed at `t1` for one survivor per group found, the most the
 /// merge plans.
-fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) -> Result<(), OperationError> {
-    let ContractScratch { group_starts, listing, .. } = scratch;
+fn reserve_survivors(
+    eng: &Engine,
+    t1: VtreeIdx,
+    scratch: &mut ContractScratch,
+) -> Result<(), OperationError> {
+    let ContractScratch {
+        group_starts,
+        listing,
+        ..
+    } = scratch;
     let list = listing.list_mut(eng.limits(), t1.idx())?;
     eng.limits().reserve(list, group_starts.len())
 }
@@ -295,13 +332,25 @@ fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) 
 /// whose earlier entries are renumbered, in the room [`reserve_survivors`]
 /// had.
 fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
-    let ContractScratch { remap, merge, listing, .. } = scratch;
+    let ContractScratch {
+        remap,
+        merge,
+        listing,
+        ..
+    } = scratch;
     let list = listing.listed_mut(t1.idx());
     for node in list.iter_mut() {
-        debug_assert_ne!(remap.final_remap[*node as usize].0, super::merge::DISCARDED, "a listed node is named");
+        debug_assert_ne!(
+            remap.final_remap[*node as usize].0,
+            super::merge::DISCARDED,
+            "a listed node is named"
+        );
         *node = survivor(&remap.final_remap, *node as usize).0;
     }
-    debug_assert!(list.capacity() - list.len() >= merge.group_plans.len(), "the survivors' room was had before the merge");
+    debug_assert!(
+        list.capacity() - list.len() >= merge.group_plans.len(),
+        "the survivors' room was had before the merge"
+    );
     for plan in &merge.group_plans {
         let keep = merge.sel[plan.start as usize];
         list.push(survivor(&remap.final_remap, keep as usize).0);
@@ -335,7 +384,8 @@ pub(super) fn push_parent(tdd: &Tdd, pending: &mut Pending, num_nodes: usize, p:
 fn restore_pending_dirty(tdd: &mut Tdd, pending: &mut Pending, current: Option<u32>) {
     let order = tdd.vtree.bottomup_slice();
     let rest = std::iter::from_fn(|| pending.pop()).map(|pos| order[pos as usize].0);
-    tdd.dirty.requeue(Pass::Contract, current.into_iter().chain(rest));
+    tdd.dirty
+        .requeue(Pass::Contract, current.into_iter().chain(rest));
 }
 
 /// Contract every twin in the diagram in one top-down pass over the parents
@@ -350,20 +400,13 @@ fn restore_pending_dirty(tdd: &mut Tdd, pending: &mut Pending, current: Option<u
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
 /// the unprocessed parents are back on the `Pass::Contract` worklist, so a
 /// later minimize resumes them.
-pub(crate) fn contract_all_twins(
-    eng: &Engine,
-    tdd: &mut Tdd,
-) -> Result<(), OperationError> {
+pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     sweep_twins(eng, tdd, true)
 }
 
 /// [`contract_all_twins`], dropping the nodes no pair names that a whole
 /// search lists where `drop_unnamed`.
-fn sweep_twins(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    drop_unnamed: bool,
-) -> Result<(), OperationError> {
+fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
@@ -452,8 +495,8 @@ fn step_pending_parent(
     let parent = VtreeIdx(p_raw);
     let (left, right) = tdd.vtree.children(parent);
 
-    let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
-        || tdd.levels[right.idx()].is_marginal();
+    let is_marginal_boundary =
+        tdd.levels[left.idx()].is_marginal() || tdd.levels[right.idx()].is_marginal();
     let reach = if scratch.listing.whole(p_idx) || diagram_marginal(tdd, scratch) {
         Reach::Whole
     } else {
@@ -465,15 +508,14 @@ fn step_pending_parent(
             }
         }
     };
-    let (left_fired, right_fired) = match joint_contract_fixpoint(
-        eng, tdd, parent, is_marginal_boundary, reach, scratch,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
-            return Err(e);
-        }
-    };
+    let (left_fired, right_fired) =
+        match joint_contract_fixpoint(eng, tdd, parent, is_marginal_boundary, reach, scratch) {
+            Ok(v) => v,
+            Err(e) => {
+                restore_pending_dirty(tdd, &mut scratch.pending, Some(p_raw));
+                return Err(e);
+            }
+        };
 
     // A child that fired had its own pairs unioned, moving its children's
     // contexts — so enqueue it as a (deeper) parent. Strictly downward, so
@@ -503,7 +545,9 @@ fn step_pending_parent(
 /// builds check it after each sweep.
 #[cfg(debug_assertions)]
 fn debug_assert_loose_listed(tdd: &Tdd) {
-    let Some(loose) = tdd.dirty.loose() else { return };
+    let Some(loose) = tdd.dirty.loose() else {
+        return;
+    };
     if tdd.is_zero() {
         return;
     }
@@ -528,7 +572,10 @@ fn debug_assert_loose_listed(tdd: &Tdd) {
                 named[tdd.output.local.0 as usize] = true;
             }
             if let Some(n) = named.iter().position(|&n| !n) {
-                panic!("level {} is not listed loose, but no pair of level {} names its node {n}", c.0, p.0);
+                panic!(
+                    "level {} is not listed loose, but no pair of level {} names its node {n}",
+                    c.0, p.0
+                );
             }
         }
     }
@@ -543,7 +590,11 @@ fn debug_assert_loose_listed(tdd: &Tdd) {
 pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[VtreeIdx]) {
     let mut copy = tdd.clone();
     let owed = copy.dirty.take(Pass::Contract);
-    let check: Vec<u32> = parents.iter().map(|t| t.0).filter(|t| !owed.contains(t)).collect();
+    let check: Vec<u32> = parents
+        .iter()
+        .map(|t| t.0)
+        .filter(|t| !owed.contains(t))
+        .collect();
     if check.is_empty() {
         return;
     }
@@ -551,13 +602,19 @@ pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[Vt
     let before = copy.levels.node_count();
     // A refusal under the caller's limits leaves nothing checked.
     if sweep_twins(eng, &mut copy, false).is_ok() {
-        assert_eq!(copy.levels.node_count(), before, "a child of a level in {check:?} has a twin no worklist owes");
+        assert_eq!(
+            copy.levels.node_count(),
+            before,
+            "a child of a level in {check:?} has a twin no worklist owes"
+        );
     }
 }
 
 /// Whether the diagram has a marginal level, read once per scratch checkout.
 pub(super) fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
-    *scratch.diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level())
+    *scratch
+        .diagram_marginal
+        .get_or_insert_with(|| tdd.has_marginal_level())
 }
 
 /// Set up the listed searches of one sweep: the parents on the worklist are
@@ -570,7 +627,9 @@ fn start_listing(
     num_nodes: usize,
     dirty_parents: &[u32],
 ) -> Result<(), OperationError> {
-    scratch.listing.start(eng.limits(), num_nodes, dirty_parents)?;
+    scratch
+        .listing
+        .start(eng.limits(), num_nodes, dirty_parents)?;
     for reach in &mut scratch.reach {
         reach.clear();
     }
@@ -598,17 +657,27 @@ fn list_changed_children(
     // Nodes and arena together bound the parent's pairs from above.
     let level = &tdd.levels[parent.idx()];
     if level.nodes().len() >= LISTED_WHOLE_MIN_WIDTH
-        && LISTED_MAX_PAIR_SHARE * pair_mass(tdd, parent, &changed) > level.nodes().len() + level.arena_len()
+        && LISTED_MAX_PAIR_SHARE * pair_mass(tdd, parent, &changed)
+            > level.nodes().len() + level.arena_len()
     {
         scratch.listing.put(parent.idx(), changed);
         return Ok(Reach::Whole);
     }
     let mut listed = Ok(());
     for (t1, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
-        let ContractScratch { reach, reach_bits, .. } = &mut *scratch;
+        let ContractScratch {
+            reach, reach_bits, ..
+        } = &mut *scratch;
         reach[side as usize].clear();
         if listed.is_ok() && !tdd.vtree.node(t1).is_leaf() && !tdd.levels[t1.idx()].is_marginal() {
-            listed = named_by(eng.limits(), tdd, (t1, parent, side), &changed, reach_bits, &mut reach[side as usize]);
+            listed = named_by(
+                eng.limits(),
+                tdd,
+                (t1, parent, side),
+                &changed,
+                reach_bits,
+                &mut reach[side as usize],
+            );
         }
     }
     scratch.listing.put(parent.idx(), changed);
@@ -667,13 +736,17 @@ fn joint_contract_fixpoint(
         // whole.
         eng.limits().check_stop()?;
         let left_once = contract_child(eng, tdd, parent, left, reach, scratch);
-        let right_once = left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
+        let right_once =
+            left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
         for list in &mut scratch.reach {
             list.clear();
         }
         let (left_once, right_once) = (left_once?, right_once?);
         (left_fired, right_fired) = (left_once.fired(), right_once.fired());
-        (scan_left, scan_right) = (left_once == Contracted::Part, right_once == Contracted::Part);
+        (scan_left, scan_right) = (
+            left_once == Contracted::Part,
+            right_once == Contracted::Part,
+        );
         if !(scan_left || scan_right) {
             #[cfg(debug_assertions)]
             if !diagram_marginal(tdd, scratch) {
@@ -683,8 +756,15 @@ fn joint_contract_fixpoint(
             }
             return Ok((left_fired, right_fired));
         }
-        debug_assert!(diagram_marginal(tdd, scratch), "without a marginal level every group merges whole");
-        debug_assert_eq!(reach, Reach::Whole, "a diagram with a marginal level is searched whole");
+        debug_assert!(
+            diagram_marginal(tdd, scratch),
+            "without a marginal level every group merges whole"
+        );
+        debug_assert_eq!(
+            reach,
+            Reach::Whole,
+            "a diagram with a marginal level is searched whole"
+        );
     }
     // A child that merged part of a group in a diagram with a marginal
     // level, or both children of a parent that borders one: rounds of whole
@@ -693,7 +773,8 @@ fn joint_contract_fixpoint(
         // As in `Reduction::content_twins`: termination is argued, not
         // bounded, so the round boundary is where cancellation cuts in, with
         // the last round's searches charged first.
-        eng.limits().poll_host_work(std::mem::take(&mut scratch.searched))?;
+        eng.limits()
+            .poll_host_work(std::mem::take(&mut scratch.searched))?;
         let mut again = [false; 2];
         for (i, (scan, fired, child)) in [
             (&mut scan_left, &mut left_fired, left),
@@ -723,7 +804,12 @@ fn joint_contract_fixpoint(
 /// Pair fusion at boundary parent `parent`, reading only the nodes its
 /// list holds where the sweep knows no other node holds a group
 /// (`Listing::fused_but`). Says whether it fused a group.
-fn fuse_at(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx, scratch: &mut ContractScratch) -> Result<bool, OperationError> {
+fn fuse_at(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
     // The inner form, so fusion reuses this run's already-taken `scratch`
     // instead of re-borrowing the pool.
     use crate::reduce::contract::pair_fusion::fuse_pairs_inner;
@@ -738,7 +824,11 @@ fn fuse_at(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx, scratch: &mut Contract
     scratch.listing.set_fused_but(parent.idx(), false);
     let stats = stats?;
     #[cfg(debug_assertions)]
-    crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&[parent]), "a listed fusion");
+    crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
+        tdd,
+        Some(&[parent]),
+        "a listed fusion",
+    );
     Ok(stats.fusion_groups > 0)
 }
 
@@ -760,9 +850,17 @@ fn debug_assert_no_twins(
     {
         return Ok(());
     }
-    let side = if tdd.vtree.children(parent).0 == child { ChildSide::Left } else { ChildSide::Right };
+    let side = if tdd.vtree.children(parent).0 == child {
+        ChildSide::Left
+    } else {
+        ChildSide::Right
+    };
     let found = find_twin_groups(eng, tdd, child, parent, side, scratch, false)?;
-    assert!(!found, "level {} keeps twins under {} after its joint fixpoint", child.0, parent.0);
+    assert!(
+        !found,
+        "level {} keeps twins under {} after its joint fixpoint",
+        child.0, parent.0
+    );
     Ok(())
 }
 

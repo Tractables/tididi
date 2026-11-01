@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{Tdd, TddLevel, ONE_LEAF_IDX};
+use crate::diagram::{ONE_LEAF_IDX, Tdd, TddLevel};
 use crate::limits::{Limits, OperationError};
 use crate::restructure::placement::push_free_level;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -81,7 +81,11 @@ pub(super) fn take_regions(
     }
     for &t in cone.free {
         let at = t.idx();
-        let owned = if carried_from_f(cone, at) { f.owned() } else { g.owned() };
+        let owned = if carried_from_f(cone, at) {
+            f.owned()
+        } else {
+            g.owned()
+        };
         if let Some(owned) = owned {
             if cone.free_in_f(at) && cone.free_in_g(at) {
                 push_free_level(&mut owned.levels[at], vtree, t);
@@ -94,7 +98,12 @@ pub(super) fn take_regions(
 
 /// Move the levels [`take_regions`] took back to their owned operands, for
 /// a refused conjunction that restores them ([`Held::uncarry`]).
-pub(super) fn give_back_regions(levels: &mut [TddLevel], cone: Cone<'_>, f: &mut Held<'_>, g: &mut Held<'_>) {
+pub(super) fn give_back_regions(
+    levels: &mut [TddLevel],
+    cone: Cone<'_>,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+) {
     for &t in cone.free {
         let at = t.idx();
         match carried_from_f(cone, at) {
@@ -110,7 +119,13 @@ pub(super) fn give_back_regions(levels: &mut [TddLevel], cone: Cone<'_>, f: &mut
 /// whose pairs read each leaf below as true only, down to the levels free in
 /// `d`, which are constant true.
 fn constant_true(vtree: &Vtree, d: &Tdd, cone: Cone<'_>, is_f: bool, t: VtreeIdx) -> bool {
-    let free_in_d = |t: usize| if is_f { cone.free_in_f(t) } else { cone.free_in_g(t) };
+    let free_in_d = |t: usize| {
+        if is_f {
+            cone.free_in_f(t)
+        } else {
+            cone.free_in_g(t)
+        }
+    };
     // Most tops hold more than one node: decided without the stack.
     if !free_in_d(t.idx()) && d.levels[t.idx()].slot_count() != 1 {
         return false;

@@ -3,17 +3,17 @@
 //! product-list allocation, bundled into `ApplyRun` by `apply_and_setup` for
 //! the driver to sweep with.
 
-use crate::Engine;
-use crate::vtree::{Vtree, VtreeIdx};
-use crate::diagram::*;
-use super::{liveness, OperationError};
-use super::products::Products;
-use super::scratch::ApplyWorkspace;
-use crate::value::StreamCache;
 use super::marginal_plan::EntryMarginality;
-use super::sparse::{sparse_thresholds, SparseThresholds};
-use super::route::{LevelMarg, SparseGate};
 use super::price::combinations_bound;
+use super::products::Products;
+use super::route::{LevelMarg, SparseGate};
+use super::scratch::ApplyWorkspace;
+use super::sparse::{SparseThresholds, sparse_thresholds};
+use super::{OperationError, liveness};
+use crate::Engine;
+use crate::diagram::*;
+use crate::value::StreamCache;
+use crate::vtree::{Vtree, VtreeIdx};
 
 /// A set of vtree nodes handed to the sweep: the levels it sums out, or the
 /// subtrees it collapses. A membership array, or nothing.
@@ -94,7 +94,11 @@ impl Cone<'_> {
     /// Every level the conjunction visits: the leaves, the built levels and
     /// the tops.
     pub(super) fn nodes(self) -> impl Iterator<Item = usize> {
-        self.leaves.iter().chain(self.built).chain(self.tops).map(|t| t.idx())
+        self.leaves
+            .iter()
+            .chain(self.built)
+            .chain(self.tops)
+            .map(|t| t.idx())
     }
 }
 
@@ -110,7 +114,10 @@ pub(super) struct ConeLists {
 }
 
 impl ConeLists {
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+    pub(super) fn buffers(
+        &mut self,
+        visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch),
+    ) {
         visit(&mut self.built);
         visit(&mut self.free_before);
         visit(&mut self.tops);
@@ -230,7 +237,9 @@ impl ApplyRun<'_, '_> {
     pub(super) fn shape(&self, t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> LevelShape {
         let (t_idx, left_idx, right_idx) = (t.idx(), left.idx(), right.idx());
         LevelShape {
-            t, left, right,
+            t,
+            left,
+            right,
             f: OperandWidths {
                 here: self.f_widths[t_idx],
                 left: self.f_widths[left_idx],
@@ -255,9 +264,7 @@ impl ApplyRun<'_, '_> {
         let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
         let now = |i: usize| self.levels[i].is_marginal();
         let any = |i: usize| {
-            self.levels[i].is_marginal()
-                || f.levels[i].is_marginal()
-                || g.levels[i].is_marginal()
+            self.levels[i].is_marginal() || f.levels[i].is_marginal() || g.levels[i].is_marginal()
         };
         LevelMarg {
             left_now: now(left_idx),
@@ -298,8 +305,15 @@ impl ApplyRun<'_, '_> {
     /// level is not big, and only past a child built sparse; the density
     /// test where the level is big. Most levels are small over dense children
     /// and run neither.
-    pub(super) fn sparse_gate(&self, shape: LevelShape, f_level: &TddLevel, g_level: &TddLevel) -> SparseGate {
-        let LevelShape { left, right, f, g, .. } = shape;
+    pub(super) fn sparse_gate(
+        &self,
+        shape: LevelShape,
+        f_level: &TddLevel,
+        g_level: &TddLevel,
+    ) -> SparseGate {
+        let LevelShape {
+            left, right, f, g, ..
+        } = shape;
         let cells = |f_width: usize, g_width: usize| f_width as u64 * g_width as u64;
         let (max_left, max_right) = (cells(f.left, g.left), cells(f.right, g.right));
         let min_grid = self.thresholds.min_grid as u64;
@@ -314,13 +328,19 @@ impl ApplyRun<'_, '_> {
                 return false;
             }
             let split = |child: VtreeIdx, max: u64| {
-                if ungridded(child) { (max as u128, 0) } else { (0, max as u128) }
+                if ungridded(child) {
+                    (max as u128, 0)
+                } else {
+                    (0, max as u128)
+                }
             };
-            let ((fill_l, scan_l), (fill_r, scan_r)) = (split(left, max_left), split(right, max_right));
+            let ((fill_l, scan_l), (fill_r, scan_r)) =
+                (split(left, max_left), split(right, max_right));
             fill_l + fill_r > scan_l + scan_r
         };
         let available = self.products.arena.is_bump();
-        let big = cells(f.here, g.here) > min_grid || combinations_bound(f_level, g_level) > min_grid as u128;
+        let big = cells(f.here, g.here) > min_grid
+            || combinations_bound(f_level, g_level) > min_grid as u128;
         let child_grid_wins = available && !big && child_grids();
         SparseGate {
             available,
@@ -341,20 +361,45 @@ impl ApplyRun<'_, '_> {
     pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize, output: VtreeIdx) {
         for child in [left, right] {
             if child != output.idx() {
-                self.products.reclaim_child(child, self.f_widths[child], self.g_widths[child]);
+                self.products
+                    .reclaim_child(child, self.f_widths[child], self.g_widths[child]);
             }
         }
     }
 
-    pub(super) fn ensure_product_list_for_child(&mut self, eng: &Engine, child: usize, f_width: usize, g_width: usize) -> Result<(), OperationError> {
-        self.products.ensure_product_list_for_child(eng, child, f_width, g_width, self.g_identity[child], self.f_identity[child])
+    pub(super) fn ensure_product_list_for_child(
+        &mut self,
+        eng: &Engine,
+        child: usize,
+        f_width: usize,
+        g_width: usize,
+    ) -> Result<(), OperationError> {
+        self.products.ensure_product_list_for_child(
+            eng,
+            child,
+            f_width,
+            g_width,
+            self.g_identity[child],
+            self.f_identity[child],
+        )
     }
 
-    pub(super) fn materialize_dense_child(&mut self, eng: &Engine, child: usize, f_width: usize, g_width: usize) -> Result<(), OperationError> {
-        self.products.materialize_dense_child(eng, child, f_width, g_width, self.g_identity[child], self.f_identity[child])
+    pub(super) fn materialize_dense_child(
+        &mut self,
+        eng: &Engine,
+        child: usize,
+        f_width: usize,
+        g_width: usize,
+    ) -> Result<(), OperationError> {
+        self.products.materialize_dense_child(
+            eng,
+            child,
+            f_width,
+            g_width,
+            self.g_identity[child],
+            self.f_identity[child],
+        )
     }
-
-
 }
 
 /// What [`survey`] reads off the operands besides their widths.
@@ -397,8 +442,10 @@ fn survey<'r>(
     lists: &'r mut ConeLists,
 ) -> Result<(Snapshot, Cone<'r>), OperationError> {
     let Operands { f, g } = ops;
-    let Operands { f: f_widths, g: g_widths } = widths;
-    let internal = vtree.internal_bottomup_slice();
+    let Operands {
+        f: f_widths,
+        g: g_widths,
+    } = widths;
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
     let mut total_cells = match leaf_cells <= min_grid as u64 {
@@ -427,41 +474,80 @@ fn survey<'r>(
         g_widths[t.idx()] = w2;
         (w1, w2)
     };
-    if masks.f.is_empty() && masks.g.is_empty() {
-        let leaves = vtree.leaf_bottomup_slice();
-        for &t in leaves {
-            level(t, f_widths, g_widths);
+    let cone = if masks.f.is_empty() && masks.g.is_empty() {
+        survey_unmasked_cone(
+            vtree,
+            ops,
+            masks,
+            (f_widths, g_widths),
+            &mut level,
+            &mut cells,
+        )
+    } else {
+        let free_nodes = survey_masked_cone(
+            (eng.limits(), vtree),
+            ops,
+            masks,
+            (f_widths, g_widths),
+            lists,
+            &mut level,
+            &mut cells,
+        )?;
+        Cone {
+            built: &lists.built,
+            free_before: &lists.free_before,
+            tops: &lists.tops,
+            free: &lists.free,
+            leaves: &lists.leaves,
+            free_nodes,
+            masks,
         }
-        for &t in internal {
-            let (w1, w2) = level(t, f_widths, g_widths);
-            cells(w1, w2, combinations_bound(&f.levels[t.idx()], &g.levels[t.idx()]));
-        }
-        let cone = Cone { built: internal, free_before: &[], tops: &[], free: &[], leaves, free_nodes: 0, masks };
-        let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
-        return Ok((snapshot, cone));
-    }
-    let free_nodes = survey_masked_cone(
-        eng.limits(),
-        vtree,
-        ops,
-        masks,
-        (f_widths, g_widths),
-        lists,
-        &mut level,
-        &mut cells,
-    )?;
-    let ConeLists { built, free_before, tops, free, leaves } = lists;
-    let cone = Cone { built, free_before, tops, free, leaves, free_nodes, masks };
-    let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
+    };
+    let snapshot = Snapshot {
+        total_cells,
+        any_entry_marginal,
+        might_use_sparse,
+    };
     Ok((snapshot, cone))
+}
+
+/// Survey the full vtree when neither operand has free levels in `masks`.
+fn survey_unmasked_cone<'r>(
+    vtree: &'r Vtree,
+    ops: Operands<&Tdd>,
+    masks: Operands<VtreeMask<'r>>,
+    (f_widths, g_widths): (&mut [usize], &mut [usize]),
+    level: &mut impl FnMut(VtreeIdx, &mut [usize], &mut [usize]) -> (usize, usize),
+    cells: &mut impl FnMut(usize, usize, u128) -> u64,
+) -> Cone<'r> {
+    let internal = vtree.internal_bottomup_slice();
+    let leaves = vtree.leaf_bottomup_slice();
+    for &t in leaves {
+        level(t, f_widths, g_widths);
+    }
+    for &t in internal {
+        let (w1, w2) = level(t, f_widths, g_widths);
+        cells(
+            w1,
+            w2,
+            combinations_bound(&ops.f.levels[t.idx()], &ops.g.levels[t.idx()]),
+        );
+    }
+    Cone {
+        built: internal,
+        free_before: &[],
+        tops: &[],
+        free: &[],
+        leaves,
+        free_nodes: 0,
+        masks,
+    }
 }
 
 /// Populate `lists` and `(f_widths, g_widths)` when at least one operand has
 /// free levels in `masks`, returning `free_nodes`.
-#[allow(clippy::too_many_arguments)]
 fn survey_masked_cone<'r>(
-    lim: &crate::limits::Limits,
-    vtree: &'r Vtree,
+    (lim, vtree): (&crate::limits::Limits, &'r Vtree),
     ops: Operands<&Tdd>,
     masks: Operands<VtreeMask<'r>>,
     (f_widths, g_widths): (&mut [usize], &mut [usize]),
@@ -471,7 +557,13 @@ fn survey_masked_cone<'r>(
 ) -> Result<u64, OperationError> {
     let Operands { f, g } = ops;
     let internal = vtree.internal_bottomup_slice();
-    let ConeLists { built, free_before, tops, free, leaves } = lists;
+    let ConeLists {
+        built,
+        free_before,
+        tops,
+        free,
+        leaves,
+    } = lists;
     built.clear();
     free_before.clear();
     tops.clear();
@@ -546,11 +638,15 @@ const APPLY_BYTES_PER_CELL: u64 = 24;
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when the prediction does not fit.
-fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Result<(), OperationError> {
+fn preflight_dense_budget(
+    lim: &crate::limits::Limits,
+    total_cells: u64,
+) -> Result<(), OperationError> {
     if let Some(rem) = lim.budget_headroom()
-        && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
-            return Err(OperationError::OverBudget);
-        }
+        && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem
+    {
+        return Err(OperationError::OverBudget);
+    }
     Ok(())
 }
 
@@ -577,17 +673,35 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     let thresholds = sparse_thresholds(lim);
     let min_grid = thresholds.min_grid;
 
-    let ApplyWorkspace { f_widths, g_widths, f_identity, g_identity,
-        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks, words, cone } = scratch;
-    if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
-    if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
-    let (Snapshot { total_cells, any_entry_marginal, might_use_sparse }, cone) = survey(
-        eng, vtree, ops, free, min_grid, Operands { f: f_widths, g: g_widths }, cone,
+    let ApplyWorkspace {
+        f_widths,
+        g_widths,
+        f_identity,
+        g_identity,
+        f_pairs_scratch,
+        g_pairs_scratch,
+        products,
+        stream_cache,
+        prefilter_masks,
+        words,
+        cone,
+    } = scratch;
+    f_widths.resize(f_widths.len().max(num_nodes), 0);
+    g_widths.resize(g_widths.len().max(num_nodes), 0);
+    let (snap, cone) = survey(
+        eng,
+        vtree,
+        ops,
+        free,
+        min_grid,
+        Operands {
+            f: f_widths,
+            g: g_widths,
+        },
+        cone,
     )?;
-
-    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
-
-    preflight_dense_budget(lim, total_cells)?;
+    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, snap.any_entry_marginal);
+    preflight_dense_budget(lim, snap.total_cells)?;
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
@@ -596,10 +710,19 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     // lists, live counts, bump allocator — is skipped outright. A level under
     // a free level is taken whole with its region, and no level reads its
     // products.
-    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, cone)?;
+    products.reset(
+        eng,
+        snap.might_use_sparse,
+        num_nodes,
+        f_widths,
+        g_widths,
+        cone,
+    )?;
 
     Ok(ApplyRun {
-        levels, f_widths, g_widths,
+        levels,
+        f_widths,
+        g_widths,
         thresholds,
         stream_cache,
         products,

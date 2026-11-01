@@ -37,7 +37,9 @@ use crate::limits::{OperationError, PollGate};
 
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, NodeIdx, Tdd, LEAF_WIDTH, ONE_LEAF_IDX, ZERO};
+use crate::diagram::{
+    ChildDecoder, ChildPair, EncodedChildRef, LEAF_WIDTH, NodeIdx, ONE_LEAF_IDX, Tdd, ZERO,
+};
 use crate::vtree::VtreeIdx;
 
 use super::Marking;
@@ -124,7 +126,10 @@ impl Listed {
     /// The position of product `(a, b)` in `products`, where it is live:
     /// a search in `f` node `a`'s run, which is short.
     fn position(&self, a: u32, b: u32) -> Option<u32> {
-        let (lo, hi) = (self.offsets[a as usize] as usize, self.offsets[a as usize + 1] as usize);
+        let (lo, hi) = (
+            self.offsets[a as usize] as usize,
+            self.offsets[a as usize + 1] as usize,
+        );
         let run = &self.products[lo..hi];
         let at = match run.len() {
             0..=8 => run.iter().position(|e| e.1 == b)?,
@@ -252,7 +257,9 @@ impl LevelPairs {
             }
             *slot = at + 1;
         } else {
-            if self.index.len() == self.index.capacity() { eng.limits().reserve_map(&mut self.index, 1)?; }
+            if self.index.len() == self.index.capacity() {
+                eng.limits().reserve_map(&mut self.index, 1)?;
+            }
             let std::collections::hash_map::Entry::Vacant(slot) = self.index.entry(k) else {
                 return Ok(false);
             };
@@ -324,7 +331,13 @@ impl Marking {
     /// `remaining` is the allowance of product-pair probes across the
     /// bottom-up decision and the walk; spending it returns `None` with the
     /// marks abandoned.
-    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx, remaining: u64) -> Result<Option<Marking>, OperationError> {
+    pub(super) fn walk(
+        eng: &Engine,
+        f: &Tdd,
+        care: &Tdd,
+        r: VtreeIdx,
+        remaining: u64,
+    ) -> Result<Option<Marking>, OperationError> {
         let root_key = match child(f, care, r, None, None) {
             Child::Pair(k) => k,
             // A compatible leaf or a marginal scalar: nothing died.
@@ -337,7 +350,12 @@ impl Marking {
             Ok(root_live) => {
                 walk.poll.flush()?;
                 walk.spread_keep()?;
-                Ok(Some(Marking { alive: walk.alive, keep: walk.keep, pair_alive: walk.pair_alive, root_live }))
+                Ok(Some(Marking {
+                    alive: walk.alive,
+                    keep: walk.keep,
+                    pair_alive: walk.pair_alive,
+                    root_live,
+                }))
             }
             Err(Halt::Spent) => {
                 walk.poll.flush()?;
@@ -349,7 +367,11 @@ impl Marking {
 
     /// Marks for a walk that never examined a pair: nothing dies (every reachable
     /// node is reported alive, so `nothing_reachable_died` holds).
-    pub(super) fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, OperationError> {
+    pub(super) fn trivial(
+        eng: &Engine,
+        f: &Tdd,
+        root_live: bool,
+    ) -> Result<Marking, OperationError> {
         Ok(Marking {
             alive: mark_rows(eng, f, true)?,
             keep: Vec::new(),
@@ -361,12 +383,17 @@ impl Marking {
     /// Is every node and pair reachable from `f`'s root marked live? Then the
     /// rebuild would reproduce `f` pair-for-pair, so `g == f` and the caller can
     /// reuse `f` verbatim. Stack-driven traversal of `f`'s reachable subgraph.
-    pub(super) fn nothing_reachable_died(&self, eng: &Engine, f: &Tdd) -> Result<bool, OperationError> {
+    pub(super) fn nothing_reachable_died(
+        &self,
+        eng: &Engine,
+        f: &Tdd,
+    ) -> Result<bool, OperationError> {
         let mut poll = eng.limits().gate();
         let vtree = &f.vtree;
         let mut seen = mark_rows(eng, f, false)?;
         let mut stack = Vec::new();
-        eng.limits().try_push(&mut stack, (f.output.vtree, f.output.local))?;
+        eng.limits()
+            .try_push(&mut stack, (f.output.vtree, f.output.local))?;
         while let Some((v, l)) = stack.pop() {
             if l == ZERO || vtree.node(v).is_leaf() || f.levels[v.idx()].is_marginal() {
                 continue;
@@ -390,7 +417,8 @@ impl Marking {
                 for (child, side) in [(lc, p.left), (rc, p.right)] {
                     let decoder = f.levels[child.idx()].child_decoder();
                     if !decoder.is_marginal() {
-                        eng.limits().try_push(&mut stack, (child, decoder.node(side)))?;
+                        eng.limits()
+                            .try_push(&mut stack, (child, decoder.node(side)))?;
                     }
                 }
                 poll.poll(1)?;
@@ -402,11 +430,21 @@ impl Marking {
 }
 
 impl<'a> Walk<'a> {
-    fn new(eng: &'a Engine, f: &'a Tdd, care: &'a Tdd, r: VtreeIdx, remaining: u64) -> Result<Self, OperationError> {
+    fn new(
+        eng: &'a Engine,
+        f: &'a Tdd,
+        care: &'a Tdd,
+        r: VtreeIdx,
+        remaining: u64,
+    ) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
-        let lower = if f.output.vtree == r { care.output.vtree } else { f.output.vtree };
+        let lower = if f.output.vtree == r {
+            care.output.vtree
+        } else {
+            f.output.vtree
+        };
         let mut inner = Vec::new();
         lim.try_resize(&mut inner, nlev, false)?;
         let mut stack = vec![lower];
@@ -460,7 +498,14 @@ impl<'a> Walk<'a> {
     /// reads every product it hands down.
     fn top_care(&self, v: VtreeIdx, k: Key) -> Key {
         match k {
-            (fo, Some(b)) if self.care_top[v.idx()].get(b.idx()).copied().unwrap_or(false) => (fo, None),
+            (fo, Some(b))
+                if self.care_top[v.idx()]
+                    .get(b.idx())
+                    .copied()
+                    .unwrap_or(false) =>
+            {
+                (fo, None)
+            }
             k => k,
         }
     }
@@ -479,7 +524,9 @@ impl<'a> Walk<'a> {
         let (f, vtree) = (self.f, &self.f.vtree);
         let order = vtree.internal_bottomup_slice();
         for &v in order.iter().rev() {
-            if f.levels[v.idx()].is_marginal() || self.whole_levels.get(v.idx()).copied().unwrap_or(false) {
+            if f.levels[v.idx()].is_marginal()
+                || self.whole_levels.get(v.idx()).copied().unwrap_or(false)
+            {
                 continue;
             }
             let (lc, rc) = vtree.children(v);
@@ -631,7 +678,11 @@ impl<'a> Walk<'a> {
             if let Some(found) = found {
                 // Found in `f`'s node and pair order: ascending already where
                 // `care` holds one node here.
-                let found = if care.levels[u.idx()].nodes().len() == 1 { found } else { sort_found(eng, nodes, found)? };
+                let found = if care.levels[u.idx()].nodes().len() == 1 {
+                    found
+                } else {
+                    sort_found(eng, nodes, found)?
+                };
                 return Ok(Products::Listed(listed(eng, nodes, &found)?));
             }
         }
@@ -648,9 +699,7 @@ impl<'a> Walk<'a> {
                 let found = sort_found(eng, nodes, found)?;
                 Products::Listed(listed(eng, nodes, &found)?)
             }
-            None => {
-                Products::Lazy(FxHashMap::default())
-            }
+            None => Products::Lazy(FxHashMap::default()),
         })
     }
 
@@ -680,7 +729,12 @@ impl<'a> Walk<'a> {
     /// inner child is live with its own. Every pair of pairs found is live,
     /// so the work is the gathering and the lookups; the outer child is the
     /// one where those cost less. `None` when even that exceeds `cap`.
-    fn join_both(&mut self, u: VtreeIdx, kids: [VtreeIdx; 2], cap: u64) -> Result<Option<Found>, Halt> {
+    fn join_both(
+        &mut self,
+        u: VtreeIdx,
+        kids: [VtreeIdx; 2],
+        cap: u64,
+    ) -> Result<Option<Found>, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let lives = [self.take(kids[0]), self.take(kids[1])];
         // Each orientation costed off `f`'s pairs in place, and `f`'s pairs
@@ -766,10 +820,16 @@ impl<'a> Walk<'a> {
         let mut cbuf = Vec::new();
         let mut tests: Vec<[SideTest; 2]> = Vec::new();
         for q in care.levels[u.idx()].pairs_read(0, &mut cbuf) {
-            let t = [self.side_test(lc, decode(care, lc, q.left))?, self.side_test(rc, decode(care, rc, q.right))?];
+            let t = [
+                self.side_test(lc, decode(care, lc, q.left))?,
+                self.side_test(rc, decode(care, rc, q.right))?,
+            ];
             eng.limits().try_push(&mut tests, t)?;
         }
-        let decoders = [f.levels[lc.idx()].child_decoder(), f.levels[rc.idx()].child_decoder()];
+        let decoders = [
+            f.levels[lc.idx()].child_decoder(),
+            f.levels[rc.idx()].child_decoder(),
+        ];
         let level = &f.levels[u.idx()];
         let per_pair = tests.len() as u64;
         let mut found = Vec::new();
@@ -782,7 +842,8 @@ impl<'a> Walk<'a> {
                 ];
                 for (j, t) in tests.iter().enumerate() {
                     if t[0].holds(refs[0]) && t[1].holds(refs[1]) {
-                        eng.limits().try_push(&mut found, (a as u32, 0, i, j as u32))?;
+                        eng.limits()
+                            .try_push(&mut found, (a as u32, 0, i, j as u32))?;
                     }
                 }
                 i += 1;
@@ -806,7 +867,11 @@ impl<'a> Walk<'a> {
         if f.levels[cv.idx()].is_marginal() {
             return Ok(SideTest::Live);
         }
-        let co = if care.levels[cv.idx()].is_marginal() { None } else { co };
+        let co = if care.levels[cv.idx()].is_marginal() {
+            None
+        } else {
+            co
+        };
         if f.vtree.node(cv).is_leaf() {
             let mut table = [false; LEAF_WIDTH];
             for (x, slot) in table.iter_mut().enumerate() {
@@ -814,14 +879,21 @@ impl<'a> Walk<'a> {
             }
             return Ok(SideTest::Leaf(table));
         }
-        let Some(b) = co.filter(|b| !self.care_top[cv.idx()].get(b.idx()).copied().unwrap_or(false)) else {
+        let Some(b) = co.filter(|b| {
+            !self.care_top[cv.idx()]
+                .get(b.idx())
+                .copied()
+                .unwrap_or(false)
+        }) else {
             return Ok(SideTest::Model);
         };
         let Products::Listed(l) = &self.products[cv.idx()] else {
             unreachable!("a spine joins only on listed children")
         };
         let mut bits = Vec::new();
-        self.eng.limits().try_resize(&mut bits, (l.offsets.len() - 1).div_ceil(64), 0u64)?;
+        self.eng
+            .limits()
+            .try_resize(&mut bits, (l.offsets.len() - 1).div_ceil(64), 0u64)?;
         for &(x, y) in &l.products {
             if y == b.0 {
                 bits[x as usize / 64] |= 1 << (x % 64);
@@ -890,7 +962,14 @@ impl<'a> Walk<'a> {
     /// tested on the other child as [`Self::join_one`] tests it. `f`'s pairs
     /// are read in storage order, once to count the partners and once to
     /// test them; `None`, and nothing tested, when the partners exceed `cap`.
-    fn join_keyed(&mut self, u: VtreeIdx, kids: [VtreeIdx; 2], k: usize, other_kind: Side, cap: u64) -> Result<Option<Found>, Halt> {
+    fn join_keyed(
+        &mut self,
+        u: VtreeIdx,
+        kids: [VtreeIdx; 2],
+        k: usize,
+        other_kind: Side,
+        cap: u64,
+    ) -> Result<Option<Found>, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let (ck, other) = (kids[k], kids[1 - k]);
         let live = self.take(ck);
@@ -898,7 +977,11 @@ impl<'a> Walk<'a> {
         let level = &f.levels[u.idx()];
         let partners = |p: ChildPair| {
             let x = ChildDecoder::structural().node(side_of(p, k));
-            if x == ZERO { None } else { live.of(x.0).first().map(|&(_, y)| y) }
+            if x == ZERO {
+                None
+            } else {
+                live.of(x.0).first().map(|&(_, y)| y)
+            }
         };
         let mut est = 0u64;
         for a in 0..level.nodes().len() {
@@ -931,7 +1014,8 @@ impl<'a> Walk<'a> {
                 for &(b, j, cside) in cands {
                     probes += 1;
                     if self.other_live(other, other_kind, fo, cside)? {
-                        eng.limits().try_push(&mut found, (a as u32, b, i as u32, j))?;
+                        eng.limits()
+                            .try_push(&mut found, (a as u32, b, i as u32, j))?;
                     }
                 }
             }
@@ -945,7 +1029,14 @@ impl<'a> Walk<'a> {
     /// or a leaf, testing each pair of pairs on the other child: one marginal
     /// in an operand decides by one side's pair alone, a lazy one asks. `None`
     /// when a lazy test would take more than `cap` probes.
-    fn join_one(&mut self, u: VtreeIdx, kids: [VtreeIdx; 2], s: usize, other_kind: Side, cap: u64) -> Result<Option<Found>, Halt> {
+    fn join_one(
+        &mut self,
+        u: VtreeIdx,
+        kids: [VtreeIdx; 2],
+        s: usize,
+        other_kind: Side,
+        cap: u64,
+    ) -> Result<Option<Found>, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let (cs, other) = (kids[s], kids[1 - s]);
         let live = self.take(cs);
@@ -954,7 +1045,8 @@ impl<'a> Walk<'a> {
         if other_kind == Side::Lazy {
             let mut est = 0u64;
             for &(x, y) in &live.products {
-                est = est.saturating_add((fg.of(x).len() as u64).saturating_mul(cg.of(y).len() as u64));
+                est = est
+                    .saturating_add((fg.of(x).len() as u64).saturating_mul(cg.of(y).len() as u64));
             }
             if est > cap {
                 self.restore(cs, live);
@@ -987,7 +1079,13 @@ impl<'a> Walk<'a> {
     /// Whether partner reference `cside` on `other` is live with `fo` under
     /// `other_kind`.
     #[inline(always)]
-    fn other_live(&mut self, other: VtreeIdx, other_kind: Side, fo: Ref, cside: EncodedChildRef) -> Result<bool, Halt> {
+    fn other_live(
+        &mut self,
+        other: VtreeIdx,
+        other_kind: Side,
+        fo: Ref,
+        cside: EncodedChildRef,
+    ) -> Result<bool, Halt> {
         let co = decode(self.care, other, cside);
         match other_kind {
             Side::CareMarginal => Ok(true),
@@ -1031,7 +1129,9 @@ impl<'a> Walk<'a> {
         let x = !one.is_empty();
         let eng = self.eng;
         if let Products::Lazy(memo) = &mut self.products[v.idx()] {
-            if memo.len() == memo.capacity() { eng.limits().reserve_map(memo, 1)?; }
+            if memo.len() == memo.capacity() {
+                eng.limits().reserve_map(memo, 1)?;
+            }
             memo.insert((a, b), x);
         }
         Ok(x)
@@ -1040,7 +1140,15 @@ impl<'a> Walk<'a> {
     /// The live pairs of `f` node `a` × `care` node `b` at `v`, as `(f pair,
     /// care pair)` indices, into `out`: only the first with `first`, and one
     /// `care` pair per `f` pair with `one_each`.
-    fn combos(&mut self, v: VtreeIdx, a: u32, b: u32, first: bool, one_each: bool, out: &mut Vec<(u32, u32)>) -> Result<(), Halt> {
+    fn combos(
+        &mut self,
+        v: VtreeIdx,
+        a: u32,
+        b: u32,
+        first: bool,
+        one_each: bool,
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<(), Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let (mut fbuf, mut cbuf) = (Vec::new(), Vec::new());
         let fp = f.levels[v.idx()].pairs_read(a as usize, &mut fbuf);
@@ -1058,7 +1166,9 @@ impl<'a> Walk<'a> {
                 let (fl, fr) = (decode(f, lc, p.left), decode(f, rc, p.right));
                 for (j, q) in cp.iter().enumerate() {
                     self.spend()?;
-                    if self.live(lc, fl, decode(care, lc, q.left))? && self.live(rc, fr, decode(care, rc, q.right))? {
+                    if self.live(lc, fl, decode(care, lc, q.left))?
+                        && self.live(rc, fr, decode(care, rc, q.right))?
+                    {
                         eng.limits().try_push(out, (i as u32, j as u32))?;
                         if first {
                             return Ok(());
@@ -1072,34 +1182,14 @@ impl<'a> Walk<'a> {
             return Ok(());
         };
         let (cs, other) = (kids[s], kids[1 - s]);
-        let mut cands: Vec<u32> = Vec::new();
         if sides[s] == Side::Leaf {
-            let mut by_label: [Vec<u32>; LEAF_WIDTH] = Default::default();
-            for (j, q) in cp.iter().enumerate() {
-                let y = ChildDecoder::structural().node(side_of(*q, s));
-                if y != ZERO {
-                    eng.limits().try_push(&mut by_label[y.idx()], j as u32)?;
-                }
-            }
-            for (i, p) in fp.iter().enumerate() {
-                let x = ChildDecoder::structural().node(side_of(*p, s));
-                if x == ZERO {
-                    continue;
-                }
-                cands.clear();
-                for (y, js) in by_label.iter().enumerate() {
-                    if !leaf_dead(Some(x), Some(NodeIdx(y as u32))) {
-                        cands.extend_from_slice(js);
-                    }
-                }
-                if self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out)? {
-                    return Ok(());
-                }
-            }
-            return Ok(());
+            return self.combos_by_leaf(other, s, (fp, cp), (first, one_each), out);
         }
+        let mut cands: Vec<u32> = Vec::new();
         let held = std::mem::replace(&mut self.products[cs.idx()], Products::Absent);
-        let Products::Listed(below) = &held else { unreachable!("an index side is listed") };
+        let Products::Listed(below) = &held else {
+            unreachable!("an index side is listed")
+        };
         let index = match self.care_index[v.idx()].remove(&(b, s as u8)) {
             Some(index) => index,
             None => {
@@ -1121,7 +1211,13 @@ impl<'a> Walk<'a> {
                 continue;
             }
             listed_candidates(below, &index, x.0, &mut cands);
-            if self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out)? {
+            if self.probe(
+                (other, s),
+                (i as u32, *p),
+                (cp, &cands),
+                (first, one_each),
+                out,
+            )? {
                 break;
             }
         }
@@ -1130,6 +1226,48 @@ impl<'a> Walk<'a> {
             eng.limits().reserve_map(&mut self.care_index[v.idx()], 1)?;
         }
         self.care_index[v.idx()].insert((b, s as u8), index);
+        Ok(())
+    }
+
+    /// Join `fp` and `cp` on leaf side `s` by indexing `cp` per leaf label.
+    fn combos_by_leaf(
+        &mut self,
+        other: VtreeIdx,
+        s: usize,
+        (fp, cp): (&[ChildPair], &[ChildPair]),
+        (first, one_each): (bool, bool),
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<(), Halt> {
+        let lim = self.eng.limits();
+        let mut cands: Vec<u32> = Vec::new();
+        let mut by_label: [Vec<u32>; LEAF_WIDTH] = Default::default();
+        for (j, q) in cp.iter().enumerate() {
+            let y = ChildDecoder::structural().node(side_of(*q, s));
+            if y != ZERO {
+                lim.try_push(&mut by_label[y.idx()], j as u32)?;
+            }
+        }
+        for (i, p) in fp.iter().enumerate() {
+            let x = ChildDecoder::structural().node(side_of(*p, s));
+            if x == ZERO {
+                continue;
+            }
+            cands.clear();
+            for (y, js) in by_label.iter().enumerate() {
+                if !leaf_dead(Some(x), Some(NodeIdx(y as u32))) {
+                    cands.extend_from_slice(js);
+                }
+            }
+            if self.probe(
+                (other, s),
+                (i as u32, *p),
+                (cp, &cands),
+                (first, one_each),
+                out,
+            )? {
+                return Ok(());
+            }
+        }
         Ok(())
     }
 
@@ -1186,7 +1324,12 @@ impl<'a> Walk<'a> {
     /// that live pairs reach are left in `seeds`, visited. A product of an
     /// `f` node and a `care` that is `⊤` over its level ([`Walk::whole`]) is
     /// live and kept whole, never walked.
-    fn top(&mut self, r: VtreeIdx, root_key: Key, seeds: &mut Vec<(VtreeIdx, Key)>) -> Result<bool, Halt> {
+    fn top(
+        &mut self,
+        r: VtreeIdx,
+        root_key: Key,
+        seeds: &mut Vec<(VtreeIdx, Key)>,
+    ) -> Result<bool, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let vtree = &f.vtree;
         let mut stack = Vec::new();
@@ -1204,14 +1347,18 @@ impl<'a> Walk<'a> {
             for (k, (fl, fr)) in refs(f, v, fo).enumerate() {
                 for (cl, cr) in refs(care, v, co) {
                     self.spend()?;
-                    if !(self.top_live(&levels, lc, fl, cl)? && self.top_live(&levels, rc, fr, cr)?) {
+                    if !(self.top_live(&levels, lc, fl, cl)?
+                        && self.top_live(&levels, rc, fr, cr)?)
+                    {
                         continue;
                     }
                     if fo.is_some() {
                         eng.limits().try_push(&mut live_pairs, k as u32)?;
                     }
                     for (cv, x, y) in [(lc, fl, cl), (rc, fr, cr)] {
-                        let Child::Pair(key) = self.child(cv, x, y) else { continue };
+                        let Child::Pair(key) = self.child(cv, x, y) else {
+                            continue;
+                        };
                         if self.inner[cv.idx()] {
                             self.seed(cv, key, seeds)?;
                         } else if self.whole(cv, key) {
@@ -1283,7 +1430,9 @@ impl<'a> Walk<'a> {
                 'pairs: for (fl, fr) in refs(f, v, fo) {
                     for (cl, cr) in refs(care, v, co) {
                         self.spend()?;
-                        if self.top_live(levels, lc, fl, cl)? && self.top_live(levels, rc, fr, cr)? {
+                        if self.top_live(levels, lc, fl, cl)?
+                            && self.top_live(levels, rc, fr, cr)?
+                        {
                             any = true;
                             break 'pairs;
                         }
@@ -1305,11 +1454,18 @@ impl<'a> Walk<'a> {
     /// arrays by node: no product is discovered or hashed. `None` where the
     /// shape does not hold (or `f` is marginal on the path), for
     /// [`Walk::top`].
-    fn path_top(&mut self, r: VtreeIdx, root_key: Key, seeds: &mut Vec<(VtreeIdx, Key)>) -> Result<Option<bool>, Halt> {
+    fn path_top(
+        &mut self,
+        r: VtreeIdx,
+        root_key: Key,
+        seeds: &mut Vec<(VtreeIdx, Key)>,
+    ) -> Result<Option<bool>, Halt> {
         let (eng, f) = (self.eng, self.f);
         let vtree = &f.vtree;
         let c = self.care.output.vtree;
-        let (Some(root), None) = root_key else { return Ok(None) };
+        let (Some(root), None) = root_key else {
+            return Ok(None);
+        };
         if f.output.vtree != r || c == r || !self.holds_care[r.idx()] {
             return Ok(None);
         }
@@ -1329,13 +1485,18 @@ impl<'a> Walk<'a> {
         eng.limits().reserve_exact(&mut flags, path.len())?;
         for &v in &path {
             let mut row = Vec::new();
-            eng.limits().try_resize(&mut row, f.levels[v.idx()].nodes().len(), 0u8)?;
+            eng.limits()
+                .try_resize(&mut row, f.levels[v.idx()].nodes().len(), 0u8)?;
             flags.push(row);
         }
         // The liveness of `c`'s nodes beside `care`'s root, each decided
         // once: 0 not yet, 1 dead, 2 live.
         let mut at_c: Vec<u8> = Vec::new();
-        let c_nodes = if vtree.node(c).is_leaf() { LEAF_WIDTH } else { f.levels[c.idx()].nodes().len() };
+        let c_nodes = if vtree.node(c).is_leaf() {
+            LEAF_WIDTH
+        } else {
+            f.levels[c.idx()].nodes().len()
+        };
         eng.limits().try_resize(&mut at_c, c_nodes, 0u8)?;
         let last = path.len() - 1;
         for pass in [Pass::Up, Pass::Down] {
@@ -1353,59 +1514,88 @@ impl<'a> Walk<'a> {
             for i in order {
                 let v = path[i];
                 let on = path.get(i + 1).copied().unwrap_or(c);
-                let (lc, rc) = vtree.children(v);
-                let (on_left, off) = if lc == on { (true, rc) } else { (false, lc) };
-                let level = &f.levels[v.idx()];
-                for a in 0..level.nodes().len() {
-                    if pass == Pass::Down && flags[i][a] != 3 {
-                        continue;
-                    }
-                    live_pairs.clear();
-                    for (k, p) in level.pairs_iter_of_idx(a).enumerate() {
-                        self.spend()?;
-                        let (down, side) = if on_left { (p.left, p.right) } else { (p.right, p.left) };
-                        let other = decode(f, off, side);
-                        if other == Some(ZERO) {
-                            continue;
-                        }
-                        let below = decode(f, on, down);
-                        let live = match below {
-                            Some(x) if i < last => x != ZERO && flags[i + 1][x.idx()] & 1 != 0,
-                            _ => self.live_at_care_root(c, below, &mut at_c)?,
-                        };
-                        if !live {
-                            continue;
-                        }
-                        if pass == Pass::Up {
-                            flags[i][a] |= 1;
-                            break;
-                        }
-                        eng.limits().try_push(&mut live_pairs, k as u32)?;
-                        if let Some(x) = other {
-                            self.keep_node(off, x);
-                        }
-                        match below {
-                            Some(x) if i < last => flags[i + 1][x.idx()] |= 2,
-                            _ => {
-                                if let Child::Pair(key) = self.child(c, below, None) {
-                                    self.seed(c, key, seeds)?;
-                                }
-                            }
-                        }
-                    }
-                    if !live_pairs.is_empty() {
-                        self.mark_many(v, NodeIdx(a as u32), live_pairs.iter().copied())?;
-                    }
-                }
+                self.walk_path_top_level(
+                    pass,
+                    (i, last, c),
+                    (v, on),
+                    (&mut flags, &mut at_c),
+                    &mut live_pairs,
+                    seeds,
+                )?;
             }
         }
         Ok(Some(true))
     }
 
+    /// Run one pass (`Pass::Up` liveness or `Pass::Down` marking) across level
+    /// `v` on the `r -> c` spine.
+    fn walk_path_top_level(
+        &mut self,
+        pass: Pass,
+        (i, last, c): (usize, usize, VtreeIdx),
+        (v, on): (VtreeIdx, VtreeIdx),
+        (flags, at_c): (&mut [Vec<u8>], &mut [u8]),
+        live_pairs: &mut Vec<u32>,
+        seeds: &mut Vec<(VtreeIdx, Key)>,
+    ) -> Result<(), Halt> {
+        let (eng, f) = (self.eng, self.f);
+        let (lc, rc) = f.vtree.children(v);
+        let (on_left, off) = if lc == on { (true, rc) } else { (false, lc) };
+        let level = &f.levels[v.idx()];
+        for a in 0..level.nodes().len() {
+            if pass == Pass::Down && flags[i][a] != 3 {
+                continue;
+            }
+            live_pairs.clear();
+            for (k, p) in level.pairs_iter_of_idx(a).enumerate() {
+                self.spend()?;
+                let (down, side) = if on_left {
+                    (p.left, p.right)
+                } else {
+                    (p.right, p.left)
+                };
+                let other = decode(f, off, side);
+                if other == Some(ZERO) {
+                    continue;
+                }
+                let below = decode(f, on, down);
+                let live = match below {
+                    Some(x) if i < last => x != ZERO && flags[i + 1][x.idx()] & 1 != 0,
+                    _ => self.live_at_care_root(c, below, at_c)?,
+                };
+                if !live {
+                    continue;
+                }
+                if pass == Pass::Up {
+                    flags[i][a] |= 1;
+                    break;
+                }
+                eng.limits().try_push(live_pairs, k as u32)?;
+                if let Some(x) = other {
+                    self.keep_node(off, x);
+                }
+                match below {
+                    Some(x) if i < last => flags[i + 1][x.idx()] |= 2,
+                    _ => {
+                        if let Child::Pair(key) = self.child(c, below, None) {
+                            self.seed(c, key, seeds)?;
+                        }
+                    }
+                }
+            }
+            if !live_pairs.is_empty() {
+                self.mark_many(v, NodeIdx(a as u32), live_pairs.iter().copied())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `f`'s reference `x` into `c`, `care`'s root level, is live
     /// beside `care`'s root, memoized in `memo` by node.
     fn live_at_care_root(&mut self, c: VtreeIdx, x: Ref, memo: &mut [u8]) -> Result<bool, Halt> {
-        let Some(n) = x else { return self.live(c, None, None) };
+        let Some(n) = x else {
+            return self.live(c, None, None);
+        };
         if n == ZERO {
             return Ok(false);
         }
@@ -1430,7 +1620,13 @@ impl<'a> Walk<'a> {
 
     /// Liveness of child references at `cv` for the walk above the lower root:
     /// from `levels` above it, from the decided products below.
-    fn top_live(&mut self, levels: &[LevelPairs], cv: VtreeIdx, fo: Ref, co: Ref) -> Result<bool, Halt> {
+    fn top_live(
+        &mut self,
+        levels: &[LevelPairs],
+        cv: VtreeIdx,
+        fo: Ref,
+        co: Ref,
+    ) -> Result<bool, Halt> {
         match self.child(cv, fo, co) {
             Child::Dead => Ok(false),
             Child::Live => Ok(true),
@@ -1445,7 +1641,12 @@ impl<'a> Walk<'a> {
 
     /// Hand live product `k` below the lower root to the walk down: an `f`
     /// node under `⊤` is kept whole, any other is pushed the first time.
-    fn seed(&mut self, v: VtreeIdx, k: Key, seeds: &mut Vec<(VtreeIdx, Key)>) -> Result<(), OperationError> {
+    fn seed(
+        &mut self,
+        v: VtreeIdx,
+        k: Key,
+        seeds: &mut Vec<(VtreeIdx, Key)>,
+    ) -> Result<(), OperationError> {
         if let (Some(a), None) = k {
             self.keep_node(v, a);
         } else if self.visit(v, k)? {
@@ -1472,7 +1673,9 @@ impl<'a> Walk<'a> {
             return Ok(new);
         }
         let set = &mut self.seen[v.idx()].set;
-        if set.len() == set.capacity() { lim.reserve_set(set, 1)?; }
+        if set.len() == set.capacity() {
+            lim.reserve_set(set, 1)?;
+        }
         Ok(set.insert(k))
     }
 
@@ -1508,7 +1711,9 @@ impl<'a> Walk<'a> {
                 None => {
                     for (i, p) in fp.iter().enumerate() {
                         self.spend()?;
-                        if self.live(lc, decode(f, lc, p.left), None)? && self.live(rc, decode(f, rc, p.right), None)? {
+                        if self.live(lc, decode(f, lc, p.left), None)?
+                            && self.live(rc, decode(f, rc, p.right), None)?
+                        {
                             eng.limits().try_push(&mut out, (i as u32, 0))?;
                         }
                     }
@@ -1526,7 +1731,10 @@ impl<'a> Walk<'a> {
                     }
                     None => (None, None),
                 };
-                for (cv, x, y) in [(lc, decode(f, lc, p.left), cl), (rc, decode(f, rc, p.right), cr)] {
+                for (cv, x, y) in [
+                    (lc, decode(f, lc, p.left), cl),
+                    (rc, decode(f, rc, p.right), cr),
+                ] {
                     match self.child(cv, x, y) {
                         Child::Pair((Some(a), None)) => self.keep_node(cv, a),
                         Child::Pair(k) if self.visit(cv, k)? => {
@@ -1561,12 +1769,20 @@ impl<'a> Walk<'a> {
             if !self.inner[u.idx()] || f.levels[u.idx()].is_marginal() || self.reads_top(u) {
                 continue;
             }
-            let Products::Listed(l) = &self.products[u.idx()] else { return false };
-            if self.care_top[u.idx()].iter().any(|&t| t) || l.products.windows(2).any(|w| w[0].0 == w[1].0) {
+            let Products::Listed(l) = &self.products[u.idx()] else {
+                return false;
+            };
+            if self.care_top[u.idx()].iter().any(|&t| t)
+                || l.products.windows(2).any(|w| w[0].0 == w[1].0)
+            {
                 return false;
             }
             if u != self.lower {
-                let parent = f.vtree.node(u).parent().expect("a level below the lower root has a parent");
+                let parent = f
+                    .vtree
+                    .node(u)
+                    .parent()
+                    .expect("a level below the lower root has a parent");
                 if !matches!(self.products[parent.idx()], Products::Listed(_)) {
                     return false;
                 }
@@ -1580,7 +1796,8 @@ impl<'a> Walk<'a> {
     /// node of a level `care` reads as `⊤` kept whole.
     fn mark_listed(&mut self) -> Result<(), Halt> {
         let (eng, f) = (self.eng, self.f);
-        eng.limits().try_resize(&mut self.whole_levels, f.vtree.num_nodes(), false)?;
+        eng.limits()
+            .try_resize(&mut self.whole_levels, f.vtree.num_nodes(), false)?;
         for (u, _, _) in f.vtree.internal_bottomup() {
             if !self.inner[u.idx()] || f.levels[u.idx()].is_marginal() {
                 continue;
@@ -1600,14 +1817,25 @@ impl<'a> Walk<'a> {
                 self.alive[u.idx()][a as usize] = true;
                 let combos = &l.combos[l.starts[p] as usize..l.starts[p + 1] as usize];
                 let count = level.pair_count_at(a as usize);
-                self.pair_alive.mark_many(eng, u, NodeIdx(a), count, combos.iter().map(|&(i, _)| i))?;
+                self.pair_alive.mark_many(
+                    eng,
+                    u,
+                    NodeIdx(a),
+                    count,
+                    combos.iter().map(|&(i, _)| i),
+                )?;
             }
         }
         Ok(())
     }
 
     /// Mark `f` pairs `pairs` of node `a` at `v`, and the node, live.
-    fn mark_many(&mut self, v: VtreeIdx, a: NodeIdx, pairs: impl IntoIterator<Item = u32>) -> Result<(), OperationError> {
+    fn mark_many(
+        &mut self,
+        v: VtreeIdx,
+        a: NodeIdx,
+        pairs: impl IntoIterator<Item = u32>,
+    ) -> Result<(), OperationError> {
         self.alive[v.idx()][a.idx()] = true;
         let count = self.f.levels[v.idx()].pair_count_at(a.idx());
         self.pair_alive.mark_many(self.eng, v, a, count, pairs)
@@ -1650,14 +1878,19 @@ fn care_tops(eng: &Engine, care: &Tdd) -> Result<(Vec<Vec<bool>>, Vec<bool>), Op
     let vtree = &care.vtree;
     let mut top = mark_rows(eng, care, false)?;
     let mut flat = Vec::new();
-    eng.limits().try_resize(&mut flat, vtree.num_nodes(), false)?;
+    eng.limits()
+        .try_resize(&mut flat, vtree.num_nodes(), false)?;
     let side_top = |top: &[Vec<bool>], cv: VtreeIdx, side: EncodedChildRef| {
         let decoder = care.levels[cv.idx()].child_decoder();
         if decoder.is_marginal() {
             return true;
         }
         let node = decoder.node(side);
-        if vtree.node(cv).is_leaf() { node == ONE_LEAF_IDX } else { node != ZERO && top[cv.idx()][node.idx()] }
+        if vtree.node(cv).is_leaf() {
+            node == ONE_LEAF_IDX
+        } else {
+            node != ZERO && top[cv.idx()][node.idx()]
+        }
     };
     for (u, lc, rc) in vtree.internal_bottomup() {
         let level = &care.levels[u.idx()];
@@ -1668,7 +1901,10 @@ fn care_tops(eng: &Engine, care: &Tdd) -> Result<(Vec<Vec<bool>>, Vec<bool>), Op
         let mut all = n > 0;
         for b in 0..n {
             let t = level.pair_count_at(b) == 1 && {
-                let p = level.pairs_iter_of_idx(b).next().expect("a node of one pair");
+                let p = level
+                    .pairs_iter_of_idx(b)
+                    .next()
+                    .expect("a node of one pair");
                 side_top(&top, lc, p.left) && side_top(&top, rc, p.right)
             };
             top[u.idx()][b] = t;
@@ -1681,8 +1917,18 @@ fn care_tops(eng: &Engine, care: &Tdd) -> Result<(Vec<Vec<bool>>, Vec<bool>), Op
 
 /// `f`'s or `care`'s pairs at level `u` grouped by their child on side `s`
 /// (`0` left, `1` right), which is level `cs`; a `ZERO` child is left out.
-fn groups(eng: &Engine, t: &Tdd, u: VtreeIdx, s: usize, cs: VtreeIdx) -> Result<Groups, OperationError> {
-    let keys = if t.vtree.node(cs).is_leaf() { LEAF_WIDTH } else { t.levels[cs.idx()].nodes().len() };
+fn groups(
+    eng: &Engine,
+    t: &Tdd,
+    u: VtreeIdx,
+    s: usize,
+    cs: VtreeIdx,
+) -> Result<Groups, OperationError> {
+    let keys = if t.vtree.node(cs).is_leaf() {
+        LEAF_WIDTH
+    } else {
+        t.levels[cs.idx()].nodes().len()
+    };
     let level = &t.levels[u.idx()];
     let mut offsets = Vec::new();
     eng.limits().try_resize(&mut offsets, keys + 1, 0u32)?;
@@ -1700,7 +1946,11 @@ fn groups(eng: &Engine, t: &Tdd, u: VtreeIdx, s: usize, cs: VtreeIdx) -> Result<
         offsets[x + 1] += offsets[x];
     }
     let mut entries = Vec::new();
-    eng.limits().try_resize(&mut entries, total, (0u32, 0u32, EncodedChildRef::from_raw(0)))?;
+    eng.limits().try_resize(
+        &mut entries,
+        total,
+        (0u32, 0u32, EncodedChildRef::from_raw(0)),
+    )?;
     let mut cursor = offsets.clone();
     for a in 0..level.nodes().len() {
         for (i, p) in level.pairs_iter_of_idx(a).enumerate() {
@@ -1718,7 +1968,15 @@ fn groups(eng: &Engine, t: &Tdd, u: VtreeIdx, s: usize, cs: VtreeIdx) -> Result<
 /// child, whose live products are `outer`: per `f` child there, gather the
 /// `care` pairs live with it, then look each `f` pair under it up among them
 /// by its inner child. Read off `f`'s pairs in place, without grouping them.
-fn join_cost(eng: &Engine, f: &Tdd, u: VtreeIdx, o: usize, outer: &Listed, inner: &Listed, cg: &Groups) -> Result<u64, OperationError> {
+fn join_cost(
+    eng: &Engine,
+    f: &Tdd,
+    u: VtreeIdx,
+    o: usize,
+    outer: &Listed,
+    inner: &Listed,
+    cg: &Groups,
+) -> Result<u64, OperationError> {
     let lim = eng.limits();
     let keys = outer.offsets.len() - 1;
     // Per outer child, the `care` pairs it gathers, and whether the cost
@@ -1728,7 +1986,11 @@ fn join_cost(eng: &Engine, f: &Tdd, u: VtreeIdx, o: usize, outer: &Listed, inner
     let mut counted = Vec::new();
     lim.try_resize(&mut counted, keys, false)?;
     for (x, slot) in gathered.iter_mut().enumerate() {
-        *slot = outer.of(x as u32).iter().map(|&(_, y)| cg.of(y).len() as u64).sum();
+        *slot = outer
+            .of(x as u32)
+            .iter()
+            .map(|&(_, y)| cg.of(y).len() as u64)
+            .sum();
     }
     let level = &f.levels[u.idx()];
     let mut cost = 0u64;
@@ -1769,12 +2031,21 @@ fn leaf_live() -> Listed {
     for x in 0..LEAF_WIDTH {
         offsets[x + 1] += offsets[x];
     }
-    Listed { products, offsets, starts: Vec::new(), combos: Vec::new() }
+    Listed {
+        products,
+        offsets,
+        starts: Vec::new(),
+        combos: Vec::new(),
+    }
 }
 
 /// The listing of a level of `nodes` `f` nodes from its live `(a, b, f pair,
 /// care pair)`, ascending.
-fn listed(eng: &Engine, nodes: usize, found: &[(u32, u32, u32, u32)]) -> Result<Listed, OperationError> {
+fn listed(
+    eng: &Engine,
+    nodes: usize,
+    found: &[(u32, u32, u32, u32)],
+) -> Result<Listed, OperationError> {
     let lim = eng.limits();
     let mut products = Vec::new();
     let mut starts = Vec::new();
@@ -1794,7 +2065,12 @@ fn listed(eng: &Engine, nodes: usize, found: &[(u32, u32, u32, u32)]) -> Result<
     for k in 0..nodes {
         offsets[k + 1] += offsets[k];
     }
-    Ok(Listed { products, offsets, starts, combos })
+    Ok(Listed {
+        products,
+        offsets,
+        starts,
+        combos,
+    })
 }
 
 /// `found` ascending: counted out by `f` node, each node's few entries
@@ -1840,7 +2116,11 @@ fn side_of(p: ChildPair, s: usize) -> EncodedChildRef {
 #[inline]
 fn decode(t: &Tdd, cv: VtreeIdx, side: EncodedChildRef) -> Ref {
     let decoder = t.levels[cv.idx()].child_decoder();
-    if decoder.is_marginal() { None } else { Some(decoder.node(side)) }
+    if decoder.is_marginal() {
+        None
+    } else {
+        Some(decoder.node(side))
+    }
 }
 
 /// Resolve the references `(fo, co)` that a parent product hands to child
@@ -1848,8 +2128,16 @@ fn decode(t: &Tdd, cv: VtreeIdx, side: EncodedChildRef) -> Ref {
 /// rules (`ZERO` dead; `f` marginal live; `care` marginal ⊤; leaf table), else
 /// it is a product.
 fn child(f: &Tdd, care: &Tdd, cv: VtreeIdx, fo: Ref, co: Ref) -> Child {
-    let fo = if fo.is_none() && cv == f.output.vtree { Some(f.output.local) } else { fo };
-    let co = if co.is_none() && cv == care.output.vtree { Some(care.output.local) } else { co };
+    let fo = if fo.is_none() && cv == f.output.vtree {
+        Some(f.output.local)
+    } else {
+        fo
+    };
+    let co = if co.is_none() && cv == care.output.vtree {
+        Some(care.output.local)
+    } else {
+        co
+    };
     if fo == Some(ZERO) || co == Some(ZERO) {
         return Child::Dead;
     }
@@ -1858,9 +2146,17 @@ fn child(f: &Tdd, care: &Tdd, cv: VtreeIdx, fo: Ref, co: Ref) -> Child {
         return Child::Live;
     }
     // A marginal care level is a satisfiability indicator: ⊤ for liveness.
-    let co = if care.levels[cv.idx()].is_marginal() { None } else { co };
+    let co = if care.levels[cv.idx()].is_marginal() {
+        None
+    } else {
+        co
+    };
     if f.vtree.node(cv).is_leaf() {
-        return if leaf_dead(fo, co) { Child::Dead } else { Child::Live };
+        return if leaf_dead(fo, co) {
+            Child::Dead
+        } else {
+            Child::Live
+        };
     }
     Child::Pair((fo, co))
 }
@@ -1870,7 +2166,10 @@ fn child(f: &Tdd, care: &Tdd, cv: VtreeIdx, fo: Ref, co: Ref) -> Child {
 fn leaf_dead(fo: Ref, co: Ref) -> bool {
     match (fo, co) {
         (Some(a), Some(b)) => {
-            debug_assert!(a.idx() < LEAF_WIDTH && b.idx() < LEAF_WIDTH, "a leaf reference names a label");
+            debug_assert!(
+                a.idx() < LEAF_WIDTH && b.idx() < LEAF_WIDTH,
+                "a leaf reference names a label"
+            );
             CONJOIN_GRID[a.idx()][b.idx()] == NO_PRODUCT
         }
         _ => false,
@@ -1896,7 +2195,8 @@ fn mark_rows<T: Clone>(eng: &Engine, f: &Tdd, value: T) -> Result<Vec<Vec<T>>, O
     eng.limits().reserve_exact(&mut rows, f.levels.len())?;
     for level in &f.levels {
         let mut row = Vec::new();
-        eng.limits().try_resize(&mut row, level.nodes().len(), value.clone())?;
+        eng.limits()
+            .try_resize(&mut row, level.nodes().len(), value.clone())?;
         rows.push(row);
     }
     Ok(rows)

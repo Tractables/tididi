@@ -18,7 +18,11 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SpineCtx { left_grid_base, right_grid_base, .. } = ctx;
+    let SpineCtx {
+        left_grid_base,
+        right_grid_base,
+        ..
+    } = ctx;
     let cd_map: &[[u32; 2]] = tables.cd_map;
     let clause_t3_buf = &mut *tables.t3_buf;
     let clause_dt_pairs = &mut *tables.dt_pairs;
@@ -33,17 +37,35 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
         let [r_ct, r_dt] = cd_map[right_grid_base + p.right.raw() as usize];
         if l_ct != NO_PRODUCT {
             if r_ct != NO_PRODUCT {
-                level.pairs.stored_mut().push(ChildPair::new(EncodedChildRef::from_raw(l_ct), EncodedChildRef::from_raw(r_ct)));
+                level.pairs.stored_mut().push(ChildPair::new(
+                    EncodedChildRef::from_raw(l_ct),
+                    EncodedChildRef::from_raw(r_ct),
+                ));
             }
             if r_dt != NO_PRODUCT {
-                level.pairs.stored_mut().push(ChildPair::new(EncodedChildRef::from_raw(l_ct), EncodedChildRef::from_raw(r_dt)));
+                level.pairs.stored_mut().push(ChildPair::new(
+                    EncodedChildRef::from_raw(l_ct),
+                    EncodedChildRef::from_raw(r_dt),
+                ));
             }
         }
         if l_dt != NO_PRODUCT && r_ct != NO_PRODUCT {
-            lim.try_push(clause_t3_buf, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_ct)))?;
+            lim.try_push(
+                clause_t3_buf,
+                ChildPair::new(
+                    EncodedChildRef::from_raw(l_dt),
+                    EncodedChildRef::from_raw(r_ct),
+                ),
+            )?;
         }
         if DT && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
-            lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l_dt), EncodedChildRef::from_raw(r_dt)))?;
+            lim.try_push(
+                clause_dt_pairs,
+                ChildPair::new(
+                    EncodedChildRef::from_raw(l_dt),
+                    EncodedChildRef::from_raw(r_dt),
+                ),
+            )?;
         }
     }
     level.pairs.stored_mut().extend_from_slice(clause_t3_buf);
@@ -67,7 +89,11 @@ pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SpineCtx { left_grid_base, right_grid_base, .. } = ctx;
+    let SpineCtx {
+        left_grid_base,
+        right_grid_base,
+        ..
+    } = ctx;
     let cd_map: &[[u32; 2]] = tables.cd_map;
     let clause_dt_pairs = &mut *tables.dt_pairs;
     for p in inputs {
@@ -76,14 +102,28 @@ pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
         } else {
             cd_map[right_grid_base + p.right.raw() as usize]
         };
-        let (l, r) = if LEFT { (e[0], p.right.0) } else { (p.left.0, e[0]) };
+        let (l, r) = if LEFT {
+            (e[0], p.right.0)
+        } else {
+            (p.left.0, e[0])
+        };
         if l != NO_PRODUCT && r != NO_PRODUCT {
-            level.pairs.stored_mut().push(ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)));
+            level.pairs.stored_mut().push(ChildPair::new(
+                EncodedChildRef::from_raw(l),
+                EncodedChildRef::from_raw(r),
+            ));
         }
         if DT {
-            let (l, r) = if LEFT { (e[1], p.right.0) } else { (p.left.0, e[1]) };
+            let (l, r) = if LEFT {
+                (e[1], p.right.0)
+            } else {
+                (p.left.0, e[1])
+            };
             if l != NO_PRODUCT && r != NO_PRODUCT {
-                lim.try_push(clause_dt_pairs, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
+                lim.try_push(
+                    clause_dt_pairs,
+                    ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
+                )?;
             }
         }
     }

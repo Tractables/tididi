@@ -14,8 +14,8 @@ use crate::Engine;
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
 use crate::diagram::{
-    Assembly, ChildPair, ColumnAlgebra, LeafLabel, NodeIdx, SlotPairs, Tdd, TddNodeId, LEAF_WIDTH, NEG_LEAF_IDX, ONE_LEAF_IDX,
-    POS_LEAF_IDX,
+    Assembly, ChildPair, ColumnAlgebra, LEAF_WIDTH, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX,
+    POS_LEAF_IDX, SlotPairs, Tdd, TddNodeId,
 };
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
@@ -170,7 +170,9 @@ impl std::error::Error for PrefixFoldError {
 }
 
 impl From<OperationError> for PrefixFoldError {
-    fn from(error: OperationError) -> Self { Self::Operation(error) }
+    fn from(error: OperationError) -> Self {
+        Self::Operation(error)
+    }
 }
 
 /// No node, set, state or fold.
@@ -334,7 +336,11 @@ impl Engine {
         points.require_structure()?;
         values.require_structure()?;
         if points.is_zero() || values.is_zero() {
-            let FoldCodes { into, code_vars, codes } = coding(&[]);
+            let FoldCodes {
+                into,
+                code_vars,
+                codes,
+            } = coding(&[]);
             Coding::new(lim, vtree, layout.value_root, &into, &code_vars, &codes, 0)?;
             return Ok(crate::build::constant_zero(self, &into));
         }
@@ -365,8 +371,20 @@ impl Engine {
         let mut folds = Vec::new();
         lim.reserve(&mut folds, fold.reached.len())?;
         folds.extend(fold.reached.iter().map(|&v| fold.vals[v as usize].clone()));
-        let FoldCodes { into, code_vars, codes } = coding(&folds);
-        let mapped = Coding::new(lim, vtree, layout.value_root, &into, &code_vars, &codes, folds.len())?;
+        let FoldCodes {
+            into,
+            code_vars,
+            codes,
+        } = coding(&folds);
+        let mapped = Coding::new(
+            lim,
+            vtree,
+            layout.value_root,
+            &into,
+            &code_vars,
+            &codes,
+            folds.len(),
+        )?;
         drop(folds);
         Ok(fold.emit(self, &into, &mapped, &codes)?)
     }
@@ -397,10 +415,15 @@ struct Coding {
 /// A block's refusal: empty, or past `most` variables.
 fn check_block(name: &str, block: &[VarId], most: usize) -> Result<(), PrefixFoldError> {
     if block.is_empty() {
-        return Err(PrefixFoldError::Layout(format!("the {name} block is empty")));
+        return Err(PrefixFoldError::Layout(format!(
+            "the {name} block is empty"
+        )));
     }
     if block.len() > most {
-        return Err(PrefixFoldError::Layout(format!("the {name} block has {} variables, more than {most}", block.len())));
+        return Err(PrefixFoldError::Layout(format!(
+            "the {name} block has {} variables, more than {most}",
+            block.len()
+        )));
     }
     Ok(())
 }
@@ -425,7 +448,15 @@ impl ColumnAlgebra for ModelCounts {
         col[label as usize] = if label == LeafLabel::One { 2 } else { 1 };
     }
 
-    fn fold(&self, _: VtreeIdx, slot: usize, pairs: SlotPairs<'_>, left: &Vec<u128>, right: &Vec<u128>, out: &mut Vec<u128>) {
+    fn fold(
+        &self,
+        _: VtreeIdx,
+        slot: usize,
+        pairs: SlotPairs<'_>,
+        left: &Vec<u128>,
+        right: &Vec<u128>,
+        out: &mut Vec<u128>,
+    ) {
         out[slot] = pairs.map(|(l, r)| left[l] * right[r]).sum();
     }
 
@@ -435,7 +466,13 @@ impl ColumnAlgebra for ModelCounts {
 }
 
 impl Layout {
-    fn new(lim: &Limits, vtree: &Vtree, order: &[VarId], value_vars: &[VarId], counted: bool) -> Result<Self, PrefixFoldError> {
+    fn new(
+        lim: &Limits,
+        vtree: &Vtree,
+        order: &[VarId],
+        value_vars: &[VarId],
+        counted: bool,
+    ) -> Result<Self, PrefixFoldError> {
         let layout = |message: String| PrefixFoldError::Layout(message);
         check_block("order", order, 64)?;
         check_block("value", value_vars, if counted { 127 } else { 64 })?;
@@ -445,14 +482,22 @@ impl Layout {
         for (i, &v) in order.iter().chain(value_vars).enumerate() {
             let bit = i.checked_sub(order.len()).map_or(u8::MAX, |b| b as u8);
             if role.insert(v, bit).is_some() {
-                return Err(PrefixFoldError::Variables(VtreeError::OverlappingVariable(v)));
+                return Err(PrefixFoldError::Variables(VtreeError::OverlappingVariable(
+                    v,
+                )));
             }
         }
 
         // The chain: each order variable the left child of the next node.
-        let leaf = |v: VarId| vtree.leaf_of(v).ok_or_else(|| layout(format!("order variable {} is not a leaf of the vtree", v.0)));
+        let leaf = |v: VarId| {
+            vtree
+                .leaf_of(v)
+                .ok_or_else(|| layout(format!("order variable {} is not a leaf of the vtree", v.0)))
+        };
         let Some(mut d) = vtree.node(leaf(order[0])?).parent() else {
-            return Err(layout("the first order variable is the whole vtree".to_string()));
+            return Err(layout(
+                "the first order variable is the whole vtree".to_string(),
+            ));
         };
         let mut chain = Vec::new();
         lim.reserve(&mut chain, order.len())?;
@@ -460,12 +505,18 @@ impl Layout {
         for (j, &v) in order.iter().enumerate() {
             let (l, r) = vtree.children(d);
             if l != leaf(v)? {
-                return Err(layout(format!("order variable {} is not the left child of the chain's node {j}", v.0)));
+                return Err(layout(format!(
+                    "order variable {} is not the left child of the chain's node {j}",
+                    v.0
+                )));
             }
             chain.push(d);
             match order.get(j + 1) {
                 Some(next) if vtree.node(r).is_leaf() => {
-                    return Err(layout(format!("the chain ends before order variable {}", next.0)));
+                    return Err(layout(format!(
+                        "the chain ends before order variable {}",
+                        next.0
+                    )));
                 }
                 Some(_) => d = r,
                 None => value_root = r,
@@ -473,7 +524,8 @@ impl Layout {
         }
 
         // The value subtree: exactly the value block.
-        let value_bit = subtree_leaf_bits(lim, vtree, value_root, &role, value_vars.len(), "value")?;
+        let value_bit =
+            subtree_leaf_bits(lim, vtree, value_root, &role, value_vars.len(), "value")?;
 
         // The path from the root down to `t`.
         let mut path = Vec::new();
@@ -485,7 +537,12 @@ impl Layout {
             child = u;
         }
         path.reverse();
-        Ok(Layout { path, chain, value_root, value_bit })
+        Ok(Layout {
+            path,
+            chain,
+            value_root,
+            value_bit,
+        })
     }
 }
 
@@ -511,7 +568,12 @@ fn subtree_leaf_bits(
             let v = vtree.leaf_var(s);
             match role.get(&v) {
                 Some(&bit) if bit != u8::MAX => bit_of[s.idx()] = bit,
-                _ => return Err(layout(format!("variable {} under the {block} subtree is not a {block} variable", v.0))),
+                _ => {
+                    return Err(layout(format!(
+                        "variable {} under the {block} subtree is not a {block} variable",
+                        v.0
+                    )));
+                }
             }
             leaves += 1;
         } else {
@@ -521,7 +583,9 @@ fn subtree_leaf_bits(
         }
     }
     if leaves != expected {
-        return Err(layout(format!("a {block} variable is not a leaf of the {block} subtree")));
+        return Err(layout(format!(
+            "a {block} variable is not a leaf of the {block} subtree"
+        )));
     }
     Ok(bit_of)
 }
@@ -545,15 +609,26 @@ impl Coding {
         lim.reserve_map(&mut code_role, code_vars.len())?;
         for (i, &v) in code_vars.iter().enumerate() {
             if code_role.insert(v, i as u8).is_some() {
-                return Err(PrefixFoldError::Variables(VtreeError::OverlappingVariable(v)));
+                return Err(PrefixFoldError::Variables(VtreeError::OverlappingVariable(
+                    v,
+                )));
             }
         }
         if codes.len() != folds {
-            return Err(PrefixFoldError::Codes(format!("{} codes for {folds} folds", codes.len())));
+            return Err(PrefixFoldError::Codes(format!(
+                "{} codes for {folds} folds",
+                codes.len()
+            )));
         }
         let width = code_vars.len();
-        if let Some((i, c)) = codes.iter().enumerate().find(|&(_, &c)| width < 64 && c >> width != 0) {
-            return Err(PrefixFoldError::Codes(format!("code {c} of fold {i} is past the range of {width} code variables")));
+        if let Some((i, c)) = codes
+            .iter()
+            .enumerate()
+            .find(|&(_, &c)| width < 64 && c >> width != 0)
+        {
+            return Err(PrefixFoldError::Codes(format!(
+                "code {c} of fold {i} is past the range of {width} code variables"
+            )));
         }
 
         // `into`: the vtree outside the value subtree, the code subtree in its place.
@@ -572,18 +647,26 @@ impl Coding {
                 (true, true) if vtree.leaf_var(s) == into.leaf_var(d) => {}
                 (true, true) => {
                     let (a, b) = (vtree.leaf_var(s).0, into.leaf_var(d).0);
-                    return Err(layout(format!("`into` has variable {b} where the vtree has {a}")));
+                    return Err(layout(format!(
+                        "`into` has variable {b} where the vtree has {a}"
+                    )));
                 }
                 (false, false) => {
                     let ((sl, sr), (dl, dr)) = (vtree.children(s), into.children(d));
                     lim.try_push(&mut pairs, (sl, dl))?;
                     lim.try_push(&mut pairs, (sr, dr))?;
                 }
-                _ => return Err(layout("`into` differs in shape from the vtree outside the value subtree".to_string())),
+                _ => {
+                    return Err(layout(
+                        "`into` differs in shape from the vtree outside the value subtree"
+                            .to_string(),
+                    ));
+                }
             }
         }
         let code_root = code_root.expect("the walk reaches every node of a matching shape");
-        let code_bit = subtree_leaf_bits(lim, into, code_root, &code_role, code_vars.len(), "code")?;
+        let code_bit =
+            subtree_leaf_bits(lim, into, code_root, &code_role, code_vars.len(), "code")?;
         Ok(Coding { image, code_bit })
     }
 }
@@ -759,7 +842,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             (NONE, x) | (x, NONE) => Ok(x),
             (a, b) => {
                 self.gate.poll(1)?;
-                let v = self.monoid.combine(&self.vals[a as usize], &self.vals[b as usize]);
+                let v = self
+                    .monoid
+                    .combine(&self.vals[a as usize], &self.vals[b as usize]);
                 self.intern(v)
             }
         }
@@ -794,7 +879,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             for n in 0..width {
                 self.gate.poll(1)?;
                 let Some(v) = counts.get(n).and_then(|&c| self.monoid.count(c)) else {
-                    return Err(PrefixFoldError::Codes("the monoid counts one model but not every number".to_string()));
+                    return Err(PrefixFoldError::Codes(
+                        "the monoid counts one model but not every number".to_string(),
+                    ));
                 };
                 let id = self.intern(v)?;
                 at_root.push(id);
@@ -884,7 +971,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         self.levels.extend((0..r + m).map(|_| Level::default()));
         self.lim.reserve(&mut self.products, r)?;
         self.products.extend((0..r).map(|_| KeySide::default()));
-        self.lim.try_resize(&mut self.slot, self.ops[0].vtree().num_nodes(), NONE)?;
+        self.lim
+            .try_resize(&mut self.slot, self.ops[0].vtree().num_nodes(), NONE)?;
         let start = [self.ops[0].output().local.0, self.ops[1].output().local.0];
         let top = &mut self.levels[0];
         let a = top.sets[0].intern(self.lim, &start[..1])?;
@@ -968,7 +1056,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     }
                 }
             }
-            here.ranges.push([start as u32, (here.moves.len() - start) as u32]);
+            here.ranges
+                .push([start as u32, (here.moves.len() - start) as u32]);
         }
         if !leaf_key {
             self.mark_used(at, top as usize, &used)?;
@@ -1045,7 +1134,12 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// on the right. Per `(l, l')` it reads the pairs that begin with `l'`
     /// or the products of `r`, whichever are fewer, so no pair of nodes is
     /// tried that no satisfiable conjunction holds.
-    fn conjoin(&mut self, at: usize, x: VtreeIdx, roots: [Vec<u32>; 2]) -> Result<(), OperationError> {
+    fn conjoin(
+        &mut self,
+        at: usize,
+        x: VtreeIdx,
+        roots: [Vec<u32>; 2],
+    ) -> Result<(), OperationError> {
         let (lim, ops) = (self.lim, self.ops);
         let vtree = ops[0].vtree();
         self.key_side_levels(at, x)?;
@@ -1090,7 +1184,15 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                             continue;
                         }
                         let run = &b_pairs[first..first + width];
-                        join_right_products(lim, &mut self.gate, below, cr, (r, pl, rights), run, &mut found)?;
+                        join_right_products(
+                            lim,
+                            &mut self.gate,
+                            below,
+                            cr,
+                            (r, pl, rights),
+                            run,
+                            &mut found,
+                        )?;
                     }
                 }
                 record_found_products(lim, here, na, &mut found)?;
@@ -1147,7 +1249,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         }
         for k in (0..n).rev() {
             let (tl, tr) = vtree.children(order[k]);
-            let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
+            let (cl, cr) = (
+                child_slot(vtree, &self.slot, tl),
+                child_slot(vtree, &self.slot, tr),
+            );
             for (s, reach) in reach.iter_mut().enumerate() {
                 let mut nodes = std::mem::take(&mut reach[k]);
                 nodes.sort_unstable();
@@ -1179,7 +1284,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         }
         for k in (0..=top).rev() {
             let (tl, tr) = vtree.children(side.order[k]);
-            let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
+            let (cl, cr) = (
+                child_slot(vtree, &self.slot, tl),
+                child_slot(vtree, &self.slot, tr),
+            );
             let (below, here) = side.at.split_at_mut(k);
             let here = &here[0];
             for p in 0..here.keys.len() {
@@ -1288,7 +1396,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 lim.try_push(&mut self.levels[at].moves, [lit, next])?;
             }
             let here = &mut self.levels[at];
-            here.ranges.push([start as u32, (here.moves.len() - start) as u32]);
+            here.ranges
+                .push([start as u32, (here.moves.len() - start) as u32]);
         }
         Ok(())
     }
@@ -1297,7 +1406,13 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// sides, then from the chain's bottom up one node per distinct pair a
     /// state's moves lead to, the root holding the top state's pairs;
     /// minimized.
-    fn emit(mut self, eng: &Engine, into: &Arc<Vtree>, coding: &Coding, codes: &[u64]) -> Result<Tdd, OperationError> {
+    fn emit(
+        mut self,
+        eng: &Engine,
+        into: &Arc<Vtree>,
+        coding: &Coding,
+        codes: &[u64],
+    ) -> Result<Tdd, OperationError> {
         let (lim, layout, ops) = (self.lim, self.layout, self.ops);
         let vtree = ops[0].vtree();
         let mut assembly = Assembly::new(eng, into)?;
@@ -1305,7 +1420,15 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         let mut cubes = Vec::new();
         lim.reserve(&mut cubes, codes.len())?;
         for &code in codes {
-            let node = cube(eng, &mut assembly, &mut self.gate, into, code_root, code, &coding.code_bit)?;
+            let node = cube(
+                eng,
+                &mut assembly,
+                &mut self.gate,
+                into,
+                code_root,
+                code,
+                &coding.code_bit,
+            )?;
             cubes.push(node);
         }
         self.emit_side_products(eng, vtree, &mut assembly, coding)?;
@@ -1323,9 +1446,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             };
             let bottom = at + 1 == r + m;
             below = self.emit_level_states(
-                eng,
+                (eng, coding),
                 &mut assembly,
-                coding,
                 (at, t, label_side, right, bottom),
                 &cubes,
                 &below,
@@ -1337,7 +1459,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         }
         let top = assembly.push(eng, into.root(), &root)?;
         self.gate.flush()?;
-        let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: top })?;
+        let mut result = assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local: top,
+        })?;
         eng.minimize(&mut result)?;
         Ok(result)
     }
@@ -1355,7 +1480,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             for k in 0..side.order.len() {
                 let t = side.order[k];
                 let (tl, tr) = vtree.children(t);
-                let (cl, cr) = (child_slot(vtree, &self.slot, tl), child_slot(vtree, &self.slot, tr));
+                let (cl, cr) = (
+                    child_slot(vtree, &self.slot, tl),
+                    child_slot(vtree, &self.slot, tr),
+                );
                 let n = side.at[k].keys.len();
                 let mut out = Vec::new();
                 lim.reserve(&mut out, n)?;
@@ -1382,12 +1510,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
 
     /// Emit all states of level `at`, returning `(items, ranges)` for the
     /// parent level above (or appending root pairs into `root` when `at == 0`).
-    #[allow(clippy::too_many_arguments)]
     fn emit_level_states(
         &mut self,
-        eng: &Engine,
+        (eng, coding): (&Engine, &Coding),
         assembly: &mut Assembly<'_>,
-        coding: &Coding,
         (at, t, label_side, right, bottom): (usize, VtreeIdx, Option<Option<usize>>, bool, bool),
         cubes: &[u32],
         below: &(Vec<u32>, Vec<[u32; 2]>),
@@ -1461,7 +1587,9 @@ fn cube(
     let l = cube(eng, assembly, gate, into, l, code, code_bit)?;
     let r = cube(eng, assembly, gate, into, r, code, code_bit)?;
     gate.poll(1)?;
-    Ok(assembly.intern(eng, t, &[ChildPair::new(NodeIdx(l), NodeIdx(r))])?.0)
+    Ok(assembly
+        .intern(eng, t, &[ChildPair::new(NodeIdx(l), NodeIdx(r))])?
+        .0)
 }
 
 /// The slot of `c` in `slot` when `c` is an internal vtree node, or `None` for
@@ -1575,12 +1703,16 @@ fn record_found_products(
         }
         let id = here.keys.len() as u32;
         lim.try_push(&mut here.keys, [na, nb])?;
-        lim.try_push(&mut here.ranges, [start as u32, (here.pairs.len() - start) as u32])?;
+        lim.try_push(
+            &mut here.ranges,
+            [start as u32, (here.pairs.len() - start) as u32],
+        )?;
         lim.reserve_map(&mut here.index, 1)?;
         here.index.insert([na, nb], id);
     }
     lim.reserve_map(&mut here.of_a, 1)?;
-    here.of_a.insert(na, [first, here.keys.len() as u32 - first]);
+    here.of_a
+        .insert(na, [first, here.keys.len() as u32 - first]);
     Ok(())
 }
 

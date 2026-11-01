@@ -1,7 +1,7 @@
 //! The row loop every build route shares, and the four routes themselves.
 
-use super::*;
 use super::super::liveness::ROW_LIVE;
+use super::*;
 use crate::diagram::{EncodedChildRef, NodeKind};
 use std::mem::MaybeUninit;
 
@@ -114,7 +114,11 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// loop of its own for them: how many columns it wrote, leaving the
     /// cells from there to [`cell`](Self::cell).
     #[inline(always)]
-    fn whole_row(&mut self, _eng: &Engine, _row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+    fn whole_row(
+        &mut self,
+        _eng: &Engine,
+        _row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
         Ok(0)
     }
 }
@@ -176,7 +180,10 @@ fn reaching(mask: u128, reach: &[u128]) -> u64 {
     debug_assert!(reach.len() <= 64);
     // From the last column down, a shift by one in place of a shift by the
     // column's index.
-    reach.iter().rev().fold(0, |live, &r| live << 1 | u64::from(mask & r != 0))
+    reach
+        .iter()
+        .rev()
+        .fold(0, |live, &r| live << 1 | u64::from(mask & r != 0))
 }
 
 /// Word `w` of the g nodes whose reach meets `mask`, read off the reach
@@ -185,7 +192,11 @@ fn reaching(mask: u128, reach: &[u128]) -> u64 {
 #[inline(always)]
 fn reach_word(mask: u128, columns: &[u64], words: usize, w: usize) -> u64 {
     let bits = columns.len() / words;
-    let mut m = if bits >= 128 { mask } else { mask & ((1u128 << bits) - 1) };
+    let mut m = if bits >= 128 {
+        mask
+    } else {
+        mask & ((1u128 << bits) - 1)
+    };
     let mut live = 0;
     while m != 0 {
         let b = m.trailing_zeros() as usize;
@@ -287,39 +298,48 @@ where
     R: ChildLookup,
     A: CellAction<L, R>,
 {
-    let RowLoop { f_level: left_level_t, g_level: right_level_t, ctx, f_width: left_width, .. } = rows;
-    let RowScratch { f_pairs: f_pairs_scratch, g_pairs: g_pairs_scratch, node_idx: slab } = scratch;
+    let RowLoop {
+        f_level: left_level_t,
+        g_level: right_level_t,
+        ctx,
+        f_width: left_width,
+        ..
+    } = rows;
+    let RowScratch {
+        f_pairs: f_pairs_scratch,
+        g_pairs: g_pairs_scratch,
+        node_idx: slab,
+    } = scratch;
     let lim = eng.limits();
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
-    debug_assert!(!A::ONE_COLUMN || ctx.right_width == 1, "a one-column action runs on a level of one column");
+    debug_assert!(
+        !A::ONE_COLUMN || ctx.right_width == 1,
+        "a one-column action runs on a level of one column"
+    );
     let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
-    let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
-    let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
-    let (left_cols, right_cols) = (ctx.sides.left.reach_cols, ctx.sides.right.reach_cols);
-    let by_columns = (cull_left || cull_right)
-        && (!cull_left || !left_cols.is_empty())
-        && (!cull_right || !right_cols.is_empty());
-    let words = right_width.div_ceil(64);
-    let culls = usize::from(cull_left) + usize::from(cull_right);
-    let (left_rows, right_rows) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
-    let by_rows = (cull_left || cull_right) && ctx.sides.left.rows && ctx.sides.right.rows;
-    debug_assert!(!by_rows || right_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
-    let whole = if by_rows { ROW_LIVE | ((1u64 << right_width) - 1) } else { 0 };
-
-    let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
-    let slab_fill = A::DENSE_SLAB && !every_cell && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    let cull = RowCull::new::<DENSE, L, R>(ctx, right_width, left, right);
+    let (every_cell, slab_fill) = init_level_row_slab::<DENSE, L, R, A>(
+        slab,
+        (ctx.output_grid_base, left_width, right_width),
+        (left, right),
+    );
     let reset = |cells: &mut [u32]| {
-        if left.kills() && right.kills() { mark_dead(cells) } else { mark_dead_out_of_line(cells) }
-    };
-    if slab_fill {
-        let end = ctx.output_grid_base + left_width * right_width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            reset(&mut slab[ctx.output_grid_base..end]);
+        if left.kills() && right.kills() {
+            mark_dead(cells)
+        } else {
+            mark_dead_out_of_line(cells)
         }
-    }
+    };
 
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
-    let f_described = described_rows(lim, left_level_t, left_width, left_view, right_view, f_pairs_scratch);
+    let f_described = described_rows(
+        lim,
+        left_level_t,
+        left_width,
+        left_view,
+        right_view,
+        f_pairs_scratch,
+    );
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         let fresh = extend_slab(slab, row_base, row_base + right_width);
@@ -346,62 +366,157 @@ where
             (f_pairs, ctx, right_level_t),
             (left, right),
             (&mut *g_pairs_scratch, &mut *node_idx, &mut poll),
-            (by_rows, whole, (cull_left, cull_right), (by_columns, words, culls), (left_rows, right_rows), (left_cols, right_cols)),
+            &cull,
         )?;
     }
     poll.flush()?;
     Ok(())
 }
 
+/// Level-wide row and column cull descriptors for [`run_nonempty_level_row`].
+struct RowCull<'a> {
+    by_rows: bool,
+    whole: u64,
+    cull_left: bool,
+    cull_right: bool,
+    by_columns: bool,
+    words: usize,
+    culls: usize,
+    left_rows: &'a [u64],
+    right_rows: &'a [u64],
+    left_cols: &'a [u64],
+    right_cols: &'a [u64],
+}
+
+impl<'a> RowCull<'a> {
+    #[inline(always)]
+    fn new<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
+        ctx: &CellCtx<'a>,
+        right_width: usize,
+        left: &L,
+        right: &R,
+    ) -> Self {
+        let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
+        let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
+        let (left_cols, right_cols) = (ctx.sides.left.reach_cols, ctx.sides.right.reach_cols);
+        let by_columns = (cull_left || cull_right)
+            && (!cull_left || !left_cols.is_empty())
+            && (!cull_right || !right_cols.is_empty());
+        let words = right_width.div_ceil(64);
+        let culls = usize::from(cull_left) + usize::from(cull_right);
+        let (left_rows, right_rows) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
+        let by_rows = (cull_left || cull_right) && ctx.sides.left.rows && ctx.sides.right.rows;
+        debug_assert!(!by_rows || right_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
+        let whole = if by_rows {
+            ROW_LIVE | ((1u64 << right_width) - 1)
+        } else {
+            0
+        };
+        Self {
+            by_rows,
+            whole,
+            cull_left,
+            cull_right,
+            by_columns,
+            words,
+            culls,
+            left_rows,
+            right_rows,
+            left_cols,
+            right_cols,
+        }
+    }
+}
+
+#[inline(always)]
+fn init_level_row_slab<const DENSE: bool, L, R, A>(
+    slab: &mut Vec<u32>,
+    (output_grid_base, left_width, right_width): (usize, usize, usize),
+    (left, right): (&L, &R),
+) -> (bool, bool)
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    A: CellAction<L, R>,
+{
+    let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
+    let slab_fill = A::DENSE_SLAB
+        && !every_cell
+        && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    if slab_fill {
+        let end = output_grid_base + left_width * right_width;
+        if !extend_slab(slab, output_grid_base, end) {
+            if left.kills() && right.kills() {
+                mark_dead(&mut slab[output_grid_base..end]);
+            } else {
+                mark_dead_out_of_line(&mut slab[output_grid_base..end]);
+            }
+        }
+    }
+    (every_cell, slab_fill)
+}
+
 /// Evaluate and emit one non-empty `f` row `i` in [`run_level_rows`].
 #[inline(always)]
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn run_nonempty_level_row<'a, const DENSE: bool, L, R, A>(
     eng: &Engine,
     action: &mut A,
     (i, row_base, right_width): (usize, usize, usize),
     (f_pairs, ctx, right_level_t): (&[ChildPair], &CellCtx<'a>, &TddLevel),
     (left, right): (&L, &R),
-    (g_pairs_scratch, node_idx, poll): (&mut Vec<ChildPair>, &mut [u32], &mut crate::limits::PollGate<'a>),
-    (by_rows, whole, (cull_left, cull_right), (by_columns, words, culls), (left_rows, right_rows), (left_cols, right_cols)): (
-        bool,
-        u64,
-        (bool, bool),
-        (bool, usize, usize),
-        (&[u64], &[u64]),
-        (&[u64], &[u64]),
+    (g_pairs_scratch, node_idx, poll): (
+        &mut Vec<ChildPair>,
+        &mut [u32],
+        &mut crate::limits::PollGate<'a>,
     ),
+    cull: &RowCull<'_>,
 ) -> Result<(), OperationError>
 where
     L: ChildLookup,
     R: ChildLookup,
     A: CellAction<L, R>,
 {
-    let mut first = 0;
-    if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
-        if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
-            return Ok(());
-        }
-        let row = WholeRow {
-            row_base, f_pairs, ctx, right_level_t,
-            g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, left, right, gate: &mut *poll,
-        };
-        first = action.whole_row(eng, row)?;
-        if first == right_width {
-            return poll.poll(right_width as u64);
-        }
-    }
+    let Some(first) = try_whole_row_action::<DENSE, L, R, A>(
+        eng,
+        action,
+        (
+            row_base,
+            right_width,
+            cull.by_rows || cull.cull_left || cull.cull_right,
+        ),
+        (f_pairs, ctx, right_level_t),
+        (left, right),
+        (&mut *g_pairs_scratch, &mut *node_idx, &mut *poll),
+    )?
+    else {
+        return Ok(());
+    };
     let mut cell = |j: usize| {
         action.cell(
             eng,
             CellArgs {
-                j, i, row_base, f_pairs, ctx, right_level_t, left, right,
-                g_pairs_scratch: &mut *g_pairs_scratch, node_idx: &mut *node_idx, gate: &mut *poll,
+                j,
+                i,
+                row_base,
+                f_pairs,
+                ctx,
+                right_level_t,
+                left,
+                right,
+                g_pairs_scratch: &mut *g_pairs_scratch,
+                node_idx: &mut *node_idx,
+                gate: &mut *poll,
             },
         )
     };
-    if by_rows {
-        if enter_row_by_row_cols(f_pairs, (cull_left, cull_right), (left_rows, right_rows), whole, &mut cell)? {
+    if cull.by_rows {
+        if enter_row_by_row_cols(
+            f_pairs,
+            (cull.cull_left, cull.cull_right),
+            (cull.left_rows, cull.right_rows),
+            cull.whole,
+            &mut cell,
+        )? {
             poll.poll(right_width as u64)?;
         }
         return Ok(());
@@ -413,10 +528,14 @@ where
     }) else {
         return Ok(());
     };
-    if cull_left || cull_right {
+    if cull.cull_left || cull.cull_right {
         enter_row_by_cull(
-            ctx, (cull_left, cull_right), (left_alive_mask, right_alive_mask),
-            (by_columns, words, culls, right_width), (left_cols, right_cols), &mut cell,
+            ctx,
+            (cull.cull_left, cull.cull_right),
+            (left_alive_mask, right_alive_mask),
+            (cull.by_columns, cull.words, cull.culls, right_width),
+            (cull.left_cols, cull.right_cols),
+            &mut cell,
         )?;
     } else {
         for j in first..right_width {
@@ -424,6 +543,54 @@ where
         }
     }
     poll.poll(right_width as u64)
+}
+
+/// Try [`CellAction::whole_row`] when enabled and unculled, returning
+/// `Ok(None)` when the row is already complete or dead, or `Ok(Some(first))`
+/// for the first remaining column `first..right_width`.
+#[inline(always)]
+fn try_whole_row_action<'a, const DENSE: bool, L, R, A>(
+    eng: &Engine,
+    action: &mut A,
+    (row_base, right_width, culled): (usize, usize, bool),
+    (f_pairs, ctx, right_level_t): (&[ChildPair], &CellCtx<'a>, &TddLevel),
+    (left, right): (&L, &R),
+    (g_pairs_scratch, node_idx, poll): (
+        &mut Vec<ChildPair>,
+        &mut [u32],
+        &mut crate::limits::PollGate<'a>,
+    ),
+) -> Result<Option<usize>, OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    A: CellAction<L, R>,
+{
+    if !A::WHOLE_ROWS || culled {
+        return Ok(Some(0));
+    }
+    if !DENSE && row_alive_masks(ctx, f_pairs).is_none() {
+        return Ok(None);
+    }
+    let first = action.whole_row(
+        eng,
+        WholeRow {
+            row_base,
+            f_pairs,
+            ctx,
+            right_level_t,
+            g_pairs_scratch,
+            node_idx,
+            left,
+            right,
+            gate: &mut *poll,
+        },
+    )?;
+    if first == right_width {
+        poll.poll(right_width as u64)?;
+        return Ok(None);
+    }
+    Ok(Some(first))
 }
 
 /// Enter a row's live columns via folded `row_cols` bitmasks, returning `Ok(true)`
@@ -436,8 +603,20 @@ fn enter_row_by_row_cols(
     whole: u64,
     mut cell: impl FnMut(usize) -> Result<(), OperationError>,
 ) -> Result<bool, OperationError> {
-    let l = if cull_left { f_pairs.iter().fold(0, |l, p| l | left_rows[p.left.raw() as usize]) } else { whole };
-    let r = if cull_right { f_pairs.iter().fold(0, |r, p| r | right_rows[p.right.raw() as usize]) } else { whole };
+    let l = if cull_left {
+        f_pairs
+            .iter()
+            .fold(0, |l, p| l | left_rows[p.left.raw() as usize])
+    } else {
+        whole
+    };
+    let r = if cull_right {
+        f_pairs
+            .iter()
+            .fold(0, |r, p| r | right_rows[p.right.raw() as usize])
+    } else {
+        whole
+    };
     if l & r & ROW_LIVE == 0 {
         return Ok(false);
     }
@@ -462,8 +641,15 @@ fn enter_row_by_cull(
     (left_cols, right_cols): (&[u64], &[u64]),
     mut cell: impl FnMut(usize) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
-    let bits = if cull_left { left_alive_mask.count_ones() } else { 0 }
-        + if cull_right { right_alive_mask.count_ones() } else { 0 };
+    let bits = if cull_left {
+        left_alive_mask.count_ones()
+    } else {
+        0
+    } + if cull_right {
+        right_alive_mask.count_ones()
+    } else {
+        0
+    };
     if by_columns && 2 * bits as usize * words < 3 * culls * right_width {
         super::super::note_reach_columns_row();
         for w in 0..words {
@@ -516,7 +702,11 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
     const WHOLE_ROWS: bool = true;
 
     #[inline(always)]
-    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+    fn whole_row(
+        &mut self,
+        _eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
         emit_row(&mut self.sink, row)
     }
 
@@ -594,7 +784,12 @@ pub(crate) fn run_level_rows_marginal(
         scratch,
         &left,
         &right,
-        &mut Emit { sink: EmitSink { level, inline: &mut inline } },
+        &mut Emit {
+            sink: EmitSink {
+                level,
+                inline: &mut inline,
+            },
+        },
     )?;
     level.leave_written_pairs(inline);
     Ok(())
@@ -614,7 +809,12 @@ pub(super) struct ListSink<'a> {
 impl ListSink<'_> {
     /// Record the cell at `grid_pos` if it got a node.
     #[inline(always)]
-    fn record(&mut self, eng: &Engine, node_idx: &[u32], grid_pos: usize) -> Result<(), OperationError> {
+    fn record(
+        &mut self,
+        eng: &Engine,
+        node_idx: &[u32],
+        grid_pos: usize,
+    ) -> Result<(), OperationError> {
         let nid = node_idx[grid_pos];
         if nid == NO_PRODUCT {
             return Ok(());
@@ -630,7 +830,14 @@ impl ListSink<'_> {
 
 impl PairSink for ListSink<'_> {
     #[inline(always)]
-    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+    fn single(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
         self.emit.single(eng, node_idx, grid_pos, lc, rc)?;
         self.record(eng, node_idx, grid_pos)
     }
@@ -651,7 +858,13 @@ impl PairSink for ListSink<'_> {
     }
 
     #[inline(always)]
-    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, start: usize) -> Result<(), OperationError> {
+    fn end(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        start: usize,
+    ) -> Result<(), OperationError> {
         self.emit.end(eng, node_idx, grid_pos, start)?;
         self.record(eng, node_idx, grid_pos)
     }
@@ -733,7 +946,15 @@ pub(crate) fn run_level_rows_marginal_sparse(
         &left,
         &right,
         &mut SparseMargEmit {
-            sink: ListSink { emit: EmitSink { level, inline: &mut inline }, product_list, base: rows.ctx.output_grid_base, row: 0 },
+            sink: ListSink {
+                emit: EmitSink {
+                    level,
+                    inline: &mut inline,
+                },
+                product_list,
+                base: rows.ctx.output_grid_base,
+                row: 0,
+            },
         },
     )?;
     level.leave_written_pairs(inline);
@@ -759,22 +980,26 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
 ) -> Result<(), OperationError> {
-    let left = DenseLookup { base: rows.ctx.sides.left.base, stride: rows.ctx.sides.left.stride };
-    let right = DenseLookup { base: rows.ctx.sides.right.base, stride: rows.ctx.sides.right.stride };
+    let left = DenseLookup {
+        base: rows.ctx.sides.left.base,
+        stride: rows.ctx.sides.left.stride,
+    };
+    let right = DenseLookup {
+        base: rows.ctx.sides.right.base,
+        stride: rows.ctx.sides.right.stride,
+    };
     // When `DENSE`, the alive masks are constants (no masks, no pass-through):
     //   left_alive_mask  = 0u128      (the !masked branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !masked` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
     let mut inline = 0;
-    let mut action = Emit { sink: EmitSink { level, inline: &mut inline } };
-    run_level_rows::<DENSE, _, _, _>(
-        eng,
-        rows,
-        scratch,
-        &left,
-        &right,
-        &mut action,
-    )?;
+    let mut action = Emit {
+        sink: EmitSink {
+            level,
+            inline: &mut inline,
+        },
+    };
+    run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, &left, &right, &mut action)?;
     level.leave_written_pairs(inline);
     Ok(())
 }
@@ -795,8 +1020,18 @@ pub(crate) fn run_level_rows_single(
     level: &mut TddLevel,
     relay: bool,
 ) -> Result<(), OperationError> {
-    let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
-    let RowScratch { f_pairs: f_scratch, g_pairs: g_cols, node_idx: slab } = scratch;
+    let RowLoop {
+        f_level,
+        g_level,
+        ctx,
+        f_width,
+        ..
+    } = rows;
+    let RowScratch {
+        f_pairs: f_scratch,
+        g_pairs: g_cols,
+        node_idx: slab,
+    } = scratch;
     let lim = eng.limits();
     super::super::note_single_rows();
     let right_width = ctx.right_width;
@@ -804,19 +1039,30 @@ pub(crate) fn run_level_rows_single(
     // rows' buffer decodes a column the table does not hold.
     g_cols.clear();
     lim.reserve_exact(g_cols, right_width)?;
-    let dead = ChildPair::new(EncodedChildRef::from_raw(NO_PRODUCT), EncodedChildRef::from_raw(NO_PRODUCT));
+    let dead = ChildPair::new(
+        EncodedChildRef::from_raw(NO_PRODUCT),
+        EncodedChildRef::from_raw(NO_PRODUCT),
+    );
     for j in 0..right_width {
         let pairs = column_pairs(ctx, g_level, j, f_scratch);
         debug_assert!(pairs.len() <= 1, "a g node of one pair at most");
         g_cols.push(pairs.first().copied().unwrap_or(dead));
     }
-    let rows = SingleRows { f_level, ctx, f_width, g_cols: &g_cols[..] };
+    let rows = SingleRows {
+        f_level,
+        ctx,
+        f_width,
+        g_cols: &g_cols[..],
+    };
     if relay && !super::super::relay_forced_off() && relay_rows(eng, rows, slab, level)? {
         super::super::note_relayed();
         return Ok(());
     }
     let mut inline = 0;
-    let mut sink = EmitSink { level: &mut *level, inline: &mut inline };
+    let mut sink = EmitSink {
+        level: &mut *level,
+        inline: &mut inline,
+    };
     // A level of a few columns keeps them in registers, and writes each
     // row's cells once.
     match right_width {
@@ -864,7 +1110,12 @@ fn relay_rows(
     slab: &mut Vec<u32>,
     level: &mut TddLevel,
 ) -> Result<bool, OperationError> {
-    let SingleRows { f_level, ctx, f_width, g_cols } = rows;
+    let SingleRows {
+        f_level,
+        ctx,
+        f_width,
+        g_cols,
+    } = rows;
     let lim = eng.limits();
     let width = ctx.right_width;
     let (left, right) = (&ctx.sides.left, &ctx.sides.right);
@@ -876,8 +1127,15 @@ fn relay_rows(
     {
         return Ok(false);
     }
-    let Some(d) = f_level.implicit() else { return Ok(false) };
-    let digit = crate::diagram::Digit { radix: f_width, left: 0, right: 1, node: 1 };
+    let Some(d) = f_level.implicit() else {
+        return Ok(false);
+    };
+    let digit = crate::diagram::Digit {
+        radix: f_width,
+        left: 0,
+        right: 1,
+        node: 1,
+    };
     if d.pairs_per_node() != 1 || d.nodes() != f_width || d.within() != 0 || d.digits() != [digit] {
         return Ok(false);
     }
@@ -885,7 +1143,10 @@ fn relay_rows(
     let (a, b) = (d.first().0 as usize, d.first().1 as usize);
     let (c, e) = (g_cols[0].left.0, g_cols[0].right.0);
     if c == NO_PRODUCT
-        || !g_cols.iter().enumerate().all(|(j, q)| q.left.0 == c && u64::from(q.right.0) == u64::from(e) + j as u64)
+        || !g_cols
+            .iter()
+            .enumerate()
+            .all(|(j, q)| q.left.0 == c && u64::from(q.right.0) == u64::from(e) + j as u64)
     {
         return Ok(false);
     }
@@ -903,7 +1164,10 @@ fn relay_rows(
     if slab.len() < end {
         slab.resize(end, NO_PRODUCT);
     }
-    debug_assert!(src(f_width - 1) + width <= dst || end <= src(0), "the child's grid and the level's are apart");
+    debug_assert!(
+        src(f_width - 1) + width <= dst || end <= src(0),
+        "the child's grid and the level's are apart"
+    );
     if stride == width {
         slab.copy_within(src(0)..src(0) + cells, dst);
     } else {
@@ -914,9 +1178,22 @@ fn relay_rows(
     let Some((nodes, described)) = fit_relayed_slab(&mut slab[dst..end], p) else {
         return Ok(false);
     };
-    // The row loop's polls: a row's units, a unit a live cell and its
-    // width, added while the gate does not come due inside the row, and the
-    // row's cells polled one at a time and then its width where it does.
+    poll_relayed_rows(lim, f_width, width)?;
+    debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
+    let held = level.nodes.imply();
+    let node_capacity = lim.charge_as_pushed::<EncodedNode>(held, nodes)?;
+    let capacity = level.pairs.capacity();
+    level.pairs.describe(described, capacity, node_capacity);
+    Ok(true)
+}
+
+/// Poll the work clock for a relayed level of `f_width` rows and `width`
+/// columns in the same units as the row loop.
+fn poll_relayed_rows(
+    lim: &crate::limits::Limits,
+    f_width: usize,
+    width: usize,
+) -> Result<(), OperationError> {
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let row_units = 2 * width as u64;
     let mut rows_left = f_width as u64;
@@ -929,13 +1206,7 @@ fn relay_rows(
             rows_left -= 1;
         }
     }
-    poll.flush()?;
-    debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
-    let held = level.nodes.imply();
-    let node_capacity = lim.charge_as_pushed::<EncodedNode>(held, nodes)?;
-    let capacity = level.pairs.capacity();
-    level.pairs.describe(described, capacity, node_capacity);
-    Ok(true)
+    poll.flush()
 }
 
 /// Check that the relayed cells in `out` hold contiguous increasing node
@@ -959,7 +1230,8 @@ fn fit_relayed_slab(out: &mut [u32], p: u32) -> Option<(usize, crate::diagram::I
     if nodes < crate::diagram::floor().max(2) {
         return None;
     }
-    let described = crate::diagram::ImplicitLevel::one_step(nodes, (i64::from(p), i64::from(v)), (0, 1))?;
+    let described =
+        crate::diagram::ImplicitLevel::one_step(nodes, (i64::from(p), i64::from(v)), (0, 1))?;
     if v != 0 {
         for x in out.iter_mut().filter(|x| **x != NO_PRODUCT) {
             *x -= v;
@@ -983,96 +1255,210 @@ fn single_rows<const W: usize>(
     slab: &mut Vec<u32>,
     sink: &mut EmitSink<'_>,
 ) -> Result<(), OperationError> {
-    let SingleRows { f_level, ctx, f_width, g_cols } = rows;
+    let SingleRows {
+        f_level,
+        ctx,
+        f_width,
+        g_cols,
+    } = rows;
     let lim = eng.limits();
     let right_width = ctx.right_width;
     debug_assert!(W == 0 || W == right_width);
     let width = if W == 0 { right_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     let row_units = live_cols + width as u64;
-    let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
-    let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
+    let left = DenseLookup {
+        base: ctx.sides.left.base,
+        stride: ctx.sides.left.stride,
+    };
+    let right = DenseLookup {
+        base: ctx.sides.right.base,
+        stride: ctx.sides.right.stride,
+    };
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
-    let f_nodes = match f_level.stored() {
-        Some(stored) if f_described.is_none() && !left_view.is_marginal() && !right_view.is_marginal() => Some(stored.nodes()),
-        _ => None,
-    };
+    let f_nodes = stored_unmarginal_nodes(f_level, f_described, left_view, right_view);
     let g: [ChildPair; W] = std::array::from_fn(|j| g_cols[j]);
-
-    let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if W == 0 && slab_fill {
-        let end = ctx.output_grid_base + f_width * right_width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            mark_dead(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
-    let extended = W > 0 && f_nodes.is_some() && {
-        let end = ctx.output_grid_base + f_width * width;
-        if slab.len() < end && slab.capacity() >= end {
-            slab.resize(end, NO_PRODUCT);
-        }
-        slab.len() >= end
-    };
+    let (slab_fill, extended) = init_single_row_slab::<W>(
+        slab,
+        (ctx.output_grid_base, f_width, right_width, width),
+        f_nodes.is_some(),
+    );
     let mut next = 0;
-    'rows: while next < f_width {
+    while next < f_width {
         let mut out = sink.open_row(0, 0);
         if extended
             && let (Some(nodes), Some(o)) = (f_nodes, out.as_mut())
             && o.node_room() >= width
         {
             poll = single_rows_extended_run::<W>(
-                f_level, nodes, f_scratch, (&left, &right), &g, slab, o,
-                (&mut next, f_width, width, ctx.output_grid_base), (row_units, live_cols), poll,
+                (f_level, nodes, f_scratch),
+                (&left, &right),
+                &g,
+                (slab, o),
+                (&mut next, f_width, width, ctx.output_grid_base),
+                (row_units, live_cols),
+                poll,
             )?;
-            continue 'rows;
+            continue;
         }
-        while next < f_width {
-            let i = next;
-            next += 1;
-            let row_base = ctx.output_grid_base + i * width;
-            let p = match (f_nodes, f_described) {
-                (Some(nodes), _) => match nodes[i].kind() {
-                    NodeKind::Inline(p) => Some(p),
-                    _ => f_level.pairs_read(i, f_scratch).first().copied(),
-                },
-                (None, Some(k)) => f_scratch[i * k..(i + 1) * k].first().copied(),
-                (None, None) => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view).first().copied(),
-            };
-            debug_assert!(f_level.pairs_view_decoded(i, &mut Vec::new(), left_view, right_view).len() <= 1, "an f node of one pair at most");
-            if W == 0 && !extend_slab(slab, row_base, row_base + width) && !slab_fill {
-                mark_dead(&mut slab[row_base..row_base + width]);
-            }
-            let Some(p) = p else {
-                if W > 0 { write_cells(slab, row_base, [NO_PRODUCT; W]); }
-                continue;
-            };
-            if let Some(o) = out.as_mut().filter(|o| o.has_room(0, width)) {
-                poll = write_single_row_in_room::<W>(o, p, (&left, &right), (g_cols, &g), slab, (row_base, width), (row_units, live_cols), poll)?;
-                continue;
-            }
+        let (overflow, next_poll) = run_single_rows_in_room::<W>(
+            f_level,
+            (&mut next, f_width, width, ctx.output_grid_base),
+            (f_nodes, f_described, slab_fill),
+            (left_view, right_view, f_scratch),
+            (g_cols, &g, row_units, live_cols),
+            (slab, &mut out),
+            (&left, &right, poll),
+        )?;
+        poll = next_poll;
+        if let Some((row_base, p)) = overflow {
             drop(out);
-            poll = emit_single_row_via_sink::<W>(eng, sink, p, (&left, &right), g_cols, slab, (row_base, width), (row_units, live_cols), poll)?;
-            continue 'rows;
+            poll = emit_single_row_via_sink::<W>(
+                (eng, sink),
+                (p, g_cols),
+                (&left, &right),
+                slab,
+                (row_base, width),
+                (row_units, live_cols),
+                poll,
+            )?;
         }
     }
     poll.flush()?;
     Ok(())
 }
 
+#[inline(always)]
+fn run_single_rows_in_room<'a, const W: usize>(
+    f_level: &TddLevel,
+    (next, f_width, width, output_grid_base): (&mut usize, usize, usize, usize),
+    (f_nodes, f_described, slab_fill): (Option<&[EncodedNode]>, Option<usize>, bool),
+    (left_view, right_view, f_scratch): (
+        crate::diagram::ChildDecoder,
+        crate::diagram::ChildDecoder,
+        &mut Vec<ChildPair>,
+    ),
+    (g_cols, g, row_units, live_cols): (&[ChildPair], &[ChildPair; W], u64, u64),
+    (slab, out): (&mut Vec<u32>, &mut Option<ArenaRow<'_>>),
+    (left, right, mut poll): (&DenseLookup, &DenseLookup, crate::limits::PollGate<'a>),
+) -> Result<(Option<(usize, ChildPair)>, crate::limits::PollGate<'a>), OperationError> {
+    while *next < f_width {
+        let i = *next;
+        *next += 1;
+        let row_base = output_grid_base + i * width;
+        let Some(p) = decode_and_prep_single_row::<W>(
+            f_level,
+            i,
+            (f_nodes, f_described),
+            (left_view, right_view),
+            f_scratch,
+            (slab, row_base, width, slab_fill),
+        ) else {
+            continue;
+        };
+        if let Some(o) = out.as_mut().filter(|o| o.has_room(0, width)) {
+            poll = write_single_row_in_room::<W>(
+                (o, p),
+                (left, right),
+                (g_cols, g),
+                slab,
+                (row_base, width),
+                (row_units, live_cols),
+                poll,
+            )?;
+            continue;
+        }
+        return Ok((Some((row_base, p)), poll));
+    }
+    Ok((None, poll))
+}
+
+#[inline(always)]
+fn stored_unmarginal_nodes(
+    f_level: &TddLevel,
+    f_described: Option<usize>,
+    left_view: crate::diagram::ChildDecoder,
+    right_view: crate::diagram::ChildDecoder,
+) -> Option<&[EncodedNode]> {
+    match f_level.stored() {
+        Some(stored)
+            if f_described.is_none() && !left_view.is_marginal() && !right_view.is_marginal() =>
+        {
+            Some(stored.nodes())
+        }
+        _ => None,
+    }
+}
+
+#[inline(always)]
+fn init_single_row_slab<const W: usize>(
+    slab: &mut Vec<u32>,
+    (output_grid_base, f_width, right_width, width): (usize, usize, usize, usize),
+    has_f_nodes: bool,
+) -> (bool, bool) {
+    let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    if W == 0 && slab_fill {
+        let end = output_grid_base + f_width * right_width;
+        if !extend_slab(slab, output_grid_base, end) {
+            mark_dead(&mut slab[output_grid_base..end]);
+        }
+    }
+    let extended = W > 0 && has_f_nodes && {
+        let end = output_grid_base + f_width * width;
+        if slab.len() < end && slab.capacity() >= end {
+            slab.resize(end, NO_PRODUCT);
+        }
+        slab.len() >= end
+    };
+    (slab_fill, extended)
+}
+
+#[inline(always)]
+fn decode_and_prep_single_row<const W: usize>(
+    f_level: &TddLevel,
+    i: usize,
+    (f_nodes, f_described): (Option<&[EncodedNode]>, Option<usize>),
+    (left_view, right_view): (crate::diagram::ChildDecoder, crate::diagram::ChildDecoder),
+    f_scratch: &mut Vec<ChildPair>,
+    (slab, row_base, width, slab_fill): (&mut Vec<u32>, usize, usize, bool),
+) -> Option<ChildPair> {
+    let p = match (f_nodes, f_described) {
+        (Some(nodes), _) => match nodes[i].kind() {
+            NodeKind::Inline(p) => Some(p),
+            _ => f_level.pairs_read(i, f_scratch).first().copied(),
+        },
+        (None, Some(k)) => f_scratch[i * k..(i + 1) * k].first().copied(),
+        (None, None) => f_level
+            .pairs_view_decoded(i, f_scratch, left_view, right_view)
+            .first()
+            .copied(),
+    };
+    debug_assert!(
+        f_level
+            .pairs_view_decoded(i, &mut Vec::new(), left_view, right_view)
+            .len()
+            <= 1,
+        "an f node of one pair at most"
+    );
+    if W == 0 && !extend_slab(slab, row_base, row_base + width) && !slab_fill {
+        mark_dead(&mut slab[row_base..row_base + width]);
+    }
+    if p.is_none() && W > 0 {
+        write_cells(slab, row_base, [NO_PRODUCT; W]);
+    }
+    p
+}
+
 /// Write a run of single-pair stored `f` rows into an already-extended slab
 /// while `o.node_room()` holds at least `width` nodes per row.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn single_rows_extended_run<'a, const W: usize>(
-    f_level: &TddLevel,
-    nodes: &[EncodedNode],
-    f_scratch: &mut Vec<ChildPair>,
+    (f_level, nodes, f_scratch): (&TddLevel, &[EncodedNode], &mut Vec<ChildPair>),
     (left, right): (&DenseLookup, &DenseLookup),
     g: &[ChildPair; W],
-    slab: &mut [u32],
-    o: &mut ArenaRow<'_>,
+    (slab, o): (&mut [u32], &mut ArenaRow<'_>),
     (next, f_width, width, output_grid_base): (&mut usize, usize, usize, usize),
     (row_units, live_cols): (u64, u64),
     mut poll: crate::limits::PollGate<'a>,
@@ -1105,7 +1491,10 @@ fn single_rows_extended_run<'a, const W: usize>(
                 }
             }
         }
-        debug_assert!(row_base + W <= slab.len(), "the grid is extended over the level");
+        debug_assert!(
+            row_base + W <= slab.len(),
+            "the grid is extended over the level"
+        );
         // Safety: the grid was extended over every row of the level.
         unsafe { slab.get_unchecked_mut(row_base..row_base + W) }.copy_from_slice(&cells);
         if p.is_none() {
@@ -1144,10 +1533,8 @@ fn single_row_product(
 
 /// Write one live single-pair row `p` across `g_cols` in-place into `o`.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn write_single_row_in_room<'a, const W: usize>(
-    o: &mut ArenaRow<'_>,
-    p: ChildPair,
+    (o, p): (&mut ArenaRow<'_>, ChildPair),
     (left, right): (&DenseLookup, &DenseLookup),
     (g_cols, g): (&[ChildPair], &[ChildPair; W]),
     slab: &mut Vec<u32>,
@@ -1184,13 +1571,10 @@ fn write_single_row_in_room<'a, const W: usize>(
 /// Emit one live single-pair row `p` across `g_cols` via `sink.single` after
 /// `out` ran out of room.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn emit_single_row_via_sink<'a, const W: usize>(
-    eng: &Engine,
-    sink: &mut EmitSink<'_>,
-    p: ChildPair,
+    (eng, sink): (&Engine, &mut EmitSink<'_>),
+    (p, g_cols): (ChildPair, &[ChildPair]),
     (left, right): (&DenseLookup, &DenseLookup),
-    g_cols: &[ChildPair],
     slab: &mut Vec<u32>,
     (row_base, width): (usize, usize),
     (row_units, live_cols): (u64, u64),
@@ -1230,7 +1614,10 @@ pub(super) fn write_cells<const W: usize>(slab: &mut Vec<u32>, start: usize, cel
     }
     let have = slab.len() - start;
     slab[start..].copy_from_slice(&cells[..have]);
-    for (slot, &cell) in slab.spare_capacity_mut()[..W - have].iter_mut().zip(&cells[have..]) {
+    for (slot, &cell) in slab.spare_capacity_mut()[..W - have]
+        .iter_mut()
+        .zip(&cells[have..])
+    {
         slot.write(cell);
     }
     // Safety: the slots up to `end` were written above.
@@ -1283,30 +1670,61 @@ pub(crate) fn run_level_rows_complete(
 ) -> Result<(), OperationError> {
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let grid = |p: &ChildPlan<'_>| DenseLookup {
+        base: p.base,
+        stride: p.stride,
+    };
     let mut inline = 0;
     match lookups {
         PlainLookups::Complete { charged } => match lone_pair(rows, &mut *scratch.g_pairs) {
             Some(g) => run_level_rows::<true, _, _, _>(
-                eng, rows, scratch,
-                &complete(&sides.left), &complete(&sides.right),
-                &mut EmitBesideOne { sink: ReservedEmitSink { level, charged, inline: &mut inline }, g: [g] },
+                eng,
+                rows,
+                scratch,
+                &complete(&sides.left),
+                &complete(&sides.right),
+                &mut EmitBesideOne {
+                    sink: ReservedEmitSink {
+                        level,
+                        charged,
+                        inline: &mut inline,
+                    },
+                    g: [g],
+                },
             ),
             None => run_complete_or_lone::<true, _, _>(
-                eng, rows, scratch,
+                eng,
+                rows,
+                scratch,
                 (&complete(&sides.left), &complete(&sides.right)),
-                ReservedEmitSink { level, charged, inline: &mut inline },
+                ReservedEmitSink {
+                    level,
+                    charged,
+                    inline: &mut inline,
+                },
             ),
         },
         PlainLookups::CompleteLeft { charged } => run_complete_or_lone::<false, _, _>(
-            eng, rows, scratch,
+            eng,
+            rows,
+            scratch,
             (&complete(&sides.left), &grid(&sides.right)),
-            ReservedEmitSink { level, charged, inline: &mut inline },
+            ReservedEmitSink {
+                level,
+                charged,
+                inline: &mut inline,
+            },
         ),
         PlainLookups::CompleteRight { charged } => run_complete_or_lone::<false, _, _>(
-            eng, rows, scratch,
+            eng,
+            rows,
+            scratch,
             (&grid(&sides.left), &complete(&sides.right)),
-            ReservedEmitSink { level, charged, inline: &mut inline },
+            ReservedEmitSink {
+                level,
+                charged,
+                inline: &mut inline,
+            },
         ),
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
     }?;
@@ -1325,8 +1743,17 @@ fn run_complete_or_lone<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
     sink: ReservedEmitSink<'_>,
 ) -> Result<(), OperationError> {
     match &lone_columns(eng, rows, &mut *scratch.g_pairs)? {
-        Some(lone) => run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut EmitLoneColumns { sink, lone }),
-        None => run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink }),
+        Some(lone) => run_level_rows::<DENSE, _, _, _>(
+            eng,
+            rows,
+            scratch,
+            left,
+            right,
+            &mut EmitLoneColumns { sink, lone },
+        ),
+        None => {
+            run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink })
+        }
     }
 }
 
@@ -1370,7 +1797,11 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
     /// A row of one or two f pairs whose cells all fit the arenas' room is
     /// written there in one loop ([`lone_row`]).
     #[inline(always)]
-    fn whole_row(&mut self, _eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+    fn whole_row(
+        &mut self,
+        _eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
         match row.f_pairs.len() {
             1 => lone_row::<1, L, R>(&mut self.sink, self.lone, row),
             2 => lone_row::<2, L, R>(&mut self.sink, self.lone, row),
@@ -1385,7 +1816,16 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        let CellArgs { j, row_base, f_pairs, node_idx, left, right, gate, .. } = a;
+        let CellArgs {
+            j,
+            row_base,
+            f_pairs,
+            node_idx,
+            left,
+            right,
+            gate,
+            ..
+        } = a;
         let q = self.lone[j];
         let (c, d) = (q.left.0, q.right.0);
         let grid_pos = row_base + j;
@@ -1437,12 +1877,24 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     const { assert!(K == 1 || K == 2, "a whole row holds one or two f pairs") };
-    let WholeRow { row_base, f_pairs, node_idx, left, right, gate, .. } = row;
-    let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else { return Ok(0) };
+    let WholeRow {
+        row_base,
+        f_pairs,
+        node_idx,
+        left,
+        right,
+        gate,
+        ..
+    } = row;
+    let Ok(f) = <&[ChildPair; K]>::try_from(f_pairs) else {
+        return Ok(0);
+    };
     let width = lone.len();
     // A cell of one f pair is a node held inline: it writes no pair to the
     // pair arena.
-    let Some(mut out) = sink.open_row(if K == 1 { 0 } else { width * K }, width) else { return Ok(0) };
+    let Some(mut out) = sink.open_row(if K == 1 { 0 } else { width * K }, width) else {
+        return Ok(0);
+    };
     super::super::note_whole_row();
     let (l0, r0) = (left.row(f[0].left.0), right.row(f[0].right.0));
     let (l1, r1) = (left.row(f[K - 1].left.0), right.row(f[K - 1].right.0));
@@ -1502,12 +1954,24 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     sink: &mut S,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        right_level_t,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
     let (k, width) = (f_pairs.len(), ctx.right_width);
     if k > ROW_PAIRS {
         return Ok(0);
     }
-    let Some(mut out) = sink.open_row(0, width) else { return Ok(0) };
+    let Some(mut out) = sink.open_row(0, width) else {
+        return Ok(0);
+    };
     let child_rows = |p: &ChildPair| (left.row(p.left.0), right.row(p.right.0));
     let mut rows = [child_rows(&f_pairs[0]); ROW_PAIRS];
     for (t, p) in f_pairs.iter().enumerate().skip(1) {

@@ -67,18 +67,44 @@ fn a_contraction_below_the_worklist_is_found_by_listing() {
         pair(node_e, r2),
     ]);
 
-    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: top });
+    let mut tdd = Tdd::from_levels_unchecked(
+        vtree.clone(),
+        levels,
+        TddNodeId {
+            vtree: root,
+            local: top,
+        },
+    );
     let count = tdd.model_count().unwrap();
     tdd.seed_contract_worklist([root.0]);
     let before = listed_searches();
     contract_all_twins(&eng, &mut tdd).expect("no budget is set");
     let listed = listed_searches() - before;
 
-    assert_eq!(tdd.levels[l.idx()].slot_count(), 3, "{{A, B}} and {{C, D}} merge under the root");
-    assert_eq!(tdd.levels[ll.idx()].slot_count(), 3, "{{a1, a2}} and {{a3, a4}} merge under the survivors");
-    assert_eq!(tdd.levels[lr.idx()].slot_count(), 3, "b1, b2, b3 keep their contexts");
-    assert!(listed >= 1, "the left level's left child is searched by list: {listed}");
-    assert_eq!(tdd.model_count().unwrap(), count, "contraction keeps the function");
+    assert_eq!(
+        tdd.levels[l.idx()].slot_count(),
+        3,
+        "{{A, B}} and {{C, D}} merge under the root"
+    );
+    assert_eq!(
+        tdd.levels[ll.idx()].slot_count(),
+        3,
+        "{{a1, a2}} and {{a3, a4}} merge under the survivors"
+    );
+    assert_eq!(
+        tdd.levels[lr.idx()].slot_count(),
+        3,
+        "b1, b2, b3 keep their contexts"
+    );
+    assert!(
+        listed >= 1,
+        "the left level's left child is searched by list: {listed}"
+    );
+    assert_eq!(
+        tdd.model_count().unwrap(),
+        count,
+        "contraction keeps the function"
+    );
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
     assert_eq!(tdd.model_count().unwrap(), count);

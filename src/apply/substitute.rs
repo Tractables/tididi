@@ -1,8 +1,8 @@
 //! Simultaneous substitution through the Boolean apply kernels.
 
-use crate::diagram::{LeafLabel, Literal};
 use super::compose::SharedCircuit;
 use super::disjoin::disjoin_many_on;
+use crate::diagram::{LeafLabel, Literal};
 use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
@@ -20,7 +20,12 @@ impl Engine {
         f: Tdd,
         replacements: &[(VarId, &Tdd)],
     ) -> Result<Tdd, OperationError> {
-        self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))
+        self.substitute_with(
+            f,
+            replacements
+                .iter()
+                .map(|&(var, diagram)| (var, Replacement::Diagram(diagram))),
+        )
     }
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
@@ -31,7 +36,12 @@ impl Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
-        self.substitute_with(f, renames.iter().map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))))
+        self.substitute_with(
+            f,
+            renames
+                .iter()
+                .map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))),
+        )
     }
 
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.
@@ -43,7 +53,9 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         f.require_structure()?;
-        if replacements.len() == 0 { return Ok(f); }
+        if replacements.len() == 0 {
+            return Ok(f);
+        }
         let mut gate = lim.gate();
         let mut by_leaf = Vec::new();
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
@@ -90,7 +102,11 @@ impl Engine {
         lim.try_resize(&mut uses, vtree.num_nodes(), Vec::new())?;
         for t in vtree.bottomup() {
             gate.poll(1)?;
-            let width = if vtree.node(t).is_leaf() { 3 } else { f.level(t).nodes().len() };
+            let width = if vtree.node(t).is_leaf() {
+                3
+            } else {
+                f.level(t).nodes().len()
+            };
             lim.try_resize(&mut uses[t.idx()], width, 0)?;
             if let VtreeNode::Internal { left, right, .. } = *vtree.node(t) {
                 for node in f.level(t).nodes() {
@@ -110,32 +126,14 @@ impl Engine {
             gate.poll(1)?;
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
-                    let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
-                    lim.reserve_exact(&mut columns[t.idx()], 3)?;
-                    // LeafLabel's stable slot order is One, Pos, Neg.
-                    debug_assert_eq!(LeafLabel::Pos as usize, 1);
-                    for (slot, &count) in uses[t.idx()].iter().enumerate() {
-                        let value = if count == 0 {
-                            SharedCircuit::default()
-                        } else {
-                            let value = if slot == 0 {
-                                self.cube(&vtree, std::iter::empty::<Literal>())?
-                            } else {
-                                match replacement {
-                                    Replacement::Diagram(diagram) => {
-                                        let mut value = diagram.try_clone_on(self)?;
-                                        value.weights = None;
-                                        if slot == 2 { self.negate(value)? } else { value }
-                                    }
-                                    Replacement::Literal(literal) => {
-                                        self.literal(&vtree, if slot == 2 { literal.negated() } else { literal })?
-                                    }
-                                }
-                            };
-                            SharedCircuit::new(value, count)
-                        };
-                        columns[t.idx()].push(value);
-                    }
+                    let replacement =
+                        by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
+                    self.build_leaf_substitute_column(
+                        &vtree,
+                        replacement,
+                        &uses[t.idx()],
+                        &mut columns[t.idx()],
+                    )?;
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = f.level(t);
@@ -143,13 +141,13 @@ impl Engine {
                     for (i, node) in level.nodes().iter().enumerate() {
                         // One balanced disjunction per node rather than a linear fold over its pairs.
                         let mut terms = Vec::new();
-                        terms.try_reserve(level.pair_count_at(i)).map_err(|_| OperationError::OverBudget)?;
+                        terms
+                            .try_reserve(level.pair_count_at(i))
+                            .map_err(|_| OperationError::OverBudget)?;
                         for pair in level.pairs_iter_of(&node) {
                             gate.poll(1)?;
-                            let a =
-                                columns[left.idx()][pair.left.raw() as usize].take(self)?;
-                            let b = columns[right.idx()][pair.right.raw() as usize]
-                                .take(self)?;
+                            let a = columns[left.idx()][pair.left.raw() as usize].take(self)?;
+                            let b = columns[right.idx()][pair.right.raw() as usize].take(self)?;
                             terms.push(self.and(a, b)?);
                         }
                         let result = disjoin_many_on(self, terms)?;
@@ -167,6 +165,52 @@ impl Engine {
         // A leaf output can be a cloned replacement, which need not be minimized.
         self.minimize(&mut result)?;
         Ok(result)
+    }
+
+    /// Populate `column` with the three leaf-slot [`SharedCircuit`] entries for
+    /// `replacement` according to `uses`.
+    fn build_leaf_substitute_column(
+        &self,
+        vtree: &std::sync::Arc<crate::Vtree>,
+        replacement: Replacement<'_>,
+        uses: &[usize],
+        column: &mut Vec<SharedCircuit>,
+    ) -> Result<(), OperationError> {
+        self.limits().reserve_exact(column, 3)?;
+        // LeafLabel's stable slot order is One, Pos, Neg.
+        debug_assert_eq!(LeafLabel::Pos as usize, 1);
+        for (slot, &count) in uses.iter().enumerate() {
+            let value = if count == 0 {
+                SharedCircuit::default()
+            } else {
+                let value = if slot == 0 {
+                    self.cube(vtree, std::iter::empty::<Literal>())?
+                } else {
+                    match replacement {
+                        Replacement::Diagram(diagram) => {
+                            let mut value = diagram.try_clone_on(self)?;
+                            value.weights = None;
+                            if slot == 2 {
+                                self.negate(value)?
+                            } else {
+                                value
+                            }
+                        }
+                        Replacement::Literal(literal) => self.literal(
+                            vtree,
+                            if slot == 2 {
+                                literal.negated()
+                            } else {
+                                literal
+                            },
+                        )?,
+                    }
+                };
+                SharedCircuit::new(value, count)
+            };
+            column.push(value);
+        }
+        Ok(())
     }
 }
 

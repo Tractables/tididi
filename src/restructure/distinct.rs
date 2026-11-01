@@ -32,8 +32,8 @@ use super::DistinctError;
 
 use crate::Engine;
 use crate::diagram::{
-    sort_pairs, Assembly, ChildDecoder, ChildPair, LevelView, NodeIdx, Tdd, TddNodeId, LEAF_WIDTH, NEG_LEAF_IDX,
-    ONE_LEAF_IDX, POS_LEAF_IDX,
+    Assembly, ChildDecoder, ChildPair, LEAF_WIDTH, LevelView, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX,
+    POS_LEAF_IDX, Tdd, TddNodeId, sort_pairs,
 };
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -89,7 +89,12 @@ impl Engine {
     /// for a `key` that is not a node of the diagram's vtree,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
     /// structure at a level, and for a refused allocation or an armed stop.
-    pub fn at_least_distinct(&self, tdd: &Tdd, key: VtreeIdx, m: u64) -> Result<Tdd, DistinctError> {
+    pub fn at_least_distinct(
+        &self,
+        tdd: &Tdd,
+        key: VtreeIdx,
+        m: u64,
+    ) -> Result<Tdd, DistinctError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
@@ -115,40 +120,11 @@ impl Engine {
         // `|σ|` for every node of the sibling's level, capped at `m`.
         let size = capped_counts(self, tdd, counted, m)?;
         let reached = reached_at_parent(lim, &mut gate, tdd, parent)?;
-
-        // Each node of `key`'s level, its sum over the reached pairs.
-        let structural = ChildDecoder::structural();
-        let key_left = vtree.children(parent).0 == key;
-        let key_leaf = vtree.node(key).is_leaf();
-        let width = if key_leaf { LEAF_WIDTH } else { tdd.level(key).nodes().len() };
-        let mut sum = Vec::new();
-        lim.try_resize(&mut sum, width, 0u64)?;
-        for &n in &reached {
-            let pairs = tdd.level(parent).pairs_iter_of_idx(n.idx());
-            gate.poll(pairs.len() as u64)?;
-            for pair in pairs {
-                let (k, s) = match key_left {
-                    true => (structural.node(pair.left), structural.node(pair.right)),
-                    false => (structural.node(pair.right), structural.node(pair.left)),
-                };
-                let at = &mut sum[k.idx()];
-                *at = at.saturating_add(size[s.idx()]).min(m);
-            }
-        }
+        let (sum, key_leaf) =
+            sum_key_counts_at_parent(lim, &mut gate, tdd, (parent, key), &reached, &size, m)?;
 
         if key_leaf {
-            // A leaf's nodes are its literals and true; the union of those
-            // chosen is one of them, or nothing.
-            let chosen = |n: NodeIdx| sum[n.idx()] >= m;
-            let local = match (chosen(ONE_LEAF_IDX), chosen(POS_LEAF_IDX), chosen(NEG_LEAF_IDX)) {
-                (true, _, _) | (_, true, true) => ONE_LEAF_IDX,
-                (false, true, false) => POS_LEAF_IDX,
-                (false, false, true) => NEG_LEAF_IDX,
-                (false, false, false) => return Ok(crate::build::constant_zero(self, &into)),
-            };
-            let assembly = Assembly::new(self, &into)?;
-            gate.flush()?;
-            return Ok(assembly.finish(TddNodeId { vtree: into.root(), local })?);
+            return self.finish_leaf_distinct(&into, &sum, m, gate);
         }
 
         // One node holding the pairs of every chosen node, over the levels
@@ -177,9 +153,39 @@ impl Engine {
         }
         let top = assembly.push(self, into.root(), &pairs)?;
         gate.flush()?;
-        let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: top })?;
+        let mut result = assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local: top,
+        })?;
         self.minimize(&mut result)?;
         Ok(result)
+    }
+
+    /// Finish [`Self::at_least_distinct`] when `key` is a leaf vtree node.
+    fn finish_leaf_distinct(
+        &self,
+        into: &Arc<Vtree>,
+        sum: &[u64],
+        m: u64,
+        mut gate: crate::limits::PollGate<'_>,
+    ) -> Result<Tdd, DistinctError> {
+        let chosen = |n: NodeIdx| sum[n.idx()] >= m;
+        let local = match (
+            chosen(ONE_LEAF_IDX),
+            chosen(POS_LEAF_IDX),
+            chosen(NEG_LEAF_IDX),
+        ) {
+            (true, _, _) | (_, true, true) => ONE_LEAF_IDX,
+            (false, true, false) => POS_LEAF_IDX,
+            (false, false, true) => NEG_LEAF_IDX,
+            (false, false, false) => return Ok(crate::build::constant_zero(self, into)),
+        };
+        let assembly = Assembly::new(self, into)?;
+        gate.flush()?;
+        Ok(assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local,
+        })?)
     }
 
     /// `∃` of every variable outside `key`'s subtree, as a diagram on a
@@ -210,6 +216,43 @@ impl Engine {
     pub fn project_to_subtree(&self, tdd: &Tdd, key: VtreeIdx) -> Result<Tdd, DistinctError> {
         self.at_least_distinct(tdd, key, 1)
     }
+}
+
+/// Sum `size` across the reached pairs of `parent` for each node of `key`'s
+/// level, capped at `m`, returning `(sums, key_is_leaf)`.
+fn sum_key_counts_at_parent(
+    lim: &Limits,
+    gate: &mut PollGate<'_>,
+    tdd: &Tdd,
+    (parent, key): (VtreeIdx, VtreeIdx),
+    reached: &[NodeIdx],
+    size: &[u64],
+    m: u64,
+) -> Result<(Vec<u64>, bool), OperationError> {
+    let vtree = tdd.vtree();
+    let structural = ChildDecoder::structural();
+    let key_left = vtree.children(parent).0 == key;
+    let key_leaf = vtree.node(key).is_leaf();
+    let width = if key_leaf {
+        LEAF_WIDTH
+    } else {
+        tdd.level(key).nodes().len()
+    };
+    let mut sum = Vec::new();
+    lim.try_resize(&mut sum, width, 0u64)?;
+    for &n in reached {
+        let pairs = tdd.level(parent).pairs_iter_of_idx(n.idx());
+        gate.poll(pairs.len() as u64)?;
+        for pair in pairs {
+            let (k, s) = match key_left {
+                true => (structural.node(pair.left), structural.node(pair.right)),
+                false => (structural.node(pair.right), structural.node(pair.left)),
+            };
+            let at = &mut sum[k.idx()];
+            *at = at.saturating_add(size[s.idx()]).min(m);
+        }
+    }
+    Ok((sum, key_leaf))
 }
 
 type ProjectedKeySubtree = (Arc<Vtree>, Vec<VtreeIdx>, Vec<VtreeIdx>);
@@ -313,14 +356,18 @@ fn capped_counts(eng: &Engine, tdd: &Tdd, t: VtreeIdx, m: u64) -> Result<Vec<u64
             true => leaf(eng)?,
             false => {
                 let (l, r) = vtree.children(s);
-                let (lc, rc) = (counts[l.idx()].take().expect("a child first"), counts[r.idx()].take().expect("a child first"));
+                let (lc, rc) = (
+                    counts[l.idx()].take().expect("a child first"),
+                    counts[r.idx()].take().expect("a child first"),
+                );
                 let level = tdd.level(s);
                 let mut out = Vec::new();
                 lim.try_resize(&mut out, level.nodes().len(), 0)?;
                 for (n, pairs) in level.internal_inputs_iter() {
                     let mut total = 0u64;
                     for pair in pairs {
-                        let product = lc[structural.node(pair.left).idx()].saturating_mul(rc[structural.node(pair.right).idx()]);
+                        let product = lc[structural.node(pair.left).idx()]
+                            .saturating_mul(rc[structural.node(pair.right).idx()]);
                         total = total.saturating_add(product).min(m);
                     }
                     out[n] = total;

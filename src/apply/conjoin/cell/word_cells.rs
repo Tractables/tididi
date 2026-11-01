@@ -1,7 +1,7 @@
 //! The cells of a level read by g-pair vectors.
 
-use super::*;
 use super::rows::ListSink;
+use super::*;
 use crate::limits::Limits;
 
 /// A child row whose vector is not built yet ([`WordScratch::slots`]).
@@ -128,7 +128,10 @@ pub(crate) struct WordScratch {
 }
 
 impl WordScratch {
-    pub(in crate::apply::conjoin) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+    pub(in crate::apply::conjoin) fn buffers(
+        &mut self,
+        visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch),
+    ) {
         visit(&mut self.g_flat);
         visit(&mut self.col_of);
         visit(&mut self.col_start);
@@ -192,11 +195,38 @@ pub(crate) fn words_pay(
 ) -> bool {
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let grid = |p: &ChildPlan<'_>| DenseLookup {
+        base: p.base,
+        stride: p.stride,
+    };
     match lookups {
-        PlainLookups::Grid => pays(eng, rows, w, &grid(&sides.left), &grid(&sides.right), f_rows, node_idx),
-        PlainLookups::CompleteLeft { .. } => pays(eng, rows, w, &complete(&sides.left), &grid(&sides.right), f_rows, node_idx),
-        PlainLookups::CompleteRight { .. } => pays(eng, rows, w, &grid(&sides.left), &complete(&sides.right), f_rows, node_idx),
+        PlainLookups::Grid => pays(
+            eng,
+            rows,
+            w,
+            &grid(&sides.left),
+            &grid(&sides.right),
+            f_rows,
+            node_idx,
+        ),
+        PlainLookups::CompleteLeft { .. } => pays(
+            eng,
+            rows,
+            w,
+            &complete(&sides.left),
+            &grid(&sides.right),
+            f_rows,
+            node_idx,
+        ),
+        PlainLookups::CompleteRight { .. } => pays(
+            eng,
+            rows,
+            w,
+            &grid(&sides.left),
+            &complete(&sides.right),
+            f_rows,
+            node_idx,
+        ),
         PlainLookups::Complete { .. } => false,
     }
 }
@@ -217,11 +247,20 @@ pub(crate) fn words_pay_marginal(
 ) -> bool {
     let sides = rows.ctx.sides;
     if marginal {
-        let (left, right) = (MarginalLookup::new(&sides.left), MarginalLookup::new(&sides.right));
+        let (left, right) = (
+            MarginalLookup::new(&sides.left),
+            MarginalLookup::new(&sides.right),
+        );
         pays(eng, rows, w, &left, &right, f_rows, node_idx)
     } else {
-        let left = DenseLookup { base: sides.left.base, stride: sides.left.stride };
-        let right = DenseLookup { base: sides.right.base, stride: sides.right.stride };
+        let left = DenseLookup {
+            base: sides.left.base,
+            stride: sides.left.stride,
+        };
+        let right = DenseLookup {
+            base: sides.right.base,
+            stride: sides.right.stride,
+        };
         pays(eng, rows, w, &left, &right, f_rows, node_idx)
     }
 }
@@ -246,7 +285,10 @@ fn pays<L: ChildLookup, R: ChildLookup>(
 ) -> bool {
     let (f, g) = (rows.f_level, rows.g_level);
     let sides = rows.ctx.sides;
-    let kills = Sides { left: kills(left), right: kills(right) };
+    let kills = Sides {
+        left: kills(left),
+        right: kills(right),
+    };
     if !kills.left && !kills.right {
         return false;
     }
@@ -261,8 +303,13 @@ fn pays<L: ChildLookup, R: ChildLookup>(
     }
     let words = gp.div_ceil(64);
     let rows_of = |n: usize, k: bool| if k { n.min(fp) } else { 0 };
-    let (rows_l, rows_r) = (rows_of(f_rows.left, kills.left), rows_of(f_rows.right, kills.right));
-    if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS || (rows.ctx.masked && !g.has_multi_pair()) {
+    let (rows_l, rows_r) = (
+        rows_of(f_rows.left, kills.left),
+        rows_of(f_rows.right, kills.right),
+    );
+    if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS
+        || (rows.ctx.masked && !g.has_multi_pair())
+    {
         return false;
     }
     let masked = rows.ctx.masked;
@@ -270,14 +317,25 @@ fn pays<L: ChildLookup, R: ChildLookup>(
         return false;
     }
     let side = |rows: usize, named: usize, k: bool| {
-        if k { rows.saturating_mul(named.min(gp) + words).saturating_add(gp + named) } else { 0 }
+        if k {
+            rows.saturating_mul(named.min(gp) + words)
+                .saturating_add(gp + named)
+        } else {
+            0
+        }
     };
     let (named_l, named_r) = (sides.left.stride as usize, sides.right.stride as usize);
-    let build = (side(rows_l, named_l, kills.left) + side(rows_r, named_r, kills.right) + f_rows.left + f_rows.right) as u128;
+    let build = (side(rows_l, named_l, kills.left)
+        + side(rows_r, named_r, kills.right)
+        + f_rows.left
+        + f_rows.right) as u128;
     let reads = fp as u128 * words as u128;
     let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.right_width.min(SAMPLE_NODES);
     let budget = (candidates / SAMPLE_SHARE / sampled.max(1)).clamp(1, SAMPLE_CELL);
-    let (candidates, cells) = (candidates as u128, rows.f_width as u128 * rows.ctx.right_width as u128);
+    let (candidates, cells) = (
+        candidates as u128,
+        rows.f_width as u128 * rows.ctx.right_width as u128,
+    );
     // The costs no sample changes: a masked level's vectors against its
     // candidates; a level's without, against the most its walk costs, with
     // every candidate live.
@@ -291,7 +349,20 @@ fn pays<L: ChildLookup, R: ChildLookup>(
     if decided {
         return false;
     }
-    let Ok(s) = sample_cells(eng, rows, w, left, right, node_idx, budget) else { return false };
+    let Ok(s) = sample_cells(eng, rows, w, left, right, node_idx, budget) else {
+        return false;
+    };
+    compare_sampled_word_costs(s, masked, (candidates, cells, fp), (build, reads))
+}
+
+/// Compare the estimated vector and cell-walk costs from `s` to decide whether
+/// g-pair word vectors pay for the level.
+fn compare_sampled_word_costs(
+    s: CellSample,
+    masked: bool,
+    (candidates, cells, fp): (u128, u128, usize),
+    (build, reads): (u128, u128),
+) -> bool {
     if s.candidates == 0 || (!masked && s.grouped * 2 > s.candidates) {
         return false;
     }
@@ -301,15 +372,34 @@ fn pays<L: ChildLookup, R: ChildLookup>(
     }
     let live_cells = s.live_cells as u128 * cells / s.cells.max(1) as u128;
     let walked = s.walked;
-    let (w_cells, w_candidates) = (walked.cells as u128 * cells / s.cells.max(1) as u128, walked.candidates as u128 * candidates / s.candidates as u128);
+    let (w_cells, w_candidates) = (
+        walked.cells as u128 * cells / s.cells.max(1) as u128,
+        walked.candidates as u128 * candidates / s.candidates as u128,
+    );
     let w_live = walked.live as u128 * candidates / s.candidates as u128;
     let w_live_cells = walked.live_cells as u128 * cells / s.cells.max(1) as u128;
     let walk_cost = |cells: u128, candidates: u128, live: u128| {
-        [cells, candidates, live].iter().zip(WALK_COST).map(|(x, c)| x * c).sum::<u128>()
+        [cells, candidates, live]
+            .iter()
+            .zip(WALK_COST)
+            .map(|(x, c)| x * c)
+            .sum::<u128>()
     };
     let walk = walk_cost(cells, candidates, live);
-    let rest = [build, reads, live_cells - w_live_cells.min(live_cells), live - w_live.min(live), cells - w_cells.min(cells), fp as u128];
-    let vectors = rest.iter().zip(WORDS_COST).map(|(x, c)| x * c).sum::<u128>() + walk_cost(w_cells, w_candidates, w_live);
+    let rest = [
+        build,
+        reads,
+        live_cells - w_live_cells.min(live_cells),
+        live - w_live.min(live),
+        cells - w_cells.min(cells),
+        fp as u128,
+    ];
+    let vectors = rest
+        .iter()
+        .zip(WORDS_COST)
+        .map(|(x, c)| x * c)
+        .sum::<u128>()
+        + walk_cost(w_cells, w_candidates, w_live);
     vectors < walk
 }
 
@@ -370,31 +460,36 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
     budget: usize,
 ) -> Result<CellSample, OperationError> {
     let lim = eng.limits();
-    let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
+    let RowLoop {
+        f_level,
+        g_level,
+        ctx,
+        f_width,
+        ..
+    } = rows;
     let (lv, rv) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
-    w.sample.clear();
-    w.sample_cols.clear();
-    lim.reserve(&mut w.sample, SAMPLE_NODES * SAMPLE_CELL)?;
-    lim.reserve(&mut w.sample_cols, SAMPLE_NODES)?;
-    for j in spread(ctx.right_width, SAMPLE_NODES) {
-        let pairs = column_pairs(ctx, g_level, j, &mut w.g_flat);
-        let grouped = ctx.right_cols.is_some_and(|c| c.runs(j).is_some());
-        w.sample_cols.push(SampledColumn { start: w.sample.len() as u32, pairs: pairs.len() as u32, grouped });
-        w.sample.extend(spread(pairs.len(), SAMPLE_CELL).map(|k| pairs[k]));
-    }
+    sample_column_pairs(lim, ctx, g_level, w)?;
     let mut s = CellSample::default();
     let mut picks = [0usize; SAMPLE_CELL];
     for i in spread(f_width, SAMPLE_NODES) {
         let pairs = f_level.pairs_view_decoded(i, &mut w.g_flat, lv, rv);
         let n1 = pairs.len() as u64;
-        let row = SampledRows { candidates: s.candidates, live: s.live, cells: s.cells, live_cells: s.live_cells };
+        let row = SampledRows {
+            candidates: s.candidates,
+            live: s.live,
+            cells: s.cells,
+            live_cells: s.live_cells,
+        };
         let mut f_picked = 0;
         for k in spread(pairs.len(), SAMPLE_CELL) {
             picks[f_picked] = k;
             f_picked += 1;
         }
         for (b, col) in w.sample_cols.iter().enumerate() {
-            let end = w.sample_cols.get(b + 1).map_or(w.sample.len(), |c| c.start as usize);
+            let end = w
+                .sample_cols
+                .get(b + 1)
+                .map_or(w.sample.len(), |c| c.start as usize);
             let g_picked = &w.sample[col.start as usize..end];
             let held = n1 * u64::from(col.pairs);
             s.cells += 1;
@@ -405,24 +500,14 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
             if n1 as usize >= GROUPED_MIN_PAIRS && col.grouped {
                 s.grouped += held;
             }
-            // As many f pairs as leave a pair to each, at least
-            // `SAMPLE_SIDE` of g's, and as many g pairs as leave a pair
-            // to each of those.
-            let s1 = f_picked.min((budget / g_picked.len()).max(SAMPLE_SIDE.min(budget)));
-            let s2 = g_picked.len().min(budget / s1);
-            let mut found = 0u64;
-            for a in spread(f_picked, s1) {
-                let p = pairs[picks[a]];
-                let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-                for b in spread(g_picked.len(), s2) {
-                    let q = g_picked[b];
-                    let live = (!kills(left) || left.get_in_row(node_idx, lrow, q.left.0) != NO_PRODUCT)
-                        && (!kills(right) || right.get_in_row(node_idx, rrow, q.right.0) != NO_PRODUCT);
-                    found += u64::from(live);
-                }
-            }
-            s.live += found * held / (s1 * s2) as u64;
-            s.live_cells += u64::from(found > 0);
+            let (live, live_cell) = probe_sampled_cell(
+                (pairs, &picks[..f_picked], g_picked),
+                (held, budget),
+                node_idx,
+                (left, right),
+            );
+            s.live += live;
+            s.live_cells += live_cell;
         }
         let (candidates, live) = (s.candidates - row.candidates, s.live - row.live);
         if live * LIVE_SHARE > candidates {
@@ -434,6 +519,58 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
         }
     }
     Ok(s)
+}
+
+fn sample_column_pairs(
+    lim: &Limits,
+    ctx: &CellCtx<'_>,
+    g_level: &TddLevel,
+    w: &mut WordScratch,
+) -> Result<(), OperationError> {
+    w.sample.clear();
+    w.sample_cols.clear();
+    lim.reserve(&mut w.sample, SAMPLE_NODES * SAMPLE_CELL)?;
+    lim.reserve(&mut w.sample_cols, SAMPLE_NODES)?;
+    for j in spread(ctx.right_width, SAMPLE_NODES) {
+        let pairs = column_pairs(ctx, g_level, j, &mut w.g_flat);
+        let grouped = ctx.right_cols.is_some_and(|c| c.runs(j).is_some());
+        w.sample_cols.push(SampledColumn {
+            start: w.sample.len() as u32,
+            pairs: pairs.len() as u32,
+            grouped,
+        });
+        w.sample
+            .extend(spread(pairs.len(), SAMPLE_CELL).map(|k| pairs[k]));
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn probe_sampled_cell<L: ChildLookup, R: ChildLookup>(
+    (pairs, picks, g_picked): (&[ChildPair], &[usize], &[ChildPair]),
+    (held, budget): (u64, usize),
+    node_idx: &[u32],
+    (left, right): (&L, &R),
+) -> (u64, u64) {
+    // As many f pairs as leave a pair to each, at least
+    // `SAMPLE_SIDE` of g's, and as many g pairs as leave a pair
+    // to each of those.
+    let s1 = picks
+        .len()
+        .min((budget / g_picked.len()).max(SAMPLE_SIDE.min(budget)));
+    let s2 = g_picked.len().min(budget / s1);
+    let mut found = 0u64;
+    for a in spread(picks.len(), s1) {
+        let p = pairs[picks[a]];
+        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+        for b in spread(g_picked.len(), s2) {
+            let q = g_picked[b];
+            let live = (!kills(left) || left.get_in_row(node_idx, lrow, q.left.0) != NO_PRODUCT)
+                && (!kills(right) || right.get_in_row(node_idx, rrow, q.right.0) != NO_PRODUCT);
+            found += u64::from(live);
+        }
+    }
+    (found * held / (s1 * s2) as u64, u64::from(found > 0))
 }
 
 /// The row loop of a plain level whose cells are read by g-pair vectors
@@ -471,22 +608,56 @@ pub(crate) fn run_level_rows_words(
 ) -> Result<(), OperationError> {
     let sides = rows.ctx.sides;
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    let grid = |p: &ChildPlan<'_>| DenseLookup {
+        base: p.base,
+        stride: p.stride,
+    };
     let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {
             super::super::note_word_cells(super::super::WordNote::Grids);
-            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&grid(&sides.left), &grid(&sides.right)), EmitSink { level, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (&grid(&sides.left), &grid(&sides.right)),
+                EmitSink {
+                    level,
+                    inline: &mut inline,
+                },
+            )
         }
         PlainLookups::CompleteLeft { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&complete(&sides.left), &grid(&sides.right)), ReservedEmitSink { level, charged, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (&complete(&sides.left), &grid(&sides.right)),
+                ReservedEmitSink {
+                    level,
+                    charged,
+                    inline: &mut inline,
+                },
+            )
         }
         PlainLookups::CompleteRight { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (&grid(&sides.left), &complete(&sides.right)), ReservedEmitSink { level, charged, inline: &mut inline })
+            rows_by_words::<true, _, _, _>(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (&grid(&sides.left), &complete(&sides.right)),
+                ReservedEmitSink {
+                    level,
+                    charged,
+                    inline: &mut inline,
+                },
+            )
         }
-        PlainLookups::Complete { .. } => unreachable!("a level of two complete sides kills no candidate"),
+        PlainLookups::Complete { .. } => {
+            unreachable!("a level of two complete sides kills no candidate")
+        }
     }?;
     level.leave_written_pairs(inline);
     Ok(())
@@ -505,9 +676,20 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
     product_list: &mut Vec<ProductEntry>,
 ) -> Result<(), OperationError> {
     super::super::note_word_cells(super::super::WordNote::SparseMarginal);
-    let (left, right) = (MarginalLookup::new(&rows.ctx.sides.left), MarginalLookup::new(&rows.ctx.sides.right));
+    let (left, right) = (
+        MarginalLookup::new(&rows.ctx.sides.left),
+        MarginalLookup::new(&rows.ctx.sides.right),
+    );
     let mut inline = 0;
-    let sink = ListSink { emit: EmitSink { level, inline: &mut inline }, product_list, base: rows.ctx.output_grid_base, row: 0 };
+    let sink = ListSink {
+        emit: EmitSink {
+            level,
+            inline: &mut inline,
+        },
+        product_list,
+        base: rows.ctx.output_grid_base,
+        row: 0,
+    };
     rows_by_words::<false, _, _, _>(eng, (rows, scratch), (words, f_rows), (&left, &right), sink)?;
     level.leave_written_pairs(inline);
     Ok(())
@@ -527,14 +709,32 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
     (left, right): (&L, &R),
     sink: S,
 ) -> Result<(), OperationError> {
-    let mut a: ByWords<'_, S, SLAB> = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, (kills(left), kills(right)), sink)?;
+    let mut a: ByWords<'_, S, SLAB> = ByWords::new(
+        eng,
+        rows,
+        &mut *scratch.g_pairs,
+        words,
+        f_rows,
+        (kills(left), kills(right)),
+        sink,
+    )?;
     if rows.ctx.masked {
         run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut a)?;
         a.finish();
         return Ok(());
     }
-    let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
-    let RowScratch { f_pairs: f_scratch, g_pairs: g_scratch, node_idx: slab } = scratch;
+    let RowLoop {
+        f_level,
+        g_level,
+        ctx,
+        f_width,
+        ..
+    } = rows;
+    let RowScratch {
+        f_pairs: f_scratch,
+        g_pairs: g_scratch,
+        node_idx: slab,
+    } = scratch;
     let lim = eng.limits();
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let width = ctx.right_width;
@@ -571,8 +771,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
         dispatch_word_row(
             (eng, ctx),
             &mut a,
-            (i, row_base, units),
-            f_pairs,
+            (i, row_base, units, f_pairs),
             (g_level, g_scratch),
             slab,
             (left, right),
@@ -587,12 +786,10 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
 /// Evaluate and emit one non-empty `f` row `i` in [`rows_by_words`] according
 /// to the [`RowMode`] selected by [`ByWords::take_row`].
 #[inline]
-#[allow(clippy::too_many_arguments)]
 fn dispatch_word_row<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSink>(
     (eng, ctx): (&Engine, &CellCtx<'_>),
     a: &mut ByWords<'_, S, SLAB>,
-    (i, row_base, units): (usize, usize, u64),
-    f_pairs: &[ChildPair],
+    (i, row_base, units, f_pairs): (usize, usize, u64, &[ChildPair]),
     (g_level, g_scratch): (&TddLevel, &mut Vec<ChildPair>),
     slab: &mut [u32],
     (left, right): (&L, &R),
@@ -606,49 +803,113 @@ fn dispatch_word_row<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSi
                 a.emit_bits(eng, (i, j, row_base + j), f_pairs, ctx, slab, (left, right))?;
             }
             let col_start = &a.w.col_start;
-            poll_row_as_walked(poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))
+            poll_row_as_walked(
+                poll,
+                ctx,
+                f_pairs,
+                units,
+                width,
+                (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)),
+            )
         }
         RowMode::Sorted => {
             while let Some(j) = a.next_column() {
                 let (from, to) = a.take_column(j);
-                a.emit_sorted((eng, ctx), (i, j, row_base + j), f_pairs, slab, (left, right), (from, to))?;
+                a.emit_sorted(
+                    (eng, ctx),
+                    (i, j, row_base + j),
+                    f_pairs,
+                    slab,
+                    (left, right),
+                    (from, to),
+                )?;
             }
             let col_start = &a.w.col_start;
-            poll_row_as_walked(poll, ctx, f_pairs, units, width, (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)))
+            poll_row_as_walked(
+                poll,
+                ctx,
+                f_pairs,
+                units,
+                width,
+                (0..width).map(|j| (j, (col_start[j + 1] - col_start[j]) as usize)),
+            )
         }
-        RowMode::Cells if units >= poll.due_in() => {
-            // The live cells' walks and the others' charges in column
-            // order, as the row loop polls them.
-            for j in 0..width {
-                if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
-                    process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
-                } else {
-                    let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
-                    if n2 != 0 {
-                        poll_cell_as_walked(poll, ctx, j, f_pairs, n2)?;
-                    }
-                }
-            }
-            poll.poll(width as u64)
-        }
-        RowMode::Cells => {
-            // The walks charge their cells; the row charges the rest,
-            // none of it bringing the gate due.
-            let mut walked = 0u64;
-            for k in 0..a.w.live_cols.len() {
-                let j = a.w.live_cols[k] as usize;
-                walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
-                process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
-            }
-            poll.poll(units - walked)
-        }
+        RowMode::Cells => dispatch_cells_mode(
+            (eng, ctx),
+            a,
+            (row_base, units, f_pairs),
+            (g_level, g_scratch),
+            slab,
+            (left, right),
+            poll,
+        ),
         RowMode::Walk => {
             for j in 0..width {
-                process_cell((eng, ctx), (j, row_base), f_pairs, (g_level, g_scratch), slab, (left, right), (&mut a.sink, poll))?;
+                process_cell(
+                    (eng, ctx),
+                    (j, row_base),
+                    f_pairs,
+                    (g_level, g_scratch),
+                    slab,
+                    (left, right),
+                    (&mut a.sink, poll),
+                )?;
             }
             poll.poll(width as u64)
         }
     }
+}
+
+/// Evaluate and emit a row in [`RowMode::Cells`], either column-by-column when
+/// the poll gate comes due inside the row or across `live_cols` alone when it
+/// does not.
+#[inline]
+fn dispatch_cells_mode<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSink>(
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    a: &mut ByWords<'_, S, SLAB>,
+    (row_base, units, f_pairs): (usize, u64, &[ChildPair]),
+    (g_level, g_scratch): (&TddLevel, &mut Vec<ChildPair>),
+    slab: &mut [u32],
+    (left, right): (&L, &R),
+    poll: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    let width = ctx.right_width;
+    if units >= poll.due_in() {
+        for j in 0..width {
+            if a.w.col_live[j / 64] >> (j % 64) & 1 != 0 {
+                process_cell(
+                    (eng, ctx),
+                    (j, row_base),
+                    f_pairs,
+                    (g_level, g_scratch),
+                    slab,
+                    (left, right),
+                    (&mut a.sink, poll),
+                )?;
+            } else {
+                let n2 = (a.w.col_start[j + 1] - a.w.col_start[j]) as usize;
+                if n2 != 0 {
+                    poll_cell_as_walked(poll, ctx, j, f_pairs, n2)?;
+                }
+            }
+        }
+        return poll.poll(width as u64);
+    }
+    let mut walked = 0u64;
+    for k in 0..a.w.live_cols.len() {
+        let j = a.w.live_cols[k] as usize;
+        walked += f_pairs.len() as u64 * u64::from(a.w.col_start[j + 1] - a.w.col_start[j]);
+        process_cell(
+            (eng, ctx),
+            (j, row_base),
+            f_pairs,
+            (g_level, g_scratch),
+            slab,
+            (left, right),
+            (&mut a.sink, poll),
+        )?;
+    }
+    poll.poll(units - walked)
 }
 
 /// The vectors and the sink of [`rows_by_words`].
@@ -691,7 +952,13 @@ enum RowMode {
 /// Word `word` of the live candidates of an f pair whose vectors are in
 /// `slots`, on a level whose sides kill as `kills` says.
 #[inline(always)]
-fn anded(w: &WordScratch, words: usize, kills: (bool, bool), slots: (u32, u32), word: usize) -> u64 {
+fn anded(
+    w: &WordScratch,
+    words: usize,
+    kills: (bool, bool),
+    slots: (u32, u32),
+    word: usize,
+) -> u64 {
     let at = |v: &[u64], s: u32| v[s as usize * words + word];
     match kills {
         (true, true) => at(&w.vectors.left, slots.0) & at(&w.vectors.right, slots.1),
@@ -703,7 +970,13 @@ fn anded(w: &WordScratch, words: usize, kills: (bool, bool), slots: (u32, u32), 
 
 /// Summary word `k` for an f pair whose vectors are in `slots`.
 #[inline(always)]
-fn summary_word(w: &WordScratch, sum_words: usize, kills: (bool, bool), slots: (u32, u32), k: usize) -> u64 {
+fn summary_word(
+    w: &WordScratch,
+    sum_words: usize,
+    kills: (bool, bool),
+    slots: (u32, u32),
+    k: usize,
+) -> u64 {
     let at = |v: &[u64], s: u32| v[s as usize * sum_words + k];
     match kills {
         (true, true) => at(&w.summaries.left, slots.0) & at(&w.summaries.right, slots.1),
@@ -754,7 +1027,12 @@ fn live_words_between(
     let (w0, w1) = (start / 64, (end - 1) / 64);
     // Bits `lo..hi` of a word, `lo < hi <= 64`.
     let span = |lo: usize, hi: usize| (u64::MAX >> (64 - (hi - lo))) << lo;
-    let cut = |word: usize| span(if word == w0 { start % 64 } else { 0 }, if word == w1 { end - word * 64 } else { 64 });
+    let cut = |word: usize| {
+        span(
+            if word == w0 { start % 64 } else { 0 },
+            if word == w1 { end - word * 64 } else { 64 },
+        )
+    };
     if w1 - w0 < 4 {
         for word in w0..=w1 {
             let m = anded(w, words, kills, slots, word) & cut(word);
@@ -766,7 +1044,10 @@ fn live_words_between(
     }
     for k in w0 / 64..=w1 / 64 {
         let mut sum = summary_word(w, sum_words, kills, slots, k);
-        sum &= span(if k == w0 / 64 { w0 % 64 } else { 0 }, if k == w1 / 64 { w1 % 64 + 1 } else { 64 });
+        sum &= span(
+            if k == w0 / 64 { w0 % 64 } else { 0 },
+            if k == w1 / 64 { w1 % 64 + 1 } else { 64 },
+        );
         while sum != 0 {
             let word = k * 64 + sum.trailing_zeros() as usize;
             sum &= sum - 1;
@@ -776,6 +1057,80 @@ fn live_words_between(
             }
         }
     }
+}
+
+fn flatten_word_columns(
+    lim: &Limits,
+    ctx: &CellCtx<'_>,
+    g_level: &TddLevel,
+    width: usize,
+    decode: &mut Vec<ChildPair>,
+    f_rows: Sides<usize>,
+    w: &mut WordScratch,
+) -> Result<(), OperationError> {
+    w.g_flat.clear();
+    w.col_of.clear();
+    w.col_start.clear();
+    lim.reserve_exact(&mut w.col_start, width + 1)?;
+    w.col_start.push(0);
+    for j in 0..width {
+        let pairs = column_pairs(ctx, g_level, j, decode);
+        lim.reserve(&mut w.g_flat, pairs.len())?;
+        lim.reserve(&mut w.col_of, pairs.len())?;
+        w.g_flat.extend_from_slice(pairs);
+        w.col_of.extend(std::iter::repeat_n(j as u32, pairs.len()));
+        w.col_start.push(w.g_flat.len() as u32);
+    }
+    for (slots, n) in [
+        (&mut w.slots.left, f_rows.left),
+        (&mut w.slots.right, f_rows.right),
+    ] {
+        slots.clear();
+        lim.try_resize(slots, n, UNBUILT)?;
+    }
+    Ok(())
+}
+
+fn init_word_column_runs(
+    lim: &Limits,
+    ctx: &CellCtx<'_>,
+    width: usize,
+    w: &mut WordScratch,
+) -> Result<(), OperationError> {
+    w.vectors.left.clear();
+    w.vectors.right.clear();
+    w.summaries.left.clear();
+    w.summaries.right.clear();
+    w.col_slot.clear();
+    lim.try_resize(&mut w.col_slot, width, 0)?;
+    w.counts.clear();
+    lim.try_resize(&mut w.counts, width, 0)?;
+    w.col_live.clear();
+    lim.try_resize(&mut w.col_live, width.div_ceil(64), 0)?;
+    w.live_cols.clear();
+    lim.reserve_exact(&mut w.live_cols, width)?;
+    // Each g pair's run in its column, where the column table grouped it.
+    w.run_of.clear();
+    w.run_counts.clear();
+    if let Some(cols) = ctx.right_cols {
+        let mut most = 0;
+        for j in 0..width {
+            if let Some(runs) = cols.runs(j) {
+                let start = w.col_start[j] as usize;
+                if w.run_of.is_empty() {
+                    lim.try_resize(&mut w.run_of, w.g_flat.len(), 0)?;
+                }
+                let mut from = 0;
+                for (r, &end) in runs.iter().enumerate() {
+                    w.run_of[start + from..start + end as usize].fill(r as u32);
+                    from = end as usize;
+                }
+                most = most.max(runs.len());
+            }
+        }
+        lim.try_resize(&mut w.run_counts, most, 0)?;
+    }
+    Ok(())
 }
 
 impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
@@ -793,77 +1148,75 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         let lim = eng.limits();
         let RowLoop { g_level, ctx, .. } = rows;
         let width = ctx.right_width;
-        w.g_flat.clear();
-        w.col_of.clear();
-        w.col_start.clear();
-        lim.reserve_exact(&mut w.col_start, width + 1)?;
-        w.col_start.push(0);
-        for j in 0..width {
-            let pairs = column_pairs(ctx, g_level, j, decode);
-            lim.reserve(&mut w.g_flat, pairs.len())?;
-            lim.reserve(&mut w.col_of, pairs.len())?;
-            w.g_flat.extend_from_slice(pairs);
-            w.col_of.extend(std::iter::repeat_n(j as u32, pairs.len()));
-            w.col_start.push(w.g_flat.len() as u32);
-        }
-        for (slots, n) in [(&mut w.slots.left, f_rows.left), (&mut w.slots.right, f_rows.right)] {
-            slots.clear();
-            lim.try_resize(slots, n, UNBUILT)?;
-        }
-        let strides = (ctx.sides.left.stride as usize, ctx.sides.right.stride as usize);
+        flatten_word_columns(lim, ctx, g_level, width, decode, f_rows, w)?;
+        let strides = (
+            ctx.sides.left.stride as usize,
+            ctx.sides.right.stride as usize,
+        );
         if kills.0 {
-            by_child(lim, &w.g_flat, strides.0, |q| q.left.0, (&mut w.child_counts, &mut w.named.left, &mut w.named_start.left, &mut w.by_child.left))?;
+            by_child(
+                lim,
+                &w.g_flat,
+                strides.0,
+                |q| q.left.0,
+                (
+                    &mut w.child_counts,
+                    &mut w.named.left,
+                    &mut w.named_start.left,
+                    &mut w.by_child.left,
+                ),
+            )?;
         }
         if kills.1 {
-            by_child(lim, &w.g_flat, strides.1, |q| q.right.0, (&mut w.child_counts, &mut w.named.right, &mut w.named_start.right, &mut w.by_child.right))?;
+            by_child(
+                lim,
+                &w.g_flat,
+                strides.1,
+                |q| q.right.0,
+                (
+                    &mut w.child_counts,
+                    &mut w.named.right,
+                    &mut w.named_start.right,
+                    &mut w.by_child.right,
+                ),
+            )?;
         }
-        w.vectors.left.clear();
-        w.vectors.right.clear();
-        w.summaries.left.clear();
-        w.summaries.right.clear();
-        w.col_slot.clear();
-        lim.try_resize(&mut w.col_slot, width, 0)?;
-        w.counts.clear();
-        lim.try_resize(&mut w.counts, width, 0)?;
-        w.col_live.clear();
-        lim.try_resize(&mut w.col_live, width.div_ceil(64), 0)?;
-        w.live_cols.clear();
-        lim.reserve_exact(&mut w.live_cols, width)?;
-        // Each g pair's run in its column, where the column table grouped it.
-        w.run_of.clear();
-        w.run_counts.clear();
-        if let Some(cols) = ctx.right_cols {
-            let mut most = 0;
-            for j in 0..width {
-                if let Some(runs) = cols.runs(j) {
-                    let start = w.col_start[j] as usize;
-                    if w.run_of.is_empty() {
-                        lim.try_resize(&mut w.run_of, w.g_flat.len(), 0)?;
-                    }
-                    let mut from = 0;
-                    for (r, &end) in runs.iter().enumerate() {
-                        w.run_of[start + from..start + end as usize].fill(r as u32);
-                        from = end as usize;
-                    }
-                    most = most.max(runs.len());
-                }
-            }
-            lim.try_resize(&mut w.run_counts, most, 0)?;
-        }
+        init_word_column_runs(lim, ctx, width, w)?;
         let words = w.g_flat.len().div_ceil(64);
         let sum_words = words.div_ceil(64);
         w.union.clear();
         lim.try_resize(&mut w.union, words, 0)?;
         w.union_sum.clear();
         lim.try_resize(&mut w.union_sum, sum_words, 0)?;
-        Ok(ByWords { sink, w, lim, words, sum_words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cell_words: 0, written: 0, cursor: 0, runs_row: usize::MAX })
+        Ok(ByWords {
+            sink,
+            w,
+            lim,
+            words,
+            sum_words,
+            seen: 0,
+            live: 0,
+            on: true,
+            row: usize::MAX,
+            mode: RowMode::Walk,
+            cell_words: 0,
+            written: 0,
+            cursor: 0,
+            runs_row: usize::MAX,
+        })
     }
 
     /// Every live cell of the last row read by vectors was in a cell the
     /// loop entered; clear the row's live columns.
     fn finish(&mut self) {
-        debug_assert!(self.mode != RowMode::Bits || self.written == self.w.live_cols.len(), "a live cell the row loop did not enter");
-        debug_assert!(self.mode != RowMode::Sorted || self.cursor == self.w.sorted.len(), "a live candidate in a cell the row loop did not enter");
+        debug_assert!(
+            self.mode != RowMode::Bits || self.written == self.w.live_cols.len(),
+            "a live cell the row loop did not enter"
+        );
+        debug_assert!(
+            self.mode != RowMode::Sorted || self.cursor == self.w.sorted.len(),
+            "a live candidate in a cell the row loop did not enter"
+        );
         if self.mode != RowMode::Walk {
             for &j in &self.w.live_cols {
                 self.w.col_live[j as usize / 64] = 0;
@@ -909,7 +1262,11 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
             self.mode = RowMode::Cells;
             return Ok(RowMode::Cells);
         }
-        let bits = self.w.live_cols.len().saturating_mul(f_pairs.len().div_ceil(64));
+        let bits = self
+            .w
+            .live_cols
+            .len()
+            .saturating_mul(f_pairs.len().div_ceil(64));
         let bits_pay = bits <= CELL_BITS_MAX_WORDS && bits as u64 <= live * BITS_SHARE;
         self.mode = if bits_pay && !super::super::word_rows_sorted_forced() {
             self.cell_bits(f_pairs.len(), kills(left), kills(right))?;
@@ -1012,7 +1369,11 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         left: &L,
         right: &R,
     ) -> Result<u64, OperationError> {
-        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (kills(left), kills(right)));
+        let (lim, words, kills) = (
+            self.lim,
+            (self.words, self.sum_words),
+            (kills(left), kills(right)),
+        );
         let w = &mut *self.w;
         w.row_slots.clear();
         lim.reserve(&mut w.row_slots, f_pairs.len())?;
@@ -1026,17 +1387,44 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         let mut live = 0u64;
         for p in f_pairs {
             let ls = if kills.0 {
-                Self::slot(lim, (&mut w.slots.left, &mut w.vectors.left, &mut w.summaries.left), (&w.named.left, &w.named_start.left, &w.by_child.left), words.0, left, node_idx, p.left.0)?
+                Self::slot(
+                    lim,
+                    (
+                        &mut w.slots.left,
+                        &mut w.vectors.left,
+                        &mut w.summaries.left,
+                    ),
+                    (&w.named.left, &w.named_start.left, &w.by_child.left),
+                    words.0,
+                    left,
+                    node_idx,
+                    p.left.0,
+                )?
             } else {
                 0
             };
             let rs = if kills.1 {
-                Self::slot(lim, (&mut w.slots.right, &mut w.vectors.right, &mut w.summaries.right), (&w.named.right, &w.named_start.right, &w.by_child.right), words.0, right, node_idx, p.right.0)?
+                Self::slot(
+                    lim,
+                    (
+                        &mut w.slots.right,
+                        &mut w.vectors.right,
+                        &mut w.summaries.right,
+                    ),
+                    (&w.named.right, &w.named_start.right, &w.by_child.right),
+                    words.0,
+                    right,
+                    node_idx,
+                    p.right.0,
+                )?
             } else {
                 0
             };
             w.row_slots.push((ls, rs));
-            let (mut union, mut union_sum) = (std::mem::take(&mut w.union), std::mem::take(&mut w.union_sum));
+            let (mut union, mut union_sum) = (
+                std::mem::take(&mut w.union),
+                std::mem::take(&mut w.union_sum),
+            );
             live_words(w, words, kills, (ls, rs), |word, m| {
                 live += u64::from(m.count_ones());
                 union[word] |= m;
@@ -1051,8 +1439,17 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     /// [`count_row`](Self::count_row) counted last, into `w.sorted` by
     /// column.
     #[inline(always)]
-    fn read_row(&mut self, n1: usize, left_kills: bool, right_kills: bool) -> Result<(), OperationError> {
-        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (left_kills, right_kills));
+    fn read_row(
+        &mut self,
+        n1: usize,
+        left_kills: bool,
+        right_kills: bool,
+    ) -> Result<(), OperationError> {
+        let (lim, words, kills) = (
+            self.lim,
+            (self.words, self.sum_words),
+            (left_kills, right_kills),
+        );
         let w = &mut *self.w;
         debug_assert_eq!(w.row_slots.len(), n1, "a row is read after it is counted");
         let mut entries = std::mem::take(&mut w.entries);
@@ -1143,7 +1540,12 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     /// f pair's bit is set in each live cell where one of its live words
     /// has a bit of the cell's column.
     #[inline(always)]
-    fn cell_bits(&mut self, n1: usize, left_kills: bool, right_kills: bool) -> Result<(), OperationError> {
+    fn cell_bits(
+        &mut self,
+        n1: usize,
+        left_kills: bool,
+        right_kills: bool,
+    ) -> Result<(), OperationError> {
         let (words, kills) = ((self.words, self.sum_words), (left_kills, right_kills));
         let w = &mut *self.w;
         debug_assert_eq!(w.row_slots.len(), n1, "a row is read after it is counted");
@@ -1194,7 +1596,11 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         (left, right): (&L, &R),
     ) -> Result<(), OperationError> {
         self.written += 1;
-        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (kills(left), kills(right)));
+        let (lim, words, kills) = (
+            self.lim,
+            (self.words, self.sum_words),
+            (kills(left), kills(right)),
+        );
         let w = &mut *self.w;
         let (start, end) = (w.col_start[j] as usize, w.col_start[j + 1] as usize);
         let s = w.col_slot[j] as usize;
@@ -1204,12 +1610,17 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         let mut grown = Ok(());
         if end - start == 1 {
             // The column's one g pair against each f pair whose bit is set.
-            grown = lim.reserve(&mut entries, bits.iter().map(|b| b.count_ones() as usize).sum());
+            grown = lim.reserve(
+                &mut entries,
+                bits.iter().map(|b| b.count_ones() as usize).sum(),
+            );
             if grown.is_ok() {
                 for (at, &b) in bits.iter().enumerate() {
                     let mut b = b;
                     while b != 0 {
-                        entries.push(((at * 64) as u64 + u64::from(b.trailing_zeros())) << 32 | start as u64);
+                        entries.push(
+                            ((at * 64) as u64 + u64::from(b.trailing_zeros())) << 32 | start as u64,
+                        );
                         b &= b - 1;
                     }
                 }
@@ -1221,25 +1632,40 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
                     let k = at * 64 + b.trailing_zeros() as usize;
                     b &= b - 1;
                     let key = (k as u64) << 32;
-                    live_words_between(w, words, kills, w.row_slots[k], (start, end), |word, mut m| {
-                        let n = m.count_ones() as usize;
-                        if entries.capacity() - entries.len() < n {
-                            grown = lim.reserve(&mut entries, n);
-                            if grown.is_err() {
-                                return;
+                    live_words_between(
+                        w,
+                        words,
+                        kills,
+                        w.row_slots[k],
+                        (start, end),
+                        |word, mut m| {
+                            let n = m.count_ones() as usize;
+                            if entries.capacity() - entries.len() < n {
+                                grown = lim.reserve(&mut entries, n);
+                                if grown.is_err() {
+                                    return;
+                                }
                             }
-                        }
-                        while m != 0 {
-                            entries.push(key | (word * 64) as u64 | u64::from(m.trailing_zeros()));
-                            m &= m - 1;
-                        }
-                    });
+                            while m != 0 {
+                                entries
+                                    .push(key | (word * 64) as u64 | u64::from(m.trailing_zeros()));
+                                m &= m - 1;
+                            }
+                        },
+                    );
                 }
             }
         }
         w.entries = entries;
         grown?;
-        self.write_cell((eng, ctx), (i, j, grid_pos), f_pairs, node_idx, (left, right), None)
+        self.write_cell(
+            (eng, ctx),
+            (i, j, grid_pos),
+            f_pairs,
+            node_idx,
+            (left, right),
+            None,
+        )
     }
 
     /// Write the cell at `grid_pos`, row `i` and column `j`, of the sorted
@@ -1255,7 +1681,14 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         (left, right): (&L, &R),
         (from, to): (usize, usize),
     ) -> Result<(), OperationError> {
-        self.write_cell((eng, ctx), (i, j, grid_pos), f_pairs, node_idx, (left, right), Some((from, to)))
+        self.write_cell(
+            (eng, ctx),
+            (i, j, grid_pos),
+            f_pairs,
+            node_idx,
+            (left, right),
+            Some((from, to)),
+        )
     }
 
     /// Write the cell at `grid_pos`, row `i` and column `j`, of its live
@@ -1272,7 +1705,10 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         sorted: Option<(usize, usize)>,
     ) -> Result<(), OperationError> {
         let w = &mut *self.w;
-        let (n1, n2) = (f_pairs.len(), (w.col_start[j + 1] - w.col_start[j]) as usize);
+        let (n1, n2) = (
+            f_pairs.len(),
+            (w.col_start[j + 1] - w.col_start[j]) as usize,
+        );
         let cell = match sorted {
             Some((from, to)) => &w.sorted[from..to],
             None => &w.entries[..],
@@ -1282,7 +1718,10 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
             let (p, q) = (&f_pairs[(e >> 32) as usize], &w.g_flat[q_of(e)]);
             let lc = left.get(node_idx, p.left.0, q.left.0);
             let rc = right.get(node_idx, p.right.0, q.right.0);
-            debug_assert!(lc != NO_PRODUCT && rc != NO_PRODUCT, "a candidate read live is live");
+            debug_assert!(
+                lc != NO_PRODUCT && rc != NO_PRODUCT,
+                "a candidate read live is live"
+            );
             (lc, rc)
         };
         if n1 == 1 && n2 == 1 {
@@ -1290,7 +1729,11 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
             return self.sink.single(eng, node_idx, grid_pos, lc, rc);
         }
         let begin = self.sink.begin();
-        let runs = if n1 >= GROUPED_MIN_PAIRS && n2 > 1 { ctx.right_cols.and_then(|cols| cols.runs(j)) } else { None };
+        let runs = if n1 >= GROUPED_MIN_PAIRS && n2 > 1 {
+            ctx.right_cols.and_then(|cols| cols.runs(j))
+        } else {
+            None
+        };
         match runs {
             None => {
                 let node_idx = &*node_idx;
@@ -1310,16 +1753,27 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
                         w.runs_of.push(first as u32);
                     }
                 }
-                order_grouped(self.lim, cell, &w.runs_of, &w.run_of, &mut w.run_counts[..runs.len()], &mut w.grouped)?;
+                order_grouped(
+                    self.lim,
+                    cell,
+                    &w.runs_of,
+                    &w.run_of,
+                    &mut w.run_counts[..runs.len()],
+                    &mut w.grouped,
+                )?;
                 let node_idx = &*node_idx;
-                push_kept(eng, &mut self.sink, &w.grouped, false, |&e| product(e, node_idx))?;
+                push_kept(eng, &mut self.sink, &w.grouped, false, |&e| {
+                    product(e, node_idx)
+                })?;
             }
         }
         self.sink.end(eng, node_idx, grid_pos, begin)
     }
 }
 
-impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L, R> for ByWords<'_, S, SLAB> {
+impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L, R>
+    for ByWords<'_, S, SLAB>
+{
     const DENSE_SLAB: bool = SLAB;
 
     #[inline(always)]
@@ -1343,8 +1797,13 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
         };
         if walk {
             return process_cell(
-                (eng, a.ctx), (a.j, a.row_base), a.f_pairs, (a.right_level_t, a.g_pairs_scratch),
-                a.node_idx, (a.left, a.right), (&mut self.sink, a.gate),
+                (eng, a.ctx),
+                (a.j, a.row_base),
+                a.f_pairs,
+                (a.right_level_t, a.g_pairs_scratch),
+                a.node_idx,
+                (a.left, a.right),
+                (&mut self.sink, a.gate),
             );
         }
         let n2 = (self.w.col_start[a.j + 1] - self.w.col_start[a.j]) as usize;
@@ -1355,15 +1814,27 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
         }
         poll_cell_as_walked(a.gate, a.ctx, a.j, a.f_pairs, n2)?;
         match self.mode {
-            RowMode::Bits if self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0 => {
-                self.emit_bits(eng, (a.i, a.j, a.row_base + a.j), a.f_pairs, a.ctx, a.node_idx, (a.left, a.right))
-            }
+            RowMode::Bits if self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0 => self.emit_bits(
+                eng,
+                (a.i, a.j, a.row_base + a.j),
+                a.f_pairs,
+                a.ctx,
+                a.node_idx,
+                (a.left, a.right),
+            ),
             RowMode::Sorted => {
                 let (from, to) = self.take_column(a.j);
                 if from == to {
                     return Ok(());
                 }
-                self.emit_sorted((eng, a.ctx), (a.i, a.j, a.row_base + a.j), a.f_pairs, a.node_idx, (a.left, a.right), (from, to))
+                self.emit_sorted(
+                    (eng, a.ctx),
+                    (a.i, a.j, a.row_base + a.j),
+                    a.f_pairs,
+                    a.node_idx,
+                    (a.left, a.right),
+                    (from, to),
+                )
             }
             // A dead cell.
             _ => Ok(()),
@@ -1382,7 +1853,12 @@ fn by_child(
     g_flat: &[ChildPair],
     width: usize,
     field: impl Fn(&ChildPair) -> u32,
-    (counts, named, named_start, by_child): (&mut Vec<u32>, &mut Vec<u32>, &mut Vec<u32>, &mut Vec<u32>),
+    (counts, named, named_start, by_child): (
+        &mut Vec<u32>,
+        &mut Vec<u32>,
+        &mut Vec<u32>,
+        &mut Vec<u32>,
+    ),
 ) -> Result<(), OperationError> {
     named.clear();
     named_start.clear();

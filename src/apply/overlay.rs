@@ -37,8 +37,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::Engine;
 use crate::diagram::{
-    Assembly, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId,
-    NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX,
+    Assembly, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX,
+    POS_LEAF_IDX, Tdd, TddLevel, TddNodeId,
 };
 use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
@@ -111,7 +111,11 @@ impl Pieces {
         g_node: u32,
         of_g: bool,
     ) -> Result<(), OperationError> {
-        let items = if of_g { &mut self.g_items } else { &mut self.f_items };
+        let items = if of_g {
+            &mut self.g_items
+        } else {
+            &mut self.f_items
+        };
         lim.try_push(items, o)?;
         lim.try_push(&mut self.f_part, f_node)?;
         lim.try_push(&mut self.g_part, g_node)
@@ -129,7 +133,12 @@ impl Pieces {
 
     /// The four leaf pieces, indexed by [`leaf_index`].
     pub(super) fn leaves() -> [Pieces; 4] {
-        [Pieces::leaf(false, false), Pieces::leaf(false, true), Pieces::leaf(true, false), Pieces::leaf(true, true)]
+        [
+            Pieces::leaf(false, false),
+            Pieces::leaf(false, true),
+            Pieces::leaf(true, false),
+            Pieces::leaf(true, true),
+        ]
     }
 
     /// The pieces of a leaf child, from how each operand's parent level names
@@ -158,7 +167,14 @@ impl Pieces {
         };
         let (f_start, f_items, f_part) = side(f_one);
         let (g_start, g_items, g_part) = side(g_one);
-        Pieces { f_start, f_items, g_start, g_items, f_part, g_part }
+        Pieces {
+            f_start,
+            f_items,
+            g_start,
+            g_items,
+            f_part,
+            g_part,
+        }
     }
 }
 
@@ -187,7 +203,11 @@ fn take_child(vtree: &Vtree, child: VtreeIdx, built: &mut [Option<Pieces>]) -> O
     if vtree.node(child).is_leaf() {
         return None;
     }
-    Some(built[child.idx()].take().expect("a child level is visited before its parent"))
+    Some(
+        built[child.idx()]
+            .take()
+            .expect("a child level is visited before its parent"),
+    )
 }
 
 /// The two operands' levels at one internal vtree node and the pieces of
@@ -263,7 +283,11 @@ pub(super) struct Scratch {
 }
 
 /// Fill `owner` with every pair of `level` and the node holding it.
-fn index_owners(eng: &Engine, level: &TddLevel, owner: &mut FxHashMap<u64, u32>) -> Result<(), OperationError> {
+fn index_owners(
+    eng: &Engine,
+    level: &TddLevel,
+    owner: &mut FxHashMap<u64, u32>,
+) -> Result<(), OperationError> {
     owner.clear();
     eng.limits().reserve_map(owner, level.live_pairs())?;
     for (n, pairs) in level.internal_inputs_iter() {
@@ -314,7 +338,6 @@ impl LevelOverlay<'_> {
         let mut poll = lim.gate();
         let walk_g = op != Overlay::AndNot;
         let f_width = fl.slot_count();
-        let g_width = gl.slot_count();
         index_owners(eng, gl, &mut s.owner)?;
         lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
         pieces.f_start.push(0);
@@ -346,7 +369,10 @@ impl LevelOverlay<'_> {
                 s.pairs.clear();
                 while i < s.tagged.len() && s.tagged[i].0 == b {
                     let (_, x, y) = s.tagged[i];
-                    lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
+                    lim.try_push(
+                        &mut s.pairs,
+                        ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)),
+                    )?;
                     i += 1;
                 }
                 let o = out.push_node(lim, &s.pairs)?.0;
@@ -359,42 +385,66 @@ impl LevelOverlay<'_> {
         }
 
         if walk_g {
-            index_pairs(eng, fl, 0..f_width, &mut s.held)?;
-            // Stable by `g` node, so each node's products stay in output order.
-            s.products.sort_by_key(|&(b, _)| b);
-            lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
-            pieces.g_start.push(0);
-            let mut next = 0;
-            for b in 0..g_width {
-                while next < s.products.len() && s.products[next].0 == b as u32 {
-                    lim.try_push(&mut pieces.g_items, s.products[next].1)?;
-                    next += 1;
-                }
-                s.pairs.clear();
-                for p in gl.pairs_iter_of_idx(b) {
-                    let xs = lp.of_g(p.left.0);
-                    let ys = rp.of_g(p.right.0);
-                    for &x in xs {
-                        let fx = lp.f_part[x as usize];
-                        for &y in ys {
-                            let fy = rp.f_part[y as usize];
-                            if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
-                                continue;
-                            }
-                            lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
-                        }
-                    }
-                    poll.poll((xs.len() * ys.len()) as u64 + 1)?;
-                }
-                if !s.pairs.is_empty() {
-                    crate::diagram::sort_pairs(&mut s.pairs);
-                    let o = out.push_node(lim, &s.pairs)?.0;
-                    pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
-                }
-                lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
-            }
+            self.walk_g_inner_level(eng, out, s, pieces, &mut poll)?;
         }
         poll.flush()?;
+        Ok(())
+    }
+
+    /// Walk `gl` for a disjunction, emitting the cells of each `g` node that no
+    /// `f` node holds as `g`'s residues.
+    fn walk_g_inner_level(
+        &self,
+        eng: &Engine,
+        out: &mut TddLevel,
+        s: &mut Scratch,
+        pieces: &mut Pieces,
+        poll: &mut crate::limits::PollGate<'_>,
+    ) -> Result<(), OperationError> {
+        let &LevelOverlay { fl, gl, lp, rp } = self;
+        let lim = eng.limits();
+        let f_width = fl.slot_count();
+        let g_width = gl.slot_count();
+        index_pairs(eng, fl, 0..f_width, &mut s.held)?;
+        // Stable by `g` node, so each node's products stay in output order.
+        s.products.sort_by_key(|&(b, _)| b);
+        lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
+        pieces.g_start.push(0);
+        let mut next = 0;
+        for b in 0..g_width {
+            while next < s.products.len() && s.products[next].0 == b as u32 {
+                lim.try_push(&mut pieces.g_items, s.products[next].1)?;
+                next += 1;
+            }
+            s.pairs.clear();
+            for p in gl.pairs_iter_of_idx(b) {
+                let xs = lp.of_g(p.left.0);
+                let ys = rp.of_g(p.right.0);
+                for &x in xs {
+                    let fx = lp.f_part[x as usize];
+                    for &y in ys {
+                        let fy = rp.f_part[y as usize];
+                        if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
+                            continue;
+                        }
+                        lim.try_push(
+                            &mut s.pairs,
+                            ChildPair::new(
+                                EncodedChildRef::from_raw(x),
+                                EncodedChildRef::from_raw(y),
+                            ),
+                        )?;
+                    }
+                }
+                poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+            }
+            if !s.pairs.is_empty() {
+                crate::diagram::sort_pairs(&mut s.pairs);
+                let o = out.push_node(lim, &s.pairs)?.0;
+                pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
+            }
+            lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
+        }
         Ok(())
     }
 
@@ -428,18 +478,14 @@ impl LevelOverlay<'_> {
             Overlay::Or | Overlay::Add => f_out,
             Overlay::AndNot => g_out,
         };
-        index_pairs(eng, excluded, std::iter::once(excluded_out.idx()), &mut s.held)?;
+        index_pairs(
+            eng,
+            excluded,
+            std::iter::once(excluded_out.idx()),
+            &mut s.held,
+        )?;
         if op != Overlay::AndNot {
-            for p in fl.pairs_iter_of_idx(f_out.idx()) {
-                let xs = lp.of_f(p.left.0);
-                let ys = rp.of_f(p.right.0);
-                for &x in xs {
-                    for &y in ys {
-                        lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
-                    }
-                }
-                poll.poll((xs.len() * ys.len()) as u64 + 1)?;
-            }
+            self.push_f_output_cells(lim, &mut poll, f_out, &mut s.pairs)?;
         }
         // The walked operand: `g` for a disjunction, `f` for a difference; a cell
         // is kept when its components in the other operand are not a pair of that
@@ -450,8 +496,18 @@ impl LevelOverlay<'_> {
         };
         for p in walked.pairs_iter_of_idx(walked_out.idx()) {
             let (xs, ys, x_part, y_part) = match op {
-                Overlay::Or | Overlay::Add => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
-                Overlay::AndNot => (lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part),
+                Overlay::Or | Overlay::Add => (
+                    lp.of_g(p.left.0),
+                    rp.of_g(p.right.0),
+                    &lp.f_part,
+                    &rp.f_part,
+                ),
+                Overlay::AndNot => (
+                    lp.of_f(p.left.0),
+                    rp.of_f(p.right.0),
+                    &lp.g_part,
+                    &rp.g_part,
+                ),
             };
             for &x in xs {
                 let cx = x_part[x as usize];
@@ -464,7 +520,10 @@ impl LevelOverlay<'_> {
                         }
                         continue;
                     }
-                    lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
+                    lim.try_push(
+                        &mut s.pairs,
+                        ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)),
+                    )?;
                 }
             }
             poll.poll((xs.len() * ys.len()) as u64 + 1)?;
@@ -472,6 +531,31 @@ impl LevelOverlay<'_> {
         poll.flush()?;
         crate::diagram::sort_pairs(&mut s.pairs);
         Ok(&s.pairs)
+    }
+
+    /// Push all expanded child-cell pairs of `f_out` into `pairs`.
+    fn push_f_output_cells(
+        &self,
+        lim: &crate::limits::Limits,
+        poll: &mut crate::limits::PollGate<'_>,
+        f_out: NodeIdx,
+        pairs: &mut Vec<ChildPair>,
+    ) -> Result<(), OperationError> {
+        let &LevelOverlay { fl, lp, rp, .. } = self;
+        for p in fl.pairs_iter_of_idx(f_out.idx()) {
+            let xs = lp.of_f(p.left.0);
+            let ys = rp.of_f(p.right.0);
+            for &x in xs {
+                for &y in ys {
+                    lim.try_push(
+                        pairs,
+                        ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)),
+                    )?;
+                }
+            }
+            poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+        }
+        Ok(())
     }
 }
 
@@ -503,8 +587,10 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
         (false, false) => return crate::build::constant_on(eng, &f.vtree, false),
     };
     let levels = crate::diagram::try_take_levels(eng, f.vtree.num_nodes())?;
-    Assembly::from_levels(eng, Arc::clone(&f.vtree), levels, None)
-        .finish(TddNodeId { vtree: f.vtree.root(), local })
+    Assembly::from_levels(eng, Arc::clone(&f.vtree), levels, None).finish(TddNodeId {
+        vtree: f.vtree.root(),
+        local,
+    })
 }
 
 /// `f ∨ g`, `f ∧ ¬g` or the sum `f + g` (a disjunction refusing a shared
@@ -512,7 +598,12 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
 ///
 /// Validates both operands, aligns their weights, and returns the result with
 /// them. A false operand short-cuts: the other one, or false.
-pub(crate) fn overlay_on(eng: &Engine, op: Overlay, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
+pub(crate) fn overlay_on(
+    eng: &Engine,
+    op: Overlay,
+    mut f: Tdd,
+    mut g: Tdd,
+) -> Result<Tdd, OperationError> {
     crate::apply::check_vtree(&f, &g)?;
     f.require_structure()?;
     g.require_structure()?;
@@ -523,7 +614,9 @@ pub(crate) fn overlay_on(eng: &Engine, op: Overlay, mut f: Tdd, mut g: Tdd) -> R
         (true, _, Overlay::AndNot) => crate::build::constant_on(eng, &f.vtree, false)?,
         (true, _, Overlay::Or | Overlay::Add) => g,
         (false, true, _) => f,
-        (false, false, _) if f.vtree.node(f.vtree.root()).is_leaf() => overlay_leaf_root(eng, op, &f, &g)?,
+        (false, false, _) if f.vtree.node(f.vtree.root()).is_leaf() => {
+            overlay_leaf_root(eng, op, &f, &g)?
+        }
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,
     };
     result.weights = weights;

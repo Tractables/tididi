@@ -9,11 +9,13 @@
 //! cancellation at every round.
 
 use super::*;
-use crate::diagram::{ChildPair, LeafLabel, NodeIdx, inline_small_marginal_refs, TddLevel, TddNodeId, ValueRef};
+use crate::diagram::{
+    ChildPair, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef, inline_small_marginal_refs,
+};
 
 use crate::Engine;
-use crate::vtree::Vtree;
 use crate::test_helpers::deadline_probe;
+use crate::vtree::Vtree;
 use std::sync::Arc;
 
 /// A diagram with one contractible twin pair at an explicit level, and its root
@@ -33,12 +35,13 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
     levels[v_right.idx()].become_marginal(vec![3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sib_slot0),
-        ChildPair::new(b, sib_slot0),
-    ]);
+    levels[root.idx()]
+        .push_internal_node(&[ChildPair::new(a, sib_slot0), ChildPair::new(b, sib_slot0)]);
 
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let output = TddNodeId {
+        vtree: root,
+        local: NodeIdx(0),
+    };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
     inline_small_marginal_refs(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);

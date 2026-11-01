@@ -66,7 +66,12 @@ use crate::vtree::{Vtree, VtreeIdx};
 ///
 /// The list is written into the allocation of the larger operand list, grown
 /// once to the most it can hold. It lists each level once.
-pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8], operands: Operands<Vec<u32>>) -> Vec<u32> {
+pub(super) fn loose_levels(
+    vtree: &Vtree,
+    run: &ApplyRun<'_, '_>,
+    carrier: &[u8],
+    operands: Operands<Vec<u32>>,
+) -> Vec<u32> {
     // Which operand has each level loose: 1 for `f`, 2 for `g`, as `carrier`;
     // `LISTED` once a level under a free one is listed.
     const LISTED: u8 = 4;
@@ -89,20 +94,32 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
         };
         let listed = internal(c)
             && loose_in[c.idx()] & LISTED == 0
-            && vtree.node(c).parent().is_some_and(|p| cone.free_at(p.idx()) && from(p) == by);
+            && vtree
+                .node(c)
+                .parent()
+                .is_some_and(|p| cone.free_at(p.idx()) && from(p) == by);
         if listed {
             loose_in[c.idx()] |= LISTED;
         }
         listed
     };
-    let Operands { f: f_list, g: g_list } = operands;
+    let Operands {
+        f: f_list,
+        g: g_list,
+    } = operands;
     let ((mut loose, by), (other, other_by)) = match f_list.capacity() >= g_list.capacity() {
         true => ((f_list, 1), (g_list, 2)),
         false => ((g_list, 2), (f_list, 1)),
     };
     loose.retain(|&c| under_free(c, by, &mut loose_in));
     // Each level below the root is listed once at most, from its parent.
-    loose.reserve(vtree.internal_bottomup_slice().len().saturating_sub(1).saturating_sub(loose.len()));
+    loose.reserve(
+        vtree
+            .internal_bottomup_slice()
+            .len()
+            .saturating_sub(1)
+            .saturating_sub(loose.len()),
+    );
     for &c in &other {
         if under_free(c, other_by, &mut loose_in) {
             loose.push(c);
@@ -113,40 +130,15 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
         let (left, right) = vtree.children(p);
         if carrier[p.idx()] != 0 {
             let by = carrier[p.idx()];
-            loose.extend([left, right].into_iter().filter(|&c| internal(c) && loose_in[c.idx()] & by != 0).map(|c| c.0));
+            loose.extend(
+                [left, right]
+                    .into_iter()
+                    .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
+                    .map(|c| c.0),
+            );
             continue;
         }
-        let built = !run.levels[p.idx()].nodes().is_empty();
-        let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
-            loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
-        };
-        let kills_none = |s: VtreeIdx| match internal(s) {
-            true => run.f_widths[s.idx()].checked_mul(run.g_widths[s.idx()]) == Some(run.levels[s.idx()].nodes().len()),
-            false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
-        };
-        // The operand the conjunction built `p` as, if any.
-        let as_operand = run.as_operand.binary_search_by_key(&p.idx(), |e| e.0).ok().map(|i| run.as_operand[i].1);
-        let held = run.outer_held.binary_search(&p.idx()).is_ok();
-        let named_as_operand = |c: VtreeIdx| {
-            as_operand.is_some_and(|by| {
-                let widths = if by == 1 { &run.f_widths[..] } else { &run.g_widths[..] };
-                loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
-            })
-        };
-        for (c, s) in [(left, right), (right, left)] {
-            if !internal(c) || named_as_operand(c) {
-                continue;
-            }
-            let tight_f = tight_in(c, 1, run.f_widths);
-            if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
-                continue;
-            }
-            if tight_f && held && !internal(s) {
-                super::super::note_held_tight();
-                continue;
-            }
-            loose.push(c.0);
-        }
+        push_built_parent_loose(vtree, run, p, &loose_in, &mut loose);
     }
     // In the order of the levels' parents bottom-up, the left child first,
     // as a walk of every level lists them: the levels under the free ones
@@ -160,4 +152,58 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
         });
     }
     loose
+}
+
+/// Append the internal children of built parent `p` that are not known to have
+/// every node named at `p`.
+fn push_built_parent_loose(
+    vtree: &Vtree,
+    run: &ApplyRun<'_, '_>,
+    p: VtreeIdx,
+    loose_in: &[u8],
+    loose: &mut Vec<u32>,
+) {
+    let internal = |t: VtreeIdx| !vtree.node(t).is_leaf();
+    let (left, right) = vtree.children(p);
+    let built = !run.levels[p.idx()].nodes().is_empty();
+    let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
+        loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
+    };
+    let kills_none = |s: VtreeIdx| match internal(s) {
+        true => {
+            run.f_widths[s.idx()].checked_mul(run.g_widths[s.idx()])
+                == Some(run.levels[s.idx()].nodes().len())
+        }
+        false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
+    };
+    let as_operand = run
+        .as_operand
+        .binary_search_by_key(&p.idx(), |e| e.0)
+        .ok()
+        .map(|i| run.as_operand[i].1);
+    let held = run.outer_held.binary_search(&p.idx()).is_ok();
+    let named_as_operand = |c: VtreeIdx| {
+        as_operand.is_some_and(|by| {
+            let widths = if by == 1 {
+                &run.f_widths[..]
+            } else {
+                &run.g_widths[..]
+            };
+            loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
+        })
+    };
+    for (c, s) in [(left, right), (right, left)] {
+        if !internal(c) || named_as_operand(c) {
+            continue;
+        }
+        let tight_f = tight_in(c, 1, run.f_widths);
+        if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
+            continue;
+        }
+        if tight_f && held && !internal(s) {
+            super::super::note_held_tight();
+            continue;
+        }
+        loose.push(c.0);
+    }
 }

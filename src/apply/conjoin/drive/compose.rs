@@ -17,7 +17,7 @@
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
-use crate::diagram::{floor, ChildPair, EncodedNode, ImplicitLevel};
+use crate::diagram::{ChildPair, EncodedNode, ImplicitLevel, floor};
 
 /// The description of level `t`'s output, when the implicit route can build
 /// it: the engine's memory is unbounded (so the route's skipping the row
@@ -88,7 +88,12 @@ pub(super) fn plan_sums(
 ) -> Option<(ImplicitLevel, u64)> {
     let product = plan(lim, f, g, shape, grouped)?;
     let work = work((shape.f.here, shape.g.here), &product);
-    let complete = |base: GridBase, cells: usize| slab[base.idx()..][..cells].iter().enumerate().all(|(c, &s)| s as usize == c);
+    let complete = |base: GridBase, cells: usize| {
+        slab[base.idx()..][..cells]
+            .iter()
+            .enumerate()
+            .all(|(c, &s)| s as usize == c)
+    };
     let (fw, gw) = (shape.f, shape.g);
     (lim.cannot_stop_within(work, 0)
         && complete(bases.left, fw.left * gw.left)
@@ -106,7 +111,11 @@ fn work(nodes: (usize, usize), product: &ImplicitLevel) -> u64 {
 /// What the row loop charges a level of `product`'s shape: the work clock
 /// ([`work`]), and the output-pair meter, the doublings of the reserved
 /// capacity `charged` that the level's pairs pass, with their count.
-pub(super) fn charges(nodes: (usize, usize), product: &ImplicitLevel, charged: usize) -> (u64, usize, u32) {
+pub(super) fn charges(
+    nodes: (usize, usize),
+    product: &ImplicitLevel,
+    charged: usize,
+) -> (u64, usize, u32) {
     let work = work(nodes, product);
     let exact = product.arena_len();
     let (mut c, mut doublings) = (charged, 0);
@@ -150,7 +159,8 @@ pub(super) fn write(
     // Past that the nodes' words are stored, in an arena reserved for them.
     let node_capacity = if product.implies_nodes() {
         let held = level.nodes.imply();
-        lim.charge_as_reserved::<EncodedNode>(held, nodes)?.max(product.nodes())
+        lim.charge_as_reserved::<EncodedNode>(held, nodes)?
+            .max(product.nodes())
     } else {
         lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
         product.write_nodes(level)?;

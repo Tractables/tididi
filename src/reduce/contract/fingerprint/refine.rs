@@ -6,8 +6,8 @@ use crate::limits::{Limits, OperationError};
 
 use super::super::merge::DROPPED;
 use super::super::scratch::{ClassInfo, ContractScratch, Marks, MergeRemap};
-use crate::sort::Radix;
 use super::{mix64, pack, split_pair};
+use crate::sort::Radix;
 
 /// The class of a node known to have no twin.
 const ALONE: u32 = u32::MAX;
@@ -123,9 +123,31 @@ pub(super) fn refine_context_groups(
 ) -> Result<Option<bool>, OperationError> {
     scratch.marked = None;
     let ContractScratch {
-        twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
-        refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_met,
-        refine_seen, refine_code, refine_rows, flat_groups, group_starts, unnamed, unnamed_exact, remap, marked, member_groups, ..
+        twin_class,
+        twin_bits,
+        classes,
+        refine_keys,
+        refine_runs,
+        refine_links,
+        refine_table,
+        refine_wide,
+        refine_radix,
+        refine_column,
+        refine_reach,
+        refine_touched,
+        refine_bucket,
+        refine_met,
+        refine_seen,
+        refine_code,
+        refine_rows,
+        flat_groups,
+        group_starts,
+        unnamed,
+        unnamed_exact,
+        remap,
+        marked,
+        member_groups,
+        ..
     } = scratch;
     // Zero between parent nodes, so it only grows.
     lim.try_resize(refine_code, width, 0u8)?;
@@ -146,12 +168,91 @@ pub(super) fn refine_context_groups(
     };
     flat_groups.clear();
     group_starts.clear();
+    let (mut part, whole, hand_off) =
+        init_level_partition(lim, twin_class, twin_bits, classes, width, start)?;
+    if !split_level_partition(
+        level,
+        side,
+        lim,
+        &mut part,
+        refine_wide,
+        &mut wide,
+        hand_off,
+    )? {
+        return Ok(None);
+    }
+    if !has_twinable_after_unnamed(lim, &mut part, width, whole, unnamed, unnamed_exact)? {
+        return Ok(Some(false));
+    }
+    list_refined_groups(
+        lim,
+        part,
+        width,
+        child,
+        flat_groups,
+        group_starts,
+        remap,
+        member_groups,
+        marked,
+    )?;
+    Ok(Some(true))
+}
+
+/// Drop the unnamed class from `part`, record `*unnamed_exact`, and return
+/// whether `part.twinable > 0`.
+fn has_twinable_after_unnamed(
+    lim: &Limits,
+    part: &mut Partition<'_>,
+    width: usize,
+    whole: bool,
+    unnamed: &mut Vec<u32>,
+    unnamed_exact: &mut bool,
+) -> Result<bool, OperationError> {
+    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
+    *unnamed_exact = whole && left_unnamed != 1;
+    debug_assert_eq!(
+        part.twinable,
+        part.classes
+            .iter()
+            .filter(|k| k.size >= 2)
+            .map(|k| k.size as usize)
+            .sum::<usize>(),
+        "the count of nodes that can have a twin"
+    );
+    Ok(part.twinable != 0)
+}
+
+/// Initialize the single starting equivalence class in `part` from `start`,
+/// returning `(part, whole, hand_off)`.
+fn init_level_partition<'a>(
+    lim: &Limits,
+    twin_class: &'a mut Vec<u32>,
+    twin_bits: &'a mut Vec<[u64; 2]>,
+    classes: &'a mut Vec<ClassInfo>,
+    width: usize,
+    start: Start<'_>,
+) -> Result<(Partition<'a>, bool, bool), OperationError> {
     let words = width.div_ceil(64);
     lim.try_resize(twin_class, width, 0u32)?;
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
-    // The first class: every node, or the listed ones.
-    let (whole, hand_off, first) = match start {
+    let (whole, hand_off, first) = init_first_class(bits, width, start);
+    classes.clear();
+    lim.reserve_exact(classes, width + 1)?;
+    classes.push(ClassInfo::new(first as u32));
+    let twinable = if first >= 2 { first } else { 0 };
+    let part = Partition {
+        class: &mut twin_class[..width],
+        bits,
+        classes,
+        twinable,
+    };
+    Ok((part, whole, hand_off))
+}
+
+/// Initialize the first class bitmask from `start`, returning `(whole, hand_off, first_count)`.
+fn init_first_class(bits: &mut [[u64; 2]], width: usize, start: Start<'_>) -> (bool, bool, usize) {
+    match start {
         Start::Whole { hand_off } => {
             bits.fill([0; 2]);
             (true, hand_off, width)
@@ -165,32 +266,7 @@ pub(super) fn refine_context_groups(
             }
             (false, false, listed.len())
         }
-    };
-    // The classes made are nested sets of two or more nodes each, so there
-    // are fewer than `width` besides the first.
-    classes.clear();
-    lim.reserve_exact(classes, width + 1)?;
-    classes.push(ClassInfo::new(first as u32));
-    let twinable = if first >= 2 { first } else { 0 };
-    let mut part = Partition { class: &mut twin_class[..width], bits, classes, twinable };
-    if !split_level_partition(level, side, lim, &mut part, refine_wide, &mut wide, hand_off)? {
-        return Ok(None);
     }
-    // A node leaves the first class once a parent node names it, so a
-    // refinement from the whole level that ends with no node there, or with
-    // the two or more it lists, has every other node named.
-    let left_unnamed = part.drop_unnamed(width, whole.then_some(unnamed), lim)?;
-    *unnamed_exact = whole && left_unnamed != 1;
-    debug_assert_eq!(
-        part.twinable,
-        part.classes.iter().filter(|k| k.size >= 2).map(|k| k.size as usize).sum::<usize>(),
-        "the count of nodes that can have a twin"
-    );
-    if part.twinable == 0 {
-        return Ok(Some(false));
-    }
-    list_refined_groups(lim, part, width, child, flat_groups, group_starts, remap, member_groups, marked)?;
-    Ok(Some(true))
 }
 
 /// Split `part` across all parent nodes of `level` on `side`, returning
@@ -260,19 +336,38 @@ fn list_refined_groups(
     member_groups: &mut Vec<u32>,
     marked: &mut Option<Marks>,
 ) -> Result<(), OperationError> {
-    let Partition { class, bits, classes, twinable } = part;
+    let Partition {
+        class,
+        bits,
+        classes,
+        twinable,
+    } = part;
     lim.try_resize(flat_groups, twinable, 0u32)?;
     lim.reserve_exact(group_starts, twinable / 2)?;
-    let mut list = Listing { class, bits, classes, flat_groups, group_starts, width };
+    let mut list = Listing {
+        class,
+        bits,
+        classes,
+        flat_groups,
+        group_starts,
+        width,
+    };
     match child {
         Some(nodes) => {
             debug_assert_eq!(nodes.len(), width, "the child level's every node word");
-            let MergeRemap { final_remap, absorbed, .. } = remap;
+            let MergeRemap {
+                final_remap,
+                absorbed,
+                ..
+            } = remap;
             lim.try_resize(final_remap, width, NodeIdx(0))?;
             lim.try_resize(absorbed, width.div_ceil(64), 0u64)?;
             member_groups.clear();
             lim.reserve_exact(member_groups, twinable)?;
-            *marked = Some(Marks { width, ..list.list::<true>(final_remap, absorbed, member_groups, nodes) });
+            *marked = Some(Marks {
+                width,
+                ..list.list::<true>(final_remap, absorbed, member_groups, nodes)
+            });
         }
         None => {
             list.list::<false>(&mut [], &mut [], &mut Vec::new(), &[]);
@@ -359,10 +454,21 @@ impl Listing<'_> {
         member_groups: &mut Vec<u32>,
         nodes: &[EncodedNode],
     ) -> Marks {
-        let Listing { class, bits, classes, flat_groups, group_starts, width } = self;
+        let Listing {
+            class,
+            bits,
+            classes,
+            flat_groups,
+            group_starts,
+            width,
+        } = self;
         let width = *width;
         let mut next = 0u32;
-        let mut marks = Marks { inline: 0, in_order: true, width: 0 };
+        let mut marks = Marks {
+            inline: 0,
+            in_order: true,
+            width: 0,
+        };
         for (w, &[moved, alone]) in bits.iter().enumerate() {
             let mut live = !alone;
             if (w + 1) * 64 > width {
@@ -373,32 +479,27 @@ impl Listing<'_> {
                 let b = live.trailing_zeros() as usize;
                 live &= live - 1;
                 let t = w * 64 + b;
-                let c = if (moved >> b) & 1 == 0 { 0 } else { class[t] as usize };
+                let c = if (moved >> b) & 1 == 0 {
+                    0
+                } else {
+                    class[t] as usize
+                };
                 let k = &mut classes[c];
                 if k.size < 2 {
                     continue;
                 }
                 let pairs = if MARK {
-                    match nodes[t].kind() {
-                        NodeKind::Inline(_) => {
-                            marks.inline += 1;
-                            1
-                        }
-                        NodeKind::Multi { len, .. } => {
-                            marks.in_order &= len > 0;
-                            len
-                        }
-                        NodeKind::MultiRanged(_) => {
-                            marks.in_order = false;
-                            0
-                        }
-                    }
+                    node_mark_pairs(nodes[t], &mut marks)
                 } else {
                     0
                 };
                 if k.pos == u32::MAX {
                     flat_groups[next as usize] = t as u32;
-                    k.pos = if MARK { group_starts.len() as u32 } else { next + 1 };
+                    k.pos = if MARK {
+                        group_starts.len() as u32
+                    } else {
+                        next + 1
+                    };
                     group_starts.push(next);
                     next += k.size;
                     k.dest = t as u32;
@@ -407,7 +508,10 @@ impl Listing<'_> {
                     merged |= 1 << b;
                     final_remap[t] = NodeIdx(k.dest | DROPPED);
                     k.hits = k.hits.saturating_add(pairs);
-                    debug_assert!(member_groups.len() < member_groups.capacity(), "within the reserve");
+                    debug_assert!(
+                        member_groups.len() < member_groups.capacity(),
+                        "within reserve"
+                    );
                     member_groups.push(k.pos);
                 } else {
                     flat_groups[k.pos as usize] = t as u32;
@@ -418,8 +522,30 @@ impl Listing<'_> {
                 absorbed[w] = merged;
             }
         }
-        debug_assert_eq!(next as usize, flat_groups.len(), "every node that can have a twin is listed");
+        debug_assert_eq!(
+            next as usize,
+            flat_groups.len(),
+            "every twinable node is listed"
+        );
         marks
+    }
+}
+
+#[inline(always)]
+fn node_mark_pairs(node: EncodedNode, marks: &mut Marks) -> u32 {
+    match node.kind() {
+        NodeKind::Inline(_) => {
+            marks.inline += 1;
+            1
+        }
+        NodeKind::Multi { len, .. } => {
+            marks.in_order &= len > 0;
+            len
+        }
+        NodeKind::MultiRanged(_) => {
+            marks.in_order = false;
+            0
+        }
     }
 }
 
@@ -434,11 +560,21 @@ impl Listing<'_> {
 ///
 /// `Err(OperationError::OverBudget)` where the room for the places is
 /// refused.
-pub(in crate::reduce::contract) fn list_members(lim: &Limits, scratch: &mut ContractScratch) -> Result<(), OperationError> {
+pub(in crate::reduce::contract) fn list_members(
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+) -> Result<(), OperationError> {
     let Some(Marks { width, .. }) = scratch.marked else {
         return Ok(());
     };
-    let ContractScratch { remap, flat_groups, group_starts, member_groups, rooms, .. } = scratch;
+    let ContractScratch {
+        remap,
+        flat_groups,
+        group_starts,
+        member_groups,
+        rooms,
+        ..
+    } = scratch;
     rooms.clear();
     lim.reserve_exact(rooms, group_starts.len())?;
     rooms.extend(group_starts.iter().map(|&s| s + 1));
@@ -489,7 +625,11 @@ impl Partition<'_> {
         lim: &Limits,
         wide: &mut Vec<u64>,
     ) -> Result<(), OperationError> {
-        let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+        let side = if LEFT {
+            ChildSide::Left
+        } else {
+            ChildSide::Right
+        };
         let nodes = stored.nodes();
         let mut i = 0;
         while self.twinable != 0 {
@@ -507,7 +647,10 @@ impl Partition<'_> {
                 2 => self.split_two(pairs, side),
                 3 | 4 if self.split_few(pairs, side) => {}
                 n if n <= SMALL_PAIRS => self.split_small(pairs, side),
-                n => lim.try_push(wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
+                n => lim.try_push(
+                    wide,
+                    (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64,
+                )?,
             }
             i += 1;
         }
@@ -522,8 +665,19 @@ impl Partition<'_> {
     /// is called, so that the loop keeps it in registers: most parent nodes
     /// of a level with twins name one child.
     #[inline(always)]
-    fn leave_run(&mut self, nodes: &[EncodedNode], arena: &[ChildPair], i: usize, side: ChildSide) -> usize {
-        let Partition { class, bits, classes, twinable } = self;
+    fn leave_run(
+        &mut self,
+        nodes: &[EncodedNode],
+        arena: &[ChildPair],
+        i: usize,
+        side: ChildSide,
+    ) -> usize {
+        let Partition {
+            class,
+            bits,
+            classes,
+            twinable,
+        } = self;
         let (class, classes) = (&**class, &mut classes[..]);
         // The first class is always there, so taking a node out of it
         // checks no bound.
@@ -550,7 +704,11 @@ impl Partition<'_> {
                 continue;
             }
             bits[w] = [moved | b, alone | b];
-            let k = if moved & b == 0 { &mut classes[0] } else { &mut classes[class[t as usize] as usize] };
+            let k = if moved & b == 0 {
+                &mut classes[0]
+            } else {
+                &mut classes[class[t as usize] as usize]
+            };
             let members = k.size;
             k.size = members - 1;
             // A class that keeps two members or more keeps them able to
@@ -681,7 +839,10 @@ impl Partition<'_> {
         } else {
             // Two multisets of two siblings are equal where their least and
             // greatest are.
-            let same = na == 2 && nb == 2 && sa[0].min(sa[1]) == sb[0].min(sb[1]) && sa[0].max(sa[1]) == sb[0].max(sb[1]);
+            let same = na == 2
+                && nb == 2
+                && sa[0].min(sa[1]) == sb[0].min(sb[1])
+                && sa[0].max(sa[1]) == sb[0].max(sb[1]);
             self.split_nodes(a, b, same);
         }
         true
@@ -719,7 +880,12 @@ impl Partition<'_> {
     /// end as one group; where there are two or more, they are put in
     /// `out`, ascending. A refinement that stopped early leaves at most one.
     /// Returns how many there were.
-    fn drop_unnamed(&mut self, width: usize, out: Option<&mut Vec<u32>>, lim: &Limits) -> Result<usize, OperationError> {
+    fn drop_unnamed(
+        &mut self,
+        width: usize,
+        out: Option<&mut Vec<u32>>,
+        lim: &Limits,
+    ) -> Result<usize, OperationError> {
         let words = width.div_ceil(64);
         let mut unnamed = 0;
         for w in 0..words {
@@ -732,7 +898,10 @@ impl Partition<'_> {
         if unnamed < 2 {
             return Ok(unnamed);
         }
-        debug_assert_eq!(self.classes[0].size as usize, unnamed, "the first class is the nodes no pair names");
+        debug_assert_eq!(
+            self.classes[0].size as usize, unnamed,
+            "the first class is the nodes no pair names"
+        );
         if let Some(out) = out {
             lim.reserve_exact(out, unnamed)?;
             for (w, word) in self.bits.iter().enumerate() {
@@ -797,7 +966,11 @@ impl Partition<'_> {
             }
             k = end;
         }
-        let siblings = |r: usize| key[from[r] as usize..to[r] as usize].iter().map(|&e| e as u32);
+        let siblings = |r: usize| {
+            key[from[r] as usize..to[r] as usize]
+                .iter()
+                .map(|&e| e as u32)
+        };
         // `lead[r]`: the first run of r's group, its class and siblings;
         // `first[r]`: the first run of its class.
         let (mut lead, mut first) = ([0u8; SMALL_PAIRS], [0u8; SMALL_PAIRS]);
@@ -808,7 +981,10 @@ impl Partition<'_> {
             for q in 0..r {
                 if of[q] == of[r] {
                     f = f.min(q);
-                    if lead[q] as usize == q && to[q] - from[q] == to[r] - from[r] && siblings(q).eq(siblings(r)) {
+                    if lead[q] as usize == q
+                        && to[q] - from[q] == to[r] - from[r]
+                        && siblings(q).eq(siblings(r))
+                    {
                         g = q;
                         break;
                     }
@@ -818,6 +994,18 @@ impl Partition<'_> {
             members[g] += 1;
             named[f] += 1;
         }
+        self.apply_small_run_groups(runs, (&node, &of), (&lead, &first), (&members, &named));
+    }
+
+    /// Assign classes to the grouped runs found by [`Self::split_small`].
+    #[inline]
+    fn apply_small_run_groups(
+        &mut self,
+        runs: usize,
+        (node, of): (&[u32; SMALL_PAIRS], &[u32; SMALL_PAIRS]),
+        (lead, first): (&[u8; SMALL_PAIRS], &[u8; SMALL_PAIRS]),
+        (members, named): (&[u8; SMALL_PAIRS], &[u8; SMALL_PAIRS]),
+    ) {
         // A class all of whose members are named here keeps its first group
         // of two or more.
         let mut keep = [false; SMALL_PAIRS];
@@ -884,7 +1072,14 @@ impl Partition<'_> {
             Degrees::Unordered => return self.split_by_siblings(lim, pairs, side, wide),
             Degrees::Unsettled | Degrees::Many => {}
         }
-        let Wide { keys, runs, links, table, radix, .. } = wide;
+        let Wide {
+            keys,
+            runs,
+            links,
+            table,
+            radix,
+            ..
+        } = wide;
         // Each pair of a node not alone a key of its sibling's bits and its
         // node's above them, so that the sort places only the bits there
         // are. Most pairs of a wide node name a node already alone, which
@@ -919,10 +1114,15 @@ impl Partition<'_> {
         let mut k = 0;
         while k < keys.len() {
             let t = (keys[k] >> sb) as u32;
-            let end = k + keys[k..].iter().take_while(|&&e| (e >> sb) as u32 == t).count();
+            let end = k + keys[k..]
+                .iter()
+                .take_while(|&&e| (e >> sb) as u32 == t)
+                .count();
             let c = self.of(t);
             if self.can_twin(c) {
-                let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ (e & low)));
+                let h = keys[k..end]
+                    .iter()
+                    .fold((end - k) as u64, |h, &e| mix64(h ^ (e & low)));
                 runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
             } else if c != ALONE {
                 // The last node of its class: alone from here, so that the
@@ -932,7 +1132,8 @@ impl Partition<'_> {
             k = end;
         }
         let keys = &keys[..];
-        let siblings = |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e & low);
+        let siblings =
+            |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e & low);
         group_runs(lim, runs, links, table, |first, run| {
             first.2 - first.1 == run.2 - run.1 && siblings(first).eq(siblings(run))
         })?;
@@ -971,7 +1172,15 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<Degrees, OperationError> {
-        let Wide { runs, links, table, column, reach, touched, .. } = wide;
+        let Wide {
+            runs,
+            links,
+            table,
+            column,
+            reach,
+            touched,
+            ..
+        } = wide;
         runs.clear();
         lim.reserve_exact(runs, pairs.len())?;
         let (mut last, mut top) = (None, 0u32);
@@ -982,13 +1191,20 @@ impl Partition<'_> {
                 return Ok(Degrees::Unordered);
             }
             last = Some(t);
-            let end = k + 1 + pairs[k + 1..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
+            let end = k
+                + 1
+                + pairs[k + 1..]
+                    .iter()
+                    .take_while(|pair| split_pair(pair, side).0 == t)
+                    .count();
             let c = self.of(t);
             if self.can_twin(c) {
                 // The run's start in the third field, which the grouping
                 // does not read.
                 runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
-                top = pairs[k..end].iter().fold(top, |top, pair| top | split_pair(pair, side).1);
+                top = pairs[k..end]
+                    .iter()
+                    .fold(top, |top, pair| top | split_pair(pair, side).1);
             }
             k = end;
         }
@@ -1022,7 +1238,10 @@ impl Partition<'_> {
             at_least += u64::from(std::mem::take(&mut reach[v]));
             within += at_least * (at_least - 1) / 2;
         }
-        debug_assert!(within >= shared, "Γ is a sum of nonnegative terms over sets");
+        debug_assert!(
+            within >= shared,
+            "Γ is a sum of nonnegative terms over sets"
+        );
         group_runs(lim, runs, links, table, |_, _| true)?;
         if within == shared {
             self.apply_groups(runs, links, |r| r.1);
@@ -1138,7 +1357,14 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { column, touched, bucket, met, seen, .. } = wide;
+        let Wide {
+            column,
+            touched,
+            bucket,
+            met,
+            seen,
+            ..
+        } = wide;
         touched.clear();
         // `column` grows to the siblings as they are counted; on a refusal
         // the counts made are cleared first.
@@ -1234,7 +1460,8 @@ impl Partition<'_> {
         // Within the reserve of one entry a pair.
         wide.touched.clear();
         for &t in &wide.bucket[..listed] {
-            wide.touched.push(u32::from(std::mem::take(&mut wide.code[t as usize])));
+            wide.touched
+                .push(u32::from(std::mem::take(&mut wide.code[t as usize])));
         }
         self.split_listed_codes(lim, listed, d, wide)?;
         Ok(true)
@@ -1328,7 +1555,11 @@ impl Partition<'_> {
         let mut dest = [ALONE; 1 << FEW_SIBLINGS];
         for e in 0..1usize << d {
             if count[e] >= 2 {
-                dest[e] = if std::mem::take(&mut keep) { 0 } else { self.fresh(0, count[e]) };
+                dest[e] = if std::mem::take(&mut keep) {
+                    0
+                } else {
+                    self.fresh(0, count[e])
+                };
             }
         }
         for (&t, &e) in nodes.iter().zip(node_codes) {
@@ -1350,7 +1581,14 @@ impl Partition<'_> {
         d: usize,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { bucket, touched, seen, met, rows, .. } = wide;
+        let Wide {
+            bucket,
+            touched,
+            seen,
+            met,
+            rows,
+            ..
+        } = wide;
         let (nodes, node_codes) = (&bucket[..listed], &touched[..]);
         // A class that meets two codes has two members or more here.
         let stride = 1usize << d;
@@ -1379,11 +1617,43 @@ impl Partition<'_> {
             }
             k.hits += 1;
         }
-        // A class of one code is split as by one sibling, and keeps its
-        // `hits` no more; one of two codes or more moves some member, and
-        // keeps in `hits` one past where its row starts.
-        let mut moves = false;
+        if self.assign_listed_code_destinations(stride, met, rows) {
+            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(node_codes) {
+                if c == ALONE {
+                    continue;
+                }
+                let k = self.classes[c as usize];
+                let dest = if k.hits == 0 {
+                    k.dest
+                } else {
+                    rows[(k.hits - 1) as usize + e as usize]
+                };
+                match dest {
+                    ALONE => self.alone(t, c),
+                    // A node of the first class it names is moved there
+                    // anyway, so that it reads as named.
+                    dest if dest != c || c == 0 => self.put(t, dest),
+                    _ => {}
+                }
+            }
+        }
         for &c in met.iter() {
+            self.classes[c as usize].hits = 0;
+        }
+        Ok(())
+    }
+
+    /// Assign destination classes across `met` and `rows` in [`Self::split_listed_codes`],
+    /// returning whether any node changes class.
+    #[inline(always)]
+    fn assign_listed_code_destinations(
+        &mut self,
+        stride: usize,
+        met: &[u32],
+        rows: &mut [u32],
+    ) -> bool {
+        let mut moves = false;
+        for &c in met {
             let k = self.classes[c as usize];
             if k.dest & MIXED == 0 {
                 let dest = if k.hits == k.size {
@@ -1417,26 +1687,7 @@ impl Partition<'_> {
             }
             moves = true;
         }
-        if moves {
-            for ((&t, &c), &e) in nodes.iter().zip(seen.iter()).zip(node_codes) {
-                if c == ALONE {
-                    continue;
-                }
-                let k = self.classes[c as usize];
-                let dest = if k.hits == 0 { k.dest } else { rows[(k.hits - 1) as usize + e as usize] };
-                match dest {
-                    ALONE => self.alone(t, c),
-                    // A node of the first class it names is moved there
-                    // anyway, so that it reads as named.
-                    dest if dest != c || c == 0 => self.put(t, dest),
-                    _ => {}
-                }
-            }
-        }
-        for &c in met.iter() {
-            self.classes[c as usize].hits = 0;
-        }
-        Ok(())
+        moves
     }
 
     /// [`Self::split_sibling`] by the `nodes` one sibling is paired with,
@@ -1464,7 +1715,12 @@ impl Partition<'_> {
     /// a node's second context confirms the class its first one made, no
     /// node changes class and the second pass is left out.
     #[inline]
-    fn split_sibling(&mut self, nodes: impl Iterator<Item = u32> + Clone, met: &mut Vec<u32>, seen: &mut [u32]) {
+    fn split_sibling(
+        &mut self,
+        nodes: impl Iterator<Item = u32> + Clone,
+        met: &mut Vec<u32>,
+        seen: &mut [u32],
+    ) {
         met.clear();
         for (t, seen) in nodes.clone().zip(seen.iter_mut()) {
             let c = self.of(t);
@@ -1528,7 +1784,12 @@ impl Partition<'_> {
     /// class in the high half of its key: a group of one leaves the
     /// partition, a group that is all that is left of its class keeps the
     /// class's id, and any other group of two or more is a class of its own.
-    fn apply_groups(&mut self, runs: &[(u64, u32, u32)], links: &[(u32, u32)], node: impl Fn((u64, u32, u32)) -> u32) {
+    fn apply_groups(
+        &mut self,
+        runs: &[(u64, u32, u32)],
+        links: &[(u32, u32)],
+        node: impl Fn((u64, u32, u32)) -> u32,
+    ) {
         for (r, &run) in runs.iter().enumerate() {
             let (mut next, members) = links[r];
             if members == 0 {
@@ -1538,7 +1799,11 @@ impl Partition<'_> {
             if members == 1 {
                 self.alone(node(run), c);
             } else if members < self.classes[c as usize].size || c == 0 {
-                let id = if members < self.classes[c as usize].size { self.fresh(c, members) } else { c };
+                let id = if members < self.classes[c as usize].size {
+                    self.fresh(c, members)
+                } else {
+                    c
+                };
                 self.put(node(run), id);
                 while next != NO_RUN {
                     self.put(node(runs[next as usize]), id);

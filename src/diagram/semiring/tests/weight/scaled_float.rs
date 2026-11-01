@@ -1,4 +1,4 @@
-use super::{same_value, weight_key, ScaledFloat, ScaledSum, SignedLog, WeightValue};
+use super::{ScaledFloat, ScaledSum, SignedLog, WeightValue, same_value, weight_key};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
@@ -7,10 +7,18 @@ use crate::test_helpers::rat;
 /// A value's mantissa is in `[0.5, 1)` in magnitude, or it is the one zero.
 fn assert_normal(v: &ScaledFloat) {
     if v.is_zero() {
-        assert_eq!(v.mantissa().to_bits(), 0.0f64.to_bits(), "zero's mantissa is +0.0");
+        assert_eq!(
+            v.mantissa().to_bits(),
+            0.0f64.to_bits(),
+            "zero's mantissa is +0.0"
+        );
         assert_eq!(v.exponent(), 0, "zero's exponent is 0");
     } else {
-        assert!((0.5..1.0).contains(&v.mantissa().abs()), "mantissa {} out of [0.5, 1)", v.mantissa());
+        assert!(
+            (0.5..1.0).contains(&v.mantissa().abs()),
+            "mantissa {} out of [0.5, 1)",
+            v.mantissa()
+        );
     }
 }
 
@@ -19,7 +27,9 @@ fn floats(seed: u64, n: usize) -> Vec<f64> {
     let mut s = seed;
     (0..n)
         .map(|_| {
-            s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            s = s
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let unit = (s >> 11) as f64 / (1u64 << 53) as f64;
             let sign = if s & 1 == 0 { 1.0 } else { -1.0 };
             sign * (unit + 0.01) * 2f64.powi(((s >> 3) % 40) as i32 - 20)
@@ -29,7 +39,13 @@ fn floats(seed: u64, n: usize) -> Vec<f64> {
 
 #[test]
 fn from_rational_converts_and_normalizes() {
-    for (r, x) in [(rat(1, 2), 0.5), (rat(100, 1), 100.0), (rat(-7, 4), -1.75), (rat(3, 10), 0.3), (rat(1, 3), 1.0 / 3.0)] {
+    for (r, x) in [
+        (rat(1, 2), 0.5),
+        (rat(100, 1), 100.0),
+        (rat(-7, 4), -1.75),
+        (rat(3, 10), 0.3),
+        (rat(1, 3), 1.0 / 3.0),
+    ] {
         let v = ScaledFloat::from_rational(&r);
         assert_normal(&v);
         assert_eq!(v.to_f64(), x, "{r}");
@@ -58,7 +74,14 @@ fn from_rational_reaches_past_the_range_of_a_float() {
 
 #[test]
 fn from_f64_is_exact_for_subnormals_too() {
-    for x in [1.0, -3.5, f64::MIN_POSITIVE, f64::MIN_POSITIVE / 8.0, -f64::from_bits(1), f64::MAX] {
+    for x in [
+        1.0,
+        -3.5,
+        f64::MIN_POSITIVE,
+        f64::MIN_POSITIVE / 8.0,
+        -f64::from_bits(1),
+        f64::MAX,
+    ] {
         let v = ScaledFloat::from_f64(x);
         assert_normal(&v);
         assert_eq!(v.to_f64(), x);
@@ -208,15 +231,39 @@ fn spread(seed: u64, n: usize, binades: u64) -> Vec<ScaledFloat> {
     let mut s = seed;
     (0..n)
         .map(|_| {
-            s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            s = s
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             if s.is_multiple_of(17) {
                 return ScaledFloat::ZERO;
             }
-            let mut v = ScaledFloat::from_f64(if s & 2 == 0 { 1.0 } else { -1.0 } * (0.5 + (s >> 12) as f64 / (1u64 << 53) as f64));
+            let mut v = ScaledFloat::from_f64(
+                if s & 2 == 0 { 1.0 } else { -1.0 }
+                    * (0.5 + (s >> 12) as f64 / (1u64 << 53) as f64),
+            );
             v.exponent += ((s >> 4) % binades) as i64 - (binades / 2) as i64;
             v
         })
         .collect()
+}
+
+fn assert_product_sum_steps(
+    terms: impl IntoIterator<Item = (ScaledFloat, ScaledFloat)>,
+    what: &str,
+) {
+    let mut want = ScaledFloat::ZERO;
+    let mut got = ScaledSum::ZERO;
+    for (x, y) in terms {
+        want.add_assign(&x.mul(&y));
+        got.add_product(&x, &y);
+        let g = got.finish();
+        assert_normal(&g);
+        assert_eq!(
+            (g.mantissa().to_bits(), g.exponent()),
+            (want.mantissa().to_bits(), want.exponent()),
+            "{what}"
+        );
+    }
 }
 
 /// The unnormalized product sum leaves what the normalized operations
@@ -228,30 +275,22 @@ fn product_sum_matches_mul_and_add_assign() {
         for len in [1usize, 2, 3, 7, 40, 300] {
             let a = spread(seed * 1000 + len as u64, len, binades);
             let b = spread(seed * 7777 + len as u64, len, binades);
-            let mut want = ScaledFloat::ZERO;
-            let mut got = ScaledSum::ZERO;
-            for (x, y) in a.iter().zip(&b) {
-                want.add_assign(&x.mul(y));
-                got.add_product(x, y);
-                let g = got.finish();
-                assert_normal(&g);
-                assert_eq!((g.mantissa().to_bits(), g.exponent()), (want.mantissa().to_bits(), want.exponent()),
-                    "seed {seed}, {binades} binades, {len} terms");
-            }
+            assert_product_sum_steps(
+                a.into_iter().zip(b),
+                &format!("seed {seed}, {binades} binades, {len} terms"),
+            );
         }
     }
     // Exact cancellation, then a term far below the cancelled ones.
     let one = ScaledFloat::from_f64(1.0);
     let mut tiny = ScaledFloat::from_f64(0.75);
     tiny.exponent -= 2000;
-    let terms = [(one, one), (ScaledFloat::from_f64(-1.0), one), (tiny, one), (ScaledFloat::from_f64(1.0 + f64::EPSILON), one),
-        (ScaledFloat::from_f64(-1.0), one)];
-    let mut want = ScaledFloat::ZERO;
-    let mut got = ScaledSum::ZERO;
-    for (x, y) in &terms {
-        want.add_assign(&x.mul(y));
-        got.add_product(x, y);
-        let g = got.finish();
-        assert_eq!((g.mantissa().to_bits(), g.exponent()), (want.mantissa().to_bits(), want.exponent()));
-    }
+    let terms = [
+        (one, one),
+        (ScaledFloat::from_f64(-1.0), one),
+        (tiny, one),
+        (ScaledFloat::from_f64(1.0 + f64::EPSILON), one),
+        (ScaledFloat::from_f64(-1.0), one),
+    ];
+    assert_product_sum_steps(terms, "cancellation with tiny term");
 }

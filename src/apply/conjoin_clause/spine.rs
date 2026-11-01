@@ -17,7 +17,11 @@ pub(super) struct MarkBuffer {
 
 impl MarkBuffer {
     /// Grow the flags to cover `num_nodes` levels, charging `lim`.
-    pub(super) fn cover(&mut self, lim: &crate::limits::Limits, num_nodes: usize) -> Result<(), crate::limits::OperationError> {
+    pub(super) fn cover(
+        &mut self,
+        lim: &crate::limits::Limits,
+        num_nodes: usize,
+    ) -> Result<(), crate::limits::OperationError> {
         lim.try_resize(&mut self.flags, num_nodes, false)?;
         lim.reserve_exact(&mut self.set, num_nodes)
     }
@@ -25,7 +29,9 @@ impl MarkBuffer {
     /// Mark level `t` and report whether it was newly marked.
     #[inline]
     pub(super) fn mark(&mut self, t: VtreeIdx) -> bool {
-        if self.flags[t.idx()] { return false; }
+        if self.flags[t.idx()] {
+            return false;
+        }
         self.flags[t.idx()] = true;
         self.set.push(t);
         true
@@ -49,7 +55,10 @@ impl crate::execution::pool::Buffers for MarkBuffer {
 
 impl crate::execution::pool::PooledScratch for MarkBuffer {
     fn prepare(&mut self) {
-        debug_assert!(self.set.is_empty() && self.flags.iter().all(|&b| !b), "clause-spine marks were not cleared");
+        debug_assert!(
+            self.set.is_empty() && self.flags.iter().all(|&b| !b),
+            "clause-spine marks were not cleared"
+        );
     }
 
     /// Replay the log so the parked buffer is all false, then apply the
@@ -80,7 +89,9 @@ pub(super) fn build_clause_spine(
         let mut cur = leaf;
         loop {
             gate.poll(1)?;
-            if !on_spine.mark(cur) { break; }
+            if !on_spine.mark(cur) {
+                break;
+            }
             match vtree.node(cur).parent() {
                 Some(p) => cur = p,
                 None => break,
@@ -103,8 +114,12 @@ pub(super) fn build_clause_spine(
         } else {
             lim.try_push(dfs_stack, (t, true))?;
             let (l, r) = vtree.children(t);
-            if on_spine[l.idx()] && !vtree.node(l).is_leaf() { lim.try_push(dfs_stack, (l, false))?; }
-            if on_spine[r.idx()] && !vtree.node(r).is_leaf() { lim.try_push(dfs_stack, (r, false))?; }
+            if on_spine[l.idx()] && !vtree.node(l).is_leaf() {
+                lim.try_push(dfs_stack, (l, false))?;
+            }
+            if on_spine[r.idx()] && !vtree.node(r).is_leaf() {
+                lim.try_push(dfs_stack, (r, false))?;
+            }
         }
     }
     gate.flush()
@@ -125,8 +140,12 @@ pub(super) fn propagate_need_dt(
         let both = on_spine[l.idx()] && on_spine[r.idx()];
         let inherited = need_dt[t.idx()] || both;
         if inherited {
-            if on_spine[l.idx()] { need_dt.mark(l); }
-            if on_spine[r.idx()] { need_dt.mark(r); }
+            if on_spine[l.idx()] {
+                need_dt.mark(l);
+            }
+            if on_spine[r.idx()] {
+                need_dt.mark(r);
+            }
         }
     }
 }
@@ -178,12 +197,15 @@ pub(super) fn fill_leaf_maps(
             (NEG_LEAF_IDX.0 as usize, POS_LEAF_IDX.0 as usize)
         };
         for i in 0..LEAF_WIDTH {
-            let dt = if compute_dt { CONJOIN_GRID[i][compl_idx] } else { NO_PRODUCT };
+            let dt = if compute_dt {
+                CONJOIN_GRID[i][compl_idx]
+            } else {
+                NO_PRODUCT
+            };
             cd_map[base + i] = [CONJOIN_GRID[i][clause_idx], dt];
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "tests/spine.rs"]

@@ -18,13 +18,16 @@
 //! nothing reads its marks. The read that settles a loose level
 //! ([`settle_loose`]) marks a byte per slot instead, one level at a time.
 
-use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below};
+use crate::diagram::{
+    ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel,
+    NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below,
+};
 
 use crate::Engine;
 
-use crate::vtree::VtreeIdx;
-use crate::limits::{Limits, OperationError, PollGate, Transient};
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
+use crate::limits::{Limits, OperationError, PollGate, Transient};
+use crate::vtree::VtreeIdx;
 
 /// The new index of a slot that did not survive, in the remap a parent
 /// rewrites its references through. Every survivor's index is below the
@@ -60,7 +63,10 @@ struct Marker {
 impl Marker {
     /// A marker for the block at word `base`, with nothing pending.
     const fn new(base: usize) -> Marker {
-        Marker { word: base, bits: 0 }
+        Marker {
+            word: base,
+            bits: 0,
+        }
     }
 
     /// Mark slot `s` of the block at word `base`.
@@ -110,7 +116,11 @@ fn for_each_marked(block: &[u64], f: impl FnMut(usize)) {
 
 /// The index of every marked slot of `block`, ascending.
 fn marked(block: &[u64]) -> Marked<'_> {
-    Marked { block, word: 0, left: block.first().copied().unwrap_or(0) }
+    Marked {
+        block,
+        word: 0,
+        left: block.first().copied().unwrap_or(0),
+    }
 }
 
 /// The marked slots of a block, ascending ([`marked`]).
@@ -174,7 +184,13 @@ pub(super) struct Select<'a> {
 
 impl<'a> Select<'a> {
     pub(super) fn new(block: &'a [u64]) -> Select<'a> {
-        Select { block, word: 0, before: 0, left: block.first().copied().unwrap_or(0), passed: 0 }
+        Select {
+            block,
+            word: 0,
+            before: 0,
+            left: block.first().copied().unwrap_or(0),
+            passed: 0,
+        }
     }
 
     /// The marked slot of rank `j`, if there are more than `j`.
@@ -210,7 +226,11 @@ impl<'a> Select<'a> {
 pub(super) fn new_indices(block: &[u64], span: usize, out: &mut [u32]) {
     let mut next = 0u32;
     for (word, slots) in block.iter().zip(out[..span].chunks_mut(64)) {
-        let full = if slots.len() == 64 { u64::MAX } else { (1u64 << slots.len()) - 1 };
+        let full = if slots.len() == 64 {
+            u64::MAX
+        } else {
+            (1u64 << slots.len()) - 1
+        };
         let word = word & full;
         if word == full {
             for (slot, index) in slots.iter_mut().zip(next..) {
@@ -430,7 +450,11 @@ impl<'l> Seeds<'l> {
     /// The seeds of `tdd`, whose loose levels are `loose`, as [`settle_loose`]
     /// leaves them. The output is the root, as the walk below the root
     /// needs ([`below_root_walk_applies`]).
-    pub(crate) fn of(eng: &'l Engine, tdd: &Tdd, loose: &[u32]) -> Result<Seeds<'l>, OperationError> {
+    pub(crate) fn of(
+        eng: &'l Engine,
+        tdd: &Tdd,
+        loose: &[u32],
+    ) -> Result<Seeds<'l>, OperationError> {
         let lim = eng.limits();
         let vtree = &tdd.vtree;
         let mut state: Transient<'_, Vec<u8>> = Transient::new(lim, Vec::new());
@@ -458,37 +482,18 @@ impl<'l> Seeds<'l> {
         let mut seeds: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         let mut top: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         if root_clean {
-            // Whether each forced level is clean, settled from the root down
-            // its path: the root is, and a level is when its parent is and
-            // it is not loose. A level that is not forced has no loose level
-            // under it, so the clean levels with a child that is not are
-            // forced, and the walk reads whether a level is clean only on a
-            // seed's children, below.
-            let mut path = Vec::new();
-            for &f in forced.iter() {
-                path.clear();
-                let mut t = f;
-                let mut clean = loop {
-                    if state[t.idx()] & SETTLED != 0 {
-                        break state[t.idx()] & CLEAN != 0;
-                    }
-                    lim.try_push(&mut path, t)?;
-                    match vtree.node(t).parent() {
-                        Some(p) => t = p,
-                        None => break true,
-                    }
-                };
-                for &t in path.iter().rev() {
-                    clean = t == root || (clean && state[t.idx()] & LOOSE == 0);
-                    state[t.idx()] |= SETTLED | if clean { CLEAN } else { 0 };
-                }
-            }
+            settle_forced_clean(lim, vtree, root, &forced, &mut state, LOOSE, SETTLED)?;
             // A seed is a clean level with a child that is not: a loose
             // one.
             for &level in loose {
                 let level = VtreeIdx(level);
-                let Some(p) = vtree.node(level).parent() else { continue };
-                if state[p.idx()] & (CLEAN | SEED) == CLEAN && tdd.is_structural_internal(p) && tdd.is_structural_internal(level) {
+                let Some(p) = vtree.node(level).parent() else {
+                    continue;
+                };
+                if state[p.idx()] & (CLEAN | SEED) == CLEAN
+                    && tdd.is_structural_internal(p)
+                    && tdd.is_structural_internal(level)
+                {
                     state[p.idx()] |= SEED;
                     lim.try_push(&mut seeds, p)?;
                 }
@@ -508,8 +513,50 @@ impl<'l> Seeds<'l> {
                 }
             }
         }
-        Ok(Seeds { state, seeds, top, root_clean })
+        Ok(Seeds {
+            state,
+            seeds,
+            top,
+            root_clean,
+        })
     }
+}
+
+/// Settle whether each forced level is clean from the root down its path.
+///
+/// The root is clean, and a level is clean when its parent is and it is not
+/// loose. A level that is not forced has no loose level under it, so the clean
+/// levels with a child that is not are forced, and the walk reads whether a
+/// level is clean only on a seed's children.
+fn settle_forced_clean(
+    lim: &Limits,
+    vtree: &crate::vtree::Vtree,
+    root: VtreeIdx,
+    forced: &[VtreeIdx],
+    state: &mut [u8],
+    loose_bit: u8,
+    settled_bit: u8,
+) -> Result<(), OperationError> {
+    let mut path = Vec::new();
+    for &f in forced {
+        path.clear();
+        let mut t = f;
+        let mut clean = loop {
+            if state[t.idx()] & settled_bit != 0 {
+                break state[t.idx()] & CLEAN != 0;
+            }
+            lim.try_push(&mut path, t)?;
+            match vtree.node(t).parent() {
+                Some(p) => t = p,
+                None => break true,
+            }
+        };
+        for &t in path.iter().rev() {
+            clean = t == root || (clean && state[t.idx()] & loose_bit == 0);
+            state[t.idx()] |= settled_bit | if clean { CLEAN } else { 0 };
+        }
+    }
+    Ok(())
 }
 
 /// Every slot of every structural internal level is reachable from the output.
@@ -524,7 +571,14 @@ pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
         level_base[i + 1] = level_base[i] + words(tdd.reference_slot_count(VtreeIdx(i as u32)));
     }
     let mut marks = vec![0u64; level_base[num_nodes]];
-    classic_mark(&Limits::new(), tdd, &level_base, &mut marks, &mut Vec::new()).expect("unbounded limits refuse no offsets");
+    classic_mark(
+        &Limits::new(),
+        tdd,
+        &level_base,
+        &mut marks,
+        &mut Vec::new(),
+    )
+    .expect("unbounded limits refuse no offsets");
     for t in tdd.vtree.internal_bottomup().map(|(t, _, _)| t) {
         if !tdd.is_structural_internal(t) {
             continue;
@@ -574,7 +628,11 @@ pub(crate) fn below_root_walk_applies(tdd: &Tdd) -> bool {
 ///
 /// Returns `Err(OperationError::OverBudget)` if the marks a read takes are
 /// refused, and the stop the work polls for.
-pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Vec<u32>, OperationError> {
+pub(crate) fn settle_loose(
+    eng: &Engine,
+    tdd: &Tdd,
+    listed: &[u32],
+) -> Result<Vec<u32>, OperationError> {
     if listed.is_empty() {
         return Ok(Vec::new());
     }
@@ -588,7 +646,12 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     // The prune's scratch, which a prune checks out after this returns: a
     // read clears the block of marks it takes.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { settle_counts: counts, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
+    let PruneScratch {
+        settle_counts: counts,
+        settle_flags: flags,
+        settle_parents: parents,
+        ..
+    } = &mut *scratch;
     flags.clear();
     lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
@@ -598,7 +661,11 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     // parent's children is settled before the parent is read.
     parents.clear();
     lim.reserve(parents, listed.len())?;
-    parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
+    parents.extend(
+        listed
+            .iter()
+            .filter_map(|&t| vtree.node(VtreeIdx(t)).parent()),
+    );
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
     let mut gate = lim.gate();
@@ -619,7 +686,11 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
         }
     }
     gate.flush()?;
-    Ok(listed.iter().copied().filter(|&t| flags[t as usize][AT]).collect())
+    Ok(listed
+        .iter()
+        .copied()
+        .filter(|&t| flags[t as usize][AT])
+        .collect())
 }
 
 /// Which of the children of level `p` that `sides` asks for, left and right,
@@ -722,13 +793,20 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
     // then back to the last node that names one first.
     let slots = if LEFT { past[0] } else { 0 } + if RIGHT { past[1] } else { 0 };
     let whole = |stored: &crate::diagram::StoredPairs<'_>| {
-        !settle_by_node() && stored.nodes().len() + stored.arena().len() < WHOLE_READ_PAIRS_A_SLOT * slots
+        !settle_by_node()
+            && stored.nodes().len() + stored.arena().len() < WHOLE_READ_PAIRS_A_SLOT * slots
     };
     if let Some(stored) = level.stored().filter(whole) {
-        let none = ChildPair::new(EncodedChildRef::from_raw(past[0] as u32), EncodedChildRef::from_raw(past[1] as u32));
+        let none = ChildPair::new(
+            EncodedChildRef::from_raw(past[0] as u32),
+            EncodedChildRef::from_raw(past[1] as u32),
+        );
         if mark_whole::<LEFT, RIGHT>(stored, none, left, right) {
             note_settle_read(0);
-            let named = [!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)];
+            let named = [
+                !LEFT || !left[..past[0]].contains(&0),
+                !RIGHT || !right[..past[1]].contains(&0),
+            ];
             // Each node whose pairs are in the arena counted once past the nodes.
             let ranged = if LEFT { left[past[0]] } else { right[past[1]] } as usize;
             let pairs = stored.nodes().len() - ranged + stored.arena().len();
@@ -792,7 +870,10 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
     if let Err(Some(e)) = read {
         return Err(e);
     }
-    Ok([!LEFT || all_named(left, &mut next[0]), !RIGHT || all_named(right, &mut next[1])])
+    Ok([
+        !LEFT || all_named(left, &mut next[0]),
+        !RIGHT || all_named(right, &mut next[1]),
+    ])
 }
 
 /// The pairs a node read for below which [`mark_named`] reads a stored
@@ -860,65 +941,22 @@ fn pairs_after_last_first<const LEFT: bool, const RIGHT: bool>(
 /// [`prune_unreachable`] over every level: mark from the output, then compact
 /// each level bottom-up.
 fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    let num_nodes = tdd.vtree.num_nodes();
-
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { level_base, marks, remap, bytes, .. } = &mut *scratch;
+    let PruneScratch {
+        level_base,
+        marks,
+        remap,
+        bytes,
+        ..
+    } = &mut *scratch;
 
-    // Flat offset table, in words: level t's marks are
-    // marks[level_base[t]..level_base[t+1]]. Only a structural internal
-    // level has a block; the marks of a leaf or marginal level would never be
-    // read. The work charged counts every level's slots, and
-    // `reference_slot_count()` gives leaf levels `LEAF_WIDTH` slots for
-    // marginal nodes.
-    eng.limits().try_resize(level_base, num_nodes + 1, 0usize)?;
-    level_base[0] = 0;
-    let mut slots = 0usize;
-    for i in 0..num_nodes {
-        let t = VtreeIdx(i as u32);
-        let width = tdd.reference_slot_count(t);
-        slots += width;
-        let own = if tdd.is_structural_internal(t) { words(width) } else { 0 };
-        level_base[i + 1] = level_base[i] + own;
-    }
-    let total = level_base[num_nodes];
-
-    // The exact form leaves the Vec untouched on failure, so the pooled buffer
-    // can be returned; through the engine's limits so the reservation is
-    // charged against the byte budget.
-    let need = total.saturating_sub(marks.len());
-    eng.limits().reserve_exact(marks, need)?;
-    // Clear the marks. Split so the grown tail is initialized once, by
-    // `resize`, rather than written by `resize` and again by the fill.
-    let warm = marks.len().min(total);
-    marks[..warm].fill(0);
-    if marks.len() < total {
-        marks.resize(total, 0);
-    }
+    let (slots, total) = build_whole_mark_bases(eng.limits(), tdd, level_base, marks)?;
     // ── Pass 1 (top-down): mark reachable nodes ──────────────────────────
     classic_mark(eng.limits(), tdd, level_base, &mut marks[..total], bytes)?;
 
-    // `level_dirty[t]` records whether level `t` lost a node; charged for
-    // this prune and handed back with it.
-    let mut level_dirty: Transient<'_, Vec<bool>> = Transient::new(eng.limits(), Vec::new());
-    eng.limits().try_resize(&mut level_dirty, num_nodes, false)?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    // What the compaction reads its children's new indices from, taken
-    // before it changes anything: a dirty child's indices side by side with
-    // its sibling's.
-    let mut remap_need = 0usize;
-    for &t in vtree.bottomup_slice() {
-        if !tdd.is_structural_internal(t) {
-            continue;
-        }
-        let block = &marks[level_base[t.idx()]..level_base[t.idx() + 1]];
-        level_dirty[t.idx()] = !all_marked(block, tdd.reference_slot_count(t));
-        let (left, right) = vtree.children(t);
-        if level_dirty[left.idx()] || level_dirty[right.idx()] {
-            let need: usize = [left, right].iter().filter(|c| level_dirty[c.idx()]).map(|&c| span(level_base, c)).sum();
-            remap_need = remap_need.max(need);
-        }
-    }
+    let (level_dirty, remap_need) =
+        find_dirty_whole_levels(eng.limits(), tdd, &vtree, level_base, &marks[..total])?;
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
 
     let order = vtree
@@ -927,7 +965,15 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
         .filter(|&&t| tdd.is_structural_internal(t))
         .map(|&t| visit_at(&vtree, level_base, &level_dirty, t));
     let plans = plan_levels(eng.limits(), tdd, order, &marks[..total], remap)?;
-    compact_levels(tdd, &vtree, level_base, &level_dirty, &marks[..total], remap, plans);
+    compact_levels(
+        tdd,
+        &vtree,
+        level_base,
+        &level_dirty,
+        &marks[..total],
+        remap,
+        plans,
+    );
     seed_dirty_levels(tdd, &level_dirty);
 
     let out = tdd.output;
@@ -946,16 +992,111 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     Ok(())
 }
 
+/// Build the flat mark-word offset table `level_base` and zero-initialize
+/// `marks[..total]`, returning `(total_slots, total_mark_words)`.
+fn build_whole_mark_bases(
+    lim: &Limits,
+    tdd: &Tdd,
+    level_base: &mut Vec<usize>,
+    marks: &mut Vec<u64>,
+) -> Result<(usize, usize), OperationError> {
+    let num_nodes = tdd.vtree.num_nodes();
+    // Flat offset table, in words: level t's marks are
+    // marks[level_base[t]..level_base[t+1]]. Only a structural internal
+    // level has a block; the marks of a leaf or marginal level would never be
+    // read. The work charged counts every level's slots, and
+    // `reference_slot_count()` gives leaf levels `LEAF_WIDTH` slots for
+    // marginal nodes.
+    lim.try_resize(level_base, num_nodes + 1, 0usize)?;
+    level_base[0] = 0;
+    let mut slots = 0usize;
+    for i in 0..num_nodes {
+        let t = VtreeIdx(i as u32);
+        let width = tdd.reference_slot_count(t);
+        slots += width;
+        let own = if tdd.is_structural_internal(t) {
+            words(width)
+        } else {
+            0
+        };
+        level_base[i + 1] = level_base[i] + own;
+    }
+    let total = level_base[num_nodes];
+    // The exact form leaves the Vec untouched on failure, so the pooled buffer
+    // can be returned; through the engine's limits so the reservation is
+    // charged against the byte budget.
+    let need = total.saturating_sub(marks.len());
+    lim.reserve_exact(marks, need)?;
+    // Clear the marks. Split so the grown tail is initialized once, by
+    // `resize`, rather than written by `resize` and again by the fill.
+    let warm = marks.len().min(total);
+    marks[..warm].fill(0);
+    if marks.len() < total {
+        marks.resize(total, 0);
+    }
+    Ok((slots, total))
+}
+
+/// Record which structural internal levels lost a node in `level_dirty` and
+/// compute the peak `remap_need` across all parent levels.
+fn find_dirty_whole_levels<'l>(
+    lim: &'l Limits,
+    tdd: &Tdd,
+    vtree: &crate::vtree::Vtree,
+    level_base: &[usize],
+    marks: &[u64],
+) -> Result<(Transient<'l, Vec<bool>>, usize), OperationError> {
+    let mut level_dirty: Transient<'_, Vec<bool>> = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut level_dirty, vtree.num_nodes(), false)?;
+    // What the compaction reads its children's new indices from, taken
+    // before it changes anything: a dirty child's indices side by side with
+    // its sibling's.
+    let mut remap_need = 0usize;
+    for &t in vtree.bottomup_slice() {
+        if !tdd.is_structural_internal(t) {
+            continue;
+        }
+        let block = &marks[level_base[t.idx()]..level_base[t.idx() + 1]];
+        level_dirty[t.idx()] = !all_marked(block, tdd.reference_slot_count(t));
+        let (left, right) = vtree.children(t);
+        if level_dirty[left.idx()] || level_dirty[right.idx()] {
+            let need: usize = [left, right]
+                .iter()
+                .filter(|c| level_dirty[c.idx()])
+                .map(|&c| span(level_base, c))
+                .sum();
+            remap_need = remap_need.max(need);
+        }
+    }
+    Ok((level_dirty, remap_need))
+}
+
 /// The slots level `t`'s block of marks covers, a whole number of words.
 fn span(level_base: &[usize], t: VtreeIdx) -> usize {
     (level_base[t.idx() + 1] - level_base[t.idx()]) * 64
 }
 
 /// The [`Visit`] of level `level` in [`prune_whole`]'s flat mark table.
-fn visit_at(vtree: &crate::vtree::Vtree, level_base: &[usize], level_dirty: &[bool], level: VtreeIdx) -> Visit {
+fn visit_at(
+    vtree: &crate::vtree::Vtree,
+    level_base: &[usize],
+    level_dirty: &[bool],
+    level: VtreeIdx,
+) -> Visit {
     let (left, right) = vtree.children(level);
-    let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
-    Visit { level, base: level_base[level.idx()], left: child(left), right: child(right) }
+    let child = |c: VtreeIdx| {
+        Child::at(
+            level_base[c.idx()],
+            span(level_base, c),
+            level_dirty[c.idx()],
+        )
+    };
+    Visit {
+        level,
+        base: level_base[level.idx()],
+        left: child(left),
+        right: child(right),
+    }
 }
 
 /// Pass 2 (bottom-up): compact every level that lost a node and rewrite the
@@ -1017,7 +1158,11 @@ impl Child {
     }
 
     /// A child that kept every slot.
-    const KEPT: Child = Child { base: 0, span: 0, dirty: false };
+    const KEPT: Child = Child {
+        base: 0,
+        span: 0,
+        dirty: false,
+    };
 }
 
 /// Compact one structural level: rewrite its references into a child that
@@ -1052,12 +1197,20 @@ fn compact_one_level(
     plan: Option<Kept>,
     counted: bool,
 ) -> bool {
-    let Visit { level: t, base, left, right } = v;
+    let Visit {
+        level: t,
+        base,
+        left,
+        right,
+    } = v;
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
     let own = &marks[base..base + words(width)];
     let lost = !all_marked(own, width);
-    debug_assert_eq!(plan.is_some(), tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty));
+    debug_assert_eq!(
+        plan.is_some(),
+        tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty)
+    );
     if !(lost || left.dirty || right.dirty) {
         return false;
     }
@@ -1147,7 +1300,13 @@ fn apply_child_rewrites(
             // words; otherwise its kept nodes' references are read through
             // the children's new indices.
             let kept = own.iter().map(|w| w.count_ones() as usize).sum::<usize>();
-            let dropped = |c: Child| if c.dirty { few_dropped(&marks[c.base..], c.span) } else { Some(Dropped::NONE) };
+            let dropped = |c: Child| {
+                if c.dirty {
+                    few_dropped(&marks[c.base..], c.span)
+                } else {
+                    Some(Dropped::NONE)
+                }
+            };
             match (2 * kept >= width).then(|| (dropped(left), dropped(right))) {
                 Some((Some(l), Some(r))) => move_past_dropped(&mut tdd.levels[t_idx], &l, &r),
                 _ => {
@@ -1164,7 +1323,12 @@ fn apply_child_rewrites(
 /// The new indices of the children that lost a slot, `left` and `right`,
 /// built from their marks into `remap`, side by side: `None` for a child
 /// that kept every slot.
-fn child_remaps<'r>(marks: &[u64], remap: &'r mut [u32], left: Child, right: Child) -> (Option<&'r [u32]>, Option<&'r [u32]>) {
+fn child_remaps<'r>(
+    marks: &[u64],
+    remap: &'r mut [u32],
+    left: Child,
+    right: Child,
+) -> (Option<&'r [u32]>, Option<&'r [u32]>) {
     let (left_new, right_new) = remap.split_at_mut(if left.dirty { left.span } else { 0 });
     let left_remap = if left.dirty {
         new_indices(&marks[left.base..], left.span, left_new);
@@ -1243,7 +1407,12 @@ fn plan_level(
     marks: &[u64],
     remap: &mut [u32],
 ) -> Result<Option<Kept>, OperationError> {
-    let Visit { level: t, base, left, right } = v;
+    let Visit {
+        level: t,
+        base,
+        left,
+        right,
+    } = v;
     let level = &tdd.levels[t.idx()];
     if level.pairs.implicit().is_none() {
         return Ok(None);
@@ -1255,11 +1424,20 @@ fn plan_level(
     }
     let (lm, rm) = child_remaps(marks, remap, left, right);
     // The nodes a child that lost one kept, as its marks count them.
-    let kept_of = |c: Child| c.dirty.then(|| marks[c.base..c.base + words(c.span)].iter().map(|w| w.count_ones() as usize).sum());
-    Ok(Some(match kept_described(lim, tdd, t, own, (lm, kept_of(left)), (rm, kept_of(right)))? {
-        Some((d, dead)) => Kept::Described(d, dead),
-        None => Kept::Stored(level.store_room(lim)?),
-    }))
+    let kept_of = |c: Child| {
+        c.dirty.then(|| {
+            marks[c.base..c.base + words(c.span)]
+                .iter()
+                .map(|w| w.count_ones() as usize)
+                .sum()
+        })
+    };
+    Ok(Some(
+        match kept_described(lim, tdd, t, own, (lm, kept_of(left)), (rm, kept_of(right)))? {
+            Some((d, dead)) => Kept::Described(d, dead),
+            None => Kept::Stored(level.store_room(lim)?),
+        },
+    ))
 }
 
 /// Keep the nodes whose slots `own` marks, in their order, in place. A word
@@ -1322,7 +1500,10 @@ fn kept_described(
 ) -> Result<Option<(ImplicitLevel, usize)>, OperationError> {
     let (lc, rc) = tdd.vtree.children(t);
     let level = &tdd.levels[t.idx()];
-    let d = level.pairs.implicit().expect("a description is kept as one");
+    let d = level
+        .pairs
+        .implicit()
+        .expect("a description is kept as one");
     let k = d.pairs_per_node();
     let nodes: usize = own.iter().map(|w| w.count_ones() as usize).sum();
     // Past 2^31 pairs a node's range takes the side table (`ranges`); the
@@ -1338,10 +1519,14 @@ fn kept_described(
     // renumbering moves value slots; the derivation reads node indices.
     let kept = |c: VtreeIdx, n: Option<usize>| match n {
         None => Some(ChildKept::Whole),
-        Some(n) => (!tdd.levels[c.idx()].child_decoder().is_marginal()).then_some(ChildKept::Renumbered(n)),
+        Some(n) => {
+            (!tdd.levels[c.idx()].child_decoder().is_marginal()).then_some(ChildKept::Renumbered(n))
+        }
     };
     let derived = match (kept(lc, left.1), kept(rc, right.1)) {
-        (Some(l), Some(r)) => d.kept_any(nodes, l, r).or_else(|| d.kept_box(own, nodes, l, r)),
+        (Some(l), Some(r)) => d
+            .kept_any(nodes, l, r)
+            .or_else(|| d.kept_box(own, nodes, l, r)),
         _ => None,
     };
     let fitted = || {
@@ -1351,8 +1536,13 @@ fn kept_described(
         d.pruned(lim, nodes, |j| select.nth(j), || marked(own), left, right)
     };
     #[cfg(debug_assertions)]
-    if derived.is_some() && let Ok(fit) = fitted() {
-        assert!(fit == derived, "a derived description differs from the fitted one");
+    if derived.is_some()
+        && let Ok(fit) = fitted()
+    {
+        assert!(
+            fit == derived,
+            "a derived description differs from the fitted one"
+        );
     }
     let left_of = match derived {
         Some(derived) => derived,
@@ -1374,7 +1564,14 @@ fn kept_described(
 /// a stored level would hold ([`TddLevel::store_moved`]).
 ///
 /// [`TddLevel::store_moved`]: crate::diagram::TddLevel
-fn store_kept(tdd: &mut Tdd, t: VtreeIdx, room: StoreRoom, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) {
+fn store_kept(
+    tdd: &mut Tdd,
+    t: VtreeIdx,
+    room: StoreRoom,
+    own: &[u64],
+    left: Option<&[u32]>,
+    right: Option<&[u32]>,
+) {
     let (lc, rc) = tdd.vtree.children(t);
     let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
     let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
@@ -1395,7 +1592,13 @@ fn store_kept(tdd: &mut Tdd, t: VtreeIdx, room: StoreRoom, own: &[u64], left: Op
 /// Out of line, so that the rewrite's loop keeps its registers apart from
 /// what the compaction holds across it.
 #[inline(never)]
-fn rewrite_child_refs(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left_remap: Option<&[u32]>, right_remap: Option<&[u32]>) {
+fn rewrite_child_refs(
+    tdd: &mut Tdd,
+    t: VtreeIdx,
+    own: &[u64],
+    left_remap: Option<&[u32]>,
+    right_remap: Option<&[u32]>,
+) {
     let (left, right) = tdd.vtree.children(t);
     debug_assert!(left_remap.is_none() || tdd.is_structural_internal(left));
     debug_assert!(right_remap.is_none() || tdd.is_structural_internal(right));
@@ -1422,7 +1625,12 @@ fn moved_slot(remap: &[u32]) -> impl Fn(u32) -> u32 + '_ {
 /// Move the left and the right side of every pair of `level`'s marked
 /// nodes, by `own`, through `left` and `right`.
 #[inline(always)]
-fn move_sides(level: &mut TddLevel, own: &[u64], left: impl Fn(u32) -> u32, right: impl Fn(u32) -> u32) {
+fn move_sides(
+    level: &mut TddLevel,
+    own: &[u64],
+    left: impl Fn(u32) -> u32,
+    right: impl Fn(u32) -> u32,
+) {
     for_each_marked(own, |i| {
         let kind = level.nodes.stored()[i].kind();
         match kind {
@@ -1446,7 +1654,11 @@ fn move_sides(level: &mut TddLevel, own: &[u64], left: impl Fn(u32) -> u32, righ
 /// Where a child slot, as a raw word, moves when the child level read
 /// through `view` is renumbered by `remap`: nowhere without one.
 fn moved(view: ChildDecoder, remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
-    move |x| remap.map_or(x, |m| i64::from(view.remap(EncodedChildRef::from_raw(x as u32), m).raw()))
+    move |x| {
+        remap.map_or(x, |m| {
+            i64::from(view.remap(EncodedChildRef::from_raw(x as u32), m).raw())
+        })
+    }
 }
 
 /// Push every level prune shrank onto the contract worklists.
@@ -1472,13 +1684,23 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
 ///
 /// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
 /// level's nodes are read in are refused ([`mark_described`]).
-fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64], bytes: &mut Vec<u8>) -> Result<(), OperationError> {
+fn classic_mark(
+    lim: &Limits,
+    tdd: &Tdd,
+    level_base: &[usize],
+    marks: &mut [u64],
+    bytes: &mut Vec<u8>,
+) -> Result<(), OperationError> {
     let vtree = &tdd.vtree;
     // An output on a leaf or marginal level has no structural level under it.
     if !tdd.is_structural_internal(tdd.output.vtree) {
         return Ok(());
     }
-    mark(marks, level_base[tdd.output.vtree.idx()], tdd.output.local.idx());
+    mark(
+        marks,
+        level_base[tdd.output.vtree.idx()],
+        tdd.output.local.idx(),
+    );
     let block = |c: VtreeIdx| tdd.is_structural_internal(c).then(|| level_base[c.idx()]);
     let topo = vtree.bottomup_slice();
     for v in topo.iter().rev() {
@@ -1489,7 +1711,15 @@ fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]
             continue;
         }
         let (left, right) = vtree.children(t);
-        mark_children_of_level(lim, tdd, t, level_base[t.idx()], [block(left), block(right)], marks, bytes)?;
+        mark_children_of_level(
+            lim,
+            tdd,
+            t,
+            level_base[t.idx()],
+            [block(left), block(right)],
+            marks,
+            bytes,
+        )?;
     }
     Ok(())
 }
@@ -1558,15 +1788,27 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.
-        return mark_described::<LEFT, RIGHT>(lim, d, level.slot_count(), base, left_base, right_base, marks);
+        return mark_described::<LEFT, RIGHT>(
+            lim,
+            d,
+            level.slot_count(),
+            base,
+            left_base,
+            right_base,
+            marks,
+        );
     }
     let width = level.slot_count();
     if described.is_none() {
         // The sides staged as bytes: their slots, rounded up to whole words.
-        let marked: usize = marks[base..base + words(width)].iter().map(|w| w.count_ones() as usize).sum();
+        let marked: usize = marks[base..base + words(width)]
+            .iter()
+            .map(|w| w.count_ones() as usize)
+            .sum();
         let staged = |on: bool, c: VtreeIdx| {
             let slots = tdd.reference_slot_count(c);
-            (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE)).then_some(words(slots) * 64)
+            (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
+                .then_some(words(slots) * 64)
         };
         let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
         note_sides_marked(
@@ -1576,9 +1818,33 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         if ls.is_some() || rs.is_some() {
             let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
             return match (ls, rs) {
-                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
-                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
-                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(lim, tdd, t, (base, child_base), [ln, rn], marks, bytes),
+                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(
+                    lim,
+                    tdd,
+                    t,
+                    (base, child_base),
+                    [ln, rn],
+                    marks,
+                    bytes,
+                ),
+                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
+                    lim,
+                    tdd,
+                    t,
+                    (base, child_base),
+                    [ln, rn],
+                    marks,
+                    bytes,
+                ),
+                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
+                    lim,
+                    tdd,
+                    t,
+                    (base, child_base),
+                    [ln, rn],
+                    marks,
+                    bytes,
+                ),
                 (None, None) => unreachable!(),
             };
         }
@@ -1598,7 +1864,8 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         (Some(d), _) => {
             let mut cursor = d.cursor();
             for_each_marked_beside(width, base, marks, |marks, i| {
-                d.places_from(cursor.first_of(i)).for_each(|pair| mark(marks, pair));
+                d.places_from(cursor.first_of(i))
+                    .for_each(|pair| mark(marks, pair));
             });
         }
         (None, Some(stored)) => for_each_marked_beside(width, base, marks, |marks, i| {
@@ -1662,7 +1929,8 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     }
     bytes[..used].fill(0);
     let (lb, rb) = bytes[..used].split_at_mut(n[0]);
-    let (mut left_marks, mut right_marks) = (Marker::new(child_base[0]), Marker::new(child_base[1]));
+    let (mut left_marks, mut right_marks) =
+        (Marker::new(child_base[0]), Marker::new(child_base[1]));
     for_each_marked_beside(width, base, marks, |marks, i| {
         for &pair in stored.of_idx(i) {
             if LEFT && let Some(s) = left_view.child(pair.left).index() {
@@ -1712,7 +1980,12 @@ fn pack_bytes(bytes: &[u8], block: &mut [u64]) {
 /// on its slots, so that `f` may mark other blocks, a level's children's
 /// beside its own.
 #[inline(always)]
-fn for_each_marked_beside(width: usize, base: usize, marks: &mut [u64], mut f: impl FnMut(&mut [u64], usize)) {
+fn for_each_marked_beside(
+    width: usize,
+    base: usize,
+    marks: &mut [u64],
+    mut f: impl FnMut(&mut [u64], usize),
+) {
     for w in 0..words(width) {
         let mut x = marks[base + w];
         while x != 0 {
@@ -1756,12 +2029,23 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
         last: Option<i64>,
     }
     impl<'l> Side<'l> {
-        fn new(lim: &'l Limits, d: &ImplicitLevel, side: ChildSide, on: bool, base: usize) -> Result<Side<'l>, OperationError> {
+        fn new(
+            lim: &'l Limits,
+            d: &ImplicitLevel,
+            side: ChildSide,
+            on: bool,
+            base: usize,
+        ) -> Result<Side<'l>, OperationError> {
             let mut offsets = Transient::new(lim, Vec::new());
             if on {
                 d.side_offsets(side, lim, &mut offsets)?;
             }
-            Ok(Side { offsets, base, marker: Marker::new(base), last: None })
+            Ok(Side {
+                offsets,
+                base,
+                marker: Marker::new(base),
+                last: None,
+            })
         }
 
         /// Mark the slots of a node that starts at slot `first`.
@@ -1824,7 +2108,12 @@ pub(crate) struct Visit {
 impl Visit {
     /// A level whose block is marked but whose children are not settled yet.
     const fn new(level: VtreeIdx, base: usize) -> Visit {
-        Visit { level, base, left: Child::KEPT, right: Child::KEPT }
+        Visit {
+            level,
+            base,
+            left: Child::KEPT,
+            right: Child::KEPT,
+        }
     }
 }
 
@@ -1844,38 +2133,28 @@ pub(crate) enum Start<'a> {
 /// `start`, stopping at every level that loses no node. With `forced`, also
 /// entering every level it marks whose entry has [`FORCED`] set, whether or
 /// not it lost one.
-pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: Start<'_>) -> Result<(), OperationError> {
+pub(crate) fn prune_below_root(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    forced: Option<&[u8]>,
+    start: Start<'_>,
+) -> Result<(), OperationError> {
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { marks, remap, visits, entered, from_output, bytes, .. } = &mut *scratch;
+    let PruneScratch {
+        marks,
+        remap,
+        visits,
+        entered,
+        from_output,
+        bytes,
+        ..
+    } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    let root = tdd.output.vtree;
     visits.clear();
-    // Words of `marks` taken, and the slots the walk is charged for.
     let mut used = 0usize;
     let mut slots = 0usize;
-    // The widest pair of dirty children one level rewrites its references
-    // into, side by side.
     let mut remap_need = 0usize;
-
-    let clean = match start {
-        Start::Output => {
-            let root_width = tdd.levels[root.idx()].slot_count();
-            let base = alloc_block(eng, marks, &mut used, &mut slots, root_width)?;
-            mark(marks, base, tdd.output.local.idx());
-            eng.limits().try_push(visits, Visit::new(root, base))?;
-            None
-        }
-        Start::Seeds(seeds, state, _) => {
-            eng.limits().reserve(visits, seeds.len())?;
-            for &t in seeds {
-                let width = tdd.levels[t.idx()].slot_count();
-                let base = alloc_block(eng, marks, &mut used, &mut slots, width)?;
-                mark_all(&mut marks[base..base + words(width)], width);
-                visits.push(Visit::new(t, base));
-            }
-            Some(state)
-        }
-    };
+    let clean = seed_prune_below_root(eng, tdd, start, marks, visits, (&mut used, &mut slots))?;
     let is_clean = |c: VtreeIdx| clean.is_some_and(|s| s[c.idx()] & CLEAN != 0);
 
     // A child the walk does not descend into, a leaf level, whose remap is
@@ -1891,7 +2170,10 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
     while i < visits.len() {
         let t = visits[i].level;
         let (left, right) = vtree.children(t);
-        let (lw, rw) = (tdd.reference_slot_count(left), tdd.reference_slot_count(right));
+        let (lw, rw) = (
+            tdd.reference_slot_count(left),
+            tdd.reference_slot_count(right),
+        );
         let mut block = |c: VtreeIdx, width: usize| -> Result<Option<usize>, OperationError> {
             // A clean child, under a seed, is all reached: no block.
             if is_clean(c) {
@@ -1911,13 +2193,12 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
         visits[i].left = lc;
         visits[i].right = rc;
         remap_need = remap_need.max(lc.span + rc.span);
-        let enter = |child: VtreeIdx, dirty: bool| dirty || forced.is_some_and(|f| f[child.idx()] & FORCED != 0);
-        if let Some(base) = lb && enter(left, lc.dirty) {
-            eng.limits().try_push(visits, Visit::new(left, base))?;
-        }
-        if let Some(base) = rb && enter(right, rc.dirty) {
-            eng.limits().try_push(visits, Visit::new(right, base))?;
-        }
+        enqueue_marked_children(
+            eng.limits(),
+            visits,
+            forced,
+            [(left, lb, lc.dirty), (right, rb, rc.dirty)],
+        )?;
         i += 1;
     }
     // A walk from the seeds is charged as one from the output would be.
@@ -1934,6 +2215,57 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
     // and neither can stop partway.
     eng.limits().charge_work(2 * slots as u64);
     Ok(())
+}
+
+/// Enqueue marked structural children that lost a node or are marked [`FORCED`].
+#[inline]
+fn enqueue_marked_children(
+    lim: &Limits,
+    visits: &mut Vec<Visit>,
+    forced: Option<&[u8]>,
+    children: [(VtreeIdx, Option<usize>, bool); 2],
+) -> Result<(), OperationError> {
+    for (child, base, dirty) in children {
+        let enter = dirty || forced.is_some_and(|f| f[child.idx()] & FORCED != 0);
+        if let Some(base) = base
+            && enter
+        {
+            lim.try_push(visits, Visit::new(child, base))?;
+        }
+    }
+    Ok(())
+}
+
+/// Seed `marks` and `visits` from `start` for [`prune_below_root`], returning
+/// the optional per-level clean flags.
+fn seed_prune_below_root<'a>(
+    eng: &Engine,
+    tdd: &Tdd,
+    start: Start<'a>,
+    marks: &mut Vec<u64>,
+    visits: &mut Vec<Visit>,
+    (used, slots): (&mut usize, &mut usize),
+) -> Result<Option<&'a [u8]>, OperationError> {
+    match start {
+        Start::Output => {
+            let root = tdd.output.vtree;
+            let root_width = tdd.levels[root.idx()].slot_count();
+            let base = alloc_block(eng, marks, used, slots, root_width)?;
+            mark(marks, base, tdd.output.local.idx());
+            eng.limits().try_push(visits, Visit::new(root, base))?;
+            Ok(None)
+        }
+        Start::Seeds(seeds, state, _) => {
+            eng.limits().reserve(visits, seeds.len())?;
+            for &t in seeds {
+                let width = tdd.levels[t.idx()].slot_count();
+                let base = alloc_block(eng, marks, used, slots, width)?;
+                mark_all(&mut marks[base..base + words(width)], width);
+                visits.push(Visit::new(t, base));
+            }
+            Ok(Some(state))
+        }
+    }
 }
 
 /// Charge `slots` for an unmarked (leaf or marginal) child when `width` is
@@ -1975,7 +2307,11 @@ fn slots_from_output(
     }
     from_output.clear();
     lim.reserve(from_output, 1 + top.len() + visits.len())?;
-    let levels = || std::iter::once(root).chain(top.iter().copied()).chain(visits.iter().map(|v| v.level));
+    let levels = || {
+        std::iter::once(root)
+            .chain(top.iter().copied())
+            .chain(visits.iter().map(|v| v.level))
+    };
     let mut count = 0;
     for t in levels() {
         count += usize::from(!entered[t.idx()]);
@@ -2003,7 +2339,11 @@ fn slots_from_output(
     for t in levels() {
         entered[t.idx()] = false;
     }
-    debug_assert_eq!(from_output.len(), count, "a level the seeded walk entered is not under one a walk from the output enters");
+    debug_assert_eq!(
+        from_output.len(),
+        count,
+        "a level the seeded walk entered is not under one a walk from the output enters"
+    );
     Ok(slots)
 }
 
@@ -2023,7 +2363,13 @@ fn compact_visited(
     let counted = tdd.levels.is_closed();
     // What the compaction does with the levels held as descriptions is
     // decided first.
-    let mut plans = plan_levels(eng.limits(), tdd, visits.iter().rev().copied(), marks, remap)?;
+    let mut plans = plan_levels(
+        eng.limits(),
+        tdd,
+        visits.iter().rev().copied(),
+        marks,
+        remap,
+    )?;
     // The first level compacted makes room in the worklists for every level
     // still to come, so that each list grows once however many are pushed.
     let mut room = false;
@@ -2073,52 +2419,37 @@ fn compact_visited(
 /// # Errors
 ///
 /// As [`prune_unreachable`]: a refused reservation leaves `tdd` untouched.
-pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Result<(), OperationError> {
+pub(crate) fn prune_complement(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    old: NodeIdx,
+) -> Result<(), OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
     debug_assert_ne!(old, tdd.output.local);
     let lim = eng.limits();
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { marks, remap, visits, chain, row, .. } = &mut *scratch;
+    let PruneScratch {
+        marks,
+        remap,
+        visits,
+        chain,
+        row,
+        ..
+    } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    let root = tdd.output.vtree;
-    debug_assert_eq!(tdd.levels[root.idx()].slot_count(), 2, "the root holds the old output and its complement");
-    chain.clear();
-    lim.try_push(chain, [root.0, old.0, 0])?;
-    // The slots the walk below the root is charged for: the root's, and on
-    // each level of the chain, the levels it walks in the order it walks
-    // them, the slots of its structural children and of another child wider
-    // than every one met before it ([`prune_below_root`]).
-    let mut slots = tdd.levels[root.idx()].slot_count();
-    let mut unmarked = 0usize;
-    row.clear();
-    let mut i = 0;
-    while i < chain.len() {
-        let [t, r, _] = chain[i];
-        let (left, right) = vtree.children(VtreeIdx(t));
-        let sides = [tdd.is_structural_internal(left), tdd.is_structural_internal(right)];
-        for (c, structural) in [left, right].into_iter().zip(sides) {
-            let width = tdd.reference_slot_count(c);
-            if structural {
-                slots += width;
-            } else {
-                charge_unmarked_child(&mut slots, &mut unmarked, width);
-            }
-        }
-        let found = true_children(lim, tdd, VtreeIdx(t), r as usize, sides, row, i as u32 + 1)?;
-        for (c, u) in [left, right].into_iter().zip(found) {
-            let Some(u) = u else { continue };
-            lim.try_push(chain, [c.0, u as u32, i as u32])?;
-        }
-        i += 1;
-    }
+    let slots = collect_complement_chain(lim, tdd, &vtree, old, chain, row)?;
     // A level held as a description is compacted as the walk compacts it,
     // which needs the walk's marks and visits: a block per level of the
     // chain, every slot marked but the dying node's, in the walk's order,
     // which is the chain's. What happens to such a level is decided before
     // any level changes.
-    let described = chain.iter().any(|&[t, _, _]| tdd.levels[t as usize].pairs.implicit().is_some());
+    let described = chain
+        .iter()
+        .any(|&[t, _, _]| tdd.levels[t as usize].pairs.implicit().is_some());
     let mut plans = if described {
-        Some(plan_complement_described(eng, tdd, chain, marks, remap, visits)?)
+        Some(plan_complement_described(
+            eng, tdd, chain, marks, remap, visits,
+        )?)
     } else {
         None
     };
@@ -2137,16 +2468,7 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
             Some(plan) => {
                 compact_one_level(tdd, visits[j], marks, remap, Some(plan), counted);
             }
-            None => {
-                let level = &tdd.levels[c.idx()];
-                let pairs = level.known_live_pairs(counted).map(|n| n - level.pair_count_at(k as usize));
-                tdd.levels.mark_changed(c);
-                let level = &mut tdd.levels[c.idx()];
-                retire(level, k as usize);
-                if let Some(pairs) = pairs {
-                    level.leave_live_pairs(pairs);
-                }
-            }
+            None => retire_stored_complement_node(tdd, c, k as usize, counted),
         }
         tdd.invalidate_shrunk(c);
         let t = VtreeIdx(chain[up as usize][0]);
@@ -2158,6 +2480,71 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
     let local = tdd.output.local.0;
     tdd.output.local = NodeIdx(local - u32::from(local > old.0));
     Ok(())
+}
+
+/// Walk the chain of dying true-residual nodes from `old` at the root down
+/// into `chain`, returning the slot count charged for the walk.
+fn collect_complement_chain(
+    lim: &Limits,
+    tdd: &Tdd,
+    vtree: &crate::vtree::Vtree,
+    old: NodeIdx,
+    chain: &mut Vec<[u32; 3]>,
+    row: &mut Vec<u64>,
+) -> Result<usize, OperationError> {
+    let root = tdd.output.vtree;
+    debug_assert_eq!(
+        tdd.levels[root.idx()].slot_count(),
+        2,
+        "the root holds the old output and its complement"
+    );
+    chain.clear();
+    lim.try_push(chain, [root.0, old.0, 0])?;
+    // The slots the walk below the root is charged for: the root's, and on
+    // each level of the chain, the levels it walks in the order it walks
+    // them, the slots of its structural children and of another child wider
+    // than every one met before it ([`prune_below_root`]).
+    let mut slots = tdd.levels[root.idx()].slot_count();
+    let mut unmarked = 0usize;
+    row.clear();
+    let mut i = 0;
+    while i < chain.len() {
+        let [t, r, _] = chain[i];
+        let (left, right) = vtree.children(VtreeIdx(t));
+        let sides = [
+            tdd.is_structural_internal(left),
+            tdd.is_structural_internal(right),
+        ];
+        for (c, structural) in [left, right].into_iter().zip(sides) {
+            let width = tdd.reference_slot_count(c);
+            if structural {
+                slots += width;
+            } else {
+                charge_unmarked_child(&mut slots, &mut unmarked, width);
+            }
+        }
+        let found = true_children(lim, tdd, VtreeIdx(t), r as usize, sides, row, i as u32 + 1)?;
+        for (c, u) in [left, right].into_iter().zip(found) {
+            let Some(u) = u else { continue };
+            lim.try_push(chain, [c.0, u as u32, i as u32])?;
+        }
+        i += 1;
+    }
+    Ok(slots)
+}
+
+/// Retire node `k` in place from stored level `c` while updating its live-pair count.
+fn retire_stored_complement_node(tdd: &mut Tdd, c: VtreeIdx, k: usize, counted: bool) {
+    let level = &tdd.levels[c.idx()];
+    let pairs = level
+        .known_live_pairs(counted)
+        .map(|n| n - level.pair_count_at(k));
+    tdd.levels.mark_changed(c);
+    let level = &mut tdd.levels[c.idx()];
+    retire(level, k);
+    if let Some(pairs) = pairs {
+        level.leave_live_pairs(pairs);
+    }
 }
 
 /// Build the synthetic marks and visits for `chain` and plan compaction for
@@ -2176,7 +2563,11 @@ fn plan_complement_described(
     let mut used = 0usize;
     for (i, &[t, k, _]) in chain.iter().enumerate() {
         let t = VtreeIdx(t);
-        let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
+        let width = if i == 0 {
+            tdd.levels[t.idx()].slot_count()
+        } else {
+            tdd.reference_slot_count(t)
+        };
         let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
         mark_all(&mut marks[base..base + words(width)], width);
         marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
@@ -2201,7 +2592,9 @@ fn plan_complement_described(
 /// Drop node `k` of a stored `level`, the nodes after it each one slot
 /// down.
 fn retire(level: &mut TddLevel, k: usize) {
-    debug_assert!(level.pairs.implicit().is_none() && level.nodes.stored().len() == level.slot_count());
+    debug_assert!(
+        level.pairs.implicit().is_none() && level.nodes.stored().len() == level.slot_count()
+    );
     let dead = level.arena_pairs_at(k);
     level.nodes.stored_mut().remove(k);
     level.note_dead_pairs(dead);
@@ -2217,12 +2610,18 @@ fn retire(level: &mut TddLevel, k: usize) {
 /// arena's dead pairs and the nodes the compaction drops move too, which
 /// nothing reads.
 #[inline(never)]
-fn move_past<const N: usize, const LEFT: bool, const RIGHT: bool>(level: &mut TddLevel, left: &[u32; N], right: &[u32; N]) {
+fn move_past<const N: usize, const LEFT: bool, const RIGHT: bool>(
+    level: &mut TddLevel,
+    left: &[u32; N],
+    right: &[u32; N],
+) {
     debug_assert!(level.pairs.implicit().is_none());
     for node in level.nodes.stored_mut() {
         node.move_past::<N, LEFT, RIGHT>(left, right);
     }
-    let past = |side: EncodedChildRef, dropped: &[u32; N]| EncodedChildRef::from_raw(side.0 - slots_below(side.0, dropped));
+    let past = |side: EncodedChildRef, dropped: &[u32; N]| {
+        EncodedChildRef::from_raw(side.0 - slots_below(side.0, dropped))
+    };
     for pair in level.pairs.stored_mut() {
         if LEFT {
             pair.left = past(pair.left, left);
@@ -2256,7 +2655,10 @@ pub(super) struct Dropped {
 
 impl Dropped {
     /// A child that kept every slot.
-    const NONE: Dropped = Dropped { slots: [u32::MAX; FEW_DROPPED], len: 0 };
+    const NONE: Dropped = Dropped {
+        slots: [u32::MAX; FEW_DROPPED],
+        len: 0,
+    };
 }
 
 /// The unmarked slots among the first `span` of `block`, the slots a child
@@ -2265,7 +2667,12 @@ pub(super) fn few_dropped(block: &[u64], span: usize) -> Option<Dropped> {
     let mut dropped = Dropped::NONE;
     for (w, &word) in block[..words(span)].iter().enumerate() {
         let slots = (span - 64 * w).min(64);
-        let mut lost = !word & if slots == 64 { u64::MAX } else { (1u64 << slots) - 1 };
+        let mut lost = !word
+            & if slots == 64 {
+                u64::MAX
+            } else {
+                (1u64 << slots) - 1
+            };
         if dropped.len + lost.count_ones() as usize > FEW_DROPPED {
             return None;
         }
@@ -2282,7 +2689,10 @@ pub(super) fn few_dropped(block: &[u64], span: usize) -> Option<Dropped> {
 /// the fewest compares a reference that cover them.
 fn move_past_dropped(level: &mut TddLevel, left: &Dropped, right: &Dropped) {
     fn on<const N: usize>(level: &mut TddLevel, left: &Dropped, right: &Dropped) {
-        let (l, r) = (left.slots[..N].try_into().expect("N slots"), right.slots[..N].try_into().expect("N slots"));
+        let (l, r) = (
+            left.slots[..N].try_into().expect("N slots"),
+            right.slots[..N].try_into().expect("N slots"),
+        );
         match (left.len > 0, right.len > 0) {
             (true, true) => move_past::<N, true, true>(level, l, r),
             (true, false) => move_past::<N, true, false>(level, l, r),
@@ -2319,7 +2729,10 @@ fn true_children(
     stamp: u32,
 ) -> Result<[Option<usize>; 2], OperationError> {
     let (left, right) = tdd.vtree.children(t);
-    let leaf = [tdd.vtree.node(left).is_leaf(), tdd.vtree.node(right).is_leaf()];
+    let leaf = [
+        tdd.vtree.node(left).is_leaf(),
+        tdd.vtree.node(right).is_leaf(),
+    ];
     let width = |c: VtreeIdx| tdd.levels[c.idx()].slot_count();
     // Side `k`'s sibling is the other child, `1 - k`.
     let full = [
@@ -2335,7 +2748,11 @@ fn true_children(
     let one = crate::diagram::ONE_LEAF_IDX.0;
     let mut count = |slot: usize, w: u32| -> u32 {
         let e = &mut row[slot];
-        let n = if *e >> 32 == u64::from(stamp) { *e as u32 + w } else { w };
+        let n = if *e >> 32 == u64::from(stamp) {
+            *e as u32 + w
+        } else {
+            w
+        };
         *e = tag | u64::from(n);
         n
     };
@@ -2366,7 +2783,9 @@ fn true_children(
 /// in turn.
 fn settle_child(marks: &[u64], base: Option<usize>, width: usize) -> Child {
     match base {
-        Some(base) if !all_marked(&marks[base..base + words(width)], width) => Child::at(base, width, true),
+        Some(base) if !all_marked(&marks[base..base + words(width)], width) => {
+            Child::at(base, width, true)
+        }
         _ => Child::KEPT,
     }
 }

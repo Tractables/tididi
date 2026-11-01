@@ -1,12 +1,12 @@
 //! The determinism check.
 
-use std::sync::Arc;
-use num_bigint::BigUint;
-use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
+use crate::vtree::{VtreeIdx, VtreeNode};
+use num_bigint::BigUint;
+use std::sync::Arc;
 
-use crate::diagram::{LEAF_WIDTH, LeafLabel, Tdd, ZERO};
 use super::signature::tdd_with_output;
+use crate::diagram::{LEAF_WIDTH, LeafLabel, Tdd, ZERO};
 
 /// Check the determinism property: at each vtree level, all *live* nodes
 /// compute mutually exclusive Boolean functions.
@@ -38,62 +38,12 @@ use super::signature::tdd_with_output;
 pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let shared_vtree = Arc::clone(&tdd.vtree);
-
-    // Leaf-level mode consistency: at each leaf vtree node, collect the set
-    // of labels actually referenced (via parent pair lists or the diagram output).
-    // Reject mixes where a non-mutex pair of labels is live.
-    let n = vtree.num_nodes();
-    let mut used_at_leaf: Vec<u8> = vec![0u8; n]; // bit i = label i is used
-    for vi in 0..n {
-        let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        let level = &tdd.levels[vi];
-        if level.slot_count() == 0 { continue; }
-        let left_is_leaf = vtree.node(left).is_leaf();
-        let right_is_leaf = vtree.node(right).is_leaf();
-        if !left_is_leaf && !right_is_leaf { continue; }
-        for (_, pairs) in level.internal_inputs_iter() {
-            for p in pairs {
-                if left_is_leaf {
-                    let idx = p.left.raw() as usize;
-                    if idx < LEAF_WIDTH { used_at_leaf[left.idx()] |= 1u8 << idx; }
-                }
-                if right_is_leaf {
-                    let idx = p.right.raw() as usize;
-                    if idx < LEAF_WIDTH { used_at_leaf[right.idx()] |= 1u8 << idx; }
-                }
-            }
-        }
-    }
-    if vtree.node(tdd.output.vtree).is_leaf() && tdd.output.local != ZERO {
-        let idx = tdd.output.local.idx();
-        if idx < LEAF_WIDTH { used_at_leaf[tdd.output.vtree.idx()] |= 1u8 << idx; }
-    }
-    let pos_mask: u8 = 1u8 << (LeafLabel::Pos as u32);
-    let neg_mask: u8 = 1u8 << (LeafLabel::Neg as u32);
-    let one_mask: u8 = 1u8 << (LeafLabel::One as u32);
-    // Indexes the vtree and `used_at_leaf` at the same position.
-    #[expect(clippy::needless_range_loop)]
-    for vi in 0..n {
-        if !vtree.node(VtreeIdx(vi as u32)).is_leaf() { continue; }
-        let u = used_at_leaf[vi];
-        let has_one = (u & one_mask) != 0;
-        let has_lit = (u & (pos_mask | neg_mask)) != 0;
-        if has_one && has_lit {
-            return Err(format!(
-                "leaf vtree {:?} mixes label modes (used = 0b{:03b}: Pos={}, \
-                 Neg={}, One={}); expected subset of {{Pos,Neg}} or {{One}}, \
-                 not both — Pos ∧ One ≠ ⊥",
-                vi, u,
-                (u & pos_mask) != 0, (u & neg_mask) != 0, has_one,
-            ));
-        }
-    }
+    check_leaf_mode_consistency(tdd)?;
 
     for t in vtree.bottomup() {
-        if vtree.node(t).is_leaf() { continue; }
+        if vtree.node(t).is_leaf() {
+            continue;
+        }
         let width = tdd.reference_slot_count(t);
         for i in 0..width {
             for j in (i + 1)..width {
@@ -126,5 +76,75 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+/// Check that no leaf vtree node mixes `LeafLabel::One` with `Pos`/`Neg`.
+fn check_leaf_mode_consistency(tdd: &Tdd) -> Result<(), String> {
+    let vtree = &tdd.vtree;
+    let n = vtree.num_nodes();
+    let mut used_at_leaf: Vec<u8> = vec![0u8; n];
+    for vi in 0..n {
+        let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
+            VtreeNode::Internal { left, right, .. } => (left, right),
+            VtreeNode::Leaf { .. } => continue,
+        };
+        let level = &tdd.levels[vi];
+        if level.slot_count() == 0 {
+            continue;
+        }
+        let left_is_leaf = vtree.node(left).is_leaf();
+        let right_is_leaf = vtree.node(right).is_leaf();
+        if !left_is_leaf && !right_is_leaf {
+            continue;
+        }
+        for (_, pairs) in level.internal_inputs_iter() {
+            for p in pairs {
+                if left_is_leaf {
+                    let idx = p.left.raw() as usize;
+                    if idx < LEAF_WIDTH {
+                        used_at_leaf[left.idx()] |= 1u8 << idx;
+                    }
+                }
+                if right_is_leaf {
+                    let idx = p.right.raw() as usize;
+                    if idx < LEAF_WIDTH {
+                        used_at_leaf[right.idx()] |= 1u8 << idx;
+                    }
+                }
+            }
+        }
+    }
+    if vtree.node(tdd.output.vtree).is_leaf() && tdd.output.local != ZERO {
+        let idx = tdd.output.local.idx();
+        if idx < LEAF_WIDTH {
+            used_at_leaf[tdd.output.vtree.idx()] |= 1u8 << idx;
+        }
+    }
+    let pos_mask: u8 = 1u8 << (LeafLabel::Pos as u32);
+    let neg_mask: u8 = 1u8 << (LeafLabel::Neg as u32);
+    let one_mask: u8 = 1u8 << (LeafLabel::One as u32);
+    // Indexes the vtree and `used_at_leaf` at the same position.
+    #[expect(clippy::needless_range_loop)]
+    for vi in 0..n {
+        if !vtree.node(VtreeIdx(vi as u32)).is_leaf() {
+            continue;
+        }
+        let u = used_at_leaf[vi];
+        let has_one = (u & one_mask) != 0;
+        let has_lit = (u & (pos_mask | neg_mask)) != 0;
+        if has_one && has_lit {
+            return Err(format!(
+                "leaf vtree {:?} mixes label modes (used = 0b{:03b}: Pos={}, \
+                 Neg={}, One={}); expected subset of {{Pos,Neg}} or {{One}}, \
+                 not both — Pos ∧ One ≠ ⊥",
+                vi,
+                u,
+                (u & pos_mask) != 0,
+                (u & neg_mask) != 0,
+                has_one,
+            ));
+        }
+    }
     Ok(())
 }

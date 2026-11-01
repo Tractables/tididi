@@ -2,11 +2,15 @@
 //! next fusion there is skipped until an edit pushes the level.
 
 use super::*;
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef};
+use crate::diagram::{
+    ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef,
+};
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
-use crate::test_helpers::{assert_same_shape, compile_clauses_on, rand_cnf, toy, vtree_shapes, CnfShape};
-use crate::vtree::rng::Lcg;
+use crate::test_helpers::{
+    CnfShape, assert_same_shape, compile_clauses_on, rand_cnf, toy, vtree_shapes,
+};
 use crate::vtree::Vtree;
+use crate::vtree::rng::Lcg;
 use std::sync::Arc;
 
 /// An engine that stops at its first poll, with a poll at every node: a
@@ -14,7 +18,9 @@ use std::sync::Arc;
 fn stopping() -> Engine {
     let eng = Engine::new();
     let callback = StopCallback::new(|_, _| StopDecision::Stop);
-    let _prior = eng.limits().install(LimitConfig::none().with_stop_callback(Some(callback)));
+    let _prior = eng
+        .limits()
+        .install(LimitConfig::none().with_stop_callback(Some(callback)));
     eng.limits().pin_reduce_poll_stride(Some(1));
     eng
 }
@@ -22,23 +28,35 @@ fn stopping() -> Engine {
 /// Two root nodes over a marginal right child, the first with a group at
 /// explicit ref 0.
 fn one_group() -> Tdd {
-    toy((0..4).map(|s| s * 3 + 1).collect(), &[&[(0, 0), (0, 1), (1, 2)], &[(1, 3), (2, 0)]])
+    toy(
+        (0..4).map(|s| s * 3 + 1).collect(),
+        &[&[(0, 0), (0, 1), (1, 2)], &[(1, 3), (2, 0)]],
+    )
 }
 
 #[test]
 fn a_fusion_run_to_the_end_is_recorded_and_the_next_one_skipped() {
     let mut tdd = one_group();
     let root = tdd.vtree.root();
-    assert!(!tdd.dirty.is_fused(root.0), "a diagram starts with no record");
+    assert!(
+        !tdd.dirty.is_fused(root.0),
+        "a diagram starts with no record"
+    );
     let stats = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
     assert_eq!(stats.fusion_groups, 1);
     assert!(tdd.dirty.is_fused(root.0));
     let stats = fuse_pairs(&stopping(), &mut tdd).expect("a recorded parent is not read");
     assert_eq!(stats.fusion_groups, 0);
     tdd.invalidate(root);
-    assert!(!tdd.dirty.is_fused(root.0), "an edit of the parent drops its record");
+    assert!(
+        !tdd.dirty.is_fused(root.0),
+        "an edit of the parent drops its record"
+    );
     let r = fuse_pairs(&stopping(), &mut tdd);
-    assert!(matches!(r, Err(OperationError::Stopped)), "the parent is read again: {r:?}");
+    assert!(
+        matches!(r, Err(OperationError::Stopped)),
+        "the parent is read again: {r:?}"
+    );
 }
 
 #[test]
@@ -66,7 +84,14 @@ fn a_parent_with_both_children_marginal_is_not_recorded() {
         .map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r)))
         .collect();
     levels[root.idx()].push_internal_node(&pairs);
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+    let mut tdd = Tdd::from_levels_unchecked(
+        vtree,
+        levels,
+        TddNodeId {
+            vtree: root,
+            local: NodeIdx(0),
+        },
+    );
     fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
     assert!(!tdd.dirty.is_fused(root.0));
 }
@@ -82,24 +107,39 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
     for num_vars in 4..9u32 {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let eng = Engine::new();
-            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
+            let clauses = rand_cnf(
+                &mut rng,
+                num_vars,
+                CnfShape {
+                    clauses: 2 * num_vars as usize,
+                    width: 3,
+                },
+            );
             let mut kept = compile_clauses_on(&eng, &vtree, &clauses);
             if kept.is_zero() {
                 continue;
             }
             let mut forced = kept.clone();
-            let below_root: Vec<VtreeIdx> =
-                (0..vtree.num_nodes() as u32).map(VtreeIdx).filter(|&t| t != vtree.root()).collect();
+            let below_root: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32)
+                .map(VtreeIdx)
+                .filter(|&t| t != vtree.root())
+                .collect();
             for step in 0..4 {
                 let target = below_root[rng.below(below_root.len() as u64) as usize];
                 eng.marginalize_levels(&mut kept, &[target]).unwrap();
-                recorded += (0..vtree.num_nodes() as u32).filter(|&t| kept.dirty.is_fused(t)).count();
+                recorded += (0..vtree.num_nodes() as u32)
+                    .filter(|&t| kept.dirty.is_fused(t))
+                    .count();
                 eng.minimize(&mut kept).unwrap();
                 eng.marginalize_levels(&mut forced, &[target]).unwrap();
                 forced.dirty.forget_all_fused();
                 eng.minimize(&mut forced).unwrap();
                 forced.dirty.forget_all_fused();
-                assert_same_shape(&kept, &forced, &format!("{shape} over {num_vars} variables, step {step}"));
+                assert_same_shape(
+                    &kept,
+                    &forced,
+                    &format!("{shape} over {num_vars} variables, step {step}"),
+                );
             }
         }
     }
@@ -113,7 +153,8 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
 fn a_merge_at_a_recorded_parent_is_fused_at_its_survivors() {
     // The root over variable 1 and the boundary parent, which is over
     // variable 2 and the marginal variable 3.
-    let vtree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n").unwrap());
+    let vtree =
+        Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n").unwrap());
     let root = vtree.root();
     let (_, boundary) = vtree.children(root);
     let (_, marginal) = vtree.children(boundary);
@@ -123,34 +164,64 @@ fn a_merge_at_a_recorded_parent_is_fused_at_its_survivors() {
     const BIG: u128 = 1 << 40;
     levels[marginal.idx()].become_marginal(vec![BIG, BIG + 1, BIG + 2, BIG + 3], None);
     let (pos, neg) = (label(LeafLabel::Pos), label(LeafLabel::Neg));
-    let a = levels[boundary.idx()].push_internal_node(&[ChildPair::new(pos, slot(0)), ChildPair::new(neg, slot(2))]);
-    let b = levels[boundary.idx()].push_internal_node(&[ChildPair::new(pos, slot(1)), ChildPair::new(neg, slot(3))]);
+    let a = levels[boundary.idx()]
+        .push_internal_node(&[ChildPair::new(pos, slot(0)), ChildPair::new(neg, slot(2))]);
+    let b = levels[boundary.idx()]
+        .push_internal_node(&[ChildPair::new(pos, slot(1)), ChildPair::new(neg, slot(3))]);
     let one = label(LeafLabel::One);
     levels[root.idx()].push_internal_node(&[ChildPair::new(one, a), ChildPair::new(one, b)]);
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+    let mut tdd = Tdd::from_levels_unchecked(
+        vtree,
+        levels,
+        TddNodeId {
+            vtree: root,
+            local: NodeIdx(0),
+        },
+    );
     let eng = Engine::new();
-    assert_eq!(fuse_pairs(&eng, &mut tdd).expect("no limits armed").fusion_groups, 0);
-    assert!(tdd.dirty.is_fused(boundary.0), "a fusion that found nothing records its parent");
+    assert_eq!(
+        fuse_pairs(&eng, &mut tdd)
+            .expect("no limits armed")
+            .fusion_groups,
+        0
+    );
+    assert!(
+        tdd.dirty.is_fused(boundary.0),
+        "a fusion that found nothing records its parent"
+    );
 
     let listed_before = crate::reduce::contract::tests::listed_fusions();
     tdd.seed_contract_worklist([root.0]);
     crate::reduce::contract::sweep::contract_all_twins(&eng, &mut tdd).expect("no limits armed");
-    assert!(crate::reduce::contract::tests::listed_fusions() > listed_before, "the fusion read the whole parent");
+    assert!(
+        crate::reduce::contract::tests::listed_fusions() > listed_before,
+        "the fusion read the whole parent"
+    );
     let level = &tdd.levels[boundary.idx()];
     assert_eq!(level.nodes().len(), 1, "the twins merged");
     let counts = tdd.levels[marginal.idx()].marginal_counts().unwrap();
     let mut fused: Vec<(u32, u128)> = level
         .pairs_vec(0)
         .iter()
-        .map(|p| match ChildDecoder::marginal().value(EncodedChildRef::from_raw(p.right.0)) {
-            ValueRef::Slot(s) => (p.left.0, counts[s as usize]),
-            ValueRef::Inline(c) => (p.left.0, c as u128),
-        })
+        .map(
+            |p| match ChildDecoder::marginal().value(EncodedChildRef::from_raw(p.right.0)) {
+                ValueRef::Slot(s) => (p.left.0, counts[s as usize]),
+                ValueRef::Inline(c) => (p.left.0, c as u128),
+            },
+        )
         .collect();
     fused.sort_unstable();
     let mut want = vec![(pos.0, 2 * BIG + 1), (neg.0, 2 * BIG + 5)];
     want.sort_unstable();
     assert_eq!(fused, want, "each label's two pairs fused into one");
+}
+
+fn assert_minimizes_same_without_fused_records(eng: &Engine, mut kept: Tdd, label: &str) {
+    let mut forced = kept.clone();
+    forced.dirty.forget_all_fused();
+    eng.minimize(&mut kept).unwrap();
+    eng.minimize(&mut forced).unwrap();
+    assert_same_shape(&kept, &forced, label);
 }
 
 /// Random formulas on every vtree shape with a level marginalized and the
@@ -168,7 +239,14 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
     for num_vars in 5..9u32 {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let eng = Engine::new();
-            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
+            let clauses = rand_cnf(
+                &mut rng,
+                num_vars,
+                CnfShape {
+                    clauses: 2 * num_vars as usize,
+                    width: 3,
+                },
+            );
             let mut f = compile_clauses_on(&eng, &vtree, &clauses);
             if f.is_zero() {
                 continue;
@@ -195,21 +273,21 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
             let g = compile_clauses_on(&eng, &vtree, std::slice::from_ref(&clause));
             let label = format!("{shape} over {num_vars} variables");
 
-            let mut kept = eng.and(f.clone(), g.clone()).unwrap();
-            recorded += (0..vtree.num_nodes() as u32).filter(|&t| kept.dirty.is_fused(t)).count();
-            let mut forced = kept.clone();
-            forced.dirty.forget_all_fused();
-            eng.minimize(&mut kept).unwrap();
-            eng.minimize(&mut forced).unwrap();
-            assert_same_shape(&kept, &forced, &label);
+            let kept = eng.and(f.clone(), g.clone()).unwrap();
+            recorded += (0..vtree.num_nodes() as u32)
+                .filter(|&t| kept.dirty.is_fused(t))
+                .count();
+            assert_minimizes_same_without_fused_records(&eng, kept, &label);
 
-            let mut kept = eng.and_clause(f.clone(), &clause).unwrap();
-            kept_by_clause += (0..vtree.num_nodes() as u32).filter(|&t| kept.dirty.is_fused(t)).count();
-            let mut forced = kept.clone();
-            forced.dirty.forget_all_fused();
-            eng.minimize(&mut kept).unwrap();
-            eng.minimize(&mut forced).unwrap();
-            assert_same_shape(&kept, &forced, &format!("{label}, as a clause"));
+            let kept = eng.and_clause(f.clone(), &clause).unwrap();
+            kept_by_clause += (0..vtree.num_nodes() as u32)
+                .filter(|&t| kept.dirty.is_fused(t))
+                .count();
+            assert_minimizes_same_without_fused_records(
+                &eng,
+                kept,
+                &format!("{label}, as a clause"),
+            );
 
             // A second target whose subtree neither holds nor lies in the first's.
             let beside: Vec<VtreeIdx> = inner
@@ -221,12 +299,12 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
                 continue;
             }
             let second = beside[rng.below(beside.len() as u64) as usize];
-            let mut kept = eng.and_marginalizing(f, g, &[second]).unwrap();
-            let mut forced = kept.clone();
-            forced.dirty.forget_all_fused();
-            eng.minimize(&mut kept).unwrap();
-            eng.minimize(&mut forced).unwrap();
-            assert_same_shape(&kept, &forced, &format!("{label}, summing a second level"));
+            let kept = eng.and_marginalizing(f, g, &[second]).unwrap();
+            assert_minimizes_same_without_fused_records(
+                &eng,
+                kept,
+                &format!("{label}, summing a second level"),
+            );
         }
     }
     assert!(recorded > 0, "no conjunction recorded a level it built");

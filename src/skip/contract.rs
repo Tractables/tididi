@@ -25,10 +25,10 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
-use super::{filled, ix, mk, normalize, vt, Ref, SLevel, SkipForm, NEG, ONE, POS, ZREF};
+use super::{NEG, ONE, POS, Ref, SLevel, Shape, SkipForm, ZREF, filled, ix, mk, normalize, vt};
 
-use crate::limits::Limits;
 use crate::OperationError;
+use crate::limits::Limits;
 
 const NONE: u32 = u32::MAX;
 /// A node's result where it is unchanged.
@@ -77,7 +77,14 @@ impl CLv {
     }
     /// Add a group of the stored nodes and skips `members` (`sh`'s level
     /// `c`, whose children are `l` and `r`), returning its number.
-    fn push_group(&mut self, s: &SkipForm, members: &[Ref], l: u32, r: u32, lim: &Limits) -> Result<u32, OperationError> {
+    fn push_group(
+        &mut self,
+        s: &SkipForm,
+        members: &[Ref],
+        l: u32,
+        r: u32,
+        lim: &Limits,
+    ) -> Result<u32, OperationError> {
         if self.gstart.is_empty() {
             lim.try_push(&mut self.gstart, 0)?;
         }
@@ -92,7 +99,14 @@ impl CLv {
                 lim.reserve(&mut self.gpairs, node.len())?;
                 self.gpairs.extend_from_slice(node);
             } else {
-                lim.try_push(&mut self.gpairs, if s.shape.within(vt(e), l) { (e, mk(r, ONE)) } else { (mk(l, ONE), e) })?;
+                lim.try_push(
+                    &mut self.gpairs,
+                    if s.shape.within(vt(e), l) {
+                        (e, mk(r, ONE))
+                    } else {
+                        (mk(l, ONE), e)
+                    },
+                )?;
             }
         }
         lim.try_push(&mut self.gstart, self.gpairs.len() as u32)?;
@@ -113,7 +127,8 @@ impl CLv {
 /// An order-free hash of one (class, partner) occurrence.
 #[inline]
 fn mix(k: u32, p: Ref) -> u64 {
-    let mut x = p.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (k as u64 + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    let mut x =
+        p.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (k as u64 + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
     x ^= x >> 31;
     x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= x >> 29;
@@ -210,14 +225,20 @@ impl ContractWork {
                 .chain((0..pcl.groups()).map(|g| (pcl.width + g as u32, pcl.group(g))))
         };
         let partners = |b: Ref| -> [Ref; 2] {
-            if sib_leaf && ix(b) == ONE { [mk(sib, POS), mk(sib, NEG)] } else { [b, ZREF] }
+            if sib_leaf && ix(b) == ONE {
+                [mk(sib, POS), mk(sib, NEG)]
+            } else {
+                [b, ZREF]
+            }
         };
         self.epoch += 1;
         self.ent.clear();
         for (k, pairs) in classes() {
             for &(a, b) in pairs {
                 let (e, partner) = if left { (a, b) } else { (b, a) };
-                let id = self.ids.id_alloc(s, e, &mut self.sstamp, &mut self.sslot, lim)?;
+                let id = self
+                    .ids
+                    .id_alloc(s, e, &mut self.sstamp, &mut self.sslot, lim)?;
                 if self.sstamp[id] != self.epoch {
                     self.sstamp[id] = self.epoch;
                     self.sslot[id] = self.ent.len() as u32;
@@ -248,7 +269,14 @@ impl ContractWork {
                     }
                 }
             }
-            sort_candidate_contexts(&self.ent, &self.cand, &mut self.order, &mut self.occ, &mut self.ctx, lim)?;
+            sort_candidate_contexts(
+                &self.ent,
+                &self.cand,
+                &mut self.order,
+                &mut self.occ,
+                &mut self.ctx,
+                lim,
+            )?;
             self.emit_confirmed_groups(s, sh, (c, l, r, here), cl, queued, heap, lim)?;
         }
         lim.charge_work(self.ent.len() as u64 + self.occ.len() as u64);
@@ -273,7 +301,9 @@ impl ContractWork {
             occ[a as usize..b as usize].iter().map(|x| (x.1, x.2))
         };
         let ent = &self.ent;
-        for run in self.order.chunk_by(|&x, &y| (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)) {
+        for run in self.order.chunk_by(|&x, &y| {
+            (ent[x as usize].1, ent[x as usize].2) == (ent[y as usize].1, ent[y as usize].2)
+        }) {
             if run.len() < 2 {
                 continue;
             }
@@ -292,7 +322,12 @@ impl ContractWork {
             for g in 0..self.firsts.len() as u32 {
                 self.members.clear();
                 lim.reserve(&mut self.members, run.len())?;
-                self.members.extend(run.iter().zip(&of).filter(|x| *x.1 == g).map(|x| ent[*x.0 as usize].0));
+                self.members.extend(
+                    run.iter()
+                        .zip(&of)
+                        .filter(|x| *x.1 == g)
+                        .map(|x| ent[*x.0 as usize].0),
+                );
                 if self.members.len() < 2 {
                     continue;
                 }
@@ -369,7 +404,16 @@ pub(crate) fn contract_in(
         let pe = if p == NONE { NONE } else { at[p as usize] };
         if pe != NONE {
             let pcl = &lvs[pe as usize];
-            work.contract_under_parent(&s, sh, (c, l, r, here), (p, pcl), &mut cl, &mut queued, &mut heap, lim)?;
+            work.contract_under_parent(
+                &s,
+                sh,
+                (c, l, r, here),
+                (p, pcl),
+                &mut cl,
+                &mut queued,
+                &mut heap,
+                lim,
+            )?;
         }
         // Merged skips sent down here: each group is a class of its own,
         // since only the levels above name its members.
@@ -491,34 +535,16 @@ fn patch_merged(
 ) -> Result<SkipForm, OperationError> {
     let shape = s.shape.clone();
     let sh = &*shape;
-    // A side read at `d` resolves through a group a skip joined there, else
-    // through its node's result.
-    let resolve = |lvs: &Vec<CLv>, d: u32, x: Ref| -> Ref {
-        if !sh.is_leaf(d) && vt(x) != d {
-            let e = at[d as usize];
-            if e != NONE && !lvs[e as usize].chainmap.is_empty() && let Some(&(to, g)) = lvs[e as usize].chainmap.get(&x) {
-                return lvs[to as usize].gres[g as usize];
-            }
-        }
-        let v = vt(x);
-        if !sh.is_leaf(v) {
-            let e = at[v as usize];
-            if e != NONE {
-                let rm = &lvs[e as usize].rm;
-                if !rm.is_empty() && rm[ix(x) as usize] != KEEP {
-                    return rm[ix(x) as usize];
-                }
-            }
-        }
-        x
-    };
     let mut buf: Vec<(Ref, Ref)> = Vec::new();
     for e in (0..lvs.len()).rev() {
         let c = lvs[e].level;
         let (l, r) = sh.kids[c as usize];
         let width = lvs[e].width as usize;
-        let changes = |lvs: &Vec<CLv>, lvl: &SLevel, i: usize| {
-            lvl.node(i as u32).iter().any(|&(a, b)| resolve(lvs, l, a) != a || resolve(lvs, r, b) != b)
+        let changes = |lvs: &[CLv], lvl: &SLevel, i: usize| {
+            lvl.node(i as u32).iter().any(|&(a, b)| {
+                resolve_patched_ref(sh, lvs, at, l, a) != a
+                    || resolve_patched_ref(sh, lvs, at, r, b) != b
+            })
         };
         let lvl = &s.levels[c as usize];
         let grouped = |i: usize| !lvs[e].group_of.is_empty() && lvs[e].group_of[i] != NONE;
@@ -534,11 +560,14 @@ fn patch_merged(
             if !grouped(i) && changes(&lvs, lvl, i) {
                 buf.clear();
                 lim.reserve(&mut buf, node.len())?;
-                buf.extend(node.iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
+                buf.extend(node.iter().map(|&(a, b)| {
+                    (
+                        resolve_patched_ref(sh, &lvs, at, l, a),
+                        resolve_patched_ref(sh, &lvs, at, r, b),
+                    )
+                }));
                 match normalize(sh, c, &mut buf) {
-                    Err(t) => {
-                        *x = t;
-                    }
+                    Err(t) => *x = t,
                     Ok(()) => {
                         out.push(&buf, lim)?;
                         continue;
@@ -547,21 +576,7 @@ fn patch_merged(
             }
             out.push(node, lim)?;
         }
-        let mut gres = Vec::new();
-        lim.reserve_exact(&mut gres, lvs[e].groups())?;
-        for g in 0..lvs[e].groups() {
-            buf.clear();
-            let group = lvs[e].group(g);
-            lim.reserve(&mut buf, 2 * group.len())?;
-            buf.extend(group.iter().map(|&(a, b)| (resolve(&lvs, l, a), resolve(&lvs, r, b))));
-            // Merged members can repeat a pair.
-            buf.sort_unstable();
-            buf.dedup();
-            gres.push(match normalize(sh, c, &mut buf) {
-                Err(t) => t,
-                Ok(()) => mk(c, out.push(&buf, lim)?),
-            });
-        }
+        let gres = build_patched_group_results((sh, c), (&lvs, at, e), &mut out, &mut buf, lim)?;
         for (x, &g) in rm.iter_mut().zip(&lvs[e].group_of) {
             if g != NONE {
                 *x = gres[g as usize];
@@ -572,7 +587,7 @@ fn patch_merged(
         lim.release_bytes(s.levels[c as usize].bytes());
         s.levels[c as usize] = out;
     }
-    s.out = resolve(&lvs, sh.root, s.out);
+    s.out = resolve_patched_ref(sh, &lvs, at, sh.root, s.out);
     lim.discard(buf);
     let visited: Vec<u32> = lvs.iter().map(|l| l.level).collect();
     for cl in lvs {
@@ -580,6 +595,65 @@ fn patch_merged(
     }
     s.collect_in(visited, lim)?;
     Ok(s)
+}
+
+/// Resolve a side reference `x` read at `d` through any skip-joined group at `d`,
+/// or else through its node's patched result.
+#[inline]
+fn resolve_patched_ref(sh: &Shape, lvs: &[CLv], at: &[u32], d: u32, x: Ref) -> Ref {
+    if !sh.is_leaf(d) && vt(x) != d {
+        let e = at[d as usize];
+        if e != NONE
+            && !lvs[e as usize].chainmap.is_empty()
+            && let Some(&(to, g)) = lvs[e as usize].chainmap.get(&x)
+        {
+            return lvs[to as usize].gres[g as usize];
+        }
+    }
+    let v = vt(x);
+    if !sh.is_leaf(v) {
+        let e = at[v as usize];
+        if e != NONE {
+            let rm = &lvs[e as usize].rm;
+            if !rm.is_empty() && rm[ix(x) as usize] != KEEP {
+                return rm[ix(x) as usize];
+            }
+        }
+    }
+    x
+}
+
+/// Normalize and push each merged twin group of `lvs[e]` into `out`, returning
+/// each group's resolved reference.
+fn build_patched_group_results(
+    (sh, c): (&Shape, u32),
+    (lvs, at, e): (&[CLv], &[u32], usize),
+    out: &mut SLevel,
+    buf: &mut Vec<(Ref, Ref)>,
+    lim: &Limits,
+) -> Result<Vec<Ref>, OperationError> {
+    let (l, r) = sh.kids[c as usize];
+    let mut gres = Vec::new();
+    lim.reserve_exact(&mut gres, lvs[e].groups())?;
+    for g in 0..lvs[e].groups() {
+        buf.clear();
+        let group = lvs[e].group(g);
+        lim.reserve(buf, 2 * group.len())?;
+        buf.extend(group.iter().map(|&(a, b)| {
+            (
+                resolve_patched_ref(sh, lvs, at, l, a),
+                resolve_patched_ref(sh, lvs, at, r, b),
+            )
+        }));
+        // Merged members can repeat a pair.
+        buf.sort_unstable();
+        buf.dedup();
+        gres.push(match normalize(sh, c, buf) {
+            Err(t) => t,
+            Ok(()) => mk(c, out.push(buf, lim)?),
+        });
+    }
+    Ok(gres)
 }
 
 /// Dense numbers for a diagram's references: stored node `i` of level `t`
@@ -591,7 +665,10 @@ struct Ids {
 
 impl Ids {
     fn new(num_nodes: usize) -> Ids {
-        Ids { base: vec![NONE; num_nodes], n: 0 }
+        Ids {
+            base: vec![NONE; num_nodes],
+            n: 0,
+        }
     }
     #[inline]
     fn id_alloc(
@@ -607,7 +684,11 @@ impl Ids {
         if b == NONE {
             b = self.n;
             self.base[v] = b;
-            let add = if s.shape.is_leaf(v as u32) { 3 } else { s.levels[v].width() as u32 };
+            let add = if s.shape.is_leaf(v as u32) {
+                3
+            } else {
+                s.levels[v].width() as u32
+            };
             self.n += add;
         }
         let id = (b + ix(x)) as usize;
@@ -689,7 +770,13 @@ impl Names {
 /// of the highest level below `c` where the members stop being twins (one
 /// is stored there, a pair of the level above names one, or they part).
 /// `c` itself when that level is `c`'s child.
-fn parts(sh: &super::Shape, nm: &Names, ids: &Ids, c: u32, members: impl Iterator<Item = Ref> + Clone) -> u32 {
+fn parts(
+    sh: &super::Shape,
+    nm: &Names,
+    ids: &Ids,
+    c: u32,
+    members: impl Iterator<Item = Ref> + Clone,
+) -> u32 {
     // The highest member, and where the members part.
     let mut h = NONE;
     for e in members.clone() {
@@ -697,7 +784,11 @@ fn parts(sh: &super::Shape, nm: &Names, ids: &Ids, c: u32, members: impl Iterato
             h = vt(e);
         }
     }
-    let mut w = if members.clone().all(|e| sh.within(vt(e), h)) { h } else { sh.parent[h as usize] };
+    let mut w = if members.clone().all(|e| sh.within(vt(e), h)) {
+        h
+    } else {
+        sh.parent[h as usize]
+    };
     for e in members {
         // The highest level at or below `c` naming `e`.
         let ls = nm.of_ref(ids, e);

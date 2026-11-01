@@ -12,9 +12,11 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::{filled, ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
-use crate::limits::Limits;
+use super::{
+    NEG, NONE, ONE, POS, Ref, SLevel, Shape, SkipForm, ZREF, filled, ix, mk, normalize, vt,
+};
 use crate::OperationError;
+use crate::limits::Limits;
 
 /// The product of `a` and `b` (references read from one child level) when
 /// known without building (a false or leaf result), or `None` when built at an
@@ -51,7 +53,12 @@ fn is_one(sh: &Shape, r: Ref) -> bool {
 /// level holding a node of `g` or of a leaf `g` reads a literal on. Below the
 /// cone every reference of `g` is `true`; the cone holds every ancestor of its
 /// levels.
-fn cone_of(sh: &Shape, g: &SkipForm, ng: &Numbered, lim: &Limits) -> Result<Vec<bool>, OperationError> {
+fn cone_of(
+    sh: &Shape,
+    g: &SkipForm,
+    ng: &Numbered,
+    lim: &Limits,
+) -> Result<Vec<bool>, OperationError> {
     let mut cone = filled(lim, sh.num_nodes(), false)?;
     let mut up = |mut t: u32| {
         while t != NONE && !cone[t as usize] {
@@ -159,7 +166,11 @@ struct Lists {
 
 impl Lists {
     fn new(n: usize, lim: &Limits) -> Result<Lists, OperationError> {
-        Ok(Lists { head: filled(lim, n, NIL)?, ent: Vec::new(), free: NIL })
+        Ok(Lists {
+            head: filled(lim, n, NIL)?,
+            ent: Vec::new(),
+            free: NIL,
+        })
     }
 
     #[inline]
@@ -187,7 +198,13 @@ impl Lists {
     /// gives, for the other reference, whether the entry stays listed and
     /// whether it is taken. Entries that do not stay are freed.
     #[inline]
-    fn scan(&mut self, i: usize, ends: &mut Vec<(Ref, Ref)>, lim: &Limits, judge: impl Fn(Ref) -> (bool, bool)) -> Result<(), OperationError> {
+    fn scan(
+        &mut self,
+        i: usize,
+        ends: &mut Vec<(Ref, Ref)>,
+        lim: &Limits,
+        judge: impl Fn(Ref) -> (bool, bool),
+    ) -> Result<(), OperationError> {
         let (mut prev, mut e) = (NIL, self.head[i]);
         while e != NIL {
             let (other, res, next) = self.ent[e as usize];
@@ -312,7 +329,11 @@ impl Numbered {
     /// from `s.out` or `s`'s levels in `f_cone`: since the cone holds every
     /// ancestor of its levels, the highest level where any such reference is
     /// read in `s` is attained at `s.out` or at a level in `f_cone`.
-    pub(super) fn of_cone(s: &SkipForm, f_cone: &[u32], lim: &Limits) -> Result<Numbered, OperationError> {
+    pub(super) fn of_cone(
+        s: &SkipForm,
+        f_cone: &[u32],
+        lim: &Limits,
+    ) -> Result<Numbered, OperationError> {
         Self::of_levels(s, f_cone, lim)
     }
 
@@ -326,7 +347,11 @@ impl Numbered {
         }
         let mut top = Vec::new();
         lim.try_resize(&mut top, n as usize, NONE)?;
-        let mut nb = Numbered { base, top, leaves: Vec::new() };
+        let mut nb = Numbered {
+            base,
+            top,
+            leaves: Vec::new(),
+        };
         nb.note(s, s.out, sh.root, lim)?;
         for &u in levels {
             let (l, r) = sh.kids[u as usize];
@@ -395,7 +420,10 @@ impl Numbered {
 
     /// The leaf references on leaf `c` the operand reads at level `u` above it.
     fn leaf_refs<'a>(&'a self, sh: &'a Shape, c: u32, u: u32) -> impl Iterator<Item = Ref> + 'a {
-        [ONE, POS, NEG].into_iter().map(move |lab| mk(c, lab)).filter(move |&x| self.read_at(sh, x, u))
+        [ONE, POS, NEG]
+            .into_iter()
+            .map(move |lab| mk(c, lab))
+            .filter(move |&x| self.read_at(sh, x, u))
     }
 }
 
@@ -414,7 +442,11 @@ impl Numbered {
 /// `g`'s pairs. A product whose other reference is no longer read is
 /// dropped from its reference's list when a scan meets it. Products no
 /// output path reaches are dropped at the end.
-pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipForm, Vec<bool>), OperationError> {
+pub(crate) fn and_scoped(
+    f: &SkipForm,
+    g: &SkipForm,
+    lim: &Limits,
+) -> Result<(SkipForm, Vec<bool>), OperationError> {
     // Shapes read from one vtree are equal; `f`'s serves both.
     debug_assert_eq!(f.shape.kids, g.shape.kids);
     let shape = Arc::clone(&f.shape);
@@ -437,7 +469,10 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     let seeds = identity_seeds(sh, f, &nf, &ng, &cone, &f_cone, lim)?;
     // The levels in the cone products can land on, children first.
     let mut todo: Vec<u32> = Vec::new();
-    lim.reserve(&mut todo, f_cone.len() + g.active.len() + nf.leaves.len() + ng.leaves.len())?;
+    lim.reserve(
+        &mut todo,
+        f_cone.len() + g.active.len() + nf.leaves.len() + ng.leaves.len(),
+    )?;
     todo.extend(f_cone.iter().chain(&g.active).copied());
     for nb in [&nf, &ng] {
         for &c in &nb.leaves {
@@ -464,7 +499,7 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         let steps = if sh.is_leaf(l) && sh.is_leaf(r) {
             conjoin_leaf_pair(sh, u, (f, &nf), (g, &ng), &mut work.batch, &mut out, lim)?
         } else {
-            work.conjoin_anchor_level(sh, u, (f, &nf), (g, &ng), &cone, &mut out, lim)?
+            work.conjoin_anchor_level((sh, u), (f, &nf), (g, &ng), &cone, &mut out, lim)?
         };
         lim.charge_work(steps);
         lim.check_stop()?;
@@ -539,7 +574,14 @@ impl AnchorScratch {
         lim.discard(self.ends);
     }
 
-    fn record_made(&mut self, sh: &Shape, u: u32, nf: &Numbered, ng: &Numbered, lim: &Limits) -> Result<(), OperationError> {
+    fn record_made(
+        &mut self,
+        sh: &Shape,
+        u: u32,
+        nf: &Numbered,
+        ng: &Numbered,
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
         let lookup = sh.looked_up[u as usize];
         if lookup {
             lim.reserve_map(&mut self.live, self.batch.made.len())?;
@@ -556,11 +598,9 @@ impl AnchorScratch {
     }
 
     /// Conjoin a level `u` that has at least one internal child (the anchor).
-    #[allow(clippy::too_many_arguments)]
     fn conjoin_anchor_level(
         &mut self,
-        sh: &Shape,
-        u: u32,
+        (sh, u): (&Shape, u32),
         (f, nf): (&SkipForm, &Numbered),
         (g, ng): (&SkipForm, &Numbered),
         cone: &[bool],
@@ -573,7 +613,13 @@ impl AnchorScratch {
         let right = !sh.is_leaf(r);
         let (cs, co) = if right { (r, l) } else { (l, r) };
         let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
-        let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
+        let join = |anchor: Ref, other: Ref| {
+            if right {
+                (other, anchor)
+            } else {
+                (anchor, other)
+            }
+        };
         let skips = sh.is_leaf(co);
         let other = |live: &FxHashMap<u64, Ref>, oa: Ref, ob: Ref| -> Ref {
             if is_one(sh, ob) && !cone[vt(oa) as usize] {
@@ -581,23 +627,13 @@ impl AnchorScratch {
             }
             match land_pair(sh, oa, ob) {
                 Some(x) => x,
-                None => live.get(&(((nf.id(oa) as u64) << 32) | ng.id(ob) as u64)).copied().unwrap_or(ZREF),
+                None => live
+                    .get(&(((nf.id(oa) as u64) << 32) | ng.id(ob) as u64))
+                    .copied()
+                    .unwrap_or(ZREF),
             }
         };
-        self.lstamp += 1;
-        self.gent.clear();
-        for j in 0..gl.width() as u32 {
-            for &p in gl.node(j) {
-                let (y, ob) = split(p);
-                let gy = ng.id(y);
-                if self.gmark[gy] != self.lstamp {
-                    self.gmark[gy] = self.lstamp;
-                    self.ghead[gy] = NIL;
-                }
-                lim.try_push(&mut self.gent, (j, ob, self.ghead[gy]))?;
-                self.ghead[gy] = (self.gent.len() - 1) as u32;
-            }
-        }
+        self.index_anchor_g_entries(gl, ng, right, lim)?;
         let mut work = 0u64;
         let gbase = ng.base[u as usize];
         for i in 0..fl.width() as u32 {
@@ -605,20 +641,7 @@ impl AnchorScratch {
             self.cstamp += 1;
             for &p in fl.node(i) {
                 let (x, oa) = split(p);
-                // The true products of `x` with references of `g` read at the anchor.
-                self.ends.clear();
-                self.pf.scan(nf.id(x), &mut self.ends, lim, |y| {
-                    let keep = ng.read_at(sh, y, cs);
-                    (keep, keep)
-                })?;
-                if sh.is_leaf(vt(x)) {
-                    for y in ng.leaf_refs(sh, vt(x), cs) {
-                        let res = leaf_and(vt(x), ix(x), ix(y));
-                        if res != ZREF {
-                            lim.try_push(&mut self.ends, (y, res))?;
-                        }
-                    }
-                }
+                self.collect_anchor_f_ends((sh, cs), x, nf, ng, lim)?;
                 for &(y, res) in &self.ends {
                     let gy = ng.id(y);
                     if self.gmark[gy] == self.lstamp {
@@ -640,24 +663,80 @@ impl AnchorScratch {
                     }
                     if skips && ng.above(sh, y, u) {
                         // `y` is `true` on the other side here.
-                        self.batch.push_stamped(&mut self.cg[gy], self.cstamp, (a, y), join(res, oa), lim)?;
+                        self.batch.push_stamped(
+                            &mut self.cg[gy],
+                            self.cstamp,
+                            (a, y),
+                            join(res, oa),
+                            lim,
+                        )?;
                     }
                 }
             }
             work += self.batch.emit(u, out, lim)?;
         }
         if skips {
-            work += self.conjoin_f_skips(sh, u, (cs, right), (f, nf), (g, ng), out, lim)?;
+            work += self.conjoin_f_skips((sh, u), (cs, right), (f, nf), (g, ng), out, lim)?;
         }
         Ok(work)
     }
 
+    /// Index `gl`'s pairs by their anchor reference into `self.ghead` and `self.gent`.
+    fn index_anchor_g_entries(
+        &mut self,
+        gl: &SLevel,
+        ng: &Numbered,
+        right: bool,
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
+        let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
+        self.lstamp += 1;
+        self.gent.clear();
+        for j in 0..gl.width() as u32 {
+            for &p in gl.node(j) {
+                let (y, ob) = split(p);
+                let gy = ng.id(y);
+                if self.gmark[gy] != self.lstamp {
+                    self.gmark[gy] = self.lstamp;
+                    self.ghead[gy] = NIL;
+                }
+                lim.try_push(&mut self.gent, (j, ob, self.ghead[gy]))?;
+                self.ghead[gy] = (self.gent.len() - 1) as u32;
+            }
+        }
+        Ok(())
+    }
+
+    /// Populate `self.ends` with the true products of `x` with references of `g`
+    /// read at anchor `cs`.
+    fn collect_anchor_f_ends(
+        &mut self,
+        (sh, cs): (&Shape, u32),
+        x: Ref,
+        nf: &Numbered,
+        ng: &Numbered,
+        lim: &Limits,
+    ) -> Result<(), OperationError> {
+        self.ends.clear();
+        self.pf.scan(nf.id(x), &mut self.ends, lim, |y| {
+            let keep = ng.read_at(sh, y, cs);
+            (keep, keep)
+        })?;
+        if sh.is_leaf(vt(x)) {
+            for y in ng.leaf_refs(sh, vt(x), cs) {
+                let res = leaf_and(vt(x), ix(x), ix(y));
+                if res != ZREF {
+                    lim.try_push(&mut self.ends, (y, res))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Skips of `f` through `u` against `g`'s nodes when the non-anchor child is a leaf.
-    #[allow(clippy::too_many_arguments)]
     fn conjoin_f_skips(
         &mut self,
-        sh: &Shape,
-        u: u32,
+        (sh, u): (&Shape, u32),
         (cs, right): (u32, bool),
         (_f, nf): (&SkipForm, &Numbered),
         (g, ng): (&SkipForm, &Numbered),
@@ -666,7 +745,13 @@ impl AnchorScratch {
     ) -> Result<u64, OperationError> {
         let gl = &g.levels[u as usize];
         let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
-        let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
+        let join = |anchor: Ref, other: Ref| {
+            if right {
+                (other, anchor)
+            } else {
+                (anchor, other)
+            }
+        };
         let mut work = 0u64;
         for j in 0..gl.width() as u32 {
             let b = mk(u, j);
@@ -687,7 +772,13 @@ impl AnchorScratch {
                     }
                 }
                 for &(x, res) in &self.ends {
-                    self.batch.push_stamped(&mut self.cf[nf.id(x)], self.cstamp, (x, b), join(res, ob), lim)?;
+                    self.batch.push_stamped(
+                        &mut self.cf[nf.id(x)],
+                        self.cstamp,
+                        (x, b),
+                        join(res, ob),
+                        lim,
+                    )?;
                 }
             }
             work += self.batch.emit(u, out, lim)?;
@@ -863,10 +954,18 @@ fn prune_outside_cone(
         }
     }
     lim.discard(dropped_roots);
-    let cand: Vec<u32> = out.active.iter().copied().filter(|&t| dirty[t as usize]).collect();
+    let cand: Vec<u32> = out
+        .active
+        .iter()
+        .copied()
+        .filter(|&t| dirty[t as usize])
+        .collect();
     out.collect_in(cand, lim)?;
     for &t in &f.active {
-        if !cone[t as usize] && dirty[t as usize] && out.levels[t as usize].width() < f.levels[t as usize].width() {
+        if !cone[t as usize]
+            && dirty[t as usize]
+            && out.levels[t as usize].width() < f.levels[t as usize].width()
+        {
             let mut u = t;
             while u != NONE && !cone[u as usize] {
                 cone[u as usize] = true;

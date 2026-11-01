@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
+use super::layout::Layout;
 use crate::limits::{Limits, OperationError};
 use crate::sort::Radix;
-use super::layout::Layout;
 
 /// Words one packed row occupies. The floor of one keeps a row of no
 /// variables a readable slice rather than an empty one.
@@ -73,7 +73,9 @@ fn ascending_within(rows: &[u64], num_vars: usize) -> bool {
     let mut last: Option<u64> = None;
     for step in rows.chunks(ASCENDING_STEP) {
         let mut ok = step.iter().fold(0u64, |acc, &word| acc | word) & past == 0;
-        ok &= step.windows(2).fold(true, |acc, pair| acc & (pair[0] < pair[1]));
+        ok &= step
+            .windows(2)
+            .fold(true, |acc, pair| acc & (pair[0] < pair[1]));
         ok &= last.is_none_or(|last| last < step[0]);
         if !ok {
             return false;
@@ -103,7 +105,11 @@ fn owned_rows(
         // layout's bit order, so re-encoding a row is a copy and only the bits
         // past the last variable have to go.
         let tail = num_vars - (w - 1) * 64;
-        let tail_mask = if tail == 64 { !0u64 } else { (1u64 << tail) - 1 };
+        let tail_mask = if tail == 64 {
+            !0u64
+        } else {
+            (1u64 << tail) - 1
+        };
         gate.poll(rows.len() as u64)?;
         if let (1, Some((&first, rest))) = (w, rows.split_first()) {
             // The pass that copies the words also sees whether they ascend
@@ -126,27 +132,8 @@ fn owned_rows(
             }
         }
     } else if layout.is_reversed() {
-        // `vars` runs left to right in leaf order and the leftmost leaf holds
-        // the highest bit, so re-encoding reverses a row's bits; the bits past
-        // the last variable land below the row and shift out.
         gate.poll(rows.len() as u64)?;
-        let shift = w * 64 - num_vars;
-        if w == 1 {
-            packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
-        } else {
-            packed.resize(rows.len(), 0);
-            for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
-                for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
-                    *to = word.reverse_bits();
-                }
-                if shift > 0 {
-                    for j in 0..w {
-                        let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
-                        out[j] = out[j] >> shift | above;
-                    }
-                }
-            }
-        }
+        pack_reversed_rows(rows, num_vars, w, &mut packed);
     } else if w == 1 && n >= BYTE_TABLE_MIN_ROWS {
         // One table per byte of the input word holds where that byte's bits
         // land, so a row is re-encoded by eight lookups instead of one step
@@ -156,25 +143,63 @@ fn owned_rows(
         packed.extend(rows.iter().map(|&word| Layout::reencode_word(&table, word)));
         lim.discard(table);
     } else {
-        packed.resize(rows.len(), 0);
-        for k in 0..n {
-            gate.poll(w as u64)?;
-            for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
-                // A row's bits past the last variable carry no assignment.
-                let used = num_vars - j * 64;
-                let mut live = if used >= 64 { word } else { word & ((1u64 << used) - 1) };
-                while live != 0 {
-                    let bit = live.trailing_zeros() as usize;
-                    live &= live - 1;
-                    let to = layout.position[j * 64 + bit] as usize;
-                    packed[k * w + to / 64] |= 1u64 << (to % 64);
-                }
-            }
-        }
+        pack_general_rows(rows, layout, num_vars, (n, w), &mut packed, &mut gate)?;
     }
 
     gate.flush()?;
     sorted_distinct(lim, radix, num_vars, layout, packed, w, distinct)
+}
+
+/// Re-encode `rows` into `packed` when `layout.is_reversed()`.
+fn pack_reversed_rows(rows: &[u64], num_vars: usize, w: usize, packed: &mut Vec<u64>) {
+    let shift = w * 64 - num_vars;
+    if w == 1 {
+        packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
+    } else {
+        packed.resize(rows.len(), 0);
+        for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
+            for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
+                *to = word.reverse_bits();
+            }
+            if shift > 0 {
+                for j in 0..w {
+                    let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
+                    out[j] = out[j] >> shift | above;
+                }
+            }
+        }
+    }
+}
+
+/// Re-encode `rows` into `packed` bit by bit through `layout.position`.
+fn pack_general_rows(
+    rows: &[u64],
+    layout: &Layout,
+    num_vars: usize,
+    (n, w): (usize, usize),
+    packed: &mut Vec<u64>,
+    gate: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    packed.resize(rows.len(), 0);
+    for k in 0..n {
+        gate.poll(w as u64)?;
+        for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
+            // A row's bits past the last variable carry no assignment.
+            let used = num_vars - j * 64;
+            let mut live = if used >= 64 {
+                word
+            } else {
+                word & ((1u64 << used) - 1)
+            };
+            while live != 0 {
+                let bit = live.trailing_zeros() as usize;
+                live &= live - 1;
+                let to = layout.position[j * 64 + bit] as usize;
+                packed[k * w + to / 64] |= 1u64 << (to % 64);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats
@@ -250,7 +275,10 @@ fn ordered_low_bits(layout: &Layout, packed: &[u64]) -> usize {
             .max();
         let Some(width) = widest else { return 0 };
         let mask = (1u64 << width) - 1;
-        if packed.windows(2).all(|pair| pair[0] & mask <= pair[1] & mask) {
+        if packed
+            .windows(2)
+            .all(|pair| pair[0] & mask <= pair[1] & mask)
+        {
             return width as usize;
         }
         below = width;

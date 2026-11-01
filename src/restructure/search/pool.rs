@@ -21,11 +21,12 @@ use crate::Engine;
 use crate::diagram::{Tdd, TddLevel};
 use crate::limits::{Charged, Limits, OperationError, Transient};
 use crate::restructure::relevel::{
-    Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels, score_levels_crossed_too,
+    Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels,
+    score_levels_crossed_too,
 };
 use crate::restructure::scratch::RestructureScratch;
-use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::rng::Lcg;
+use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
@@ -63,7 +64,8 @@ impl PoolProbe<'_> {
     /// Live pairs over all members after the move, minus before. Negative
     /// means the move shrank the pool; no other level moved.
     pub fn live_pairs_delta(&self) -> i64 {
-        self.after.iter().map(|&p| p as i64).sum::<i64>() - self.before.iter().map(|&p| p as i64).sum::<i64>()
+        self.after.iter().map(|&p| p as i64).sum::<i64>()
+            - self.before.iter().map(|&p| p as i64).sum::<i64>()
     }
 }
 
@@ -203,7 +205,13 @@ pub struct PoolRestarts {
 
 impl Default for PoolRestarts {
     fn default() -> Self {
-        PoolRestarts { count: 0, kick: 20, slack_permille: 50, seed: 0, min_gain_permille: 0 }
+        PoolRestarts {
+            count: 0,
+            kick: 20,
+            slack_permille: 50,
+            seed: 0,
+            min_gain_permille: 0,
+        }
     }
 }
 
@@ -329,7 +337,9 @@ impl Engine {
             return Ok(false);
         }
         let mut tree = Vtree::clone(&shared);
-        let Some(pending) = move_in_place(&mut tree, mv) else { return Ok(false) };
+        let Some(pending) = move_in_place(&mut tree, mv) else {
+            return Ok(false);
+        };
         let info = pending.commit(&mut tree);
         let mut scratch = self.scratch.restructure.checkout(self);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
@@ -365,7 +375,11 @@ impl Engine {
     ///
     /// As [`rotate_pool_if`](Self::rotate_pool_if), and the errors of the
     /// reductions.
-    pub fn pool_search(&self, members: &mut [&mut Tdd], config: &PoolSearchConfig) -> Result<PoolSearchStats, OperationError> {
+    pub fn pool_search(
+        &self,
+        members: &mut [&mut Tdd],
+        config: &PoolSearchConfig,
+    ) -> Result<PoolSearchStats, OperationError> {
         let _op = self.limits().enter()?;
         let mut stats = PoolSearchStats::default();
         if members.is_empty() {
@@ -448,7 +462,17 @@ impl<'l> PoolDescent<'l> {
         let mut crossed_scores = Transient::new(lim, Vec::new());
         lim.reserve_exact(&mut crossed_scores, members.len())?;
         let until = start.saturating_add(config.max_work_units);
-        Ok(PoolDescent { eng, tree, config, until, scratch, stats, known, crossed_scores, marginal })
+        Ok(PoolDescent {
+            eng,
+            tree,
+            config,
+            until,
+            scratch,
+            stats,
+            known,
+            crossed_scores,
+            marginal,
+        })
     }
 
     /// The descent of [`Engine::pool_search`] and its restarts, between its two
@@ -476,7 +500,9 @@ impl<'l> PoolDescent<'l> {
             let mut undo = Undo::begin(members, self.tree, &self.known);
             let accepts = self.stats.accepts;
             let outcome = self.restart(members, &internals, &mut rng, &mut undo);
-            if outcome.is_ok() && live_pairs(members) < kept_below(undo.pairs, restarts.min_gain_permille) {
+            if outcome.is_ok()
+                && live_pairs(members) < kept_below(undo.pairs, restarts.min_gain_permille)
+            {
                 self.stats.restarts_kept += 1;
                 *changed |= self.stats.accepts > accepts;
                 drop(undo);
@@ -513,14 +539,25 @@ impl<'l> PoolDescent<'l> {
                 return Ok(());
             }
             let v = internals[rng.below(internals.len() as u64) as usize];
-            let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
+            let kind = if rng.below(2) == 0 {
+                RotationKind::Left
+            } else {
+                RotationKind::Right
+            };
             let crossed = self.config.crossed && rng.below(2) == 0;
-            let slack = (live_pairs(members) as u64).saturating_mul(u64::from(restarts.slack_permille)) / 1000;
+            let slack = (live_pairs(members) as u64)
+                .saturating_mul(u64::from(restarts.slack_permille))
+                / 1000;
             let (left, right) = self.tree.children(v);
             let parent = self.tree.node(v).parent();
-            let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+            let mv = PoolMove {
+                rotation: RotationMove { pivot: v, kind },
+                crossed,
+            };
             self.stats.probes += 1;
-            let slack = usize::try_from(slack).unwrap_or(usize::MAX).saturating_add(1);
+            let slack = usize::try_from(slack)
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
             if self.probe_in_place(members, mv, TwinMode::Alone, slack, Some(undo))? {
                 kept += 1;
                 self.stats.accepts += 1;
@@ -567,13 +604,23 @@ struct Known {
 
 impl Known {
     fn new(nodes: usize) -> Known {
-        Known { refused: vec![false; nodes], refusals: vec![[None; 4]; nodes] }
+        Known {
+            refused: vec![false; nodes],
+            refusals: vec![[None; 4]; nodes],
+        }
     }
 
     /// Forget what the kept move `mv` may have changed, `tree` the tree after
     /// it, `left`, `right` and `parent` the pivot's children and parent before
     /// it.
-    fn kept(&mut self, tree: &Vtree, mv: PoolMove, left: VtreeIdx, right: VtreeIdx, parent: Option<VtreeIdx>) {
+    fn kept(
+        &mut self,
+        tree: &Vtree,
+        mv: PoolMove,
+        left: VtreeIdx,
+        right: VtreeIdx,
+        parent: Option<VtreeIdx>,
+    ) {
         let v = mv.rotation.pivot;
         let promoted = match mv.rotation.kind {
             RotationKind::Left => right,
@@ -582,11 +629,18 @@ impl Known {
         self.refusals[v.idx()] = [None; 4];
         self.refusals[promoted.idx()] = [None; 4];
         if let Some(parent) = parent {
-            let at_parent = if tree.children(parent).1 == v { RotationKind::Left } else { RotationKind::Right };
+            let at_parent = if tree.children(parent).1 == v {
+                RotationKind::Left
+            } else {
+                RotationKind::Right
+            };
             self.refusals[parent.idx()][move_slot(at_parent, false)] = None;
             self.refusals[parent.idx()][move_slot(at_parent, true)] = None;
         }
-        for t in [Some(v), Some(left), Some(right), parent].into_iter().flatten() {
+        for t in [Some(v), Some(left), Some(right), parent]
+            .into_iter()
+            .flatten()
+        {
             self.refused[t.idx()] = false;
         }
     }
@@ -614,7 +668,10 @@ impl<'a> Undo<'a> {
         Undo {
             tree: tree.clone(),
             known: known.clone(),
-            members: members.iter().map(|m| DiagramHeader::clone_from_tdd(m)).collect(),
+            members: members
+                .iter()
+                .map(|m| DiagramHeader::clone_from_tdd(m))
+                .collect(),
             filed: vec![false; tree.num_nodes()],
             levels: Vec::new(),
             pairs: live_pairs(members),
@@ -671,14 +728,19 @@ impl<'l> PoolDescent<'l> {
         members: &mut [&mut Tdd],
         mut undo: Option<&mut Undo<'l>>,
     ) -> Result<bool, OperationError> {
-        let crossings: &[bool] = if self.config.crossed { &[false, true] } else { &[false] };
+        let crossings: &[bool] = if self.config.crossed {
+            &[false, true]
+        } else {
+            &[false]
+        };
         let until = self.until;
         let spent = |eng: &Engine| eng.limits().work_units() >= until;
         let mut sweeps = 0usize;
         while sweeps < self.config.max_sweeps && !spent(self.eng) {
             sweeps += 1;
             self.stats.sweeps += 1;
-            let internals: Vec<VtreeIdx> = self.tree.internal_bottomup().map(|(v, _, _)| v).collect();
+            let internals: Vec<VtreeIdx> =
+                self.tree.internal_bottomup().map(|(v, _, _)| v).collect();
             let mut kept = 0usize;
             for v in internals {
                 self.eng.limits().check_stop()?;
@@ -727,13 +789,22 @@ impl<'l> PoolDescent<'l> {
                     self.eng.limits().charge_work(units);
                     continue;
                 }
-                let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+                let mv = PoolMove {
+                    rotation: RotationMove { pivot: v, kind },
+                    crossed,
+                };
                 // A plain move whose crossing is to be probed scores the
                 // crossing too; refused, it leaves the levels as they
                 // were, and the crossing reads its scores.
                 let twin = if crossed {
-                    if twin_scored { TwinMode::Given } else { TwinMode::Alone }
-                } else if self.config.crossed && self.known.refusals[v.idx()][move_slot(kind, true)].is_none() {
+                    if twin_scored {
+                        TwinMode::Given
+                    } else {
+                        TwinMode::Alone
+                    }
+                } else if self.config.crossed
+                    && self.known.refusals[v.idx()][move_slot(kind, true)].is_none()
+                {
                     self.crossed_scores.clear();
                     twin_scored = true;
                     TwinMode::Fill
@@ -741,11 +812,17 @@ impl<'l> PoolDescent<'l> {
                     TwinMode::Alone
                 };
                 let before = self.eng.limits().work_units();
-                if self.marginal || !self.probe_in_place(members, mv, twin, 0, undo.as_deref_mut())? {
-                    self.known.refusals[v.idx()][slot] = Some(self.eng.limits().work_units() - before);
+                if self.marginal
+                    || !self.probe_in_place(members, mv, twin, 0, undo.as_deref_mut())?
+                {
+                    self.known.refusals[v.idx()][slot] =
+                        Some(self.eng.limits().work_units() - before);
                     continue;
                 }
-                debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), self.marginal);
+                debug_assert_eq!(
+                    members.iter().any(|m| m.has_marginal_level()),
+                    self.marginal
+                );
                 self.stats.accepts += 1;
                 self.known.kept(self.tree, mv, left, right, parent);
                 return Ok(Some(true));
@@ -771,7 +848,15 @@ impl<'l> PoolDescent<'l> {
             TwinMode::Fill => Twin::Fill(&mut self.crossed_scores),
             TwinMode::Given => Twin::Given(&self.crossed_scores),
         };
-        probe_in_place(self.eng, members, self.tree, (mv, self.config.max_inner_pairs, slack), self.scratch, twin, undo)
+        probe_in_place(
+            self.eng,
+            members,
+            self.tree,
+            (mv, self.config.max_inner_pairs, slack),
+            self.scratch,
+            twin,
+            undo,
+        )
     }
 }
 
@@ -788,7 +873,9 @@ fn probe_in_place<'l>(
     twin: Twin<'_>,
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
-    let Some(pending) = move_in_place(tree, mv) else { return Ok(false) };
+    let Some(pending) = move_in_place(tree, mv) else {
+        return Ok(false);
+    };
     let info = pending.info();
     let step = BoundedMove { info, mv, bound };
     match probe_scored(eng, members, step, scratch, twin, slack, undo) {
@@ -799,7 +886,9 @@ fn probe_in_place<'l>(
                 RotationKind::Left => info.a_idx,
                 RotationKind::Right => info.c_idx,
             };
-            let moved = tree.topo_pos(misplaced).saturating_sub(tree.topo_pos(info.w_idx));
+            let moved = tree
+                .topo_pos(misplaced)
+                .saturating_sub(tree.topo_pos(info.w_idx));
             eng.limits().charge_work(u64::from(moved));
             pending.commit(tree);
             Ok(true)
@@ -818,7 +907,9 @@ fn probe_in_place<'l>(
 #[inline]
 fn replay_refusals() -> bool {
     #[cfg(test)]
-    if !tests::replays_refusal() { return false; }
+    if !tests::replays_refusal() {
+        return false;
+    }
     true
 }
 
@@ -832,7 +923,9 @@ fn move_slot(kind: RotationKind, crossed: bool) -> usize {
 /// does not apply. A crossed move that is reverted owes the swap back.
 fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
     let RotationMove { pivot, kind } = mv.rotation;
-    let VtreeNode::Internal { left, right, .. } = *tree.node(pivot) else { return None };
+    let VtreeNode::Internal { left, right, .. } = *tree.node(pivot) else {
+        return None;
+    };
     let promoted = match kind {
         RotationKind::Left => right,
         RotationKind::Right => left,
@@ -905,21 +998,29 @@ fn rebuild_member<'a>(
     scratch: &mut RestructureScratch,
 ) -> Result<Option<usize>, OperationError> {
     let BoundedMove { info, mv, .. } = step;
-    saved.push((i, Saved {
-        header: DiagramHeader::take(m),
-        levels: None,
-    }));
+    saved.push((
+        i,
+        Saved {
+            header: DiagramHeader::take(m),
+            levels: None,
+        },
+    ));
     m.levels.forget();
     // No member has a marginal level here.
     let rebuilt = match prepared {
-        Some(prepared) => finish_levels(lim, m, &info, mv.rotation.kind, false, scratch, prepared).map(Some),
+        Some(prepared) => {
+            finish_levels(lim, m, &info, mv.rotation.kind, false, scratch, prepared).map(Some)
+        }
         None => rebuild_levels(lim, m, step.step(), false, scratch),
     };
     let Some((outer, inner)) = rebuilt? else {
         return Ok(None);
     };
-    saved.last_mut().expect("pushed above").1.levels = Some((Transient::new(lim, outer), Transient::new(lim, inner)));
-    Ok(Some(m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs()))
+    saved.last_mut().expect("pushed above").1.levels =
+        Some((Transient::new(lim, outer), Transient::new(lim, inner)));
+    Ok(Some(
+        m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs(),
+    ))
 }
 
 /// Rebuild every member at `step`, stopping on the first refusal or error, and
@@ -939,7 +1040,10 @@ fn rebuild_other_members<'a>(
         let prep = prepared.as_deref_mut().and_then(|p| p[i].as_mut());
         let had_prep = prep.is_some();
         let rebuilt = rebuild_member(lim, i, m, step, prep, &mut saved, scratch);
-        debug_assert!(!had_prep || !matches!(rebuilt, Ok(None)), "a rebuild passes the bound its preparation passed");
+        debug_assert!(
+            !had_prep || !matches!(rebuilt, Ok(None)),
+            "a rebuild passes the bound its preparation passed"
+        );
         outcome = match rebuilt {
             Ok(Some(pairs)) => on_rebuilt(i, had_prep, pairs).map(|()| true),
             other => other.map(|_| false),
@@ -958,7 +1062,10 @@ struct PreparedMembers(Vec<Option<Prepared>>);
 
 impl Charged for PreparedMembers {
     fn charged_bytes(&self) -> u64 {
-        self.0.iter().flatten().fold(self.0.charged_bytes(), |bytes, p| bytes + p.charged_bytes())
+        self.0
+            .iter()
+            .flatten()
+            .fold(self.0.charged_bytes(), |bytes, p| bytes + p.charged_bytes())
     }
 }
 
@@ -1001,7 +1108,10 @@ fn probe(
     let mut prepared = Transient::new(lim, PreparedMembers::default());
     lim.reserve_exact(&mut prepared.0, members.len())?;
     for m in members.iter() {
-        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
+        let (outer, inner) = (
+            m.levels[info.v_idx.idx()].live_pairs(),
+            m.levels[info.w_idx.idx()].live_pairs(),
+        );
         let old = outer + inner;
         before.push(old);
         if defer && outer <= 1 && inner == outer {
@@ -1011,7 +1121,11 @@ fn probe(
             continue;
         }
         prepared.0.push(Some(Prepared::default()));
-        let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
+        let slot = prepared
+            .0
+            .last_mut()
+            .and_then(Option::as_mut)
+            .expect("pushed above");
         let Some(new) = prepare_levels(lim, m, step.step(), false, scratch, slot)? else {
             return Ok(false);
         };
@@ -1022,7 +1136,10 @@ fn probe(
     // decides.
     gate.flush()?;
     lim.check_stop()?;
-    if !accept(&PoolProbe { before: &before, after: &after }) {
+    if !accept(&PoolProbe {
+        before: &before,
+        after: &after,
+    }) {
         return Ok(false);
     }
     // Kept: every member rebuilt, each put back if a later one is refused.
@@ -1032,8 +1149,15 @@ fn probe(
         step,
         scratch,
         |i, had_prep, pairs| {
-            debug_assert_eq!(pairs, after[i], "a rebuild leaves the pairs its preparation gave");
-            if had_prep { Ok(()) } else { gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS) }
+            debug_assert_eq!(
+                pairs, after[i],
+                "a rebuild leaves the pairs its preparation gave"
+            );
+            if had_prep {
+                Ok(())
+            } else {
+                gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
+            }
         },
         Some(&mut prepared.0),
     )?;
@@ -1081,18 +1205,7 @@ fn probe_scored<'l>(
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
-    let mut after = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut after, members.len())?;
-    after.extend_from_slice(&before);
-    // The largest members first: a move they refuse is refused with less
-    // of the pool read.
-    let mut order = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut order, members.len())?;
-    order.extend(0..members.len());
-    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
-    if let Twin::Fill(slots) = &mut twin {
-        slots.resize(members.len(), None);
-    }
+    let (mut after, order) = init_score_order(lim, &before, &mut twin)?;
     // The floors of the members still to score, and the pairs of those
     // scored, of the move and of its crossing where it is scored too.
     let mut rest = floors.iter().sum::<usize>();
@@ -1108,7 +1221,14 @@ fn probe_scored<'l>(
             continue;
         }
         let new = score_member_move(
-            lim, m, i, step, &mut scratch.score, &mut twin, (sum, &mut sum_crossed), (rest, limit),
+            lim,
+            m,
+            i,
+            step,
+            &mut scratch.score,
+            &mut twin,
+            (sum, &mut sum_crossed),
+            (rest, limit),
         )?;
         let Some(new) = new else {
             // Refused, by the cap or the bound: this member and the ones
@@ -1135,13 +1255,63 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         return Ok(false);
     }
+    finish_probed_move(
+        lim,
+        members,
+        step,
+        scratch,
+        (&before, &scored, &mut after),
+        limit,
+        (gate, undo),
+    )
+}
+
+type ScoreOrderBufs<'l> = (Transient<'l, Vec<usize>>, Transient<'l, Vec<usize>>);
+
+/// Initialize the `after` score table from `before`, sort `order` largest-first,
+/// and size `twin`'s slot table when filling.
+fn init_score_order<'l>(
+    lim: &'l Limits,
+    before: &[usize],
+    twin: &mut Twin<'_>,
+) -> Result<ScoreOrderBufs<'l>, OperationError> {
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, before.len())?;
+    after.extend_from_slice(before);
+    // The largest members first: a move they refuse is refused with less
+    // of the pool read.
+    let mut order = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut order, before.len())?;
+    order.extend(0..before.len());
+    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
+    if let Twin::Fill(slots) = twin {
+        slots.resize(before.len(), None);
+    }
+    Ok((after, order))
+}
+
+/// Rebuild all members for a move that passed scoring and settle or roll back
+/// according to whether the rebuilt total stays under `limit`.
+fn finish_probed_move<'l>(
+    lim: &'l Limits,
+    members: &mut [&mut Tdd],
+    step: BoundedMove,
+    scratch: &mut RestructureScratch,
+    (before, scored, after): (&[usize], &[bool], &mut [usize]),
+    limit: usize,
+    (mut gate, undo): (crate::limits::PollGate<'_>, Option<&mut Undo<'l>>),
+) -> Result<bool, OperationError> {
     let (mut saved, outcome) = rebuild_other_members(
         lim,
         members,
         step,
         scratch,
         |i, _, pairs| {
-            debug_assert!(!scored[i] || pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
+            debug_assert!(
+                !scored[i] || pairs >= after[i],
+                "a score is at most the pairs: {} > {pairs}",
+                after[i]
+            );
             after[i] = pairs;
             gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
         },
@@ -1154,10 +1324,14 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(lim, members, &info, &mut saved, outcome, undo)
+    settle(lim, members, &step.info, &mut saved, outcome, undo)
 }
 
-type MemberFloors<'a> = (Transient<'a, Vec<usize>>, Transient<'a, Vec<bool>>, Transient<'a, Vec<usize>>);
+type MemberFloors<'a> = (
+    Transient<'a, Vec<usize>>,
+    Transient<'a, Vec<bool>>,
+    Transient<'a, Vec<usize>>,
+);
 
 /// Each member's old pair total, whether it is scored (a member with at most
 /// one pair on each level is not, its pairs unchanged), and the least pairs it
@@ -1209,7 +1383,13 @@ fn score_member_move(
             // at nothing.
             let crossed_cap = sum_crossed.map_or(0, cap);
             let [plain, crossed] = score_levels_crossed_too(
-                lim, m, &info, mv.rotation.kind, score, bound, [cap(sum), crossed_cap],
+                lim,
+                m,
+                &info,
+                mv.rotation.kind,
+                score,
+                bound,
+                [cap(sum), crossed_cap],
             )?;
             slots[i] = Some(crossed);
             *sum_crossed = (*sum_crossed).zip(crossed).map(|(s, n)| s + n);
@@ -1225,7 +1405,14 @@ fn score_member_move(
 /// A level's live pairs and the nodes that hold them.
 fn pairs_and_owners(level: &TddLevel) -> (usize, usize) {
     match level.implicit() {
-        Some(d) => (d.pairs(), if d.pairs_per_node() == 0 { 0 } else { d.nodes() }),
+        Some(d) => (
+            d.pairs(),
+            if d.pairs_per_node() == 0 {
+                0
+            } else {
+                d.nodes()
+            },
+        ),
         None => {
             let (pairs, live, _) = level.pair_census();
             (pairs as usize, live as usize)
@@ -1273,7 +1460,8 @@ fn settle<'a>(
         for (i, s) in saved.drain(..) {
             let m = &mut members[i];
             m.close_changed_levels(&[info.v_idx, info.w_idx]);
-            m.dirty.merge_under_kept(s.header.dirty, &[info.v_idx, info.w_idx]);
+            m.dirty
+                .merge_under_kept(s.header.dirty, &[info.v_idx, info.w_idx]);
         }
         return Ok(true);
     }
@@ -1312,7 +1500,10 @@ fn debug_check_scores(
         let new = prepare_levels(lim, m, step.step(), false, scratch, &mut prepared)?;
         lim.discard(prepared);
         if let Some(new) = new {
-            debug_assert!(new >= score, "a score is at most the pairs: {score} > {new}");
+            debug_assert!(
+                new >= score,
+                "a score is at most the pairs: {score} > {new}"
+            );
         }
     }
     Ok(())
@@ -1344,7 +1535,10 @@ fn debug_check_refusal(
         let Some(new) = new else { return Ok(()) };
         pairs += new;
     }
-    debug_assert!(pairs >= total, "a capped score refused a move to {pairs} pairs from {total}");
+    debug_assert!(
+        pairs >= total,
+        "a capped score refused a move to {pairs} pairs from {total}"
+    );
     Ok(())
 }
 

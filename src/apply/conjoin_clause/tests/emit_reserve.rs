@@ -46,7 +46,10 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
     ];
     let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 7)), &cnf);
     let expected = BigUint::from(brute_force_count(n, &cnf));
-    assert!(expected > BigUint::from(0u32), "fixture must stay satisfiable");
+    assert!(
+        expected > BigUint::from(0u32),
+        "fixture must stay satisfiable"
+    );
     assert_eq!(acc.model_count().unwrap(), expected);
     assert_fold_is_valid(&acc);
 }
@@ -70,7 +73,10 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
         vec![-3, 4, -5],
     ];
     let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 3)), &cnf);
-    assert_eq!(acc.model_count().unwrap(), BigUint::from(brute_force_count(n, &cnf)));
+    assert_eq!(
+        acc.model_count().unwrap(),
+        BigUint::from(brute_force_count(n, &cnf))
+    );
     assert_fold_is_valid(&acc);
 }
 
@@ -80,7 +86,9 @@ fn a_clause_reuses_the_single_node_input_arena() {
     let input = Tdd::one(&tree);
     assert_canonical(&input);
     let nodes = input.level(tree.root()).nodes.stored().as_ptr();
-    let result = Engine::new().and_clause(input, &[crate::Literal::try_from(1).unwrap()]).unwrap();
+    let result = Engine::new()
+        .and_clause(input, &[crate::Literal::try_from(1).unwrap()])
+        .unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 128u32.into());
     assert_eq!(result.level(tree.root()).nodes.stored().as_ptr(), nodes);
@@ -92,14 +100,21 @@ fn a_clause_reuses_empty_input_pair_capacity() {
     let eng = Engine::new();
     let one = Tdd::one(&tree);
     assert_canonical(&one);
-    let input = eng.and_clause(one, &[crate::Literal::try_from(1).unwrap()]).unwrap();
+    let input = eng
+        .and_clause(one, &[crate::Literal::try_from(1).unwrap()])
+        .unwrap();
     assert_canonical(&input);
     let level = input.level(tree.root());
     assert!(level.pairs.is_empty());
     assert!(level.pairs.capacity() > 0);
     let pairs = level.pairs.stored().unwrap().as_ptr();
-    let result = eng.and_clause(input, &[crate::Literal::try_from(2).unwrap()]).unwrap();
+    let result = eng
+        .and_clause(input, &[crate::Literal::try_from(2).unwrap()])
+        .unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 64u32.into());
-    assert_eq!(result.level(tree.root()).pairs.stored().unwrap().as_ptr(), pairs);
+    assert_eq!(
+        result.level(tree.root()).pairs.stored().unwrap().as_ptr(),
+        pairs
+    );
 }

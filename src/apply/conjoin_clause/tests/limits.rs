@@ -5,16 +5,28 @@
 use std::sync::Arc;
 
 use crate::limits::LimitConfig;
-use crate::test_helpers::{compile_clauses_on, rand_cnf, stopping_engine, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{
+    CnfShape, Lcg, compile_clauses_on, rand_cnf, stopping_engine, vtree_shapes,
+};
 use crate::vtree::{VarId, Vtree};
-use crate::{Literal, OperationError, Engine, Tdd};
+use crate::{Engine, Literal, OperationError, Tdd};
 
 #[test]
 fn a_stop_decision_cuts_the_rebuild() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = stopping_engine();
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap();
-    assert_eq!(eng.and_clause(f, &[crate::Literal::try_from(3).unwrap(), crate::Literal::try_from(4).unwrap()]).err(), Some(OperationError::Stopped));
+    assert_eq!(
+        eng.and_clause(
+            f,
+            &[
+                crate::Literal::try_from(3).unwrap(),
+                crate::Literal::try_from(4).unwrap()
+            ]
+        )
+        .err(),
+        Some(OperationError::Stopped)
+    );
 }
 
 #[test]
@@ -22,13 +34,28 @@ fn the_output_cap_counts_the_rebuilt_levels() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap();
-    let _armed = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
-    assert_eq!(eng.and_clause(f, &[crate::Literal::try_from(3).unwrap(), crate::Literal::try_from(4).unwrap()]).err(), Some(OperationError::OutputCap));
+    let _armed = eng
+        .limits()
+        .scope(LimitConfig::none().with_output_node_cap(Some(0)));
+    assert_eq!(
+        eng.and_clause(
+            f,
+            &[
+                crate::Literal::try_from(3).unwrap(),
+                crate::Literal::try_from(4).unwrap()
+            ]
+        )
+        .err(),
+        Some(OperationError::OutputCap)
+    );
 }
 
 /// The pairs of `d`'s levels at `spine`.
 fn spine_pairs(d: &Tdd, spine: &[usize]) -> u64 {
-    spine.iter().map(|&t| d.levels[t].pair_counts().sum::<usize>() as u64).sum()
+    spine
+        .iter()
+        .map(|&t| d.levels[t].pair_counts().sum::<usize>() as u64)
+        .sum()
 }
 
 /// Random formulas on every vtree shape, each conjoined with clauses of two
@@ -44,15 +71,33 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
     for (name, vtree) in vtree_shapes(n) {
         for case in 0..6 {
             let eng = Engine::new();
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));
+            let f = compile_clauses_on(
+                &eng,
+                &vtree,
+                &rand_cnf(
+                    &mut rng,
+                    n,
+                    CnfShape {
+                        clauses: 24,
+                        width: 3,
+                    },
+                ),
+            );
             let mut vars: Vec<u32> = (1..=n).collect();
             let width = 2 + case % 2;
             for k in 0..width {
                 let j = k + rng.below(u64::from(n) - k as u64) as usize;
                 vars.swap(k, j);
             }
-            let clause: Vec<Literal> = vars[..width].iter()
-                .map(|&v| if rng.coin() { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) })
+            let clause: Vec<Literal> = vars[..width]
+                .iter()
+                .map(|&v| {
+                    if rng.coin() {
+                        Literal::pos(VarId(v))
+                    } else {
+                        Literal::neg(VarId(v))
+                    }
+                })
                 .collect();
             // The levels whose subtree holds a clause variable.
             let mut spine = Vec::new();

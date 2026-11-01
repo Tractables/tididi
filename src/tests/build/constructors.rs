@@ -1,4 +1,3 @@
-
 use crate::diagram::ChildDecoder;
 use std::sync::Arc;
 
@@ -6,7 +5,6 @@ use super::*;
 
 use crate::apply::conjoin_clause::conjoin_clause_on;
 use crate::test_helpers::clause_to_tdd;
-
 
 use crate::diagram::ZERO;
 use crate::test_helpers::{assert_canonical, assert_same_shape, literals, vtree_shapes};
@@ -24,8 +22,16 @@ fn test_constant_one() {
     }
     // Leaf levels are marginal (empty nodes vec, virtual width 3)
     for (t, _var) in vtree.leaf_bottomup() {
-        assert_eq!(tdd.level(t).slot_count(), 0, "Leaf level should have no stored nodes");
-        assert_eq!(tdd.reference_slot_count(t), LEAF_WIDTH, "Leaf effective width should be LEAF_WIDTH");
+        assert_eq!(
+            tdd.level(t).slot_count(),
+            0,
+            "Leaf level should have no stored nodes"
+        );
+        assert_eq!(
+            tdd.reference_slot_count(t),
+            LEAF_WIDTH,
+            "Leaf effective width should be LEAF_WIDTH"
+        );
     }
     // Output: for multi-var vtrees, root is internal → output at index 0.
     // For single-var vtrees, root is leaf → output at implicit One index 0.
@@ -34,24 +40,25 @@ fn test_constant_one() {
 
 // ==================== Clause diagram structural invariants ====================
 
+const CLAUSE_CASES: &[(u32, &[i32])] = &[
+    (2, &[1]),
+    (3, &[1, 2]),
+    (3, &[1, 2, 3]),
+    (4, &[1, -3]),
+    (4, &[-1, -2, -3, -4]),
+    (6, &[1]),
+    (6, &[3, 5]),
+    (8, &[1, 4, 8]),
+];
+
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
     // Minimize changes clause diagram structure (prune removes the unreachable d_root
     // at the root, and for sparse clauses cascades further), but must preserve
     // the Boolean function. Verify via model count.
-    let cases: Vec<(u32, Vec<i32>)> = vec![
-        (2, vec![1]),
-        (3, vec![1, 2]),
-        (3, vec![1, 2, 3]),
-        (4, vec![1, -3]),
-        (4, vec![-1, -2, -3, -4]),
-        (6, vec![1]),
-        (6, vec![3, 5]),
-        (8, vec![1, 4, 8]),
-    ];
-    for (num_vars, lits) in &cases {
+    for &(num_vars, lits) in CLAUSE_CASES {
         let clause = literals(lits);
-        for (shape_name, vtree) in vtree_shapes(*num_vars) {
+        for (shape_name, vtree) in vtree_shapes(num_vars) {
             let tdd_before = clause_to_tdd(&vtree, &clause);
             let count_before = tdd_before.model_count().unwrap();
 
@@ -112,12 +119,15 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
     // Indexes the vtree, `tdd.levels` and `reachable` at the same position.
     #[expect(clippy::needless_range_loop)]
     for t_idx in 0..num_nodes {
-        if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() { continue; }
+        if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() {
+            continue;
+        }
         for i in 0..tdd.levels[t_idx].slot_count() {
             if !reachable[t_idx][i] {
                 return Err(format!(
                     "vtree {:?} node {}: unreachable from output",
-                    VtreeIdx(t_idx as u32), i
+                    VtreeIdx(t_idx as u32),
+                    i
                 ));
             }
         }
@@ -129,25 +139,14 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 fn test_clause_to_tdd_is_minimal() {
     // `clause_to_tdd` should return a minimal, canonical diagram with no
     // unreachable nodes.
-    let cases: Vec<(u32, Vec<i32>)> = vec![
-        (2, vec![1]),
-        (3, vec![1, 2]),
-        (3, vec![1, 2, 3]),
-        (4, vec![1, -3]),
-        (4, vec![-1, -2, -3, -4]),
-        (6, vec![1]),
-        (6, vec![3, 5]),
-        (8, vec![1, 4, 8]),
-    ];
-    for (num_vars, lits) in &cases {
+    for &(num_vars, lits) in CLAUSE_CASES {
         let clause = literals(lits);
-        for (shape_name, vtree) in vtree_shapes(*num_vars) {
+        for (shape_name, vtree) in vtree_shapes(num_vars) {
             let tdd = clause_to_tdd(&vtree, &clause);
             let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);
 
             assert_canonical(&tdd);
-            validate_all_nodes_reachable(&tdd)
-                .unwrap_or_else(|e| panic!("{}: {}", label, e));
+            validate_all_nodes_reachable(&tdd).unwrap_or_else(|e| panic!("{}: {}", label, e));
         }
     }
 }
@@ -158,39 +157,40 @@ fn test_clause_to_tdd_is_minimal() {
 #[test]
 fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
     let eng = &Engine::new();
-    let cases: Vec<(u32, Vec<i32>)> = vec![
-        (1, vec![1]),
-        (1, vec![-1]),
-        (2, vec![1]),
-        (3, vec![1, 2]),
-        (3, vec![1, 2, 3]),
-        (3, vec![1, -1]),
-        (3, vec![-1, 1, 2]),
-        (3, vec![2, 1, -2]),
-        (3, vec![1, 2, 1]),
-        (4, vec![1, -3]),
-        (4, vec![-1, -2, -3, -4]),
-        (6, vec![1]),
-        (6, vec![3, 5]),
-        (8, vec![1, 4, 8]),
+    let extra: &[(u32, &[i32])] = &[
+        (1, &[1]),
+        (1, &[-1]),
+        (3, &[1, -1]),
+        (3, &[-1, 1, 2]),
+        (3, &[2, 1, -2]),
+        (3, &[1, 2, 1]),
     ];
-    for (num_vars, lits) in &cases {
+    for &(num_vars, lits) in CLAUSE_CASES.iter().chain(extra) {
         let clause = literals(lits);
-        for (shape_name, vtree) in vtree_shapes(*num_vars) {
+        for (shape_name, vtree) in vtree_shapes(num_vars) {
             let label = format!("clause {lits:?} ({num_vars} vars, {shape_name})");
             let built = clause_to_tdd(&vtree, &clause);
-            let conjoined =
-                conjoin_clause_on(eng, constant_one(eng, &vtree), &clause)
-                    .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            let conjoined = conjoin_clause_on(eng, constant_one(eng, &vtree), &clause)
+                .unwrap_or_else(|e| panic!("{label}: {e:?}"));
             assert_eq!(built.output, conjoined.output, "{label}: output");
-            assert_eq!(built.levels.len(), conjoined.levels.len(), "{label}: level count");
+            assert_eq!(
+                built.levels.len(),
+                conjoined.levels.len(),
+                "{label}: level count"
+            );
             for (t, (a, b)) in built.levels.iter().zip(&conjoined.levels).enumerate() {
                 assert!(
                     a.nodes == b.nodes && a.pairs == b.pairs && a.ranges == b.ranges,
                     "{label}: level {t} stores different nodes or pairs"
                 );
-                assert!(!a.is_marginal() && !b.is_marginal(), "{label}: level {t} is structural");
-                assert_eq!(a.value_ref_sides, b.value_ref_sides, "{label}: level {t} inline markers");
+                assert!(
+                    !a.is_marginal() && !b.is_marginal(),
+                    "{label}: level {t} is structural"
+                );
+                assert_eq!(
+                    a.value_ref_sides, b.value_ref_sides,
+                    "{label}: level {t} inline markers"
+                );
                 assert_eq!(a.dead_pairs, b.dead_pairs, "{label}: level {t} dead pairs");
             }
         }
@@ -204,14 +204,21 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
 #[test]
 fn a_clause_reads_its_literals_as_a_set() {
     for (name, vtree) in vtree_shapes(3) {
-        let all = (constant_one(&Engine::new(), &vtree)).model_count().unwrap();
+        let all = (constant_one(&Engine::new(), &vtree))
+            .model_count()
+            .unwrap();
         for clause in [vec![1, -1], vec![-1, 1], vec![1, -1, 2], vec![2, 1, -2]] {
             let built = Tdd::clause(&vtree, literals(&clause)).unwrap();
             assert_canonical(&built);
-            assert_eq!(built.model_count().unwrap(), all, "{name}: {clause:?} is satisfied everywhere");
+            assert_eq!(
+                built.model_count().unwrap(),
+                all,
+                "{name}: {clause:?} is satisfied everywhere"
+            );
 
-            let conjoined =
-                (Tdd::clause(&vtree, [3]).unwrap()).and_clause(literals(&clause)).unwrap();
+            let conjoined = (Tdd::clause(&vtree, [3]).unwrap())
+                .and_clause(literals(&clause))
+                .unwrap();
             assert_eq!(
                 conjoined.model_count().unwrap(),
                 (Tdd::clause(&vtree, [3]).unwrap()).model_count().unwrap(),
@@ -222,7 +229,9 @@ fn a_clause_reads_its_literals_as_a_set() {
         assert_canonical(&repeated);
         assert_eq!(
             repeated.model_count().unwrap(),
-            (Tdd::clause(&vtree, literals(&[1, 2])).unwrap()).model_count().unwrap(),
+            (Tdd::clause(&vtree, literals(&[1, 2])).unwrap())
+                .model_count()
+                .unwrap(),
             "{name}: a repeated literal says nothing new"
         );
     }
@@ -240,13 +249,24 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
             constant_zero(eng, &vtree),
             eng.cube(&vtree, std::iter::empty::<Literal>()).unwrap(),
             eng.cube(&vtree, [1, -3, 5]).unwrap(),
-            eng.from_models(&vtree, &[VarId(1), VarId(3), VarId(5)], &[0b101, 0b010, 0b111]).unwrap(),
+            eng.from_models(
+                &vtree,
+                &[VarId(1), VarId(3), VarId(5)],
+                &[0b101, 0b010, 0b111],
+            )
+            .unwrap(),
             eng.from_models(&vtree, &[], &[0]).unwrap(),
             constant_like(eng, &constant_one(eng, &vtree), false).unwrap(),
         ];
         for f in built {
-            assert!(f.dirty.is_empty(), "{shape}: a level was left on a worklist");
-            assert!(f.levels.is_canonical(f.output), "{shape}: the output is not certified");
+            assert!(
+                f.dirty.is_empty(),
+                "{shape}: a level was left on a worklist"
+            );
+            assert!(
+                f.levels.is_canonical(f.output),
+                "{shape}: the output is not certified"
+            );
             assert_canonical(&f);
             let mut again = f.clone();
             again.levels.forget();

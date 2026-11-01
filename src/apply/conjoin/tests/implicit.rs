@@ -8,7 +8,9 @@
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::{assert_canonical, rand_conj_over, same_levels, stored_copies, stored_levels, Lcg};
+use crate::test_helpers::{
+    Lcg, assert_canonical, rand_conj_over, same_levels, stored_copies, stored_levels,
+};
 use crate::vtree::{VarId, Vtree};
 
 /// A random function of `vars`, minimized, on `vtree`, built on `eng`.
@@ -23,15 +25,29 @@ fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
 /// each of `given`, a variable and its value, on one fresh engine, with
 /// every level stored when `written` holds, under `rules`: the result and
 /// the work it took.
-fn chain(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)], written: bool, rules: StopRules) -> (Result<Tdd, OperationError>, u64) {
+fn chain(
+    parts: &[Tdd],
+    pairwise: bool,
+    given: &[(u32, bool)],
+    written: bool,
+    rules: StopRules,
+) -> (Result<Tdd, OperationError>, u64) {
     let eng = Engine::new();
     // The stored route conjoins the stored copies of operands a close or a
     // product left implicit.
-    let parts: Vec<Tdd> = if written { parts.iter().map(stored_copies).collect() } else { parts.to_vec() };
+    let parts: Vec<Tdd> = if written {
+        parts.iter().map(stored_copies).collect()
+    } else {
+        parts.to_vec()
+    };
     let parts = &parts[..];
     let run = || -> Result<Tdd, OperationError> {
-        let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(rules));
-        let mut acc = if let [a, b, c, d] = parts && pairwise {
+        let _scope = eng
+            .limits()
+            .scope(LimitConfig::none().with_stop_rules(rules));
+        let mut acc = if let [a, b, c, d] = parts
+            && pairwise
+        {
             let left = eng.and(a.clone(), b.clone())?;
             let right = eng.and(c.clone(), d.clone())?;
             eng.and(left, right)?
@@ -73,13 +89,37 @@ impl std::ops::AddAssign for Described {
 /// them of one pair a node.
 fn implicit_levels(t: &Tdd) -> (usize, usize) {
     let described = t.levels.iter().filter_map(|l| l.pairs.implicit());
-    (described.clone().count(), described.filter(|d| d.pairs_per_node() == 1).count())
+    (
+        described.clone().count(),
+        described.filter(|d| d.pairs_per_node() == 1).count(),
+    )
 }
 
 /// The levels of `t` a prune kept described after dropping nodes: implicit,
 /// with the slots of the dropped pairs past the described ones.
 fn redescribed_levels(t: &Tdd) -> usize {
-    t.levels.iter().filter(|l| l.implicit().is_some_and(|d| l.pairs.len() > d.pairs())).count()
+    t.levels
+        .iter()
+        .filter(|l| l.implicit().is_some_and(|d| l.pairs.len() > d.pairs()))
+        .count()
+}
+
+fn check_stopped_chain(
+    parts: &[Tdd],
+    pairwise: bool,
+    given: &[(u32, bool)],
+    rules: StopRules,
+    what: &str,
+) -> (Result<Tdd, OperationError>, Result<Tdd, OperationError>) {
+    let (oracle, oracle_work) = chain(parts, pairwise, given, true, rules);
+    let (stopped, work) = chain(parts, pairwise, given, false, rules);
+    assert_eq!(
+        stopped.is_ok(),
+        oracle.is_ok(),
+        "a stop at {what} fell differently"
+    );
+    assert_eq!(work, oracle_work, "a stop at {what} fell at other work");
+    (stopped, oracle)
 }
 
 /// Conjoin `parts` both ways, and condition on `given`, as [`chain`] does,
@@ -88,7 +128,10 @@ fn redescribed_levels(t: &Tdd) -> usize {
 /// the chain took, the same stop at the same work. Returns what the result
 /// holds described.
 fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> Described {
-    let none = StopRules { unconditional: None, after_pairs: None };
+    let none = StopRules {
+        unconditional: None,
+        after_pairs: None,
+    };
     let (oracle, oracle_work) = chain(parts, pairwise, given, true, none);
     let (out, work) = chain(parts, pairwise, given, false, none);
     let (oracle, out) = (oracle.unwrap(), out.unwrap());
@@ -98,27 +141,32 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> Descr
     let total: usize = out.levels.iter().map(|l| l.pairs.len()).sum();
     let mut floor = 1u64;
     while floor <= 4 * total as u64 {
-        let rules = StopRules { unconditional: None, after_pairs: Some((floor, StopAt::WorkUnits(0))) };
-        let (oracle, oracle_work) = chain(parts, pairwise, given, true, rules);
-        let (stopped, work) = chain(parts, pairwise, given, false, rules);
-        assert_eq!(stopped.is_ok(), oracle.is_ok(), "a stop at {floor} pairs fell differently");
-        assert_eq!(work, oracle_work, "a stop at {floor} pairs fell at other work");
+        let rules = StopRules {
+            unconditional: None,
+            after_pairs: Some((floor, StopAt::WorkUnits(0))),
+        };
+        let _ = check_stopped_chain(parts, pairwise, given, rules, &format!("{floor} pairs"));
         floor = floor * 3 / 2 + 1;
     }
     let mut bound = 1u64;
     while bound <= oracle_work + 1 {
-        let rules = StopRules { unconditional: Some(StopAt::WorkUnits(bound)), after_pairs: None };
-        let (oracle, oracle_work) = chain(parts, pairwise, given, true, rules);
-        let (stopped, work) = chain(parts, pairwise, given, false, rules);
-        assert_eq!(stopped.is_ok(), oracle.is_ok(), "a stop at {bound} units fell differently");
-        assert_eq!(work, oracle_work, "a stop at {bound} units fell at other work");
+        let rules = StopRules {
+            unconditional: Some(StopAt::WorkUnits(bound)),
+            after_pairs: None,
+        };
+        let (stopped, oracle) =
+            check_stopped_chain(parts, pairwise, given, rules, &format!("{bound} units"));
         if let (Ok(a), Ok(b)) = (&stopped, &oracle) {
             same_levels(a, b);
         }
         bound = bound * 2 + 1;
     }
     let (implicit, one_pair) = implicit_levels(&out);
-    Described { implicit, one_pair, kept: redescribed_levels(&out) }
+    Described {
+        implicit,
+        one_pair,
+        kept: redescribed_levels(&out),
+    }
 }
 
 /// Random functions over the classes of the variables modulo `m`,
@@ -151,14 +199,22 @@ fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
 /// children's nodes and `e` two or four; the root holds one node, with the
 /// pairs `(x, x)`. Distinct nodes of a level are disjoint, so the pairs of a
 /// node are, and no two slots of a child share their contexts.
-pub(super) fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, rng: &mut Lcg) -> Tdd {
-    use crate::diagram::{TddBuilder, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+pub(super) fn affine_function(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    m: u32,
+    j: u32,
+    rng: &mut Lcg,
+) -> Tdd {
+    use crate::diagram::{NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, TddBuilder, TddNodeId};
     let mut b: TddBuilder = Tdd::builder(eng, vtree).unwrap();
     let mut nodes: Vec<Vec<NodeIdx>> = vec![Vec::new(); vtree.num_nodes()];
     // The height of each vtree node, and the tables' `e` at each height,
     // the same on both halves.
     let mut height = vec![0usize; vtree.num_nodes()];
-    let e_at: Vec<usize> = (0..64).map(|_| if rng.below(2) == 0 { 4 } else { 2 }).collect();
+    let e_at: Vec<usize> = (0..64)
+        .map(|_| if rng.below(2) == 0 { 4 } else { 2 })
+        .collect();
     let root = vtree.root();
     for t in vtree.bottomup() {
         if !vtree.node(t).is_leaf() {
@@ -167,43 +223,81 @@ pub(super) fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, 
         }
         if vtree.node(t).is_leaf() {
             let v = vtree.leaf_var(t).0;
-            nodes[t.idx()] = if (v - 1) % m == j { vec![POS_LEAF_IDX, NEG_LEAF_IDX] } else { vec![ONE_LEAF_IDX] };
+            nodes[t.idx()] = if (v - 1) % m == j {
+                vec![POS_LEAF_IDX, NEG_LEAF_IDX]
+            } else {
+                vec![ONE_LEAF_IDX]
+            };
             continue;
         }
         let (l, r) = vtree.children(t);
         let (left, right) = (nodes[l.idx()].clone(), nodes[r.idx()].clone());
         let (a, c) = (left.len(), right.len());
         let mut push = |pairs: &[(usize, usize)]| {
-            let pairs: Vec<ChildPair> = pairs.iter().map(|&(x, y)| ChildPair::new(left[x], right[y])).collect();
+            let pairs: Vec<ChildPair> = pairs
+                .iter()
+                .map(|&(x, y)| ChildPair::new(left[x], right[y]))
+                .collect();
             b.push(eng, t, &pairs).unwrap()
         };
         nodes[t.idx()] = if t == root {
             assert_eq!(a, c, "the two halves are alike");
             vec![push(&(0..a).map(|x| (x, x)).collect::<Vec<_>>())]
         } else if a >= 4 && c >= 4 && a.is_multiple_of(2) && c.is_multiple_of(2) {
-            let e = if a.is_multiple_of(4) && c.is_multiple_of(4) { e_at[height[t.idx()]] } else { 2 };
+            let e = if a.is_multiple_of(4) && c.is_multiple_of(4) {
+                e_at[height[t.idx()]]
+            } else {
+                2
+            };
             let (sa, sc) = (a / e, c / e);
-            (0..sc).flat_map(|n1| (0..sa).map(move |n0| (n0, n1))).map(|(n0, n1)| push(&(0..e).map(|x| (n0 + sa * x, n1 + sc * x)).collect::<Vec<_>>())).collect()
+            (0..sc)
+                .flat_map(|n1| (0..sa).map(move |n0| (n0, n1)))
+                .map(|(n0, n1)| {
+                    push(
+                        &(0..e)
+                            .map(|x| (n0 + sa * x, n1 + sc * x))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect()
         } else {
-            (0..c).flat_map(|y| (0..a).map(move |x| (x, y))).map(|(x, y)| push(&[(x, y)])).collect()
+            (0..c)
+                .flat_map(|y| (0..a).map(move |x| (x, y)))
+                .map(|(x, y)| push(&[(x, y)]))
+                .collect()
         };
     }
     let out = nodes[root.idx()][0];
-    b.finish(TddNodeId { vtree: root, local: out }).unwrap()
+    b.finish(TddNodeId {
+        vtree: root,
+        local: out,
+    })
+    .unwrap()
 }
 
 /// The functions of [`affine_function`] over every class of `m`, on a
 /// balanced vtree of `n` variables, conjoined in a chain, or pairwise for
 /// four, then conditioned on `given` random variables. Returns what the
 /// results hold described.
-fn chains_of_tables(n: u32, m: u32, pairwise: bool, given: usize, seed: u64, rounds: usize) -> Described {
+fn chains_of_tables(
+    n: u32,
+    m: u32,
+    pairwise: bool,
+    given: usize,
+    seed: u64,
+    rounds: usize,
+) -> Described {
     let vtree = Arc::new(Vtree::balanced(n));
     let eng = Engine::new();
     let mut rng = Lcg::new(seed);
     let mut described = Described::default();
     for _ in 0..rounds {
-        let parts: Vec<Tdd> = (0..m).map(|j| affine_function(&eng, &vtree, m, j, &mut rng)).collect();
-        let given: Vec<(u32, bool)> = (0..given).map(|_| (1 + rng.below(u64::from(n)) as u32, rng.below(2) == 1)).collect();
+        let parts: Vec<Tdd> = (0..m)
+            .map(|j| affine_function(&eng, &vtree, m, j, &mut rng))
+            .collect();
+        let given: Vec<(u32, bool)> = (0..given)
+            .map(|_| (1 + rng.below(u64::from(n)) as u32, rng.below(2) == 1))
+            .collect();
         described += same_both_ways(&parts, pairwise, &given);
     }
     described
@@ -218,8 +312,14 @@ fn random_functions_match_the_written_route() {
 
 #[test]
 fn products_of_two_tables_match_the_written_route() {
-    assert!(chains_of_tables(16, 2, false, 0, 0x11a7_0011, 4).implicit > 0, "no level was implicit");
-    assert!(chains_of_tables(32, 2, false, 0, 0x11a7_0012, 2).implicit > 0, "no level was implicit");
+    assert!(
+        chains_of_tables(16, 2, false, 0, 0x11a7_0011, 4).implicit > 0,
+        "no level was implicit"
+    );
+    assert!(
+        chains_of_tables(32, 2, false, 0, 0x11a7_0012, 2).implicit > 0,
+        "no level was implicit"
+    );
 }
 
 /// A chain over four classes: from the second conjunction on, one
@@ -231,7 +331,10 @@ fn implicit_times_implicit_matches_the_written_route() {
     for (pairwise, seed) in [(false, 0x11a7_0013), (true, 0x11a7_0014)] {
         let described = chains_of_tables(32, 4, pairwise, 0, seed, 3);
         assert!(described.implicit > 0, "no level was implicit");
-        assert!(described.one_pair > 0, "no level of one pair a node was implicit");
+        assert!(
+            described.one_pair > 0,
+            "no level of one pair a node was implicit"
+        );
     }
 }
 

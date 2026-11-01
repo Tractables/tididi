@@ -1,22 +1,24 @@
 //! The streaming collapse route: a level whose per-cell result is a count or a
 //! weight rather than a set of emitted pairs.
 
+use super::super::marginal_plan::Carrier;
 use super::rows::{Emit, run_level_rows};
 use super::word_cells::WordScratch;
-use super::super::marginal_plan::Carrier;
 use super::*;
 use crate::diagram::{EncodedChildRef, ImplicitLevel, ScaledFloat, WeightStore};
-use crate::value::{plain_floats, CheckedProducts, FloatCol, PlainProducts, StreamChild};
-use crate::isa::avx2_fn;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use crate::isa::Avx2;
+use crate::isa::avx2_fn;
+use crate::value::{CheckedProducts, FloatCol, PlainProducts, StreamChild, plain_floats};
 
 // A test sums its streamed float levels a cell at a time, as the oracle
 // for the row sums and for the sums off a description, or reads and keeps
 // child rows and sums blocks of f pairs and of rows wherever it can, and
 // counts the blocks and the levels summed off a description.
 #[cfg(test)]
-use crate::apply::conjoin::tests::{cells_only, eager, note_block, note_described_sums, note_lanes};
+use crate::apply::conjoin::tests::{
+    cells_only, eager, note_block, note_described_sums, note_lanes,
+};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -80,7 +82,9 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
         StreamLevelState::Weighted(counts) => {
             stream_level::<WeightFold, L, R>(eng, rows, scratch, left, right, counts, env)
         }
-        StreamLevelState::Float(values) => stream_float_level(eng, rows, scratch, left, right, values, env),
+        StreamLevelState::Float(values) => {
+            stream_float_level(eng, rows, scratch, left, right, values, env)
+        }
         StreamLevelState::Int(counts) => {
             stream_level::<IntFold, L, R>(eng, rows, scratch, left, right, counts, env)
         }
@@ -144,8 +148,22 @@ fn run_sum_rows<I: Isa, S: RowSum, L: ChildLookup, R: ChildLookup>(
         pools.row_slots.checkout(eng),
     );
     let mut next = pools.cell_pairs.checkout(eng);
-    let bufs = SumBuffers { ones: &mut ones, floats: &mut floats, flags: &mut flags, slots: &mut slots, next: &mut next };
-    let mut action = sum_rows(isa, eng, rows, (left, right), sum, bufs, &mut *scratch.g_pairs)?;
+    let bufs = SumBuffers {
+        ones: &mut ones,
+        floats: &mut floats,
+        flags: &mut flags,
+        slots: &mut slots,
+        next: &mut next,
+    };
+    let mut action = sum_rows(
+        isa,
+        eng,
+        rows,
+        (left, right),
+        sum,
+        bufs,
+        &mut *scratch.g_pairs,
+    )?;
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
@@ -164,26 +182,61 @@ fn float_level<I: Isa, L: ChildLookup, R: ChildLookup>(
     if let Some(products) = PlainProducts::of(&st.left, &st.right)
         && let Some(out) = st.counts.narrow_under(products.scale)
     {
-        let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
+        let sink = PlainSink {
+            products,
+            out,
+            sum: 0.0,
+            live: false,
+            none: Vec::new(),
+        };
         if cells_only() {
-            return run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink });
+            return run_level_rows::<false, _, _, _>(
+                eng,
+                rows,
+                scratch,
+                left,
+                right,
+                &mut Emit { sink },
+            );
         }
         return run_sum_rows(isa, eng, rows, scratch, (left, right), sink);
     }
     let mut st = st;
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
-    let StreamState { left: lchild, right: rchild, counts, store } = &mut st;
+    let StreamState {
+        left: lchild,
+        right: rchild,
+        counts,
+        store,
+    } = &mut st;
     let pools = &eng.scratch.apply;
-    let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+    let (mut lbuf, mut rbuf) = (
+        pools.left_floats.checkout(eng),
+        pools.right_floats.checkout(eng),
+    );
     if !cells_only()
         && let Some(l) = plain_floats(eng, lchild, &mut lbuf)?
         && let Some(r) = plain_floats(eng, rchild, &mut rbuf)?
     {
         let products = CheckedProducts::new(l, lchild.view, r, rchild.view);
-        let sum = CheckedSum { products, left: lchild, right: rchild, counts, store, cell: &mut cell_pairs };
+        let sum = CheckedSum {
+            products,
+            left: lchild,
+            right: rchild,
+            counts,
+            store,
+            cell: &mut cell_pairs,
+        };
         return run_sum_rows(isa, eng, rows, scratch, (left, right), sum);
     }
-    let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
+    let mut action = Emit {
+        sink: FoldSink {
+            fold: &mut st,
+            cell: CollectSink {
+                out: &mut cell_pairs,
+            },
+        },
+    };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
@@ -268,7 +321,13 @@ avx2_fn! {
 /// one-pair cell is its product. `places` are what the places of a node
 /// add to its first pair's slots, every slot a pair names in its column.
 #[inline(always)]
-fn described_rows(product: &ImplicitLevel, places: &[(i64, i64)], products: &PlainProducts<'_>, out: &mut Vec<f64>, grid: &mut [u32]) {
+fn described_rows(
+    product: &ImplicitLevel,
+    places: &[(i64, i64)],
+    products: &PlainProducts<'_>,
+    out: &mut Vec<f64>,
+    grid: &mut [u32],
+) {
     let (left, right) = products.floats();
     let one = places.len() == 1;
     let mut acc = [0.0f64; DESCRIBED_BLOCK];
@@ -287,7 +346,9 @@ fn described_rows(product: &ImplicitLevel, places: &[(i64, i64)], products: &Pla
                 for a in acc.iter_mut() {
                     // Safety: every slot a pair names lies in its column
                     // (`slot_range`, checked by the caller).
-                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe { *right.get_unchecked(r as usize) });
+                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe {
+                        *right.get_unchecked(r as usize)
+                    });
                     *a = if one { v } else { *a + v };
                     (l, r) = (l + step.0, r + step.1);
                 }
@@ -314,7 +375,14 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 ) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(env, rows.children, counts);
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
-    let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
+    let mut action = Emit {
+        sink: FoldSink {
+            fold: &mut st,
+            cell: CollectSink {
+                out: &mut cell_pairs,
+            },
+        },
+    };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
@@ -334,12 +402,37 @@ pub(crate) fn run_level_rows_stream_words(
     let sides = &rows.ctx.sides;
     if marginal_children {
         super::super::note_word_cells(super::super::WordNote::StreamMarginal);
-        let (left, right) = (MarginalLookup::new(&sides.left), MarginalLookup::new(&sides.right));
-        stream_words(eng, rows, scratch, (words, f_rows), (&left, &right), stream_state, env)
+        let (left, right) = (
+            MarginalLookup::new(&sides.left),
+            MarginalLookup::new(&sides.right),
+        );
+        stream_words(
+            eng,
+            rows,
+            scratch,
+            (words, f_rows),
+            (&left, &right),
+            stream_state,
+            env,
+        )
     } else {
-        let left = DenseLookup { base: sides.left.base, stride: sides.left.stride };
-        let right = DenseLookup { base: sides.right.base, stride: sides.right.stride };
-        stream_words(eng, rows, scratch, (words, f_rows), (&left, &right), stream_state, env)
+        let left = DenseLookup {
+            base: sides.left.base,
+            stride: sides.left.stride,
+        };
+        let right = DenseLookup {
+            base: sides.right.base,
+            stride: sides.right.stride,
+        };
+        stream_words(
+            eng,
+            rows,
+            scratch,
+            (words, f_rows),
+            (&left, &right),
+            stream_state,
+            env,
+        )
     }
 }
 
@@ -357,21 +450,54 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
     match stream_state {
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(env, rows.children, counts);
-            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
+            stream_fold_words(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (left, right),
+                &mut st,
+                &mut cell_pairs,
+            )
         }
         StreamLevelState::Float(values) => {
             let mut st = attach_children::<FloatFold>(env, rows.children, values);
             if let Some(products) = PlainProducts::of(&st.left, &st.right)
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
-                let sink = PlainSink { products, out, sum: 0.0, live: false, none: Vec::new() };
-                return super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink);
+                let sink = PlainSink {
+                    products,
+                    out,
+                    sum: 0.0,
+                    live: false,
+                    none: Vec::new(),
+                };
+                return super::word_cells::rows_by_words::<true, _, _, _>(
+                    eng,
+                    (rows, scratch),
+                    (words, f_rows),
+                    (left, right),
+                    sink,
+                );
             }
-            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
+            stream_fold_words(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (left, right),
+                &mut st,
+                &mut cell_pairs,
+            )
         }
         StreamLevelState::Int(counts) => {
             let mut st = attach_children::<IntFold>(env, rows.children, counts);
-            stream_fold_words(eng, (rows, scratch), (words, f_rows), (left, right), &mut st, &mut cell_pairs)
+            stream_fold_words(
+                eng,
+                (rows, scratch),
+                (words, f_rows),
+                (left, right),
+                &mut st,
+                &mut cell_pairs,
+            )
         }
     }
 }
@@ -386,8 +512,17 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     st: &mut StreamState<'_, F>,
     cell_pairs: &mut Vec<ChildPair>,
 ) -> Result<(), OperationError> {
-    let sink = FoldSink { fold: st, cell: CollectSink { out: cell_pairs } };
-    super::word_cells::rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (left, right), sink)
+    let sink = FoldSink {
+        fold: st,
+        cell: CollectSink { out: cell_pairs },
+    };
+    super::word_cells::rows_by_words::<true, _, _, _>(
+        eng,
+        (rows, scratch),
+        (words, f_rows),
+        (left, right),
+        sink,
+    )
 }
 
 /// Collapse at the source: each live cell's pairs gathered into a reused
@@ -401,7 +536,14 @@ struct FoldSink<'a, 'data, F: ValueDomain> {
 
 impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
     #[inline(always)]
-    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+    fn single(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
         self.cell.out.clear();
         self.cell.single(eng, node_idx, grid_pos, lc, rc)?;
         self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
@@ -426,7 +568,13 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
     /// An empty cell stays `NO_PRODUCT` (no slot), as the emit walk
     /// produces no node for zero pairs.
     #[inline(always)]
-    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, _start: usize) -> Result<(), OperationError> {
+    fn end(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        _start: usize,
+    ) -> Result<(), OperationError> {
         if self.cell.out.is_empty() {
             return Ok(());
         }
@@ -456,7 +604,13 @@ impl PlainSink<'_> {
     /// Append the cell's value `v` and record its slot, as
     /// [`StreamState::fold_cell`] does.
     #[inline(always)]
-    fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError> {
         let lim = eng.limits();
         let slot = lim.next_slot(self.out.len())?;
         lim.try_push(self.out, v)?;
@@ -469,7 +623,14 @@ impl PairSink for PlainSink<'_> {
     /// A one-pair cell's sum is its product: adding a nonnegative float to
     /// zero gives it back.
     #[inline(always)]
-    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+    fn single(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
         let v = self.products.product(lc, rc);
         self.push(eng, node_idx, grid_pos, v)
     }
@@ -500,7 +661,13 @@ impl PairSink for PlainSink<'_> {
 
     /// An empty cell stays `NO_PRODUCT`, as with [`FoldSink`].
     #[inline(always)]
-    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, _start: usize) -> Result<(), OperationError> {
+    fn end(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        _start: usize,
+    ) -> Result<(), OperationError> {
         if !self.live {
             return Ok(());
         }
@@ -517,10 +684,20 @@ const DEAD_COLUMN: u32 = u32::MAX;
 /// columns as [`read_columns`] reads them, and none for a [`DEAD_COLUMN`];
 /// else as [`column_pairs`] reads them.
 #[inline(always)]
-fn pairs_at<'a, const ONES: bool>(ones: &'a [ChildPair], ctx: &'a CellCtx<'_>, level: &'a TddLevel, j: usize, scratch: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
+fn pairs_at<'a, const ONES: bool>(
+    ones: &'a [ChildPair],
+    ctx: &'a CellCtx<'_>,
+    level: &'a TddLevel,
+    j: usize,
+    scratch: &'a mut Vec<ChildPair>,
+) -> &'a [ChildPair] {
     if ONES {
         let q = &ones[j];
-        return if q.left.0 == DEAD_COLUMN { &[] } else { std::slice::from_ref(q) };
+        return if q.left.0 == DEAD_COLUMN {
+            &[]
+        } else {
+            std::slice::from_ref(q)
+        };
     }
     column_pairs(ctx, level, j, scratch)
 }
@@ -542,7 +719,10 @@ fn read_columns<'a>(
     if one {
         eng.limits().reserve(ones, width)?;
     }
-    let dead = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
+    let dead = ChildPair {
+        left: EncodedChildRef::from_raw(DEAD_COLUMN),
+        right: EncodedChildRef::from_raw(DEAD_COLUMN),
+    };
     let (mut pairs, mut bound) = (0, Sides { left: 0, right: 0 });
     for j in 0..width {
         let g = column_pairs(rows.ctx, rows.g_level, j, scratch);
@@ -636,7 +816,22 @@ impl<'b> ValueSide<'b> {
         (lanes, marks): (&'b mut [f64], &'b mut [u8]),
     ) -> Self {
         let cap = (stats.len() / 3 - spares) as u32;
-        ValueSide { n, fixed, vals, dead, stats, slot_of, cap, used: 0, at: [NO_SLOT; BLOCK], spares, pinned: 0, next: 0, lanes, marks }
+        ValueSide {
+            n,
+            fixed,
+            vals,
+            dead,
+            stats,
+            slot_of,
+            cap,
+            used: 0,
+            at: [NO_SLOT; BLOCK],
+            spares,
+            pinned: 0,
+            next: 0,
+            lanes,
+            marks,
+        }
     }
 
     /// Whether the side lays rows side by side.
@@ -651,7 +846,12 @@ impl<'b> ValueSide<'b> {
         let w = self.n + 1;
         let (vals, dead) = (&self.vals[s * w..s * w + w], &self.dead[s * w..s * w + w]);
         let bit = 1u8 << k;
-        for ((lane, mark), (&v, &d)) in self.lanes.chunks_exact_mut(LANES).zip(self.marks.iter_mut()).zip(vals.iter().zip(dead)) {
+        for ((lane, mark), (&v, &d)) in self
+            .lanes
+            .chunks_exact_mut(LANES)
+            .zip(self.marks.iter_mut())
+            .zip(vals.iter().zip(dead))
+        {
             lane[k] = v;
             *mark = (*mark & !bit) | (d << k);
         }
@@ -663,7 +863,15 @@ impl<'b> ValueSide<'b> {
     /// each lane's least and greatest nonzero floats, read where `stats`,
     /// and whether a cell of its row is dead.
     #[inline(always)]
-    fn read_lanes<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: &[u32], lay: bool, stats: bool, factor: impl Fn(u32) -> Option<f64>) -> (usize, [(f64, f64, bool); LANES]) {
+    fn read_lanes<C: ChildLookup>(
+        &mut self,
+        side: &C,
+        node_idx: &[u32],
+        at: &[u32],
+        lay: bool,
+        stats: bool,
+        factor: impl Fn(u32) -> Option<f64>,
+    ) -> (usize, [(f64, f64, bool); LANES]) {
         let mut found = [(f64::INFINITY, 0.0, false); LANES];
         let mut s = 0;
         for (k, &a) in at.iter().enumerate() {
@@ -700,7 +908,11 @@ impl<'b> ValueSide<'b> {
     #[inline(always)]
     fn cost(&self, at: u32) -> usize {
         let at = if self.fixed { 0 } else { at };
-        if self.kept(at) || self.spare(at).is_some() { 0 } else { self.n }
+        if self.kept(at) || self.spare(at).is_some() {
+            0
+        } else {
+            self.n
+        }
     }
 
     /// Free the last slots for the next row's reads.
@@ -717,7 +929,14 @@ impl<'b> ValueSide<'b> {
     /// slot holds it until [`unpin`](Self::unpin); at most `spares` rows
     /// are read between.
     #[inline(always)]
-    fn read<C: ChildLookup>(&mut self, side: &C, node_idx: &[u32], at: u32, stats: bool, factor: impl Fn(u32) -> Option<f64>) -> usize {
+    fn read<C: ChildLookup>(
+        &mut self,
+        side: &C,
+        node_idx: &[u32],
+        at: u32,
+        stats: bool,
+        factor: impl Fn(u32) -> Option<f64>,
+    ) -> usize {
         let at = if self.fixed { 0 } else { at };
         let s = if self.kept(at) {
             let s = self.slot_of[at as usize];
@@ -743,12 +962,19 @@ impl<'b> ValueSide<'b> {
             self.cap as usize + k
         };
         let (n, w) = (self.n, self.n + 1);
-        let (vals, dead) = (&mut self.vals[s * w..s * w + w], &mut self.dead[s * w..s * w + w]);
+        let (vals, dead) = (
+            &mut self.vals[s * w..s * w + w],
+            &mut self.dead[s * w..s * w + w],
+        );
         let row = side.row(at);
         let (mut any, mut lo, mut hi) = (0u8, f64::INFINITY, 0.0f64);
         for (q, (v, d)) in vals[..n].iter_mut().zip(&mut dead[..n]).enumerate() {
             let c = side.get_in_row(node_idx, row, q as u32);
-            let x = if side.kills() && c == NO_PRODUCT { None } else { factor(c) };
+            let x = if side.kills() && c == NO_PRODUCT {
+                None
+            } else {
+                factor(c)
+            };
             let f = x.unwrap_or(0.0);
             *v = f;
             *d = u8::from(x.is_none());
@@ -767,7 +993,13 @@ impl<'b> ValueSide<'b> {
     fn row(&self, s: usize) -> RowFloats<'_> {
         let w = self.n + 1;
         let st = &self.stats[3 * s..3 * s + 3];
-        RowFloats { vals: &self.vals[s * w..s * w + w], dead: &self.dead[s * w..s * w + w], any_dead: st[2] != 0.0, lo: st[0], hi: st[1] }
+        RowFloats {
+            vals: &self.vals[s * w..s * w + w],
+            dead: &self.dead[s * w..s * w + w],
+            any_dead: st[2] != 0.0,
+            lo: st[0],
+            hi: st[1],
+        }
     }
 }
 
@@ -784,7 +1016,10 @@ fn rows_exact<S: RowSum>(l: RowFloats<'_>, r: RowFloats<'_>) -> bool {
 /// `l` and `r`.
 #[inline(always)]
 fn spans_exact<S: RowSum>(l: (f64, f64), r: (f64, f64)) -> bool {
-    !S::CHECKED || l.0 == f64::INFINITY || r.0 == f64::INFINITY || (S::times(l.0, r.0).1 && S::times(l.1, r.1).1)
+    !S::CHECKED
+        || l.0 == f64::INFINITY
+        || r.0 == f64::INFINITY
+        || (S::times(l.0, r.0).1 && S::times(l.1, r.1).1)
 }
 
 /// A row sum's flag: a pair of the cell lives.
@@ -859,7 +1094,15 @@ impl Gather<'_> {
     /// `None` otherwise. The level's columns are walked as
     /// [`lane_values`] walks them.
     #[inline(always)]
-    fn rows(&mut self, right: bool, at: u32, row: RowFloats<'_>, ctx: &CellCtx<'_>, level: &TddLevel, scratch: &mut Vec<ChildPair>) -> Option<Gathered<'_>> {
+    fn rows(
+        &mut self,
+        right: bool,
+        at: u32,
+        row: RowFloats<'_>,
+        ctx: &CellCtx<'_>,
+        level: &TddLevel,
+        scratch: &mut Vec<ChildPair>,
+    ) -> Option<Gathered<'_>> {
         if self.vals.is_empty() || self.right != right {
             return None;
         }
@@ -871,12 +1114,22 @@ impl Gather<'_> {
             self.gather(right, row, ctx, level, scratch);
             self.held = Some(at);
         }
-        Some(Gathered { vals: self.vals, dead: self.dead })
+        Some(Gathered {
+            vals: self.vals,
+            dead: self.dead,
+        })
     }
 
     /// Gather `row` on side `right` along the level's column pairs.
     #[inline(never)]
-    fn gather(&mut self, right: bool, row: RowFloats<'_>, ctx: &CellCtx<'_>, level: &TddLevel, scratch: &mut Vec<ChildPair>) {
+    fn gather(
+        &mut self,
+        right: bool,
+        row: RowFloats<'_>,
+        ctx: &CellCtx<'_>,
+        level: &TddLevel,
+        scratch: &mut Vec<ChildPair>,
+    ) {
         let mut w = 0;
         for j in 0..ctx.right_width {
             for q in column_pairs(ctx, level, j, scratch) {
@@ -885,7 +1138,11 @@ impl Gather<'_> {
                 w += 1;
             }
         }
-        debug_assert_eq!(w, self.vals.len(), "a gather holds a float for each column pair");
+        debug_assert_eq!(
+            w,
+            self.vals.len(),
+            "a gather holds a float for each column pair"
+        );
     }
 }
 
@@ -935,11 +1192,18 @@ const KEEP_GRID_SHARE: usize = 1;
 /// names one of them, and the fields of a side carrying the g pair's field,
 /// where reading them reads at most [`VALUE_ROW_READS`] times the level's
 /// `pairs`. Also whether every f pair reads the same row.
-fn row_width(side: &ChildPlan<'_>, passthrough: bool, bound: usize, pairs: usize) -> Option<(usize, bool)> {
+fn row_width(
+    side: &ChildPlan<'_>,
+    passthrough: bool,
+    bound: usize,
+    pairs: usize,
+) -> Option<(usize, bool)> {
     let n = side.stride as usize;
     match side.plan.carrier {
         None if !passthrough && n > 0 && bound <= n => Some((n, false)),
-        Some(Carrier::G) if passthrough && bound <= pairs.saturating_mul(VALUE_ROW_READS) => Some((bound.max(1), true)),
+        Some(Carrier::G) if passthrough && bound <= pairs.saturating_mul(VALUE_ROW_READS) => {
+            Some((bound.max(1), true))
+        }
         _ => None,
     }
 }
@@ -966,22 +1230,87 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         return Ok(None);
     };
     let lim = eng.limits();
-    let (reads, f_pairs) = side_reads(lim, rows, Sides { left: !lfixed, right: !rfixed }, slots, scratch)?;
-    let grid = rows.f_width.saturating_mul(rows.ctx.right_width).saturating_mul(4);
-    let mut room = KEEP_MIN_BYTES.max(grid.saturating_mul(KEEP_GRID_SHARE)).min((lim.headroom() / 4) as usize);
+    let (reads, f_pairs) = side_reads(
+        lim,
+        rows,
+        Sides {
+            left: !lfixed,
+            right: !rfixed,
+        },
+        slots,
+        scratch,
+    )?;
+    let (kl, kr) = plan_kept_value_rows(
+        lim,
+        rows,
+        (reads, f_pairs, pairs),
+        (sl, lfixed),
+        (sr, rfixed),
+    );
+    let (spares, ll, rl, gright, gw, aw) =
+        plan_value_lane_layouts(rows, pairs, (sl, lfixed), (sr, rfixed));
+    let (nl, nr) = (
+        if kl > 0 { reads.left.rows } else { 0 },
+        if kr > 0 { reads.right.rows } else { 0 },
+    );
+    alloc_value_row_slices(
+        lim,
+        (
+            (sl, lfixed, kl + spares, ll, nl),
+            (sr, rfixed, kr + spares, rl, nr),
+        ),
+        (spares, ones, aw, gright, gw),
+        (floats, flags, slots),
+    )
+    .map(Some)
+}
+
+/// Choose how many rows each side keeps in [`ValueRows`] within the level's
+/// memory budget.
+fn plan_kept_value_rows(
+    lim: &crate::limits::Limits,
+    rows: RowLoop<'_>,
+    (reads, f_pairs, pairs): (Sides<SideReads>, usize, usize),
+    (sl, lfixed): (usize, bool),
+    (sr, rfixed): (usize, bool),
+) -> (usize, usize) {
+    let grid = rows
+        .f_width
+        .saturating_mul(rows.ctx.right_width)
+        .saturating_mul(4);
+    let mut room = KEEP_MIN_BYTES
+        .max(grid.saturating_mul(KEEP_GRID_SHARE))
+        .min((lim.headroom() / 4) as usize);
     // The rows a side keeps, out of the room left: a kept row costs its
     // floats, marks and statistics, and the side a slot index a row.
     let mut keep = |r: SideReads, n: usize, fixed: bool| {
         let pays = !fixed
-            && ((r.changes >= 2 * r.distinct && r.distinct * n <= f_pairs.saturating_mul(pairs).saturating_mul(VALUE_ROW_READS))
+            && ((r.changes >= 2 * r.distinct
+                && r.distinct * n
+                    <= f_pairs
+                        .saturating_mul(pairs)
+                        .saturating_mul(VALUE_ROW_READS))
                 || (eager() && r.changes > r.distinct));
-        let kept = if pays && 4 * r.rows < room { r.distinct.min((room - 4 * r.rows) / (9 * n + 33)) } else { 0 };
+        let kept = if pays && 4 * r.rows < room {
+            r.distinct.min((room - 4 * r.rows) / (9 * n + 33))
+        } else {
+            0
+        };
         if kept > 0 {
             room -= 4 * r.rows + kept * (9 * n + 33);
         }
         kept
     };
-    let (kl, kr) = (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed));
+    (keep(reads.left, sl, lfixed), keep(reads.right, sr, rfixed))
+}
+
+/// Plan spare row slots, lane layouts, and shared-row gathering for [`value_rows`].
+fn plan_value_lane_layouts(
+    rows: RowLoop<'_>,
+    pairs: usize,
+    (sl, lfixed): (usize, bool),
+    (sr, rfixed): (usize, bool),
+) -> (usize, bool, bool, bool, usize, usize) {
     // A level of wide enough rows sums a block of f pairs at a time, a
     // side holding a row for each. A level of rows of one f pair whose
     // columns hold enough pairs sums a block of rows at a time: a side
@@ -990,17 +1319,26 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
     // sums of the block's rows after the first, all within
     // [`LANE_MAX_BYTES`].
     let width = rows.ctx.right_width;
-    let spares = if pairs >= BLOCK_MIN_PAIRS || eager() { BLOCK } else { 1 };
+    let spares = if pairs >= BLOCK_MIN_PAIRS || eager() {
+        BLOCK
+    } else {
+        1
+    };
     let ahead_bytes = 9 * (LANES - 1) * width;
     let blocks = spares == BLOCK
         && rows.f_width >= 2
         && width > 0
         && (pairs >= LANE_COLUMN_PAIRS * width || eager())
         && ahead_bytes <= LANE_MAX_BYTES;
-    let mut budget = if blocks { LANE_MAX_BYTES - ahead_bytes } else { 0 };
+    let mut budget = if blocks {
+        LANE_MAX_BYTES - ahead_bytes
+    } else {
+        0
+    };
     let mut lays = |n: usize, fixed: bool| {
         let bytes = (n + 1) * (8 * LANES + 1);
-        let on = !fixed && (n.saturating_mul(LANE_ROW_SHARE) <= pairs || eager()) && bytes <= budget;
+        let on =
+            !fixed && (n.saturating_mul(LANE_ROW_SHARE) <= pairs || eager()) && bytes <= budget;
         if on {
             budget -= bytes;
         }
@@ -1021,26 +1359,22 @@ fn value_rows<'b, L: ChildLookup, R: ChildLookup>(
         _ => None,
     };
     let (gright, gw) = match shared {
-        Some((right, n)) if (n >= GATHER_MIN_FLOATS || eager()) && 9 * pairs <= budget => (right, pairs),
+        Some((right, n)) if (n >= GATHER_MIN_FLOATS || eager()) && 9 * pairs <= budget => {
+            (right, pairs)
+        }
         _ => (false, 0),
     };
     let aw = if ll || rl { (LANES - 1) * width } else { 0 };
-    let (nl, nr) = (if kl > 0 { reads.left.rows } else { 0 }, if kr > 0 { reads.right.rows } else { 0 });
-    alloc_value_row_slices(
-        lim,
-        ((sl, lfixed, kl + spares, ll, nl), (sr, rfixed, kr + spares, rl, nr)),
-        (spares, ones, aw, gright, gw),
-        (floats, flags, slots),
-    )
-    .map(Some)
+    (spares, ll, rl, gright, gw, aw)
 }
+
+type ValueSideSpec = (usize, bool, usize, bool, usize);
 
 /// Resize and slice `floats`, `flags`, and `slots` into the per-side and
 /// level-wide buffers of [`ValueRows`].
-#[allow(clippy::type_complexity)]
 fn alloc_value_row_slices<'b>(
     lim: &crate::limits::Limits,
-    ((sl, lfixed, ls, ll, nl), (sr, rfixed, rs, rl, nr)): ((usize, bool, usize, bool, usize), (usize, bool, usize, bool, usize)),
+    ((sl, lfixed, ls, ll, nl), (sr, rfixed, rs, rl, nr)): (ValueSideSpec, ValueSideSpec),
     (spares, ones, aw, gright, gw): (usize, usize, usize, bool, usize),
     (floats, flags, slots): (&'b mut Vec<f64>, &'b mut Vec<u8>, &'b mut Vec<u32>),
 ) -> Result<ValueRows<'b>, OperationError> {
@@ -1070,10 +1404,32 @@ fn alloc_value_row_slices<'b>(
     let (lmap, rmap) = slots.split_at_mut(nl);
     let left = ValueSide::new((sl, lfixed, spares), (lv, ld), lst, lmap, (llanes, lmarks));
     let right = ValueSide::new((sr, rfixed, spares), (rv, rd), rst, rmap, (rlanes, rmarks));
-    let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
-    let ahead = Ahead { sums: ahead_sums, flags: ahead_flags, rows: [(0, none); LANES - 1], got: 0, held: 0 };
-    let gather = Gather { vals: gvals, dead: gdead, right: gright, held: None, last: None };
-    Ok(ValueRows { left, right, sums, flags, ahead, gather })
+    let none = ChildPair {
+        left: EncodedChildRef::from_raw(DEAD_COLUMN),
+        right: EncodedChildRef::from_raw(DEAD_COLUMN),
+    };
+    let ahead = Ahead {
+        sums: ahead_sums,
+        flags: ahead_flags,
+        rows: [(0, none); LANES - 1],
+        got: 0,
+        held: 0,
+    };
+    let gather = Gather {
+        vals: gvals,
+        dead: gdead,
+        right: gright,
+        held: None,
+        last: None,
+    };
+    Ok(ValueRows {
+        left,
+        right,
+        sums,
+        flags,
+        ahead,
+        gather,
+    })
 }
 
 /// Each child side's [`SideReads`] over the level's f pairs, its rows
@@ -1085,7 +1441,10 @@ fn side_reads(
     slots: &mut Vec<u32>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<(Sides<SideReads>, usize), OperationError> {
-    let mut reads = Sides { left: SideReads::default(), right: SideReads::default() };
+    let mut reads = Sides {
+        left: SideReads::default(),
+        right: SideReads::default(),
+    };
     let (mut last, mut f_pairs) = ((NO_SLOT, NO_SLOT), 0);
     each_f_pair(rows, scratch, |p| {
         let (a, b) = (p.left.0, p.right.0);
@@ -1099,9 +1458,15 @@ fn side_reads(
     // The rows read, counted where a side changes rows often enough to
     // keep them.
     let count = |r: &SideReads| r.changes >= 4 || (eager() && r.changes >= 2);
-    let (cl, cr) = (may.left && count(&reads.left), may.right && count(&reads.right));
+    let (cl, cr) = (
+        may.left && count(&reads.left),
+        may.right && count(&reads.right),
+    );
     if cl || cr {
-        let (nl, nr) = (if cl { reads.left.rows } else { 0 }, if cr { reads.right.rows } else { 0 });
+        let (nl, nr) = (
+            if cl { reads.left.rows } else { 0 },
+            if cr { reads.right.rows } else { 0 },
+        );
         slots.clear();
         lim.try_resize(slots, nl + nr, 0)?;
         let (ml, mr) = slots.split_at_mut(nl);
@@ -1132,11 +1497,17 @@ fn side_reads(
 /// each node's first pair for afresh. Pairs are decoded only where a child
 /// is marginal.
 fn each_f_pair(rows: RowLoop<'_>, scratch: &mut Vec<ChildPair>, mut each: impl FnMut(ChildPair)) {
-    let (lview, rview) = (rows.ctx.sides.left.plan.view, rows.ctx.sides.right.plan.view);
+    let (lview, rview) = (
+        rows.ctx.sides.left.plan.view,
+        rows.ctx.sides.right.plan.view,
+    );
     let mut cursor = None;
     if !lview.is_marginal() && !rview.is_marginal() {
         for i in 0..rows.f_width {
-            rows.f_level.pairs_read_next(&mut cursor, i, scratch).iter().for_each(|&p| each(p));
+            rows.f_level
+                .pairs_read_next(&mut cursor, i, scratch)
+                .iter()
+                .for_each(|&p| each(p));
         }
     } else {
         for i in 0..rows.f_width {
@@ -1169,7 +1540,13 @@ trait RowSum {
     /// The product of two factors, and whether the float is that product.
     fn times(a: f64, b: f64) -> (f64, bool);
     /// Append a cell's sum `v` of products each its float.
-    fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError>;
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError>;
 }
 
 impl<'a> RowSum for PlainSink<'a> {
@@ -1202,7 +1579,13 @@ impl<'a> RowSum for PlainSink<'a> {
     }
 
     #[inline(always)]
-    fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError> {
         PlainSink::push(self, eng, node_idx, grid_pos, v)
     }
 }
@@ -1228,7 +1611,13 @@ impl CheckedSum<'_, '_> {
     /// Append the value `v` at `grid_pos`, as [`StreamState::fold_cell`]
     /// appends a cell's.
     #[inline(always)]
-    fn append(&mut self, eng: &Engine, v: ScaledFloat, node_idx: &mut [u32], grid_pos: usize) -> Result<(), OperationError> {
+    fn append(
+        &mut self,
+        eng: &Engine,
+        v: ScaledFloat,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+    ) -> Result<(), OperationError> {
         let slot = eng.limits().next_slot(self.counts.len())?;
         self.counts.push(eng, v)?;
         node_idx[grid_pos] = slot;
@@ -1237,7 +1626,12 @@ impl CheckedSum<'_, '_> {
 
     /// Fold the collected cell and append it, as [`StreamState::fold_cell`] does.
     #[inline(always)]
-    fn fold(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize) -> Result<(), OperationError> {
+    fn fold(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+    ) -> Result<(), OperationError> {
         let v = FloatFold::fold_cell(self.cell, self.left, self.right, self.store);
         self.append(eng, v, node_idx, grid_pos)
     }
@@ -1245,7 +1639,14 @@ impl CheckedSum<'_, '_> {
 
 impl PairSink for CheckedSum<'_, '_> {
     #[inline(always)]
-    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+    fn single(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
         self.cell.clear();
         self.pair(eng, lc, rc)?;
         self.fold(eng, node_idx, grid_pos)
@@ -1259,7 +1660,10 @@ impl PairSink for CheckedSum<'_, '_> {
 
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
-        eng.limits().try_push(self.cell, ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))
+        eng.limits().try_push(
+            self.cell,
+            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+        )
     }
 
     #[inline(always)]
@@ -1268,7 +1672,13 @@ impl PairSink for CheckedSum<'_, '_> {
     }
 
     #[inline(always)]
-    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, _start: usize) -> Result<(), OperationError> {
+    fn end(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        _start: usize,
+    ) -> Result<(), OperationError> {
         if self.cell.is_empty() {
             return Ok(());
         }
@@ -1306,7 +1716,13 @@ impl<'a, 'data> RowSum for CheckedSum<'a, 'data> {
     }
 
     #[inline(always)]
-    fn push(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, v: f64) -> Result<(), OperationError> {
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError> {
         node_idx[grid_pos] = self.counts.push_offset(eng, v, self.products.scale())?;
         Ok(())
     }
@@ -1366,7 +1782,14 @@ impl Peek<'_> {
     /// most [`VALUE_ROW_READS`] cells a pair, and a side whose rows differ
     /// lays them.
     #[inline(never)]
-    fn block(&mut self, ctx: &CellCtx<'_>, i: usize, p1: ChildPair, vr: &ValueRows<'_>, pairs: usize) -> Option<(usize, Lay)> {
+    fn block(
+        &mut self,
+        ctx: &CellCtx<'_>,
+        i: usize,
+        p1: ChildPair,
+        vr: &ValueRows<'_>,
+        pairs: usize,
+    ) -> Option<(usize, Lay)> {
         if i < self.from {
             return None;
         }
@@ -1375,14 +1798,22 @@ impl Peek<'_> {
         let (mut lsame, mut rsame) = (true, true);
         let mut m = 1;
         while m < LANES && i + m < self.f_width {
-            let f = self.f_level.pairs_view_decoded(i + m, self.scratch, lview, rview);
+            let f = self
+                .f_level
+                .pairs_view_decoded(i + m, self.scratch, lview, rview);
             let &[p] = f else {
                 break;
             };
-            if row_alive_masks(ctx, f).is_none() || (lside.cost(p.left.0) + rside.cost(p.right.0) > VALUE_ROW_READS * pairs && !eager()) {
+            if row_alive_masks(ctx, f).is_none()
+                || (lside.cost(p.left.0) + rside.cost(p.right.0) > VALUE_ROW_READS * pairs
+                    && !eager())
+            {
                 break;
             }
-            let (l, r) = (lsame && (lside.fixed || p.left == p1.left), rsame && (rside.fixed || p.right == p1.right));
+            let (l, r) = (
+                lsame && (lside.fixed || p.left == p1.left),
+                rsame && (rside.fixed || p.right == p1.right),
+            );
             if (!l && !lside.lays()) || (!r && !rside.lays()) {
                 break;
             }
@@ -1416,12 +1847,41 @@ fn sum_rows<'o, 'r: 'o, I: Isa, S: RowSum, L: ChildLookup, R: ChildLookup>(
     bufs: SumBuffers<'o>,
     scratch: &mut Vec<ChildPair>,
 ) -> Result<SumRows<'o, S, I>, OperationError> {
-    let SumBuffers { ones, floats, flags, slots, next } = bufs;
+    let SumBuffers {
+        ones,
+        floats,
+        flags,
+        slots,
+        next,
+    } = bufs;
     let (ones, pairs, bound) = read_columns(eng, rows, ones, scratch)?;
-    let values = value_rows(eng, rows, (left, right), (bound, ones.len(), pairs), (floats, flags, slots), scratch)?;
-    let none = ChildPair { left: EncodedChildRef::from_raw(DEAD_COLUMN), right: EncodedChildRef::from_raw(DEAD_COLUMN) };
-    let peek = Peek { f_level: rows.f_level, f_width: rows.f_width, scratch: next, next: [none; LANES - 1], from: 0 };
-    Ok(SumRows { isa, sum, ones, pairs, values, peek })
+    let values = value_rows(
+        eng,
+        rows,
+        (left, right),
+        (bound, ones.len(), pairs),
+        (floats, flags, slots),
+        scratch,
+    )?;
+    let none = ChildPair {
+        left: EncodedChildRef::from_raw(DEAD_COLUMN),
+        right: EncodedChildRef::from_raw(DEAD_COLUMN),
+    };
+    let peek = Peek {
+        f_level: rows.f_level,
+        f_width: rows.f_width,
+        scratch: next,
+        next: [none; LANES - 1],
+        from: 0,
+    };
+    Ok(SumRows {
+        isa,
+        sum,
+        ones,
+        pairs,
+        values,
+        peek,
+    })
 }
 
 impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for SumRows<'_, S, I> {
@@ -1447,8 +1907,20 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
     }
 
     #[inline(always)]
-    fn whole_row(&mut self, eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
-        sum_row(self.isa, &mut self.sum, (self.ones, self.pairs), self.values.as_mut(), &mut self.peek, eng, row)
+    fn whole_row(
+        &mut self,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        sum_row(
+            self.isa,
+            &mut self.sum,
+            (self.ones, self.pairs),
+            self.values.as_mut(),
+            &mut self.peek,
+            eng,
+            row,
+        )
     }
 }
 
@@ -1465,7 +1937,14 @@ trait Isa: Copy {
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError>;
 
-    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError>;
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        sums: &[f64],
+        flags: &[u8],
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError>;
 }
 
 /// The target's own instruction set.
@@ -1487,7 +1966,14 @@ impl Isa for Base {
     }
 
     #[inline(never)]
-    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        sums: &[f64],
+        flags: &[u8],
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
         ahead_row(sum, sums, flags, eng, row)
     }
 }
@@ -1510,7 +1996,14 @@ impl Isa for Avx2 {
     }
 
     #[inline(always)]
-    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(self, sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
+    fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        sums: &[f64],
+        flags: &[u8],
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
         // Safety: as above.
         unsafe { avx2_ahead_row(sum, sums, flags, eng, row) }
     }
@@ -1545,7 +2038,12 @@ const SUM_COLUMNS: usize = 128;
 /// Charge `units` to `gate` as one poll would, counting down `due` from
 /// `due_at`, the gate's `due_in` when the count began.
 #[inline(always)]
-pub(super) fn charge(gate: &mut crate::limits::PollGate, due_at: &mut u64, due: &mut u64, units: u64) -> Result<(), OperationError> {
+pub(super) fn charge(
+    gate: &mut crate::limits::PollGate,
+    due_at: &mut u64,
+    due: &mut u64,
+    units: u64,
+) -> Result<(), OperationError> {
     if units >= *due {
         gate.add_short(*due_at - *due);
         gate.poll(units)?;
@@ -1597,9 +2095,12 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
         charge(gate, due_at, due, k)?;
         let (acc, fl) = (sums[x], flags[x]);
         finish_cell(
-            sum, eng, (node_idx, row_base + x),
+            sum,
+            eng,
+            (node_idx, row_base + x),
             (acc, fl & LIVE != 0, fl & INEXACT == 0),
-            (f_pairs, std::slice::from_ref(q)), (left, right),
+            (f_pairs, std::slice::from_ref(q)),
+            (left, right),
         )?;
     }
     Ok(())
@@ -1635,32 +2136,27 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
                 let i = (row.row_base - row.ctx.output_grid_base) / width;
                 if let Some(k) = vr.ahead.take(i, p1) {
                     let at = k * width..(k + 1) * width;
-                    return isa.ahead_row(sum, &vr.ahead.sums[at.clone()], &vr.ahead.flags[at], eng, row);
+                    return isa.ahead_row(
+                        sum,
+                        &vr.ahead.sums[at.clone()],
+                        &vr.ahead.flags[at],
+                        eng,
+                        row,
+                    );
                 }
-                if (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs || eager())
+                if (vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) <= VALUE_ROW_READS * pairs
+                    || eager())
                     && let Some((m, lay)) = peek.block(row.ctx, i, p1, vr, pairs)
                 {
                     return isa.block_rows(sum, (i, p1), (&peek.next[..m - 1], lay), vr, eng, row);
                 }
             }
-            if vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) > VALUE_ROW_READS * pairs && !eager() {
+            if vr.left.cost(p1.left.0) + vr.right.cost(p1.right.0) > VALUE_ROW_READS * pairs
+                && !eager()
+            {
                 return one_pair_row(sum, eng, row);
             }
-            vr.left.unpin();
-            vr.right.unpin();
-            let ls = vr.left.read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| sum.left_factor(c));
-            let rs = vr.right.read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| sum.right_factor(c));
-            let (l, r) = (vr.left.row(ls), vr.right.row(rs));
-            return match (l.any_dead || r.any_dead, !rows_exact::<S>(l, r), ones.is_empty()) {
-                (true, true, true) => one_pair_row_values::<true, true, false, _, _, _>(sum, ones, l, r, eng, row),
-                (true, false, true) => one_pair_row_values::<true, false, false, _, _, _>(sum, ones, l, r, eng, row),
-                (false, true, true) => one_pair_row_values::<false, true, false, _, _, _>(sum, ones, l, r, eng, row),
-                (false, false, true) => one_pair_row_values::<false, false, false, _, _, _>(sum, ones, l, r, eng, row),
-                (true, true, false) => one_pair_row_values::<true, true, true, _, _, _>(sum, ones, l, r, eng, row),
-                (true, false, false) => one_pair_row_values::<true, false, true, _, _, _>(sum, ones, l, r, eng, row),
-                (false, true, false) => one_pair_row_values::<false, true, true, _, _, _>(sum, ones, l, r, eng, row),
-                (false, false, false) => one_pair_row_values::<false, false, true, _, _, _>(sum, ones, l, r, eng, row),
-            };
+            return dispatch_one_pair_row_values(sum, ones, vr, p1, eng, row);
         }
         return one_pair_row(sum, eng, row);
     }
@@ -1673,6 +2169,62 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
     }
 }
 
+/// Read `p1`'s left and right [`ValueRow`]s and dispatch to the specialized
+/// [`one_pair_row_values`] instantiation.
+#[inline(always)]
+fn dispatch_one_pair_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    ones: &[ChildPair],
+    vr: &mut ValueRows<'_>,
+    p1: ChildPair,
+    eng: &Engine,
+    row: WholeRow<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    vr.left.unpin();
+    vr.right.unpin();
+    let ls = vr
+        .left
+        .read(row.left, row.node_idx, p1.left.0, S::CHECKED, |c| {
+            sum.left_factor(c)
+        });
+    let rs = vr
+        .right
+        .read(row.right, row.node_idx, p1.right.0, S::CHECKED, |c| {
+            sum.right_factor(c)
+        });
+    let (l, r) = (vr.left.row(ls), vr.right.row(rs));
+    match (
+        l.any_dead || r.any_dead,
+        !rows_exact::<S>(l, r),
+        ones.is_empty(),
+    ) {
+        (true, true, true) => {
+            one_pair_row_values::<true, true, false, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (true, false, true) => {
+            one_pair_row_values::<true, false, false, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (false, true, true) => {
+            one_pair_row_values::<false, true, false, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (false, false, true) => {
+            one_pair_row_values::<false, false, false, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (true, true, false) => {
+            one_pair_row_values::<true, true, true, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (true, false, false) => {
+            one_pair_row_values::<true, false, true, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (false, true, false) => {
+            one_pair_row_values::<false, true, true, _, _, _>(sum, ones, l, r, eng, row)
+        }
+        (false, false, false) => {
+            one_pair_row_values::<false, false, true, _, _, _>(sum, ones, l, r, eng, row)
+        }
+    }
+}
+
 /// [`sum_row`] on a row of one f pair, its products read off the grids.
 #[inline(always)]
 fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
@@ -1680,7 +2232,17 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        right_level_t,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let p1 = f_pairs[0];
@@ -1707,7 +2269,14 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             live = true;
             exact &= ok;
         }
-        finish_cell(sum, eng, (node_idx, row_base + j), (acc, live, exact), (f_pairs, g), (left, right))?;
+        finish_cell(
+            sum,
+            eng,
+            (node_idx, row_base + j),
+            (acc, live, exact),
+            (f_pairs, g),
+            (left, right),
+        )?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1718,7 +2287,14 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
 /// may not be its float ([`rows_exact`]), and `ONES` where each column's
 /// pairs are read off `ones` ([`pairs_at`]).
 #[inline(always)]
-fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L: ChildLookup, R: ChildLookup, S: RowSum>(
+fn one_pair_row_values<
+    const TRACK: bool,
+    const CHECK: bool,
+    const ONES: bool,
+    L: ChildLookup,
+    R: ChildLookup,
+    S: RowSum,
+>(
     sum: &mut S,
     ones: &[ChildPair],
     l: RowFloats<'_>,
@@ -1726,7 +2302,17 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        right_level_t,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
     let width = ctx.right_width;
     let (lv, ld, rv, rd) = (l.vals, l.dead, r.vals, r.dead);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
@@ -1754,7 +2340,14 @@ fn one_pair_row_values<const TRACK: bool, const CHECK: bool, const ONES: bool, L
             }
         }
         let live = !TRACK || flags & LIVE != 0;
-        finish_cell(sum, eng, (node_idx, row_base + j), (acc, live, flags & INEXACT == 0), (f_pairs, g), (left, right))?;
+        finish_cell(
+            sum,
+            eng,
+            (node_idx, row_base + j),
+            (acc, live, flags & INEXACT == 0),
+            (f_pairs, g),
+            (left, right),
+        )?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1775,7 +2368,13 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     note_lanes();
-    let ValueRows { left: lside, right: rside, ahead, gather, .. } = vr;
+    let ValueRows {
+        left: lside,
+        right: rside,
+        ahead,
+        gather,
+        ..
+    } = vr;
     let m = 1 + next.len();
     let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
     for (k, p) in next.iter().enumerate() {
@@ -1788,22 +2387,58 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         Lay::Right => (false, true),
         Lay::Both => (true, true),
     };
-    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| sum.left_factor(c));
-    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| sum.right_factor(c));
+    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| {
+        sum.left_factor(c)
+    });
+    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| {
+        sum.right_factor(c)
+    });
     let track = (0..m).any(|k| lst[k].2 || rst[k].2);
     let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
     let (sums, flags) = (&mut *ahead.sums, &mut *ahead.flags);
     let (lrow, rrow) = (lside.row(ls), rside.row(rs));
-    let (lone, rone) = (Shared { vals: lrow.vals, dead: lrow.dead }, Shared { vals: rrow.vals, dead: rrow.dead });
-    let (llaid, rlaid) = (Laid { vals: &*lside.lanes, marks: &*lside.marks }, Laid { vals: &*rside.lanes, marks: &*rside.marks });
+    let (lone, rone) = (
+        Shared {
+            vals: lrow.vals,
+            dead: lrow.dead,
+        },
+        Shared {
+            vals: rrow.vals,
+            dead: rrow.dead,
+        },
+    );
+    let (llaid, rlaid) = (
+        Laid {
+            vals: &*lside.lanes,
+            marks: &*lside.marks,
+        },
+        Laid {
+            vals: &*rside.lanes,
+            marks: &*rside.marks,
+        },
+    );
     let out = (m, sums, flags);
     let (ctx, level) = (row.ctx, row.right_level_t);
     match lay {
-        Lay::Left => match gather.rows(true, if rside.fixed { 0 } else { ra[0] }, rrow, ctx, level, &mut *row.g_pairs_scratch) {
+        Lay::Left => match gather.rows(
+            true,
+            if rside.fixed { 0 } else { ra[0] },
+            rrow,
+            ctx,
+            level,
+            &mut *row.g_pairs_scratch,
+        ) {
             Some(rg) => lanes_by((track, check), sum, (llaid, rg), out, eng, row),
             None => lanes_by((track, check), sum, (llaid, rone), out, eng, row),
         },
-        Lay::Right => match gather.rows(false, if lside.fixed { 0 } else { la[0] }, lrow, ctx, level, &mut *row.g_pairs_scratch) {
+        Lay::Right => match gather.rows(
+            false,
+            if lside.fixed { 0 } else { la[0] },
+            lrow,
+            ctx,
+            level,
+            &mut *row.g_pairs_scratch,
+        ) {
             Some(lg) => lanes_by((track, check), sum, (lg, rlaid), out, eng, row),
             None => lanes_by((track, check), sum, (lone, rlaid), out, eng, row),
         },
@@ -1849,7 +2484,16 @@ impl Lanes for Laid<'_> {
     fn at(self, i: usize, _w: usize) -> ([f64; LANES], u8) {
         // Safety: as for `Shared`; laid rows hold `LANES` floats and one
         // mark for each cell of a row.
-        unsafe { (self.vals.as_ptr().add(i * LANES).cast::<[f64; LANES]>().read(), *self.marks.get_unchecked(i)) }
+        unsafe {
+            (
+                self.vals
+                    .as_ptr()
+                    .add(i * LANES)
+                    .cast::<[f64; LANES]>()
+                    .read(),
+                *self.marks.get_unchecked(i),
+            )
+        }
     }
 }
 
@@ -1896,7 +2540,15 @@ fn lanes_by<A: Lanes, B: Lanes, L: ChildLookup, R: ChildLookup, S: RowSum>(
 /// `TRACK` where a cell of the rows is dead, and `CHECK` where a product
 /// of them may not be its float.
 #[inline(always)]
-fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: ChildLookup, R: ChildLookup, S: RowSum>(
+fn lane_values<
+    const TRACK: bool,
+    const CHECK: bool,
+    A: Lanes,
+    B: Lanes,
+    L: ChildLookup,
+    R: ChildLookup,
+    S: RowSum,
+>(
     sum: &mut S,
     l: A,
     r: B,
@@ -1904,7 +2556,17 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        right_level_t,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut w = 0;
@@ -1915,7 +2577,8 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
             continue;
         }
         charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-        let (mut acc, mut live, mut bad) = ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
+        let (mut acc, mut live, mut bad) =
+            ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
         for q in g {
             let (a, da) = l.at(q.left.0 as usize, w);
             let (b, db) = r.at(q.right.0 as usize, w);
@@ -1935,7 +2598,14 @@ fn lane_values<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, L: Chil
             sums[(k - 1) * width + j] = acc[k];
             flags[(k - 1) * width + j] = (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
         }
-        finish_cell(sum, eng, (node_idx, row_base + j), (acc[0], live & 1 != 0, bad & 1 == 0), (f_pairs, g), (left, right))?;
+        finish_cell(
+            sum,
+            eng,
+            (node_idx, row_base + j),
+            (acc[0], live & 1 != 0, bad & 1 == 0),
+            (f_pairs, g),
+            (left, right),
+        )?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1952,7 +2622,17 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, right_level_t, g_pairs_scratch, node_idx, left, right, gate } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        right_level_t,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     for j in 0..width {
@@ -1963,7 +2643,14 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
         charge(gate, &mut due_at, &mut due, g.len() as u64)?;
         let (acc, fl) = (sums[j], flags[j]);
-        finish_cell(sum, eng, (node_idx, row_base + j), (acc, fl & LIVE != 0, fl & INEXACT == 0), (f_pairs, g), (left, right))?;
+        finish_cell(
+            sum,
+            eng,
+            (node_idx, row_base + j),
+            (acc, fl & LIVE != 0, fl & INEXACT == 0),
+            (f_pairs, g),
+            (left, right),
+        )?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -1978,7 +2665,16 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, node_idx, left, right, gate, .. } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        node_idx,
+        left,
+        right,
+        gate,
+        ..
+    } = row;
     let width = ctx.right_width;
     debug_assert_eq!(ones.len(), width);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
@@ -1991,11 +2687,23 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         sums[..n].fill(0.0);
         flags[..n].fill(0);
         for p1 in f_pairs {
-            add_grid(sum, (&mut sums[..n], &mut flags[..n]), block, node_idx, (left, right), (p1.left.0, p1.right.0));
+            add_grid(
+                sum,
+                (&mut sums[..n], &mut flags[..n]),
+                block,
+                node_idx,
+                (left, right),
+                (p1.left.0, p1.right.0),
+            );
         }
         flush_ones_block(
-            sum, eng, (node_idx, row_base + j0), (f_pairs, block),
-            (&sums[..n], &flags[..n]), (left, right), (gate, &mut due_at, &mut due),
+            sum,
+            eng,
+            (node_idx, row_base + j0),
+            (f_pairs, block),
+            (&sums[..n], &flags[..n]),
+            (left, right),
+            (gate, &mut due_at, &mut due),
         )?;
         j0 += n;
     }
@@ -2016,36 +2724,46 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow { row_base, f_pairs, ctx, node_idx, left, right, gate, .. } = row;
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        node_idx,
+        left,
+        right,
+        gate,
+        ..
+    } = row;
     let width = ctx.right_width;
     let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
-    let ValueRows { left: lside, right: rside, sums, flags, .. } = vr;
+    let ValueRows {
+        left: lside,
+        right: rside,
+        sums,
+        flags,
+        ..
+    } = vr;
     let (sums, flags) = (&mut sums[..width], &mut flags[..width]);
     sums.fill(0.0);
     flags.fill(0);
-    let reads = |lside: &ValueSide<'_>, rside: &ValueSide<'_>, p: &ChildPair| lside.cost(p.left.0) + rside.cost(p.right.0) <= VALUE_ROW_READS * width || eager();
+    let reads = |lside: &ValueSide<'_>, rside: &ValueSide<'_>, p: &ChildPair| {
+        lside.cost(p.left.0) + rside.cost(p.right.0) <= VALUE_ROW_READS * width || eager()
+    };
     let mut at = 0;
     while at < k {
-        let block = f_pairs.get(at..at + BLOCK).filter(|b| lside.spares == BLOCK && b.iter().all(|p| reads(lside, rside, p)));
+        let block = f_pairs
+            .get(at..at + BLOCK)
+            .filter(|b| lside.spares == BLOCK && b.iter().all(|p| reads(lside, rside, p)));
         if let Some(block) = block {
-            note_block();
-            lside.unpin();
-            rside.unpin();
-            let (mut ls, mut rs) = ([0usize; BLOCK], [0usize; BLOCK]);
-            for (x, p) in block.iter().enumerate() {
-                ls[x] = lside.read(left, node_idx, p.left.0, S::CHECKED, |c| sum.left_factor(c));
-                rs[x] = rside.read(right, node_idx, p.right.0, S::CHECKED, |c| sum.right_factor(c));
-            }
-            let (l, r) = (ls.map(|s| lside.row(s)), rs.map(|s| rside.row(s)));
-            let track = l.iter().chain(&r).any(|x| x.any_dead);
-            let check = (0..BLOCK).any(|x| !rows_exact::<S>(l[x], r[x]));
-            match (track, check) {
-                (true, true) => add_block::<true, true, S>(sums, flags, ones, l, r),
-                (true, false) => add_block::<true, false, S>(sums, flags, ones, l, r),
-                (false, true) => add_block::<false, true, S>(sums, flags, ones, l, r),
-                (false, false) => add_block::<false, false, S>(sums, flags, ones, l, r),
-            }
+            accumulate_ones_block(
+                sum,
+                block,
+                (lside, rside),
+                (sums, flags, ones),
+                node_idx,
+                (left, right),
+            );
             at += BLOCK;
             continue;
         }
@@ -2070,11 +2788,46 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
     }
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     flush_ones_block(
-        sum, eng, (node_idx, row_base), (f_pairs, ones),
-        (sums, flags), (left, right), (gate, &mut due_at, &mut due),
+        sum,
+        eng,
+        (node_idx, row_base),
+        (f_pairs, ones),
+        (sums, flags),
+        (left, right),
+        (gate, &mut due_at, &mut due),
     )?;
     gate.add_short(due_at - due);
     Ok(width)
+}
+
+#[inline(always)]
+fn accumulate_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &S,
+    block: &[ChildPair],
+    (lside, rside): (&mut ValueSide<'_>, &mut ValueSide<'_>),
+    (sums, flags, ones): (&mut [f64], &mut [u8], &[ChildPair]),
+    node_idx: &[u32],
+    (left, right): (&L, &R),
+) {
+    note_block();
+    lside.unpin();
+    rside.unpin();
+    let (mut ls, mut rs) = ([0usize; BLOCK], [0usize; BLOCK]);
+    for (x, p) in block.iter().enumerate() {
+        ls[x] = lside.read(left, node_idx, p.left.0, S::CHECKED, |c| sum.left_factor(c));
+        rs[x] = rside.read(right, node_idx, p.right.0, S::CHECKED, |c| {
+            sum.right_factor(c)
+        });
+    }
+    let (l, r) = (ls.map(|s| lside.row(s)), rs.map(|s| rside.row(s)));
+    let track = l.iter().chain(&r).any(|x| x.any_dead);
+    let check = (0..BLOCK).any(|x| !rows_exact::<S>(l[x], r[x]));
+    match (track, check) {
+        (true, true) => add_block::<true, true, S>(sums, flags, ones, l, r),
+        (true, false) => add_block::<true, false, S>(sums, flags, ones, l, r),
+        (false, true) => add_block::<false, true, S>(sums, flags, ones, l, r),
+        (false, false) => add_block::<false, false, S>(sums, flags, ones, l, r),
+    }
 }
 
 /// Add f pair `(a, b)`'s product to each one-pair column's sum, read off
@@ -2103,7 +2856,11 @@ fn add_grid<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
         let (p, ok) = sum.product(lc, rc);
         *s += p;
-        *f |= if S::CHECKED && !ok { LIVE | INEXACT } else { LIVE };
+        *f |= if S::CHECKED && !ok {
+            LIVE | INEXACT
+        } else {
+            LIVE
+        };
     }
 }
 
@@ -2112,7 +2869,13 @@ fn add_grid<L: ChildLookup, R: ChildLookup, S: RowSum>(
 /// without pairs reads the rows' last floats. `TRACK` where a cell of the
 /// rows is dead, and `CHECK` where a product of them may not be its float.
 #[inline(always)]
-fn add_values<const TRACK: bool, const CHECK: bool, S: RowSum>(sums: &mut [f64], flags: &mut [u8], ones: &[ChildPair], l: RowFloats<'_>, r: RowFloats<'_>) {
+fn add_values<const TRACK: bool, const CHECK: bool, S: RowSum>(
+    sums: &mut [f64],
+    flags: &mut [u8],
+    ones: &[ChildPair],
+    l: RowFloats<'_>,
+    r: RowFloats<'_>,
+) {
     let (sl, sr) = (l.vals.len() - 1, r.vals.len() - 1);
     for ((s, f), q) in sums.iter_mut().zip(flags.iter_mut()).zip(ones) {
         let (i, t) = ((q.left.0 as usize).min(sl), (q.right.0 as usize).min(sr));
@@ -2135,7 +2898,13 @@ fn add_values<const TRACK: bool, const CHECK: bool, S: RowSum>(sums: &mut [f64],
 /// each column's sum loaded and stored once for the block, its products
 /// added in the block's order.
 #[inline(always)]
-fn add_block<const TRACK: bool, const CHECK: bool, S: RowSum>(sums: &mut [f64], flags: &mut [u8], ones: &[ChildPair], l: [RowFloats<'_>; BLOCK], r: [RowFloats<'_>; BLOCK]) {
+fn add_block<const TRACK: bool, const CHECK: bool, S: RowSum>(
+    sums: &mut [f64],
+    flags: &mut [u8],
+    ones: &[ChildPair],
+    l: [RowFloats<'_>; BLOCK],
+    r: [RowFloats<'_>; BLOCK],
+) {
     let (sl, sr) = (l[0].vals.len() - 1, r[0].vals.len() - 1);
     let (lv, rv) = (l.map(|x| x.vals), r.map(|x| x.vals));
     let (ld, rd) = (l.map(|x| x.dead), r.map(|x| x.dead));

@@ -21,8 +21,8 @@
 //! subtree then costs the levels of that subtree; every level above it is
 //! moved, whatever its size.
 
-use super::*;
 use super::identity::publish_identity_level;
+use super::*;
 
 /// How one child side of a relabelled level maps the carrier's child
 /// references.
@@ -121,13 +121,87 @@ pub(super) fn take_relabel_level(
     shape: LevelShape,
     sweep: &Sweep<'_, '_>,
 ) -> Result<bool, OperationError> {
+    let Some((carrier_f, one)) = select_relabel_carrier(run, f, g, shape, sweep) else {
+        return Ok(false);
+    };
     let (t, left, right) = (shape.t, shape.left, shape.right);
     let ti = t.idx();
-    // Neither operand one node here: no level is cheaper to turn away.
-    if shape.f.here != 1 && shape.g.here != 1 {
-        return Ok(false);
+    let vtree = sweep.vtree;
+    let pools = &eng.scratch.apply;
+    let (mut left_buf, mut right_buf) = (
+        pools.relabel_left.checkout(eng),
+        pools.relabel_right.checkout(eng),
+    );
+    let side_map = |c: VtreeIdx, label: u32, buf: &mut Vec<u32>| -> Result<bool, OperationError> {
+        if vtree.node(c).is_leaf() {
+            return Ok(false);
+        }
+        let ci = c.idx();
+        let identity = Operands {
+            f: run.f_identity[ci],
+            g: run.g_identity[ci],
+        };
+        run.products.column(
+            eng,
+            ci,
+            (run.f_widths[ci], run.g_widths[ci]),
+            (carrier_f, label),
+            identity,
+            buf,
+        )
+    };
+    let left_filled = side_map(left, one.left.raw(), &mut left_buf)?;
+    let right_filled = side_map(right, one.right.raw(), &mut right_buf)?;
+    let lm = SideMap::of(
+        vtree.node(left).is_leaf(),
+        one.left.raw(),
+        left_filled,
+        &left_buf,
+    );
+    let rm = SideMap::of(
+        vtree.node(right).is_leaf(),
+        one.right.raw(),
+        right_filled,
+        &right_buf,
+    );
+    let width = if carrier_f {
+        shape.f.here
+    } else {
+        shape.g.here
+    };
+
+    if lm.is_identity() && rm.is_identity() {
+        return carry_identity_relabel_level(eng.limits(), run, (f, g), ti, carrier_f, width);
     }
-    if relabel_forced_off()
+
+    let mut map = pools.relabel_map.checkout(eng);
+    let carrier = if carrier_f {
+        &f.levels[ti]
+    } else {
+        &g.levels[ti]
+    };
+    let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
+    if run.plain {
+        run.levels[ti].leave_live_pairs(pairs);
+    }
+    let nodes = run.levels[ti].nodes().len();
+    run.products
+        .publish_relabelled(eng, ti, carrier_f, &map, nodes)?;
+    note_relabelled(false);
+    Ok(true)
+}
+
+fn select_relabel_carrier(
+    run: &ApplyRun,
+    f: &Held<'_>,
+    g: &Held<'_>,
+    shape: LevelShape,
+    sweep: &Sweep<'_, '_>,
+) -> Option<(bool, ChildPair)> {
+    let (t, left, right) = (shape.t, shape.left, shape.right);
+    let ti = t.idx();
+    if (shape.f.here != 1 && shape.g.here != 1)
+        || relabel_forced_off()
         || sweep.ws.is_some()
         || sweep.targets.contains(ti)
         || fuses_target_child(sweep, t, shape.f.here, shape.g.here)
@@ -135,72 +209,53 @@ pub(super) fn take_relabel_level(
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
     {
-        return Ok(false);
+        return None;
     }
-    // The one-pair test before the marginal state, which reads three levels.
-    let (carrier_f, one) = match (single_pair(g, ti, shape.g.here), single_pair(f, ti, shape.f.here)) {
+    let (carrier_f, one) = match (
+        single_pair(g, ti, shape.g.here),
+        single_pair(f, ti, shape.f.here),
+    ) {
         (Some(pair), _) => (true, pair),
         (None, Some(pair)) => (false, pair),
-        (None, None) => return Ok(false),
+        (None, None) => return None,
     };
     let marginal = run.level_marginal(f, g, shape, sweep.targets);
     if marginal.is_target {
-        return Ok(false);
+        return None;
     }
-    // A marginal child is read through only where the output's level there
-    // is the carrier's own, which an identity fast path moved because the
-    // narrow operand is constant-true over it: each carrier reference to
-    // it, a slot or an inline count, is then its own product, as the
-    // general routes pass that side through.
-    let carried = |c: VtreeIdx| run.carried.iter().any(|&(x, from_f)| x == c.idx() && from_f == carrier_f);
+    let carried = |c: VtreeIdx| {
+        run.carried
+            .iter()
+            .any(|&(x, from_f)| x == c.idx() && from_f == carrier_f)
+    };
     if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
-        return Ok(false);
+        return None;
     }
     if marginal.left_any || marginal.right_any {
         note_read_through();
     }
+    Some((carrier_f, one))
+}
 
-    let vtree = sweep.vtree;
-    let pools = &eng.scratch.apply;
-    let (mut left_buf, mut right_buf) = (pools.relabel_left.checkout(eng), pools.relabel_right.checkout(eng));
-    let side_map = |c: VtreeIdx, label: u32, buf: &mut Vec<u32>| -> Result<bool, OperationError> {
-        if vtree.node(c).is_leaf() {
-            return Ok(false);
-        }
-        let ci = c.idx();
-        let identity = Operands { f: run.f_identity[ci], g: run.g_identity[ci] };
-        run.products.column(eng, ci, (run.f_widths[ci], run.g_widths[ci]), (carrier_f, label), identity, buf)
-    };
-    let left_filled = side_map(left, one.left.raw(), &mut left_buf)?;
-    let right_filled = side_map(right, one.right.raw(), &mut right_buf)?;
-    let lm = SideMap::of(vtree.node(left).is_leaf(), one.left.raw(), left_filled, &left_buf);
-    let rm = SideMap::of(vtree.node(right).is_leaf(), one.right.raw(), right_filled, &right_buf);
-    let width = if carrier_f { shape.f.here } else { shape.g.here };
-
-    if lm.is_identity() && rm.is_identity() {
-        // Every pair is its own product: the carrier's level is the output.
-        match carrier_f {
-            true => f.carry(eng.limits(), ti, &mut run.levels[ti])?,
-            false => g.carry(eng.limits(), ti, &mut run.levels[ti])?,
-        }
-        run.carried.push((ti, carrier_f));
-        run.relabel_moved.push(ti);
-        publish_identity_level(run.products, ti, width);
-        run.products.note_complete(ti);
-        note_relabelled(true);
-        return Ok(true);
+/// Move the carrier's level into `run.levels[ti]` unchanged when both side maps
+/// are the identity.
+fn carry_identity_relabel_level(
+    lim: &crate::limits::Limits,
+    run: &mut ApplyRun,
+    (f, g): (&mut Held<'_>, &mut Held<'_>),
+    ti: usize,
+    carrier_f: bool,
+    width: usize,
+) -> Result<bool, OperationError> {
+    match carrier_f {
+        true => f.carry(lim, ti, &mut run.levels[ti])?,
+        false => g.carry(lim, ti, &mut run.levels[ti])?,
     }
-
-    let mut map = pools.relabel_map.checkout(eng);
-    let carrier = if carrier_f { &f.levels[ti] } else { &g.levels[ti] };
-    let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
-    // A plain conjunction's seat closes the level as it stands.
-    if run.plain {
-        run.levels[ti].leave_live_pairs(pairs);
-    }
-    let nodes = run.levels[ti].nodes().len();
-    run.products.publish_relabelled(eng, ti, carrier_f, &map, nodes)?;
-    note_relabelled(false);
+    run.carried.push((ti, carrier_f));
+    run.relabel_moved.push(ti);
+    publish_identity_level(run.products, ti, width);
+    run.products.note_complete(ti);
+    note_relabelled(true);
     Ok(true)
 }
 
@@ -210,7 +265,12 @@ pub(super) fn take_relabel_level(
 /// the two-step path fuses once the child is marginal. The relabelling route
 /// leaves it to the general routes in every mode, so the two paths build it
 /// alike, pair for pair; one node in each operand, it has nothing to save.
-pub(super) fn fuses_target_child(sweep: &Sweep<'_, '_>, t: VtreeIdx, f_here: usize, g_here: usize) -> bool {
+pub(super) fn fuses_target_child(
+    sweep: &Sweep<'_, '_>,
+    t: VtreeIdx,
+    f_here: usize,
+    g_here: usize,
+) -> bool {
     if f_here != 1 || g_here != 1 || sweep.targets.is_empty() {
         return false;
     }
@@ -271,7 +331,9 @@ fn relabel_level(
             level.nodes.stored_mut().push(EncodedNode::inline(pair));
             inline += 1;
         } else {
-            level.try_push_multi_by_range(start, survivors).map_err(|()| OperationError::OverBudget)?;
+            level
+                .try_push_multi_by_range(start, survivors)
+                .map_err(|()| OperationError::OverBudget)?;
         }
         Ok(())
     })?;

@@ -2,7 +2,10 @@
 //! column's floats centred by a power of two where the cell needs it, and
 //! the sum is the scaled-float fold's, bit for bit.
 
-use super::{plain_fold, plain_fold_centred, pow2, FloatColumn, Offsets, Plain, PlainProducts, PLAIN_HI, PLAIN_LO};
+use super::{
+    FloatColumn, Offsets, PLAIN_HI, PLAIN_LO, Plain, PlainProducts, plain_fold, plain_fold_centred,
+    pow2,
+};
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ScaledFloat};
 use crate::test_helpers::Lcg;
 use crate::value::{FloatCol, FloatFold, StreamChild};
@@ -32,12 +35,18 @@ fn bits(v: ScaledFloat) -> (u64, i64) {
 }
 
 fn pair(left: u32, right: u32) -> ChildPair {
-    ChildPair { left: EncodedChildRef::from_raw(left), right: EncodedChildRef::from_raw(right) }
+    ChildPair {
+        left: EncodedChildRef::from_raw(left),
+        right: EncodedChildRef::from_raw(right),
+    }
 }
 
 /// A narrow child column read through its slots.
 fn child(col: Plain<'_>) -> StreamChild<'_, FloatFold> {
-    StreamChild { col: FloatColumn::Narrow(col), view: ChildDecoder::structural() }
+    StreamChild {
+        col: FloatColumn::Narrow(col),
+        view: ChildDecoder::structural(),
+    }
 }
 
 /// The scaled-float fold of the same cell.
@@ -50,6 +59,17 @@ fn scaled_fold(pairs: &[ChildPair], l: &[f64], ls: i64, r: &[f64], rs: i64) -> S
     )
 }
 
+const RANGES: [(i64, i64); 8] = [
+    (-3, 3),
+    (-200, 40),
+    (PLAIN_LO / 2, PLAIN_LO / 2 + 30),
+    (PLAIN_HI / 2 - 30, PLAIN_HI / 2),
+    (-900, 900),
+    (-1021, -500),
+    (600, 1024),
+    (-1021, 200),
+];
+
 /// Random cells of signed values, near both ends of the offsets the plain
 /// sum takes, well inside them and past them on either side, under random
 /// scales: every cell whose columns' offsets fit, as they are or centred,
@@ -58,24 +78,16 @@ fn scaled_fold(pairs: &[ChildPair], l: &[f64], ls: i64, r: &[f64], rs: i64) -> S
 fn a_plain_sum_is_the_scaled_fold_bit_for_bit() {
     let mut rng = Lcg::new(0xf10a7);
     let view = ChildDecoder::structural();
-    let ranges = [
-        (-3, 3),
-        (-200, 40),
-        (PLAIN_LO / 2, PLAIN_LO / 2 + 30),
-        (PLAIN_HI / 2 - 30, PLAIN_HI / 2),
-        (-900, 900),
-        (-1021, -500),
-        (600, 1024),
-        (-1021, 200),
-    ];
     let (mut plain, mut centred, mut outside) = (0, 0, 0);
     for round in 0..800 {
-        let (lo, hi) = ranges[round % ranges.len()];
+        let (lo, hi) = RANGES[round % RANGES.len()];
         let (l, r) = (column(&mut rng, 40, lo, hi), column(&mut rng, 40, lo, hi));
         let (ls, rs) = (rng.below(4000) as i64 - 2000, rng.below(4000) as i64 - 2000);
         let (left, right) = (Plain::new(&l, ls), Plain::new(&r, rs));
         let n = 1 + rng.below(30) as usize;
-        let pairs: Vec<ChildPair> = (0..n).map(|_| pair(rng.below(40) as u32, rng.below(40) as u32)).collect();
+        let pairs: Vec<ChildPair> = (0..n)
+            .map(|_| pair(rng.below(40) as u32, rng.below(40) as u32))
+            .collect();
         let fits = left.at.lo + right.at.lo >= PLAIN_LO && left.at.hi + right.at.hi <= PLAIN_HI;
         let got = match fits {
             true => plain_fold(&pairs, left, view, right, view),
@@ -83,7 +95,11 @@ fn a_plain_sum_is_the_scaled_fold_bit_for_bit() {
         };
         match (got, fits) {
             (Some(got), _) => {
-                assert_eq!(bits(got), bits(scaled_fold(&pairs, &l, ls, &r, rs)), "round {round}");
+                assert_eq!(
+                    bits(got),
+                    bits(scaled_fold(&pairs, &l, ls, &r, rs)),
+                    "round {round}"
+                );
                 match fits {
                     true => plain += 1,
                     false => centred += 1,
@@ -93,7 +109,10 @@ fn a_plain_sum_is_the_scaled_fold_bit_for_bit() {
             (None, true) => {}
         }
     }
-    assert!(plain > 300 && centred > 100 && outside > 50, "{plain} plain, {centred} centred, {outside} outside");
+    assert!(
+        plain > 300 && centred > 100 && outside > 50,
+        "{plain} plain, {centred} centred, {outside} outside"
+    );
 }
 
 /// A column inside its half of the plain range is read as it is; one past
@@ -103,8 +122,15 @@ fn a_plain_sum_is_the_scaled_fold_bit_for_bit() {
 fn a_column_away_from_the_middle_is_centred() {
     let mut rng = Lcg::new(0xce47);
     let (lo, hi) = (PLAIN_LO / 2, PLAIN_HI / 2);
-    for (a, b, moved) in [(-500, 0, false), (-1000, -700, true), (700, 1024, true), (-1021, 0, false)] {
-        let vals: Vec<f64> = (0..64).map(|i| float_at(&mut rng, if i % 2 == 0 { a } else { b })).collect();
+    for (a, b, moved) in [
+        (-500, 0, false),
+        (-1000, -700, true),
+        (700, 1024, true),
+        (-1021, 0, false),
+    ] {
+        let vals: Vec<f64> = (0..64)
+            .map(|i| float_at(&mut rng, if i % 2 == 0 { a } else { b }))
+            .collect();
         let plain = Plain::new(&vals, 17);
         assert_eq!(plain.centre != 0, moved, "{a}..{b}");
         let at = plain.centred();
@@ -113,7 +139,10 @@ fn a_column_away_from_the_middle_is_centred() {
         }
         let by = pow2(plain.centre);
         for &x in &vals {
-            assert_eq!(bits(ScaledFloat::at_offset(x * by, at.scale)), bits(ScaledFloat::at_offset(x, 17)));
+            assert_eq!(
+                bits(ScaledFloat::at_offset(x * by, at.scale)),
+                bits(ScaledFloat::at_offset(x, 17))
+            );
             assert!(x == 0.0 || (x * by).is_normal());
         }
     }
@@ -143,20 +172,15 @@ fn a_sum_cancelled_below_the_normal_floats_is_declined() {
 #[test]
 fn plain_products_sum_to_the_scaled_fold_bit_for_bit() {
     let mut rng = Lcg::new(0x9a1d);
-    let ranges = [
-        (-3, 3),
-        (-200, 40),
-        (PLAIN_LO / 2, PLAIN_LO / 2 + 30),
-        (PLAIN_HI / 2 - 30, PLAIN_HI / 2),
-        (-900, 900),
-        (-1021, -500),
-        (600, 1024),
-        (-1021, 200),
-    ];
     let (mut raw, mut centred, mut declined) = (0, 0, 0);
     for round in 0..800 {
-        let (lo, hi) = ranges[round % ranges.len()];
-        let draw = |rng: &mut Lcg| column(rng, 40, lo, hi).into_iter().map(f64::abs).collect::<Vec<f64>>();
+        let (lo, hi) = RANGES[round % RANGES.len()];
+        let draw = |rng: &mut Lcg| {
+            column(rng, 40, lo, hi)
+                .into_iter()
+                .map(f64::abs)
+                .collect::<Vec<f64>>()
+        };
         let (l, r) = (draw(&mut rng), draw(&mut rng));
         let (ls, rs) = (rng.below(4000) as i64 - 2000, rng.below(4000) as i64 - 2000);
         let (left, right) = (child(Plain::new(&l, ls)), child(Plain::new(&r, rs)));
@@ -169,18 +193,34 @@ fn plain_products_sum_to_the_scaled_fold_bit_for_bit() {
             false => centred += 1,
         }
         let cells: Vec<Vec<ChildPair>> = (0..8)
-            .map(|_| (0..1 + rng.below(30)).map(|_| pair(rng.below(40) as u32, rng.below(40) as u32)).collect())
+            .map(|_| {
+                (0..1 + rng.below(30))
+                    .map(|_| pair(rng.below(40) as u32, rng.below(40) as u32))
+                    .collect()
+            })
             .collect();
         let mut col = FloatCol::default();
-        let out = col.narrow_under(products.scale).expect("an empty column takes any scale");
+        let out = col
+            .narrow_under(products.scale)
+            .expect("an empty column takes any scale");
         for cell in &cells {
-            out.push(cell.iter().fold(0.0, |sum, p| sum + products.product(p.left.0, p.right.0)));
+            out.push(
+                cell.iter()
+                    .fold(0.0, |sum, p| sum + products.product(p.left.0, p.right.0)),
+            );
         }
         for (i, cell) in cells.iter().enumerate() {
-            assert_eq!(bits(col.get(i)), bits(scaled_fold(cell, &l, ls, &r, rs)), "round {round}, cell {i}");
+            assert_eq!(
+                bits(col.get(i)),
+                bits(scaled_fold(cell, &l, ls, &r, rs)),
+                "round {round}, cell {i}"
+            );
         }
     }
-    assert!(raw > 300 && centred > 100 && declined > 50, "{raw} raw, {centred} centred, {declined} declined");
+    assert!(
+        raw > 300 && centred > 100 && declined > 50,
+        "{raw} raw, {centred} centred, {declined} declined"
+    );
     let (l, r) = ([0.75, -0.5], [0.5]);
     assert!(PlainProducts::of(&child(Plain::new(&l, 0)), &child(Plain::new(&r, 0))).is_none());
 }
@@ -205,7 +245,20 @@ fn offsets_by_branch(vals: &[f64]) -> (i64, i64, bool) {
 /// columns long and short.
 #[test]
 fn offsets_match_a_branch_a_float() {
-    let edges = [0.0, -0.0, f64::MIN_POSITIVE, f64::from_bits(1), -f64::from_bits(1), f64::from_bits(1 << 51), 0.5, 1.0, -2.0, f64::MAX, f64::INFINITY, f64::NAN];
+    let edges = [
+        0.0,
+        -0.0,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        -f64::from_bits(1),
+        f64::from_bits(1 << 51),
+        0.5,
+        1.0,
+        -2.0,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+    ];
     let mut cases: Vec<Vec<f64>> = vec![Vec::new(), vec![0.0; 40], vec![-0.0; 40]];
     for (i, &a) in edges.iter().enumerate() {
         cases.push(vec![a]);

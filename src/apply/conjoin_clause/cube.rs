@@ -53,7 +53,11 @@ impl CubeChain {
         let mut m_idx = Vec::new();
         lim.try_resize(&mut m_idx, vtree.num_nodes(), NO_PRODUCT)?;
         for &(lit, t) in clause {
-            m_idx[t.idx()] = if lit.sign { NEG_LEAF_IDX.0 } else { POS_LEAF_IDX.0 };
+            m_idx[t.idx()] = if lit.sign {
+                NEG_LEAF_IDX.0
+            } else {
+                POS_LEAF_IDX.0
+            };
         }
         Ok(CubeChain { m_idx })
     }
@@ -62,8 +66,10 @@ impl CubeChain {
     /// Both are closed before `t` is reached, since the walk is bottom-up.
     pub(super) fn pair_at(&self, vtree: &Vtree, t: VtreeIdx) -> ChildPair {
         let (left, right) = vtree.children(t);
-        debug_assert!(self.m_idx[left.idx()] != NO_PRODUCT && self.m_idx[right.idx()] != NO_PRODUCT,
-            "the cube chain reached level {t:?} before its children");
+        debug_assert!(
+            self.m_idx[left.idx()] != NO_PRODUCT && self.m_idx[right.idx()] != NO_PRODUCT,
+            "the cube chain reached level {t:?} before its children"
+        );
         ChildPair::new(
             EncodedChildRef::from_raw(self.m_idx[left.idx()]),
             EncodedChildRef::from_raw(self.m_idx[right.idx()]),
@@ -87,11 +93,17 @@ impl CubeChain {
     ) -> Result<(), OperationError> {
         let mut found = NO_PRODUCT;
         for entry in lanes {
-            if entry[1] == NO_PRODUCT { continue; }
-            debug_assert_eq!(found, NO_PRODUCT,
-                "two nodes of level {t:?} meet the cube; structural determinism broken");
+            if entry[1] == NO_PRODUCT {
+                continue;
+            }
+            debug_assert_eq!(
+                found, NO_PRODUCT,
+                "two nodes of level {t:?} meet the cube; structural determinism broken"
+            );
             found = entry[1];
-            if !cfg!(debug_assertions) { break; }
+            if !cfg!(debug_assertions) {
+                break;
+            }
         }
         if found == NO_PRODUCT {
             let pair = self.pair_at(vtree, t);
@@ -108,7 +120,11 @@ impl CubeChain {
 /// # Errors
 ///
 /// Returns the [`OperationError`] the disjunction stopped on.
-pub(crate) fn disjoin_cube_on(eng: &Engine, f: Tdd, cube: &[Literal]) -> Result<Tdd, OperationError> {
+pub(crate) fn disjoin_cube_on(
+    eng: &Engine,
+    f: Tdd,
+    cube: &[Literal],
+) -> Result<Tdd, OperationError> {
     spine_walk(eng, f, cube, true)
 }
 
@@ -116,7 +132,11 @@ pub(crate) fn disjoin_cube_on(eng: &Engine, f: Tdd, cube: &[Literal]) -> Result<
 /// general disjunction runs, and the route for a cube the spine walk's chain
 /// cannot name. `clause` is `¬M` normalized and non-empty, and `f` has
 /// structure at its leaves. The result is minimized.
-pub(super) fn disjoin_cube_by_complement(eng: &Engine, f: Tdd, clause: &[(Literal, VtreeIdx)]) -> Result<Tdd, OperationError> {
+pub(super) fn disjoin_cube_by_complement(
+    eng: &Engine,
+    f: Tdd,
+    clause: &[(Literal, VtreeIdx)],
+) -> Result<Tdd, OperationError> {
     f.require_structure()?;
     let not_f = negate_on(eng, f)?;
     let mut rest = conjoin_normalized(eng, not_f, clause)?;

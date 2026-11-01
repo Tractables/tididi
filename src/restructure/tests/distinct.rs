@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::restructure::DistinctError;
-use crate::test_helpers::{assert_canonical, compile_clauses, eval, random_diagrams, test_cases, under, vtree_shapes};
+use crate::test_helpers::{
+    assert_canonical, compile_clauses, eval, random_diagrams, test_cases, under, vtree_shapes,
+};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 
@@ -12,7 +14,11 @@ fn keys(vtree: &Vtree) -> Vec<VtreeIdx> {
 }
 
 fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
-    vtree.leaf_bottomup().filter(|&(leaf, _)| under(vtree, leaf, t)).map(|(_, v)| v).collect()
+    vtree
+        .leaf_bottomup()
+        .filter(|&(leaf, _)| under(vtree, leaf, t))
+        .map(|(_, v)| v)
+        .collect()
 }
 
 /// Every count of `f` keyed on each node [`keys`] gives, for `m` up to
@@ -44,7 +50,11 @@ fn check(eng: &Engine, f: &Tdd) {
                 }
                 let k: Vec<bool> = kv.iter().map(|v| asn[v.idx()]).collect();
                 let count = distinct.get(&k).map_or(0, HashSet::len) as u64;
-                assert_eq!(eval(&g, &asn), count >= m, "key {key:?} m {m} at {k:?}: {count} distinct");
+                assert_eq!(
+                    eval(&g, &asn),
+                    count >= m,
+                    "key {key:?} m {m} at {k:?}: {count} distinct"
+                );
             }
         }
     }
@@ -74,7 +84,11 @@ fn a_projection_onto_a_subtree_is_the_quantified_diagram() {
         let vtree = f.vtree();
         for key in keys(vtree) {
             let kept = vars_under(vtree, key);
-            let dropped: Vec<VarId> = vtree.leaf_bottomup().map(|(_, v)| v).filter(|v| !kept.contains(v)).collect();
+            let dropped: Vec<VarId> = vtree
+                .leaf_bottomup()
+                .map(|(_, v)| v)
+                .filter(|v| !kept.contains(v))
+                .collect();
             let g = eng.project_to_subtree(&f, key).unwrap();
             assert_canonical(&g);
             let (back, _) = eng.embed(&g, vtree, |v| v).unwrap();
@@ -100,7 +114,10 @@ fn the_root_is_refused_as_a_key() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::linear(4));
     let f = compile_clauses(&vtree, &[vec![1, 2, 3, 4]]);
-    assert!(matches!(eng.at_least_distinct(&f, vtree.root(), 1), Err(DistinctError::Root)));
+    assert!(matches!(
+        eng.at_least_distinct(&f, vtree.root(), 1),
+        Err(DistinctError::Root)
+    ));
     // x4 sits three levels down a linear vtree of four variables: a key
     // there reads the levels on its path only.
     let deep = vtree.leaf_of(VarId(4)).unwrap();

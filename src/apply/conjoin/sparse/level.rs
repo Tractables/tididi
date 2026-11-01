@@ -1,8 +1,8 @@
 //! The sparse route's whole-level entry point.
 
 use super::*;
-use crate::apply::conjoin::marginal_plan::{Carrier, SidePlan};
 use crate::apply::conjoin::held::Held;
+use crate::apply::conjoin::marginal_plan::{Carrier, SidePlan};
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::{ChildSide, Sides};
 
@@ -26,8 +26,14 @@ impl Passthrough {
     /// The pass-through side of a level with exactly one, from its marginal plan.
     pub(crate) fn of(sides: Sides<SidePlan>) -> Option<Passthrough> {
         match (sides.left.carrier, sides.right.carrier) {
-            (Some(carrier), None) => Some(Passthrough { side: ChildSide::Left, carrier }),
-            (None, Some(carrier)) => Some(Passthrough { side: ChildSide::Right, carrier }),
+            (Some(carrier), None) => Some(Passthrough {
+                side: ChildSide::Left,
+                carrier,
+            }),
+            (None, Some(carrier)) => Some(Passthrough {
+                side: ChildSide::Right,
+                carrier,
+            }),
             _ => None,
         }
     }
@@ -81,7 +87,10 @@ fn scatter_level(
         (None, Some(c)) => Some((c.side, Inner::Complete { g_width: c.g_width })),
         (None, None) => None,
     };
-    debug_assert!(complete.is_none() || passthrough.is_none(), "a level reads one side without its list");
+    debug_assert!(
+        complete.is_none() || passthrough.is_none(),
+        "a level reads one side without its list"
+    );
     lim.try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
 
     // The leaf arm reads the pass-through side, or the complete one, where
@@ -103,10 +112,22 @@ fn scatter_level(
     // The estimator sums what each direction walks around the emit. Do not
     // substitute a plain grid-size proxy — it ignores selectivity and
     // mispicks on wide×wide segment conjoins.
-    let choice = estimate_scatter_direction(eng, &mut ws.est_counts, f_level, g_level, pl.left, pl.right, shape)?;
+    let choice = estimate_scatter_direction(
+        eng,
+        &mut ws.est_counts,
+        f_level,
+        g_level,
+        pl.left,
+        pl.right,
+        shape,
+    )?;
     match (collect, choice.swapped) {
-        (Collect::Nodes(emit), false) => scatter_routed::<false>(eng, ws, f_level, g_level, shape, pl, emit),
-        (Collect::Nodes(emit), true) => scatter_routed::<true>(eng, ws, f_level, g_level, shape, pl, emit),
+        (Collect::Nodes(emit), false) => {
+            scatter_routed::<false>(eng, ws, f_level, g_level, shape, pl, emit)
+        }
+        (Collect::Nodes(emit), true) => {
+            scatter_routed::<true>(eng, ws, f_level, g_level, shape, pl, emit)
+        }
         (collect, false) => scatter_join::<false>(eng, ws, f_level, g_level, shape, pl, collect),
         (collect, true) => scatter_join::<true>(eng, ws, f_level, g_level, shape, pl, collect),
     }
@@ -147,7 +168,10 @@ struct WsGuard<'a> {
 
 impl<'a> WsGuard<'a> {
     fn new(eng: &'a Engine) -> Self {
-        WsGuard { ws: eng.scratch.sparse.checkout(eng), repair: true }
+        WsGuard {
+            ws: eng.scratch.sparse.checkout(eng),
+            repair: true,
+        }
     }
 
     /// The lookup tables are all `NO_PRODUCT` again; nothing to repair.
@@ -219,51 +243,40 @@ pub(crate) fn apply_sparse_level(
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<(Made, bool), OperationError> {
     let t_idx = shape.t.idx();
-    let ProductLists { left, right, out: pl_output } = lists;
+    let ProductLists {
+        left,
+        right,
+        out: pl_output,
+    } = lists;
     let pl = Sides { left, right };
 
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels, passthrough);
 
-    seed_output(eng, &f.levels[t_idx], &g.levels[t_idx], &mut levels[t_idx], pl_output)?;
+    seed_output(
+        eng,
+        &f.levels[t_idx],
+        &g.levels[t_idx],
+        &mut levels[t_idx],
+        pl_output,
+    )?;
     let mut guard = WsGuard::new(eng);
     let ws = &mut *guard;
     ws.outer_held = false;
-
-    // Duplicate pairs in one node's list are legal once any level of the
-    // diagram is marginal — pair lists are then multisets feeding a sum.
-    // A duplicate here is *inherited*: an operand parent whose own list
-    // holds the same pair twice produces the same product pair twice, which
-    // is exactly the multiplicity the count recurrence needs. Only the
-    // pure-Boolean case still guarantees set-ness, so that is where the
-    // emit's check stays armed. `cfg!` is a compile-time constant, so the
-    // level scan is dead code in release.
-    let duplicates_legal = cfg!(debug_assertions)
-        && (f.levels.iter().any(|l| l.is_marginal())
-            || g.levels.iter().any(|l| l.is_marginal())
-            || levels.iter().any(|l| l.is_marginal()));
-
-    // ── Fused scatter-filter ──────────────────────────────────────
-    //
-    // Four-way join: parent(p1,p2) <- f(p1,a1,s1) /\ g(p2,a2,s2)
-    //                                /\ left_alive(a1,a2) /\ right_alive(s1,s2)
-    //
-    // When the inner child is a leaf, the reverse index for the
-    // opposite operand is keyed by the non-leaf child for selectivity,
-    // and `CONJOIN_GRID` supplies the leaf product directly; a
-    // pass-through inner side supplies the carried field the same way.
+    let duplicates_legal = any_diagram_marginal(f, g, levels);
 
     // A level where f and g have one node each has one product at most,
     // `(0, 0)`, and every candidate is one of its pairs: the scatter writes
     // them straight into the output level, and nothing is left to group.
     if shape.f.here == 1 && shape.g.here == 1 {
-        let level = &mut levels[t_idx];
-        let base = level.pairs.len();
-        scatter_level(eng, ws, (f, g), (shape, pl), Collect::Direct(&mut *level), (passthrough, complete))?;
-        let held = ws.outer_held;
-        // The one product's node holds every candidate.
-        let candidates = level.pairs.len() - base;
-        finish_direct(eng, level, base, pl_output, duplicates_legal)?;
-        level.leave_live_pairs(candidates);
+        let held = apply_single_product_sparse_level(
+            eng,
+            ws,
+            (f, g),
+            (shape, pl),
+            &mut levels[t_idx],
+            pl_output,
+            (duplicates_legal, passthrough, complete),
+        )?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
@@ -279,29 +292,124 @@ pub(crate) fn apply_sparse_level(
         (pl, &mut *pl_output, cells),
         (duplicates_legal, thresholds, passthrough, complete),
     )? {
-        let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
+        let made = finish_emitted_level(
+            f,
+            &mut levels[t_idx],
+            t_idx,
+            made,
+            live,
+            pl_output,
+            &mut guard,
+        );
         return Ok((made, false));
     }
 
+    scatter_and_finish_sparse_level(
+        eng,
+        &mut guard,
+        (f, g),
+        (shape, pl),
+        (&mut levels[t_idx], pl_output),
+        (duplicates_legal, thresholds, passthrough, complete),
+    )
+}
+
+/// Duplicate pairs in one node's list are legal once any level of the
+/// diagram is marginal — pair lists are then multisets feeding a sum.
+#[inline]
+fn any_diagram_marginal(f: &Held<'_>, g: &Tdd, levels: &[TddLevel]) -> bool {
+    cfg!(debug_assertions)
+        && (f.levels.iter().any(|l| l.is_marginal())
+            || g.levels.iter().any(|l| l.is_marginal())
+            || levels.iter().any(|l| l.is_marginal()))
+}
+
+/// Run the full four-way scatter-filter join into `level` and finalize `pl_output`.
+fn scatter_and_finish_sparse_level(
+    eng: &Engine,
+    guard: &mut WsGuard<'_>,
+    (f, g): (&mut Held<'_>, &Tdd),
+    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
+    (level, pl_output): (&mut TddLevel, &mut Vec<ProductEntry>),
+    (duplicates_legal, thresholds, passthrough, complete): (
+        bool,
+        SparseThresholds,
+        Option<Passthrough>,
+        Option<Complete>,
+    ),
+) -> Result<(Made, bool), OperationError> {
+    let t_idx = shape.t.idx();
+    let ws = &mut **guard;
     let mut live = None;
-    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
-    let made = scatter_level(eng, ws, (f, g), (shape, pl), Collect::Nodes(emit), (passthrough, complete))?;
+    let emit = Emit {
+        level,
+        out: pl_output,
+        duplicates_legal,
+        thresholds,
+        live: &mut live,
+    };
+    let made = scatter_level(
+        eng,
+        ws,
+        (f, g),
+        (shape, pl),
+        Collect::Nodes(emit),
+        (passthrough, complete),
+    )?;
     let held = ws.outer_held;
-    let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
+    let made = finish_emitted_level(f, level, t_idx, made, live, pl_output, guard);
     Ok((made, held))
 }
 
+/// Scatter and finish a level where both `f` and `g` have width 1, returning `outer_held`.
+fn apply_single_product_sparse_level(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    (f, g): (&mut Held<'_>, &Tdd),
+    (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    (duplicates_legal, passthrough, complete): (bool, Option<Passthrough>, Option<Complete>),
+) -> Result<bool, OperationError> {
+    let base = level.pairs.len();
+    scatter_level(
+        eng,
+        ws,
+        (f, g),
+        (shape, pl),
+        Collect::Direct(&mut *level),
+        (passthrough, complete),
+    )?;
+    let held = ws.outer_held;
+    // The one product's node holds every candidate.
+    let candidates = level.pairs.len() - base;
+    finish_direct(eng, level, base, pl_output, duplicates_legal)?;
+    level.leave_live_pairs(candidates);
+    Ok(held)
+}
+
+type SparseProbeCells<'a> = (
+    Sides<&'a [ProductEntry]>,
+    &'a mut Vec<ProductEntry>,
+    Sides<CellLookup<'a>>,
+);
+type SparseProbeOpts = (
+    bool,
+    SparseThresholds,
+    Option<Passthrough>,
+    Option<Complete>,
+);
+
 /// Try the `f`-node probe walk (`probe_level`) when neither child is a leaf or
 /// pass-through side.
-#[allow(clippy::type_complexity)]
 fn try_probe_sparse_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     (f, g): (&Held<'_>, &Tdd),
     shape: LevelShape,
     levels: &mut [TddLevel],
-    (pl, pl_output, cells): (Sides<&[ProductEntry]>, &mut Vec<ProductEntry>, Sides<CellLookup<'_>>),
-    (duplicates_legal, thresholds, passthrough, complete): (bool, SparseThresholds, Option<Passthrough>, Option<Complete>),
+    (pl, pl_output, cells): SparseProbeCells<'_>,
+    (duplicates_legal, thresholds, passthrough, complete): SparseProbeOpts,
 ) -> Result<Option<(Made, Option<usize>)>, OperationError> {
     // A level of many products, each found by a lookup or two, is walked by
     // `f` node instead of scattered (`probe_level`). It joins both children,
@@ -321,7 +429,9 @@ fn try_probe_sparse_level(
     // scan on each of its small ones. The level being built is split
     // out of the scan, and read on its own.
     let (below, rest) = levels.split_at_mut(shape.t.idx());
-    let (level, above) = rest.split_first_mut().expect("the level is one of the levels");
+    let (level, above) = rest
+        .split_first_mut()
+        .expect("the level is one of the levels");
     let here = level.is_marginal();
     let multisets = || {
         here || f.levels.iter().any(|l| l.is_marginal())
@@ -333,8 +443,17 @@ fn try_probe_sparse_level(
         right: complete.is_none_or(|c| c.side != ChildSide::Right),
     };
     let mut live = None;
-    let emit = Emit { level, out: pl_output, duplicates_legal, thresholds, live: &mut live };
-    Ok(probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)?.map(|made| (made, live)))
+    let emit = Emit {
+        level,
+        out: pl_output,
+        duplicates_legal,
+        thresholds,
+        live: &mut live,
+    };
+    Ok(
+        probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)?
+            .map(|made| (made, live)),
+    )
 }
 
 /// Complete a probe- or scatter-emitted level: install `f`'s level if `made == Made::F`,
@@ -360,7 +479,6 @@ fn finish_emitted_level(
     made
 }
 
-
 /// Where a walk left `level` f's level at `t_idx` ([`Made::F`]), give it
 /// f's nodes and arena: moved where f is owned, copied where it is
 /// borrowed ([`Made::CopiedF`]). Returns what the level is then.
@@ -383,7 +501,9 @@ fn take_f_level(f: &mut Held<'_>, level: &mut TddLevel, t_idx: usize, made: Made
         // A borrowed f's are copied into the level's room, which holds
         // them, as the walk's writes of them would have.
         None => {
-            let stored = f.levels[t_idx].stored().expect("a level the walk made f's is stored");
+            let stored = f.levels[t_idx]
+                .stored()
+                .expect("a level the walk made f's is stored");
             level.pairs.stored_mut().extend_from_slice(stored.arena());
             level.nodes.stored_mut().extend_from_slice(stored.nodes());
             Made::CopiedF
@@ -414,7 +534,9 @@ fn seed_output(
     let pairs = f.pairs.len().max(g.pairs.len());
     let nodes = f.node_count().max(g.node_count());
     let bytes = (pairs * std::mem::size_of::<ChildPair>()
-        + nodes * (std::mem::size_of::<crate::diagram::EncodedNode>() + std::mem::size_of::<ProductEntry>())) as u64;
+        + nodes
+            * (std::mem::size_of::<crate::diagram::EncodedNode>()
+                + std::mem::size_of::<ProductEntry>())) as u64;
     if bytes.saturating_mul(3) >= lim.headroom() {
         return Ok(());
     }
@@ -444,10 +566,28 @@ pub(crate) fn count_sparse_level(
     passthrough: Option<Passthrough>,
     fold: &mut CandidateFold<'_>,
 ) -> Result<(), OperationError> {
-    debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
-    assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
+    debug_assert!(
+        shape.f.here == 1 && shape.g.here == 1,
+        "a counted level has one product"
+    );
+    assert_no_marginal_children(
+        shape.t.idx(),
+        shape.left,
+        shape.right,
+        f,
+        g,
+        levels,
+        passthrough,
+    );
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, (f, g), (shape, pl), Collect::Fold(fold), (passthrough, None))?;
+    scatter_level(
+        eng,
+        &mut guard,
+        (f, g),
+        (shape, pl),
+        Collect::Fold(fold),
+        (passthrough, None),
+    )?;
     guard.scatter_clean();
     Ok(())
 }
@@ -468,10 +608,20 @@ pub(crate) fn sum_sparse_level(
     complete: Option<Complete>,
     sum: &mut ChildSum,
 ) -> Result<(), OperationError> {
-    debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
+    debug_assert!(
+        shape.f.here == 1 && shape.g.here == 1,
+        "a summed level has one product"
+    );
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, (f, g), (shape, pl), Collect::Sum(sum), (None, complete))?;
+    scatter_level(
+        eng,
+        &mut guard,
+        (f, g),
+        (shape, pl),
+        Collect::Sum(sum),
+        (None, complete),
+    )?;
     guard.scatter_clean();
     Ok(())
 }
@@ -497,13 +647,17 @@ fn assert_no_marginal_children(
 ) {
     let carried = |side| passthrough.is_some_and(|p| p.side == side);
     let marginal = |c: VtreeIdx| {
-        f.levels[c.idx()].is_marginal() || g.levels[c.idx()].is_marginal() || levels[c.idx()].is_marginal()
+        f.levels[c.idx()].is_marginal()
+            || g.levels[c.idx()].is_marginal()
+            || levels[c.idx()].is_marginal()
     };
     cheap_assert!(
-        (carried(ChildSide::Left) || !marginal(left)) && (carried(ChildSide::Right) || !marginal(right)),
+        (carried(ChildSide::Left) || !marginal(left))
+            && (carried(ChildSide::Right) || !marginal(right)),
         "apply_sparse_level reached with a marginal joined child (t={t_idx} l={} r={}): \
          the dedicated marginal-child dispatch was bypassed",
-        left.idx(), right.idx()
+        left.idx(),
+        right.idx()
     );
 }
 
@@ -512,9 +666,16 @@ fn assert_no_marginal_children(
 #[cfg(debug_assertions)]
 fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
     for (i, e) in pl_output.iter().enumerate() {
-        debug_assert_eq!(e.prod_idx.0 as usize, i,
-            "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
+        debug_assert_eq!(
+            e.prod_idx.0 as usize, i,
+            "pl_output[{}].prod_idx = {} but expected {}",
+            i, e.prod_idx.0, i
+        );
     }
-    debug_assert!(level.nodes().len() == pl_output.len(),
-        "level.nodes().len() {} != pl_output.len() {}", level.nodes().len(), pl_output.len());
+    debug_assert!(
+        level.nodes().len() == pl_output.len(),
+        "level.nodes().len() {} != pl_output.len() {}",
+        level.nodes().len(),
+        pl_output.len()
+    );
 }

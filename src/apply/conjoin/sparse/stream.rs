@@ -114,10 +114,37 @@ struct Oriented<'a> {
 
 impl<'a> Oriented<'a> {
     fn new(input: &StreamInput<'a>, pivot: Operand) -> Self {
-        let StreamInput { f_root, g_root, f_c, g_c, c_left, f_widths, g_widths, .. } = *input;
+        let StreamInput {
+            f_root,
+            g_root,
+            f_c,
+            g_c,
+            c_left,
+            f_widths,
+            g_widths,
+            ..
+        } = *input;
         match pivot {
-            Operand::F => Oriented { pivot, p_root: f_root, q_root: g_root, p_c: f_c, q_c: g_c, p: f_widths, q: g_widths, c_left },
-            Operand::G => Oriented { pivot, p_root: g_root, q_root: f_root, p_c: g_c, q_c: f_c, p: g_widths, q: f_widths, c_left },
+            Operand::F => Oriented {
+                pivot,
+                p_root: f_root,
+                q_root: g_root,
+                p_c: f_c,
+                q_c: g_c,
+                p: f_widths,
+                q: g_widths,
+                c_left,
+            },
+            Operand::G => Oriented {
+                pivot,
+                p_root: g_root,
+                q_root: f_root,
+                p_c: g_c,
+                q_c: f_c,
+                p: g_widths,
+                q: f_widths,
+                c_left,
+            },
         }
     }
 
@@ -133,12 +160,20 @@ impl<'a> Oriented<'a> {
     /// A root pair's `(c, o)` children.
     #[inline(always)]
     fn at_root(&self, pair: &ChildPair) -> (u32, u32) {
-        if self.c_left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) }
+        if self.c_left {
+            (pair.left.0, pair.right.0)
+        } else {
+            (pair.right.0, pair.left.0)
+        }
     }
 }
 
 /// A histogram of `keys` over `n` keys, counted as `u32`.
-fn histogram(lim: &Limits, n: usize, keys: impl Iterator<Item = u32>) -> Result<Vec<u32>, OperationError> {
+fn histogram(
+    lim: &Limits,
+    n: usize,
+    keys: impl Iterator<Item = u32>,
+) -> Result<Vec<u32>, OperationError> {
     let mut counts = Vec::new();
     lim.try_resize(&mut counts, n, 0u32)?;
     keys.for_each(|k| counts[k as usize] += 1);
@@ -191,13 +226,28 @@ struct PairPricing {
 }
 
 impl PairPricing {
-    fn new(lim: &Limits, view: &Oriented<'_>, input: &StreamInput<'_>) -> Result<Self, OperationError> {
-        let q_by_cl = histogram(lim, view.q.cl, view.q_c.pairs_with_parent().map(|(_, pair)| pair.left.0))?;
-        let q_by_cr = histogram(lim, view.q.cr, view.q_c.pairs_with_parent().map(|(_, pair)| pair.right.0))?;
+    fn new(
+        lim: &Limits,
+        view: &Oriented<'_>,
+        input: &StreamInput<'_>,
+    ) -> Result<Self, OperationError> {
+        let q_by_cl = histogram(
+            lim,
+            view.q.cl,
+            view.q_c.pairs_with_parent().map(|(_, pair)| pair.left.0),
+        )?;
+        let q_by_cr = histogram(
+            lim,
+            view.q.cr,
+            view.q_c.pairs_with_parent().map(|(_, pair)| pair.right.0),
+        )?;
         let (cl_len, cl_reach) = row_weights(lim, view, input.cl.products, view.p.cl, &q_by_cl)?;
         let (cr_len, cr_reach) = row_weights(lim, view, input.cr.products, view.p.cr, &q_by_cr)?;
         Ok(PairPricing {
-            cl_len, cl_reach, cr_len, cr_reach,
+            cl_len,
+            cl_reach,
+            cr_len,
+            cr_reach,
             cl_direct: view.p.cl == 1 || view.q.cl == 1,
             cr_direct: view.p.cr == 1 || view.q.cr == 1,
         })
@@ -210,7 +260,11 @@ impl PairPricing {
         let mark = |direct: bool, len: u32| if direct { 0 } else { u128::from(len) };
         let by_left = 1 + mark(self.cr_direct, self.cr_len[r]) + u128::from(self.cl_reach[l]);
         let by_right = 1 + mark(self.cl_direct, self.cl_len[l]) + u128::from(self.cr_reach[r]);
-        if by_left <= by_right { (Direction::ByLeft, by_left) } else { (Direction::ByRight, by_right) }
+        if by_left <= by_right {
+            (Direction::ByLeft, by_left)
+        } else {
+            (Direction::ByRight, by_right)
+        }
     }
 }
 
@@ -219,17 +273,31 @@ impl PairPricing {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a counter array is refused.
-pub(crate) fn price(lim: &Limits, input: &StreamInput<'_>, pivot: Operand) -> Result<StreamCost, OperationError> {
+pub(crate) fn price(
+    lim: &Limits,
+    input: &StreamInput<'_>,
+    pivot: Operand,
+) -> Result<StreamCost, OperationError> {
     let view = Oriented::new(input, pivot);
     // The weighing: each root pair of `P` walks the live products of its
     // `o`-side child into `Q`'s root pairs by their `o`-side child.
-    let q_by_o = histogram(lim, view.q.o, view.q_root.pairs_with_parent().map(|(_, pair)| view.at_root(&pair).1))?;
+    let q_by_o = histogram(
+        lim,
+        view.q.o,
+        view.q_root
+            .pairs_with_parent()
+            .map(|(_, pair)| view.at_root(&pair).1),
+    )?;
     let (_, o_reach) = row_weights(lim, &view, input.o.products, view.p.o, &q_by_o)?;
-    let weigh = view.p_root.pairs_with_parent()
+    let weigh = view
+        .p_root
+        .pairs_with_parent()
         .map(|(_, pair)| 1 + u128::from(o_reach[view.at_root(&pair).1 as usize]))
         .sum();
     let pricing = PairPricing::new(lim, &view, input)?;
-    let walk = view.p_c.pairs_with_parent()
+    let walk = view
+        .p_c
+        .pairs_with_parent()
         .map(|(_, pair)| pricing.choose(pair.left.0, pair.right.0).1)
         .sum();
     Ok(StreamCost { pivot, weigh, walk })
@@ -250,10 +318,17 @@ const WEIGH_FACTOR: u128 = 2;
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a counter array is refused.
-pub(crate) fn choose_pivot(lim: &Limits, input: &StreamInput<'_>) -> Result<Option<Operand>, OperationError> {
+pub(crate) fn choose_pivot(
+    lim: &Limits,
+    input: &StreamInput<'_>,
+) -> Result<Option<Operand>, OperationError> {
     let by_f = price(lim, input, Operand::F)?;
     let by_g = price(lim, input, Operand::G)?;
-    let best = if by_g.total() < by_f.total() { by_g } else { by_f };
+    let best = if by_g.total() < by_f.total() {
+        by_g
+    } else {
+        by_f
+    };
     Ok(match forced() {
         Some(forced) => forced,
         None => (best.weigh <= WEIGH_FACTOR * best.walk).then_some(best.pivot),
@@ -290,12 +365,29 @@ pub(crate) fn candidate_bound(
     // The pairs one operand has at `c` for each of its nodes at one child,
     // summed over that child's live products.
     let walk = |operand: Operand, on_left: bool| {
-        let (level, widths) = match operand { Operand::F => (f, f_widths), Operand::G => (g, g_widths) };
-        let (width, products) = if on_left { (widths.cl, left) } else { (widths.cr, right) };
-        let side = level.pairs_with_parent().map(|(_, pair)| if on_left { pair.left.0 } else { pair.right.0 });
+        let (level, widths) = match operand {
+            Operand::F => (f, f_widths),
+            Operand::G => (g, g_widths),
+        };
+        let (width, products) = if on_left {
+            (widths.cl, left)
+        } else {
+            (widths.cr, right)
+        };
+        let side = level
+            .pairs_with_parent()
+            .map(|(_, pair)| if on_left { pair.left.0 } else { pair.right.0 });
         let counts = histogram(lim, width, side)?;
-        let node = |e: &ProductEntry| match operand { Operand::F => e.f_idx.0, Operand::G => e.g_idx.0 };
-        Ok::<u128, OperationError>(products.iter().map(|e| u128::from(counts[node(e) as usize])).sum())
+        let node = |e: &ProductEntry| match operand {
+            Operand::F => e.f_idx.0,
+            Operand::G => e.g_idx.0,
+        };
+        Ok::<u128, OperationError>(
+            products
+                .iter()
+                .map(|e| u128::from(counts[node(e) as usize]))
+                .sum(),
+        )
     };
     Ok(walk(Operand::F, true)?
         .min(walk(Operand::F, false)?)
@@ -363,7 +455,13 @@ enum Probe<M> {
 }
 
 impl<M: Copy + Default> Probe<M> {
-    fn new(lim: &Limits, view: &Oriented<'_>, built: Built<'_>, p_width: usize, q_width: usize) -> Result<Self, OperationError> {
+    fn new(
+        lim: &Limits,
+        view: &Oriented<'_>,
+        built: Built<'_>,
+        p_width: usize,
+        q_width: usize,
+    ) -> Result<Self, OperationError> {
         let table = |n: usize, key: &dyn Fn(u32, u32) -> u32| -> Result<Vec<u64>, OperationError> {
             let mut table = Vec::new();
             lim.try_resize(&mut table, n, 0u64)?;
@@ -456,14 +554,24 @@ fn root_groups(
     lim: &Limits,
     view: &Oriented<'_>,
 ) -> Result<(Grouped<u32>, Grouped<u32>), OperationError> {
-    let p_root = grouped(lim, view.p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_c as usize, at_o)
-    })?;
-    let q_root = grouped(lim, view.q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_o as usize, at_c)
-    })?;
+    let p_root = grouped(
+        lim,
+        view.p.c,
+        view.p_root.pairs_with_parent(),
+        |(_, pair)| {
+            let (at_c, at_o) = view.at_root(&pair);
+            (at_c as usize, at_o)
+        },
+    )?;
+    let q_root = grouped(
+        lim,
+        view.q.o,
+        view.q_root.pairs_with_parent(),
+        |(_, pair)| {
+            let (at_c, at_o) = view.at_root(&pair);
+            (at_o as usize, at_c)
+        },
+    )?;
     Ok((p_root, q_root))
 }
 
@@ -506,8 +614,15 @@ fn walk_indirect_pair(
         let owners = walked.owners.view().bucket(q_walked as usize);
         steps += 1 + owners.len() as u64;
         for &(q_node, q_probed) in owners {
-            let Some(v) = weights.get(q_node) else { continue };
-            let Some(c_p) = probed.probe.count(p_probed, q_probed, |prod| probed.counts[prod as usize]) else { continue };
+            let Some(v) = weights.get(q_node) else {
+                continue;
+            };
+            let Some(c_p) = probed
+                .probe
+                .count(p_probed, q_probed, |prod| probed.counts[prod as usize])
+            else {
+                continue;
+            };
             total.add3(c_w, c_p, v);
         }
     }
@@ -522,7 +637,11 @@ fn walk_indirect_pair(
 ///
 /// [`OperationError::OverBudget`] when an index or column is refused, and the
 /// stop the engine's limits install, polled as the walks go.
-pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Result<BigUint, OperationError> {
+pub(crate) fn count(
+    eng: &Engine,
+    input: &StreamInput<'_>,
+    pivot: Operand,
+) -> Result<BigUint, OperationError> {
     let lim = eng.limits();
     let view = Oriented::new(input, pivot);
     let pricing = PairPricing::new(lim, &view, input)?;
@@ -555,13 +674,17 @@ fn count_indirect(
     // child.
     let mut left = IndirectSide {
         rows: rows_by_p(lim, &view, input.cl.products, p.cl)?,
-        owners: grouped(lim, q.cl, view.q_c.pairs_with_parent(), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?,
+        owners: grouped(lim, q.cl, view.q_c.pairs_with_parent(), |(node, pair)| {
+            (pair.left.0 as usize, (node, pair.right.0))
+        })?,
         counts: input.cl.counts,
         probe: Probe::new(lim, &view, input.cl, p.cl, q.cl)?,
     };
     let mut right = IndirectSide {
         rows: rows_by_p(lim, &view, input.cr.products, p.cr)?,
-        owners: grouped(lim, q.cr, view.q_c.pairs_with_parent(), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?,
+        owners: grouped(lim, q.cr, view.q_c.pairs_with_parent(), |(node, pair)| {
+            (pair.right.0 as usize, (node, pair.left.0))
+        })?,
         counts: input.cr.counts,
         probe: Probe::new(lim, &view, input.cr, p.cr, q.cr)?,
     };
@@ -594,8 +717,12 @@ fn count_indirect(
         for pair in view.p_c.pairs_iter_of(&node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
-                Direction::ByLeft => walk_indirect_pair(&left, &mut right, (p_cl, p_cr), &weights, &mut total),
-                Direction::ByRight => walk_indirect_pair(&right, &mut left, (p_cr, p_cl), &weights, &mut total),
+                Direction::ByLeft => {
+                    walk_indirect_pair(&left, &mut right, (p_cl, p_cr), &weights, &mut total)
+                }
+                Direction::ByRight => {
+                    walk_indirect_pair(&right, &mut left, (p_cr, p_cl), &weights, &mut total)
+                }
             };
             ticker.poll(walked)?;
         }
@@ -628,8 +755,9 @@ pub(crate) enum Walk {
 /// `(p, q)` (a node's pairs are distinct, and `p` and `q` fix the `c` side of
 /// each), so the sum of every count at `o` bounds every entry.
 fn choose_walk(input: &StreamInput<'_>) -> Walk {
-    let o_total = input.o.products.iter()
-        .fold(0u128, |sum, e| sum.saturating_add(input.o.counts[e.prod_idx.0 as usize]));
+    let o_total = input.o.products.iter().fold(0u128, |sum, e| {
+        sum.saturating_add(input.o.counts[e.prod_idx.0 as usize])
+    });
     let wide = if o_total <= u128::from(u32::MAX) {
         false
     } else if o_total <= u128::from(u64::MAX) {
@@ -639,7 +767,13 @@ fn choose_walk(input: &StreamInput<'_>) -> Walk {
     };
     match forced_walk() {
         Some(Walk::Indirect) => Walk::Indirect,
-        Some(Walk::Dense { wide: forced_wide, fold }) => Walk::Dense { wide: wide || forced_wide, fold },
+        Some(Walk::Dense {
+            wide: forced_wide,
+            fold,
+        }) => Walk::Dense {
+            wide: wide || forced_wide,
+            fold,
+        },
         None => Walk::Dense { wide, fold: true },
     }
 }
@@ -739,11 +873,17 @@ impl Owners {
         fold: bool,
     ) -> Result<Self, OperationError> {
         let pairs = view.q_c.pairs_with_parent().map(move |(node, pair)| {
-            let (this, other) = if left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
+            let (this, other) = if left {
+                (pair.left.0, pair.right.0)
+            } else {
+                (pair.right.0, pair.left.0)
+            };
             (this, node, other)
         });
         let by_q = match probe {
-            Probe::ByQ(table) if fold && table.iter().all(|&c| c <= u64::from(u32::MAX)) => Some(table.as_slice()),
+            Probe::ByQ(table) if fold && table.iter().all(|&c| c <= u64::from(u32::MAX)) => {
+                Some(table.as_slice())
+            }
             _ => None,
         };
         #[cfg(test)]
@@ -761,9 +901,19 @@ impl Owners {
             })?;
             Ok(Owners::Folded(owners))
         } else if fold && matches!(probe, Probe::ByP(_)) {
-            Ok(Owners::Folded(grouped(lim, q_width, pairs, |(this, node, _)| (this as usize, (node, 1)))?))
+            Ok(Owners::Folded(grouped(
+                lim,
+                q_width,
+                pairs,
+                |(this, node, _)| (this as usize, (node, 1)),
+            )?))
         } else {
-            Ok(Owners::Probed(grouped(lim, q_width, pairs, |(this, node, other)| (this as usize, (node, other)))?))
+            Ok(Owners::Probed(grouped(
+                lim,
+                q_width,
+                pairs,
+                |(this, node, other)| (this as usize, (node, other)),
+            )?))
         }
     }
 }
@@ -789,7 +939,10 @@ impl DenseSide {
         owners: Owners,
     ) -> Result<Self, OperationError> {
         let rows = if rows {
-            let live = built.products.iter().filter(|e| built.counts[e.prod_idx.0 as usize] != 0);
+            let live = built
+                .products
+                .iter()
+                .filter(|e| built.counts[e.prod_idx.0 as usize] != 0);
             grouped(lim, p_width, live, |e| {
                 let (p, q) = view.pq(e);
                 // Every count the stream reads fits `u64` (see `Built`).
@@ -805,7 +958,11 @@ impl DenseSide {
     /// (a probe that reads them always has them).
     #[inline]
     fn row(&self, p: u32) -> &[(u32, u64)] {
-        if self.rows.offsets.is_empty() { &[] } else { self.rows.view().bucket(p as usize) }
+        if self.rows.offsets.is_empty() {
+            &[]
+        } else {
+            self.rows.view().bucket(p as usize)
+        }
     }
 }
 
@@ -862,7 +1019,9 @@ fn walk_probed<W: Weight>(
             if v == 0 {
                 continue;
             }
-            let Some(c_other) = probe.count(other, q_other, u128::from) else { continue };
+            let Some(c_other) = probe.count(other, q_other, u128::from) else {
+                continue;
+            };
             total.add3(u128::from(c_this), c_other, v);
         }
     }
@@ -895,7 +1054,15 @@ fn walk_pair<W: Weight>(
         Owners::Probed(owners) => {
             let row = probed.row(other);
             probe.open(row);
-            row.len() as u64 + walk_probed(walked.row(this), owners.view(), other, probe, weights, total)
+            row.len() as u64
+                + walk_probed(
+                    walked.row(this),
+                    owners.view(),
+                    other,
+                    probe,
+                    weights,
+                    total,
+                )
         }
         Owners::Unread => unreachable!("a child a pair walks from has its owners"),
     }
@@ -907,11 +1074,19 @@ fn walk_pair<W: Weight>(
 /// random place, and a run's start is a miss the walk would otherwise wait
 /// on.
 #[inline(always)]
-fn prefetch_rows<W: Copy>(tops: &[u32], j: usize, o_rows: GroupedView<'_, (u32, W)>, q_root: GroupedView<'_, u32>) {
+fn prefetch_rows<W: Copy>(
+    tops: &[u32],
+    j: usize,
+    o_rows: GroupedView<'_, (u32, W)>,
+    q_root: GroupedView<'_, u32>,
+) {
     if let Some(&ahead) = tops.get(j + 2) {
         o_rows.prefetch_bucket(ahead as usize);
     }
-    if let Some(&(q_o, _)) = tops.get(j + 1).and_then(|&next| o_rows.bucket(next as usize).first()) {
+    if let Some(&(q_o, _)) = tops
+        .get(j + 1)
+        .and_then(|&next| o_rows.bucket(next as usize).first())
+    {
         q_root.prefetch_bucket(q_o as usize);
     }
 }
@@ -936,56 +1111,33 @@ fn count_dense<W: Weight>(
     let (p_root, q_root) = root_groups(lim, &view)?;
     let col_o = input.o.counts;
     let o_rows = grouped(
-        lim, p.o,
-        input.o.products.iter().filter(|e| col_o[e.prod_idx.0 as usize] != 0),
+        lim,
+        p.o,
+        input
+            .o
+            .products
+            .iter()
+            .filter(|e| col_o[e.prod_idx.0 as usize] != 0),
         |e| {
             let (pn, qn) = view.pq(e);
-            (pn as usize, (qn, W::from_count(col_o[e.prod_idx.0 as usize])))
+            (
+                pn as usize,
+                (qn, W::from_count(col_o[e.prod_idx.0 as usize])),
+            )
         },
     )?;
 
     // Which walks and probes run decides what each side builds.
-    let (mut by_left, mut by_right) = (false, false);
-    view.p_c.pairs_with_parent().for_each(|(_, pair)| match pricing.choose(pair.left.0, pair.right.0).0 {
-        Direction::ByLeft => by_left = true,
-        Direction::ByRight => by_right = true,
-    });
-    let mut probe_cl: Probe<u64> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
-    let mut probe_cr: Probe<u64> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
-    let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
-        if walked { Owners::new(lim, &view, left, q_width, probe, fold) } else { Ok(Owners::Unread) }
-    };
-    let (left_owners, right_owners) = (owners(by_left, true, q.cl, &probe_cr)?, owners(by_right, false, q.cr, &probe_cl)?);
-    // A side's rows are read by its walks, and opened by the other side's
-    // walks when its probe is marked and not folded.
-    let opens = |owners: &Owners| matches!(owners, Owners::Probed(_));
-    let (open_cl, open_cr) = (opens(&right_owners) && matches!(probe_cl, Probe::Marked(_)), opens(&left_owners) && matches!(probe_cr, Probe::Marked(_)));
-    let left = DenseSide::new(lim, &view, input.cl, p.cl, by_left || open_cl, left_owners)?;
-    let right = DenseSide::new(lim, &view, input.cr, p.cr, by_right || open_cr, right_owners)?;
+    let (left, right, mut probe_cl, mut probe_cr) =
+        build_dense_sides(lim, &view, input, pricing, fold)?;
 
     let mut weights: Vec<W> = Vec::new();
     lim.try_resize(&mut weights, q.c, W::default())?;
     let mut total = Total::default();
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for (p_node, node) in view.p_c.nodes().iter().enumerate() {
-        // `V(p, ·)`.
-        let (mut weighed, mut any) = (0u64, false);
         let tops = p_root.view().bucket(p_node);
-        for (j, &p_o) in tops.iter().enumerate() {
-            prefetch_rows(tops, j, o_rows.view(), q_root.view());
-            for &(q_o, c_o) in o_rows.view().bucket(p_o as usize) {
-                let owners = q_root.view().bucket(q_o as usize);
-                for (i, &q_node) in owners.iter().enumerate() {
-                    if let Some(&ahead) = owners.get(i + AHEAD) {
-                        prefetch(&weights, ahead as usize);
-                    }
-                    let slot = &mut weights[q_node as usize];
-                    *slot = slot.plus(c_o);
-                }
-                weighed += 1 + owners.len() as u64;
-                any |= !owners.is_empty();
-            }
-        }
+        let (weighed, any) = scatter_top_weights(tops, o_rows.view(), q_root.view(), &mut weights);
         ticker.poll(weighed)?;
         if !any {
             continue;
@@ -994,21 +1146,116 @@ fn count_dense<W: Weight>(
         for pair in view.p_c.pairs_iter_of(&node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
-                Direction::ByLeft => walk_pair(&left, &right, p_cl, p_cr, &mut probe_cr, &weights, &mut total),
-                Direction::ByRight => walk_pair(&right, &left, p_cr, p_cl, &mut probe_cl, &weights, &mut total),
+                Direction::ByLeft => walk_pair(
+                    &left,
+                    &right,
+                    p_cl,
+                    p_cr,
+                    &mut probe_cr,
+                    &weights,
+                    &mut total,
+                ),
+                Direction::ByRight => walk_pair(
+                    &right,
+                    &left,
+                    p_cr,
+                    p_cl,
+                    &mut probe_cl,
+                    &weights,
+                    &mut total,
+                ),
             };
             ticker.poll(walked)?;
         }
-        // Empty `V(p, ·)` by walking back over what the round wrote.
-        for (j, &p_o) in tops.iter().enumerate() {
-            prefetch_rows(tops, j, o_rows.view(), q_root.view());
-            for &(q_o, _) in o_rows.view().bucket(p_o as usize) {
-                for &q_node in q_root.view().bucket(q_o as usize) {
-                    weights[q_node as usize] = W::default();
-                }
-            }
-        }
+        clear_top_weights(tops, o_rows.view(), q_root.view(), &mut weights);
     }
     ticker.flush()?;
     Ok(total.finish())
+}
+
+/// Build the left and right [`DenseSide`]s and child [`Probe`]s for [`count_dense`].
+fn build_dense_sides(
+    lim: &Limits,
+    view: &Oriented<'_>,
+    input: &StreamInput<'_>,
+    pricing: &PairPricing,
+    fold: bool,
+) -> Result<(DenseSide, DenseSide, Probe<u64>, Probe<u64>), OperationError> {
+    let (p, q) = (view.p, view.q);
+    let (mut by_left, mut by_right) = (false, false);
+    view.p_c.pairs_with_parent().for_each(|(_, pair)| {
+        match pricing.choose(pair.left.0, pair.right.0).0 {
+            Direction::ByLeft => by_left = true,
+            Direction::ByRight => by_right = true,
+        }
+    });
+    let probe_cl: Probe<u64> = Probe::new(lim, view, input.cl, p.cl, q.cl)?;
+    let probe_cr: Probe<u64> = Probe::new(lim, view, input.cr, p.cr, q.cr)?;
+    let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
+        if walked {
+            Owners::new(lim, view, left, q_width, probe, fold)
+        } else {
+            Ok(Owners::Unread)
+        }
+    };
+    let (left_owners, right_owners) = (
+        owners(by_left, true, q.cl, &probe_cr)?,
+        owners(by_right, false, q.cr, &probe_cl)?,
+    );
+    // A side's rows are read by its walks, and opened by the other side's
+    // walks when its probe is marked and not folded.
+    let opens = |owners: &Owners| matches!(owners, Owners::Probed(_));
+    let (open_cl, open_cr) = (
+        opens(&right_owners) && matches!(probe_cl, Probe::Marked(_)),
+        opens(&left_owners) && matches!(probe_cr, Probe::Marked(_)),
+    );
+    let left = DenseSide::new(lim, view, input.cl, p.cl, by_left || open_cl, left_owners)?;
+    let right = DenseSide::new(lim, view, input.cr, p.cr, by_right || open_cr, right_owners)?;
+    Ok((left, right, probe_cl, probe_cr))
+}
+
+/// Populate `V(p, ·)` in `weights` for the `p_o` entries in `tops`, returning
+/// `(weighed_units, any_nonzero)`.
+#[inline(always)]
+fn scatter_top_weights<W: Weight>(
+    tops: &[u32],
+    o_rows: GroupedView<'_, (u32, W)>,
+    q_root: GroupedView<'_, u32>,
+    weights: &mut [W],
+) -> (u64, bool) {
+    let (mut weighed, mut any) = (0u64, false);
+    for (j, &p_o) in tops.iter().enumerate() {
+        prefetch_rows(tops, j, o_rows, q_root);
+        for &(q_o, c_o) in o_rows.bucket(p_o as usize) {
+            let owners = q_root.bucket(q_o as usize);
+            for (i, &q_node) in owners.iter().enumerate() {
+                if let Some(&ahead) = owners.get(i + AHEAD) {
+                    prefetch(weights, ahead as usize);
+                }
+                let slot = &mut weights[q_node as usize];
+                *slot = slot.plus(c_o);
+            }
+            weighed += 1 + owners.len() as u64;
+            any |= !owners.is_empty();
+        }
+    }
+    (weighed, any)
+}
+
+/// Reset the entries of `weights` touched by `tops` back to `W::default()`.
+#[inline(always)]
+fn clear_top_weights<W: Weight>(
+    tops: &[u32],
+    o_rows: GroupedView<'_, (u32, W)>,
+    q_root: GroupedView<'_, u32>,
+    weights: &mut [W],
+) {
+    for (j, &p_o) in tops.iter().enumerate() {
+        prefetch_rows(tops, j, o_rows, q_root);
+        for &(q_o, _) in o_rows.bucket(p_o as usize) {
+            for &q_node in q_root.bucket(q_o as usize) {
+                weights[q_node as usize] = W::default();
+            }
+        }
+    }
 }

@@ -7,29 +7,45 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use super::inner_index::{block, pack};
-use super::{owners_built, rows, ForcedStream, ForcedWalk};
 use super::super::stream::{Operand, Walk};
-use crate::test_helpers::{assert_canonical, Lcg};
+use super::inner_index::{block, pack};
+use super::{ForcedStream, ForcedWalk, owners_built, rows};
+use crate::test_helpers::{Lcg, assert_canonical};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 
 /// The choices a test pins: the pricing's, building `c`, and streaming with
 /// either pivot.
-const CHOICES: [Option<Option<Operand>>; 4] = [None, Some(None), Some(Some(Operand::F)), Some(Some(Operand::G))];
+const CHOICES: [Option<Option<Operand>>; 4] = [
+    None,
+    Some(None),
+    Some(Some(Operand::F)),
+    Some(Some(Operand::G)),
+];
 
 /// The walks a test pins: the choice's, the indirect walk, and the dense
 /// walk with either width of `V`, its table probes folded or not.
 fn walks() -> Vec<Option<Walk>> {
-    let dense = [false, true].into_iter()
+    let dense = [false, true]
+        .into_iter()
         .flat_map(|wide| [false, true].map(|fold| Some(Walk::Dense { wide, fold })));
-    [None, Some(Walk::Indirect)].into_iter().chain(dense).collect()
+    [None, Some(Walk::Indirect)]
+        .into_iter()
+        .chain(dense)
+        .collect()
 }
 
 /// Count `f ∧ g` under every choice, every walk and both operand orders,
 /// checking each against `expected`; returns how many counts reached the
 /// choice.
-fn count_every_way(eng: &Engine, f: &Tdd, g: &Tdd, targets: &[VtreeIdx], expected: &BigUint, what: &str) -> u32 {
+fn count_every_way(
+    eng: &Engine,
+    f: &Tdd,
+    g: &Tdd,
+    targets: &[VtreeIdx],
+    expected: &BigUint,
+    what: &str,
+) -> u32 {
     let before = ForcedStream::asked();
     for choice in CHOICES {
         let _pin = ForcedStream::install(choice);
@@ -45,6 +61,18 @@ fn count_every_way(eng: &Engine, f: &Tdd, g: &Tdd, targets: &[VtreeIdx], expecte
     ForcedStream::asked() - before
 }
 
+fn bal(x: &[VarId]) -> Vtree {
+    Vtree::balanced_over(x).unwrap()
+}
+
+fn join(l: &Vtree, r: &Vtree) -> Vtree {
+    Vtree::join(l, r).unwrap()
+}
+
+fn four_blocks(bits: u32) -> [Vec<VarId>; 4] {
+    std::array::from_fn(|k| block(1 + k as u32 * bits, bits))
+}
+
 /// The 4-cycle `R(a,b), R(b,c), R(c,d), R(d,a)` as a path over the four
 /// blocks conjoined with its closing edge, on vtrees that put either child of
 /// the root, or both, over several blocks.
@@ -52,9 +80,7 @@ fn count_every_way(eng: &Engine, f: &Tdd, g: &Tdd, targets: &[VtreeIdx], expecte
 fn a_streamed_root_counts_a_cycle() {
     let eng = Engine::new();
     let bits = 3;
-    let (a, b, c, d) = (block(1, bits), block(4, bits), block(7, bits), block(10, bits));
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
+    let [a, b, c, d] = four_blocks(bits);
     let (va, vb, vc, vd) = (bal(&a), bal(&b), bal(&c), bal(&d));
     let vtrees = [
         join(&join(&join(&va, &vb), &vc), &vd),
@@ -67,13 +93,29 @@ fn a_streamed_root_counts_a_cycle() {
     let (mut streamed, mut streamed_under_root) = (0, 0);
     for seed in 0..5u64 {
         let edges: BTreeSet<(u64, u64)> = rows(seed, 18 + 4 * seed as usize, 2, bits)
-            .into_iter().map(|r| (r[0], r[1])).collect();
-        let path: Vec<Vec<u64>> = edges.iter()
-            .flat_map(|&(x, y)| edges.iter().filter(move |e| e.0 == y).map(move |&(_, z)| (x, y, z)))
-            .flat_map(|(x, y, z)| edges.iter().filter(move |e| e.0 == z).map(move |&(_, w)| vec![x, y, z, w]))
+            .into_iter()
+            .map(|r| (r[0], r[1]))
+            .collect();
+        let path: Vec<Vec<u64>> = edges
+            .iter()
+            .flat_map(|&(x, y)| {
+                edges
+                    .iter()
+                    .filter(move |e| e.0 == y)
+                    .map(move |&(_, z)| (x, y, z))
+            })
+            .flat_map(|(x, y, z)| {
+                edges
+                    .iter()
+                    .filter(move |e| e.0 == z)
+                    .map(move |&(_, w)| vec![x, y, z, w])
+            })
             .collect();
         let closing: Vec<Vec<u64>> = edges.iter().map(|&(x, y)| vec![y, x]).collect();
-        let cycles = path.iter().filter(|p| edges.contains(&(p[3], p[0]))).count();
+        let cycles = path
+            .iter()
+            .filter(|p| edges.contains(&(p[3], p[0])))
+            .count();
         let expected = BigUint::from(cycles);
         let (pv, pr) = pack(&[&a, &b, &c, &d], &path);
         let (cv, cr) = pack(&[&a, &d], &closing);
@@ -94,7 +136,10 @@ fn a_streamed_root_counts_a_cycle() {
         }
     }
     assert!(streamed > 0, "no root count was streamed");
-    assert!(streamed_under_root > 0, "no root count was streamed under a target at the root");
+    assert!(
+        streamed_under_root > 0,
+        "no root count was streamed under a target at the root"
+    );
 }
 
 /// Relations that constrain every block on both sides, so neither operand
@@ -105,9 +150,7 @@ fn a_streamed_root_counts_a_cycle() {
 fn a_streamed_root_matches_the_built_count_on_dense_relations() {
     let eng = Engine::new();
     let bits = 2;
-    let (a, b, c, d) = (block(1, bits), block(3, bits), block(5, bits), block(7, bits));
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
+    let [a, b, c, d] = four_blocks(bits);
     let free_sets: [Vec<VarId>; 3] = [vec![], block(20, 60), block(20, 70)];
     let mut streamed = 0;
     for free in &free_sets {
@@ -119,7 +162,10 @@ fn a_streamed_root_matches_the_built_count_on_dense_relations() {
         } else {
             vec![
                 join(&joined, &bal(free)),
-                join(&join(&join(&bal(&a), &bal(&b)), &bal(&c)), &join(&bal(&d), &bal(free))),
+                join(
+                    &join(&join(&bal(&a), &bal(&b)), &bal(&c)),
+                    &join(&bal(&d), &bal(free)),
+                ),
             ]
         };
         let scale = BigUint::from(1u32) << free.len();
@@ -141,8 +187,17 @@ fn a_streamed_root_matches_the_built_count_on_dense_relations() {
                 let leaf = |v: VarId| vtree.leaf_of(v).unwrap();
                 let block_a = vtree.lca(leaf(a[0]), leaf(a[a.len() - 1]));
                 let (left, right) = vtree.children(vtree.root());
-                for targets in [vec![], vec![block_a], vec![left], vec![right], vec![vtree.root()]] {
-                    let what = format!("free {}, seed {seed}, vtree {i}, targets {targets:?}", free.len());
+                for targets in [
+                    vec![],
+                    vec![block_a],
+                    vec![left],
+                    vec![right],
+                    vec![vtree.root()],
+                ] {
+                    let what = format!(
+                        "free {}, seed {seed}, vtree {i}, targets {targets:?}",
+                        free.len()
+                    );
                     streamed += count_every_way(&eng, &f, &g, &targets, &expected, &what);
                 }
             }
@@ -160,18 +215,22 @@ fn a_streamed_root_matches_the_built_count_on_dense_relations() {
 fn a_summed_operand_level_is_not_read_as_nodes() {
     let eng = Engine::new();
     let bits = 2;
-    let (a, b, c, d) = (block(1, bits), block(3, bits), block(5, bits), block(7, bits));
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
+    let [a, b, c, d] = four_blocks(bits);
     let (va, vb, vc, vd) = (bal(&a), bal(&b), bal(&c), bal(&d));
-    let vtrees = [join(&join(&va, &vb), &join(&vc, &vd)), join(&join(&join(&va, &vb), &vc), &vd)];
+    let vtrees = [
+        join(&join(&va, &vb), &join(&vc, &vd)),
+        join(&join(&join(&va, &vb), &vc), &vd),
+    ];
     for (i, vtree) in vtrees.iter().enumerate() {
         let vtree = Arc::new(vtree.clone());
         let leaf = |v: VarId| vtree.leaf_of(v).unwrap();
         // Sum `b` out of f, or `c`, and leave it out of g.
         for (summed, kept) in [(1, [0, 2, 3]), (2, [0, 1, 3])] {
             let blocks: [&[VarId]; 4] = [&a, &b, &c, &d];
-            let at = vtree.lca(leaf(blocks[summed][0]), leaf(blocks[summed][bits as usize - 1]));
+            let at = vtree.lca(
+                leaf(blocks[summed][0]),
+                leaf(blocks[summed][bits as usize - 1]),
+            );
             for seed in 0..4u64 {
                 let f_rows = rows(seed + 80, 40, 4, bits);
                 let g_rows = rows(seed + 90, 30, 3, bits);
@@ -185,7 +244,10 @@ fn a_summed_operand_level_is_not_read_as_nodes() {
                 assert_canonical(&g);
                 let f_set: BTreeSet<&Vec<u64>> = f_rows.iter().collect();
                 let g_set: BTreeSet<&Vec<u64>> = g_rows.iter().collect();
-                let joined = f_set.iter().filter(|r| g_set.contains(&kept.map(|k| r[k]).to_vec())).count();
+                let joined = f_set
+                    .iter()
+                    .filter(|r| g_set.contains(&kept.map(|k| r[k]).to_vec()))
+                    .count();
                 let what = format!("vtree {i}, block {summed} summed, seed {seed}");
                 count_every_way(&eng, &f, &g, &[], &BigUint::from(joined), &what);
             }
@@ -197,7 +259,10 @@ fn a_summed_operand_level_is_not_read_as_nodes() {
 /// block balanced, the blocks joined two at a time from a shrinking forest.
 fn random_over_blocks(blocks: &[Vec<VarId>], seed: u64) -> Vtree {
     let rng = &mut Lcg::new(seed);
-    let mut forest: Vec<Vtree> = blocks.iter().map(|b| Vtree::balanced_over(b).unwrap()).collect();
+    let mut forest: Vec<Vtree> = blocks
+        .iter()
+        .map(|b| Vtree::balanced_over(b).unwrap())
+        .collect();
     while forest.len() > 1 {
         let left = forest.swap_remove(rng.below(forest.len() as u64) as usize);
         let right = forest.swap_remove(rng.below(forest.len() as u64) as usize);
@@ -222,12 +287,20 @@ fn a_streamed_root_matches_the_built_conjunction_on_random_vtrees() {
         let f_rows = rows(seed + 100, 24 + seed as usize, 4, bits);
         let mut g_rows = rows(seed + 200, 12 + seed as usize / 2, shape.len(), bits);
         // Rows `f` shares with `g`, so the conjunction is rarely empty.
-        g_rows.extend(f_rows.iter().step_by(3).map(|r| shape.iter().map(|&k| r[k]).collect()));
+        g_rows.extend(
+            f_rows
+                .iter()
+                .step_by(3)
+                .map(|r| shape.iter().map(|&k| r[k]).collect()),
+        );
         let f_on: Vec<&[VarId]> = blocks.iter().map(Vec::as_slice).collect();
         let g_on: Vec<&[VarId]> = shape.iter().map(|&k| blocks[k].as_slice()).collect();
         let (fv, fr) = pack(&f_on, &f_rows);
         let (gv, gr) = pack(&g_on, &g_rows);
-        for vtree in [random_over_blocks(&blocks, seed), Vtree::random(4 * bits, seed)] {
+        for vtree in [
+            random_over_blocks(&blocks, seed),
+            Vtree::random(4 * bits, seed),
+        ] {
             let vtree = Arc::new(vtree);
             let f = eng.from_models(&vtree, &fv, &fr).unwrap();
             let g = eng.from_models(&vtree, &gv, &gr).unwrap();

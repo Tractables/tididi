@@ -25,16 +25,24 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, f_pairs: &[ChildPair]) -> Optio
     } else if !ctx.masked {
         0u128
     } else {
-        f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.raw() as usize])
+        f_pairs.iter().fold(0u128, |acc, p1| {
+            acc | ctx.sides.left.live_cols[p1.left.raw() as usize]
+        })
     };
-    if ctx.masked && left_alive_mask == 0 { return None; }
+    if ctx.masked && left_alive_mask == 0 {
+        return None;
+    }
 
     let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.masked {
         u128::MAX
     } else {
-        f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.raw() as usize])
+        f_pairs.iter().fold(0u128, |acc, p1| {
+            acc | ctx.sides.right.live_cols[p1.right.raw() as usize]
+        })
     };
-    if ctx.masked && right_alive_mask == 0 { return None; }
+    if ctx.masked && right_alive_mask == 0 {
+        return None;
+    }
 
     Some((left_alive_mask, right_alive_mask))
 }
@@ -63,8 +71,13 @@ pub(crate) fn emit_product_node(
 /// Emit a node holding exactly `pair`, stored inline. The push is
 /// budget-charged.
 #[inline(always)]
-pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
-    eng.limits().try_push(level.nodes.stored_mut(), EncodedNode::inline(pair))
+pub(in crate::apply::conjoin) fn emit_single_pair(
+    eng: &Engine,
+    level: &mut TddLevel,
+    pair: ChildPair,
+) -> Result<(), OperationError> {
+    eng.limits()
+        .try_push(level.nodes.stored_mut(), EncodedNode::inline(pair))
 }
 
 /// A cell written straight into the pair arena of the level being built,
@@ -90,12 +103,20 @@ impl<'a> ArenaCell<'a> {
     /// `room`, at most the arena's spare capacity, says it has room for;
     /// `None` where it has not.
     #[inline(always)]
-    fn open(level: &'a mut TddLevel, inline: &'a mut usize, room: usize, bound: usize) -> Option<Self> {
+    fn open(
+        level: &'a mut TddLevel,
+        inline: &'a mut usize,
+        room: usize,
+        bound: usize,
+    ) -> Option<Self> {
         if room < bound {
             return None;
         }
         let pairs = level.pairs.stored_mut();
-        debug_assert!(room <= pairs.capacity() - pairs.len(), "a sink's room is within its arena's capacity");
+        debug_assert!(
+            room <= pairs.capacity() - pairs.len(),
+            "a sink's room is within its arena's capacity"
+        );
         let (start, out) = (pairs.len(), pairs.as_mut_ptr());
         Some(ArenaCell {
             level,
@@ -116,10 +137,18 @@ impl<'a> ArenaCell<'a> {
     #[inline(always)]
     pub(crate) unsafe fn push(&mut self, lc: u32, rc: u32) {
         #[cfg(debug_assertions)]
-        debug_assert!(self.len < self.end, "a cell wrote past the pairs it was opened for");
+        debug_assert!(
+            self.len < self.end,
+            "a cell wrote past the pairs it was opened for"
+        );
         // Safety: `open` found the arena's spare capacity to hold `end -
         // start` pairs past `start`, and the caller writes no more.
-        unsafe { self.out.add(self.len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+        unsafe {
+            self.out.add(self.len).write(ChildPair::new(
+                EncodedChildRef::from_raw(lc),
+                EncodedChildRef::from_raw(rc),
+            ))
+        };
         self.len += 1;
     }
 
@@ -127,8 +156,19 @@ impl<'a> ArenaCell<'a> {
     /// at `grid_pos`: no node for none, one pair stored inline, more as the
     /// node's range of the arena.
     #[inline(always)]
-    pub(crate) fn close(self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize) -> Result<(), OperationError> {
-        let ArenaCell { level, inline, start, len, .. } = self;
+    pub(crate) fn close(
+        self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+    ) -> Result<(), OperationError> {
+        let ArenaCell {
+            level,
+            inline,
+            start,
+            len,
+            ..
+        } = self;
         // Safety: the slots below `len` hold the old pairs and one written
         // pair a push.
         unsafe { level.pairs.stored_mut().set_len(len) };
@@ -140,7 +180,9 @@ impl<'a> ArenaCell<'a> {
                 emit_single_pair(eng, level, pair)?;
                 *inline += 1;
             }
-            n => level.try_push_multi_by_range(start, n).map_err(|_| OperationError::OverBudget)?,
+            n => level
+                .try_push_multi_by_range(start, n)
+                .map_err(|_| OperationError::OverBudget)?,
         }
         node_idx[grid_pos] = node;
         Ok(())
@@ -184,14 +226,23 @@ impl<'a> ArenaRow<'a> {
     /// first `pairs` pairs fit, `room` pairs past the pair arena's length
     /// being at most its spare capacity; `None` where either arena is short.
     #[inline(always)]
-    fn open(level: &'a mut TddLevel, inline: &'a mut usize, room: usize, pairs: usize, nodes: usize) -> Option<Self> {
+    fn open(
+        level: &'a mut TddLevel,
+        inline: &'a mut usize,
+        room: usize,
+        pairs: usize,
+        nodes: usize,
+    ) -> Option<Self> {
         let (pair_arena, node_arena) = (level.pairs.stored_mut(), level.nodes.stored_mut());
         let (len, node_len) = (pair_arena.len(), node_arena.len());
         let pair_end = (len + room).min((1 << 31) - 1);
         if len + pairs > pair_end || node_arena.capacity() - node_len < nodes {
             return None;
         }
-        debug_assert!(room <= pair_arena.capacity() - len, "a sink's room is within its arena's capacity");
+        debug_assert!(
+            room <= pair_arena.capacity() - len,
+            "a sink's room is within its arena's capacity"
+        );
         let node_cap = node_arena.capacity();
         Some(ArenaRow {
             out: pair_arena.as_mut_ptr(),
@@ -235,7 +286,10 @@ impl<'a> ArenaRow<'a> {
     /// The open cell [fits](Self::fits) the pairs it is given.
     #[inline(always)]
     pub(crate) unsafe fn push(&mut self, lc: u32, rc: u32) {
-        debug_assert!(self.len + self.cell < self.pair_end, "a row wrote past its room");
+        debug_assert!(
+            self.len + self.cell < self.pair_end,
+            "a row wrote past its room"
+        );
         // Safety: the arena's spare capacity holds `pair_end` past its
         // length, and the caller writes no further.
         let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
@@ -280,7 +334,10 @@ impl<'a> ArenaRow<'a> {
             }
         };
         self.cell = 0;
-        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
+        debug_assert!(
+            self.node_len < self.node_cap,
+            "a row closed more cells than its node arena holds"
+        );
         // Safety: the node arena's capacity holds a node for every cell the
         // row was opened or found room for, and the caller closes no more.
         unsafe { self.node_out.add(self.node_len).write(node) };
@@ -297,7 +354,13 @@ impl<'a> ArenaRow<'a> {
     /// No cell is open, and the row closes at most the cells its open or a
     /// [`has_room`](Self::has_room) admitted.
     #[inline(always)]
-    pub(crate) unsafe fn single(&mut self, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) {
+    pub(crate) unsafe fn single(
+        &mut self,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) {
         // Safety: as the caller's.
         node_idx[grid_pos] = unsafe { self.single_node(lc, rc) };
     }
@@ -311,8 +374,14 @@ impl<'a> ArenaRow<'a> {
     #[inline(always)]
     pub(crate) unsafe fn single_node(&mut self, lc: u32, rc: u32) -> u32 {
         debug_assert_eq!(self.cell, 0, "a cell is open");
-        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
-        let node = EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)));
+        debug_assert!(
+            self.node_len < self.node_cap,
+            "a row closed more cells than its node arena holds"
+        );
+        let node = EncodedNode::inline(ChildPair::new(
+            EncodedChildRef::from_raw(lc),
+            EncodedChildRef::from_raw(rc),
+        ));
         self.ones += 1;
         // Safety: as in `close`.
         unsafe { self.node_out.add(self.node_len).write(node) };
@@ -384,7 +453,12 @@ impl RowCursor {
     #[inline(always)]
     pub(crate) unsafe fn single_node(&mut self, lc: u32, rc: u32) -> u32 {
         // Safety: as the caller's.
-        unsafe { self.emit(EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))) }
+        unsafe {
+            self.emit(EncodedNode::inline(ChildPair::new(
+                EncodedChildRef::from_raw(lc),
+                EncodedChildRef::from_raw(rc),
+            )))
+        }
     }
 
     /// A cell of the two survivors `(l0, r0)` and `(l1, r1)`, in that order,
@@ -398,7 +472,8 @@ impl RowCursor {
     #[inline(always)]
     pub(crate) unsafe fn pair_node(&mut self, l0: u32, r0: u32, l1: u32, r1: u32) -> u32 {
         debug_assert!(self.len + 2 <= self.pair_end, "a row wrote past its room");
-        let pair = |l, r| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
+        let pair =
+            |l, r| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
         // Safety: the arena's spare capacity holds `pair_end` past its
         // length, and the caller writes no further.
         unsafe {
@@ -418,7 +493,10 @@ impl RowCursor {
     /// The node arena has room for it.
     #[inline(always)]
     unsafe fn emit(&mut self, node: EncodedNode) -> u32 {
-        debug_assert!(self.node_len < self.node_cap, "a row closed more cells than its node arena holds");
+        debug_assert!(
+            self.node_len < self.node_cap,
+            "a row closed more cells than its node arena holds"
+        );
         // Safety: as the caller's.
         unsafe { self.node_out.add(self.node_len).write(node) };
         self.node_len += 1;
@@ -539,7 +617,9 @@ pub(crate) struct EmitSink<'a> {
 impl PairSink for EmitSink<'_> {
     #[inline(always)]
     fn single(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         lc: u32,
         rc: u32,
@@ -572,7 +652,9 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn end(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
     ) -> Result<(), OperationError> {
@@ -616,12 +698,18 @@ pub(crate) struct ReservedEmitSink<'a> {
 impl PairSink for ReservedEmitSink<'_> {
     #[inline(always)]
     fn single(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         lc: u32,
         rc: u32,
     ) -> Result<(), OperationError> {
-        EmitSink { level: &mut *self.level, inline: &mut *self.inline }.single(eng, node_idx, grid_pos, lc, rc)
+        EmitSink {
+            level: &mut *self.level,
+            inline: &mut *self.inline,
+        }
+        .single(eng, node_idx, grid_pos, lc, rc)
     }
 
     #[inline(always)]
@@ -662,7 +750,9 @@ impl PairSink for ReservedEmitSink<'_> {
 
     #[inline(always)]
     fn end(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
     ) -> Result<(), OperationError> {
@@ -753,15 +843,37 @@ impl<'a> ProjectedEmitSink<'a> {
         let limit = level.pairs.capacity();
         let charged = if bounded { usize::MAX } else { limit };
         let after = super::super::ahead_after_forced().unwrap_or(AHEAD_AFTER);
-        let at = if bounded || total < after || super::super::ahead_forced_off() { usize::MAX } else { total / after };
-        ProjectedEmitSink { sink: ReservedEmitSink { level, charged, inline }, most, start, node_seed, limit, total, at, rows: 0, row: 0 }
+        let at = if bounded || total < after || super::super::ahead_forced_off() {
+            usize::MAX
+        } else {
+            total / after
+        };
+        ProjectedEmitSink {
+            sink: ReservedEmitSink {
+                level,
+                charged,
+                inline,
+            },
+            most,
+            start,
+            node_seed,
+            limit,
+            total,
+            at,
+            rows: 0,
+            row: 0,
+        }
     }
 
     /// The arenas sized for the row loop from the `done` rows written: to
     /// what those rows project it writes, where that fits half the memory
     /// left.
     #[inline(never)]
-    pub(crate) fn reserve_ahead(&mut self, eng: &Engine, done: usize) -> Result<(), OperationError> {
+    pub(crate) fn reserve_ahead(
+        &mut self,
+        eng: &Engine,
+        done: usize,
+    ) -> Result<(), OperationError> {
         let rows = self.total;
         let lim = eng.limits();
         if done == 0 || self.sink.charged == usize::MAX || lim.bounded_growth() {
@@ -774,7 +886,8 @@ impl<'a> ProjectedEmitSink<'a> {
         let nodes_to = projected_len(nodes, self.start.1, done, rows, self.most.1);
         let more_pairs = pairs_to.saturating_sub(level.pairs.capacity());
         let more_nodes = nodes_to.saturating_sub(level.nodes.stored_mut().capacity());
-        let bytes = (more_pairs * std::mem::size_of::<ChildPair>() + more_nodes * std::mem::size_of::<EncodedNode>()) as u64;
+        let bytes = (more_pairs * std::mem::size_of::<ChildPair>()
+            + more_nodes * std::mem::size_of::<EncodedNode>()) as u64;
         if bytes == 0 || bytes > lim.headroom() / 2 {
             return Ok(());
         }
@@ -820,7 +933,10 @@ impl<'a> ProjectedEmitSink<'a> {
         let level = &mut *self.sink.level;
         super::super::budget::trim_to(level.pairs.stored_mut(), self.sink.charged);
         let nodes = level.nodes.stored_mut();
-        super::super::budget::trim_to(nodes, super::super::budget::doubled_to(self.node_seed, nodes.len()));
+        super::super::budget::trim_to(
+            nodes,
+            super::super::budget::doubled_to(self.node_seed, nodes.len()),
+        );
     }
 }
 
@@ -829,11 +945,21 @@ impl<'a> ProjectedEmitSink<'a> {
 /// [`AHEAD_OPERAND_FACTOR`] times the larger operand level.
 #[inline]
 pub(crate) fn ahead_most(f: &TddLevel, g: &TddLevel, cells: usize) -> (usize, usize) {
-    let (af, nf, ag, ng) = (f.pairs.len() as u128, f.node_count(), g.pairs.len() as u128, g.node_count());
+    let (af, nf, ag, ng) = (
+        f.pairs.len() as u128,
+        f.node_count(),
+        g.pairs.len() as u128,
+        g.node_count(),
+    );
     // As `open_level_arenas` bounds the level's arena.
-    let bound = af.saturating_mul(ag.saturating_add(ng as u128)).saturating_add((nf as u128).saturating_mul(ag));
+    let bound = af
+        .saturating_mul(ag.saturating_add(ng as u128))
+        .saturating_add((nf as u128).saturating_mul(ag));
     let factor = (AHEAD_OPERAND_FACTOR as u128).saturating_mul(af.max(ag));
-    (bound.min(factor) as usize, cells.min(AHEAD_OPERAND_FACTOR.saturating_mul(nf.max(ng))))
+    (
+        bound.min(factor) as usize,
+        cells.min(AHEAD_OPERAND_FACTOR.saturating_mul(nf.max(ng))),
+    )
 }
 
 /// The length an arena that holds `len`, `start` of it before a walk
@@ -853,13 +979,21 @@ fn projected_len(len: usize, start: usize, done: usize, total: usize, most: usiz
 /// projection fits half the memory left, and by doubling elsewhere.
 #[cold]
 #[inline(never)]
-fn grow_projected(eng: &Engine, v: &mut Vec<ChildPair>, start: usize, most: usize, row: usize, rows: usize) -> Result<(), OperationError> {
+fn grow_projected(
+    eng: &Engine,
+    v: &mut Vec<ChildPair>,
+    start: usize,
+    most: usize,
+    row: usize,
+    rows: usize,
+) -> Result<(), OperationError> {
     super::super::note_pairs_grown();
     let lim = eng.limits();
     let len = v.len();
     if rows != 0 && row != 0 {
         let to = projected_len(len, start, row, rows, most);
-        if to > len && ((to - len) * std::mem::size_of::<ChildPair>()) as u64 <= lim.headroom() / 2 {
+        if to > len && ((to - len) * std::mem::size_of::<ChildPair>()) as u64 <= lim.headroom() / 2
+        {
             return lim.reserve_exact(v, to - len);
         }
     }
@@ -869,7 +1003,9 @@ fn grow_projected(eng: &Engine, v: &mut Vec<ChildPair>, start: usize, most: usiz
 impl PairSink for ProjectedEmitSink<'_> {
     #[inline(always)]
     fn single(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         lc: u32,
         rc: u32,
@@ -893,7 +1029,10 @@ impl PairSink for ProjectedEmitSink<'_> {
         if len < limit {
             // Safety: the limit is within the capacity.
             unsafe {
-                v.as_mut_ptr().add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)));
+                v.as_mut_ptr().add(len).write(ChildPair::new(
+                    EncodedChildRef::from_raw(lc),
+                    EncodedChildRef::from_raw(rc),
+                ));
                 v.set_len(len + 1);
             }
             return Ok(());
@@ -913,7 +1052,9 @@ impl PairSink for ProjectedEmitSink<'_> {
 
     #[inline(always)]
     fn end(
-        &mut self, eng: &Engine, node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
     ) -> Result<(), OperationError> {
@@ -948,7 +1089,6 @@ impl PairSink for ProjectedEmitSink<'_> {
         let room = self.room();
         ArenaRow::open(self.sink.level, self.sink.inline, room, pairs, nodes)
     }
-
 }
 
 /// Collect surviving `(lc, rc)` pairs into a caller-owned scratch Vec — the
@@ -966,7 +1106,9 @@ pub(crate) struct CollectSink<'a> {
 impl PairSink for CollectSink<'_> {
     #[inline(always)]
     fn single(
-        &mut self, eng: &Engine, _node_idx: &mut [u32],
+        &mut self,
+        eng: &Engine,
+        _node_idx: &mut [u32],
         _grid_pos: usize,
         lc: u32,
         rc: u32,
@@ -982,7 +1124,10 @@ impl PairSink for CollectSink<'_> {
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         let lim = eng.limits();
-        lim.try_push(self.out, ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)))
+        lim.try_push(
+            self.out,
+            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+        )
     }
 
     #[inline(always)]
@@ -1036,8 +1181,14 @@ pub(super) fn push_kept<T, S: PairSink>(
         if room == 0 {
             let (lc, rc) = cand(&rest[0]);
             rest = &rest[1..];
-            debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
-            debug_assert!(kills || rc != NO_PRODUCT, "a side that kills nothing answered no product");
+            debug_assert!(
+                lc != NO_PRODUCT || rc == NO_PRODUCT,
+                "a dead left side stands for the right"
+            );
+            debug_assert!(
+                kills || rc != NO_PRODUCT,
+                "a side that kills nothing answered no product"
+            );
             if !kills || rc != NO_PRODUCT {
                 sink.pair(eng, lc, rc)?;
             }
@@ -1046,19 +1197,33 @@ pub(super) fn push_kept<T, S: PairSink>(
         let (run, tail) = rest.split_at(room.min(rest.len()));
         rest = tail;
         let v = sink.buf();
-        debug_assert!(run.len() <= v.capacity() - v.len(), "a sink's room is within its buffer's capacity");
+        debug_assert!(
+            run.len() <= v.capacity() - v.len(),
+            "a sink's room is within its buffer's capacity"
+        );
         let out = v.as_mut_ptr();
         let mut len = v.len();
         for item in run {
             let (lc, rc) = cand(item);
-            debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
-            debug_assert!(kills || rc != NO_PRODUCT, "a side that kills nothing answered no product");
+            debug_assert!(
+                lc != NO_PRODUCT || rc == NO_PRODUCT,
+                "a dead left side stands for the right"
+            );
+            debug_assert!(
+                kills || rc != NO_PRODUCT,
+                "a side that kills nothing answered no product"
+            );
             if !kills || rc != NO_PRODUCT {
                 // Safety: `len` starts at the buffer's length and steps at
                 // most once per item of `run`, which holds no more items than
                 // the sink's room, itself within the spare capacity, so the
                 // write stays inside the allocation.
-                unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+                unsafe {
+                    out.add(len).write(ChildPair::new(
+                        EncodedChildRef::from_raw(lc),
+                        EncodedChildRef::from_raw(rc),
+                    ))
+                };
                 len += 1;
             }
         }
@@ -1133,7 +1298,9 @@ where
         let node_idx = &*node_idx;
         push_kept(eng, sink, f_pairs, kills, |p1| {
             let lc = left.get(node_idx, p1.left.0, c);
-            if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
+            if left.kills() && lc == NO_PRODUCT {
+                return (lc, lc);
+            }
             (lc, right.get(node_idx, p1.right.0, d))
         })?;
     } else {
@@ -1144,7 +1311,9 @@ where
         let node_idx = &*node_idx;
         push_kept(eng, sink, g_pairs, kills, |p2| {
             let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-            if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
+            if left.kills() && lc == NO_PRODUCT {
+                return (lc, lc);
+            }
             (lc, right.get_in_row(node_idx, rrow, p2.right.0))
         })?;
     }
@@ -1183,58 +1352,32 @@ where
     if f_pairs.len() >= GROUPED_MIN_PAIRS
         && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
     {
-        // ── Grouped N×M: run-length groups by shared `.left` ──────────
-        // Emits the same pair multiset as the general double loop, in
-        // grouped order; every consumer is order-independent (pair lists
-        // are unordered sets — see diagram/level/mod.rs). The column table
-        // groups only levels with no pass-through side.
-        debug_assert!(!left.passthrough() && !right.passthrough());
-        let n2 = g_pairs.len();
-        let n1 = f_pairs.len();
-        let mut p1_idx = 0;
-        while p1_idx < n1 {
-            let p1_left = f_pairs[p1_idx].left;
-            let g1_start = p1_idx;
-            p1_idx += 1;
-            while p1_idx < n1 && f_pairs[p1_idx].left == p1_left { p1_idx += 1; }
-            let g1 = &f_pairs[g1_start..p1_idx];
-            gate.poll((g1.len() * n2) as u64)?;
-
-            if ctx.masked && left.kills() && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
-                continue;
-            }
-
-            let mut g2_start = 0;
-            for &g2_end in g_runs {
-                let g2 = &g_pairs[g2_start..g2_end as usize];
-                g2_start = g2_end as usize;
-                let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
-                if left.kills() && lc == NO_PRODUCT { continue; }
-
-                for p1 in g1 {
-                    if ctx.masked && right.kills()
-                        && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0
-                    {
-                        continue;
-                    }
-                    let rrow = right.row(p1.right.0);
-                    let node_idx = &*node_idx;
-                    // `lc` is live here, so only the right side can kill.
-                    push_kept(eng, sink, g2, right.kills(), |p2| (lc, right.get_in_row(node_idx, rrow, p2.right.0)))?;
-                }
-            }
-        }
+        cell_prefilter_grouped(
+            (eng, ctx),
+            j,
+            (f_pairs, g_pairs, g_runs),
+            node_idx,
+            (left, right),
+            (sink, gate),
+        )?;
     } else {
         // ── General N×M ───────────────────────────────────────────────
         let kills = left.kills() || right.kills();
         for p1 in f_pairs {
             gate.poll(g_pairs.len() as u64)?;
-            if ctx.masked && !left.passthrough() && left.kills()
-                && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
+            if ctx.masked
+                && !left.passthrough()
+                && left.kills()
+                && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0
+            {
                 continue;
             }
-            if ctx.masked && !right.passthrough() && right.kills()
-                && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
+            if ctx.masked
+                && !right.passthrough()
+                && right.kills()
+                && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j]
+                    == 0
+            {
                 continue;
             }
             let lrow = left.row(p1.left.0);
@@ -1242,12 +1385,78 @@ where
             let node_idx = &*node_idx;
             push_kept(eng, sink, g_pairs, kills, |p2| {
                 let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-                if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
+                if left.kills() && lc == NO_PRODUCT {
+                    return (lc, lc);
+                }
                 (lc, right.get_in_row(node_idx, rrow, p2.right.0))
             })?;
         }
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
+    Ok(())
+}
+
+/// Grouped N×M walk in [`cell_prefilter`]: run-length groups by shared `.left`.
+#[inline(always)]
+fn cell_prefilter_grouped<L, R, S>(
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    j: usize,
+    (f_pairs, g_pairs, g_runs): (&[ChildPair], &[ChildPair], &[u32]),
+    node_idx: &mut [u32],
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
+    debug_assert!(!left.passthrough() && !right.passthrough());
+    let n2 = g_pairs.len();
+    let n1 = f_pairs.len();
+    let mut p1_idx = 0;
+    while p1_idx < n1 {
+        let p1_left = f_pairs[p1_idx].left;
+        let g1_start = p1_idx;
+        p1_idx += 1;
+        while p1_idx < n1 && f_pairs[p1_idx].left == p1_left {
+            p1_idx += 1;
+        }
+        let g1 = &f_pairs[g1_start..p1_idx];
+        gate.poll((g1.len() * n2) as u64)?;
+
+        if ctx.masked
+            && left.kills()
+            && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0
+        {
+            continue;
+        }
+
+        let mut g2_start = 0;
+        for &g2_end in g_runs {
+            let g2 = &g_pairs[g2_start..g2_end as usize];
+            g2_start = g2_end as usize;
+            let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+            if left.kills() && lc == NO_PRODUCT {
+                continue;
+            }
+
+            for p1 in g1 {
+                if ctx.masked
+                    && right.kills()
+                    && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j]
+                        == 0
+                {
+                    continue;
+                }
+                let rrow = right.row(p1.right.0);
+                let node_idx = &*node_idx;
+                push_kept(eng, sink, g2, right.kills(), |p2| {
+                    (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                })?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1310,7 +1519,15 @@ where
     // `row_base` is the row's flat slab offset, already computed by the row loop
     // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
     // re-deriving the same product per cell.
-    cell_pairs((eng, ctx), (j, row_base + j), f_pairs, g_pairs, node_idx, (left, right), (sink, gate))
+    cell_pairs(
+        (eng, ctx),
+        (j, row_base + j),
+        f_pairs,
+        g_pairs,
+        node_idx,
+        (left, right),
+        (sink, gate),
+    )
 }
 
 /// Column `j`'s pairs: the g node's, read from the per-level
@@ -1331,7 +1548,12 @@ pub(crate) fn column_pairs<'a>(
 ) -> &'a [ChildPair] {
     match ctx.right_cols {
         Some(cols) => cols.get(j),
-        None => right_level.pairs_view_decoded(j, scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
+        None => right_level.pairs_view_decoded(
+            j,
+            scratch,
+            ctx.sides.left.plan.view,
+            ctx.sides.right.plan.view,
+        ),
     }
 }
 
@@ -1344,7 +1566,13 @@ pub(crate) fn column_pairs<'a>(
 /// same work. For a route that charges a cell's candidates without
 /// walking it.
 #[inline(always)]
-pub(crate) fn poll_cell_as_walked(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usize, f_pairs: &[ChildPair], n2: usize) -> Result<(), OperationError> {
+pub(crate) fn poll_cell_as_walked(
+    gate: &mut PollGate,
+    ctx: &CellCtx<'_>,
+    j: usize,
+    f_pairs: &[ChildPair],
+    n2: usize,
+) -> Result<(), OperationError> {
     let n1 = f_pairs.len();
     let units = (n1 * n2) as u64;
     if units < gate.due_in() || n1 == 1 || n2 <= 1 {
@@ -1356,13 +1584,22 @@ pub(crate) fn poll_cell_as_walked(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usi
 /// [`poll_cell_as_walked`] for a cell the gate comes due inside.
 #[cold]
 #[inline(never)]
-fn poll_cell_in_pieces(gate: &mut PollGate, ctx: &CellCtx<'_>, j: usize, f_pairs: &[ChildPair], n2: usize) -> Result<(), OperationError> {
+fn poll_cell_in_pieces(
+    gate: &mut PollGate,
+    ctx: &CellCtx<'_>,
+    j: usize,
+    f_pairs: &[ChildPair],
+    n2: usize,
+) -> Result<(), OperationError> {
     let n1 = f_pairs.len();
     if n1 >= GROUPED_MIN_PAIRS && ctx.right_cols.and_then(|cols| cols.runs(j)).is_some() {
         let mut start = 0;
         while start < n1 {
             let left = f_pairs[start].left;
-            let end = f_pairs[start..].iter().position(|p| p.left != left).map_or(n1, |k| start + k);
+            let end = f_pairs[start..]
+                .iter()
+                .position(|p| p.left != left)
+                .map_or(n1, |k| start + k);
             gate.poll(((end - start) * n2) as u64)?;
             start = end;
         }
@@ -1415,7 +1652,11 @@ pub(crate) fn poll_row_in_cells(
             polled += (f_pairs.len() * n2) as u64;
         }
     }
-    debug_assert_eq!(polled + width as u64, units, "a row's cells charge other than its units");
+    debug_assert_eq!(
+        polled + width as u64,
+        units,
+        "a row's cells charge other than its units"
+    );
     gate.poll(width as u64)
 }
 
@@ -1426,7 +1667,11 @@ pub(crate) fn poll_row_in_cells(
 /// out of line keeps its gate in registers.
 #[cold]
 #[inline(never)]
-pub(crate) fn poll_each_then_due(mut gate: PollGate<'_>, each: u64, then: u64) -> Result<PollGate<'_>, OperationError> {
+pub(crate) fn poll_each_then_due(
+    mut gate: PollGate<'_>,
+    each: u64,
+    then: u64,
+) -> Result<PollGate<'_>, OperationError> {
     gate.poll_each(each)?;
     gate.poll(then)?;
     Ok(gate)
@@ -1464,16 +1709,33 @@ where
         }
     } else if g_pairs.len() == 1 {
         cell_one_sided::<true, _, _, _>(
-            eng, f_pairs, g_pairs, node_idx, grid_pos, (left, right), (sink, gate),
+            eng,
+            f_pairs,
+            g_pairs,
+            node_idx,
+            grid_pos,
+            (left, right),
+            (sink, gate),
         )?;
     } else if f_pairs.len() == 1 {
         cell_one_sided::<false, _, _, _>(
-            eng, f_pairs, g_pairs, node_idx, grid_pos, (left, right), (sink, gate),
+            eng,
+            f_pairs,
+            g_pairs,
+            node_idx,
+            grid_pos,
+            (left, right),
+            (sink, gate),
         )?;
     } else {
         cell_prefilter(
-            (eng, ctx), (j, grid_pos), f_pairs, g_pairs,
-            node_idx, (left, right), (sink, gate),
+            (eng, ctx),
+            (j, grid_pos),
+            f_pairs,
+            g_pairs,
+            node_idx,
+            (left, right),
+            (sink, gate),
         )?;
     }
     Ok(())
