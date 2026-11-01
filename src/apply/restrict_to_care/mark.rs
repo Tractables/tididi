@@ -930,13 +930,7 @@ impl<'a> Walk<'a> {
                 }
                 for &(b, j, cside) in cands {
                     probes += 1;
-                    let co = decode(care, other, cside);
-                    let ok = match other_kind {
-                        Side::CareMarginal => true,
-                        Side::FMarginal => co != Some(ZERO),
-                        _ => self.live(other, fo, co)?,
-                    };
-                    if ok {
+                    if self.other_live(other, other_kind, fo, cside)? {
                         eng.limits().try_push(&mut found, (a as u32, b, i as u32, j))?;
                     }
                 }
@@ -980,13 +974,7 @@ impl<'a> Walk<'a> {
                 }
                 for &(b, j, cside) in cands {
                     self.spend()?;
-                    let co = decode(care, other, cside);
-                    let ok = match other_kind {
-                        Side::CareMarginal => true,
-                        Side::FMarginal => co != Some(ZERO),
-                        _ => self.live(other, fo, co)?,
-                    };
-                    if ok {
+                    if self.other_live(other, other_kind, fo, cside)? {
                         eng.limits().try_push(&mut found, (a, b, i, j))?;
                     }
                 }
@@ -994,6 +982,18 @@ impl<'a> Walk<'a> {
         }
         self.restore(cs, live);
         Ok(Some(found))
+    }
+
+    /// Whether partner reference `cside` on `other` is live with `fo` under
+    /// `other_kind`.
+    #[inline(always)]
+    fn other_live(&mut self, other: VtreeIdx, other_kind: Side, fo: Ref, cside: EncodedChildRef) -> Result<bool, Halt> {
+        let co = decode(self.care, other, cside);
+        match other_kind {
+            Side::CareMarginal => Ok(true),
+            Side::FMarginal => Ok(co != Some(ZERO)),
+            _ => self.live(other, fo, co),
+        }
     }
 
     /// Whether child references `(fo, co)` at child level `cv` lead to a model.
@@ -1120,28 +1120,7 @@ impl<'a> Walk<'a> {
             if x == ZERO {
                 continue;
             }
-            cands.clear();
-            let partners = below.of(x.0);
-            if partners.len().saturating_mul(8) < index.len() {
-                for &(_, y) in partners {
-                    let lo = index.partition_point(|e| e.0 < y);
-                    cands.extend(index[lo..].iter().take_while(|e| e.0 == y).map(|e| e.1));
-                }
-            } else if index.len().saturating_mul(8) < partners.len() {
-                cands.extend(index.iter().filter(|e| below.contains(x.0, e.0)).map(|e| e.1));
-            } else {
-                let (mut m, mut n) = (0, 0);
-                while m < partners.len() && n < index.len() {
-                    match partners[m].1.cmp(&index[n].0) {
-                        std::cmp::Ordering::Less => m += 1,
-                        std::cmp::Ordering::Greater => n += 1,
-                        std::cmp::Ordering::Equal => {
-                            cands.push(index[n].1);
-                            n += 1;
-                        }
-                    }
-                }
-            }
+            listed_candidates(below, &index, x.0, &mut cands);
             if self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out)? {
                 break;
             }
@@ -1210,50 +1189,10 @@ impl<'a> Walk<'a> {
     fn top(&mut self, r: VtreeIdx, root_key: Key, seeds: &mut Vec<(VtreeIdx, Key)>) -> Result<bool, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let vtree = &f.vtree;
-        let nodes = |v: VtreeIdx| f.levels[v.idx()].nodes().len();
-        let mut levels: Vec<LevelPairs> = Vec::new();
-        eng.limits().reserve_exact(&mut levels, vtree.num_nodes())?;
-        levels.resize_with(vtree.num_nodes(), LevelPairs::default);
-        levels[r.idx()].push(eng, nodes(r), root_key)?;
         let mut stack = Vec::new();
-        eng.limits().try_push(&mut stack, (r, root_key))?;
-        while let Some((v, (fo, co))) = stack.pop() {
-            let (lc, rc) = vtree.children(v);
-            for (fl, fr) in refs(f, v, fo) {
-                for (cl, cr) in refs(care, v, co) {
-                    self.spend()?;
-                    for (cv, x, y) in [(lc, fl, cl), (rc, fr, cr)] {
-                        if let Child::Pair(k) = self.child(cv, x, y)
-                            && !self.inner[cv.idx()]
-                            && !self.whole(cv, k)
-                            && levels[cv.idx()].push(eng, nodes(cv), k)? {
-                                eng.limits().try_push(&mut stack, (cv, k))?;
-                            }
-                    }
-                }
-            }
-        }
-        for (v, lc, rc) in vtree.internal_bottomup() {
-            if self.inner[v.idx()] {
-                continue;
-            }
-            for i in 0..levels[v.idx()].keys.len() {
-                let (fo, co) = levels[v.idx()].keys[i];
-                let mut any = false;
-                'pairs: for (fl, fr) in refs(f, v, fo) {
-                    for (cl, cr) in refs(care, v, co) {
-                        self.spend()?;
-                        if self.top_live(&levels, lc, fl, cl)? && self.top_live(&levels, rc, fr, cr)? {
-                            any = true;
-                            break 'pairs;
-                        }
-                    }
-                }
-                levels[v.idx()].live[i] = any;
-            }
-        }
-        let root_live = levels[r.idx()].live[0];
-        if !root_live {
+        let mut levels = self.discover_top_levels(r, root_key, &mut stack)?;
+        self.decide_top_levels(&mut levels)?;
+        if !levels[r.idx()].live[0] {
             return Ok(false);
         }
         levels[r.idx()].marked[0] = true;
@@ -1293,6 +1232,67 @@ impl<'a> Walk<'a> {
             }
         }
         Ok(true)
+    }
+
+    /// Discover all non-whole products above the lower root reachable from
+    /// `(r, root_key)`.
+    fn discover_top_levels(
+        &mut self,
+        r: VtreeIdx,
+        root_key: Key,
+        stack: &mut Vec<(VtreeIdx, Key)>,
+    ) -> Result<Vec<LevelPairs>, Halt> {
+        let (eng, f, care) = (self.eng, self.f, self.care);
+        let vtree = &f.vtree;
+        let nodes = |v: VtreeIdx| f.levels[v.idx()].nodes().len();
+        let mut levels: Vec<LevelPairs> = Vec::new();
+        eng.limits().reserve_exact(&mut levels, vtree.num_nodes())?;
+        levels.resize_with(vtree.num_nodes(), LevelPairs::default);
+        levels[r.idx()].push(eng, nodes(r), root_key)?;
+        eng.limits().try_push(stack, (r, root_key))?;
+        while let Some((v, (fo, co))) = stack.pop() {
+            let (lc, rc) = vtree.children(v);
+            for (fl, fr) in refs(f, v, fo) {
+                for (cl, cr) in refs(care, v, co) {
+                    self.spend()?;
+                    for (cv, x, y) in [(lc, fl, cl), (rc, fr, cr)] {
+                        if let Child::Pair(k) = self.child(cv, x, y)
+                            && !self.inner[cv.idx()]
+                            && !self.whole(cv, k)
+                            && levels[cv.idx()].push(eng, nodes(cv), k)?
+                        {
+                            eng.limits().try_push(stack, (cv, k))?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(levels)
+    }
+
+    /// Decide bottom-up which discovered products above the lower root are live.
+    fn decide_top_levels(&mut self, levels: &mut [LevelPairs]) -> Result<(), Halt> {
+        let (f, care) = (self.f, self.care);
+        for (v, lc, rc) in f.vtree.internal_bottomup() {
+            if self.inner[v.idx()] {
+                continue;
+            }
+            for i in 0..levels[v.idx()].keys.len() {
+                let (fo, co) = levels[v.idx()].keys[i];
+                let mut any = false;
+                'pairs: for (fl, fr) in refs(f, v, fo) {
+                    for (cl, cr) in refs(care, v, co) {
+                        self.spend()?;
+                        if self.top_live(levels, lc, fl, cl)? && self.top_live(levels, rc, fr, cr)? {
+                            any = true;
+                            break 'pairs;
+                        }
+                    }
+                }
+                levels[v.idx()].live[i] = any;
+            }
+        }
+        Ok(())
     }
 
     /// [`Walk::top`] where `f` is rooted at `r` and `care` lower, at `c`,
@@ -1611,6 +1611,33 @@ impl<'a> Walk<'a> {
         self.alive[v.idx()][a.idx()] = true;
         let count = self.f.levels[v.idx()].pair_count_at(a.idx());
         self.pair_alive.mark_many(self.eng, v, a, count, pairs)
+    }
+}
+
+/// Collect `care` pair indices in `index` whose child node is a live partner
+/// of `x` in `below`.
+fn listed_candidates(below: &Listed, index: &[(u32, u32)], x: u32, cands: &mut Vec<u32>) {
+    cands.clear();
+    let partners = below.of(x);
+    if partners.len().saturating_mul(8) < index.len() {
+        for &(_, y) in partners {
+            let lo = index.partition_point(|e| e.0 < y);
+            cands.extend(index[lo..].iter().take_while(|e| e.0 == y).map(|e| e.1));
+        }
+    } else if index.len().saturating_mul(8) < partners.len() {
+        cands.extend(index.iter().filter(|e| below.contains(x, e.0)).map(|e| e.1));
+    } else {
+        let (mut m, mut n) = (0, 0);
+        while m < partners.len() && n < index.len() {
+            match partners[m].1.cmp(&index[n].0) {
+                std::cmp::Ordering::Less => m += 1,
+                std::cmp::Ordering::Greater => n += 1,
+                std::cmp::Ordering::Equal => {
+                    cands.push(index[n].1);
+                    n += 1;
+                }
+            }
+        }
     }
 }
 

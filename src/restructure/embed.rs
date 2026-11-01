@@ -1065,22 +1065,7 @@ fn assemble_marginal(
     let mut source = tdd.try_clone_on(eng)?;
     let mut placement = MovePlacement::new(eng, into, Some(weights.empty_like()))?;
     placement.move_part(&mut source, &plan.embedding.levels);
-    // The destination nodes strictly below the image of a marginal level,
-    // and the highest such images, whose values the free leaves scale.
-    let mut inside = vec![false; into.num_nodes()];
-    let mut boundaries = Vec::new();
-    for t in into.bottomup().rev() {
-        if into.node(t).is_leaf() {
-            continue;
-        }
-        let marginal = plan.covered_by[t.idx()].is_some_and(|s| tdd.level(s).is_marginal());
-        if marginal && !inside[t.idx()] {
-            boundaries.push(t);
-        }
-        let (left, right) = into.children(t);
-        inside[left.idx()] = inside[t.idx()] || marginal;
-        inside[right.idx()] = inside[t.idx()] || marginal;
-    }
+    let (inside, boundaries) = marginal_boundaries(tdd, into, plan);
     let mut gate = eng.limits().gate();
     for t in into.bottomup() {
         if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
@@ -1099,8 +1084,42 @@ fn assemble_marginal(
         }
     }
     gate.flush()?;
+    scale_marginal_boundaries(&mut placement, into, plan, &weights, &boundaries);
+    placement.check_weights().map_err(EmbedError::DestinationWeights)?;
+    Ok(placement.finish(tdd.output().local)?)
+}
+
+/// Find destination nodes strictly below the image of a marginal level and
+/// the highest such images (`boundaries`).
+fn marginal_boundaries(tdd: &Tdd, into: &Vtree, plan: &Plan) -> (Vec<bool>, Vec<VtreeIdx>) {
+    let mut inside = vec![false; into.num_nodes()];
+    let mut boundaries = Vec::new();
+    for t in into.bottomup().rev() {
+        if into.node(t).is_leaf() {
+            continue;
+        }
+        let marginal = plan.covered_by[t.idx()].is_some_and(|s| tdd.level(s).is_marginal());
+        if marginal && !inside[t.idx()] {
+            boundaries.push(t);
+        }
+        let (left, right) = into.children(t);
+        inside[left.idx()] = inside[t.idx()] || marginal;
+        inside[right.idx()] = inside[t.idx()] || marginal;
+    }
+    (inside, boundaries)
+}
+
+/// Scale each highest marginal boundary by the product of the free leaves
+/// in its destination subtree.
+fn scale_marginal_boundaries(
+    placement: &mut MovePlacement<'_>,
+    into: &Vtree,
+    plan: &Plan,
+    weights: &WeightStore,
+    boundaries: &[VtreeIdx],
+) {
     let mut stack = Vec::new();
-    for boundary in boundaries {
+    for &boundary in boundaries {
         let mut factor: Option<WeightValue> = None;
         stack.push(boundary);
         while let Some(t) = stack.pop() {
@@ -1122,8 +1141,6 @@ fn assemble_marginal(
             placement.scale(boundary, &factor);
         }
     }
-    placement.check_weights().map_err(EmbedError::DestinationWeights)?;
-    Ok(placement.finish(tdd.output().local)?)
 }
 
 #[cfg(test)]

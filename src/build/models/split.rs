@@ -517,60 +517,74 @@ fn split_words(
             number_runs(lim, &mut s.runs, &s.high_keys, &s.high_starts, (values, parent.atoms), &mut s.high_first)?;
         let (low_atom, low_atoms) =
             number_runs(lim, &mut s.runs, &s.low_keys, &s.low_starts, (high_count, parent.atoms), &mut s.low_first)?;
-        let from_low = from_low(n, s);
-        if !from_low {
-            // Emitting by high value names each value's low value.
-            if s.low_of.len() < n {
-                lim.try_resize(&mut s.low_of, n, 0u32)?;
-            }
-            if key.indexed {
-                for (l, range) in runs(&s.low_starts, n).enumerate() {
-                    for &sorted in &s.sort_keys[range] {
-                        s.low_of[key.index(sorted)] = l as u32;
-                    }
-                }
-            } else {
-                // A high value's run ascends by low part, so the low order
-                // meets its values in parent order, and a cursor per run
-                // tells which.
-                s.cursor.clear();
-                lim.reserve_exact(&mut s.cursor, high_count)?;
-                s.cursor.extend_from_slice(&s.high_starts);
-                for (l, range) in runs(&s.low_starts, n).enumerate() {
-                    for &sorted in &s.sort_keys[range] {
-                        let at = &mut s.cursor[key.run(sorted)];
-                        s.low_of[*at as usize] = l as u32;
-                        *at += 1;
-                    }
-                }
-            }
-        }
-        let (sort_keys, low_of) = (&s.sort_keys, &s.low_of);
-        let (low_starts, high_starts) = (&s.low_starts, &s.high_starts);
-        let (low_first, high_first) = (&s.low_first, &s.high_first);
-        let each = |emit: &mut dyn FnMut([u32; 3])| {
-            if from_low {
-                for (l, &k) in low_first.iter().enumerate() {
-                    for &sorted in &sort_keys[run(low_starts, k, n)] {
-                        emit([key.atom(sorted), high_atom[key.run(sorted)], l as u32]);
-                    }
-                }
-            } else {
-                for (r, &k) in high_first.iter().enumerate() {
-                    for e in run(high_starts, k, n) {
-                        emit([parent.atom[e], r as u32, low_atom[low_of[e] as usize]]);
-                    }
-                }
-            }
-        };
-        let atoms = (parent.atoms, high_atoms, low_atoms);
-        triples = sorted_triples(lim, &mut s.radix, &mut s.high_keys, &mut s.wide_triples, atoms, !from_low, each)?;
+        triples = split_word_triples(lim, s, parent, key, (&low_atom, low_atoms), (&high_atom, high_atoms))?;
         (low_atom, low_atoms, high_atom, high_atoms)
     };
     let split = Decomposition::Triples { atoms: parent.atoms as usize, triples };
     let low = Values { words: 1, data: low_data.into(), atom: low_atom, atoms: low_atoms };
     let high = Values { words: 1, data: high_data.into(), atom: high_atom, atoms: high_atoms };
     Ok((split, low, high))
+}
+
+/// Emit and sort the triples of `split_words` when values are not all distinct.
+fn split_word_triples(
+    lim: &Limits,
+    s: &mut Scratch,
+    parent: &Values,
+    key: KeyLayout,
+    (low_atom, low_atoms): (&[u32], u32),
+    (high_atom, high_atoms): (&[u32], u32),
+) -> Result<Vec<[u32; 3]>, OperationError> {
+    let n = parent.len();
+    let high_count = s.high_starts.len();
+    let from_low = from_low(n, s);
+    if !from_low {
+        // Emitting by high value names each value's low value.
+        if s.low_of.len() < n {
+            lim.try_resize(&mut s.low_of, n, 0u32)?;
+        }
+        if key.indexed {
+            for (l, range) in runs(&s.low_starts, n).enumerate() {
+                for &sorted in &s.sort_keys[range] {
+                    s.low_of[key.index(sorted)] = l as u32;
+                }
+            }
+        } else {
+            // A high value's run ascends by low part, so the low order
+            // meets its values in parent order, and a cursor per run
+            // tells which.
+            s.cursor.clear();
+            lim.reserve_exact(&mut s.cursor, high_count)?;
+            s.cursor.extend_from_slice(&s.high_starts);
+            for (l, range) in runs(&s.low_starts, n).enumerate() {
+                for &sorted in &s.sort_keys[range] {
+                    let at = &mut s.cursor[key.run(sorted)];
+                    s.low_of[*at as usize] = l as u32;
+                    *at += 1;
+                }
+            }
+        }
+    }
+    let (sort_keys, low_of) = (&s.sort_keys, &s.low_of);
+    let (low_starts, high_starts) = (&s.low_starts, &s.high_starts);
+    let (low_first, high_first) = (&s.low_first, &s.high_first);
+    let each = |emit: &mut dyn FnMut([u32; 3])| {
+        if from_low {
+            for (l, &k) in low_first.iter().enumerate() {
+                for &sorted in &sort_keys[run(low_starts, k, n)] {
+                    emit([key.atom(sorted), high_atom[key.run(sorted)], l as u32]);
+                }
+            }
+        } else {
+            for (r, &k) in high_first.iter().enumerate() {
+                for e in run(high_starts, k, n) {
+                    emit([parent.atom[e], r as u32, low_atom[low_of[e] as usize]]);
+                }
+            }
+        }
+    };
+    let atoms = (parent.atoms, high_atoms, low_atoms);
+    sorted_triples(lim, &mut s.radix, &mut s.high_keys, &mut s.wide_triples, atoms, !from_low, each)
 }
 
 /// Split one-word values that all lie in one parent atom, as the values of
@@ -760,6 +774,33 @@ fn group_single(
     Ok((Decomposition::Grouped { ends, lows }, low_atom, low_atoms))
 }
 
+/// Total length of the runs in `starts` indexed by `firsts`.
+#[inline(always)]
+fn held_keys(starts: &[u32], firsts: &[u32], n: usize) -> usize {
+    firsts.iter().map(|&k| run(starts, k, n).len()).sum()
+}
+
+/// Copy unique adjacent elements from `v[start..end]` to `v[kept..]`,
+/// returning the new `kept` cursor.
+#[inline(always)]
+fn dedup_range<T: Copy + PartialEq>(v: &mut [T], start: usize, end: usize, mut kept: usize) -> usize {
+    for at in start..end {
+        if at == start || v[at] != v[kept - 1] {
+            v[kept] = v[at];
+            kept += 1;
+        }
+    }
+    kept
+}
+
+/// Drop adjacent duplicates from `v[start..]`.
+#[inline(always)]
+fn dedup_tail<T: Copy + PartialEq>(v: &mut Vec<T>, start: usize) {
+    let len = v.len();
+    let kept = dedup_range(v, start, len, start);
+    v.truncate(kept);
+}
+
 /// Whether `group_single` reads its pairs off the low side, once both
 /// sides are numbered, and then how many keys the low side's first runs
 /// hold. The high side reads every key twice, to lay the keys out and to
@@ -767,9 +808,8 @@ fn group_single(
 /// first runs' keys once, each with a lookup of its high atom that can miss
 /// the cache.
 fn single_from_low(n: usize, s: &Scratch) -> Option<usize> {
-    let held = |starts: &[u32], firsts: &[u32]| firsts.iter().map(|&k| run(starts, k, n).len()).sum::<usize>();
-    let low = held(&s.low_starts, &s.low_first);
-    (low.saturating_mul(LOW_SIDE_COST) <= n + held(&s.high_starts, &s.high_first)).then_some(low)
+    let low = held_keys(&s.low_starts, &s.low_first, n);
+    (low.saturating_mul(LOW_SIDE_COST) <= n + held_keys(&s.high_starts, &s.high_first, n)).then_some(low)
 }
 
 /// How many times fewer keys the low side's first runs of `group_single`
@@ -961,12 +1001,7 @@ fn close_groups(
             if !lows[start..end].windows(2).all(|pair| pair[0] < pair[1]) {
                 lows[start..end].sort_unstable();
             }
-            for at in start..end {
-                if at == start || lows[at] != lows[kept - 1] {
-                    lows[kept] = lows[at];
-                    kept += 1;
-                }
-            }
+            kept = dedup_range(lows, start, end, kept);
         } else {
             kept = end;
         }
@@ -1335,7 +1370,7 @@ fn hashed_split(
     atom_of.clear();
     lim.reserve_exact(atom_of, 1 << low_width)?;
     atom_of.extend(s.rank.iter().map(|&rank| if merged { low_atom[rank as usize] } else { rank }));
-    let held = s.high_first.iter().map(|&k| run(&s.high_starts, k, n).len()).sum::<usize>();
+    let held = held_keys(&s.high_starts, &s.high_first, n);
     let mut gate = lim.gate();
     gate.poll(held as u64)?;
     if parent.atoms == 1 && s.direct {
@@ -1357,14 +1392,7 @@ fn hashed_split(
             lows.extend(data[run(&s.high_starts, k, n)].iter().map(|&value| atom_of[(value & mask) as usize]));
             if merged && !lows[start..].windows(2).all(|pair| pair[0] < pair[1]) {
                 lows[start..].sort_unstable();
-                let mut kept = start + 1;
-                for at in start + 1..lows.len() {
-                    if lows[at] != lows[kept - 1] {
-                        lows[kept] = lows[at];
-                        kept += 1;
-                    }
-                }
-                lows.truncate(kept);
+                dedup_tail(&mut lows, start);
             }
             ends.push(lows.len() as u32);
         }
@@ -1411,17 +1439,9 @@ fn direct_pairs(
             ChildPair::new(left, NodeIdx(atom_of[(value & mask) as usize]))
         }));
         if merged {
-            let group = &mut pairs[start..];
-            if !group.windows(2).all(|pair| pair[0].right.0 < pair[1].right.0) {
-                group.sort_unstable_by_key(|pair| pair.right.0);
-                let mut kept = start + 1;
-                for at in start + 1..pairs.len() {
-                    if pairs[at].right.0 != pairs[kept - 1].right.0 {
-                        pairs[kept] = pairs[at];
-                        kept += 1;
-                    }
-                }
-                pairs.truncate(kept);
+            if !pairs[start..].windows(2).all(|pair| pair[0].right.0 < pair[1].right.0) {
+                pairs[start..].sort_unstable_by_key(|pair| pair.right.0);
+                dedup_tail(&mut pairs, start);
             }
             let width: u64 = pairs[start..].iter().map(|pair| low_size[pair.right.0 as usize]).sum();
             models += u128::from(high_size[high]) * u128::from(width);
@@ -1671,12 +1691,7 @@ fn by_parent_atom(
         if end - start > 1 {
             sort_small_by(&mut pairs[start..end], !0);
         }
-        for at in start..end {
-            if at == start || pairs[at] != pairs[kept - 1] {
-                pairs[kept] = pairs[at];
-                kept += 1;
-            }
-        }
+        kept = dedup_range(&mut pairs, start, end, kept);
         ends.push(kept as u32);
     }
     pairs.truncate(kept);
@@ -1989,8 +2004,7 @@ fn runs_between(first: u64, last: u64, n: usize) -> usize {
 /// Reading the first run of every atom on one side finds them all; whether
 /// the low side's first runs hold no more values than the high's.
 fn from_low(n: usize, s: &Scratch) -> bool {
-    let held = |starts: &[u32], firsts: &[u32]| firsts.iter().map(|&k| run(starts, k, n).len()).sum::<usize>();
-    held(&s.low_starts, &s.low_first) <= held(&s.high_starts, &s.high_first)
+    held_keys(&s.low_starts, &s.low_first, n) <= held_keys(&s.high_starts, &s.high_first, n)
 }
 
 /// Split values of any width through their materialized parts.
@@ -2125,19 +2139,19 @@ fn parts(
     let n = parent.len();
     let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
     s.low.clear();
-    lim.reserve_exact(&mut s.low, n * lw)?;
     s.high.clear();
-    lim.reserve_exact(&mut s.high, n * rw)?;
     let mut gate = lim.gate();
     if parent.words == 1 {
         // Both parts are narrower than the parent's one word.
+        lim.reserve_exact(&mut s.low, n * lw)?;
+        lim.reserve_exact(&mut s.high, n * rw)?;
         let mask = (1u64 << low_width) - 1;
         gate.poll(n as u64)?;
         s.low.extend(parent.data.iter().map(|&v| v & mask));
         s.high.extend(parent.data.iter().map(|&v| v >> low_width));
     } else {
-        s.low.resize(n * lw, 0);
-        s.high.resize(n * rw, 0);
+        lim.try_resize(&mut s.low, n * lw, 0)?;
+        lim.try_resize(&mut s.high, n * rw, 0)?;
         for e in 0..n {
             gate.poll(parent.words as u64)?;
             let value = &parent.data[e * parent.words..][..parent.words];

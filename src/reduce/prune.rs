@@ -1884,10 +1884,7 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
             if tdd.is_structural_internal(c) {
                 return alloc_block(eng, marks, &mut used, &mut slots, width).map(Some);
             }
-            if unmarked < width {
-                slots += width;
-                unmarked = width;
-            }
+            charge_unmarked_child(&mut slots, &mut unmarked, width);
             Ok(None)
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
@@ -1921,6 +1918,16 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
     // and neither can stop partway.
     eng.limits().charge_work(2 * slots as u64);
     Ok(())
+}
+
+/// Charge `slots` for an unmarked (leaf or marginal) child when `width` is
+/// wider than every unmarked child met before it.
+#[inline(always)]
+fn charge_unmarked_child(slots: &mut usize, unmarked: &mut usize, width: usize) {
+    if *unmarked < width {
+        *slots += width;
+        *unmarked = width;
+    }
 }
 
 /// The slots a walk from the output would be charged for where one from
@@ -1967,10 +1974,7 @@ fn slots_from_output(
         for c in [left, right] {
             let width = tdd.reference_slot_count(c);
             if !tdd.is_structural_internal(c) {
-                if unmarked < width {
-                    slots += width;
-                    unmarked = width;
-                }
+                charge_unmarked_child(&mut slots, &mut unmarked, width);
                 continue;
             }
             slots += width;
@@ -2080,9 +2084,8 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
             let width = tdd.reference_slot_count(c);
             if structural {
                 slots += width;
-            } else if unmarked < width {
-                slots += width;
-                unmarked = width;
+            } else {
+                charge_unmarked_child(&mut slots, &mut unmarked, width);
             }
         }
         let found = true_children(lim, tdd, VtreeIdx(t), r as usize, sides, row, i as u32 + 1)?;
@@ -2098,34 +2101,11 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
     // which is the chain's. What happens to such a level is decided before
     // any level changes.
     let described = chain.iter().any(|&[t, _, _]| tdd.levels[t as usize].pairs.implicit().is_some());
-    let mut plans = None;
-    if described {
-        visits.clear();
-        lim.reserve(visits, chain.len())?;
-        let mut used = 0usize;
-        for (i, &[t, k, _]) in chain.iter().enumerate() {
-            let t = VtreeIdx(t);
-            let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
-            let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
-            mark_all(&mut marks[base..base + words(width)], width);
-            marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
-            visits.push(Visit::new(t, base));
-        }
-        let mut remap_need = 0usize;
-        for (j, &[c, _, up]) in chain.iter().enumerate().skip(1) {
-            let c = VtreeIdx(c);
-            let child = Child::at(visits[j].base, tdd.reference_slot_count(c), true);
-            let parent = &mut visits[up as usize];
-            if vtree.children(parent.level).0 == c {
-                parent.left = child;
-            } else {
-                parent.right = child;
-            }
-            remap_need = remap_need.max(parent.left.span + parent.right.span);
-        }
-        lim.try_resize(remap, remap_need, UNREACHED)?;
-        plans = Some(plan_levels(lim, tdd, visits.iter().rev().copied(), marks, remap)?);
-    }
+    let mut plans = if described {
+        Some(plan_complement_described(eng, tdd, chain, marks, remap, visits)?)
+    } else {
+        None
+    };
     lim.charge_work(2 * slots as u64);
     // From the bottom of the chain up, as the compaction goes: a described
     // level as the compaction leaves it, a stored one in place, its node
@@ -2162,6 +2142,44 @@ pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Res
     let local = tdd.output.local.0;
     tdd.output.local = NodeIdx(local - u32::from(local > old.0));
     Ok(())
+}
+
+/// Build the synthetic marks and visits for `chain` and plan compaction for
+/// any described levels in [`prune_complement`].
+fn plan_complement_described(
+    eng: &Engine,
+    tdd: &Tdd,
+    chain: &[[u32; 3]],
+    marks: &mut Vec<u64>,
+    remap: &mut Vec<u32>,
+    visits: &mut Vec<Visit>,
+) -> Result<Plans, OperationError> {
+    let lim = eng.limits();
+    visits.clear();
+    lim.reserve(visits, chain.len())?;
+    let mut used = 0usize;
+    for (i, &[t, k, _]) in chain.iter().enumerate() {
+        let t = VtreeIdx(t);
+        let width = if i == 0 { tdd.levels[t.idx()].slot_count() } else { tdd.reference_slot_count(t) };
+        let base = alloc_block(eng, marks, &mut used, &mut 0, width)?;
+        mark_all(&mut marks[base..base + words(width)], width);
+        marks[base + (k as usize >> 6)] &= !(1u64 << (k & 63));
+        visits.push(Visit::new(t, base));
+    }
+    let mut remap_need = 0usize;
+    for (j, &[c, _, up]) in chain.iter().enumerate().skip(1) {
+        let c = VtreeIdx(c);
+        let child = Child::at(visits[j].base, tdd.reference_slot_count(c), true);
+        let parent = &mut visits[up as usize];
+        if tdd.vtree.children(parent.level).0 == c {
+            parent.left = child;
+        } else {
+            parent.right = child;
+        }
+        remap_need = remap_need.max(parent.left.span + parent.right.span);
+    }
+    lim.try_resize(remap, remap_need, UNREACHED)?;
+    plan_levels(lim, tdd, visits.iter().rev().copied(), marks, remap)
 }
 
 /// Drop node `k` of a stored `level`, the nodes after it each one slot

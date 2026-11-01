@@ -450,6 +450,23 @@ fn grouped<S, T: Copy + Default, I: Iterator<Item = S> + Clone>(
     Ok(out)
 }
 
+/// `P`'s root pairs grouped by their `c` child and `Q`'s root pairs grouped
+/// by their `o` child.
+fn root_groups(
+    lim: &Limits,
+    view: &Oriented<'_>,
+) -> Result<(Grouped<u32>, Grouped<u32>), OperationError> {
+    let p_root = grouped(lim, view.p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
+        let (at_c, at_o) = view.at_root(&pair);
+        (at_c as usize, at_o)
+    })?;
+    let q_root = grouped(lim, view.q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
+        let (at_c, at_o) = view.at_root(&pair);
+        (at_o as usize, at_c)
+    })?;
+    Ok((p_root, q_root))
+}
+
 /// A built level's live products by their `P` node, each holding its `Q`
 /// node and its product index.
 fn rows_by_p(
@@ -462,6 +479,39 @@ fn rows_by_p(
         let (p, q) = view.pq(e);
         (p as usize, (q, e.prod_idx.0))
     })
+}
+
+/// One child's rows, owner index, count column, and probe for [`count_indirect`].
+struct IndirectSide<'a> {
+    rows: Grouped<(u32, u32)>,
+    owners: Grouped<(u32, u32)>,
+    counts: &'a [u128],
+    probe: Probe<u32>,
+}
+
+/// Walk one pair of `P` at `c` along `walked` and probe `probed`.
+#[inline(always)]
+fn walk_indirect_pair(
+    walked: &IndirectSide<'_>,
+    probed: &mut IndirectSide<'_>,
+    (p_walked, p_probed): (u32, u32),
+    weights: &Stamped<u128>,
+    total: &mut Total,
+) -> u64 {
+    let probed_row = probed.rows.view().bucket(p_probed as usize);
+    probed.probe.open(probed_row);
+    let mut steps = probed_row.len() as u64;
+    for &(q_walked, prod_w) in walked.rows.view().bucket(p_walked as usize) {
+        let c_w = walked.counts[prod_w as usize];
+        let owners = walked.owners.view().bucket(q_walked as usize);
+        steps += 1 + owners.len() as u64;
+        for &(q_node, q_probed) in owners {
+            let Some(v) = weights.get(q_node) else { continue };
+            let Some(c_p) = probed.probe.count(p_probed, q_probed, |prod| probed.counts[prod as usize]) else { continue };
+            total.add3(c_w, c_p, v);
+        }
+    }
+    steps
 }
 
 /// Count the root with `pivot`, never building `c`: see the module docs.
@@ -498,26 +548,25 @@ fn count_indirect(
     // The top-down side: `P`'s root pairs by their `c` child, the live
     // products of `o` by their `P` node, and `Q`'s root pairs by their `o`
     // child.
-    let p_root = grouped(lim, p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_c as usize, at_o)
-    })?;
-    let q_root = grouped(lim, q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_o as usize, at_c)
-    })?;
+    let (p_root, q_root) = root_groups(lim, &view)?;
     let o_rows = rows_by_p(lim, &view, input.o.products, p.o)?;
     // The bottom-up side: both children's live products by their `P` node,
     // and `Q`'s pairs at `c` by each child, holding the node and the other
     // child.
-    let cl_rows = rows_by_p(lim, &view, input.cl.products, p.cl)?;
-    let cr_rows = rows_by_p(lim, &view, input.cr.products, p.cr)?;
-    let q_by_cl = grouped(lim, q.cl, view.q_c.pairs_with_parent(), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?;
-    let q_by_cr = grouped(lim, q.cr, view.q_c.pairs_with_parent(), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?;
-    let mut probe_cl: Probe<u32> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
-    let mut probe_cr: Probe<u32> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+    let mut left = IndirectSide {
+        rows: rows_by_p(lim, &view, input.cl.products, p.cl)?,
+        owners: grouped(lim, q.cl, view.q_c.pairs_with_parent(), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?,
+        counts: input.cl.counts,
+        probe: Probe::new(lim, &view, input.cl, p.cl, q.cl)?,
+    };
+    let mut right = IndirectSide {
+        rows: rows_by_p(lim, &view, input.cr.products, p.cr)?,
+        owners: grouped(lim, q.cr, view.q_c.pairs_with_parent(), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?,
+        counts: input.cr.counts,
+        probe: Probe::new(lim, &view, input.cr, p.cr, q.cr)?,
+    };
 
-    let (col_o, col_cl, col_cr) = (input.o.counts, input.cl.counts, input.cr.counts);
+    let col_o = input.o.counts;
     let mut weights: Stamped<u128> = Stamped::new(lim, q.c)?;
     let mut total = Total::default();
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
@@ -545,38 +594,8 @@ fn count_indirect(
         for pair in view.p_c.pairs_iter_of(&node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
-                Direction::ByLeft => {
-                    let cr_row = cr_rows.view().bucket(p_cr as usize);
-                    probe_cr.open(cr_row);
-                    let mut walked = cr_row.len() as u64;
-                    for &(q_cl, prod_l) in cl_rows.view().bucket(p_cl as usize) {
-                        let c_l = col_cl[prod_l as usize];
-                        let owners = q_by_cl.view().bucket(q_cl as usize);
-                        walked += 1 + owners.len() as u64;
-                        for &(q_node, q_cr) in owners {
-                            let Some(v) = weights.get(q_node) else { continue };
-                            let Some(c_r) = probe_cr.count(p_cr, q_cr, |prod| col_cr[prod as usize]) else { continue };
-                            total.add3(c_l, c_r, v);
-                        }
-                    }
-                    walked
-                }
-                Direction::ByRight => {
-                    let cl_row = cl_rows.view().bucket(p_cl as usize);
-                    probe_cl.open(cl_row);
-                    let mut walked = cl_row.len() as u64;
-                    for &(q_cr, prod_r) in cr_rows.view().bucket(p_cr as usize) {
-                        let c_r = col_cr[prod_r as usize];
-                        let owners = q_by_cr.view().bucket(q_cr as usize);
-                        walked += 1 + owners.len() as u64;
-                        for &(q_node, q_cl) in owners {
-                            let Some(v) = weights.get(q_node) else { continue };
-                            let Some(c_l) = probe_cl.count(p_cl, q_cl, |prod| col_cl[prod as usize]) else { continue };
-                            total.add3(c_l, c_r, v);
-                        }
-                    }
-                    walked
-                }
+                Direction::ByLeft => walk_indirect_pair(&left, &mut right, (p_cl, p_cr), &weights, &mut total),
+                Direction::ByRight => walk_indirect_pair(&right, &mut left, (p_cr, p_cl), &weights, &mut total),
             };
             ticker.poll(walked)?;
         }
@@ -914,14 +933,7 @@ fn count_dense<W: Weight>(
 
     // The top-down side, as the indirect walk has it, with each `o`
     // product's count beside its `Q` node.
-    let p_root = grouped(lim, p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_c as usize, at_o)
-    })?;
-    let q_root = grouped(lim, q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
-        let (at_c, at_o) = view.at_root(&pair);
-        (at_o as usize, at_c)
-    })?;
+    let (p_root, q_root) = root_groups(lim, &view)?;
     let col_o = input.o.counts;
     let o_rows = grouped(
         lim, p.o,

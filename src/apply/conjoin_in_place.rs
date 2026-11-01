@@ -604,24 +604,7 @@ fn block_products(
 ) -> Result<Vec<u32>, OperationError> {
     let vtree = g.vtree();
     let whole = |u: VtreeIdx| top[u.idx()].filter(|_| g.level(u).node_count() == 1);
-    // The internal levels under `t`, parents first; the descent ends where
-    // `g` has only its true node.
-    let mut order = Vec::new();
-    lim.try_push(&mut order, t)?;
-    let mut at = 0;
-    while at < order.len() {
-        let u = order[at];
-        at += 1;
-        if u != t && whole(u).is_some() {
-            continue;
-        }
-        let (l, r) = vtree.children(u);
-        for c in [l, r] {
-            if !vtree.node(c).is_leaf() {
-                lim.try_push(&mut order, c)?;
-            }
-        }
-    }
+    let order = internal_subtree_order(lim, vtree, t, |u| whole(u).is_some())?;
     let mut split: Vec<Option<Split>> = charged(lim, vtree.num_nodes(), || None)?;
     let mut gate = lim.gate();
     let mut hits = Vec::new();
@@ -727,7 +710,36 @@ fn block_products(
 }
 
 /// The nodes of branching level `t` and of the levels under it that no node
-/// `to` names reaches, removed, and `to` renumbered through what is left.
+/// The internal levels under `t`, parents first, stopping descent beneath any
+/// node `u != t` where `stop(u)` holds.
+fn internal_subtree_order(
+    lim: &Limits,
+    vtree: &Vtree,
+    t: VtreeIdx,
+    stop: impl Fn(VtreeIdx) -> bool,
+) -> Result<Vec<VtreeIdx>, OperationError> {
+    let mut order = Vec::new();
+    lim.try_push(&mut order, t)?;
+    let mut at = 0;
+    while at < order.len() {
+        let u = order[at];
+        at += 1;
+        if u != t && stop(u) {
+            continue;
+        }
+        let (l, r) = vtree.children(u);
+        for c in [l, r] {
+            if !vtree.node(c).is_leaf() {
+                lim.try_push(&mut order, c)?;
+            }
+        }
+    }
+    Ok(order)
+}
+
+/// Prune `f` below a branching level `t`: every node under `t` not reached
+/// from `to`'s live products, and on `t` itself every node neither `to` nor a
+/// node `to` names reaches, removed, and `to` renumbered through what is left.
 /// `t`'s products stand beside the nodes they replace, which overlap them,
 /// and so do the products under them; the prune would remove those, and
 /// [`Engine::and_in_place_loose`] runs none. The work is the levels under
@@ -736,19 +748,7 @@ fn block_products(
 /// close describes it again where it fits.
 fn prune_under(eng: &Engine, f: &mut Tdd, vtree: &Vtree, t: VtreeIdx, to: &mut [u32]) -> Result<(), OperationError> {
     let lim = eng.limits();
-    // The internal levels from `t` down, parents first.
-    let mut order = Vec::new();
-    lim.try_push(&mut order, t)?;
-    let mut at = 0;
-    while at < order.len() {
-        let (l, r) = vtree.children(order[at]);
-        for c in [l, r] {
-            if !vtree.node(c).is_leaf() {
-                lim.try_push(&mut order, c)?;
-            }
-        }
-        at += 1;
-    }
+    let order = internal_subtree_order(lim, vtree, t, |_| false)?;
     for &s in &order {
         if f.levels[s.idx()].pairs.implicit().is_some() {
             f.levels[s.idx()].store_if_implicit(lim)?;
@@ -868,30 +868,7 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
     let root = vtree.root();
     debug_assert!(f.output.vtree == root && g.output.vtree == root, "a structural output sits at the root");
 
-    // `g`'s spine and branching levels, from its output down.
-    let mut role = charged(lim, n, || Role::True)?;
-    let mut stack = Vec::new();
-    lim.try_push(&mut stack, (root, g.output.local.0))?;
-    while let Some((t, b)) = stack.pop() {
-        if top[t.idx()] == Some(b) {
-            continue;
-        }
-        if vtree.node(t).is_leaf() {
-            role[t.idx()] = Role::Branch(b);
-            continue;
-        }
-        let level = g.level(t);
-        let mut pairs = level.pairs_iter_of_idx(b as usize);
-        let first = pairs.next().expect("a stored node has a pair");
-        if pairs.next().is_some() {
-            role[t.idx()] = Role::Branch(b);
-            continue;
-        }
-        role[t.idx()] = Role::Spine(b);
-        let (l, r) = vtree.children(t);
-        lim.try_push(&mut stack, (l, first.left.raw()))?;
-        lim.try_push(&mut stack, (r, first.right.raw()))?;
-    }
+    let role = classify_g_roles(lim, g, &top)?;
     if role[root.idx()] == Role::True {
         return Ok(f);
     }
@@ -984,53 +961,8 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
     // description is stored first, as `prune_under` stores one, and the
     // close describes it again where it fits.
     for (t, l, r) in vtree.internal_bottomup() {
-        if !matches!(role[t.idx()], Role::Spine(_)) {
-            continue;
-        }
-        let (ml, mr) = (&moved[l.idx()], &moved[r.idx()]);
-        let emptied = f.rewrite_level(t, |level| {
-            rewrite_level_pairs(lim, level, |_, _, _, p| {
-                let cl = ml.at(p.left.raw());
-                if cl == DEAD {
-                    return None;
-                }
-                let cr = mr.at(p.right.raw());
-                if cr == DEAD {
-                    return None;
-                }
-                Some(ChildPair::new(NodeIdx(cl), NodeIdx(cr)))
-            })
-        })?;
-        gate.poll(f.levels[t.idx()].node_count() as u64)?;
-        if emptied {
-            let level = &mut f.levels[t.idx()];
-            level.store_if_implicit(lim)?;
-            let width = level.node_count();
-            let mut to = Vec::new();
-            lim.reserve_exact(&mut to, width)?;
-            let mut next = 0u32;
-            for i in 0..width {
-                to.push(match level.pair_count_at(i) {
-                    0 => DEAD,
-                    _ => {
-                        next += 1;
-                        next - 1
-                    }
-                });
-            }
-            let mut i = 0;
-            level.nodes.stored_mut().retain(|_| {
-                i += 1;
-                to[i - 1] != DEAD
-            });
-            moved[t.idx()] = Moved::To(to);
-        }
-        if let Some(loose) = loose.as_mut() {
-            for c in [l, r] {
-                if !vtree.node(c).is_leaf() {
-                    lim.try_push(loose, c.0)?;
-                }
-            }
+        if matches!(role[t.idx()], Role::Spine(_)) {
+            rewrite_spine_level(lim, &mut f, &vtree, (t, l, r), &mut moved, &mut loose, &mut gate)?;
         }
     }
     gate.flush()?;
@@ -1050,6 +982,95 @@ pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, g
         false => f.close_marked_levels(closed),
     }
     Ok(f)
+}
+
+/// Classify `g`'s levels into [`Role::True`], [`Role::Spine`], and
+/// [`Role::Branch`] from its output down.
+fn classify_g_roles(lim: &Limits, g: &Tdd, top: &[Option<u32>]) -> Result<Vec<Role>, OperationError> {
+    let vtree = g.vtree();
+    let mut role = charged(lim, vtree.num_nodes(), || Role::True)?;
+    let mut stack = Vec::new();
+    lim.try_push(&mut stack, (vtree.root(), g.output.local.0))?;
+    while let Some((t, b)) = stack.pop() {
+        if top[t.idx()] == Some(b) {
+            continue;
+        }
+        if vtree.node(t).is_leaf() {
+            role[t.idx()] = Role::Branch(b);
+            continue;
+        }
+        let level = g.level(t);
+        let mut pairs = level.pairs_iter_of_idx(b as usize);
+        let first = pairs.next().expect("a stored node has a pair");
+        if pairs.next().is_some() {
+            role[t.idx()] = Role::Branch(b);
+            continue;
+        }
+        role[t.idx()] = Role::Spine(b);
+        let (l, r) = vtree.children(t);
+        lim.try_push(&mut stack, (l, first.left.raw()))?;
+        lim.try_push(&mut stack, (r, first.right.raw()))?;
+    }
+    Ok(role)
+}
+
+/// Rewrite one spine level `t` of `f` through its children's [`Moved`] maps,
+/// compacting any emptied nodes.
+fn rewrite_spine_level(
+    lim: &Limits,
+    f: &mut Tdd,
+    vtree: &Vtree,
+    (t, l, r): (VtreeIdx, VtreeIdx, VtreeIdx),
+    moved: &mut [Moved],
+    loose: &mut Option<Vec<u32>>,
+    gate: &mut crate::limits::PollGate,
+) -> Result<(), OperationError> {
+    let (ml, mr) = (&moved[l.idx()], &moved[r.idx()]);
+    let emptied = f.rewrite_level(t, |level| {
+        rewrite_level_pairs(lim, level, |_, _, _, p| {
+            let cl = ml.at(p.left.raw());
+            if cl == DEAD {
+                return None;
+            }
+            let cr = mr.at(p.right.raw());
+            if cr == DEAD {
+                return None;
+            }
+            Some(ChildPair::new(NodeIdx(cl), NodeIdx(cr)))
+        })
+    })?;
+    gate.poll(f.levels[t.idx()].node_count() as u64)?;
+    if emptied {
+        let level = &mut f.levels[t.idx()];
+        level.store_if_implicit(lim)?;
+        let width = level.node_count();
+        let mut to = Vec::new();
+        lim.reserve_exact(&mut to, width)?;
+        let mut next = 0u32;
+        for i in 0..width {
+            to.push(match level.pair_count_at(i) {
+                0 => DEAD,
+                _ => {
+                    next += 1;
+                    next - 1
+                }
+            });
+        }
+        let mut i = 0;
+        level.nodes.stored_mut().retain(|_| {
+            i += 1;
+            to[i - 1] != DEAD
+        });
+        moved[t.idx()] = Moved::To(to);
+    }
+    if let Some(loose) = loose.as_mut() {
+        for c in [l, r] {
+            if !vtree.node(c).is_leaf() {
+                lim.try_push(loose, c.0)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Engine {

@@ -420,12 +420,23 @@ impl Walk<'_> {
             levels[t.idx()] = Some(level);
         }
         drop(reach);
-        // The nodes of `g` each true level copies: those its parent's
-        // products name, and under them their pairs' sides.
+        gate.flush()?;
+        let copies = self.plan_true_copies(&order, &levels)?;
+        Ok(Plan { order, levels, copies })
+    }
+
+    /// Collect the `g` nodes each [`Level::True`] level copies: those its
+    /// parent's products name, and under them their pairs' sides.
+    fn plan_true_copies(
+        &mut self,
+        order: &[VtreeIdx],
+        levels: &[Option<Level>],
+    ) -> Result<Vec<Vec<u32>>, OperationError> {
+        let mut gate = self.lim.gate();
         let mut copies: Vec<Vec<u32>> = Vec::new();
         self.lim.reserve_exact(&mut copies, self.vtree.num_nodes())?;
         copies.resize_with(self.vtree.num_nodes(), Vec::new);
-        for &t in &order {
+        for &t in order {
             if self.vtree.node(t).is_leaf() {
                 continue;
             }
@@ -446,8 +457,7 @@ impl Walk<'_> {
                     let mut mine = std::mem::take(&mut copies[t.idx()]);
                     mine.sort_unstable();
                     mine.dedup();
-                    let g = self.g;
-                    let level = g.level(t);
+                    let level = self.g.level(t);
                     for &y in &mine {
                         self.work.copies += 1;
                         let pairs = level.pairs_iter_of_idx(y as usize);
@@ -467,7 +477,7 @@ impl Walk<'_> {
             }
         }
         gate.flush()?;
-        Ok(Plan { order, levels, copies })
+        Ok(copies)
     }
 }
 

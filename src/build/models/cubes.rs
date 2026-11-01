@@ -386,12 +386,11 @@ fn plan(
 /// values share an atom.
 fn leaf_nodes(lim: &Limits, pieces: &Pieces) -> Result<Vec<NodeIdx>, OperationError> {
     let mut locals = Vec::new();
-    lim.reserve_exact(&mut locals, 2)?;
     if pieces.atoms == 1 && (pieces.len() == 2 || pieces.fixed[0] & 1 == 0) {
-        locals.push(ONE_LEAF_IDX);
+        lim.try_push(&mut locals, ONE_LEAF_IDX)?;
         return Ok(locals);
     }
-    locals.resize(pieces.atoms as usize, ONE_LEAF_IDX);
+    lim.try_resize(&mut locals, pieces.atoms as usize, ONE_LEAF_IDX)?;
     for (k, &atom) in pieces.atom.iter().enumerate() {
         locals[atom as usize] = if pieces.value[k] & 1 == 0 { NEG_LEAF_IDX } else { POS_LEAF_IDX };
     }
@@ -625,38 +624,8 @@ fn coarse_atoms(
         lists
     };
     let (list_id, firsts) = number_lists(lim, &lists)?;
-
-    // Each distinct list as the fine pieces its parts cover, which lists
-    // that differ can share.
-    let mut expanded = Lists { starts: Vec::new(), items: Vec::new() };
-    lim.reserve_exact(&mut expanded.starts, firsts.len() + 1)?;
-    let total: usize = firsts.iter().flat_map(|&k| lists.get(k as usize)).map(|&item| fine.cover((item >> 32) as u32).len()).sum();
-    gate.poll(total as u64)?;
-    lim.reserve_exact(&mut expanded.items, total)?;
-    expanded.starts.push(0);
-    for &k in &firsts {
-        let start = expanded.items.len();
-        for &item in lists.get(k as usize) {
-            let (part, atom) = ((item >> 32) as u32, item & 0xffff_ffff);
-            expanded.items.extend(fine.cover(part).iter().map(|&f| (f as u64) << 32 | atom));
-        }
-        // A part's cover ascends, so a list of one part, or of parts whose
-        // covers follow each other, is in order already.
-        let set = &mut expanded.items[start..];
-        if !set.is_sorted() {
-            set.sort_unstable();
-        }
-        let mut kept = 0;
-        for at in 0..set.len() {
-            if at == 0 || set[at] != set[kept - 1] {
-                set[kept] = set[at];
-                kept += 1;
-            }
-        }
-        expanded.items.truncate(start + kept);
-        expanded.starts.push(expanded.items.len() as u32);
-    }
     gate.flush()?;
+    let expanded = expand_coarse_lists(lim, &lists, &firsts, fine)?;
     lists.discard(lim);
     let (set_id, set_firsts) = number_lists(lim, &expanded)?;
     let mut atom = Vec::new();
@@ -812,16 +781,53 @@ fn side(lim: &Limits, s: &mut Scratch, parent: &Pieces, start: usize, width: usi
     Ok(Side { part_of, pieces, starts, cover })
 }
 
+/// Expand each distinct coarse list in `firsts` into the sorted, deduplicated
+/// fine pieces its parts cover.
+fn expand_coarse_lists(
+    lim: &Limits,
+    lists: &Lists,
+    firsts: &[u32],
+    fine: &Side,
+) -> Result<Lists, OperationError> {
+    let mut expanded = Lists { starts: Vec::new(), items: Vec::new() };
+    lim.reserve_exact(&mut expanded.starts, firsts.len() + 1)?;
+    let total: usize = firsts.iter().flat_map(|&k| lists.get(k as usize)).map(|&item| fine.cover((item >> 32) as u32).len()).sum();
+    let mut gate = lim.gate();
+    gate.poll(total as u64)?;
+    lim.reserve_exact(&mut expanded.items, total)?;
+    expanded.starts.push(0);
+    for &k in firsts {
+        let start = expanded.items.len();
+        for &item in lists.get(k as usize) {
+            let (part, atom) = ((item >> 32) as u32, item & 0xffff_ffff);
+            expanded.items.extend(fine.cover(part).iter().map(|&f| (f as u64) << 32 | atom));
+        }
+        // A part's cover ascends, so a list of one part, or of parts whose
+        // covers follow each other, is in order already.
+        let set = &mut expanded.items[start..];
+        if !set.is_sorted() {
+            set.sort_unstable();
+        }
+        let mut kept = 0;
+        for at in 0..set.len() {
+            if at == 0 || set[at] != set[kept - 1] {
+                set[kept] = set[at];
+                kept += 1;
+            }
+        }
+        expanded.items.truncate(start + kept);
+        expanded.starts.push(expanded.items.len() as u32);
+    }
+    gate.flush()?;
+    Ok(expanded)
+}
+
 /// Cut distinct cubes of `width` bits, ascending by value, into disjoint
 /// pieces, each cube the union of the pieces it covers. Returns the pieces
 /// (their atoms unset), and where each cube's pieces start in the list of
 /// covered pieces, with that list.
 fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>, Vec<u32>), OperationError> {
     let (k, w) = (parts.value.len() / parts.words, parts.words);
-    let full = |j: usize| {
-        let bits = width.saturating_sub(64 * j).min(64);
-        if bits == 64 { !0u64 } else { (1u64 << bits) - 1 }
-    };
     // The parts ascend by value. Where each fixes a leading run of the bits
     // and leaves the rest free, an interval aligned to a power of two, and
     // each such interval ends before the next begins, they are disjoint
@@ -829,13 +835,13 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
     let aligned_and_apart = w == 1 && {
         let mut end = 0u128;
         (0..k).all(|p| {
-            let (value, free) = (parts.value[p], !parts.fixed[p] & full(0));
+            let (value, free) = (parts.value[p], !parts.fixed[p] & lower_bits(0, width));
             let apart = free & free.wrapping_add(1) == 0 && (p == 0 || value as u128 >= end);
             end = value as u128 + free as u128 + 1;
             apart
         })
     };
-    if aligned_and_apart || (0..k).all(|p| (0..w).all(|j| parts.fixed[p * w + j] == full(j))) {
+    if aligned_and_apart || (0..k).all(|p| (0..w).all(|j| parts.fixed[p * w + j] == lower_bits(j, width))) {
         // Distinct cubes that fix every bit are disjoint already.
         let mut starts = Vec::new();
         lim.reserve_exact(&mut starts, k + 1)?;
@@ -872,10 +878,6 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
     while let Some(frame) = stack.pop() {
         let (from, len) = frame.items;
         gate.poll(len as u64)?;
-        let below = |j: usize| {
-            let bits = frame.bit.saturating_sub(64 * j).min(64);
-            if bits == 64 { !0u64 } else { (1u64 << bits) - 1 }
-        };
         or_f.fill(0);
         and_f.fill(!0);
         or_v.fill(0);
@@ -891,11 +893,12 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
             }
         }
         for j in 0..w {
-            and_f[j] &= below(j);
-            or_f[j] &= below(j);
-            split_bits[j] = ((or_f[j] & !and_f[j]) | (and_f[j] & (or_v[j] ^ and_v[j]))) & below(j);
+            let below = lower_bits(j, frame.bit);
+            and_f[j] &= below;
+            or_f[j] &= below;
+            split_bits[j] = ((or_f[j] & !and_f[j]) | (and_f[j] & (or_v[j] ^ and_v[j]))) & below;
         }
-        if len > 1 && (0..w).all(|j| and_f[j] == below(j)) {
+        if len > 1 && (0..w).all(|j| and_f[j] == lower_bits(j, frame.bit)) {
             // Every cube here fixes every bit left, so the cubes of one
             // value below the path are one piece, and different values are
             // disjoint: no bit needs splitting one at a time.
@@ -903,7 +906,7 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
             lim.reserve(&mut arena, len)?;
             arena.extend_from_within(from..from + len);
             for (j, mask) in masks.iter_mut().enumerate() {
-                *mask = below(j);
+                *mask = lower_bits(j, frame.bit);
             }
             let values = &parts.value;
             let lower = |p: u32| {
@@ -921,10 +924,10 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
                 lim.reserve_exact(&mut out.value, w)?;
                 lim.reserve_exact(&mut out.fixed, w)?;
                 for j in 0..w {
-                    out.value.push(paths[frame.value + j] | (parts.value[p * w + j] & below(j)));
+                    out.value.push(paths[frame.value + j] | (parts.value[p * w + j] & lower_bits(j, frame.bit)));
                 }
                 for j in 0..w {
-                    out.fixed.push(paths[frame.value + w + j] | below(j));
+                    out.fixed.push(paths[frame.value + w + j] | lower_bits(j, frame.bit));
                 }
                 lim.try_push(&mut members, (at as u32, (end - at) as u32))?;
                 at = end;
@@ -937,7 +940,7 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
         let lowest = top.map_or(0, |s| s + 1);
         let path = frame.value;
         for j in 0..w {
-            let keep = below(j) & !lower_bits(j, lowest);
+            let keep = lower_bits(j, frame.bit) & !lower_bits(j, lowest);
             paths[path + w + j] |= and_f[j] & keep;
             paths[path + j] |= or_v[j] & and_f[j] & keep;
         }
@@ -973,9 +976,25 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
     }
     gate.flush()?;
 
-    // Invert the members into each cube's covered pieces.
+    let (starts, cover) = invert_piece_members(lim, k, &arena, &members)?;
+    out.atom = filled(lim, members.len(), 0u32)?;
+    lim.discard(arena);
+    lim.discard(paths);
+    lim.discard(members);
+    lim.discard(parts);
+    Ok((out, starts, cover))
+}
+
+/// Invert each piece's cube slice `(from, len)` in `arena` into each cube's
+/// covered pieces `(starts, cover)`.
+fn invert_piece_members(
+    lim: &Limits,
+    k: usize,
+    arena: &[u32],
+    members: &[(u32, u32)],
+) -> Result<(Vec<u32>, Vec<u32>), OperationError> {
     let mut starts = filled(lim, k + 1, 0u32)?;
-    for &(from, len) in &members {
+    for &(from, len) in members {
         for &p in &arena[from as usize..(from + len) as usize] {
             starts[p as usize + 1] += 1;
         }
@@ -993,13 +1012,8 @@ fn refine(lim: &Limits, width: usize, parts: Pieces) -> Result<(Pieces, Vec<u32>
             at[p as usize] += 1;
         }
     }
-    out.atom = filled(lim, members.len(), 0u32)?;
     lim.discard(at);
-    lim.discard(arena);
-    lim.discard(paths);
-    lim.discard(members);
-    lim.discard(parts);
-    Ok((out, starts, cover))
+    Ok((starts, cover))
 }
 
 /// The bits of word `j` below bit `bit` of a multi-word value.

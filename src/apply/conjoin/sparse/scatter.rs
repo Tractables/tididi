@@ -154,11 +154,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             let collect = match collect {
                 Collect::Nodes(to) if walkable(f_level) && one_each(pl_outer, f_outer) => {
                     let gathered = gather_listed_products(lim, pl_outer, &ws.owners[..OWNER_SLOTS * g_outer], &mut ws.owned);
-                    if !SWAPPED {
-                        clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-                    } else {
-                        clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-                    }
+                    clear_owners::<SWAPPED>(g_level, g_outer, ws);
                     let (plain, held) = gathered?;
                     ws.outer_held = held;
                     let plain = plain && !ones;
@@ -177,11 +173,7 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
             // the table is then done with.
             let gathered = gather_owned_products(lim, pl_outer, f_outer, &ws.owners[..OWNER_SLOTS * g_outer],
                 &mut ws.outer_offsets, &mut ws.owned);
-            if !SWAPPED {
-                clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-            } else {
-                clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-            }
+            clear_owners::<SWAPPED>(g_level, g_outer, ws);
             let held;
             (ws.owned_len, held) = gathered?;
             ws.outer_held = held && ws.owned_len == pl_outer.len();
@@ -918,12 +910,11 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 // moved before the second's, in place, and each half its
                 // g parent's node.
                 // Safety: the candidates are the `count` pairs at `first`.
-                unsafe {
-                    match count {
-                        4 => split_turns::<4>(first),
-                        6 => split_turns::<6>(first),
-                        _ => split_turns::<8>(first),
-                    }
+                let place = unsafe { std::slice::from_raw_parts_mut(first, count) };
+                match count {
+                    4 => split_turns::<4>(place),
+                    6 => split_turns::<6>(place),
+                    _ => split_turns::<8>(place),
                 }
                 let half = count / 2;
                 for (k, g_parent) in [owner, owner ^ turn].into_iter().enumerate() {
@@ -943,16 +934,8 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
                 #[cfg(debug_assertions)]
                 {
                     settle!();
-                    debug_assert!(
-                        duplicates_legal || {
-                            let made = level.nodes().len();
-                            (made - 2..made).all(|i| {
-                                let mut seen = std::collections::HashSet::new();
-                                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-                            })
-                        },
-                        "sparse apply: duplicate pair emitted — canonicity violated"
-                    );
+                    let made = level.nodes().len();
+                    debug_assert_unique_pairs(level, made - 2..made, duplicates_legal);
                 }
             } else {
                 settle!();
@@ -1007,13 +990,8 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
             #[cfg(debug_assertions)]
             {
                 settle!();
-                debug_assert!(
-                    duplicates_legal || {
-                        let mut seen = std::collections::HashSet::new();
-                        level.pairs_iter_of_idx(level.nodes().len() - 1).all(|p| seen.insert(p))
-                    },
-                    "sparse apply: duplicate pair emitted — canonicity violated"
-                );
+                let made = level.nodes().len();
+                debug_assert_unique_pairs(level, made - 1..made, duplicates_legal);
             }
         }
     }
@@ -1025,23 +1003,25 @@ fn owner_walk_nodes<'f, const SWAPPED: bool, const ONES: bool, const DENSE: bool
     Ok((Made::Written, made_pairs))
 }
 
-/// The `N` pairs at `first`, which take turns between two g parents from
+/// Clear [`build_owner_table`]'s slots for `g_level`.
+#[inline(always)]
+fn clear_owners<const SWAPPED: bool>(g_level: &TddLevel, g_outer: usize, ws: &mut SparseWorkspace) {
+    if !SWAPPED {
+        clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
+    } else {
+        clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
+    }
+}
+
+/// The `N` pairs in `pairs`, which take turns between two g parents from
 /// the first, put the first parent's before the second's, each half in its
 /// order: [`emit_alternating`]'s split, on the walk's arena in place.
-///
-/// # Safety
-///
-/// `first` points at `N` initialized pairs.
 #[inline(always)]
-unsafe fn split_turns<const N: usize>(first: *mut ChildPair) {
-    // Safety: as the caller's.
-    let read: [ChildPair; N] = unsafe { first.cast::<[ChildPair; N]>().read_unaligned() };
+fn split_turns<const N: usize>(pairs: &mut [ChildPair]) {
+    let read: [ChildPair; N] = pairs[..N].try_into().expect("the candidates' place");
     for i in 0..N / 2 {
-        // Safety: both places are among the `N`.
-        unsafe {
-            first.add(i).write(read[2 * i]);
-            first.add(N / 2 + i).write(read[2 * i + 1]);
-        }
+        pairs[i] = read[2 * i];
+        pairs[N / 2 + i] = read[2 * i + 1];
     }
 }
 
@@ -1844,15 +1824,9 @@ impl RoutedWalk<'_> {
     ) -> Result<(), OperationError> {
         for e in self.inner.bucket(inner1 as usize) {
             let under = self.routes.find(segment, e.g_idx.0);
-            if under.is_empty() {
-                continue;
+            if !under.is_empty() {
+                push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
             }
-            let inner_prod = e.prod_idx.0;
-            for &(g_parent, attached) in under {
-                let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
-                push(ParEntry { g_parent, left_prod, right_prod })?;
-            }
-            ticker.poll(under.len() as u64)?;
         }
         Ok(())
     }
@@ -1907,11 +1881,7 @@ impl RoutedWalk<'_> {
             }
         }
         for &(under, inner_prod) in &hits[..m] {
-            for &(g_parent, attached) in under {
-                let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
-                push(ParEntry { g_parent, left_prod, right_prod })?;
-            }
-            ticker.poll(under.len() as u64)?;
+            push_run::<SWAPPED>(under, inner_prod, ticker, push)?;
         }
         Ok(())
     }
@@ -2767,38 +2737,47 @@ impl ScatterSides<'_> {
             .sum()
     }
 
-    /// The candidates of the f pairs under one outer key, folded into a
-    /// count ([`Collect::Fold`]): for each f pair, each alive inner product
-    /// replays the alive `filtered` entries of its inner-g child
-    /// ([`emit_candidates`]). With `FAR`, on a level whose inner products
-    /// span more than [`PREFETCH_BYTES`], each pair's inner run is asked for
-    /// some pairs ahead ([`prefetch_walk`]).
-    fn emit_fold_for_outer<const SWAPPED: bool, const FAR: bool>(
+    /// The candidates of the f pairs under one outer key: for each f pair,
+    /// each alive inner product replays the alive `filtered` entries of its
+    /// inner-g child ([`emit_candidates`]). With `FAR`, on a level whose
+    /// inner products span more than [`PREFETCH_BYTES`], each pair's inner
+    /// run is asked for some pairs ahead ([`prefetch_walk`]).
+    #[inline(always)]
+    fn emit_for_outer<const SWAPPED: bool, const FAR: bool>(
         &self,
-        fold: &mut CandidateFold<'_>,
         outer: usize,
+        site: usize,
         ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ChildPair) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
         let filtered = self.filtered.index();
         if !FAR {
             for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
-                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| {
-                    fold.push(candidate_pair(&entry));
-                    Ok(())
-                })?;
+                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| push(candidate_pair(&entry)))?;
             }
             return Ok(());
         }
         let under = self.f_by_outer.entries_of(self.outer_k);
         for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
             prefetch_walk(under, j, self.inner);
-            note_prefetch(0);
-            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker, |entry| {
-                fold.push(candidate_pair(&entry));
-                Ok(())
-            })?;
+            note_prefetch(site);
+            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker, |entry| push(candidate_pair(&entry)))?;
         }
         Ok(())
+    }
+
+    /// The candidates of the f pairs under one outer key, folded into a
+    /// count ([`Collect::Fold`]).
+    fn emit_fold_for_outer<const SWAPPED: bool, const FAR: bool>(
+        &self,
+        fold: &mut CandidateFold<'_>,
+        outer: usize,
+        ticker: &mut crate::limits::PollGate,
+    ) -> Result<(), OperationError> {
+        self.emit_for_outer::<SWAPPED, FAR>(outer, 0, ticker, |pair| {
+            fold.push(pair);
+            Ok(())
+        })
     }
 
     /// [`ScatterSides::emit_fold_for_outer`] on a level whose candidates go
@@ -2810,26 +2789,9 @@ impl ScatterSides<'_> {
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
-        let filtered = self.filtered.index();
-        if !FAR {
-            for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
-                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
-                    |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))?;
-            }
-            return Ok(());
-        }
-        let under = self.f_by_outer.entries_of(self.outer_k);
-        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
-            prefetch_walk(under, j, self.inner);
-            note_prefetch(1);
-            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker,
-                |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))?;
-        }
-        Ok(())
+        self.emit_for_outer::<SWAPPED, FAR>(outer, 1, ticker, |pair| try_push_pair_into(eng, level, pair))
     }
-}
 
-impl ScatterSides<'_> {
     /// [`ScatterSides::emit_fold_for_outer`] on a root whose candidates are
     /// added into sums ([`Collect::Sum`]).
     fn emit_sum_for_outer<const SWAPPED: bool, const FAR: bool>(
@@ -2839,24 +2801,24 @@ impl ScatterSides<'_> {
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
-        let filtered = self.filtered.index();
-        if !FAR {
-            for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
-                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
-                    |entry| sum.push(lim, candidate_pair(&entry)))?;
-            }
-            return Ok(());
-        }
-        let under = self.f_by_outer.entries_of(self.outer_k);
-        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
-            prefetch_walk(under, j, self.inner);
-            // Noted as a walk building a one-product level, which it is.
-            note_prefetch(1);
-            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker,
-                |entry| sum.push(lim, candidate_pair(&entry)))?;
-        }
-        Ok(())
+        self.emit_for_outer::<SWAPPED, FAR>(outer, 1, ticker, |pair| sum.push(lim, pair))
     }
+}
+
+/// Push a candidate for each `(g_parent, attached)` in `under` paired with
+/// `inner_prod`, then poll `ticker` for the run's length.
+#[inline(always)]
+fn push_run<const SWAPPED: bool>(
+    under: &[(u32, u32)],
+    inner_prod: u32,
+    ticker: &mut crate::limits::PollGate,
+    push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    for &(g_parent, attached) in under {
+        let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
+        push(ParEntry { g_parent, left_prod, right_prod })?;
+    }
+    ticker.poll(under.len() as u64)
 }
 
 /// The candidates of one f parent under the current outer key: for each of
@@ -2881,15 +2843,9 @@ fn emit_candidates<const SWAPPED: bool>(
             continue;
         }
         let fb = filtered.entries_at(key);
-        if fb.is_empty() {
-            continue;
+        if !fb.is_empty() {
+            push_run::<SWAPPED>(fb, e.prod_idx.0, ticker, &mut push)?;
         }
-        let inner_prod = e.prod_idx.0;
-        for &(g_parent, attached) in fb {
-            let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
-            push(ParEntry { g_parent, left_prod, right_prod })?;
-        }
-        ticker.poll(fb.len() as u64)?;
     }
     Ok(())
 }
@@ -3149,13 +3105,8 @@ fn emit_walked(
         let node = finish_node(eng, out.level, out.base)?.expect("the walk wrote the candidates' pairs");
         // As in `emit_walked`: canonical children make a node's pairs
         // distinct unless pair lists are multisets.
-        debug_assert!(
-            out.duplicates_legal || {
-                let mut seen = std::collections::HashSet::new();
-                out.level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
-            },
-            "sparse apply: duplicate pair emitted — canonicity violated"
-        );
+        let idx = node.idx();
+        debug_assert_unique_pairs(out.level, idx..idx + 1, out.duplicates_legal);
         return Ok(());
     }
     emit_mixed(eng, emit, out, owners)
@@ -3213,6 +3164,38 @@ fn two_owners(owners: &[u32]) -> Option<u32> {
     (head.iter().all(|&g| two(g)) && rest.chunks(16).all(|block| block.iter().fold(true, |all, &g| all & two(g)))).then_some(b)
 }
 
+/// Reserve room and push a [`ProductEntry`] for each g parent in `parents`
+/// paired with `p1`.
+#[inline(always)]
+fn push_product_entries(
+    lim: &crate::limits::Limits,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    parents: &[u32],
+) -> Result<(), OperationError> {
+    let first = pl_output.len();
+    reserve_room(lim, pl_output, parents.len())?;
+    pl_output.extend(parents.iter().enumerate().map(|(k, &g_parent)| ProductEntry {
+        f_idx: FNodeIdx(p1 as u32),
+        g_idx: GNodeIdx(g_parent),
+        prod_idx: ProductNodeIdx((first + k) as u32),
+    }));
+    Ok(())
+}
+
+/// Assert in debug builds that every node in `nodes` has distinct pairs
+/// unless `duplicates_legal` holds.
+#[inline(always)]
+fn debug_assert_unique_pairs(level: &TddLevel, nodes: std::ops::Range<usize>, duplicates_legal: bool) {
+    debug_assert!(
+        duplicates_legal || nodes.into_iter().all(|i| {
+            let mut seen = std::collections::HashSet::new();
+            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+        }),
+        "sparse apply: duplicate pair emitted — canonicity violated"
+    );
+}
+
 /// [`emit_owned`] on [`GATHERED_CANDIDATES`] candidates or more of two g
 /// parents, the first candidate's and `b`: each owner is keyed by comparing it with `b`, in the pass that
 /// counts the second product's pairs, without the map, and the pairs are
@@ -3228,15 +3211,7 @@ pub(super) fn emit_two(
     let lim = eng.limits();
     let EmitScratch { pair_counts, single_pairs, moved_pairs, .. } = emit;
     let (a, n) = (owners[0], owners.len());
-    let first = pl_output.len();
-    reserve_room(lim, pl_output, 2)?;
-    for (k, g_parent) in [a, b].into_iter().enumerate() {
-        pl_output.push(ProductEntry {
-            f_idx: FNodeIdx(p1 as u32),
-            g_idx: GNodeIdx(g_parent),
-            prod_idx: ProductNodeIdx((first + k) as u32),
-        });
-    }
+    push_product_entries(lim, pl_output, p1, &[a, b])?;
     let mut second = 0u32;
     for owner in owners.iter_mut() {
         let k = u32::from(*owner == b);
@@ -3261,13 +3236,7 @@ pub(super) fn emit_two(
     push_ranged_nodes(eng, level, base, pair_counts, single_pairs)?;
     // As in `emit_walked`: canonical children make a node's pairs distinct
     // unless pair lists are multisets.
-    debug_assert!(
-        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
-            let mut seen = std::collections::HashSet::new();
-            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-        }),
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
+    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -3288,15 +3257,7 @@ fn emit_alternating(
     let NodeOut { level, pl_output, p1, base, duplicates_legal } = out;
     debug_assert!(a != b && matches!(n, 2 | 4 | 6 | 8), "two g parents taking turns");
     let lim = eng.limits();
-    let first = pl_output.len();
-    reserve_room(lim, pl_output, 2)?;
-    for (k, g_parent) in [a, b].into_iter().enumerate() {
-        pl_output.push(ProductEntry {
-            f_idx: FNodeIdx(p1 as u32),
-            g_idx: GNodeIdx(g_parent),
-            prod_idx: ProductNodeIdx((first + k) as u32),
-        });
-    }
+    push_product_entries(lim, pl_output, p1, &[a, b])?;
     reserve_room(lim, level.nodes.stored_mut(), 2)?;
     let arena = level.pairs.stored_mut();
     let half = n / 2;
@@ -3308,34 +3269,17 @@ fn emit_alternating(
         nodes.push(EncodedNode::inline(pb));
         return Ok(());
     }
-    /// The even places' pairs, then the odd places', of `N` pairs.
-    #[inline(always)]
-    fn split<const N: usize>(pairs: &mut [ChildPair]) {
-        let read: [ChildPair; N] = pairs[..N].try_into().expect("the candidates' place");
-        for i in 0..N / 2 {
-            pairs[i] = read[2 * i];
-            pairs[N / 2 + i] = read[2 * i + 1];
-        }
-    }
     let place = &mut arena[base..base + n];
     match n {
-        4 => split::<4>(place),
-        6 => split::<6>(place),
-        _ => split::<8>(place),
+        4 => split_turns::<4>(place),
+        6 => split_turns::<6>(place),
+        _ => split_turns::<8>(place),
     }
     for start in [base, base + half] {
         level.try_push_multi_by_range(start, half).map_err(|_| OperationError::OverBudget)?;
     }
-    debug_assert!(
-        duplicates_legal || {
-            let nodes = level.nodes().len();
-            (nodes - 2..nodes).all(|i| {
-                let mut seen = std::collections::HashSet::new();
-                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-            })
-        },
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
+    let nodes = level.nodes().len();
+    debug_assert_unique_pairs(level, nodes - 2..nodes, duplicates_legal);
     Ok(())
 }
 
@@ -3430,13 +3374,7 @@ pub(super) fn emit_owned(
     built?;
     // As in `emit_walked`: canonical children make a node's pairs distinct
     // unless pair lists are multisets.
-    debug_assert!(
-        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
-            let mut seen = std::collections::HashSet::new();
-            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-        }),
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
+    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -3532,13 +3470,7 @@ fn emit_few(
             _ => 1,
         };
     }
-    let first = pl_output.len();
-    reserve_room(lim, pl_output, products)?;
-    pl_output.extend(parents[..products].iter().enumerate().map(|(k, &g_parent)| ProductEntry {
-        f_idx: FNodeIdx(p1 as u32),
-        g_idx: GNodeIdx(g_parent),
-        prod_idx: ProductNodeIdx((first + k) as u32),
-    }));
+    push_product_entries(lim, pl_output, p1, &parents[..products])?;
     // One reserve for the level's pairs, and the output-pair meter
     // charged once for whatever the arena grew by.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
@@ -3567,13 +3499,7 @@ fn emit_few(
     }
     lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
     built?;
-    debug_assert!(
-        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
-            let mut seen = std::collections::HashSet::new();
-            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-        }),
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
+    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -3629,12 +3555,7 @@ pub(super) fn finish_direct(
         g_idx: GNodeIdx(0),
         prod_idx: ProductNodeIdx(idx),
     })?;
-    debug_assert!(
-        duplicates_legal || {
-            let mut seen = std::collections::HashSet::new();
-            level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
-        },
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
+    let node_idx = node.idx();
+    debug_assert_unique_pairs(level, node_idx..node_idx + 1, duplicates_legal);
     Ok(())
 }
