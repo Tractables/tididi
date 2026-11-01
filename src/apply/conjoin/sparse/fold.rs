@@ -36,8 +36,7 @@ pub(crate) struct CandidateFold<'a> {
     cols: Option<[&'a [u128]; 2]>,
     /// The grouped path's state for the current outer key.
     round: Round,
-    fast: u128,
-    big: BigUint,
+    total: Total,
     /// The keys this level's filtered walks have tested, and how many of
     /// them passed; see [`Self::walk_grouped`].
     filter_tested: u64,
@@ -203,8 +202,7 @@ impl Total {
         }
     }
 
-    /// Add `count × sum`, a sum below `2^96`, as
-    /// [`CandidateFold::add_product`] does.
+    /// Add `count × sum`, a sum below `2^96`.
     #[inline(always)]
     fn add_product(&mut self, count: u64, sum: u128) {
         if sum >> 64 == 0 {
@@ -290,8 +288,8 @@ impl<'a> CandidateFold<'a> {
         };
         let cols = raw(&left).zip(raw(&right)).map(|(l, r)| [l, r]);
         Ok(CandidateFold {
-            left, right, batch, cols, round: Round::default(), fast: 0,
-            big: BigUint::ZERO, filter_tested: 0, filter_passed: 0,
+            left, right, batch, cols, round: Round::default(), total: Total::default(),
+            filter_tested: 0, filter_passed: 0,
         })
     }
 
@@ -311,19 +309,8 @@ impl<'a> CandidateFold<'a> {
         let count = IntFold::fold_cell(&self.batch, &self.left, &self.right, &());
         self.batch.clear();
         match count {
-            crate::value::Count::Fast(v) => self.add(v),
-            crate::value::Count::Big(v) => self.big += v,
-        }
-    }
-
-    #[inline(always)]
-    fn add(&mut self, v: u128) {
-        match self.fast.checked_add(v) {
-            Some(sum) => self.fast = sum,
-            None => {
-                self.big += self.fast;
-                self.fast = v;
-            }
+            crate::value::Count::Fast(v) => self.total.add(v),
+            crate::value::Count::Big(v) => self.total.big += v,
         }
     }
 
@@ -491,8 +478,8 @@ impl<'a> CandidateFold<'a> {
         for i in 0..self.round.slots.len() {
             let Slot { weight, sum } = self.round.slots[i];
             match weight.checked_mul(sum) {
-                Some(v) => self.add(v),
-                None => self.big += BigUint::from(weight) * sum,
+                Some(v) => self.total.add(v),
+                None => self.total.big += BigUint::from(weight) * sum,
             }
         }
     }
@@ -601,8 +588,8 @@ impl<'a> CandidateFold<'a> {
         }
         self.filter_tested += tested;
         self.filter_passed += passed;
-        self.add(total.fast);
-        self.big += total.big;
+        self.total.add(total.fast);
+        self.total.big += total.big;
         Ok(())
     }
 
@@ -615,21 +602,7 @@ impl<'a> CandidateFold<'a> {
         if let Some(i) = self.round.slot(key) {
             let count = self.inner_count::<SWAPPED>(prod);
             let sum = self.round.slots[i].sum;
-            self.add_product(count, sum);
-        }
-    }
-
-    /// Add `count × sum`, a sum below `2^96`.
-    #[inline(always)]
-    fn add_product(&mut self, count: u64, sum: u128) {
-        if sum >> 64 == 0 {
-            // One widening multiply; the product fits `u128`.
-            self.add(count as u128 * sum);
-        } else {
-            match (count as u128).checked_mul(sum) {
-                Some(v) => self.add(v),
-                None => self.big += BigUint::from(count) * sum,
-            }
+            self.total.add_product(count, sum);
         }
     }
 
@@ -638,6 +611,6 @@ impl<'a> CandidateFold<'a> {
         if !self.batch.is_empty() {
             self.flush();
         }
-        self.big + self.fast
+        self.total.big + self.total.fast
     }
 }

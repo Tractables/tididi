@@ -303,16 +303,29 @@ fn check_case(case: &Case) {
     step("none");
 }
 
-/// Conjoin the clauses one at a time, minimizing after each: the canonical
-/// result counts what enumeration counts.
-fn compile(case: &Case) -> Tdd {
+/// Conjoin `clauses` one at a time onto `vtree`, minimizing after each.
+fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let eng = Engine::new();
-    let mut acc = Tdd::one(&case.vtree);
-    for clause in &case.clauses {
-        acc = eng.and(acc, Tdd::clause(&case.vtree, clause).unwrap()).expect("an unarmed engine refuses nothing");
+    let mut acc = Tdd::one(vtree);
+    for clause in clauses {
+        acc = eng.and(acc, Tdd::clause(vtree, clause).unwrap()).expect("an unarmed engine refuses nothing");
         acc.minimize().unwrap();
     }
     acc
+}
+
+/// Conjoin the clauses one at a time, minimizing after each: the canonical
+/// result counts what enumeration counts.
+fn compile(case: &Case) -> Tdd {
+    compile_clauses(&case.vtree, &case.clauses)
+}
+
+/// Compile `case.clauses[..split]` and `case.clauses[split..]` onto `case.vtree`.
+fn compile_split(case: &Case, split: usize) -> (Tdd, Tdd) {
+    (
+        compile_clauses(&case.vtree, &case.clauses[..split]),
+        compile_clauses(&case.vtree, &case.clauses[split..]),
+    )
 }
 
 fn count_matches_enumeration(case: &Case) {
@@ -359,12 +372,9 @@ fn operations_match_enumeration(case: &Case) {
     let n = case.num_vars;
     let eng = Engine::new();
     let split = case.clauses.len().div_ceil(2);
-    let head: Vec<Vec<i32>> = case.clauses[..split].to_vec();
-    let tail: Vec<Vec<i32>> = case.clauses[split..].to_vec();
 
     step("compiling the halves");
-    let f = compile(&Case { clauses: head.clone(), vtree_kind: String::new(), ..borrow(case) });
-    let g = compile(&Case { clauses: tail.clone(), vtree_kind: String::new(), ..borrow(case) });
+    let (f, g) = compile_split(case, split);
     let tf = diagram_truth(&f, n);
     let tg = diagram_truth(&g, n);
 
@@ -462,19 +472,6 @@ fn operations_match_enumeration(case: &Case) {
 /// diagrams too small to reach them by default.
 const EVERY_LEVEL_SPARSE: SparseRoute = SparseRoute::new(1, 1);
 
-/// Borrow a case's vtree and variable count into a fresh case over other
-/// clauses, so the halves of `operations_match_enumeration` compile the same
-/// way the whole does.
-fn borrow(case: &Case) -> Case {
-    Case {
-        seed: case.seed,
-        num_vars: case.num_vars,
-        clauses: Vec::new(),
-        vtree: Arc::clone(&case.vtree),
-        vtree_kind: case.vtree_kind.clone(),
-    }
-}
-
 /// Sum a random set of levels out. A level may go only once its children are
 /// marginal or are leaves, so the drawn set is closed downward and ordered
 /// bottom-up; the count the diagram answers is the same before and after.
@@ -507,8 +504,7 @@ fn sums_match_enumeration(case: &Case) {
     let eng = Engine::new();
     let split = case.clauses.len().div_ceil(2);
     step("compiling the halves for a sum");
-    let mut f = compile(&Case { clauses: case.clauses[..split].to_vec(), ..borrow(case) });
-    let mut g = compile(&Case { clauses: case.clauses[split..].to_vec(), ..borrow(case) });
+    let (mut f, mut g) = compile_split(case, split);
     let (tf, tg) = (diagram_truth(&f, n), diagram_truth(&g, n));
     let targets = draw_marginal_targets(case);
     if targets.is_empty() {
@@ -591,6 +587,31 @@ fn text_round_trip(case: &Case) {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Assert that two diagrams over the same vtree have identical output and
+/// per-level node pair lists, without normalizing node numbering.
+fn assert_levels_identical(a: &Tdd, b: &Tdd, what: &str) {
+    assert_eq!(a.output(), b.output(), "{what}: output");
+    for t in a.vtree().bottomup() {
+        let (la, lb) = (a.level(t), b.level(t));
+        assert_eq!(la.nodes().len(), lb.nodes().len(), "{what}: level {t:?}");
+        for i in 0..la.nodes().len() {
+            assert_eq!(la.pairs_vec(i), lb.pairs_vec(i), "{what}: level {t:?} node {i}");
+        }
+    }
+}
+
+/// Flip one random body byte in `bytes` and rewrite the trailing `XXH64`
+/// checksum so the binary reader accepts the envelope.
+fn corrupt_and_reseal(bytes: &[u8], rng: &mut Lcg) -> Vec<u8> {
+    let mut bad = bytes.to_vec();
+    let at = 24 + rng.below((bad.len() - 32) as u64) as usize;
+    bad[at] ^= 1 + rng.below(255) as u8;
+    let end = bad.len() - 8;
+    let sum = xxh64(&bad[..end]);
+    bad[end..].copy_from_slice(&sum.to_le_bytes());
+    bad
+}
+
 /// The binary format carries the diagram the text format carries: both read
 /// back to the same levels, node for node and pair for pair. A body byte
 /// changed under a rewritten checksum is refused or read as a diagram the
@@ -604,25 +625,12 @@ fn binary_round_trip(case: &Case) {
     write_tdd(&mut text, &f).expect("the diagram is structural, so it is writable");
     let from_text = read_tdd(&mut text.as_slice(), &case.vtree).expect("the text reads back");
     assert_canonical(&back);
-    assert_eq!(back.output(), from_text.output(), "binary round trip: output");
-    for t in case.vtree.bottomup() {
-        let (a, b) = (back.level(t), from_text.level(t));
-        assert_eq!(a.nodes().len(), b.nodes().len(), "binary round trip: level {t:?}");
-        for i in 0..a.nodes().len() {
-            assert_eq!(a.pairs_vec(i), b.pairs_vec(i), "binary round trip: level {t:?} node {i}");
-        }
-    }
+    assert_levels_identical(&back, &from_text, "binary round trip");
     assert_eq!(f.model_count().unwrap(), back.model_count().unwrap(), "binary round trip changed the count");
 
     let mut rng = Lcg::new(case.seed ^ 0xb1);
     for _ in 0..16 {
-        let mut bad = bytes.clone();
-        let at = 24 + rng.below((bad.len() - 32) as u64) as usize;
-        bad[at] ^= 1 + rng.below(255) as u8;
-        // Reseal: the length is unchanged; rewrite the checksum.
-        let end = bad.len() - 8;
-        let sum = xxh64(&bad[..end]);
-        bad[end..].copy_from_slice(&sum.to_le_bytes());
+        let bad = corrupt_and_reseal(&bytes, &mut rng);
         if let Ok(g) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
             g.model_count().expect("a diagram the reader accepted counts");
         }
@@ -649,8 +657,7 @@ fn renumbering_keeps_the_diagram(case: &Case) {
 
     step("renumbering an unreduced conjunction");
     let split = case.clauses.len().div_ceil(2);
-    let a = compile(&Case { clauses: case.clauses[..split].to_vec(), vtree_kind: String::new(), ..borrow(case) });
-    let b = compile(&Case { clauses: case.clauses[split..].to_vec(), vtree_kind: String::new(), ..borrow(case) });
+    let (a, b) = compile_split(case, split);
     let conj = eng.and(a.clone(), b.clone()).expect("an unarmed engine refuses nothing");
     let r = eng.renumber_top_down(&conj).expect("an unarmed engine refuses nothing");
     assert_eq!((r.node_count(), r.pair_count()), (conj.node_count(), conj.pair_count()), "renumbering changed the size");
@@ -670,14 +677,7 @@ fn renumbering_keeps_the_diagram(case: &Case) {
     write_tdd_binary(&mut bytes, &g).expect("the diagram is structural, so it is writable");
     let back = read_tdd_binary(&mut bytes.as_slice(), &case.vtree).expect("what was just written reads back");
     assert_canonical(&back);
-    assert_eq!(back.output(), g.output(), "renumbered binary round trip: output");
-    for t in case.vtree.bottomup() {
-        let (x, y) = (back.level(t), g.level(t));
-        assert_eq!(x.nodes().len(), y.nodes().len(), "renumbered binary round trip: level {t:?}");
-        for i in 0..x.nodes().len() {
-            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "renumbered binary round trip: level {t:?} node {i}");
-        }
-    }
+    assert_levels_identical(&back, &g, "renumbered binary round trip");
 }
 
 /// `XXH64` with seed 0, the binary format's checksum, written out here so the
@@ -1146,10 +1146,7 @@ fn marginal_evaluations_match_enumeration(case: &Case) {
 
     step("evaluation of a marginalizing conjunction");
     let split = case.clauses.len().div_ceil(2);
-    let (mut head, mut tail) = (borrow(case), borrow(case));
-    head.clauses = case.clauses[..split].to_vec();
-    tail.clauses = case.clauses[split..].to_vec();
-    let (g, h) = (compile(&head), compile(&tail));
+    let (g, h) = compile_split(case, split);
     for route in [SparseRoute::DEFAULT, EVERY_LEVEL_SPARSE] {
         let context = Arc::clone(g.context());
         let summed = context.with_limits(LimitConfig::none().with_sparse_route(route), |eng| {
@@ -1169,15 +1166,12 @@ fn marginal_evaluations_match_enumeration(case: &Case) {
 fn level_counts_match_enumeration(case: &Case) {
     let n = case.num_vars;
     let split = case.clauses.len().div_ceil(2);
-    let (mut head, mut tail) = (borrow(case), borrow(case));
-    head.clauses = case.clauses[..split].to_vec();
-    tail.clauses = case.clauses[split..].to_vec();
     let (head_count, count) = (
-        BigUint::from(brute_force_count(n, &head.clauses)),
+        BigUint::from(brute_force_count(n, &case.clauses[..split])),
         BigUint::from(brute_force_count(n, &case.clauses)),
     );
     let eng = Engine::new();
-    let (mut f, g) = (compile(&head), compile(&tail));
+    let (mut f, g) = compile_split(case, split);
     step("keeping level counts");
     f.attach_level_counts().unwrap();
     assert_eq!(f.model_count().unwrap(), head_count, "a kept count");
@@ -1202,12 +1196,7 @@ fn level_counts_match_enumeration(case: &Case) {
     step("corrupted kept counts");
     let mut rng = Lcg::new(case.seed ^ 0xc0);
     for _ in 0..16 {
-        let mut bad = bytes.clone();
-        let at = 24 + rng.below((bad.len() - 32) as u64) as usize;
-        bad[at] ^= 1 + rng.below(255) as u8;
-        let end = bad.len() - 8;
-        let sum = xxh64(&bad[..end]);
-        bad[end..].copy_from_slice(&sum.to_le_bytes());
+        let bad = corrupt_and_reseal(&bytes, &mut rng);
         if let Ok(read) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
             read.model_count().expect("a diagram the reader accepted counts");
             let _ = eng.and_model_count(read, g.clone(), &[]);
@@ -1252,11 +1241,9 @@ fn mirrored_placements_match_enumeration(case: &Case) {
 
     step("a conjunction onto a mirror");
     let split = case.clauses.len().div_ceil(2);
-    let (mut head, mut tail) = (borrow(case), borrow(case));
-    head.clauses = case.clauses[..split].to_vec();
-    tail.clauses = case.clauses[split..].to_vec();
+    let (head, tail) = compile_split(case, split);
     let both = eng
-        .and_onto_mirrored(compile(&head), |v| v, compile(&tail), |v| v, &mirror)
+        .and_onto_mirrored(head, |v| v, tail, |v| v, &mirror)
         .map_err(|r| r.error)
         .unwrap();
     assert_canonical_after_minimize(&both);
@@ -1369,9 +1356,7 @@ fn marginal_products_match_enumeration(case: &Case) {
     let kept: u64 = (1..=case.num_vars).filter(|&v| !summed_out(v)).map(|v| 1u64 << (v - 1)).sum();
     let mut halves = Vec::new();
     for clauses in [&case.clauses[..split], &case.clauses[split..]] {
-        let mut half = borrow(case);
-        half.clauses = clauses.to_vec();
-        let mut f = compile(&half);
+        let mut f = compile_clauses(&case.vtree, clauses);
         if !f.is_zero() && !targets.is_empty() {
             eng.marginalize_levels(&mut f, &targets).unwrap();
             assert_canonical_after_minimize(&f);
@@ -1476,11 +1461,7 @@ fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
 fn a_summed_root_is_the_two_step_diagram(case: &Case) {
     let vtree = &case.vtree;
     let split = case.clauses.len() / 2;
-    let mut left_case = borrow(case);
-    let mut right_case = borrow(case);
-    left_case.clauses = case.clauses[..split].to_vec();
-    right_case.clauses = case.clauses[split..].to_vec();
-    let (f, g) = (compile(&left_case), compile(&right_case));
+    let (f, g) = compile_split(case, split);
     let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
     let routes = [SparseRoute::DEFAULT, SparseRoute::new(1, 1)];
     let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.level(t).nodes().len() == 1;
@@ -1517,11 +1498,7 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
 /// Streaming and standalone installation preserve the independently enumerated value.
 fn streaming_marginalization_matches_enumeration(case: &Case) {
     let split = case.clauses.len() / 2;
-    let mut left_case = borrow(case);
-    let mut right_case = borrow(case);
-    left_case.clauses = case.clauses[..split].to_vec();
-    right_case.clauses = case.clauses[split..].to_vec();
-    let (left, right) = (compile(&left_case), compile(&right_case));
+    let (left, right) = compile_split(case, split);
     let eng = Engine::new();
     let mut targets = draw_marginal_targets(case);
     if case.seed & 1 != 0 {
@@ -1543,14 +1520,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
         assert_canonical(&result);
-        let got = eng.weighted_value(&result).unwrap().unwrap();
-        match arithmetic {
-            Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
-            Arithmetic::SignedLog => {
-                assert_log_close(got.as_log().unwrap(), &w.want, &w.magnitude, "the streamed log value is off");
-            }
-            _ => unreachable!(),
-        }
+        assert_weighted_sum(&result, &w.want, &w.magnitude);
     }
 }
 

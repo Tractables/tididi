@@ -394,14 +394,13 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                     rewrite_node(eng, level, a, (&ls, &rs), of_g, &mut pairs, &mut poll)?;
                     crate::diagram::sort_pairs(&mut pairs);
                     let o = out.push_node(lim, &pairs)?.0;
-                    let (start, items) = match of_g {
-                        true => (&mut pieces.g_start, &mut pieces.g_items),
-                        false => (&mut pieces.f_start, &mut pieces.f_items),
+                    let (start, items_len) = match of_g {
+                        true => (&mut pieces.g_start, pieces.g_items.len() as u32),
+                        false => (&mut pieces.f_start, pieces.f_items.len() as u32),
                     };
-                    start.push(items.len() as u32);
-                    lim.try_push(items, o)?;
-                    lim.try_push(&mut pieces.f_part, if of_g { ABSENT } else { a as u32 })?;
-                    lim.try_push(&mut pieces.g_part, if of_g { a as u32 } else { ABSENT })?;
+                    start.push(items_len);
+                    let (f_node, g_node) = if of_g { (ABSENT, a as u32) } else { (a as u32, ABSENT) };
+                    pieces.push_piece(lim, o, f_node, g_node, of_g)?;
                 }
                 let (start, items) = match of_g {
                     true => (&mut pieces.g_start, &pieces.g_items),

@@ -104,6 +104,28 @@ fn marginal_ref(pair: ChildPair, side: ChildSide) -> u32 {
     }
 }
 
+/// Sum the marginal-side refs yielded by `refs` (using `run` as scratch) and
+/// build a [`PlanEntry`] for `(n, x_idx)`.
+#[inline]
+fn plan_from_run<D: SlotValues>(
+    lim: &Limits,
+    tdd: &Tdd,
+    v: VtreeIdx,
+    (n, x_idx): (usize, u32),
+    refs: impl ExactSizeIterator<Item = u32>,
+    run: &mut Vec<u32>,
+) -> Result<PlanEntry<D::Value>, OperationError> {
+    run.clear();
+    lim.reserve(run, refs.len())?;
+    run.extend(refs);
+    Ok(PlanEntry {
+        node_idx: n,
+        x_idx,
+        value: D::sum_refs(tdd, v, run),
+        new_ref: u32::MAX,
+    })
+}
+
 /// [`group_by_scatter`] for a wide node whose pairs do not ascend: the
 /// positions of its pairs are sorted stably by explicit-side ref, a least
 /// significant digit radix sort, so each group is a run of positions in
@@ -175,15 +197,9 @@ pub(super) fn group_by_sorting<D: SlotValues>(
         let x_idx = keyed[at].0;
         let end = at + keyed[at..].iter().take_while(|&&(x, _)| x == x_idx).count();
         if end - at > 1 {
-            run.clear();
-            lim.reserve(run, end - at)?;
-            run.extend(keyed[at..end].iter().map(|&(_, pos)| marginal_ref(node[pos as usize], side)));
-            lim.try_push(&mut found, (keyed[at].1, PlanEntry {
-                node_idx: n,
-                x_idx,
-                value: D::sum_refs(tdd, v, run),
-                new_ref: u32::MAX,
-            }))?;
+            let refs = keyed[at..end].iter().map(|&(_, pos)| marginal_ref(node[pos as usize], side));
+            let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
+            lim.try_push(&mut found, (keyed[at].1, plan))?;
         }
         at = end;
     }
@@ -211,15 +227,9 @@ pub(super) fn group_by_runs<D: SlotValues>(
         let x_idx = explicit_ref(node[at], side);
         let end = at + node[at..].iter().take_while(|&&p| explicit_ref(p, side) == x_idx).count();
         if end - at > 1 {
-            run.clear();
-            lim.reserve(run, end - at)?;
-            run.extend(node[at..end].iter().map(|&p| marginal_ref(p, side)));
-            lim.try_push(out, PlanEntry {
-                node_idx: n,
-                x_idx,
-                value: D::sum_refs(tdd, v, run),
-                new_ref: u32::MAX,
-            })?;
+            let refs = node[at..end].iter().map(|&p| marginal_ref(p, side));
+            let plan = plan_from_run::<D>(lim, tdd, v, (n, x_idx), refs, run)?;
+            lim.try_push(out, plan)?;
         }
         at = end;
     }

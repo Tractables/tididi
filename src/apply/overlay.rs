@@ -100,6 +100,23 @@ impl Pieces {
         &self.g_items[self.g_start[b] as usize..self.g_start[b + 1] as usize]
     }
 
+    /// Record output node `o` as a piece of `f_node` and `g_node`, appending `o`
+    /// to `g_items` when `of_g` is true and to `f_items` otherwise.
+    #[inline]
+    pub(super) fn push_piece(
+        &mut self,
+        lim: &crate::limits::Limits,
+        o: u32,
+        f_node: u32,
+        g_node: u32,
+        of_g: bool,
+    ) -> Result<(), OperationError> {
+        let items = if of_g { &mut self.g_items } else { &mut self.f_items };
+        lim.try_push(items, o)?;
+        lim.try_push(&mut self.f_part, f_node)?;
+        lim.try_push(&mut self.g_part, g_node)
+    }
+
     /// Empty every list, keeping the allocations for the next level.
     pub(super) fn clear(&mut self) {
         self.f_start.clear();
@@ -333,9 +350,7 @@ impl LevelOverlay<'_> {
                     i += 1;
                 }
                 let o = out.push_node(lim, &s.pairs)?.0;
-                lim.try_push(&mut pieces.f_items, o)?;
-                lim.try_push(&mut pieces.f_part, a as u32)?;
-                lim.try_push(&mut pieces.g_part, b)?;
+                pieces.push_piece(lim, o, a as u32, b, false)?;
                 if walk_g && b != ABSENT {
                     lim.try_push(&mut s.products, (b, o))?;
                 }
@@ -374,9 +389,7 @@ impl LevelOverlay<'_> {
                 if !s.pairs.is_empty() {
                     crate::diagram::sort_pairs(&mut s.pairs);
                     let o = out.push_node(lim, &s.pairs)?.0;
-                    lim.try_push(&mut pieces.g_items, o)?;
-                    lim.try_push(&mut pieces.f_part, ABSENT)?;
-                    lim.try_push(&mut pieces.g_part, b as u32)?;
+                    pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
                 }
                 lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
             }

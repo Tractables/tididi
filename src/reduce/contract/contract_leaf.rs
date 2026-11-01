@@ -190,6 +190,25 @@ enum Class {
     NotContractible,
 }
 
+/// Split a pair into `(leaf_label, partner_ref)` when the leaf is on `side`.
+#[inline(always)]
+fn split_leaf_side(p: ChildPair, side: ChildSide) -> (EncodedChildRef, EncodedChildRef) {
+    side.pick((p.left, p.right), (p.right, p.left))
+}
+
+/// Sort `pos` and `neg` partner slices and return the resulting [`Class`].
+#[inline]
+fn finish_classify(pos: &mut [EncodedChildRef], neg: &mut [EncodedChildRef], has_one: bool) -> Class {
+    let has_literal = !pos.is_empty() || !neg.is_empty();
+    // Mode-mixed lists and partner lists of different lengths are not contractible.
+    if (has_literal && has_one) || pos.len() != neg.len() {
+        return Class::NotContractible;
+    }
+    pos.sort_unstable();
+    neg.sort_unstable();
+    if pos == neg { Class::AllContractible { has_literal } } else { Class::NotContractible }
+}
+
 /// [`classify`] of a stored node's pair list of at most [`SMALL_PAIRS`]
 /// pairs, collecting nothing in memory, or `None` for a wider one. A node of
 /// one pair admits the rewrite only where its label on `side` is `One`: a
@@ -198,7 +217,7 @@ enum Class {
 fn classify_narrow(pairs: &[ChildPair], side: ChildSide) -> Option<Class> {
     Some(match *pairs {
         [pair] => {
-            let label = if side == ChildSide::Left { pair.left } else { pair.right };
+            let (label, _) = split_leaf_side(pair, side);
             if label == ONE_LEAF_IDX.into() {
                 Class::AllContractible { has_literal: false }
             } else {
@@ -215,8 +234,7 @@ fn classify_narrow(pairs: &[ChildPair], side: ChildSide) -> Option<Class> {
 /// nothing collected: both `One`, or `Pos` and `Neg` with one partner.
 #[inline]
 fn classify_two(p: ChildPair, q: ChildPair, side: ChildSide) -> Class {
-    let split = |p: ChildPair| if side == ChildSide::Left { (p.left, p.right) } else { (p.right, p.left) };
-    let ((a, x), (b, y)) = (split(p), split(q));
+    let ((a, x), (b, y)) = (split_leaf_side(p, side), split_leaf_side(q, side));
     let (one, pos, neg): (EncodedChildRef, EncodedChildRef, EncodedChildRef) =
         (ONE_LEAF_IDX.into(), POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
     if a == one && b == one {
@@ -239,8 +257,8 @@ fn classify_small(pairs: &[ChildPair], side: ChildSide) -> Class {
         (ONE_LEAF_IDX.into(), POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
     let (mut pos, mut neg) = ([one; SMALL_PAIRS], [one; SMALL_PAIRS]);
     let (mut np, mut nn, mut has_one) = (0usize, 0usize, false);
-    for p in pairs {
-        let (label, partner) = if side == ChildSide::Left { (p.left, p.right) } else { (p.right, p.left) };
+    for &p in pairs {
+        let (label, partner) = split_leaf_side(p, side);
         if label == pos_label {
             pos[np] = partner;
             np += 1;
@@ -253,15 +271,7 @@ fn classify_small(pairs: &[ChildPair], side: ChildSide) -> Class {
             return Class::NotContractible;
         }
     }
-    let has_literal = np + nn > 0;
-    // A mode-mixed list refuses, as in `classify`, and so do partner lists
-    // of different lengths.
-    if (has_literal && has_one) || np != nn {
-        return Class::NotContractible;
-    }
-    pos[..np].sort_unstable();
-    neg[..nn].sort_unstable();
-    if pos[..np] == neg[..nn] { Class::AllContractible { has_literal } } else { Class::NotContractible }
+    finish_classify(&mut pos[..np], &mut neg[..nn], has_one)
 }
 
 /// `pos` and `neg` are the caller's buffers for the partners of the `Pos` and
@@ -277,25 +287,13 @@ fn classify(
     neg.clear();
     let mut has_one = false;
     for p in pairs {
-        let label = if side == ChildSide::Left { p.left } else { p.right };
-        let partner = if side == ChildSide::Left { p.right } else { p.left };
+        let (label, partner) = split_leaf_side(p, side);
         if label == POS_LEAF_IDX.into() { lim.try_push(pos, partner)?; }
         else if label == NEG_LEAF_IDX.into() { lim.try_push(neg, partner)?; }
         else if label == ONE_LEAF_IDX.into() { has_one = true; }
         else { return Ok(Class::NotContractible); }
     }
-    let has_literal = !pos.is_empty() || !neg.is_empty();
-    if has_literal && has_one {
-        // Mode-mixed list. On a structural leaf `check_determinism` forbids
-        // it; on a weight-marginal leaf it is expected, since the refs there
-        // select values in the pinned column and
-        // `marginal::leaf::canonicalize_leaf_refs_at_parent` folds equal-valued
-        // labels together. Bail either way.
-        return Ok(Class::NotContractible);
-    }
-    pos.sort_unstable();
-    neg.sort_unstable();
-    Ok(if pos == neg { Class::AllContractible { has_literal } } else { Class::NotContractible })
+    Ok(finish_classify(pos, neg, has_one))
 }
 
 /// Apply the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite to every pair list
@@ -336,7 +334,7 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                 // lone literal), and `One` pairs are copied verbatim.
                 debug_assert!(
                     {
-                        let label = if side == ChildSide::Left { p.left } else { p.right };
+                        let (label, _) = split_leaf_side(p, side);
                         label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into()
                     },
                     "leaf rewrite: a contractible level cannot hold a single-pair literal node"
@@ -349,7 +347,7 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
             let arena = level.pairs.stored_mut();
             for r in start..start + old_len {
                 let p = arena[r];
-                let label = if side == ChildSide::Left { p.left } else { p.right };
+                let (label, _) = split_leaf_side(p, side);
                 if label == NEG_LEAF_IDX.into() {
                     // Dropped: its matching Pos contributes the (One, partner)
                     // pair. No re-sort and no dedup: pair lists are unordered,
@@ -359,11 +357,7 @@ fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
                     continue;
                 }
                 let np = if label == POS_LEAF_IDX.into() {
-                    if side == ChildSide::Left {
-                        ChildPair::new(ONE_LEAF_IDX, p.right)
-                    } else {
-                        ChildPair::new(p.left, ONE_LEAF_IDX)
-                    }
+                    side.pick(ChildPair::new(ONE_LEAF_IDX, p.right), ChildPair::new(p.left, ONE_LEAF_IDX))
                 } else {
                     p
                 };

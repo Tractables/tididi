@@ -300,13 +300,7 @@ pub(crate) fn apply_sparse_level(
         let mut live = None;
         let emit = Emit { level, out: &mut *pl_output, duplicates_legal, thresholds, live: &mut live };
         if let Some(made) = probe_level(eng, ws, (f, g), shape, (pl, listed, cells), multisets, emit)? {
-            let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
-            if let Some(n) = live {
-                levels[t_idx].leave_live_pairs(n);
-            }
-            #[cfg(debug_assertions)]
-            debug_check_flushed_level(pl_output, &levels[t_idx]);
-            guard.scatter_clean();
+            let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
             return Ok((made, false));
         }
     }
@@ -315,16 +309,31 @@ pub(crate) fn apply_sparse_level(
     let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, thresholds, live: &mut live };
     let made = scatter_level(eng, ws, (f, g), (shape, pl), Collect::Nodes(emit), (passthrough, complete))?;
     let held = ws.outer_held;
-    let made = take_f_level(f, &mut levels[t_idx], t_idx, made);
-    if let Some(n) = live {
-        levels[t_idx].leave_live_pairs(n);
-    }
-
-    #[cfg(debug_assertions)]
-    debug_check_flushed_level(pl_output, &levels[t_idx]);
-
-    guard.scatter_clean();
+    let made = finish_emitted_level(f, &mut levels[t_idx], t_idx, made, live, pl_output, &mut guard);
     Ok((made, held))
+}
+
+/// Complete a probe- or scatter-emitted level: install `f`'s level if `made == Made::F`,
+/// record any live-pair count, run the debug flush check, and mark the scatter
+/// workspace clean.
+#[inline]
+fn finish_emitted_level(
+    f: &mut Held<'_>,
+    level: &mut TddLevel,
+    t_idx: usize,
+    made: Made,
+    live: Option<usize>,
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] pl_output: &[ProductEntry],
+    guard: &mut WsGuard<'_>,
+) -> Made {
+    let made = take_f_level(f, level, t_idx, made);
+    if let Some(n) = live {
+        level.leave_live_pairs(n);
+    }
+    #[cfg(debug_assertions)]
+    debug_check_flushed_level(pl_output, level);
+    guard.scatter_clean();
+    made
 }
 
 

@@ -340,6 +340,13 @@ pub fn assert_same_shape(a: &Tdd, b: &Tdd, what: &str) {
     assert_eq!(normalized_levels(a), normalized_levels(b), "{what}: level shape differs");
 }
 
+/// Whether `r` is the positive or negative literal leaf reference.
+#[cfg(test)]
+#[inline]
+fn is_lit_leaf_ref(r: crate::diagram::EncodedChildRef) -> bool {
+    r == POS_LEAF_IDX.into() || r == NEG_LEAF_IDX.into()
+}
+
 /// Structural support of `t`: `out[x]` is true iff `t` depends on variable `x`
 /// (some live pair references x's leaf with a Pos/Neg label, not just One).
 /// Minimizes a clone first so every scanned node is reachable. O(size).
@@ -381,11 +388,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
             let level = &mt.levels[vi];
             'scan: for ni in 0..level.nodes().len() {
                 for p in level.pairs_iter_of(&level.node(ni)) {
-                    let child = match side {
-                        ChildSide::Left => p.left,
-                        ChildSide::Right => p.right,
-                    };
-                    if child == POS_LEAF_IDX.into() || child == NEG_LEAF_IDX.into() {
+                    if is_lit_leaf_ref(side.pick(p.left, p.right)) {
                         *sup_x = true;
                         break 'scan;
                     }
@@ -409,11 +412,11 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
     if t.is_zero() {
         return bits;
     }
+    let mut set_var = |x: usize| bits[x / 64] |= 1u64 << (x % 64);
     // Output sitting directly at a leaf: set that leaf's var iff labelled Pos/Neg.
     if let VtreeNode::Leaf { var, .. } = *vtree.node(t.output.vtree) {
         if t.output.local == POS_LEAF_IDX || t.output.local == NEG_LEAF_IDX {
-            let x = var.idx();
-            bits[x / 64] |= 1u64 << (x % 64);
+            set_var(var.idx());
         }
         return bits;
     }
@@ -442,14 +445,12 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let mut need_r = rvar.is_some();
         'scan: for ni in 0..level.nodes().len() {
             for p in level.pairs_iter_of(&level.node(ni)) {
-                if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
-                    let x = lvar.unwrap();
-                    bits[x / 64] |= 1u64 << (x % 64);
+                if need_l && is_lit_leaf_ref(p.left) {
+                    set_var(lvar.unwrap());
                     need_l = false;
                 }
-                if need_r && (p.right == POS_LEAF_IDX.into() || p.right == NEG_LEAF_IDX.into()) {
-                    let x = rvar.unwrap();
-                    bits[x / 64] |= 1u64 << (x % 64);
+                if need_r && is_lit_leaf_ref(p.right) {
+                    set_var(rvar.unwrap());
                     need_r = false;
                 }
                 if !need_l && !need_r {

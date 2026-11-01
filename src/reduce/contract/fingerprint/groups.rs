@@ -80,6 +80,19 @@ fn materialize_candidate_signatures(
     Ok(())
 }
 
+/// Replace each count in `counts` with the exclusive prefix sum of the
+/// preceding counts, returning the total sum.
+#[inline]
+fn prefix_sum_in_place(counts: &mut [u32]) -> u32 {
+    let mut sum = 0u32;
+    for c in counts.iter_mut() {
+        let here = *c;
+        *c = sum;
+        sum += here;
+    }
+    sum
+}
+
 /// Count each twin-candidate node's entries and turn the counts into a
 /// prefix-sum offset table in `scratch.counts`, returning the total entry count.
 ///
@@ -122,12 +135,7 @@ fn count_candidate_entries(
     // sig_offsets[i] = start of node i's signature entries in the flat buffer.
     // This avoids allocating a separate Vec for offsets.
     let sig_offsets = &mut scratch.counts;
-    let mut running = 0u32;
-    for slot in sig_offsets.iter_mut().take(child_width) {
-        let c = *slot;
-        *slot = running;
-        running += c; // ≤ candidate_mass < u32::MAX, checked above
-    }
+    let running = prefix_sum_in_place(&mut sig_offsets[..child_width]);
     sig_offsets[child_width] = running; // sentinel (pre-allocated above)
     Ok(candidate_mass)
 }
@@ -356,12 +364,7 @@ pub(super) fn group_single_entries(
         }
         // A digit every record shares moves none of them.
         if !counts.iter().any(|&n| n as usize == width) {
-            let mut sum = 0u32;
-            for count in counts.iter_mut() {
-                let n = *count;
-                *count = sum;
-                sum += n;
-            }
+            prefix_sum_in_place(counts);
             for &record in src.iter() {
                 let digit = ((record >> shift) & mask) as usize;
                 dst[counts[digit] as usize] = record;

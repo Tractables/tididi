@@ -89,6 +89,32 @@ fn absorbed(bits: &[u64], i: usize) -> bool {
     (bits[i / 64] >> (i % 64)) & 1 != 0
 }
 
+/// Arena and live pair counts of a packed level after subtracting the pairs
+/// of nodes no parent pair names (`unnamed`).
+#[inline]
+fn census_less_unnamed(level: &TddLevel, unnamed: &[u32]) -> (usize, usize) {
+    let (pairs, _, single) = level.pair_census();
+    let mut total = (pairs - single) as usize;
+    let mut live = pairs as usize;
+    for &u in unnamed {
+        total -= level.arena_pairs_at(u as usize);
+        live -= level.pair_count_at(u as usize);
+    }
+    (total, live)
+}
+
+/// Assert in debug builds that a merged twin group's concatenated pair slice
+/// has no duplicate pairs (Invariant 1).
+#[inline]
+fn assert_disjoint_pairs(pairs: &[ChildPair]) {
+    let mut chk = pairs.to_vec();
+    chk.sort_unstable();
+    assert!(
+        chk.windows(2).all(|w| w[0] != w[1]),
+        "twin contraction: duplicate pair across twin supports — invariant 1 violation"
+    );
+}
+
 /// Reserve the arenas of the level `t1` will be after the committed merge:
 /// exactly its pairs, every survivor's own and each concat group's
 /// members' at its survivor, and a range entry for each node whose range
@@ -126,13 +152,7 @@ pub(super) fn reserve_rebuilt(
     let RebuiltPairs { arena: total, live } = if let Some(counts) = in_order {
         counts
     } else if level.ranges.is_empty() {
-        let (pairs, _, single) = level.pair_census();
-        let mut total = (pairs - single) as usize;
-        let mut live = pairs as usize;
-        for &u in unnamed {
-            total -= level.arena_pairs_at(u as usize);
-            live -= level.pair_count_at(u as usize);
-        }
+        let (mut total, mut live) = census_less_unnamed(level, unnamed);
         for p in &bufs.group_plans {
             let members = &bufs.sel[p.start as usize..p.end as usize];
             match p.action {
@@ -174,13 +194,7 @@ pub(super) fn in_order_pairs(level: &TddLevel, marks: Marks, unnamed: &[u32]) ->
     if !marks.in_order || !level.ranges.is_empty() {
         return None;
     }
-    let (pairs, _, single) = level.pair_census();
-    let mut total = (pairs - single) as usize;
-    let mut live = pairs as usize;
-    for &u in unnamed {
-        total -= level.arena_pairs_at(u as usize);
-        live -= level.pair_count_at(u as usize);
-    }
+    let (mut total, live) = census_less_unnamed(level, unnamed);
     total += marks.inline;
     (total < PACKED_LIMIT).then_some(RebuiltPairs { arena: total, live })
 }
@@ -350,12 +364,7 @@ pub(super) fn rebuild_level(
                     }
                 }
                 if cfg!(debug_assertions) && check_disjoint {
-                    let mut chk = fresh[start..].to_vec();
-                    chk.sort_unstable();
-                    assert!(
-                        chk.windows(2).all(|w| w[0] != w[1]),
-                        "twin contraction: duplicate pair across twin supports — invariant 1 violation"
-                    );
+                    assert_disjoint_pairs(&fresh[start..]);
                 }
                 match fresh.len() - start {
                     1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
@@ -588,12 +597,7 @@ pub(super) fn rebuild_in_order(
             let room = start as usize..(start + len) as usize;
             assert_eq!(rooms[g] as usize, room.end, "every member put its pairs");
             if check_disjoint {
-                let mut chk = fresh[room].to_vec();
-                chk.sort_unstable();
-                assert!(
-                    chk.windows(2).all(|w| w[0] != w[1]),
-                    "twin contraction: duplicate pair across twin supports — invariant 1 violation"
-                );
+                assert_disjoint_pairs(&fresh[room]);
             }
         }
     }

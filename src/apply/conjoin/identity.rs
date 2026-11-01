@@ -138,17 +138,13 @@ pub(super) fn init_leaf_identity_over(
                         // Children of a marginal level are marginal by the
                         // invariant — but a child may itself be CT, in which
                         // case its leaf descendants stay identity.
-                        let left_lvl = &tdd.levels[left.idx()];
-                        let right_lvl = &tdd.levels[right.idx()];
-                        if !(left_lvl.is_marginal()
-                            && level_marginal_is_constant_true(left_lvl, subvars[left.idx()]))
-                        {
-                            stack.push(*left);
-                        }
-                        if !(right_lvl.is_marginal()
-                            && level_marginal_is_constant_true(right_lvl, subvars[right.idx()]))
-                        {
-                            stack.push(*right);
+                        for &child in [left, right] {
+                            let child_lvl = &tdd.levels[child.idx()];
+                            if !(child_lvl.is_marginal()
+                                && level_marginal_is_constant_true(child_lvl, subvars[child.idx()]))
+                            {
+                                stack.push(child);
+                            }
                         }
                     }
                 }
@@ -259,17 +255,13 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     // store-space. `?`: the re-resolve reserves the destination store growth it
     // needs before rewriting anything, so `OverBudget` here aborts the apply with
     // the swapped-in level untouched — never half-remapped.
-    if carrier_levels[left_idx].is_marginal() && levels[left_idx].is_marginal() {
-        diagram::resolve_swapped_marginal_side(
-            eng,
-            levels, t_idx, left_idx, &carrier_levels[left_idx], ChildSide::Left,
-        )?;
-    }
-    if carrier_levels[right_idx].is_marginal() && levels[right_idx].is_marginal() {
-        diagram::resolve_swapped_marginal_side(
-            eng,
-            levels, t_idx, right_idx, &carrier_levels[right_idx], ChildSide::Right,
-        )?;
+    for (child_idx, side) in [(left_idx, ChildSide::Left), (right_idx, ChildSide::Right)] {
+        if carrier_levels[child_idx].is_marginal() && levels[child_idx].is_marginal() {
+            diagram::resolve_swapped_marginal_side(
+                eng,
+                levels, t_idx, child_idx, &carrier_levels[child_idx], side,
+            )?;
+        }
     }
 
     publish_identity_level(run.products, t_idx, k_carrier);

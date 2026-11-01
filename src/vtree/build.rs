@@ -12,6 +12,14 @@ pub(super) fn require_nonempty(num_vars: u32) {
     assert!(num_vars > 0, "a vtree needs at least one variable");
 }
 
+/// The ascending variable list `VarId(1)..=VarId(num_vars)`, after checking
+/// [`require_nonempty`].
+#[track_caller]
+fn natural_vars(num_vars: u32) -> Vec<VarId> {
+    require_nonempty(num_vars);
+    (1..=num_vars).map(VarId).collect()
+}
+
 /// The id space a vtree may cover when the node list gives no better bound: a
 /// single leaf carrying `VarId(4_000_000_000)` is a legal one-line file, and
 /// the tables below would be 16 GB for it. Sparse ids stay legal — `to_text`
@@ -167,9 +175,7 @@ impl Vtree {
     /// assert!(vtree.leaf_of(VarId(4)).is_some());
     /// ```
     pub fn balanced(num_vars: u32) -> Self {
-        require_nonempty(num_vars);
-        let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
-        Self::balanced_over(&vars).expect("the ids are distinct")
+        Self::balanced_over(&natural_vars(num_vars)).expect("the ids are distinct")
     }
 
     /// A balanced binary vtree whose leaves read `order` left to right: the
@@ -217,9 +223,7 @@ impl Vtree {
     ///
     /// Panics if `num_vars` is zero.
     pub fn linear(num_vars: u32) -> Self {
-        require_nonempty(num_vars);
-        let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
-        Self::linear_from_order(&vars).expect("the ids are distinct")
+        Self::linear_from_order(&natural_vars(num_vars)).expect("the ids are distinct")
     }
 
     /// A right-linear vtree over `num_vars, …, 1`, reversing [`Vtree::linear`]'s

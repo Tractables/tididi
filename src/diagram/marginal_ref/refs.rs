@@ -34,6 +34,15 @@ impl ChildSide {
             ChildSide::Right
         }
     }
+
+    /// Return `left` when `self == ChildSide::Left`, and `right` otherwise.
+    #[inline(always)]
+    pub(crate) fn pick<T>(self, left: T, right: T) -> T {
+        match self {
+            ChildSide::Left => left,
+            ChildSide::Right => right,
+        }
+    }
 }
 
 /// One value per child side.

@@ -658,15 +658,18 @@ fn joint_contract_fixpoint(
         // the last round's searches charged first.
         eng.limits().poll_host_work(std::mem::take(&mut scratch.searched))?;
         let mut again = [false; 2];
-        if std::mem::take(&mut scan_left) {
-            let done = contract_child(eng, tdd, parent, left, Reach::Whole, scratch)?;
-            left_fired |= done.fired();
-            again[0] = done == Contracted::Part;
-        }
-        if std::mem::take(&mut scan_right) {
-            let done = contract_child(eng, tdd, parent, right, Reach::Whole, scratch)?;
-            right_fired |= done.fired();
-            again[1] = done == Contracted::Part;
+        for (i, (scan, fired, child)) in [
+            (&mut scan_left, &mut left_fired, left),
+            (&mut scan_right, &mut right_fired, right),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if std::mem::take(scan) {
+                let done = contract_child(eng, tdd, parent, child, Reach::Whole, scratch)?;
+                *fired |= done.fired();
+                again[i] = done == Contracted::Part;
+            }
         }
         let mut fused = false;
         if is_marginal_boundary {

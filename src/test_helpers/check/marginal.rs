@@ -97,10 +97,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
                 continue;
             }
         let (pleft, pright) = tdd.vtree.children(parent);
-        let sibling = match side {
-            ChildSide::Left => pright,
-            ChildSide::Right => pleft,
-        };
+        let sibling = side.pick(pright, pleft);
         if tdd.levels[sibling.idx()].is_marginal() {
             continue;
         }
@@ -108,10 +105,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
         for n in 0..plevel.nodes().len() {
             groups.clear();
             for p in plevel.pairs_iter_of_idx(n) {
-                let (x, marginal) = match side {
-                    ChildSide::Right => (p.left.0, p.right.0),
-                    ChildSide::Left => (p.right.0, p.left.0),
-                };
+                let (x, marginal) = side.pick((p.right.0, p.left.0), (p.left.0, p.right.0));
                 groups.entry(x).or_default().push(marginal);
             }
             for (&x, refs) in &groups {

@@ -318,15 +318,22 @@ impl<'a> PlainProducts<'a> {
     /// the two factors' product.
     #[inline(always)]
     pub(crate) fn left_factor(&self, lc: u32) -> Option<f64> {
-        self.lview.child(EncodedChildRef::from_raw(lc)).index().and_then(|i| self.left.get(i)).map(|&l| l * self.by.0)
+        factor_at(self.left, self.lview, lc).map(|l| l * self.by.0)
     }
 
     /// The right factor of [`product`](Self::product), as
     /// [`left_factor`](Self::left_factor).
     #[inline(always)]
     pub(crate) fn right_factor(&self, rc: u32) -> Option<f64> {
-        self.rview.child(EncodedChildRef::from_raw(rc)).index().and_then(|i| self.right.get(i)).map(|&r| r * self.by.1)
+        factor_at(self.right, self.rview, rc).map(|r| r * self.by.1)
     }
+}
+
+/// Look up the float at the slot `raw` names through `view`, or `None` when
+/// `raw` is not an in-bounds slot of `vals`.
+#[inline(always)]
+fn factor_at(vals: &[f64], view: ChildDecoder, raw: u32) -> Option<f64> {
+    view.child(EncodedChildRef::from_raw(raw)).index().and_then(|i| vals.get(i)).copied()
 }
 
 /// The products of two narrow child columns with no float negative, each
@@ -374,14 +381,14 @@ impl<'a> CheckedProducts<'a> {
     /// names, `None` where it names no value of the column.
     #[inline(always)]
     pub(crate) fn left_factor(&self, lc: u32) -> Option<f64> {
-        self.lview.child(EncodedChildRef::from_raw(lc)).index().and_then(|i| self.left.get(i)).copied()
+        factor_at(self.left, self.lview, lc)
     }
 
     /// The right float of [`product`](Self::product), as
     /// [`left_factor`](Self::left_factor).
     #[inline(always)]
     pub(crate) fn right_factor(&self, rc: u32) -> Option<f64> {
-        self.rview.child(EncodedChildRef::from_raw(rc)).index().and_then(|i| self.right.get(i)).copied()
+        factor_at(self.right, self.rview, rc)
     }
 
     /// The power of two a cell's float sum of such products stands under:
