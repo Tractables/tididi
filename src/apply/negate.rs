@@ -5,12 +5,15 @@
 //! that make every level below the root t-full; `negate` then complements the
 //! output at the root, whose cells the root's children now span.
 
-use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{
+    Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx,
+    ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId,
+};
 
 use crate::Engine;
-use crate::limits::OperationError;
-use crate::execution::pool::{Drain, Pool, Pools};
 use crate::apply::falsity::empty_node;
+use crate::execution::pool::{Drain, Pool, Pools};
+use crate::limits::OperationError;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -95,7 +98,11 @@ impl Engine {
         if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
             self.certify_complement(&mut result, full, old)?;
         } else {
-            self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
+            self.reduce_scoped(
+                &mut result,
+                plan,
+                crate::reduce::prune::PruneScope::BelowRoot,
+            )?;
         }
         Ok(result)
     }
@@ -109,7 +116,10 @@ pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
 
 /// [`negate_on`] of an owned or borrowed operand, with the old output's slot
 /// where the complement was built beside it.
-pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+pub(crate) fn complement_on(
+    eng: &Engine,
+    tdd: Cow<'_, Tdd>,
+) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     tdd.require_structure()?;
     eng.limits().check_stop()?;
     let vtree = Arc::clone(&tdd.vtree);
@@ -124,19 +134,46 @@ pub(crate) fn complement_on(eng: &Engine, tdd: Cow<'_, Tdd>) -> Result<(Tdd, Opt
             (tdd.levels.into_vec(), None, weights, owed)
         }
         Cow::Borrowed(tdd) => {
-            let weights = tdd.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?;
+            let weights = tdd
+                .weights
+                .as_ref()
+                .map(|w| w.try_clone_on(eng.limits()))
+                .transpose()?;
             let owed = tdd.dirty.clone_on(eng)?;
-            (Target::empty_levels(eng, &tdd.levels)?, Some(&tdd.levels[..]), weights, owed)
+            (
+                Target::empty_levels(eng, &tdd.levels)?,
+                Some(&tdd.levels[..]),
+                weights,
+                owed,
+            )
         }
     };
     let (mut result, old) = if zero {
         (crate::build::constant_on(eng, &vtree, true)?, None)
     } else {
         let mut filled = Vec::new();
-        eng.limits().try_resize(&mut filled, vtree.num_nodes(), false)?;
-        expand_full(eng, &vtree, &mut Target { levels: &mut levels, source }, canonical, closed, &mut filled)?;
+        eng.limits()
+            .try_resize(&mut filled, vtree.num_nodes(), false)?;
+        expand_full(
+            eng,
+            &vtree,
+            &mut Target {
+                levels: &mut levels,
+                source,
+            },
+            canonical,
+            closed,
+            &mut filled,
+        )?;
         let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
-        complement_full_at_root(eng, &vtree, (levels, source), output, &filled, (closed, owed))?
+        complement_full_at_root(
+            eng,
+            &vtree,
+            (levels, source),
+            output,
+            &filled,
+            (closed, owed),
+        )?
     };
     #[cfg(debug_assertions)]
     if at_root && !zero && result.output.vtree == vtree.root() {
@@ -173,14 +210,21 @@ impl Owed {
     ) -> Self {
         // A canonical operand has every node named; otherwise the operand's
         // loose levels, read before the seeding forgets them.
-        let loose = if canonical { Some(Vec::new()) } else { carried.take_loose() };
+        let loose = if canonical {
+            Some(Vec::new())
+        } else {
+            carried.take_loose()
+        };
         let may_be_loose = |c: crate::vtree::VtreeIdx| {
             !vtree.node(c).is_leaf() && loose.as_ref().is_none_or(|l| l.contains(&c.0))
         };
         let root = vtree.root();
         let mut rebuilt = vec![root];
         for (t, left, right) in vtree.internal_bottomup() {
-            if t != root && filled[t.idx()] && (may_be_loose(left) || may_be_loose(right) || levels[t.idx()].node_count() == 1) {
+            if t != root
+                && filled[t.idx()]
+                && (may_be_loose(left) || may_be_loose(right) || levels[t.idx()].node_count() == 1)
+            {
                 rebuilt.push(t);
             }
         }
@@ -201,7 +245,9 @@ impl Target<'_, '_> {
     /// Empty levels for the copy of `source`'s.
     fn empty_levels(eng: &Engine, source: &[TddLevel]) -> Result<Vec<TddLevel>, OperationError> {
         debug_assert!(
-            source.iter().all(|level| level.node_count() > 0 || level.arena_len() == 0),
+            source
+                .iter()
+                .all(|level| level.node_count() > 0 || level.arena_len() == 0),
             "a structural level without nodes holds no pairs",
         );
         let mut levels = Vec::new();
@@ -221,7 +267,12 @@ impl Target<'_, '_> {
     /// nothing to add, which negation meets at nearly every level it
     /// visits, is reached without a call.
     #[inline(always)]
-    fn write(&mut self, eng: &Engine, t: usize, fill: Option<usize>) -> Result<&mut TddLevel, OperationError> {
+    fn write(
+        &mut self,
+        eng: &Engine,
+        t: usize,
+        fill: Option<usize>,
+    ) -> Result<&mut TddLevel, OperationError> {
         if self.source.is_none() && fill.is_none() {
             return Ok(&mut self.levels[t]);
         }
@@ -231,7 +282,12 @@ impl Target<'_, '_> {
     /// [`write`](Self::write) of a borrowed operand's level or of a level
     /// about to take a fill node.
     #[inline(never)]
-    fn copy_or_grow(&mut self, eng: &Engine, t: usize, fill: Option<usize>) -> Result<&mut TddLevel, OperationError> {
+    fn copy_or_grow(
+        &mut self,
+        eng: &Engine,
+        t: usize,
+        fill: Option<usize>,
+    ) -> Result<&mut TddLevel, OperationError> {
         if let Some(source) = self.source {
             let from = &source[t];
             let (nodes, pairs) = match fill {
@@ -274,7 +330,13 @@ fn complement_full_at_root(
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Ok((crate::build::constant_on(eng, vtree, false)?, None));
         };
-        Ok((assembly.finish(TddNodeId { vtree: root, local: neg_local })?, None))
+        Ok((
+            assembly.finish(TddNodeId {
+                vtree: root,
+                local: neg_local,
+            })?,
+            None,
+        ))
     } else {
         // Child widths the complement's basis spans:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
@@ -287,7 +349,15 @@ fn complement_full_at_root(
         let mut marked = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
         let mut target = Target { levels, source };
-        collect_root_complement_pairs(eng, vtree, &target, out_local, filled, &mut marked, &mut neg_pairs)?;
+        collect_root_complement_pairs(
+            eng,
+            vtree,
+            &target,
+            out_local,
+            filled,
+            &mut marked,
+            &mut neg_pairs,
+        )?;
 
         if neg_pairs.is_empty() {
             return Ok((crate::build::constant_on(eng, vtree, false)?, None));
@@ -298,7 +368,10 @@ fn complement_full_at_root(
         let neg_idx = root_level.push_node(eng.limits(), &neg_pairs)?;
         root_level.leave_live_pairs(pairs + neg_pairs.len());
 
-        let output = TddNodeId { vtree: root, local: neg_idx };
+        let output = TddNodeId {
+            vtree: root,
+            local: neg_idx,
+        };
         let result = match owed {
             Some(owed) => {
                 let mut result = assembly.finish_with(output, owed.carried, &owed.rebuilt, None)?;
@@ -306,8 +379,12 @@ fn complement_full_at_root(
                 // whole basis, every cell a pair, so names each of their
                 // nodes. The complement drops the cells of an empty node, so
                 // the root's children may hold one no pair names.
-                let loose = [(left, left_is_leaf), (right, right_is_leaf)].into_iter().filter(|&(_, leaf)| !leaf);
-                result.dirty.set_loose(Some(loose.map(|(c, _)| c.0).collect()));
+                let loose = [(left, left_is_leaf), (right, right_is_leaf)]
+                    .into_iter()
+                    .filter(|&(_, leaf)| !leaf);
+                result
+                    .dirty
+                    .set_loose(Some(loose.map(|(c, _)| c.0).collect()));
                 result
             }
             None => assembly.finish(output)?,
@@ -332,13 +409,23 @@ fn collect_root_complement_pairs(
     let right_is_leaf = vtree.node(right).is_leaf();
     let lefts = ChildBasis::of(vtree, target.levels, left);
     let rights = ChildBasis::of(vtree, target.levels, right);
-    let leaf = LeafForm { left_one: left_is_leaf, right_one: right_is_leaf };
-    let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
+    let leaf = LeafForm {
+        left_one: left_is_leaf,
+        right_one: right_is_leaf,
+    };
+    let fill = [
+        filled[left.idx()].then(|| lefts.end - 1),
+        filled[right.idx()].then(|| rights.end - 1),
+    ];
     // The other root nodes are dropped with the old output, so the
     // complement takes the leaf form the output uses.
     let mut form = LeafForm::LITERAL;
     let root_level = target.read(root.idx());
-    let covered = areas(root_level.pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
+    let covered = areas(
+        root_level.pairs_iter_of_idx(out_local.idx()),
+        leaf,
+        &mut form,
+    );
     neg_pairs.clear();
     // The work clock is charged a scan of the root's basis, by either
     // route.
@@ -353,7 +440,10 @@ fn collect_root_complement_pairs(
             cover.mark_pairs(root_level.pairs_iter_of_idx(out_local.idx()));
             let mut by_cover = Vec::new();
             cover.missing_into(eng, &mut by_cover)?;
-            debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
+            debug_assert_eq!(
+                *neg_pairs, by_cover,
+                "negate: the lines of the added nodes are not the root cells the output misses"
+            );
         }
     } else {
         let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
@@ -365,9 +455,15 @@ fn collect_root_complement_pairs(
     // node with no pairs), which a fill node of `expand_full` can be.
     neg_pairs.retain(|pair| {
         let left_alive = left_is_leaf
-            || !empty_node(&target.levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
+            || !empty_node(
+                &target.levels[left.idx()],
+                ChildDecoder::structural().node(pair.left).idx(),
+            );
         let right_alive = right_is_leaf
-            || !empty_node(&target.levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
+            || !empty_node(
+                &target.levels[right.idx()],
+                ChildDecoder::structural().node(pair.right).idx(),
+            );
         left_alive && right_alive
     });
     Ok(())
@@ -416,83 +512,114 @@ pub(crate) fn expand_full(
             right_one: vtree.node(right).is_leaf(),
         };
         // A child the completion added a node to has it last.
-        let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
+        let fill = [
+            filled[left.idx()].then(|| lefts.end - 1),
+            filled[right.idx()].then(|| rights.end - 1),
+        ];
         let level = target.read(t.idx());
-
-        // On a canonical diagram every stored node is reachable and
-        // deterministic, so the pairs of a level cover disjoint cells, and
-        // their count says whether they cover every cell, the level being
-        // full already, or every cell of the children's old nodes, the
-        // missing cells then being the lines of the children's added nodes,
-        // read off without a cover. An operand with unreachable nodes may
-        // hold two that cover one cell, which only the cover sees.
         let form = level_form(level, leaf);
         let pairs = level_pairs(level, closed);
-        if canonical {
-            let covered = pairs << (u32::from(form.left_one) + u32::from(form.right_one));
-            #[cfg(debug_assertions)]
-            {
-                let (by_pairs, form_by_pairs) = covered_cells_by_pairs(level, leaf);
-                debug_assert_eq!(covered, by_pairs, "negate: the covered cells are not the pairs' areas");
-                debug_assert!(
-                    (form.left_one, form.right_one) == (form_by_pairs.left_one, form_by_pairs.right_one),
-                    "negate: the level's first pair does not name its leaves in the level's form",
-                );
-            }
-            // Both routes charge the work clock what the cover below does:
-            // a unit a pair, and a scan of the basis where a cell is
-            // missing.
-            if covered == (lefts.len() * rights.len()) as u64 {
-                #[cfg(debug_assertions)]
-                debug_assert!(missing_by_cover(eng, marked, level, lefts, rights, form)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
-                charge_pairs(eng, pairs)?;
-                target.write(eng, t.idx(), None)?.leave_live_pairs(pairs as usize);
-                eng.limits().check_stop()?;
-                continue;
-            }
-            if covered == old_cells(lefts, rights, fill) {
-                charge_pairs(eng, pairs)?;
-                charge_scan(eng, lefts, rights)?;
-                if fill != [None, None] {
-                    cells.clear();
-                    fill_lines_into(eng, lefts, rights, fill, form, cells)?;
-                    #[cfg(debug_assertions)]
-                    debug_assert_eq!(*cells, missing_by_cover(eng, marked, level, lefts, rights, form)?, "negate: the lines of the added nodes are not the cells no pair covers");
-                    let level = target.write(eng, t.idx(), Some(cells.len()))?;
-                    level.push_node(eng.limits(), cells)?;
-                    level.leave_live_pairs(pairs as usize + cells.len());
-                    filled[t.idx()] = true;
-                } else {
-                    target.write(eng, t.idx(), None)?.leave_live_pairs(pairs as usize);
-                }
-                eng.limits().check_stop()?;
-                continue;
-            }
+        if canonical
+            && try_expand_canonical_by_count(
+                eng,
+                target,
+                t,
+                (lefts, rights),
+                (leaf, form, pairs, fill),
+                (marked, cells, filled),
+            )?
+        {
+            continue;
         }
-
         // Mark the cells the pairs cover and read the fill off the rest, in
         // the level's form.
         expand_level_by_cover(
-            eng, target, t, (lefts, rights), form, pairs, canonical, marked, cells, filled,
+            eng,
+            target,
+            t,
+            (lefts, rights),
+            (form, pairs, canonical),
+            (marked, cells, filled),
         )?;
     }
     Ok(())
 }
 
+/// On a canonical diagram, try to complete `t` from its pair count alone
+/// (either already full or missing only the lines of the children's added
+/// nodes), returning `Ok(true)` when handled.
+fn try_expand_canonical_by_count(
+    eng: &Engine,
+    target: &mut Target<'_, '_>,
+    t: crate::vtree::VtreeIdx,
+    (lefts, rights): (ChildBasis, ChildBasis),
+    (leaf, form, pairs, fill): (LeafForm, LeafForm, u64, [Option<u32>; 2]),
+    (marked, cells, filled): (&mut Vec<u8>, &mut Vec<ChildPair>, &mut [bool]),
+) -> Result<bool, OperationError> {
+    let level = target.read(t.idx());
+    let covered = pairs << (u32::from(form.left_one) + u32::from(form.right_one));
+    #[cfg(debug_assertions)]
+    {
+        let (by_pairs, form_by_pairs) = covered_cells_by_pairs(level, leaf);
+        debug_assert_eq!(
+            covered, by_pairs,
+            "negate: the covered cells are not the pairs' areas"
+        );
+        debug_assert!(
+            (form.left_one, form.right_one) == (form_by_pairs.left_one, form_by_pairs.right_one),
+            "negate: the level's first pair does not name its leaves in the level's form",
+        );
+    }
+    let _ = (leaf, &*marked);
+    if covered == (lefts.len() * rights.len()) as u64 {
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            missing_by_cover(eng, marked, level, lefts, rights, form)?.is_empty(),
+            "negate: a level whose pairs fill its basis misses a cell"
+        );
+        charge_pairs(eng, pairs)?;
+        target
+            .write(eng, t.idx(), None)?
+            .leave_live_pairs(pairs as usize);
+        eng.limits().check_stop()?;
+        return Ok(true);
+    }
+    if covered == old_cells(lefts, rights, fill) {
+        charge_pairs(eng, pairs)?;
+        charge_scan(eng, lefts, rights)?;
+        if fill != [None, None] {
+            cells.clear();
+            fill_lines_into(eng, lefts, rights, fill, form, cells)?;
+            #[cfg(debug_assertions)]
+            debug_assert_eq!(
+                *cells,
+                missing_by_cover(eng, marked, level, lefts, rights, form)?,
+                "negate: the lines of the added nodes are not the cells no pair covers"
+            );
+            let level = target.write(eng, t.idx(), Some(cells.len()))?;
+            level.push_node(eng.limits(), cells)?;
+            level.leave_live_pairs(pairs as usize + cells.len());
+            filled[t.idx()] = true;
+        } else {
+            target
+                .write(eng, t.idx(), None)?
+                .leave_live_pairs(pairs as usize);
+        }
+        eng.limits().check_stop()?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Mark the cells `target.read(t)` covers and append a fill node for any
 /// uncovered cells.
-#[allow(clippy::too_many_arguments)]
 fn expand_level_by_cover(
     eng: &Engine,
     target: &mut Target<'_, '_>,
     t: crate::vtree::VtreeIdx,
     (lefts, rights): (ChildBasis, ChildBasis),
-    form: LeafForm,
-    pairs: u64,
-    canonical: bool,
-    marked: &mut Vec<u8>,
-    cells: &mut Vec<ChildPair>,
-    filled: &mut [bool],
+    (form, pairs, canonical): (LeafForm, u64, bool),
+    (marked, cells, filled): (&mut Vec<u8>, &mut Vec<ChildPair>, &mut [bool]),
 ) -> Result<(), OperationError> {
     let mut cover = Cover::reset(eng, marked, lefts, rights, form)?;
     // On a canonical diagram the fill holds the cells the pairs leave,
@@ -508,13 +635,23 @@ fn expand_level_by_cover(
     cover.mark_level(eng, level, pairs)?;
     cells.clear();
     cover.missing_into(eng, cells)?;
-    debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
-    debug_assert!(!canonical || cells.len() + pairs as usize == cover.len, "negate: the fill is not the cells the pairs leave");
+    debug_assert!(
+        !canonical || !cells.is_empty(),
+        "negate: a level short of its cells has none missing"
+    );
+    debug_assert!(
+        !canonical || cells.len() + pairs as usize == cover.len,
+        "negate: the fill is not the cells the pairs leave"
+    );
     if !cells.is_empty() {
         charge_scan(eng, lefts, rights)?;
         // Written with its room before the cover where the diagram is
         // canonical.
-        let level = if canonical { &mut target.levels[t.idx()] } else { target.write(eng, t.idx(), Some(cells.len()))? };
+        let level = if canonical {
+            &mut target.levels[t.idx()]
+        } else {
+            target.write(eng, t.idx(), Some(cells.len()))?
+        };
         level.push_node(eng.limits(), cells)?;
         filled[t.idx()] = true;
     } else if !canonical {
@@ -559,7 +696,11 @@ fn level_form(level: &TddLevel, leaf: LeafForm) -> LeafForm {
 /// cells they cover are the pairs doubled for each such side, without
 /// reading the pairs.
 fn level_pairs(level: &TddLevel, closed: bool) -> u64 {
-    (if closed { level.live_pairs_closed() } else { level.live_pairs() }) as u64
+    (if closed {
+        level.live_pairs_closed()
+    } else {
+        level.live_pairs()
+    }) as u64
 }
 
 /// Charge the work clock `pairs` units, a unit a pair, as a cover's walk
@@ -582,7 +723,9 @@ fn charge_scan(eng: &Engine, lefts: ChildBasis, rights: ChildBasis) -> Result<()
 #[cfg(debug_assertions)]
 fn covered_cells_by_pairs(level: &TddLevel, leaf: LeafForm) -> (u64, LeafForm) {
     let mut form = LeafForm::LITERAL;
-    let covered = (0..level.node_count()).map(|i| areas(level.pairs_iter_of_idx(i), leaf, &mut form)).sum();
+    let covered = (0..level.node_count())
+        .map(|i| areas(level.pairs_iter_of_idx(i), leaf, &mut form))
+        .sum();
     (covered, form)
 }
 
@@ -650,7 +793,10 @@ fn fill_lines_into(
         }
         let l = if couple_l { ONE_LEAF_IDX.0 } else { l };
         let r = if couple_r { ONE_LEAF_IDX.0 } else { r };
-        lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))
+        lim.try_push(
+            out,
+            ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
+        )
     };
     for l in lefts.start..lefts.end {
         if Some(l) == fill[0] {
@@ -723,9 +869,15 @@ impl ChildBasis {
         child: crate::vtree::VtreeIdx,
     ) -> ChildBasis {
         if vtree.node(child).is_leaf() {
-            ChildBasis { start: POS_LEAF_IDX.0, end: NEG_LEAF_IDX.0 + 1 }
+            ChildBasis {
+                start: POS_LEAF_IDX.0,
+                end: NEG_LEAF_IDX.0 + 1,
+            }
         } else {
-            ChildBasis { start: 0, end: levels[child.idx()].slot_count() as u32 }
+            ChildBasis {
+                start: 0,
+                end: levels[child.idx()].slot_count() as u32,
+            }
         }
     }
 
@@ -762,7 +914,10 @@ struct LeafForm {
 impl LeafForm {
     /// Neither side is in `One` form: what a level with no leaf-side `One`
     /// reference uses, and what an empty level defaults to.
-    const LITERAL: LeafForm = LeafForm { left_one: false, right_one: false };
+    const LITERAL: LeafForm = LeafForm {
+        left_one: false,
+        right_one: false,
+    };
 }
 
 /// Where a cell of a [`Cover`]'s basis is: cell `(l, r)` is number `l *
@@ -783,7 +938,8 @@ impl Cells {
     fn of(self, pair: ChildPair) -> usize {
         let (l, r) = (pair.left.0, pair.right.0);
         debug_assert!(
-            (self.lefts.contains(l) && self.rights.contains(r)) || (l == self.lefts.end && r == self.rights.start),
+            (self.lefts.contains(l) && self.rights.contains(r))
+                || (l == self.lefts.end && r == self.rights.start),
             "negate: a pair names a cell outside its basis"
         );
         (l as usize * self.stride + r as usize).wrapping_sub(self.origin)
@@ -842,9 +998,18 @@ impl<'a> Cover<'a> {
         rights: ChildBasis,
         form: LeafForm,
     ) -> Result<Cover<'a>, OperationError> {
-        lefts.len().checked_mul(rights.len()).ok_or(OperationError::IndexOverflow)?;
-        let one = ChildBasis { start: ONE_LEAF_IDX.0, end: ONE_LEAF_IDX.0 + 1 };
-        let (lefts, rights) = (if form.left_one { one } else { lefts }, if form.right_one { one } else { rights });
+        lefts
+            .len()
+            .checked_mul(rights.len())
+            .ok_or(OperationError::IndexOverflow)?;
+        let one = ChildBasis {
+            start: ONE_LEAF_IDX.0,
+            end: ONE_LEAF_IDX.0 + 1,
+        };
+        let (lefts, rights) = (
+            if form.left_one { one } else { lefts },
+            if form.right_one { one } else { rights },
+        );
         let len = lefts.len() * rights.len();
         if len >= WORD_CELLS {
             marked.clear();
@@ -852,12 +1017,24 @@ impl<'a> Cover<'a> {
             // reads no pair of ([`mark_level`](Self::mark_level)).
             eng.limits().try_resize(marked, len + 1, 0u8)?;
         }
-        Ok(Cover { marked, word: 0, lefts, rights, stride: rights.len(), len })
+        Ok(Cover {
+            marked,
+            word: 0,
+            lefts,
+            rights,
+            stride: rights.len(),
+            len,
+        })
     }
 
     /// Mark the cells of every pair of `level`'s nodes, `pairs` of them
     /// ([`each_pair`]), and charge the work clock a unit a pair.
-    fn mark_level(&mut self, eng: &Engine, level: &TddLevel, pairs: u64) -> Result<(), OperationError> {
+    fn mark_level(
+        &mut self,
+        eng: &Engine,
+        level: &TddLevel,
+        pairs: u64,
+    ) -> Result<(), OperationError> {
         let cells = self.cells();
         if self.len < WORD_CELLS {
             let mut word = 0u64;
@@ -885,16 +1062,27 @@ impl<'a> Cover<'a> {
     #[inline(always)]
     fn cells(&self) -> Cells {
         let origin = self.lefts.start as usize * self.stride + self.rights.start as usize;
-        Cells { lefts: self.lefts, rights: self.rights, stride: self.stride, origin }
+        Cells {
+            lefts: self.lefts,
+            rights: self.rights,
+            stride: self.stride,
+            origin,
+        }
     }
 
     /// The cover's bytes and basis for a walk to mark, held apart from it
     /// so that the walk keeps them in registers.
     #[inline(always)]
     fn marks(&mut self) -> Marks<'_> {
-        debug_assert!(self.marked.len() > self.len, "the cover has the cell past its basis");
+        debug_assert!(
+            self.marked.len() > self.len,
+            "the cover has the cell past its basis"
+        );
         let cells = self.cells();
-        Marks { marked: &mut self.marked[..], cells }
+        Marks {
+            marked: &mut self.marked[..],
+            cells,
+        }
     }
 
     /// Append the unmarked cells to `out`, in ascending `(l, r)` order, a
@@ -910,7 +1098,10 @@ impl<'a> Cover<'a> {
         let mut push = |cell: usize| {
             let l = self.lefts.start + (cell / self.stride) as u32;
             let r = self.rights.start + (cell % self.stride) as u32;
-            lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))
+            lim.try_push(
+                out,
+                ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
+            )
         };
         if self.len < WORD_CELLS {
             let mut missing = !self.word & ((1 << self.len) - 1);
@@ -980,7 +1171,10 @@ const WORD_CELLS: usize = 64;
 #[inline(always)]
 fn each_pair(level: &TddLevel, cells: Cells, mut mark: impl FnMut(ChildPair)) {
     if let Some(stored) = level.stored() {
-        let past = ChildPair::new(EncodedChildRef::from_raw(cells.lefts.end), EncodedChildRef::from_raw(cells.rights.start));
+        let past = ChildPair::new(
+            EncodedChildRef::from_raw(cells.lefts.end),
+            EncodedChildRef::from_raw(cells.rights.start),
+        );
         if level.dead_pairs != 0 {
             for node in stored.nodes() {
                 match node.kind() {
@@ -989,14 +1183,21 @@ fn each_pair(level: &TddLevel, cells: Cells, mut mark: impl FnMut(ChildPair)) {
                 }
             }
         } else if !stored.for_each_pair_whole(past, &mut mark) {
-            for node in stored.nodes().iter().filter(|node| node.kind().pairs_in_arena()) {
+            for node in stored
+                .nodes()
+                .iter()
+                .filter(|node| node.kind().pairs_in_arena())
+            {
                 stored.of(node).iter().for_each(|&pair| mark(pair));
             }
         }
     } else {
         let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..level.node_count() {
-            level.described_read_next(&mut cursor, i, &mut buf).iter().for_each(|&pair| mark(pair));
+            level
+                .described_read_next(&mut cursor, i, &mut buf)
+                .iter()
+                .for_each(|&pair| mark(pair));
         }
     }
 }

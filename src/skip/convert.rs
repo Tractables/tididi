@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use super::conjoin::Numbered;
-use super::{filled, ix, mk, normalize, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
+use super::{NEG, NONE, ONE, POS, Ref, Shape, SkipForm, ZREF, filled, ix, mk, normalize, vt};
 use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ZERO};
-use crate::vtree::{Vtree, VtreeIdx};
 use crate::limits::Limits;
+use crate::vtree::{Vtree, VtreeIdx};
 use crate::{Engine, OperationError};
 
 /// The skip form of `f`. Any valid diagram converts; a canonical one
@@ -18,7 +18,11 @@ use crate::{Engine, OperationError};
 /// [`OperationError::IncompatibleWeights`] where `f` carries weights,
 /// [`OperationError::MarginalLevel`] where a level is summed out, and
 /// [`OperationError::OverBudget`] where the skip form does not fit.
-pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipForm, OperationError> {
+pub(crate) fn from_tdd(
+    f: &Tdd,
+    shape: Arc<Shape>,
+    lim: &Limits,
+) -> Result<SkipForm, OperationError> {
     if f.weights.is_some() {
         return Err(OperationError::IncompatibleWeights);
     }
@@ -36,37 +40,11 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
     // A canonical diagram holds only nodes its output reaches, and its skip
     // form only nodes their referrers name.
     let canonical = levels.is_canonical(f.output);
-    // The nodes the output reaches, top-down, when `f` is not certified canonical.
-    let mut reach: Vec<Vec<bool>> = Vec::new();
-    if !canonical {
-        reach.reserve_exact(n);
-        for i in 0..n {
-            reach.push(if sh.is_leaf(i as u32) {
-                Vec::new()
-            } else {
-                filled(lim, levels[i].slot_count(), false)?
-            });
-        }
-        if !sh.is_leaf(root) {
-            reach[root as usize][f.output().local.idx()] = true;
-        }
-        for &t in &sh.topdown {
-            let (l, r) = sh.kids[t as usize];
-            for i in 0..reach[t as usize].len() {
-                if !reach[t as usize][i] {
-                    continue;
-                }
-                for pair in levels[t as usize].pairs_iter_of_idx(i) {
-                    if !sh.is_leaf(l) {
-                        reach[l as usize][pair.left.raw() as usize] = true;
-                    }
-                    if !sh.is_leaf(r) {
-                        reach[r as usize][pair.right.raw() as usize] = true;
-                    }
-                }
-            }
-        }
-    }
+    let reach = if canonical {
+        Vec::new()
+    } else {
+        compute_untrimmed_reach(f, sh, lim)?
+    };
     // Resolve bottom-up.
     let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
     let mut buf = Vec::new();
@@ -80,8 +58,17 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
             }
             buf.clear();
             for pair in levels[t as usize].pairs_iter_of_idx(i) {
-                let side = |c: u32, raw: u32| if sh.is_leaf(c) { mk(c, raw) } else { res[c as usize][raw as usize] };
-                lim.try_push(&mut buf, (side(l, pair.left.raw()), side(r, pair.right.raw())))?;
+                let side = |c: u32, raw: u32| {
+                    if sh.is_leaf(c) {
+                        mk(c, raw)
+                    } else {
+                        res[c as usize][raw as usize]
+                    }
+                };
+                lim.try_push(
+                    &mut buf,
+                    (side(l, pair.left.raw()), side(r, pair.right.raw())),
+                )?;
             }
             out[i] = match normalize(sh, t, &mut buf) {
                 Err(target) => target,
@@ -91,7 +78,11 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
         res[t as usize] = out;
     }
     let o = f.output().local.0;
-    form.out = if sh.is_leaf(root) { mk(root, o) } else { res[root as usize][o as usize] };
+    form.out = if sh.is_leaf(root) {
+        mk(root, o)
+    } else {
+        res[root as usize][o as usize]
+    };
     for v in reach {
         lim.discard(v);
     }
@@ -100,21 +91,67 @@ pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipF
     }
     lim.discard(buf);
     if canonical {
-        form.active = sh.topdown.iter().copied().filter(|&t| form.levels[t as usize].width() > 0).collect();
+        form.active = sh
+            .topdown
+            .iter()
+            .copied()
+            .filter(|&t| form.levels[t as usize].width() > 0)
+            .collect();
     } else {
         form.collect(lim)?;
     }
     Ok(form)
 }
 
+/// Mark the nodes reachable from `f.output()` top-down when `f` is not
+/// certified canonical.
+fn compute_untrimmed_reach(
+    f: &Tdd,
+    sh: &Shape,
+    lim: &Limits,
+) -> Result<Vec<Vec<bool>>, OperationError> {
+    let n = sh.num_nodes();
+    let root = sh.root;
+    let levels = &f.levels;
+    let mut reach: Vec<Vec<bool>> = Vec::with_capacity(n);
+    for i in 0..n {
+        reach.push(if sh.is_leaf(i as u32) {
+            Vec::new()
+        } else {
+            filled(lim, levels[i].slot_count(), false)?
+        });
+    }
+    if !sh.is_leaf(root) {
+        reach[root as usize][f.output().local.idx()] = true;
+    }
+    for &t in &sh.topdown {
+        let (l, r) = sh.kids[t as usize];
+        for i in 0..reach[t as usize].len() {
+            if !reach[t as usize][i] {
+                continue;
+            }
+            for pair in levels[t as usize].pairs_iter_of_idx(i) {
+                if !sh.is_leaf(l) {
+                    reach[l as usize][pair.left.raw() as usize] = true;
+                }
+                if !sh.is_leaf(r) {
+                    reach[r as usize][pair.right.raw() as usize] = true;
+                }
+            }
+        }
+    }
+    Ok(reach)
+}
+
+type PassthroughPlan = (Vec<Ref>, Vec<u32>, Vec<u32>);
+
 /// Collect all numbered references in `s` together with the flat `(start, pts)`
 /// lists of pass-through reference numbers needed at each level.
-#[allow(clippy::type_complexity)]
 fn collect_passthroughs(
     s: &SkipForm,
     nb: &Numbered,
     lim: &Limits,
-) -> Result<(Vec<Ref>, Vec<u32>, Vec<u32>), OperationError> {
+) -> Result<PassthroughPlan, OperationError> {
     let sh = &*s.shape;
     let n = sh.num_nodes();
     let mut refs = filled(lim, nb.len(), ZREF)?;
@@ -165,14 +202,21 @@ fn collect_passthroughs(
 /// from): every level a skip crosses holds the node `true` on the skipped
 /// variable makes, one per (level, target). The stored form of a canonical
 /// skip form is canonical, but it is not certified as such here.
-pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+pub(crate) fn to_tdd(
+    s: &SkipForm,
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+) -> Result<Tdd, OperationError> {
     let sh = &*s.shape;
     if s.out == ZREF {
         return Ok(Tdd::zero(vtree));
     }
     if sh.is_leaf(sh.root) {
         return Tdd::builder(eng, vtree)?
-            .finish(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(ix(s.out)) })
+            .finish(TddNodeId {
+                vtree: VtreeIdx(sh.root),
+                local: NodeIdx(ix(s.out)),
+            })
             .map_err(|_| OperationError::IndexOverflow);
     }
     let lim = eng.limits();
@@ -182,64 +226,139 @@ pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<T
     // chain written: the levels are written children first, and a
     // reference's next level up its chain is the parent of the last.
     let mut cur = filled(lim, nb.len(), 0u32)?;
-    let width = |c: u32| if sh.is_leaf(c) { 0 } else { s.levels[c as usize].width() as u32 };
+    let width = |c: u32| {
+        if sh.is_leaf(c) {
+            0
+        } else {
+            s.levels[c as usize].width() as u32
+        }
+    };
     let mut b = Tdd::builder(eng, vtree)?;
     let mut node: Vec<ChildPair> = Vec::new();
     for &t in &sh.bottomup {
-        let (l, r) = sh.kids[t as usize];
-        let lvl = &s.levels[t as usize];
         let here = &pts[start[t as usize] as usize..start[t as usize + 1] as usize];
-        // A leaf child is named by literals in every pair of the level, or
-        // by One in every pair; pass-through nodes name One there.
-        let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
-        let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
-        let raw = |cur: &[u32], c: u32, x: Ref| -> u32 {
-            if sh.is_leaf(c) || vt(x) == c { ix(x) } else { width(c) + cur[nb.id(x)] }
-        };
-        let expand = |node: &mut Vec<ChildPair>, left: u32, a_one: bool, right: u32, c_one: bool| {
-            let lefts: &[u32] = if lit_l && a_one { &[POS, NEG] } else { std::slice::from_ref(&left) };
-            for &la in lefts {
-                if lit_r && c_one {
-                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(POS)));
-                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(NEG)));
-                } else {
-                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(right)));
-                }
-            }
-        };
-        let grow = |one_l: bool, one_r: bool| (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 });
-        let mut npairs: usize = lvl.pairs.iter().map(|p| grow(ix(p.0) == ONE && sh.is_leaf(l), ix(p.1) == ONE && sh.is_leaf(r))).sum();
-        npairs += here.len() * grow(sh.is_leaf(l), sh.is_leaf(r));
-        b.reserve(eng, VtreeIdx(t), lvl.width() + here.len(), npairs)?;
-        for i in 0..lvl.width() {
-            node.clear();
-            for &(a, c) in lvl.node(i as u32) {
-                let a_one = sh.is_leaf(l) && ix(a) == ONE;
-                let c_one = sh.is_leaf(r) && ix(c) == ONE;
-                expand(&mut node, raw(&cur, l, a), a_one, raw(&cur, r, c), c_one);
-            }
-            b.push(eng, VtreeIdx(t), &node)?;
-        }
-        for (k, &id) in here.iter().enumerate() {
-            let x = refs[id as usize];
-            node.clear();
-            if sh.within(vt(x), l) {
-                expand(&mut node, raw(&cur, l, x), false, ONE, sh.is_leaf(r));
-            } else {
-                expand(&mut node, ONE, sh.is_leaf(l), raw(&cur, r, x), false);
-            }
-            b.push(eng, VtreeIdx(t), &node)?;
-            cur[id as usize] = k as u32;
-        }
+        emit_skip_tdd_level(s, eng, &nb, (t, here, &refs), (&mut cur, &mut node), &mut b)?;
     }
-    let o = if vt(s.out) == sh.root { ix(s.out) } else { width(sh.root) + cur[nb.id(s.out)] };
+    let o = if vt(s.out) == sh.root {
+        ix(s.out)
+    } else {
+        width(sh.root) + cur[nb.id(s.out)]
+    };
     // Safety: every pair side names a node written at its child level
     // (pass-through nodes before their parents), or a leaf label.
-    let tdd = unsafe { b.finish_unchecked(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(o) }) };
+    let tdd = unsafe {
+        b.finish_unchecked(TddNodeId {
+            vtree: VtreeIdx(sh.root),
+            local: NodeIdx(o),
+        })
+    };
     debug_assert!(o != ZERO.0);
     lim.discard(refs);
     lim.discard(pts);
     lim.discard(cur);
     nb.discard(lim);
     Ok(tdd)
+}
+
+fn emit_skip_tdd_level(
+    s: &SkipForm,
+    eng: &Engine,
+    nb: &Numbered,
+    (t, here, refs): (u32, &[u32], &[Ref]),
+    (cur, node): (&mut [u32], &mut Vec<ChildPair>),
+    b: &mut crate::diagram::TddBuilder,
+) -> Result<(), OperationError> {
+    let sh = &*s.shape;
+    let (l, r) = sh.kids[t as usize];
+    let lvl = &s.levels[t as usize];
+    let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
+    let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
+    let raw = |cur: &[u32], c: u32, x: Ref| -> u32 {
+        if sh.is_leaf(c) || vt(x) == c {
+            ix(x)
+        } else {
+            s.levels[c as usize].width() as u32 + cur[nb.id(x)]
+        }
+    };
+    let grow = |one_l: bool, one_r: bool| {
+        (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 })
+    };
+    let mut npairs: usize = lvl
+        .pairs
+        .iter()
+        .map(|p| {
+            grow(
+                ix(p.0) == ONE && sh.is_leaf(l),
+                ix(p.1) == ONE && sh.is_leaf(r),
+            )
+        })
+        .sum();
+    npairs += here.len() * grow(sh.is_leaf(l), sh.is_leaf(r));
+    b.reserve(eng, VtreeIdx(t), lvl.width() + here.len(), npairs)?;
+    for i in 0..lvl.width() {
+        node.clear();
+        for &(a, c) in lvl.node(i as u32) {
+            let a_one = sh.is_leaf(l) && ix(a) == ONE;
+            let c_one = sh.is_leaf(r) && ix(c) == ONE;
+            expand_skip_pair(
+                node,
+                (lit_l, lit_r),
+                (raw(cur, l, a), a_one),
+                (raw(cur, r, c), c_one),
+            );
+        }
+        b.push(eng, VtreeIdx(t), node)?;
+    }
+    for (k, &id) in here.iter().enumerate() {
+        let x = refs[id as usize];
+        node.clear();
+        if sh.within(vt(x), l) {
+            expand_skip_pair(
+                node,
+                (lit_l, lit_r),
+                (raw(cur, l, x), false),
+                (ONE, sh.is_leaf(r)),
+            );
+        } else {
+            expand_skip_pair(
+                node,
+                (lit_l, lit_r),
+                (ONE, sh.is_leaf(l)),
+                (raw(cur, r, x), false),
+            );
+        }
+        b.push(eng, VtreeIdx(t), node)?;
+        cur[id as usize] = k as u32;
+    }
+    Ok(())
+}
+
+fn expand_skip_pair(
+    node: &mut Vec<ChildPair>,
+    (lit_l, lit_r): (bool, bool),
+    (left, a_one): (u32, bool),
+    (right, c_one): (u32, bool),
+) {
+    let lefts: &[u32] = if lit_l && a_one {
+        &[POS, NEG]
+    } else {
+        std::slice::from_ref(&left)
+    };
+    for &la in lefts {
+        if lit_r && c_one {
+            node.push(ChildPair::new(
+                EncodedChildRef::from_raw(la),
+                EncodedChildRef::from_raw(POS),
+            ));
+            node.push(ChildPair::new(
+                EncodedChildRef::from_raw(la),
+                EncodedChildRef::from_raw(NEG),
+            ));
+        } else {
+            node.push(ChildPair::new(
+                EncodedChildRef::from_raw(la),
+                EncodedChildRef::from_raw(right),
+            ));
+        }
+    }
 }

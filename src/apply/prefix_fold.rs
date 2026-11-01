@@ -1315,35 +1315,13 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     fn chain_level(&mut self, at: usize, j: usize) -> Result<(), OperationError> {
         let d = self.layout.chain[j];
         let last = j + 1 == self.layout.chain.len();
-        let (lim, ops) = (self.lim, self.ops);
+        let lim = self.lim;
         let mut halves: [[Vec<u32>; 2]; 2] = Default::default();
         let n = self.levels[at].states.len();
         lim.reserve(&mut self.levels[at].ranges, n)?;
         for s in 0..n {
             let state = self.levels[at].states[s];
-            // Per operand, the nodes below with `order[j]` false, then true.
-            for side in 0..2 {
-                let [zero, one] = &mut halves[side];
-                zero.clear();
-                one.clear();
-                let level = ops[side].level(d);
-                for &node in self.levels[at].sets[side].get(state[side]) {
-                    for pair in level.pairs_iter_of_idx(node as usize) {
-                        self.gate.poll(1)?;
-                        let (lit, next) = (pair.left.raw(), pair.right.raw());
-                        if lit != POS_LEAF_IDX.0 {
-                            lim.try_push(zero, next)?;
-                        }
-                        if lit != NEG_LEAF_IDX.0 {
-                            lim.try_push(one, next)?;
-                        }
-                    }
-                }
-                for half in [zero, one] {
-                    half.sort_unstable();
-                    half.dedup();
-                }
-            }
+            self.collect_chain_halves(at, d, state, &mut halves)?;
             let start = self.levels[at].moves.len();
             let descending = self.range.descending();
             for (bit, lit) in [(0, NEG_LEAF_IDX.0), (1, POS_LEAF_IDX.0)] {
@@ -1361,37 +1339,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     _ => state[2],
                 };
                 self.gate.poll(1)?;
-                let next = match last {
-                    true => {
-                        let fold = match self.range.strict() {
-                            true => passed,
-                            false => {
-                                let here = self.fold_of(j + 1, &halves[1][bit])?;
-                                self.plus(passed, here)?
-                            }
-                        };
-                        if fold == NONE {
-                            continue;
-                        }
-                        match self.reached_at.get(&fold) {
-                            Some(&i) => i,
-                            None => {
-                                let i = self.reached.len() as u32;
-                                lim.try_push(&mut self.reached, fold)?;
-                                lim.reserve_map(&mut self.reached_at, 1)?;
-                                self.reached_at.insert(fold, i);
-                                i
-                            }
-                        }
-                    }
-                    // No model left below and none passed: no fold.
-                    false if halves[1][bit].is_empty() && passed == NONE => continue,
-                    false => {
-                        let below = &mut self.levels[at + 1];
-                        let a = below.sets[0].intern(lim, &halves[0][bit])?;
-                        let b = below.sets[1].intern(lim, &halves[1][bit])?;
-                        below.add(lim, [a, b, passed])?
-                    }
+                let Some(next) = self.advance_chain_bit(at, j, last, bit, passed, &halves)? else {
+                    continue;
                 };
                 lim.try_push(&mut self.levels[at].moves, [lit, next])?;
             }
@@ -1400,6 +1349,83 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 .push([start as u32, (here.moves.len() - start) as u32]);
         }
         Ok(())
+    }
+
+    fn collect_chain_halves(
+        &mut self,
+        at: usize,
+        d: VtreeIdx,
+        state: [u32; 3],
+        halves: &mut [[Vec<u32>; 2]; 2],
+    ) -> Result<(), OperationError> {
+        let (lim, ops) = (self.lim, self.ops);
+        for side in 0..2 {
+            let [zero, one] = &mut halves[side];
+            zero.clear();
+            one.clear();
+            let level = ops[side].level(d);
+            for &node in self.levels[at].sets[side].get(state[side]) {
+                for pair in level.pairs_iter_of_idx(node as usize) {
+                    self.gate.poll(1)?;
+                    let (lit, next) = (pair.left.raw(), pair.right.raw());
+                    if lit != POS_LEAF_IDX.0 {
+                        lim.try_push(zero, next)?;
+                    }
+                    if lit != NEG_LEAF_IDX.0 {
+                        lim.try_push(one, next)?;
+                    }
+                }
+            }
+            for half in [zero, one] {
+                half.sort_unstable();
+                half.dedup();
+            }
+        }
+        Ok(())
+    }
+
+    fn advance_chain_bit(
+        &mut self,
+        at: usize,
+        j: usize,
+        last: bool,
+        bit: usize,
+        passed: u32,
+        halves: &[[Vec<u32>; 2]; 2],
+    ) -> Result<Option<u32>, OperationError> {
+        let lim = self.lim;
+        match last {
+            true => {
+                let fold = match self.range.strict() {
+                    true => passed,
+                    false => {
+                        let here = self.fold_of(j + 1, &halves[1][bit])?;
+                        self.plus(passed, here)?
+                    }
+                };
+                if fold == NONE {
+                    return Ok(None);
+                }
+                let next = match self.reached_at.get(&fold) {
+                    Some(&i) => i,
+                    None => {
+                        let i = self.reached.len() as u32;
+                        lim.try_push(&mut self.reached, fold)?;
+                        lim.reserve_map(&mut self.reached_at, 1)?;
+                        self.reached_at.insert(fold, i);
+                        i
+                    }
+                };
+                Ok(Some(next))
+            }
+            false if halves[1][bit].is_empty() && passed == NONE => Ok(None),
+            false => {
+                let below = &mut self.levels[at + 1];
+                let a = below.sets[0].intern(lim, &halves[0][bit])?;
+                let b = below.sets[1].intern(lim, &halves[1][bit])?;
+                Ok(Some(below.add(lim, [a, b, passed])?))
+            }
+        }
     }
 
     /// The result on `into`: a cube per code, the products on the keys'

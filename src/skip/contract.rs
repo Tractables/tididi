@@ -415,28 +415,15 @@ pub(crate) fn contract_in(
                 lim,
             )?;
         }
-        // Merged skips sent down here: each group is a class of its own,
-        // since only the levels above name its members.
-        if let Some(groups) = work.pending.remove(&c) {
-            for (from, group) in groups {
-                let g = cl.push_group(&s, &group, l, r, lim)?;
-                let origin = &mut lvs[from as usize].chainmap;
-                lim.reserve_map(origin, group.len())?;
-                for &e in &group {
-                    origin.insert(e, (here, g));
-                }
-                lim.discard(group);
-            }
-        }
+        record_pending_skip_groups(&s, &mut work, &mut lvs, &mut cl, (c, l, r, here), lim)?;
         lim.charge_work(s.levels[c as usize].pairs.len() as u64);
-        if width > 0 || cl.groups() > 0 {
-            let descend = scope.is_none_or(|cone| cone[c as usize] || cl.groups() > 0);
-            if descend {
-                for ch in [l, r] {
-                    if !sh.is_leaf(ch) && !queued[ch as usize] {
-                        queued[ch as usize] = true;
-                        heap.push(Reverse((sh.pre[ch as usize], ch)));
-                    }
+        if (width > 0 || cl.groups() > 0)
+            && scope.is_none_or(|cone| cone[c as usize] || cl.groups() > 0)
+        {
+            for ch in [l, r] {
+                if !sh.is_leaf(ch) && !queued[ch as usize] {
+                    queued[ch as usize] = true;
+                    heap.push(Reverse((sh.pre[ch as usize], ch)));
                 }
             }
         }
@@ -453,6 +440,29 @@ pub(crate) fn contract_in(
         return Ok(s);
     }
     patch_merged(s, lvs, &at, lim)
+}
+
+/// Drain merged skip groups sent down to `c` and record their chainmap entries.
+fn record_pending_skip_groups(
+    s: &SkipForm,
+    work: &mut ContractWork,
+    lvs: &mut [CLv],
+    cl: &mut CLv,
+    (c, l, r, here): (u32, u32, u32, u32),
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    if let Some(groups) = work.pending.remove(&c) {
+        for (from, group) in groups {
+            let g = cl.push_group(s, &group, l, r, lim)?;
+            let origin = &mut lvs[from as usize].chainmap;
+            lim.reserve_map(origin, group.len())?;
+            for &e in &group {
+                origin.insert(e, (here, g));
+            }
+            lim.discard(group);
+        }
+    }
+    Ok(())
 }
 
 /// Mark entities in `ent` whose `(hash, count)` collides with another entity.

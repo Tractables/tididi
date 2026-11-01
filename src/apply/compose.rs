@@ -16,7 +16,10 @@ pub(super) struct SharedCircuit {
 impl SharedCircuit {
     pub(super) fn new(value: Tdd, uses: usize) -> Self {
         debug_assert!(uses > 0);
-        Self { value: Some(value), remaining: uses }
+        Self {
+            value: Some(value),
+            remaining: uses,
+        }
     }
 
     pub(super) fn take(&mut self, eng: &Engine) -> Result<Tdd, OperationError> {
@@ -24,7 +27,10 @@ impl SharedCircuit {
         let result = if self.remaining == 1 {
             self.value.take().expect("live composition operand")
         } else {
-            self.value.as_ref().expect("live composition operand").try_clone_on(eng)?
+            self.value
+                .as_ref()
+                .expect("live composition operand")
+                .try_clone_on(eng)?
         };
         self.remaining -= 1;
         Ok(result)
@@ -300,15 +306,24 @@ impl Engine {
         // by an empty one, and which of the two stores the product then carries
         // is a question the rewrites below do not answer.
         if how.pushes_through() && f.weights.is_some() {
-            return Err(OperationError::InertOption { option: how.name(), needs: "unweighted operands" });
+            return Err(OperationError::InertOption {
+                option: how.name(),
+                needs: "unweighted operands",
+            });
         }
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
         let (product, collapsed) = if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;
             if how.collapses_subtrees() {
                 let vtree = std::sync::Arc::clone(f.vtree());
-                let whole = Transient::new(self.limits(), quantified_subtrees(self, &vtree, &targets)?);
-                super::conjoin::conjoin_on(self, f, g, super::conjoin::VtreeMask::new(Some(&whole[..])))?
+                let whole =
+                    Transient::new(self.limits(), quantified_subtrees(self, &vtree, &targets)?);
+                super::conjoin::conjoin_on(
+                    self,
+                    f,
+                    g,
+                    super::conjoin::VtreeMask::new(Some(&whole[..])),
+                )?
             } else {
                 (self.and(f, g)?, false)
             }
@@ -337,7 +352,8 @@ fn quantified_subtrees(
     targets: &[VtreeIdx],
 ) -> Result<Vec<bool>, OperationError> {
     let mut whole = Vec::new();
-    eng.limits().try_resize(&mut whole, vtree.num_nodes(), false)?;
+    eng.limits()
+        .try_resize(&mut whole, vtree.num_nodes(), false)?;
     for &leaf in targets {
         whole[leaf.idx()] = true;
     }
@@ -411,24 +427,13 @@ pub(super) fn push_local_targets(
         let mut free_in_g = eng.scratch.apply.g_identity.checkout(eng);
         super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f)?;
         super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g)?;
-        // Bottom-up: whether every leaf below a node is a target, and a
-        // covered one; an operand's flag at a covered node, its constancy over
-        // all of it (a flag off a covered node is never read).
-        let mut whole = Transient::new(lim, Vec::new());
-        lim.try_resize(&mut whole, num_nodes, false)?;
-        let mut covered = Transient::new(lim, Vec::new());
-        lim.try_resize(&mut covered, num_nodes, false)?;
-        for &leaf in targets {
-            whole[leaf.idx()] = true;
-            covered[leaf.idx()] = free_in_f[leaf.idx()] || free_in_g[leaf.idx()];
-        }
-        for (t, left, right) in vtree.internal_bottomup() {
-            let (l, r) = (left.idx(), right.idx());
-            whole[t.idx()] = whole[l] && whole[r];
-            covered[t.idx()] = covered[l] && covered[r];
-            free_in_f[t.idx()] = free_in_f[l] && free_in_f[r];
-            free_in_g[t.idx()] = free_in_g[l] && free_in_g[r];
-        }
+        let [whole, covered] = compute_covered_subtrees(
+            lim,
+            &vtree,
+            targets,
+            (&mut free_in_f, &mut free_in_g),
+            num_nodes,
+        )?;
         // Each maximal covered subtree, and the operands it is pushed into:
         // bit 0 for `f`, bit 1 for `g`.
         let mut push = Transient::new(lim, Vec::new());
@@ -447,7 +452,8 @@ pub(super) fn push_local_targets(
                 }
                 let pays = alone || {
                     if costs[side].is_none() {
-                        costs[side] = Some(Transient::new(lim, LevelPairs::of(eng, operand, &vtree)?));
+                        costs[side] =
+                            Some(Transient::new(lim, LevelPairs::of(eng, operand, &vtree)?));
                     }
                     let pairs = costs[side].as_ref().expect("computed above");
                     pairs.inside[t.idx()] > pairs.above[t.idx()]
@@ -457,21 +463,14 @@ pub(super) fn push_local_targets(
                 }
             }
         }
-        // Top-down: a covered subtree's leaves go where it goes.
-        for (t, left, right) in vtree.internal_bottomup().rev() {
-            if covered[t.idx()] {
-                push[left.idx()] |= push[t.idx()];
-                push[right.idx()] |= push[t.idx()];
-            }
-        }
-        for &leaf in targets {
-            if push[leaf.idx()] & 1 != 0 {
-                lim.try_push(&mut into_f, leaf)?;
-            }
-            if push[leaf.idx()] & 2 != 0 {
-                lim.try_push(&mut into_g, leaf)?;
-            }
-        }
+        propagate_pushed_targets(
+            lim,
+            &vtree,
+            targets,
+            &covered,
+            &mut push,
+            (&mut into_f, &mut into_g),
+        )?;
     }
     if !into_f.is_empty() {
         f = super::project::exists_targets_on(eng, f, &into_f, false, ReductionPlan::default())?;
@@ -482,6 +481,60 @@ pub(super) fn push_local_targets(
     Ok((f, g))
 }
 
+fn compute_covered_subtrees<'a>(
+    lim: &'a crate::limits::Limits,
+    vtree: &crate::vtree::Vtree,
+    targets: &[VtreeIdx],
+    (free_in_f, free_in_g): (&mut [bool], &mut [bool]),
+    num_nodes: usize,
+) -> Result<[Transient<'a, Vec<bool>>; 2], OperationError> {
+    // Bottom-up: whether every leaf below a node is a target, and a
+    // covered one; an operand's flag at a covered node, its constancy over
+    // all of it (a flag off a covered node is never read).
+    let mut whole = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut whole, num_nodes, false)?;
+    let mut covered = Transient::new(lim, Vec::new());
+    lim.try_resize(&mut covered, num_nodes, false)?;
+    for &leaf in targets {
+        whole[leaf.idx()] = true;
+        covered[leaf.idx()] = free_in_f[leaf.idx()] || free_in_g[leaf.idx()];
+    }
+    for (t, left, right) in vtree.internal_bottomup() {
+        let (l, r) = (left.idx(), right.idx());
+        whole[t.idx()] = whole[l] && whole[r];
+        covered[t.idx()] = covered[l] && covered[r];
+        free_in_f[t.idx()] = free_in_f[l] && free_in_f[r];
+        free_in_g[t.idx()] = free_in_g[l] && free_in_g[r];
+    }
+    Ok([whole, covered])
+}
+
+fn propagate_pushed_targets(
+    lim: &crate::limits::Limits,
+    vtree: &crate::vtree::Vtree,
+    targets: &[VtreeIdx],
+    covered: &[bool],
+    push: &mut [u8],
+    (into_f, into_g): (&mut Vec<VtreeIdx>, &mut Vec<VtreeIdx>),
+) -> Result<(), OperationError> {
+    // Top-down: a covered subtree's leaves go where it goes.
+    for (t, left, right) in vtree.internal_bottomup().rev() {
+        if covered[t.idx()] {
+            push[left.idx()] |= push[t.idx()];
+            push[right.idx()] |= push[t.idx()];
+        }
+    }
+    for &leaf in targets {
+        if push[leaf.idx()] & 1 != 0 {
+            lim.try_push(into_f, leaf)?;
+        }
+        if push[leaf.idx()] & 2 != 0 {
+            lim.try_push(into_g, leaf)?;
+        }
+    }
+    Ok(())
+}
+
 /// How many times the other operand's pairs an operand of
 /// [`Quantification::Fused`] may hold and still be quantified before the
 /// product ([`push_local_targets`]).
@@ -489,7 +542,9 @@ const PUSH_RATIO: usize = 16;
 
 /// The pair count of each of `tdd`'s nodes, level by level.
 fn pair_stream(tdd: &Tdd) -> impl Iterator<Item = usize> + '_ {
-    tdd.levels.iter().flat_map(crate::diagram::TddLevel::pair_counts)
+    tdd.levels
+        .iter()
+        .flat_map(crate::diagram::TddLevel::pair_counts)
 }
 
 /// Which operand, `0` for `f` and `1` for `g`, holds more than
@@ -532,14 +587,18 @@ impl LevelPairs {
         let mut above = Transient::new(lim, Vec::new());
         lim.try_resize(&mut above, vtree.num_nodes(), 0u64)?;
         for (t, left, right) in vtree.internal_bottomup() {
-            inside[t.idx()] = tdd.levels[t.idx()].live_pairs() as u64 + inside[left.idx()] + inside[right.idx()];
+            inside[t.idx()] =
+                tdd.levels[t.idx()].live_pairs() as u64 + inside[left.idx()] + inside[right.idx()];
         }
         for (t, left, right) in vtree.internal_bottomup().rev() {
             let here = above[t.idx()] + tdd.levels[t.idx()].live_pairs() as u64;
             above[left.idx()] = here;
             above[right.idx()] = here;
         }
-        Ok(Self { inside: inside.keep(), above: above.keep() })
+        Ok(Self {
+            inside: inside.keep(),
+            above: above.keep(),
+        })
     }
 }
 

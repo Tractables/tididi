@@ -1162,24 +1162,7 @@ impl<'a> Walk<'a> {
             self.index_side(kids, sides)
         };
         let Some(s) = pick else {
-            'f: for (i, p) in fp.iter().enumerate() {
-                let (fl, fr) = (decode(f, lc, p.left), decode(f, rc, p.right));
-                for (j, q) in cp.iter().enumerate() {
-                    self.spend()?;
-                    if self.live(lc, fl, decode(care, lc, q.left))?
-                        && self.live(rc, fr, decode(care, rc, q.right))?
-                    {
-                        eng.limits().try_push(out, (i as u32, j as u32))?;
-                        if first {
-                            return Ok(());
-                        }
-                        if one_each {
-                            continue 'f;
-                        }
-                    }
-                }
-            }
-            return Ok(());
+            return self.combos_grid((lc, rc), (fp, cp), (first, one_each), out);
         };
         let (cs, other) = (kids[s], kids[1 - s]);
         if sides[s] == Side::Leaf {
@@ -1190,21 +1173,7 @@ impl<'a> Walk<'a> {
         let Products::Listed(below) = &held else {
             unreachable!("an index side is listed")
         };
-        let index = match self.care_index[v.idx()].remove(&(b, s as u8)) {
-            Some(index) => index,
-            None => {
-                let mut index = Vec::new();
-                eng.limits().reserve_exact(&mut index, cp.len())?;
-                for (j, q) in cp.iter().enumerate() {
-                    let y = ChildDecoder::structural().node(side_of(*q, s));
-                    if y != ZERO {
-                        index.push((y.0, j as u32));
-                    }
-                }
-                index.sort_unstable();
-                index
-            }
-        };
+        let index = self.take_or_build_care_index(v, b, s, cp)?;
         for (i, p) in fp.iter().enumerate() {
             let x = ChildDecoder::structural().node(side_of(*p, s));
             if x == ZERO {
@@ -1227,6 +1196,56 @@ impl<'a> Walk<'a> {
         }
         self.care_index[v.idx()].insert((b, s as u8), index);
         Ok(())
+    }
+
+    fn combos_grid(
+        &mut self,
+        (lc, rc): (VtreeIdx, VtreeIdx),
+        (fp, cp): (&[ChildPair], &[ChildPair]),
+        (first, one_each): (bool, bool),
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<(), Halt> {
+        let (eng, f, care) = (self.eng, self.f, self.care);
+        'f: for (i, p) in fp.iter().enumerate() {
+            let (fl, fr) = (decode(f, lc, p.left), decode(f, rc, p.right));
+            for (j, q) in cp.iter().enumerate() {
+                self.spend()?;
+                if self.live(lc, fl, decode(care, lc, q.left))?
+                    && self.live(rc, fr, decode(care, rc, q.right))?
+                {
+                    eng.limits().try_push(out, (i as u32, j as u32))?;
+                    if first {
+                        return Ok(());
+                    }
+                    if one_each {
+                        continue 'f;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn take_or_build_care_index(
+        &mut self,
+        v: VtreeIdx,
+        b: u32,
+        s: usize,
+        cp: &[ChildPair],
+    ) -> Result<Vec<(u32, u32)>, Halt> {
+        if let Some(index) = self.care_index[v.idx()].remove(&(b, s as u8)) {
+            return Ok(index);
+        }
+        let mut index = Vec::new();
+        self.eng.limits().reserve_exact(&mut index, cp.len())?;
+        for (j, q) in cp.iter().enumerate() {
+            let y = ChildDecoder::structural().node(side_of(*q, s));
+            if y != ZERO {
+                index.push((y.0, j as u32));
+            }
+        }
+        index.sort_unstable();
+        Ok(index)
     }
 
     /// Join `fp` and `cp` on leaf side `s` by indexing `cp` per leaf label.

@@ -2254,7 +2254,6 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     (level, start, out): (&mut TddLevel, usize, &mut Vec<ProductEntry>),
     ticker: &mut crate::limits::PollGate<'_>,
 ) -> Result<Copied, OperationError> {
-    use crate::diagram::NodeKind;
     let lim = eng.limits();
     let (arena, nodes) = (level.pairs.stored_mut(), level.nodes.stored_mut());
     // While each node made so far is f's node as f stores it, its pairs at
@@ -2311,26 +2310,41 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
             lim.try_push(out, product)?;
         }
         made_pairs += count;
-        if let Some(n) = unwritten {
-            let own = match node.kind() {
-                NodeKind::Inline(_) => n < arena.capacity(),
-                NodeKind::Multi { start, .. } => {
-                    start as usize == n && n + count <= arena.capacity()
-                }
-                NodeKind::MultiRanged(_) => false,
-            };
-            if own && p1 < nodes.capacity() {
-                unwritten = Some(if count == 1 { n } else { n + count });
-                continue;
-            }
-            write(arena, nodes, p1, n);
-            unwritten = None;
+        if try_keep_unwritten_node(arena, nodes, node, (p1, count), &mut unwritten, write) {
+            continue;
         }
         push_copied_node(eng, arena, nodes, *node, pairs, (start, p1, f_nodes), base)?;
     }
     Ok(finish_copied_level(
         arena, nodes, f_nodes, made_pairs, unwritten, lendable,
     ))
+}
+
+#[inline(always)]
+fn try_keep_unwritten_node(
+    arena: &mut Vec<ChildPair>,
+    nodes: &mut Vec<crate::diagram::EncodedNode>,
+    node: &crate::diagram::EncodedNode,
+    (p1, count): (usize, usize),
+    unwritten: &mut Option<usize>,
+    write: impl FnOnce(&mut Vec<ChildPair>, &mut Vec<crate::diagram::EncodedNode>, usize, usize),
+) -> bool {
+    use crate::diagram::NodeKind;
+    let Some(n) = *unwritten else {
+        return false;
+    };
+    let own = match node.kind() {
+        NodeKind::Inline(_) => n < arena.capacity(),
+        NodeKind::Multi { start, .. } => start as usize == n && n + count <= arena.capacity(),
+        NodeKind::MultiRanged(_) => false,
+    };
+    if own && p1 < nodes.capacity() {
+        *unwritten = Some(if count == 1 { n } else { n + count });
+        return true;
+    }
+    write(arena, nodes, p1, n);
+    *unwritten = None;
+    false
 }
 
 #[inline(always)]

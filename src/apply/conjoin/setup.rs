@@ -673,21 +673,12 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     let thresholds = sparse_thresholds(lim);
     let min_grid = thresholds.min_grid;
 
-    let ApplyWorkspace {
-        f_widths,
-        g_widths,
-        f_identity,
-        g_identity,
-        f_pairs_scratch,
-        g_pairs_scratch,
-        products,
-        stream_cache,
-        prefilter_masks,
-        words,
-        cone,
-    } = scratch;
-    f_widths.resize(f_widths.len().max(num_nodes), 0);
-    g_widths.resize(g_widths.len().max(num_nodes), 0);
+    scratch
+        .f_widths
+        .resize(scratch.f_widths.len().max(num_nodes), 0);
+    scratch
+        .g_widths
+        .resize(scratch.g_widths.len().max(num_nodes), 0);
     let (snap, cone) = survey(
         eng,
         vtree,
@@ -695,44 +686,40 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         free,
         min_grid,
         Operands {
-            f: f_widths,
-            g: g_widths,
+            f: &mut scratch.f_widths,
+            g: &mut scratch.g_widths,
         },
-        cone,
+        &mut scratch.cone,
     )?;
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, snap.any_entry_marginal);
     preflight_dense_budget(lim, snap.total_cells)?;
 
-    // Streaming-marginal scratch: lazily computed child columns for
-    // streaming-target levels whose children are still explicit.
-    stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(kind));
-    // With no level over the threshold, all the sparse infrastructure — product
-    // lists, live counts, bump allocator — is skipped outright. A level under
-    // a free level is taken whole with its region, and no level reads its
-    // products.
-    products.reset(
+    scratch
+        .stream_cache
+        .reset(num_nodes, (!targets.is_empty()).then_some(kind));
+    scratch.products.reset(
         eng,
         snap.might_use_sparse,
         num_nodes,
-        f_widths,
-        g_widths,
+        &scratch.f_widths,
+        &scratch.g_widths,
         cone,
     )?;
 
     Ok(ApplyRun {
         levels,
-        f_widths,
-        g_widths,
+        f_widths: &mut scratch.f_widths,
+        g_widths: &mut scratch.g_widths,
         thresholds,
-        stream_cache,
-        products,
+        stream_cache: &mut scratch.stream_cache,
+        products: &mut scratch.products,
         entry_marginality,
-        g_identity,
-        f_identity,
-        f_pairs_scratch,
-        g_pairs_scratch,
-        prefilter_masks,
-        words,
+        g_identity: &mut scratch.g_identity,
+        f_identity: &mut scratch.f_identity,
+        f_pairs_scratch: &mut scratch.f_pairs_scratch,
+        g_pairs_scratch: &mut scratch.g_pairs_scratch,
+        prefilter_masks: &mut scratch.prefilter_masks,
+        words: &mut scratch.words,
         carried: Vec::new(),
         relabel_moved: Vec::new(),
         lent: Vec::new(),

@@ -539,22 +539,8 @@ fn split_words(
     scan_word_low_runs(lim, s, n, key, distinct, &mut triples)?;
     gate.flush()?;
 
-    let mut low_data = Vec::new();
-    lim.reserve_exact(&mut low_data, s.low_starts.len())?;
-    low_data.extend(
-        s.low_starts
-            .iter()
-            .map(|&i| key.low(s.sort_keys[i as usize])),
-    );
-    let mut high_data = Vec::new();
-    lim.reserve_exact(&mut high_data, s.high_starts.len())?;
-    high_data.extend(
-        s.high_starts
-            .iter()
-            .map(|&e| parent.data[e as usize] >> low_width),
-    );
+    let (low_data, high_data) = collect_split_word_data(lim, s, parent, low_width, key)?;
     let (low_count, high_count) = (s.low_starts.len(), s.high_starts.len());
-
     let (low_atom, low_atoms, high_atom, high_atoms) = if distinct {
         (
             identity(lim, low_count)?,
@@ -607,6 +593,30 @@ fn split_words(
         atoms: high_atoms,
     };
     Ok((split, low, high))
+}
+
+fn collect_split_word_data(
+    lim: &Limits,
+    s: &Scratch,
+    parent: &Values,
+    low_width: usize,
+    key: KeyLayout,
+) -> Result<(Vec<u64>, Vec<u64>), OperationError> {
+    let mut low_data = Vec::new();
+    lim.reserve_exact(&mut low_data, s.low_starts.len())?;
+    low_data.extend(
+        s.low_starts
+            .iter()
+            .map(|&i| key.low(s.sort_keys[i as usize])),
+    );
+    let mut high_data = Vec::new();
+    lim.reserve_exact(&mut high_data, s.high_starts.len())?;
+    high_data.extend(
+        s.high_starts
+            .iter()
+            .map(|&e| parent.data[e as usize] >> low_width),
+    );
+    Ok((low_data, high_data))
 }
 
 fn scan_word_low_runs(
@@ -1510,58 +1520,16 @@ fn split_sparse(
     )? {
         return Ok(None);
     }
-    // Each distinct low part, in order of appearance, and the table that
-    // finds it: an entry holds the low part above its number plus one.
-    let mut lows: Vec<u64> = Vec::new();
-    let mut table = Growing::new(lim, &mut s.exact, most)?;
     let mut gate = lim.gate();
     gate.poll(n as u64)?;
-    for (e, &value) in parent.data.iter().enumerate() {
-        let low = value & mask;
-        let mut at = (finish(low) >> (64 - table.bits)) as usize;
-        loop {
-            let entry = s.exact[at];
-            if entry == 0 {
-                if lows.len() == most {
-                    lim.discard(lows);
-                    return Ok(None);
-                }
-                s.exact[at] = u128::from(low) << 32 | (lows.len() as u128 + 1);
-                lim.try_push(&mut lows, low)?;
-                table.added(lim, &mut s.exact, (e + 1, n), |entry| (entry >> 32) as u64)?;
-                break;
-            }
-            if (entry >> 32) as u64 == low {
-                break;
-            }
-            at = (at + 1) & (s.exact.len() - 1);
-        }
-    }
+    let Some(lows) = collect_sparse_lows(lim, &mut s.exact, &parent.data, mask, most)? else {
+        return Ok(None);
+    };
     let count = lows.len();
     let ranked = rank_sparse_lows(lim, &mut s.exact, lows)?;
     let bits = index_bits(count).max(1) as usize;
-    let found = &s.exact;
-    let rewrite = |value: u64| {
-        let low = value & mask;
-        let mut at = (finish(low) >> (64 - found.len().trailing_zeros())) as usize;
-        loop {
-            let entry = found[at];
-            if entry != 0 && (entry >> 32) as u64 == low {
-                return (value >> low_width) << bits | u64::from(entry as u32 - 1);
-            }
-            at = (at + 1) & (found.len() - 1);
-        }
-    };
     gate.poll(n as u64)?;
-    match &mut parent.data {
-        Cow::Owned(data) => data.iter_mut().for_each(|value| *value = rewrite(*value)),
-        Cow::Borrowed(data) => {
-            let mut owned = Vec::new();
-            lim.reserve_exact(&mut owned, n)?;
-            owned.extend(data.iter().map(|&value| rewrite(value)));
-            parent.data = Cow::Owned(owned);
-        }
-    }
+    rewrite_sparse_parent_data(lim, &mut parent.data, &s.exact, mask, low_width, bits, n)?;
     gate.flush()?;
     let (split, mut low, high) =
         split_hashed(lim, s, parent, bits)?.expect("ranks are narrow enough to address");
@@ -1576,6 +1544,76 @@ fn split_sparse(
         lim.discard(ranks);
     }
     Ok(Some((split, low, high)))
+}
+
+/// Collect the distinct low parts of `data` (up to `most`) into `exact` and
+/// return them in order of appearance, or `None` if more than `most` appear.
+fn collect_sparse_lows(
+    lim: &Limits,
+    exact: &mut Vec<u128>,
+    data: &[u64],
+    mask: u64,
+    most: usize,
+) -> Result<Option<Vec<u64>>, OperationError> {
+    let n = data.len();
+    let mut lows: Vec<u64> = Vec::new();
+    let mut table = Growing::new(lim, exact, most)?;
+    for (e, &value) in data.iter().enumerate() {
+        let low = value & mask;
+        let mut at = (finish(low) >> (64 - table.bits)) as usize;
+        loop {
+            let entry = exact[at];
+            if entry == 0 {
+                if lows.len() == most {
+                    lim.discard(lows);
+                    return Ok(None);
+                }
+                exact[at] = u128::from(low) << 32 | (lows.len() as u128 + 1);
+                lim.try_push(&mut lows, low)?;
+                table.added(lim, exact, (e + 1, n), |entry| (entry >> 32) as u64)?;
+                break;
+            }
+            if (entry >> 32) as u64 == low {
+                break;
+            }
+            at = (at + 1) & (exact.len() - 1);
+        }
+    }
+    Ok(Some(lows))
+}
+
+/// Rewrite every word in `data` by replacing its low `low_width` bits with its
+/// rank from `found` in `bits` bits.
+fn rewrite_sparse_parent_data(
+    lim: &Limits,
+    data: &mut Cow<'_, [u64]>,
+    found: &[u128],
+    mask: u64,
+    low_width: usize,
+    bits: usize,
+    n: usize,
+) -> Result<(), OperationError> {
+    let rewrite = |value: u64| {
+        let low = value & mask;
+        let mut at = (finish(low) >> (64 - found.len().trailing_zeros())) as usize;
+        loop {
+            let entry = found[at];
+            if entry != 0 && (entry >> 32) as u64 == low {
+                return (value >> low_width) << bits | u64::from(entry as u32 - 1);
+            }
+            at = (at + 1) & (found.len() - 1);
+        }
+    };
+    match data {
+        Cow::Owned(vec) => vec.iter_mut().for_each(|value| *value = rewrite(*value)),
+        Cow::Borrowed(slice) => {
+            let mut owned = Vec::new();
+            lim.reserve_exact(&mut owned, n)?;
+            owned.extend(slice.iter().map(|&value| rewrite(value)));
+            *data = Cow::Owned(owned);
+        }
+    }
+    Ok(())
 }
 
 /// Sort `lows` into ascending order and rewrite each entry in `exact` to carry
@@ -2464,18 +2502,7 @@ fn split_parts(
         (&low_atom, low_atoms),
         (&high_atom, high_atoms),
     )?;
-
-    let mut low_data = Vec::new();
-    lim.reserve_exact(&mut low_data, low_count * lw)?;
-    for &i in &s.low_starts {
-        let e = s.order[i as usize] as usize;
-        low_data.extend_from_slice(&s.low[e * lw..][..lw]);
-    }
-    let mut high_data = Vec::new();
-    lim.reserve_exact(&mut high_data, high_count * rw)?;
-    for &e in &s.high_starts {
-        high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
-    }
+    let (low_data, high_data) = collect_split_part_data(lim, s, (low_count, lw), (high_count, rw))?;
     let split = Decomposition::Triples {
         atoms: parent.atoms as usize,
         triples,
@@ -2493,6 +2520,26 @@ fn split_parts(
         atoms: high_atoms,
     };
     Ok((split, low, high))
+}
+
+fn collect_split_part_data(
+    lim: &Limits,
+    s: &Scratch,
+    (low_count, lw): (usize, usize),
+    (high_count, rw): (usize, usize),
+) -> Result<(Vec<u64>, Vec<u64>), OperationError> {
+    let mut low_data = Vec::new();
+    lim.reserve_exact(&mut low_data, low_count * lw)?;
+    for &i in &s.low_starts {
+        let e = s.order[i as usize] as usize;
+        low_data.extend_from_slice(&s.low[e * lw..][..lw]);
+    }
+    let mut high_data = Vec::new();
+    lim.reserve_exact(&mut high_data, high_count * rw)?;
+    for &e in &s.high_starts {
+        high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
+    }
+    Ok((low_data, high_data))
 }
 
 /// Find the runs of the parent values by their high part, in parent order,

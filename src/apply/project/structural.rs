@@ -1128,53 +1128,70 @@ fn number_one_atom_cells<'a>(
             atom => n + group(atom) as usize,
         };
         if one_pair_each {
-            // One cell per node, the pair's.
-            let mut items = Transient::new(lim, Vec::new());
-            lim.reserve_exact(&mut items, n)?;
-            {
-                let items: &mut Vec<u32> = &mut items;
-                for g in 0..n {
-                    if g % 4096 == 0 {
-                        work.gate.poll(4096)?;
-                    }
-                    // Node `g`'s one pair is pair `g`, which fits a `u32`.
-                    items.push(reach(cell_of(g, g as u32))?);
-                }
-            }
-            let mut starts_out = Transient::new(lim, Vec::new());
-            lim.reserve_exact(&mut starts_out, n + 1)?;
-            // The nodes were counted in a `u32`.
-            starts_out.extend(0..=n as u32);
-            Runs {
-                starts: starts_out.keep(),
-                items: items.keep(),
-            }
+            number_one_pair_cells(lim, &mut work.gate, n, cell_of, &mut reach)?
         } else {
-            let mut fanout: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
-            lim.reserve_exact(&mut fanout, n)?;
-            let mut mine: Vec<u32> = Vec::new();
-            for (g, node) in starts.windows(2).enumerate() {
-                work.gate.poll(u64::from(node[1] - node[0]))?;
-                mine.clear();
-                for p in node[0]..node[1] {
-                    let numbered = reach(cell_of(g, p))?;
-                    if mine.last() != Some(&numbered) {
-                        lim.try_push(&mut mine, numbered)?;
-                    }
-                }
-                mine.sort_unstable();
-                mine.dedup();
-                for &cell in &mine {
-                    // `g` fits: the nodes were counted in a `u32`.
-                    lim.try_push(&mut fanout, (g as u32, cell))?;
-                }
-            }
-            lim.discard(mine);
-            Runs::pack(lim, n, &fanout, 0u32)?
+            number_multi_pair_cells(lim, &mut work.gate, n, starts, cell_of, &mut reach)?
         }
     };
     drop(number);
     Ok((order, remap))
+}
+
+fn number_one_pair_cells(
+    lim: &crate::limits::Limits,
+    gate: &mut crate::limits::PollGate<'_>,
+    n: usize,
+    cell_of: impl Fn(usize, u32) -> usize,
+    reach: &mut impl FnMut(usize) -> Result<u32, OperationError>,
+) -> Result<Remap, OperationError> {
+    // One cell per node, the pair's.
+    let mut items = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut items, n)?;
+    for g in 0..n {
+        if g % 4096 == 0 {
+            gate.poll(4096)?;
+        }
+        // Node `g`'s one pair is pair `g`, which fits a `u32`.
+        items.push(reach(cell_of(g, g as u32))?);
+    }
+    let mut starts_out = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut starts_out, n + 1)?;
+    starts_out.extend(0..=n as u32);
+    Ok(Runs {
+        starts: starts_out.keep(),
+        items: items.keep(),
+    })
+}
+
+fn number_multi_pair_cells(
+    lim: &crate::limits::Limits,
+    gate: &mut crate::limits::PollGate<'_>,
+    n: usize,
+    starts: &[u32],
+    cell_of: impl Fn(usize, u32) -> usize,
+    reach: &mut impl FnMut(usize) -> Result<u32, OperationError>,
+) -> Result<Remap, OperationError> {
+    let mut fanout: Transient<'_, Vec<(u32, u32)>> = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut fanout, n)?;
+    let mut mine: Vec<u32> = Vec::new();
+    for (g, node) in starts.windows(2).enumerate() {
+        gate.poll(u64::from(node[1] - node[0]))?;
+        mine.clear();
+        for p in node[0]..node[1] {
+            let numbered = reach(cell_of(g, p))?;
+            if mine.last() != Some(&numbered) {
+                lim.try_push(&mut mine, numbered)?;
+            }
+        }
+        mine.sort_unstable();
+        mine.dedup();
+        for &cell in &mine {
+            // `g` fits: the nodes were counted in a `u32`.
+            lim.try_push(&mut fanout, (g as u32, cell))?;
+        }
+    }
+    lim.discard(mine);
+    Runs::pack(lim, n, &fanout, 0u32)
 }
 
 type SharedOneAtoms<'a> = (Transient<'a, Vec<u32>>, Transient<'a, Vec<ChildPair>>);

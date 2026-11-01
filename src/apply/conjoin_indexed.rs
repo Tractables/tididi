@@ -66,7 +66,10 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::Engine;
-use crate::diagram::{Assembly, ChildPair, ColumnAlgebra, InlineSlots, LeafLabel, NodeIdx, PairIndex, PairsIter, SlotPairs, Tdd, TddNodeId, LEAF_WIDTH};
+use crate::diagram::{
+    Assembly, ChildPair, ColumnAlgebra, InlineSlots, LEAF_WIDTH, LeafLabel, NodeIdx, PairIndex,
+    PairsIter, SlotPairs, Tdd, TddNodeId,
+};
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -177,7 +180,12 @@ impl Walk<'_> {
     }
 
     /// The nodes of `f` reachable from `roots` at `top`, per level, ascending.
-    fn reach(&mut self, order: &[VtreeIdx], top: VtreeIdx, roots: Vec<u32>) -> Result<Vec<Vec<u32>>, OperationError> {
+    fn reach(
+        &mut self,
+        order: &[VtreeIdx],
+        top: VtreeIdx,
+        roots: Vec<u32>,
+    ) -> Result<Vec<Vec<u32>>, OperationError> {
         let mut reach: Vec<Vec<u32>> = Vec::new();
         self.lim.reserve_exact(&mut reach, self.vtree.num_nodes())?;
         reach.resize_with(self.vtree.num_nodes(), Vec::new);
@@ -225,7 +233,10 @@ impl Walk<'_> {
             }
             Level::True => Pieces::All,
             Level::Listed(p) => {
-                let (from, to) = (p.start[x as usize] as usize, p.start[x as usize + 1] as usize);
+                let (from, to) = (
+                    p.start[x as usize] as usize,
+                    p.start[x as usize + 1] as usize,
+                );
                 Pieces::List(&p.items[from..to])
             }
         }
@@ -244,7 +255,16 @@ impl Walk<'_> {
     ) -> Result<(), OperationError> {
         let index = self.index;
         let lim = self.lim;
-        let mut hit = |b: u32, l: u32, r: u32| lim.try_push(hits, Hit { a, b, pair: ChildPair::new(NodeIdx(l), NodeIdx(r)) });
+        let mut hit = |b: u32, l: u32, r: u32| {
+            lim.try_push(
+                hits,
+                Hit {
+                    a,
+                    b,
+                    pair: ChildPair::new(NodeIdx(l), NodeIdx(r)),
+                },
+            )
+        };
         let probes = &mut self.work.probes;
         match (left, right) {
             (Pieces::All, Pieces::All) => {
@@ -272,48 +292,78 @@ impl Walk<'_> {
                 }
             }
             (Pieces::List(ls), Pieces::List(rs)) => {
-                if ls.is_empty() || rs.is_empty() {
-                    return Ok(());
+                return self.meet_list_list(t, a, ls, rs, leafy, hits);
+            }
+        }
+        Ok(())
+    }
+
+    fn meet_list_list(
+        &mut self,
+        t: VtreeIdx,
+        a: u32,
+        ls: &[(u32, u32)],
+        rs: &[(u32, u32)],
+        leafy: bool,
+        hits: &mut Vec<Hit>,
+    ) -> Result<(), OperationError> {
+        if ls.is_empty() || rs.is_empty() {
+            return Ok(());
+        }
+        let index = self.index;
+        let lim = self.lim;
+        let mut hit = |b: u32, l: u32, r: u32| {
+            lim.try_push(
+                hits,
+                Hit {
+                    a,
+                    b,
+                    pair: ChildPair::new(NodeIdx(l), NodeIdx(r)),
+                },
+            )
+        };
+        let probes = &mut self.work.probes;
+        let cross = ls.len() as u64 * rs.len() as u64;
+        // With a leaf side the crossing is at most three times the
+        // other side, and the runs are not read to compare.
+        let (by_left, by_right) = match leafy {
+            true => (u64::MAX, u64::MAX),
+            false => {
+                *probes += (ls.len() + rs.len()) as u64;
+                (
+                    ls.iter()
+                        .map(|&(bl, _)| index.left_run(t, bl).len() as u64)
+                        .sum(),
+                    rs.iter()
+                        .map(|&(br, _)| index.right_run(t, br).len() as u64)
+                        .sum(),
+                )
+            }
+        };
+        if cross <= by_left && cross <= by_right {
+            *probes += cross;
+            for &(bl, lp) in ls {
+                for &(br, rp) in rs {
+                    if let Some(b) = index.owner_of(t, bl, br) {
+                        hit(b, lp, rp)?;
+                    }
                 }
-                let cross = ls.len() as u64 * rs.len() as u64;
-                // With a leaf side the crossing is at most three times the
-                // other side, and the runs are not read to compare.
-                let (by_left, by_right) = match leafy {
-                    true => (u64::MAX, u64::MAX),
-                    false => {
-                        *probes += (ls.len() + rs.len()) as u64;
-                        (
-                            ls.iter().map(|&(bl, _)| index.left_run(t, bl).len() as u64).sum(),
-                            rs.iter().map(|&(br, _)| index.right_run(t, br).len() as u64).sum(),
-                        )
+            }
+        } else if by_left <= by_right {
+            *probes += by_left;
+            for &(bl, lp) in ls {
+                for &(br, b) in index.left_run(t, bl) {
+                    if let Ok(k) = rs.binary_search_by_key(&br, |e| e.0) {
+                        hit(b, lp, rs[k].1)?;
                     }
-                };
-                if cross <= by_left && cross <= by_right {
-                    *probes += cross;
-                    for &(bl, lp) in ls {
-                        for &(br, rp) in rs {
-                            if let Some(b) = index.owner_of(t, bl, br) {
-                                hit(b, lp, rp)?;
-                            }
-                        }
-                    }
-                } else if by_left <= by_right {
-                    *probes += by_left;
-                    for &(bl, lp) in ls {
-                        for &(br, b) in index.left_run(t, bl) {
-                            if let Ok(k) = rs.binary_search_by_key(&br, |e| e.0) {
-                                hit(b, lp, rs[k].1)?;
-                            }
-                        }
-                    }
-                } else {
-                    *probes += by_right;
-                    for &(br, rp) in rs {
-                        for &(bl, b) in index.right_run(t, br) {
-                            if let Ok(k) = ls.binary_search_by_key(&bl, |e| e.0) {
-                                hit(b, ls[k].1, rp)?;
-                            }
-                        }
+                }
+            }
+        } else {
+            *probes += by_right;
+            for &(br, rp) in rs {
+                for &(bl, b) in index.right_run(t, br) {
+                    if let Ok(k) = ls.binary_search_by_key(&bl, |e| e.0) {
+                        hit(b, ls[k].1, rp)?;
                     }
                 }
             }
@@ -334,8 +384,12 @@ impl Walk<'_> {
     ) -> Result<Products, OperationError> {
         let (l, r) = self.vtree.children(t);
         let (ll, rl) = (
-            levels[l.idx()].as_ref().expect("a level's children come first"),
-            levels[r.idx()].as_ref().expect("a level's children come first"),
+            levels[l.idx()]
+                .as_ref()
+                .expect("a level's children come first"),
+            levels[r.idx()]
+                .as_ref()
+                .expect("a level's children come first"),
         );
         let leafy = self.vtree.node(l).is_leaf() || self.vtree.node(r).is_leaf();
         let f = self.f;
@@ -354,7 +408,12 @@ impl Walk<'_> {
         }
         hits.sort_unstable_by_key(|h| (h.a, h.b, h.pair.key()));
         let width = self.f.reference_slot_count(t);
-        let mut out = Products { start: Vec::new(), items: Vec::new(), made_at: Vec::new(), made: Vec::new() };
+        let mut out = Products {
+            start: Vec::new(),
+            items: Vec::new(),
+            made_at: Vec::new(),
+            made: Vec::new(),
+        };
         self.lim.reserve_exact(&mut out.made, hits.len())?;
         let mut last: Option<(u32, u32)> = None;
         match by_f {
@@ -408,21 +467,34 @@ impl Walk<'_> {
         let reach = self.reach(&order, top, roots)?;
         let tops = true_nodes(self.lim, self.f)?;
         let mut levels: Vec<Option<Level>> = Vec::new();
-        self.lim.reserve_exact(&mut levels, self.vtree.num_nodes())?;
+        self.lim
+            .reserve_exact(&mut levels, self.vtree.num_nodes())?;
         levels.resize_with(self.vtree.num_nodes(), || None);
         let mut gate = self.lim.gate();
         for &t in order.iter().rev() {
             let level = match self.vtree.node(t).is_leaf() {
                 true => Level::Leaf,
-                false if t != top && tops[t.idx()].is_some_and(|x| reach[t.idx()] == [x]) => Level::True,
-                false => Level::Listed(self.products(t, &reach[t.idx()], &levels, by_f && t == top, &mut gate)?),
+                false if t != top && tops[t.idx()].is_some_and(|x| reach[t.idx()] == [x]) => {
+                    Level::True
+                }
+                false => Level::Listed(self.products(
+                    t,
+                    &reach[t.idx()],
+                    &levels,
+                    by_f && t == top,
+                    &mut gate,
+                )?),
             };
             levels[t.idx()] = Some(level);
         }
         drop(reach);
         gate.flush()?;
         let copies = self.plan_true_copies(&order, &levels)?;
-        Ok(Plan { order, levels, copies })
+        Ok(Plan {
+            order,
+            levels,
+            copies,
+        })
     }
 
     /// Collect the `g` nodes each [`Level::True`] level copies: those its
@@ -434,7 +506,8 @@ impl Walk<'_> {
     ) -> Result<Vec<Vec<u32>>, OperationError> {
         let mut gate = self.lim.gate();
         let mut copies: Vec<Vec<u32>> = Vec::new();
-        self.lim.reserve_exact(&mut copies, self.vtree.num_nodes())?;
+        self.lim
+            .reserve_exact(&mut copies, self.vtree.num_nodes())?;
         copies.resize_with(self.vtree.num_nodes(), Vec::new);
         for &t in order {
             if self.vtree.node(t).is_leaf() {
@@ -442,12 +515,19 @@ impl Walk<'_> {
             }
             let (l, r) = self.vtree.children(t);
             let true_side = |c: VtreeIdx| matches!(levels[c.idx()], Some(Level::True));
-            match levels[t.idx()].as_ref().expect("every level under the top is planned") {
+            match levels[t.idx()]
+                .as_ref()
+                .expect("every level under the top is planned")
+            {
                 Level::Listed(p) => {
                     for (c, left) in [(l, true), (r, false)] {
                         if true_side(c) {
                             for pair in &p.made {
-                                let side = if left { pair.left.raw() } else { pair.right.raw() };
+                                let side = if left {
+                                    pair.left.raw()
+                                } else {
+                                    pair.right.raw()
+                                };
                                 self.lim.try_push(&mut copies[c.idx()], side)?;
                             }
                         }
@@ -486,25 +566,41 @@ impl Plan {
     /// output: a label, a product, or a copy's rank among `c`'s copies.
     fn rank(&self, c: VtreeIdx, x: u32) -> u32 {
         match self.levels[c.idx()].as_ref().expect("a planned child") {
-            Level::True => self.copies[c.idx()].binary_search(&x).expect("a named node of g is copied") as u32,
+            Level::True => self.copies[c.idx()]
+                .binary_search(&x)
+                .expect("a named node of g is copied") as u32,
             Level::Leaf | Level::Listed(_) => x,
         }
     }
 
     /// The pairs of level `t`'s `k`th node in the output, in the children's
     /// ranks ([`rank`](Self::rank)), into `buf`: a product's or a copy's.
-    fn pairs_into(&self, g: &Tdd, t: VtreeIdx, l: VtreeIdx, r: VtreeIdx, k: usize, buf: &mut SmallVec<[ChildPair; 8]>) {
+    fn pairs_into(
+        &self,
+        g: &Tdd,
+        t: VtreeIdx,
+        l: VtreeIdx,
+        r: VtreeIdx,
+        k: usize,
+        buf: &mut SmallVec<[ChildPair; 8]>,
+    ) {
         buf.clear();
         match self.levels[t.idx()].as_ref().expect("a planned level") {
             Level::True => {
                 let y = self.copies[t.idx()][k];
                 buf.extend(g.level(t).pairs_iter_of_idx(y as usize).map(|p| {
-                    ChildPair::new(NodeIdx(self.rank(l, p.left.raw())), NodeIdx(self.rank(r, p.right.raw())))
+                    ChildPair::new(
+                        NodeIdx(self.rank(l, p.left.raw())),
+                        NodeIdx(self.rank(r, p.right.raw())),
+                    )
                 }));
             }
             Level::Listed(p) => {
                 buf.extend(p.pairs(k).iter().map(|p| {
-                    ChildPair::new(NodeIdx(self.rank(l, p.left.raw())), NodeIdx(self.rank(r, p.right.raw())))
+                    ChildPair::new(
+                        NodeIdx(self.rank(l, p.left.raw())),
+                        NodeIdx(self.rank(r, p.right.raw())),
+                    )
                 }));
             }
             Level::Leaf => {}
@@ -522,23 +618,39 @@ impl Plan {
 }
 
 /// Refuse operands an indexed walk does not read.
-fn check_operands(f: &Tdd, g: &Tdd, index: &PairIndex, what: &'static str) -> Result<(), OperationError> {
+fn check_operands(
+    f: &Tdd,
+    g: &Tdd,
+    index: &PairIndex,
+    what: &'static str,
+) -> Result<(), OperationError> {
     super::check_vtree(f, g)?;
     f.require_structure()?;
     g.require_structure()?;
     if f.weights.is_some() || g.weights.is_some() {
-        return Err(OperationError::InertOption { option: what, needs: "unweighted operands" });
+        return Err(OperationError::InertOption {
+            option: what,
+            needs: "unweighted operands",
+        });
     }
     index.check(g)
 }
 
 /// [`Engine::and_indexed`] with the work its walk did.
-pub(crate) fn and_indexed_counted(eng: &Engine, f: &Tdd, g: &Tdd, index: &PairIndex) -> Result<(Tdd, IndexedWork), OperationError> {
+pub(crate) fn and_indexed_counted(
+    eng: &Engine,
+    f: &Tdd,
+    g: &Tdd,
+    index: &PairIndex,
+) -> Result<(Tdd, IndexedWork), OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
     check_operands(f, g, index, "and_indexed")?;
     if f.is_zero() || g.is_zero() {
-        return Ok((crate::build::constant_like(eng, f, false)?, IndexedWork::default()));
+        return Ok((
+            crate::build::constant_like(eng, f, false)?,
+            IndexedWork::default(),
+        ));
     }
     let vtree = Arc::clone(f.vtree());
     let root = vtree.root();
@@ -546,11 +658,23 @@ pub(crate) fn and_indexed_counted(eng: &Engine, f: &Tdd, g: &Tdd, index: &PairIn
         // One variable: nothing to index.
         return Ok((eng.and(f.clone(), g.clone())?, IndexedWork::default()));
     }
-    let mut walk = Walk { lim, vtree: &vtree, f, g, index, work: IndexedWork::default() };
+    let mut walk = Walk {
+        lim,
+        vtree: &vtree,
+        f,
+        g,
+        index,
+        work: IndexedWork::default(),
+    };
     let plan = walk.plan(root, vec![f.output().local.0], false)?;
     let work = walk.work;
-    let Some(Level::Listed(top)) = &plan.levels[root.idx()] else { unreachable!("the top is listed") };
-    let (from, to) = (top.start[f.output().local.idx()] as usize, top.start[f.output().local.idx() + 1] as usize);
+    let Some(Level::Listed(top)) = &plan.levels[root.idx()] else {
+        unreachable!("the top is listed")
+    };
+    let (from, to) = (
+        top.start[f.output().local.idx()] as usize,
+        top.start[f.output().local.idx() + 1] as usize,
+    );
     let b = g.output().local.0;
     let Ok(k) = top.items[from..to].binary_search_by_key(&b, |e| e.0) else {
         return Ok((crate::build::constant_like(eng, f, false)?, work));
@@ -586,7 +710,10 @@ pub(crate) fn and_indexed_counted(eng: &Engine, f: &Tdd, g: &Tdd, index: &PairIn
         ids[t.idx()] = mine;
     }
     gate.flush()?;
-    let output = TddNodeId { vtree: root, local: NodeIdx(ids[root.idx()][made]) };
+    let output = TddNodeId {
+        vtree: root,
+        local: NodeIdx(ids[root.idx()][made]),
+    };
     Ok((out.finish(output)?, work))
 }
 
@@ -607,24 +734,28 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
         return Err(OperationError::LevelNotInVtree(at));
     }
     if vtree.node(at).is_leaf() {
-        return Err(OperationError::InertOption { option: "sum_indexed at a leaf", needs: "an internal vtree node" });
+        return Err(OperationError::InertOption {
+            option: "sum_indexed at a leaf",
+            needs: "an internal vtree node",
+        });
     }
     let width = f.reference_slot_count(at);
-    let mut walk = Walk { lim, vtree: &vtree, f, g, index, work: IndexedWork::default() };
+    let mut walk = Walk {
+        lim,
+        vtree: &vtree,
+        f,
+        g,
+        index,
+        work: IndexedWork::default(),
+    };
     if g.is_zero() {
-        // `g` reaches no node at `at`: every node's value is the empty sum.
-        let mut col = algebra.column(at, width);
-        let none: [ChildPair; 0] = [];
-        let (l, r) = vtree.children(at);
-        for k in 0..width {
-            let pairs = SlotPairs::new(PairsIter::slice(&none), InlineSlots::default(), InlineSlots::default());
-            algebra.fold(at, k, pairs, &algebra.column(l, 0), &algebra.column(r, 0), &mut col);
-        }
-        return Ok((col, walk.work));
+        return Ok((empty_indexed_column(&vtree, at, width, algebra), walk.work));
     }
     let plan = walk.plan(at, (0..width as u32).collect(), true)?;
     let work = walk.work;
-    let mut cols: Vec<A::Column> = (0..vtree.num_nodes()).map(|_| A::Column::default()).collect();
+    let mut cols: Vec<A::Column> = (0..vtree.num_nodes())
+        .map(|_| A::Column::default())
+        .collect();
     let mut buf: SmallVec<[ChildPair; 8]> = SmallVec::new();
     let mut gate = lim.gate();
     for &t in plan.order.iter().rev() {
@@ -643,7 +774,11 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
         for k in 0..n {
             plan.pairs_into(g, t, l, r, k, &mut buf);
             gate.poll(buf.len() as u64)?;
-            let pairs = SlotPairs::new(PairsIter::slice(&buf), InlineSlots::default(), InlineSlots::default());
+            let pairs = SlotPairs::new(
+                PairsIter::slice(&buf),
+                InlineSlots::default(),
+                InlineSlots::default(),
+            );
             algebra.fold(t, k, pairs, &cols[l.idx()], &cols[r.idx()], &mut col);
         }
         cols[l.idx()] = A::Column::default();
@@ -652,6 +787,28 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
     }
     gate.flush()?;
     Ok((std::mem::take(&mut cols[at.idx()]), work))
+}
+
+fn empty_indexed_column<A: ColumnAlgebra>(
+    vtree: &Vtree,
+    at: VtreeIdx,
+    width: usize,
+    algebra: &A,
+) -> A::Column {
+    // `g` reaches no node at `at`: every node's value is the empty sum.
+    let mut col = algebra.column(at, width);
+    let none: [ChildPair; 0] = [];
+    let (l, r) = vtree.children(at);
+    let (left_col, right_col) = (algebra.column(l, 0), algebra.column(r, 0));
+    for k in 0..width {
+        let pairs = SlotPairs::new(
+            PairsIter::slice(&none),
+            InlineSlots::default(),
+            InlineSlots::default(),
+        );
+        algebra.fold(at, k, pairs, &left_col, &right_col, &mut col);
+    }
+    col
 }
 
 impl Engine {

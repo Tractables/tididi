@@ -12,7 +12,11 @@ use crate::diagram::{TddBuilder, TddLevel};
 ///
 /// The public builder has no way to set a level's inlined-side markers, so
 /// every structural level of the replica leaves them clear.
-pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -> (TddBuilder, Option<TddNodeId>, FilterStats) {
+pub(super) fn replica(
+    eng: &Engine,
+    f: &Tdd,
+    keep: impl Fn(TddNodeId) -> bool,
+) -> (TddBuilder, Option<TddNodeId>, FilterStats) {
     let vtree = f.vtree();
     let mut remap: Vec<Vec<u32>> = (0..vtree.num_nodes())
         .map(|i| (0..f.reference_slot_count(VtreeIdx(i as u32)) as u32).collect())
@@ -20,7 +24,9 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
     let mut out = Tdd::builder(eng, vtree).unwrap();
     for i in 0..vtree.num_nodes() {
         let t = VtreeIdx(i as u32);
-        if f.levels()[i].is_marginal() { out.replace_level(eng, t, f.level_view(t)).unwrap(); }
+        if f.levels()[i].is_marginal() {
+            out.replace_level(eng, t, f.level_view(t)).unwrap();
+        }
     }
     let side = |child: VtreeIdx, raw: EncodedChildRef, remap: &[Vec<u32>]| -> u32 {
         if f.levels()[child.idx()].is_marginal() {
@@ -37,10 +43,15 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
     let mut pairs = Vec::new();
     for (t, left, right) in vtree.internal_bottomup() {
         let source = &f.levels()[t.idx()];
-        if source.is_marginal() { continue; }
+        if source.is_marginal() {
+            continue;
+        }
         let mut next = 0;
         for i in 0..source.nodes().len() {
-            if !keep(TddNodeId { vtree: t, local: NodeIdx(i as u32) }) {
+            if !keep(TddNodeId {
+                vtree: t,
+                local: NodeIdx(i as u32),
+            }) {
                 remap[t.idx()][i] = DEAD;
                 continue;
             }
@@ -50,12 +61,18 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
                     stats.pairs_dropped += 1;
                     continue;
                 }
-                let (l, r) = (side(left, pair.left, &remap), side(right, pair.right, &remap));
+                let (l, r) = (
+                    side(left, pair.left, &remap),
+                    side(right, pair.right, &remap),
+                );
                 if l == DEAD || r == DEAD {
                     stats.pairs_dropped += 1;
                     continue;
                 }
-                pairs.push(ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)));
+                pairs.push(ChildPair::new(
+                    EncodedChildRef::from_raw(l),
+                    EncodedChildRef::from_raw(r),
+                ));
             }
             if pairs.is_empty() {
                 remap[t.idx()][i] = DEAD;
@@ -69,7 +86,14 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
     }
     let root = f.output();
     let local = remap[root.vtree.idx()][root.local.idx()];
-    (out, (local != DEAD).then_some(TddNodeId { vtree: root.vtree, local: NodeIdx(local) }), stats)
+    (
+        out,
+        (local != DEAD).then_some(TddNodeId {
+            vtree: root.vtree,
+            local: NodeIdx(local),
+        }),
+        stats,
+    )
 }
 
 /// Everything a later operation reads of `f`: its levels, its output and the
@@ -89,23 +113,49 @@ pub(super) fn image(f: &Tdd) -> String {
 /// [`image`] of `f` with every inlined-side marker cleared.
 pub(super) fn shape(f: &Tdd) -> String {
     let mut g = f.clone();
-    for level in g.levels.iter_mut() { level.value_ref_sides = 0; }
+    for level in g.levels.iter_mut() {
+        level.value_ref_sides = 0;
+    }
     image(&g)
 }
 
 /// Give `g`'s structural levels the inlined-side markers of `f`'s.
 fn copy_markers(g: &mut Tdd, f: &Tdd) {
     for (level, source) in g.levels.iter_mut().zip(f.levels.iter()) {
-        if !source.is_marginal() { level.value_ref_sides = source.value_ref_sides; }
+        if !source.is_marginal() {
+            level.value_ref_sides = source.value_ref_sides;
+        }
     }
 }
 
 /// Satisfiable structural and marginal operands, each with a sparse
 /// rejection.
 fn cases() -> impl Iterator<Item = (Tdd, impl Fn(TddNodeId) -> bool)> {
-    let marginal = marginal_diagrams(0xb5e2, 80, 8..12).into_iter().map(|(f, _)| f);
-    random_diagrams(0xb5e1, 60, 8..13).into_iter().chain(marginal).filter(|f| !f.is_zero()).enumerate()
-        .map(|(k, f)| { let keep = sparing_output(&f, k as u64, 10); (f, keep) })
+    let marginal = marginal_diagrams(0xb5e2, 80, 8..12)
+        .into_iter()
+        .map(|(f, _)| f);
+    random_diagrams(0xb5e1, 60, 8..13)
+        .into_iter()
+        .chain(marginal)
+        .filter(|f| !f.is_zero())
+        .enumerate()
+        .map(|(k, f)| {
+            let keep = sparing_output(&f, k as u64, 10);
+            (f, keep)
+        })
+}
+
+fn remapped_output(f: &Tdd, remap: &[Vec<u32>]) -> Option<TddNodeId> {
+    let root = f.output();
+    let local = if f.vtree.node(root.vtree).is_leaf() || f.levels[root.vtree.idx()].is_marginal() {
+        root.local.0
+    } else {
+        remap[root.vtree.idx()][root.local.idx()]
+    };
+    (local != DEAD).then_some(TddNodeId {
+        vtree: root.vtree,
+        local: NodeIdx(local),
+    })
 }
 
 #[test]
@@ -113,7 +163,9 @@ fn the_sweep_and_its_finish_match_a_builder_sweep() {
     let mut compared = [0usize; 2];
     for (f, keep) in cases() {
         let eng = Engine::new();
-        let Some(mut remap) = ask(&eng, &f, &keep).unwrap() else { continue };
+        let Some(mut remap) = ask(&eng, &f, &keep).unwrap() else {
+            continue;
+        };
         let (assembly, stats) = sweep(&eng, &f, &mut remap).unwrap();
         let (builder, output, expected) = replica(&eng, &f, &keep);
         assert_eq!(stats, expected);
@@ -128,13 +180,7 @@ fn the_sweep_and_its_finish_match_a_builder_sweep() {
             }
             assert_eq!(format!("{ours:?}"), format!("{theirs:?}"), "level {t:?}");
         }
-        let root = f.output();
-        let local = if f.vtree.node(root.vtree).is_leaf() || f.levels[root.vtree.idx()].is_marginal() {
-            root.local.0
-        } else {
-            remap[root.vtree.idx()][root.local.idx()]
-        };
-        assert_eq!((local != DEAD).then_some(TddNodeId { vtree: root.vtree, local: NodeIdx(local) }), output);
+        assert_eq!(remapped_output(&f, &remap), output);
         let Some(output) = output else { continue };
         // Finishing seeds the same reduction work, and the same reduction then
         // leaves the same diagram.
@@ -149,7 +195,10 @@ fn the_sweep_and_its_finish_match_a_builder_sweep() {
         assert_eq!(image(&ours), image(&theirs));
         compared[usize::from(f.levels.iter().any(TddLevel::any_value_ref_side))] += 1;
     }
-    assert!(compared.iter().all(|&n| n >= 20), "too few operands compared: {compared:?}");
+    assert!(
+        compared.iter().all(|&n| n >= 20),
+        "too few operands compared: {compared:?}"
+    );
 }
 
 #[test]
@@ -158,26 +207,42 @@ fn every_outcome_matches_a_builder_sweep_under_either_reduction() {
     for (f, keep) in cases() {
         let marked = f.levels.iter().any(TddLevel::any_value_ref_side);
         for full in [false, true] {
-            let plan = || if full { ReductionPlan::default() } else { ReductionPlan::Prune };
+            let plan = || {
+                if full {
+                    ReductionPlan::default()
+                } else {
+                    ReductionPlan::Prune
+                }
+            };
             let eng = Engine::new();
             let outcome = eng.filter_nodes_with(&f, &keep, plan()).unwrap();
             let (builder, output, stats) = replica(&eng, &f, &keep);
             match outcome {
                 FilterOutcome::Unchanged => {
                     assert_eq!(stats, FilterStats::default());
-                    assert!(f.levels.iter().enumerate().all(|(i, level)| level.is_marginal() || level.nodes().iter().enumerate()
-                        .all(|(j, _)| keep(TddNodeId { vtree: VtreeIdx(i as u32), local: NodeIdx(j as u32) }))));
+                    assert!(f.levels.iter().enumerate().all(|(i, level)| {
+                        level.is_marginal()
+                            || level.nodes().iter().enumerate().all(|(j, _)| {
+                                keep(TddNodeId {
+                                    vtree: VtreeIdx(i as u32),
+                                    local: NodeIdx(j as u32),
+                                })
+                            })
+                    }));
                     outcomes[0] += 1;
                 }
                 FilterOutcome::Filtered { tdd, stats: ours } => {
                     assert_eq!(ours, stats);
                     // Safety: as in the test above.
-                    let mut theirs = unsafe { builder.finish_unchecked(output.expect("the output survived")) };
+                    let mut theirs =
+                        unsafe { builder.finish_unchecked(output.expect("the output survived")) };
                     eng.reduce(&mut theirs, plan()).unwrap();
                     // The replica leaves the markers clear and is otherwise the
                     // same diagram; with no markers to copy it is the same.
                     assert_eq!(shape(&tdd), shape(&theirs));
-                    if !marked { assert_eq!(image(&tdd), image(&theirs)); }
+                    if !marked {
+                        assert_eq!(image(&tdd), image(&theirs));
+                    }
                     outcomes[1] += 1;
                 }
                 FilterOutcome::Unsatisfiable { tdd, stats: ours } => {
@@ -190,5 +255,8 @@ fn every_outcome_matches_a_builder_sweep_under_either_reduction() {
             }
         }
     }
-    assert!(outcomes.iter().all(|&n| n > 0), "every outcome occurs: {outcomes:?}");
+    assert!(
+        outcomes.iter().all(|&n| n > 0),
+        "every outcome occurs: {outcomes:?}"
+    );
 }

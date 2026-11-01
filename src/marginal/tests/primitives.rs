@@ -10,13 +10,12 @@ use num_rational::BigRational;
 
 use super::{marginalize_closure, marginalize_leaf_inline};
 
-
 use crate::diagram::{LiteralWeights, RationalWeights};
 
-use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::diagram::Tdd;
-use crate::test_helpers::check::marginal::subsumed_marginal_data_violations;
 use crate::diagram::{Arithmetic, WeightStore};
+use crate::test_helpers::check::marginal::subsumed_marginal_data_violations;
+use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 /// Clauses spanning both halves of a 4-var balanced vtree, so the root is a
@@ -28,11 +27,18 @@ fn closure_cluster_clauses() -> Vec<Vec<i32>> {
 /// Marginalize only the root's two child subtrees through the weighted
 /// dispatch, leaving the root structural over two weight-marginal children,
 /// then close the cluster and read the root weight.
-fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>, algebra: RationalWeights) -> BigRational {
+fn weighted_closure_root(
+    eng: &Engine,
+    clauses: &[Vec<i32>],
+    vtree: &Arc<Vtree>,
+    algebra: RationalWeights,
+) -> BigRational {
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
-    eng.marginalize_levels(&mut tdd, &[a, b]).expect("no wall is installed in a test");
+    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational))
+        .unwrap();
+    eng.marginalize_levels(&mut tdd, &[a, b])
+        .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
         tdd.levels[a.idx()].is_weight_marginal() && tdd.levels[b.idx()].is_weight_marginal(),
@@ -47,7 +53,11 @@ fn weighted_closure_root(eng: &Engine, clauses: &[Vec<i32>], vtree: &Arc<Vtree>,
         tdd.levels[vtree.root().idx()].is_weight_marginal(),
         "closure must collapse the root through the weighted path"
     );
-    exact_weight(&tdd.weighted_value().unwrap().expect("a weighted diagram has a value"))
+    exact_weight(
+        &tdd.weighted_value()
+            .unwrap()
+            .expect("a weighted diagram has a value"),
+    )
 }
 
 #[test]
@@ -55,7 +65,9 @@ fn weighted_closure_unit_weights_matches_model_count() {
     let eng = Engine::new();
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mc = BigRational::from(BigInt::from((compile_clauses(&vtree, &clauses)).model_count().unwrap()));
+    let mc = BigRational::from(BigInt::from(
+        (compile_clauses(&vtree, &clauses)).model_count().unwrap(),
+    ));
     let got = weighted_closure_root(&eng, &clauses, &vtree, RationalWeights::unit(4));
     assert_eq!(got, mc, "weighted closure unit count != model count");
 }
@@ -66,33 +78,62 @@ fn weighted_closure_nonunit_weights_matches_evaluate() {
     let clauses = closure_cluster_clauses();
     let vtree = Arc::new(Vtree::balanced(4));
     let weights = vec![
-        LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) },
-        LiteralWeights { negative: rat(2, 5), positive: rat(3, 7) },
-        LiteralWeights { negative: rat(5, 11), positive: rat(2, 9) },
-        LiteralWeights { negative: rat(1, 1), positive: rat(4, 9) },
+        LiteralWeights {
+            negative: rat(1, 2),
+            positive: rat(1, 3),
+        },
+        LiteralWeights {
+            negative: rat(2, 5),
+            positive: rat(3, 7),
+        },
+        LiteralWeights {
+            negative: rat(5, 11),
+            positive: rat(2, 9),
+        },
+        LiteralWeights {
+            negative: rat(1, 1),
+            positive: rat(4, 9),
+        },
     ];
-    let oracle = (compile_clauses(&vtree, &clauses)).evaluate(&RationalWeights::from_literals(&weights)).unwrap();
-    let got = weighted_closure_root(&eng, &clauses, &vtree, RationalWeights::from_literals(&weights));
-    assert_eq!(got, oracle, "weighted closure non-unit count != evaluate oracle");
+    let oracle = (compile_clauses(&vtree, &clauses))
+        .evaluate(&RationalWeights::from_literals(&weights))
+        .unwrap();
+    let got = weighted_closure_root(
+        &eng,
+        &clauses,
+        &vtree,
+        RationalWeights::from_literals(&weights),
+    );
+    assert_eq!(
+        got, oracle,
+        "weighted closure non-unit count != evaluate oracle"
+    );
 }
 
 fn nested_region_clauses() -> Vec<Vec<i32>> {
-    vec![vec![1, 2], vec![-2, 3], vec![3, -4], vec![-4, 5], vec![1, -5]]
+    vec![
+        vec![1, 2],
+        vec![-2, 3],
+        vec![3, -4],
+        vec![-4, 5],
+        vec![1, -5],
+    ]
 }
 
 /// Marginal levels under a marginal parent (counted here so the assertion is
 /// known to have bitten).
-fn nested_marginal_levels(tdd: &Tdd) -> usize {
+fn nested_marginal_levels(tdd: &Tdd) -> Vec<usize> {
     let vtree = &tdd.vtree;
     (0..vtree.num_nodes())
         .filter(|&i| {
             tdd.levels[i].is_marginal()
+                && !vtree.node(VtreeIdx(i as u32)).is_leaf()
                 && vtree
                     .node(VtreeIdx(i as u32))
                     .parent()
                     .is_some_and(|p| tdd.levels[p.idx()].is_marginal())
         })
-        .count()
+        .collect()
 }
 
 /// Marginalizing every internal level except the root leaves the root
@@ -104,14 +145,30 @@ fn integer_marginalize_leaves_no_subsumed_data() {
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc_before = tdd.model_count().unwrap();
-    let targets: Vec<_> = vtree.bottomup_slice().iter().copied().filter(|&t| t != vtree.root()).collect();
-    eng.marginalize_levels(&mut tdd, &targets).expect("no wall is installed in a test");
+    let targets: Vec<_> = vtree
+        .bottomup_slice()
+        .iter()
+        .copied()
+        .filter(|&t| t != vtree.root())
+        .collect();
+    eng.marginalize_levels(&mut tdd, &targets)
+        .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "integer_marginalize_leaves_no_subsumed_data");
 
     let viol = subsumed_marginal_data_violations(&tdd);
-    assert!(viol.is_empty(), "subsumed marginal levels still hold data: {viol:?}");
-    assert_eq!(tdd.model_count().unwrap(), mc_before, "marginalization changed #F");
-    assert!(nested_marginal_levels(&tdd) >= 1, "test setup: expected nested marginal regions");
+    assert!(
+        viol.is_empty(),
+        "subsumed marginal levels still hold data: {viol:?}"
+    );
+    assert_eq!(
+        tdd.model_count().unwrap(),
+        mc_before,
+        "marginalization changed #F"
+    );
+    assert!(
+        !nested_marginal_levels(&tdd).is_empty(),
+        "test setup: expected nested marginal regions"
+    );
 }
 
 /// The weighted pipeline frees subsumed levels too, including their
@@ -124,41 +181,52 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mc = BigRational::from(BigInt::from(tdd.model_count().unwrap()));
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
-    tdd.set_weights(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational)).unwrap();
-    eng.marginalize_levels(&mut tdd, &targets).expect("no wall is installed in a test");
+    tdd.set_weights(WeightStore::new(
+        RationalWeights::unit(5),
+        Arithmetic::ExactRational,
+    ))
+    .unwrap();
+    eng.marginalize_levels(&mut tdd, &targets)
+        .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 
     assert_eq!(
-        exact_weight(&tdd.weighted_value().unwrap().expect("a weighted diagram has a value")),
+        exact_weight(
+            &tdd.weighted_value()
+                .unwrap()
+                .expect("a weighted diagram has a value")
+        ),
         mc,
         "freeing subsumed children corrupted the weighted root value"
     );
     let viol = subsumed_marginal_data_violations(&tdd);
-    assert!(viol.is_empty(), "subsumed weighted levels hold data: {viol:?}");
+    assert!(
+        viol.is_empty(),
+        "subsumed weighted levels hold data: {viol:?}"
+    );
 
-    // Vtree leaves keep their pinned 3-slot column; every other subsumed level
-    // must have released its store entry.
     let ws = tdd.weights().expect("attached above");
-    let mut nested = 0;
-    for i in 0..vtree.num_nodes() {
-        if !tdd.levels[i].is_marginal() || vtree.node(VtreeIdx(i as u32)).is_leaf() {
-            continue;
-        }
-        let Some(p) = vtree.node(VtreeIdx(i as u32)).parent() else { continue };
-        if !tdd.levels[p.idx()].is_marginal() {
-            continue;
-        }
-        nested += 1;
+    let nested = nested_marginal_levels(&tdd);
+    assert!(
+        !nested.is_empty(),
+        "test setup: expected nested marginal regions"
+    );
+    for i in nested {
         assert!(
             ws.level(i).map(|v| v.is_empty()).unwrap_or(true),
             "subsumed weighted level {i} still has WeightStore values"
         );
     }
-    assert!(nested >= 1, "test setup: expected nested marginal regions");
 }
 
 fn leaf_inline_clauses() -> Vec<Vec<i32>> {
-    vec![vec![1, 2], vec![-3, -4], vec![5, 6], vec![-1, 3], vec![4, -5]]
+    vec![
+        vec![1, 2],
+        vec![-3, -4],
+        vec![5, 6],
+        vec![-1, 3],
+        vec![4, -5],
+    ]
 }
 
 /// Inlining a leaf's fixed 0/1/2 count at its parent is count-neutral and flips
@@ -170,11 +238,17 @@ fn leaf_inline_preserves_count() {
     for v in 0..6u32 {
         let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
         let baseline = t.model_count().unwrap();
-        let leaf = vtree.leaf_of(VarId(v + 1)).expect("the vtree carries this variable");
+        let leaf = vtree
+            .leaf_of(VarId(v + 1))
+            .expect("the vtree carries this variable");
         marginalize_leaf_inline(&mut t, leaf, &vtree);
         eng.reduce(&mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
-        assert_eq!(t.model_count().unwrap(), baseline, "count changed marginalizing leaf {v}");
+        assert_eq!(
+            t.model_count().unwrap(),
+            baseline,
+            "count changed marginalizing leaf {v}"
+        );
     }
 }
 
@@ -186,7 +260,13 @@ fn all_leaves_inline_preserve_count() {
     let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
     let baseline = t.model_count().unwrap();
     for v in 0..6u32 {
-        marginalize_leaf_inline(&mut t, vtree.leaf_of(VarId(v + 1)).expect("the vtree carries this variable"), &vtree);
+        marginalize_leaf_inline(
+            &mut t,
+            vtree
+                .leaf_of(VarId(v + 1))
+                .expect("the vtree carries this variable"),
+            &vtree,
+        );
     }
     eng.reduce(&mut t, Default::default()).unwrap();
     assert_eq!(t.model_count().unwrap(), baseline);

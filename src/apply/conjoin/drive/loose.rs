@@ -72,6 +72,46 @@ pub(super) fn loose_levels(
     carrier: &[u8],
     operands: Operands<Vec<u32>>,
 ) -> Vec<u32> {
+    let cone = run.cone;
+    let internal = |t: VtreeIdx| !vtree.node(t).is_leaf();
+    let (mut loose_in, mut loose) = seed_under_free_loose(vtree, cone, operands);
+    let under_free_levels = loose.len();
+    for &p in cone.built {
+        let (left, right) = vtree.children(p);
+        if carrier[p.idx()] != 0 {
+            let by = carrier[p.idx()];
+            loose.extend(
+                [left, right]
+                    .into_iter()
+                    .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
+                    .map(|c| c.0),
+            );
+            continue;
+        }
+        push_built_parent_loose(vtree, run, p, &loose_in, &mut loose);
+    }
+    // In the order of the levels' parents bottom-up, the left child first,
+    // as a walk of every level lists them: the levels under the free ones
+    // are sorted into those under the levels of the cone, which are in that
+    // order already.
+    if under_free_levels > 0 {
+        loose.sort_by_key(|&c| {
+            let c = VtreeIdx(c);
+            let p = vtree.node(c).parent().expect("a listed level has a parent");
+            (vtree.topo_pos(p), vtree.children(p).1 == c)
+        });
+    }
+    let _ = &mut loose_in;
+    loose
+}
+
+/// Initialize the per-node loose mask `loose_in` and collect the loose levels
+/// whose parent is free in the cone.
+fn seed_under_free_loose(
+    vtree: &Vtree,
+    cone: crate::apply::conjoin::setup::Cone<'_>,
+    operands: Operands<Vec<u32>>,
+) -> (Vec<u8>, Vec<u32>) {
     // Which operand has each level loose: 1 for `f`, 2 for `g`, as `carrier`;
     // `LISTED` once a level under a free one is listed.
     const LISTED: u8 = 4;
@@ -83,7 +123,6 @@ pub(super) fn loose_levels(
         loose_in[t as usize] |= 2;
     }
     let internal = |t: VtreeIdx| !vtree.node(t).is_leaf();
-    let cone = run.cone;
     // Whether the result lists the level `c` of the list of the operand
     // `by` names because its parent is free and was taken from that operand.
     let under_free = |c: u32, by: u8, loose_in: &mut [u8]| {
@@ -125,33 +164,7 @@ pub(super) fn loose_levels(
             loose.push(c);
         }
     }
-    let under_free_levels = loose.len();
-    for &p in cone.built {
-        let (left, right) = vtree.children(p);
-        if carrier[p.idx()] != 0 {
-            let by = carrier[p.idx()];
-            loose.extend(
-                [left, right]
-                    .into_iter()
-                    .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
-                    .map(|c| c.0),
-            );
-            continue;
-        }
-        push_built_parent_loose(vtree, run, p, &loose_in, &mut loose);
-    }
-    // In the order of the levels' parents bottom-up, the left child first,
-    // as a walk of every level lists them: the levels under the free ones
-    // are sorted into those under the levels of the cone, which are in that
-    // order already.
-    if under_free_levels > 0 {
-        loose.sort_by_key(|&c| {
-            let c = VtreeIdx(c);
-            let p = vtree.node(c).parent().expect("a listed level has a parent");
-            (vtree.topo_pos(p), vtree.children(p).1 == c)
-        });
-    }
-    loose
+    (loose_in, loose)
 }
 
 /// Append the internal children of built parent `p` that are not known to have

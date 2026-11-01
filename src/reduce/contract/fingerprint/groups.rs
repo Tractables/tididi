@@ -4,7 +4,7 @@ use crate::Engine;
 use crate::limits::{Limits, OperationError};
 
 use super::super::scratch::ContractScratch;
-use super::{probe_fingerprints, TwinEntries};
+use super::{TwinEntries, probe_fingerprints};
 
 /// Build twin groups for the `child_width` nodes of one level once
 /// `scratch.fingerprints[..child_width]` has a known collision and
@@ -162,7 +162,11 @@ fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScrat
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
 /// Two empty ones are a group only with `empty_twins`.
-fn group_width_two(lim: &Limits, scratch: &mut ContractScratch, empty_twins: bool) -> Result<bool, OperationError> {
+fn group_width_two(
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+    empty_twins: bool,
+) -> Result<bool, OperationError> {
     let sig_offsets = &scratch.counts;
     // Reaching here means `mark_candidates` found a fingerprint collision, and
     // at width 2 the only collision possible marks both nodes — so both
@@ -208,8 +212,16 @@ fn group_by_hashed_signature(
     // front of `fingerprints` in that order (a candidate's index is at least
     // its rank, so the forward move reads each fingerprint before any write
     // reaches it).
-    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, is_candidate, candidates, .. } =
-        &mut *scratch;
+    let ContractScratch {
+        fingerprints,
+        twin_hash_table,
+        entries,
+        counts,
+        cursors,
+        is_candidate,
+        candidates,
+        ..
+    } = &mut *scratch;
     candidates.clear();
     let wanted = is_candidate[..child_width].iter().filter(|&&c| c).count();
     lim.reserve_exact(candidates, wanted)?;
@@ -223,9 +235,14 @@ fn group_by_hashed_signature(
     // cursors[k] = the rank of candidate k's representative (k itself if it
     // is the first with its signature).
     let sig_offsets: &[u32] = counts;
-    let signature = |j: u32| &entries[sig_offsets[j as usize] as usize..sig_offsets[j as usize + 1] as usize];
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..n], None, |k, occupant| {
-        match occupant {
+    let signature =
+        |j: u32| &entries[sig_offsets[j as usize] as usize..sig_offsets[j as usize + 1] as usize];
+    probe_fingerprints(
+        lim,
+        twin_hash_table,
+        &fingerprints[..n],
+        None,
+        |k, occupant| match occupant {
             Some(j) if signature(candidates[k]) == signature(candidates[j]) => {
                 cursors[k] = j as u32;
                 true
@@ -235,22 +252,35 @@ fn group_by_hashed_signature(
                 cursors[k] = k as u32;
                 true
             }
-        }
-    })?;
+        },
+    )?;
 
-    // Pass 2: build contiguous groups via counting sort. O(n).
-    // Repurpose fingerprints[] as per-rep member count (additive fingerprints
-    // are no longer needed after hash table construction).
-    let ContractScratch { fingerprints, cursors, candidates, counts, flat_groups, group_starts, unnamed, .. } = &mut *scratch;
+    scatter_hashed_groups(lim, scratch, n, empty_twins)
+}
+
+/// Build contiguous twin groups in `scratch.flat_groups` and `scratch.group_starts`
+/// from the representative ranks in `scratch.cursors[..n]`.
+fn scatter_hashed_groups(
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+    n: usize,
+    empty_twins: bool,
+) -> Result<bool, OperationError> {
+    let ContractScratch {
+        fingerprints,
+        cursors,
+        candidates,
+        counts,
+        flat_groups,
+        group_starts,
+        unnamed,
+        ..
+    } = &mut *scratch;
     let empty = |k: usize| counts[candidates[k] as usize] == counts[candidates[k] as usize + 1];
     fingerprints[..n].fill(0);
     for &rep in &cursors[..n] {
         fingerprints[rep as usize] += 1;
     }
-    // Assign group offsets for reps with ≥2 members; store write cursor.
-    // `pos` counts group members, so it never exceeds `child_width` (each
-    // node joins at most one group) — the `as u32` narrowings below are
-    // exact by the level-width invariant asserted in `find_twin_groups`.
     let mut pos = 0usize;
     for k in 0..n {
         if cursors[k] as usize == k && fingerprints[k] >= 2 && (empty_twins || !empty(k)) {
@@ -269,7 +299,6 @@ fn group_by_hashed_signature(
             }
         }
     }
-    // Scatter-write members into flat_groups.
     lim.try_resize(flat_groups, pos, 0)?;
     for k in 0..n {
         let rep = cursors[k] as usize;
@@ -279,7 +308,6 @@ fn group_by_hashed_signature(
             fingerprints[rep] = cursor + 1;
         }
     }
-
     Ok(!group_starts.is_empty())
 }
 
@@ -313,8 +341,16 @@ pub(super) fn group_single_entries(
     if total != width {
         return Ok(None);
     }
-    let ContractScratch { fingerprints: records, entries: other, counts, twin_named, candidates, flat_groups, group_starts, .. } =
-        &mut *scratch;
+    let ContractScratch {
+        fingerprints: records,
+        entries: other,
+        counts,
+        twin_named,
+        candidates,
+        flat_groups,
+        group_starts,
+        ..
+    } = &mut *scratch;
     // Each node's entry at its index. With as many entries as nodes, a node
     // named twice leaves another unnamed.
     lim.try_resize(records, width, 0u64)?;
@@ -349,8 +385,17 @@ pub(super) fn group_single_entries(
         *record = (key << node_bits) | node as u64;
     }
 
-    let sorted = radix_sort_packed_entries(lim, width, (node_bits, key_bits), records, other, counts)?;
-    emit_packed_entry_runs(lim, sorted, width, node_bits, candidates, group_starts, flat_groups)
+    let sorted =
+        radix_sort_packed_entries(lim, width, (node_bits, key_bits), records, other, counts)?;
+    emit_packed_entry_runs(
+        lim,
+        sorted,
+        width,
+        node_bits,
+        candidates,
+        group_starts,
+        flat_groups,
+    )
 }
 
 /// Stable least-significant-digit radix sort of `records[..width]` over the key
@@ -405,7 +450,11 @@ fn emit_packed_entry_runs(
     let node_mask = (1u64 << node_bits) - 1;
     let run_end = |start: usize| {
         let key = sorted[start] >> node_bits;
-        start + sorted[start..].iter().take_while(|&&record| record >> node_bits == key).count()
+        start
+            + sorted[start..]
+                .iter()
+                .take_while(|&&record| record >> node_bits == key)
+                .count()
     };
     candidates.clear();
     let (mut start, mut members) = (0, 0);
@@ -423,7 +472,11 @@ fn emit_packed_entry_runs(
     for &start in candidates.iter() {
         let start = start as usize;
         group_starts.push(flat_groups.len() as u32);
-        flat_groups.extend(sorted[start..run_end(start)].iter().map(|&record| (record & node_mask) as u32));
+        flat_groups.extend(
+            sorted[start..run_end(start)]
+                .iter()
+                .map(|&record| (record & node_mask) as u32),
+        );
     }
     Ok(Some(!group_starts.is_empty()))
 }

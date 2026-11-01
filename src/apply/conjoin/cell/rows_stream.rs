@@ -2368,6 +2368,8 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
     note_lanes();
+    let (m, la, ra, (ls, rs), (track, check)) =
+        prepare_block_lanes(sum, (i, p1), (next, lay), vr, &row);
     let ValueRows {
         left: lside,
         right: rside,
@@ -2375,26 +2377,6 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         gather,
         ..
     } = vr;
-    let m = 1 + next.len();
-    let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
-    for (k, p) in next.iter().enumerate() {
-        (la[k + 1], ra[k + 1]) = (p.left.0, p.right.0);
-        ahead.rows[k] = (i + 1 + k, *p);
-    }
-    (ahead.got, ahead.held) = (0, m - 1);
-    let (lays, rays) = match lay {
-        Lay::Left => (true, false),
-        Lay::Right => (false, true),
-        Lay::Both => (true, true),
-    };
-    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| {
-        sum.left_factor(c)
-    });
-    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| {
-        sum.right_factor(c)
-    });
-    let track = (0..m).any(|k| lst[k].2 || rst[k].2);
-    let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
     let (sums, flags) = (&mut *ahead.sums, &mut *ahead.flags);
     let (lrow, rrow) = (lside.row(ls), rside.row(rs));
     let (lone, rone) = (
@@ -2444,6 +2426,51 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         },
         Lay::Both => lanes_by((track, check), sum, (llaid, rlaid), out, eng, row),
     }
+}
+
+type BlockLanesSetup = (
+    usize,
+    [u32; LANES],
+    [u32; LANES],
+    (usize, usize),
+    (bool, bool),
+);
+
+#[inline(always)]
+fn prepare_block_lanes<L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    (i, p1): (usize, ChildPair),
+    (next, lay): (&[ChildPair], Lay),
+    vr: &mut ValueRows<'_>,
+    row: &WholeRow<'_, '_, L, R>,
+) -> BlockLanesSetup {
+    let ValueRows {
+        left: lside,
+        right: rside,
+        ahead,
+        ..
+    } = vr;
+    let m = 1 + next.len();
+    let (mut la, mut ra) = ([p1.left.0; LANES], [p1.right.0; LANES]);
+    for (k, p) in next.iter().enumerate() {
+        (la[k + 1], ra[k + 1]) = (p.left.0, p.right.0);
+        ahead.rows[k] = (i + 1 + k, *p);
+    }
+    (ahead.got, ahead.held) = (0, m - 1);
+    let (lays, rays) = match lay {
+        Lay::Left => (true, false),
+        Lay::Right => (false, true),
+        Lay::Both => (true, true),
+    };
+    let (ls, lst) = lside.read_lanes(row.left, row.node_idx, &la[..m], lays, S::CHECKED, |c| {
+        sum.left_factor(c)
+    });
+    let (rs, rst) = rside.read_lanes(row.right, row.node_idx, &ra[..m], rays, S::CHECKED, |c| {
+        sum.right_factor(c)
+    });
+    let track = (0..m).any(|k| lst[k].2 || rst[k].2);
+    let check = (0..m).any(|k| !spans_exact::<S>((lst[k].0, lst[k].1), (rst[k].0, rst[k].1)));
+    (m, la, ra, (ls, rs), (track, check))
 }
 
 /// A side's floats for the [`LANES`] rows of a block, as [`lane_values`]

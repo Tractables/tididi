@@ -1,37 +1,45 @@
-use num_bigint::BigUint;
-use crate::test_helpers::check::marginal::check_store_counts;
+use crate::diagram::{ChildDecoder, CountOverflow, EncodedChildRef, ValueRef};
 use crate::marginal::transition::dedup_fresh_store;
-use crate::diagram::{EncodedChildRef, CountOverflow, ChildDecoder, ValueRef};
+use crate::test_helpers::check::marginal::check_store_counts;
+use num_bigint::BigUint;
 
 // ── `dedup_fresh_store` for marginalization-time stores ────────────────
+
+fn assert_dedup_fresh(
+    counts: Vec<u128>,
+    big: Option<CountOverflow>,
+    expected_counts: &[u128],
+    expected_remap: &[u32],
+) -> Option<CountOverflow> {
+    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
+    assert_eq!(new_counts, expected_counts);
+    assert_eq!(remap, expected_remap);
+    check_store_counts(&new_counts, new_big.as_ref())
+        .expect("born store must satisfy invariant 10 immediately");
+    new_big
+}
+
+fn remap_grid_entries(node_idx: &mut [u32], remap: &[u32]) {
+    const NO_PRODUCT: u32 = u32::MAX;
+    for entry in node_idx.iter_mut() {
+        if *entry != NO_PRODUCT {
+            *entry = remap[*entry as usize];
+        }
+    }
+}
 
 /// Two nodes with equal small counts → dedup merges them to one slot.
 /// Parent refs 0 and 1 both remap to the single surviving slot 0.
 #[test]
 fn dedup_fresh_store_merges_equal_small_counts() {
-    // counts[0] = 42, counts[1] = 42 — duplicate
-    let counts = vec![42u128, 42u128];
-    let big: Option<CountOverflow> = None;
-    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
-    assert_eq!(new_counts.len(), 1, "two equal slots must collapse to one");
-    assert_eq!(new_counts[0], 42u128);
+    let new_big = assert_dedup_fresh(vec![42u128, 42u128], None, &[42u128], &[0, 0]);
     assert!(new_big.is_none() || new_big.as_ref().unwrap().is_empty());
-    assert_eq!(remap[0], 0, "canonical slot stays 0");
-    assert_eq!(remap[1], 0, "duplicate remaps to canonical slot 0");
-    check_store_counts(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy invariant 10 immediately");
 }
 
 /// Two nodes with distinct small counts → no dedup; remap is identity.
 #[test]
 fn dedup_fresh_store_distinct_small_counts_unchanged() {
-    let counts = vec![10u128, 20u128];
-    let big: Option<CountOverflow> = None;
-    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
-    assert_eq!(new_counts, vec![10u128, 20u128]);
-    assert_eq!(remap, vec![0, 1]);
-    check_store_counts(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy invariant 10 immediately");
+    assert_dedup_fresh(vec![10u128, 20u128], None, &[10u128, 20u128], &[0, 1]);
 }
 
 /// Two nodes with equal BigUint counts (behind the OVERFLOW sentinel) →
@@ -39,20 +47,19 @@ fn dedup_fresh_store_distinct_small_counts_unchanged() {
 #[test]
 fn dedup_fresh_store_merges_equal_big_counts() {
     let big_val = BigUint::from(u128::MAX as u64) * BigUint::from(3u32);
-    let counts = vec![u128::MAX, u128::MAX]; // both OVERFLOW sentinels
     let big: Option<CountOverflow> = Some(
-        [(0u32, big_val.clone()), (1u32, big_val.clone())].into_iter().collect(),
+        [(0u32, big_val.clone()), (1u32, big_val.clone())]
+            .into_iter()
+            .collect(),
     );
-    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
-    assert_eq!(new_counts.len(), 1, "two equal Big slots must collapse to one");
-    assert_eq!(new_counts[0], u128::MAX);
+    let new_big = assert_dedup_fresh(vec![u128::MAX, u128::MAX], big, &[u128::MAX], &[0, 0]);
     let nb = new_big.as_ref().expect("new_big must exist for Big slots");
-    assert_eq!(nb.len(), 1, "the merged-away slot's entry is dropped, not kept");
+    assert_eq!(
+        nb.len(),
+        1,
+        "the merged-away slot's entry is dropped, not kept"
+    );
     assert_eq!(nb.get(0), Some(&big_val));
-    assert_eq!(remap[0], 0);
-    assert_eq!(remap[1], 0);
-    check_store_counts(&new_counts, new_big.as_ref())
-        .expect("born store must satisfy invariant 10 immediately");
 }
 
 /// Parent refs (as bare slot indices) are correctly remapped through the
@@ -60,15 +67,15 @@ fn dedup_fresh_store_merges_equal_big_counts() {
 /// a parent ref holding bare index 1 must become index 0 after remap.
 #[test]
 fn dedup_fresh_store_ref_remap_is_correct() {
-    let counts = vec![7u128, 7u128];
-    let (_, _, remap) = dedup_fresh_store(counts, None);
-    // Simulate a parent pair ref that was minted as bare slot 1.
-    let old_ref: u32 = 1; // bare slot index (pre-tagger)
+    let (_, _, remap) = dedup_fresh_store(vec![7u128, 7u128], None);
+    let old_ref: u32 = 1;
     let new_ref: u32 = remap[old_ref as usize];
     assert_eq!(new_ref, 0, "remapped ref must point to the canonical slot");
-    // After tagging (`ValueRef::slot_raw`), the consumer would decode correctly.
     let tagged = ValueRef::slot_raw(new_ref);
-    assert_eq!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(tagged)), ValueRef::Slot(0));
+    assert_eq!(
+        ChildDecoder::marginal().value(EncodedChildRef::from_raw(tagged)),
+        ValueRef::Slot(0)
+    );
 }
 
 // ── `dedup_fresh_store` duplicate-merge, independent of any call site. The apply
@@ -79,23 +86,16 @@ fn dedup_fresh_store_ref_remap_is_correct() {
 /// Both node_idx grid entries remap to the single surviving slot 0.
 #[test]
 fn streaming_emit_dedup_equal_counts() {
-    // Two cells with count=99 each (duplicate).
-    let counts = vec![99u128, 99u128];
-    let big: Option<CountOverflow> = None;
-    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
+    let (new_counts, new_big, remap) = dedup_fresh_store(vec![99u128, 99u128], None);
     assert_eq!(new_counts.len(), 1);
-    // Simulate node_idx grid for two cells: [0, 1] (bare slot indices).
     let mut node_idx: Vec<u32> = vec![0, 1];
-    const NO_PRODUCT: u32 = u32::MAX;
     let all_identity = remap.iter().enumerate().all(|(i, &r)| r == i as u32);
-    assert!(!all_identity, "equal counts must not produce identity remap");
-    for entry in node_idx.iter_mut() {
-        if *entry != NO_PRODUCT {
-            *entry = remap[*entry as usize];
-        }
-    }
-    assert_eq!(node_idx[0], 0, "first cell maps to slot 0");
-    assert_eq!(node_idx[1], 0, "duplicate cell also maps to slot 0");
+    assert!(
+        !all_identity,
+        "equal counts must not produce identity remap"
+    );
+    remap_grid_entries(&mut node_idx, &remap);
+    assert_eq!(node_idx, [0, 0]);
     check_store_counts(&new_counts, new_big.as_ref())
         .expect("deduped store must satisfy invariant 10");
 }
@@ -104,19 +104,16 @@ fn streaming_emit_dedup_equal_counts() {
 #[test]
 fn streaming_emit_dedup_equal_big_counts() {
     let big_val = BigUint::from(u128::MAX as u64) + BigUint::from(1u32);
-    let counts = vec![u128::MAX, u128::MAX];
     let big: Option<CountOverflow> = Some(
-        [(0u32, big_val.clone()), (1u32, big_val.clone())].into_iter().collect(),
+        [(0u32, big_val.clone()), (1u32, big_val.clone())]
+            .into_iter()
+            .collect(),
     );
-    let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
+    let (new_counts, new_big, remap) = dedup_fresh_store(vec![u128::MAX, u128::MAX], big);
     assert_eq!(new_counts.len(), 1, "equal Big counts must collapse");
     let mut node_idx = [0u32, 1u32];
-    const NO_PRODUCT: u32 = u32::MAX;
-    for entry in node_idx.iter_mut() {
-        if *entry != NO_PRODUCT { *entry = remap[*entry as usize]; }
-    }
-    assert_eq!(node_idx[0], 0);
-    assert_eq!(node_idx[1], 0);
+    remap_grid_entries(&mut node_idx, &remap);
+    assert_eq!(node_idx, [0, 0]);
     check_store_counts(&new_counts, new_big.as_ref())
         .expect("deduped store must satisfy invariant 10");
 }
@@ -148,12 +145,34 @@ fn dedup_fresh_store_compacts_in_place() {
 
     let (new_counts, new_big, remap) = dedup_fresh_store(counts, big);
 
-    assert_eq!(new_counts, vec![5u128, 9, u128::MAX], "survivors move down in slot order");
-    let nb = new_big.as_ref().expect("the overflow table survives compaction");
-    assert_eq!(nb.get(2), Some(&b1), "the overflow entry is re-filed under its compacted slot");
-    assert_eq!(nb.len(), 1, "and nothing is left behind at the vacated slot");
-    assert_eq!(remap, vec![0, 0, 1, 2, 1], "merged slots share their canonical's compacted index");
-    assert_eq!(new_counts.as_ptr(), counts_addr, "counts compacted in the input allocation");
+    assert_eq!(
+        new_counts,
+        vec![5u128, 9, u128::MAX],
+        "survivors move down in slot order"
+    );
+    let nb = new_big
+        .as_ref()
+        .expect("the overflow table survives compaction");
+    assert_eq!(
+        nb.get(2),
+        Some(&b1),
+        "the overflow entry is re-filed under its compacted slot"
+    );
+    assert_eq!(
+        nb.len(),
+        1,
+        "and nothing is left behind at the vacated slot"
+    );
+    assert_eq!(
+        remap,
+        vec![0, 0, 1, 2, 1],
+        "merged slots share their canonical's compacted index"
+    );
+    assert_eq!(
+        new_counts.as_ptr(),
+        counts_addr,
+        "counts compacted in the input allocation"
+    );
     check_store_counts(&new_counts, new_big.as_ref())
         .expect("compacted store must satisfy invariant 10");
 }
@@ -194,9 +213,19 @@ fn dedup_fresh_store_rekeys_scattered_big_entries() {
 
     assert_eq!(new_counts, vec![u128::MAX, 7, u128::MAX, 8, u128::MAX]);
     assert_eq!(remap, vec![0, 1, 1, 2, 0, 3, 4]);
-    let nb = new_big.as_ref().expect("distinct Big slots keep an overflow table");
-    assert_eq!(nb.len(), 3, "one entry per surviving Big slot, duplicate dropped");
-    assert_eq!(nb.get(0), Some(&b0), "b0 keeps its value at its unchanged key");
+    let nb = new_big
+        .as_ref()
+        .expect("distinct Big slots keep an overflow table");
+    assert_eq!(
+        nb.len(),
+        3,
+        "one entry per surviving Big slot, duplicate dropped"
+    );
+    assert_eq!(
+        nb.get(0),
+        Some(&b0),
+        "b0 keeps its value at its unchanged key"
+    );
     assert_eq!(nb.get(2), Some(&b1), "b1 re-filed 3 -> 2");
     assert_eq!(nb.get(4), Some(&b2), "b2 re-filed 6 -> 4");
     // Every ref lands on a slot carrying the value it was minted with.

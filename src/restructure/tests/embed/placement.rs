@@ -1,19 +1,26 @@
 use std::sync::Arc;
 
-use crate::{and, Tdd};
 use crate::diagram::LEAF_WIDTH;
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::{Tdd, and};
 
 /// `vtree`'s shape with every variable renamed through `rename`, over an id
 /// space of `num_vars`.
-pub(super) fn renamed_shape(vtree: &Vtree, rename: impl Fn(VarId) -> VarId, num_vars: u32) -> Vtree {
+pub(super) fn renamed_shape(
+    vtree: &Vtree,
+    rename: impl Fn(VarId) -> VarId,
+    num_vars: u32,
+) -> Vtree {
     let mut nodes = Vec::with_capacity(vtree.num_nodes());
     let mut copy_of = vec![VtreeIdx(0); vtree.num_nodes()];
     for t in vtree.bottomup() {
         copy_of[t.idx()] = VtreeIdx(nodes.len() as u32);
         nodes.push(match *vtree.node(t) {
-            VtreeNode::Leaf { var, .. } => VtreeNode::Leaf { var: rename(var), parent: None },
+            VtreeNode::Leaf { var, .. } => VtreeNode::Leaf {
+                var: rename(var),
+                parent: None,
+            },
             VtreeNode::Internal { left, right, .. } => VtreeNode::Internal {
                 left: copy_of[left.idx()],
                 right: copy_of[right.idx()],
@@ -46,13 +53,31 @@ fn assert_at_fixpoint(f: &Tdd) {
     assert_eq!(minimized.node_count(), f.node_count());
 }
 
+fn assert_same_slot_counts(
+    f: &Tdd,
+    embedded: &Tdd,
+    levels: &crate::restructure::Embedding,
+    label: &str,
+) {
+    for t in f.vtree().bottomup() {
+        assert_eq!(
+            embedded.reference_slot_count(levels.level_of(t)),
+            f.reference_slot_count(t),
+            "{label}",
+        );
+    }
+}
+
 #[test]
 fn a_whole_subtree_image_matches_a_direct_build() {
     let small = Arc::new(Vtree::balanced(4));
     let f = fixture(&small, [1, 2, 3, 4]);
 
     let image = Vtree::balanced_over(&[VarId(5), VarId(6), VarId(7), VarId(8)]).unwrap();
-    let free: Vec<VarId> = [1, 2, 3, 4, 9, 10, 11, 12].iter().map(|&v| VarId(v)).collect();
+    let free: Vec<VarId> = [1, 2, 3, 4, 9, 10, 11, 12]
+        .iter()
+        .map(|&v| VarId(v))
+        .collect();
     let big = Arc::new(Vtree::join(&image, &Vtree::balanced_over(&free).unwrap()).unwrap());
     assert_eq!(big.num_leaves(), 12);
 
@@ -63,12 +88,7 @@ fn a_whole_subtree_image_matches_a_direct_build() {
     assert_eq!(embedded.model_count().unwrap(), (9u32 << 8).into());
 
     // The image is a subtree, so every source level keeps its width.
-    for t in f.vtree().bottomup() {
-        assert_eq!(
-            embedded.reference_slot_count(levels.level_of(t)),
-            f.reference_slot_count(t),
-        );
-    }
+    assert_same_slot_counts(&f, &embedded, &levels, "subtree image");
 }
 
 #[test]
@@ -84,16 +104,17 @@ fn leaves_spread_along_a_spine_match_a_direct_build() {
     // Nine models over four variables, times the six variables left free.
     assert_eq!(embedded.model_count().unwrap(), (9u32 << 6).into());
 
-    for t in f.vtree().bottomup() {
-        assert_eq!(
-            embedded.reference_slot_count(levels.level_of(t)),
-            f.reference_slot_count(t),
-        );
-    }
+    assert_same_slot_counts(&f, &embedded, &levels, "spine leaves");
     // Every leaf landed on the leaf carrying its image.
     for (leaf, var) in f.vtree().leaf_bottomup() {
-        assert_eq!(levels.level_of(leaf), big.leaf_of(VarId(positions[var.idx()])).unwrap());
-        assert_eq!(embedded.reference_slot_count(levels.level_of(leaf)), LEAF_WIDTH);
+        assert_eq!(
+            levels.level_of(leaf),
+            big.leaf_of(VarId(positions[var.idx()])).unwrap()
+        );
+        assert_eq!(
+            embedded.reference_slot_count(levels.level_of(leaf)),
+            LEAF_WIDTH
+        );
     }
 }
 
@@ -138,15 +159,28 @@ fn a_one_variable_diagram_embeds() {
     let big = Arc::new(Vtree::linear(4));
     let (embedded, levels) = f.embed(&big, |_| VarId(3)).unwrap();
     assert_at_fixpoint(&embedded);
-    assert!(embedded.equivalent(&crate::literal(&big, -3).unwrap()).unwrap());
-    assert_eq!(levels.level_of(small.root()), big.leaf_of(VarId(3)).unwrap());
+    assert!(
+        embedded
+            .equivalent(&crate::literal(&big, -3).unwrap())
+            .unwrap()
+    );
+    assert_eq!(
+        levels.level_of(small.root()),
+        big.leaf_of(VarId(3)).unwrap()
+    );
 }
 
 #[test]
 fn a_constant_true_diagram_embeds() {
     let small = Arc::new(Vtree::balanced(3));
     let f = Tdd::one(&small);
-    let big = Arc::new(Vtree::join(&Vtree::balanced(3), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap());
+    let big = Arc::new(
+        Vtree::join(
+            &Vtree::balanced(3),
+            &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap(),
+        )
+        .unwrap(),
+    );
     let (embedded, _) = f.embed(&big, |v| v).unwrap();
     assert_at_fixpoint(&embedded);
     assert_eq!(embedded.model_count().unwrap(), 32u32.into());
@@ -160,8 +194,10 @@ fn every_shape_embeds_beside_the_variables_it_leaves_free() {
         }
         let shift = num_vars;
         let rename = |v: VarId| VarId(v.0 + shift);
-        let renamed: Vec<Vec<i32>> =
-            clauses.iter().map(|c| c.iter().map(|&l| l + l.signum() * shift as i32).collect()).collect();
+        let renamed: Vec<Vec<i32>> = clauses
+            .iter()
+            .map(|c| c.iter().map(|&l| l + l.signum() * shift as i32).collect())
+            .collect();
         let free: Vec<VarId> = (1..=num_vars).map(VarId).collect();
 
         for (label, small) in vtree_shapes(num_vars) {
@@ -181,13 +217,7 @@ fn every_shape_embeds_beside_the_variables_it_leaves_free() {
                 f.model_count().unwrap() << num_vars,
                 "{label}",
             );
-            for t in f.vtree().bottomup() {
-                assert_eq!(
-                    embedded.reference_slot_count(levels.level_of(t)),
-                    f.reference_slot_count(t),
-                    "{label}",
-                );
-            }
+            assert_same_slot_counts(&f, &embedded, &levels, label);
         }
     }
 }

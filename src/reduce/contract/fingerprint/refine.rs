@@ -122,66 +122,52 @@ pub(super) fn refine_context_groups(
     child: Option<&[EncodedNode]>,
 ) -> Result<Option<bool>, OperationError> {
     scratch.marked = None;
-    let ContractScratch {
-        twin_class,
-        twin_bits,
-        classes,
-        refine_keys,
-        refine_runs,
-        refine_links,
-        refine_table,
-        refine_wide,
-        refine_radix,
-        refine_column,
-        refine_reach,
-        refine_touched,
-        refine_bucket,
-        refine_met,
-        refine_seen,
-        refine_code,
-        refine_rows,
-        flat_groups,
-        group_starts,
-        unnamed,
-        unnamed_exact,
-        remap,
-        marked,
-        member_groups,
-        ..
-    } = scratch;
     // Zero between parent nodes, so it only grows.
-    lim.try_resize(refine_code, width, 0u8)?;
+    lim.try_resize(&mut scratch.refine_code, width, 0u8)?;
+    scratch.flat_groups.clear();
+    scratch.group_starts.clear();
+    let (mut part, whole, hand_off) = init_level_partition(
+        lim,
+        &mut scratch.twin_class,
+        &mut scratch.twin_bits,
+        &mut scratch.classes,
+        width,
+        start,
+    )?;
     let mut wide = Wide {
-        keys: refine_keys,
-        runs: refine_runs,
-        links: refine_links,
-        table: refine_table,
-        radix: refine_radix,
-        column: refine_column,
-        reach: refine_reach,
-        touched: refine_touched,
-        bucket: refine_bucket,
-        met: refine_met,
-        seen: refine_seen,
-        code: &mut refine_code[..width],
-        rows: refine_rows,
+        keys: &mut scratch.refine_keys,
+        runs: &mut scratch.refine_runs,
+        links: &mut scratch.refine_links,
+        table: &mut scratch.refine_table,
+        radix: &mut scratch.refine_radix,
+        column: &mut scratch.refine_column,
+        reach: &mut scratch.refine_reach,
+        touched: &mut scratch.refine_touched,
+        bucket: &mut scratch.refine_bucket,
+        met: &mut scratch.refine_met,
+        seen: &mut scratch.refine_seen,
+        code: &mut scratch.refine_code[..width],
+        rows: &mut scratch.refine_rows,
     };
-    flat_groups.clear();
-    group_starts.clear();
-    let (mut part, whole, hand_off) =
-        init_level_partition(lim, twin_class, twin_bits, classes, width, start)?;
     if !split_level_partition(
         level,
         side,
         lim,
         &mut part,
-        refine_wide,
+        &mut scratch.refine_wide,
         &mut wide,
         hand_off,
     )? {
         return Ok(None);
     }
-    if !has_twinable_after_unnamed(lim, &mut part, width, whole, unnamed, unnamed_exact)? {
+    if !has_twinable_after_unnamed(
+        lim,
+        &mut part,
+        width,
+        whole,
+        &mut scratch.unnamed,
+        &mut scratch.unnamed_exact,
+    )? {
         return Ok(Some(false));
     }
     list_refined_groups(
@@ -189,11 +175,11 @@ pub(super) fn refine_context_groups(
         part,
         width,
         child,
-        flat_groups,
-        group_starts,
-        remap,
-        member_groups,
-        marked,
+        &mut scratch.flat_groups,
+        &mut scratch.group_starts,
+        &mut scratch.remap,
+        &mut scratch.member_groups,
+        &mut scratch.marked,
     )?;
     Ok(Some(true))
 }
@@ -1080,35 +1066,10 @@ impl Partition<'_> {
             radix,
             ..
         } = wide;
-        // Each pair of a node not alone a key of its sibling's bits and its
-        // node's above them, so that the sort places only the bits there
-        // are. Most pairs of a wide node name a node already alone, which
-        // its alone bit tells in cache: every pair's key is written, and
-        // kept only where the bit is clear, with no branch and no read of
-        // the node's class.
-        keys.clear();
-        lim.try_resize(keys, pairs.len(), 0u64)?;
-        let (mut kept, mut top) = (0usize, 0u32);
-        for pair in pairs {
-            let (t, s) = split_pair(pair, side);
-            let live = !(self.bits[(t / 64) as usize][1] >> (t % 64)) & 1;
-            keys[kept] = pack(t, s);
-            kept += live as usize;
-            top |= s & 0u32.wrapping_sub(live as u32);
-        }
-        keys.truncate(kept);
-        if keys.is_empty() {
+        let Some(sb) = self.pack_and_sort_wide_keys(lim, pairs, side, keys, radix)? else {
             return Ok(());
-        }
-        let sb = u32::BITS - top.leading_zeros();
-        let tb = u32::BITS - (self.class.len() as u32 - 1).leading_zeros();
+        };
         let low = (1u64 << sb) - 1;
-        for key in keys.iter_mut() {
-            *key = ((*key >> 32) << sb) | (*key & low);
-        }
-        if !keys.is_sorted() {
-            radix.sort(lim, keys, 0, (sb + tb) as usize)?;
-        }
         runs.clear();
         lim.reserve_exact(runs, keys.len())?;
         let mut k = 0;
@@ -1139,6 +1100,49 @@ impl Partition<'_> {
         })?;
         self.apply_groups(runs, links, |r| (keys[r.1 as usize] >> sb) as u32);
         Ok(())
+    }
+
+    /// Pack the non-alone pairs of `pairs` into `keys` and sort them by
+    /// `(node, sibling)`, returning `Some(sb)` (the sibling bit width) when at
+    /// least one pair remains.
+    fn pack_and_sort_wide_keys(
+        &self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        keys: &mut Vec<u64>,
+        radix: &mut Radix,
+    ) -> Result<Option<u32>, OperationError> {
+        // Each pair of a node not alone a key of its sibling's bits and its
+        // node's above them, so that the sort places only the bits there
+        // are. Most pairs of a wide node name a node already alone, which
+        // its alone bit tells in cache: every pair's key is written, and
+        // kept only where the bit is clear, with no branch and no read of
+        // the node's class.
+        keys.clear();
+        lim.try_resize(keys, pairs.len(), 0u64)?;
+        let (mut kept, mut top) = (0usize, 0u32);
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            let live = !(self.bits[(t / 64) as usize][1] >> (t % 64)) & 1;
+            keys[kept] = pack(t, s);
+            kept += live as usize;
+            top |= s & 0u32.wrapping_sub(live as u32);
+        }
+        keys.truncate(kept);
+        if keys.is_empty() {
+            return Ok(None);
+        }
+        let sb = u32::BITS - top.leading_zeros();
+        let tb = u32::BITS - (self.class.len() as u32 - 1).leading_zeros();
+        let low = (1u64 << sb) - 1;
+        for key in keys.iter_mut() {
+            *key = ((*key >> 32) << sb) | (*key & low);
+        }
+        if !keys.is_sorted() {
+            radix.sort(lim, keys, 0, (sb + tb) as usize)?;
+        }
+        Ok(Some(sb))
     }
 
     /// A wide parent node split by how many siblings it pairs each node
@@ -1181,33 +1185,9 @@ impl Partition<'_> {
             touched,
             ..
         } = wide;
-        runs.clear();
-        lim.reserve_exact(runs, pairs.len())?;
-        let (mut last, mut top) = (None, 0u32);
-        let mut k = 0;
-        while k < pairs.len() {
-            let t = split_pair(&pairs[k], side).0;
-            if last.is_some_and(|last| t < last) {
-                return Ok(Degrees::Unordered);
-            }
-            last = Some(t);
-            let end = k
-                + 1
-                + pairs[k + 1..]
-                    .iter()
-                    .take_while(|pair| split_pair(pair, side).0 == t)
-                    .count();
-            let c = self.of(t);
-            if self.can_twin(c) {
-                // The run's start in the third field, which the grouping
-                // does not read.
-                runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
-                top = pairs[k..end]
-                    .iter()
-                    .fold(top, |top, pair| top | split_pair(pair, side).1);
-            }
-            k = end;
-        }
+        let Some(top) = self.collect_degree_runs(lim, pairs, side, runs)? else {
+            return Ok(Degrees::Unordered);
+        };
         if runs.is_empty() {
             return Ok(Degrees::Split);
         }
@@ -1253,6 +1233,46 @@ impl Partition<'_> {
             }
         }
         Ok(Degrees::Unsettled)
+    }
+
+    /// Collect the degree runs of twinable nodes in `pairs` into `runs`,
+    /// returning `None` when `pairs` is not in ascending node order, or
+    /// `Some(top)` (the bitwise OR of their sibling indices).
+    fn collect_degree_runs(
+        &self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        runs: &mut Vec<(u64, u32, u32)>,
+    ) -> Result<Option<u32>, OperationError> {
+        runs.clear();
+        lim.reserve_exact(runs, pairs.len())?;
+        let (mut last, mut top) = (None, 0u32);
+        let mut k = 0;
+        while k < pairs.len() {
+            let t = split_pair(&pairs[k], side).0;
+            if last.is_some_and(|last| t < last) {
+                return Ok(None);
+            }
+            last = Some(t);
+            let end = k
+                + 1
+                + pairs[k + 1..]
+                    .iter()
+                    .take_while(|pair| split_pair(pair, side).0 == t)
+                    .count();
+            let c = self.of(t);
+            if self.can_twin(c) {
+                // The run's start in the third field, which the grouping
+                // does not read.
+                runs.push(((u64::from(c) << 32) | (end - k) as u64, t, k as u32));
+                top = pairs[k..end]
+                    .iter()
+                    .fold(top, |top, pair| top | split_pair(pair, side).1);
+            }
+            k = end;
+        }
+        Ok(Some(top))
     }
 
     /// A wide parent node split sibling by sibling, where no parent node

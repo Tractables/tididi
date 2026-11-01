@@ -323,14 +323,7 @@ where
         (ctx.output_grid_base, left_width, right_width),
         (left, right),
     );
-    let reset = |cells: &mut [u32]| {
-        if left.kills() && right.kills() {
-            mark_dead(cells)
-        } else {
-            mark_dead_out_of_line(cells)
-        }
-    };
-
+    let both_kill = left.kills() && right.kills();
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(
         lim,
@@ -342,35 +335,63 @@ where
     );
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
-        let fresh = extend_slab(slab, row_base, row_base + right_width);
-        let node_idx = &mut slab[..];
-        if !slab_fill && !every_cell && !fresh {
-            reset(&mut node_idx[row_base..row_base + right_width]);
-        }
-
-        let f_pairs = match f_described {
-            Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
-            None => left_level_t.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
-        };
-        if f_pairs.is_empty() {
-            if every_cell && !fresh {
-                reset(&mut node_idx[row_base..row_base + right_width]);
-            }
+        let Some(f_pairs) = prepare_level_row(
+            left_level_t,
+            i,
+            f_described,
+            (left_view, right_view),
+            f_pairs_scratch,
+            slab,
+            (row_base, right_width, every_cell, slab_fill, both_kill),
+        ) else {
             continue;
-        }
-
+        };
         run_nonempty_level_row::<DENSE, L, R, A>(
             eng,
             action,
             (i, row_base, right_width),
             (f_pairs, ctx, right_level_t),
             (left, right),
-            (&mut *g_pairs_scratch, &mut *node_idx, &mut poll),
+            (&mut *g_pairs_scratch, &mut slab[..], &mut poll),
             &cull,
         )?;
     }
     poll.flush()?;
     Ok(())
+}
+
+#[inline(always)]
+fn prepare_level_row<'a>(
+    left_level_t: &'a TddLevel,
+    i: usize,
+    f_described: Option<usize>,
+    (left_view, right_view): (crate::diagram::ChildDecoder, crate::diagram::ChildDecoder),
+    f_pairs_scratch: &'a mut Vec<ChildPair>,
+    slab: &mut Vec<u32>,
+    (row_base, right_width, every_cell, slab_fill, both_kill): (usize, usize, bool, bool, bool),
+) -> Option<&'a [ChildPair]> {
+    let fresh = extend_slab(slab, row_base, row_base + right_width);
+    let reset = |cells: &mut [u32]| {
+        if both_kill {
+            mark_dead(cells)
+        } else {
+            mark_dead_out_of_line(cells)
+        }
+    };
+    if !slab_fill && !every_cell && !fresh {
+        reset(&mut slab[row_base..row_base + right_width]);
+    }
+    let f_pairs = match f_described {
+        Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
+        None => left_level_t.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
+    };
+    if f_pairs.is_empty() {
+        if every_cell && !fresh {
+            reset(&mut slab[row_base..row_base + right_width]);
+        }
+        return None;
+    }
+    Some(f_pairs)
 }
 
 /// Level-wide row and column cull descriptors for [`run_nonempty_level_row`].
@@ -476,14 +497,11 @@ where
     R: ChildLookup,
     A: CellAction<L, R>,
 {
+    let culled = cull.by_rows || cull.cull_left || cull.cull_right;
     let Some(first) = try_whole_row_action::<DENSE, L, R, A>(
         eng,
         action,
-        (
-            row_base,
-            right_width,
-            cull.by_rows || cull.cull_left || cull.cull_right,
-        ),
+        (row_base, right_width, culled),
         (f_pairs, ctx, right_level_t),
         (left, right),
         (&mut *g_pairs_scratch, &mut *node_idx, &mut *poll),
@@ -491,42 +509,56 @@ where
     else {
         return Ok(());
     };
-    let mut cell = |j: usize| {
-        action.cell(
-            eng,
-            CellArgs {
-                j,
-                i,
-                row_base,
-                f_pairs,
-                ctx,
-                right_level_t,
-                left,
-                right,
-                g_pairs_scratch: &mut *g_pairs_scratch,
-                node_idx: &mut *node_idx,
-                gate: &mut *poll,
-            },
-        )
+    let polled = {
+        let mut cell = |j: usize| {
+            action.cell(
+                eng,
+                CellArgs {
+                    j,
+                    i,
+                    row_base,
+                    f_pairs,
+                    ctx,
+                    right_level_t,
+                    left,
+                    right,
+                    g_pairs_scratch: &mut *g_pairs_scratch,
+                    node_idx: &mut *node_idx,
+                    gate: &mut *poll,
+                },
+            )
+        };
+        dispatch_level_row_cells::<DENSE>(ctx, f_pairs, (first, right_width), cull, &mut cell)?
     };
+    if polled {
+        poll.poll(right_width as u64)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn dispatch_level_row_cells<const DENSE: bool>(
+    ctx: &CellCtx<'_>,
+    f_pairs: &[ChildPair],
+    (first, right_width): (usize, usize),
+    cull: &RowCull<'_>,
+    cell: &mut impl FnMut(usize) -> Result<(), OperationError>,
+) -> Result<bool, OperationError> {
     if cull.by_rows {
-        if enter_row_by_row_cols(
+        return enter_row_by_row_cols(
             f_pairs,
             (cull.cull_left, cull.cull_right),
             (cull.left_rows, cull.right_rows),
             cull.whole,
-            &mut cell,
-        )? {
-            poll.poll(right_width as u64)?;
-        }
-        return Ok(());
+            cell,
+        );
     }
     let Some((left_alive_mask, right_alive_mask)) = (if DENSE {
         Some((0u128, u128::MAX))
     } else {
         row_alive_masks(ctx, f_pairs)
     }) else {
-        return Ok(());
+        return Ok(false);
     };
     if cull.cull_left || cull.cull_right {
         enter_row_by_cull(
@@ -535,14 +567,14 @@ where
             (left_alive_mask, right_alive_mask),
             (cull.by_columns, cull.words, cull.culls, right_width),
             (cull.left_cols, cull.right_cols),
-            &mut cell,
+            cell,
         )?;
     } else {
         for j in first..right_width {
             cell(j)?;
         }
     }
-    poll.poll(right_width as u64)
+    Ok(true)
 }
 
 /// Try [`CellAction::whole_row`] when enabled and unculled, returning

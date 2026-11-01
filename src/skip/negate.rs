@@ -14,10 +14,10 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    cells_label, filled, ix, literal_cells, mk, normalize, vt, Ref, SkipForm, NONE, ONE, POS, ZREF,
+    NONE, ONE, POS, Ref, SkipForm, ZREF, cells_label, filled, ix, literal_cells, mk, normalize, vt,
 };
-use crate::limits::{Charged, Limits};
 use crate::OperationError;
+use crate::limits::{Charged, Limits};
 
 /// A child's Z as a side: `ZTAG | level`, the level [`zlev`] names.
 const ZTAG: Ref = 1 << 62;
@@ -74,7 +74,12 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     // nodes and those skips end on a leaf label below. A level between
     // them that a skip crosses has the complement of the level it lands
     // on, behind `true` on its single variable.
-    let mut lv: Vec<u32> = f.active.iter().copied().chain(leaf_skips.keys().copied()).collect();
+    let mut lv: Vec<u32> = f
+        .active
+        .iter()
+        .copied()
+        .chain(leaf_skips.keys().copied())
+        .collect();
     lv.sort_unstable_by_key(|&t| std::cmp::Reverse(sh.pre[t as usize]));
     lv.dedup();
     let mut pos = vec![NONE; n];
@@ -90,10 +95,18 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     // variables.
     out.out = if sh.is_leaf(sh.root) {
         let c = 3 & !literal_cells(ix(f.out));
-        if c == 0 { ZREF } else { mk(sh.root, cells_label(c)) }
+        if c == 0 {
+            ZREF
+        } else {
+            mk(sh.root, cells_label(c))
+        }
     } else {
         let w = zlev(sh, &pos, sh.root);
-        if w == NONE { ZREF } else { zres[pos[w as usize] as usize] }
+        if w == NONE {
+            ZREF
+        } else {
+            zres[pos[w as usize] as usize]
+        }
     };
     for v in top {
         lim.discard(v);
@@ -125,58 +138,14 @@ fn build_z_pairs(
         let mut z = Vec::new();
         match (sh.is_leaf(l), sh.is_leaf(r)) {
             (true, true) => {
-                // The 2 x 2 grid.
-                let mut owned = [[false; 2]; 2];
-                let mut own = |a: u8, b: u8| {
-                    for (i, row) in owned.iter_mut().enumerate() {
-                        for (j, cell) in row.iter_mut().enumerate() {
-                            if a >> i & 1 != 0 && b >> j & 1 != 0 {
-                                *cell = true;
-                            }
-                        }
-                    }
-                };
-                for &(a, b) in &lvl.pairs {
-                    own(literal_cells(ix(a)), literal_cells(ix(b)));
-                }
-                for &x in leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
-                    if vt(x) == l {
-                        own(literal_cells(ix(x)), 3)
-                    } else {
-                        own(3, literal_cells(ix(x)))
-                    }
-                }
-                for i in 0..2u32 {
-                    for j in 0..2u32 {
-                        if !owned[i as usize][j as usize] {
-                            lim.try_push(&mut z, (mk(l, POS + i), mk(r, POS + j)))?;
-                        }
-                    }
-                }
+                let skips = leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]);
+                z_pairs_leaf_leaf(&lvl.pairs, (l, r), skips, &mut z, lim)?;
             }
             (true, false) | (false, true) => {
                 let left_leaf = sh.is_leaf(l);
                 let (leaf, inner) = if left_leaf { (l, r) } else { (r, l) };
-                let mut cov: FxHashMap<Ref, u8> = FxHashMap::default();
-                lim.reserve_map(&mut cov, lvl.pairs.len())?;
-                for &(a, b) in &lvl.pairs {
-                    let (lab, e) = if left_leaf { (a, b) } else { (b, a) };
-                    *cov.entry(e).or_insert(0) |= literal_cells(ix(lab));
-                }
-                let mut v: Vec<(Ref, u8)> = Vec::new();
-                lim.reserve_exact(&mut v, cov.len())?;
-                v.extend(cov.iter().map(|(&e, &c)| (e, c)).filter(|&(_, c)| c != 3));
-                lim.discard(cov);
-                v.sort_unstable();
-                lim.reserve_exact(&mut z, v.len() + 1)?;
-                for &(e, c) in &v {
-                    let lab = mk(leaf, cells_label(3 & !c));
-                    z.push(if left_leaf { (lab, e) } else { (e, lab) });
-                }
-                lim.discard(v);
-                if let Some(zi) = zof(sh, pos, &zpairs, inner) {
-                    z.push(if left_leaf { (mk(leaf, ONE), zi) } else { (zi, mk(leaf, ONE)) });
-                }
+                let zi = zof(sh, pos, &zpairs, inner);
+                z_pairs_leaf_inner(&lvl.pairs, left_leaf, leaf, zi, &mut z, lim)?;
             }
             (false, false) => {
                 z_pairs_inner_inner(
@@ -191,6 +160,78 @@ fn build_z_pairs(
         zpairs[k] = z;
     }
     Ok(zpairs)
+}
+
+fn z_pairs_leaf_leaf(
+    pairs: &[(Ref, Ref)],
+    (l, r): (u32, u32),
+    skips: &[Ref],
+    z: &mut Vec<(Ref, Ref)>,
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    let mut owned = [[false; 2]; 2];
+    let mut own = |a: u8, b: u8| {
+        for (i, row) in owned.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                if a >> i & 1 != 0 && b >> j & 1 != 0 {
+                    *cell = true;
+                }
+            }
+        }
+    };
+    for &(a, b) in pairs {
+        own(literal_cells(ix(a)), literal_cells(ix(b)));
+    }
+    for &x in skips {
+        if vt(x) == l {
+            own(literal_cells(ix(x)), 3);
+        } else {
+            own(3, literal_cells(ix(x)));
+        }
+    }
+    for i in 0..2u32 {
+        for j in 0..2u32 {
+            if !owned[i as usize][j as usize] {
+                lim.try_push(z, (mk(l, POS + i), mk(r, POS + j)))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn z_pairs_leaf_inner(
+    pairs: &[(Ref, Ref)],
+    left_leaf: bool,
+    leaf: u32,
+    zi: Option<Ref>,
+    z: &mut Vec<(Ref, Ref)>,
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    let mut cov: FxHashMap<Ref, u8> = FxHashMap::default();
+    lim.reserve_map(&mut cov, pairs.len())?;
+    for &(a, b) in pairs {
+        let (lab, e) = if left_leaf { (a, b) } else { (b, a) };
+        *cov.entry(e).or_insert(0) |= literal_cells(ix(lab));
+    }
+    let mut v: Vec<(Ref, u8)> = Vec::new();
+    lim.reserve_exact(&mut v, cov.len())?;
+    v.extend(cov.iter().map(|(&e, &c)| (e, c)).filter(|&(_, c)| c != 3));
+    lim.discard(cov);
+    v.sort_unstable();
+    lim.reserve_exact(z, v.len() + 1)?;
+    for &(e, c) in &v {
+        let lab = mk(leaf, cells_label(3 & !c));
+        z.push(if left_leaf { (lab, e) } else { (e, lab) });
+    }
+    lim.discard(v);
+    if let Some(zi) = zi {
+        z.push(if left_leaf {
+            (mk(leaf, ONE), zi)
+        } else {
+            (zi, mk(leaf, ONE))
+        });
+    }
+    Ok(())
 }
 
 /// Fill `z` with the unowned pairs and child-`Z` cross pairs of an inner-inner
@@ -351,7 +392,10 @@ fn emit_negated_levels(
             for &(a, b) in node {
                 buf.push((fix(&res, &zres, a), fix(&res, &zres, b)));
             }
-            debug_assert!(buf.iter().all(|&(a, b)| a != ZREF && b != ZREF), "a kept class names no true class");
+            debug_assert!(
+                buf.iter().all(|&(a, b)| a != ZREF && b != ZREF),
+                "a kept class names no true class"
+            );
             *slot = match normalize(sh, t, &mut buf) {
                 Err(x) => x,
                 Ok(()) => mk(t, out.push_node(t, &buf, lim)?),
@@ -388,7 +432,12 @@ fn emit_negated_levels(
 fn top_at(f: &SkipForm, t: u32, lim: &Limits) -> Result<SkipForm, OperationError> {
     let sh = &*f.shape;
     let mut out = SkipForm::zero(f.shape.clone());
-    fn build(sh: &super::Shape, out: &mut SkipForm, t: u32, lim: &Limits) -> Result<Ref, OperationError> {
+    fn build(
+        sh: &super::Shape,
+        out: &mut SkipForm,
+        t: u32,
+        lim: &Limits,
+    ) -> Result<Ref, OperationError> {
         let mut t = t;
         while !sh.is_leaf(t) {
             let (l, r) = sh.kids[t as usize];

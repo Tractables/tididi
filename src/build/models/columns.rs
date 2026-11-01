@@ -10,11 +10,11 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::Engine;
 use crate::diagram::{NodeIdx, Tdd};
 use crate::limits::{Limits, OperationError};
 use crate::query::MAX_COLUMN_BITS;
 use crate::vtree::{VarId, Vtree};
-use crate::Engine;
 
 use super::layout::Layout;
 use super::rows::{sorted_distinct, words_per_row};
@@ -86,7 +86,9 @@ impl Tdd {
         codes: &[&[u32]],
         rows: RowSelection<'_>,
     ) -> Result<Tdd, OperationError> {
-        vtree.context().run(|eng| eng.from_columns(vtree, columns, codes, rows))
+        vtree
+            .context()
+            .run(|eng| eng.from_columns(vtree, columns, codes, rows))
     }
 }
 
@@ -130,31 +132,67 @@ impl Engine {
         let (packed, ascending) = pack(lim, &layout, columns, codes, rows, chosen, w)?;
         lim.discard(vars);
         let mut radix = crate::sort::Radix::default();
-        let sorted = sorted_distinct(lim, &mut radix, layout.position.len(), &layout, packed, w, ascending)?;
-        super::build_sorted(self, vtree, &layout, Cow::Owned(sorted), w, radix, super::Direct::Off)
+        let sorted = sorted_distinct(
+            lim,
+            &mut radix,
+            layout.position.len(),
+            &layout,
+            packed,
+            w,
+            ascending,
+        )?;
+        super::build_sorted(
+            self,
+            vtree,
+            &layout,
+            Cow::Owned(sorted),
+            w,
+            radix,
+            super::Direct::Off,
+        )
     }
 }
 
 /// The rows a table of `codes` holds, checked against `columns` and `rows`.
-fn table_len(columns: &[&[VarId]], codes: &[&[u32]], rows: RowSelection<'_>) -> Result<usize, OperationError> {
+fn table_len(
+    columns: &[&[VarId]],
+    codes: &[&[u32]],
+    rows: RowSelection<'_>,
+) -> Result<usize, OperationError> {
     if let Some(column) = columns.iter().position(|c| c.len() > MAX_COLUMN_BITS) {
-        return Err(OperationError::ColumnTooWide { column, bits: columns[column].len() });
+        return Err(OperationError::ColumnTooWide {
+            column,
+            bits: columns[column].len(),
+        });
     }
     let len = codes.first().map_or(0, |c| c.len());
     if codes.len() != columns.len() {
-        return Err(OperationError::RaggedColumns { column: codes.len().min(columns.len()), len: 0, expected: len });
+        return Err(OperationError::RaggedColumns {
+            column: codes.len().min(columns.len()),
+            len: 0,
+            expected: len,
+        });
     }
     if let Some(column) = codes.iter().position(|c| c.len() != len) {
-        return Err(OperationError::RaggedColumns { column, len: codes[column].len(), expected: len });
+        return Err(OperationError::RaggedColumns {
+            column,
+            len: codes[column].len(),
+            expected: len,
+        });
     }
     match rows {
         RowSelection::All => Ok(len),
-        RowSelection::Marked(marked) if marked.len() != len => {
-            Err(OperationError::RaggedColumns { column: codes.len(), len: marked.len(), expected: len })
-        }
+        RowSelection::Marked(marked) if marked.len() != len => Err(OperationError::RaggedColumns {
+            column: codes.len(),
+            len: marked.len(),
+            expected: len,
+        }),
         RowSelection::Marked(_) => Ok(len),
         RowSelection::Listed(listed) => match listed.iter().find(|&&r| r as usize >= len) {
-            Some(&row) => Err(OperationError::RowOutOfRange { row: row as usize, rows: len }),
+            Some(&row) => Err(OperationError::RowOutOfRange {
+                row: row as usize,
+                rows: len,
+            }),
             None => Ok(len),
         },
     }
@@ -195,59 +233,9 @@ fn pack(
     let mut gate = lim.gate();
     gate.poll((chosen * columns.len().max(1)) as u64)?;
     let ascending = if w == 1 {
-        let one = |r: usize| -> u64 {
-            let mut word = 0u64;
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                word |= match placement {
-                    Placement::Shift { shift, mask, .. } => u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        (0..*bytes).fold(0, |acc, k| acc | table[k * 256 + ((code >> (8 * k)) & 0xff) as usize])
-                    }
-                };
-            }
-            word
-        };
-        let mut ascending = true;
-        let mut last: Option<u64> = None;
-        let mut push = |word: u64| {
-            ascending &= last.is_none_or(|last| last < word);
-            last = Some(word);
-            packed.push(word);
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(|r| push(one(r))),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| push(one(r as usize))),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| push(one(r)));
-            }
-        }
-        ascending
+        pack_one_word_rows(&placements, codes, rows, &mut packed)
     } else {
-        let mut row = vec![0u64; w];
-        let mut one = |r: usize| {
-            row.iter_mut().for_each(|word| *word = 0);
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                match placement {
-                    Placement::Shift { word, shift, mask } => row[*word] |= u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        for k in 0..*bytes {
-                            let entry = &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
-                            row.iter_mut().zip(entry).for_each(|(word, &bits)| *word |= bits);
-                        }
-                    }
-                }
-            }
-            packed.extend_from_slice(&row);
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(&mut one),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| one(r));
-            }
-        }
+        pack_multi_word_rows(&placements, codes, rows, w, &mut packed);
         false
     };
     gate.flush()?;
@@ -259,18 +247,115 @@ fn pack(
     Ok((packed, ascending))
 }
 
+fn pack_one_word_rows(
+    placements: &[Placement],
+    codes: &[&[u32]],
+    rows: RowSelection<'_>,
+    packed: &mut Vec<u64>,
+) -> bool {
+    let one = |r: usize| -> u64 {
+        let mut word = 0u64;
+        for (placement, column) in placements.iter().zip(codes) {
+            let code = column[r];
+            word |= match placement {
+                Placement::Shift { shift, mask, .. } => u64::from(code & mask) << shift,
+                Placement::Spread { bytes, table } => (0..*bytes).fold(0, |acc, k| {
+                    acc | table[k * 256 + ((code >> (8 * k)) & 0xff) as usize]
+                }),
+            };
+        }
+        word
+    };
+    let mut ascending = true;
+    let mut last: Option<u64> = None;
+    let mut push = |word: u64| {
+        ascending &= last.is_none_or(|last| last < word);
+        last = Some(word);
+        packed.push(word);
+    };
+    match rows {
+        RowSelection::All => (0..codes[0].len()).for_each(|r| push(one(r))),
+        RowSelection::Listed(listed) => listed.iter().for_each(|&r| push(one(r as usize))),
+        RowSelection::Marked(marked) => {
+            marked
+                .iter()
+                .enumerate()
+                .filter(|&(_, &m)| m)
+                .for_each(|(r, _)| push(one(r)));
+        }
+    }
+    ascending
+}
+
+fn pack_multi_word_rows(
+    placements: &[Placement],
+    codes: &[&[u32]],
+    rows: RowSelection<'_>,
+    w: usize,
+    packed: &mut Vec<u64>,
+) {
+    let mut row = vec![0u64; w];
+    let mut one = |r: usize| {
+        row.iter_mut().for_each(|word| *word = 0);
+        for (placement, column) in placements.iter().zip(codes) {
+            let code = column[r];
+            match placement {
+                Placement::Shift { word, shift, mask } => {
+                    row[*word] |= u64::from(code & mask) << shift
+                }
+                Placement::Spread { bytes, table } => {
+                    for k in 0..*bytes {
+                        let entry =
+                            &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
+                        row.iter_mut()
+                            .zip(entry)
+                            .for_each(|(word, &bits)| *word |= bits);
+                    }
+                }
+            }
+        }
+        packed.extend_from_slice(&row);
+    };
+    match rows {
+        RowSelection::All => (0..codes[0].len()).for_each(&mut one),
+        RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
+        RowSelection::Marked(marked) => {
+            marked
+                .iter()
+                .enumerate()
+                .filter(|&(_, &m)| m)
+                .for_each(|(r, _)| one(r));
+        }
+    }
+}
+
 /// The placement of a column whose bits, most significant first, land at
 /// `positions` of a `w`-word row.
 fn place(lim: &Limits, positions: &[u32], w: usize) -> Result<Placement, OperationError> {
     let bits = positions.len();
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     if bits == 0 {
-        return Ok(Placement::Shift { word: 0, shift: 0, mask: 0 });
+        return Ok(Placement::Shift {
+            word: 0,
+            shift: 0,
+            mask: 0,
+        });
     }
     let low = positions[bits - 1];
-    let adjacent = positions.iter().enumerate().all(|(i, &p)| p == low + (bits - 1 - i) as u32);
+    let adjacent = positions
+        .iter()
+        .enumerate()
+        .all(|(i, &p)| p == low + (bits - 1 - i) as u32);
     if adjacent && (low % 64) as usize + bits <= 64 {
-        return Ok(Placement::Shift { word: low as usize / 64, shift: low % 64, mask });
+        return Ok(Placement::Shift {
+            word: low as usize / 64,
+            shift: low % 64,
+            mask,
+        });
     }
     let bytes = bits.div_ceil(8);
     let mut table = Vec::new();

@@ -1,8 +1,8 @@
 //! The work clock's two paths off a gate: the explicit flush and the drop.
 
 use super::*;
-use crate::limits::poll::{ClockReading, CLOCK_POLLS, CLOCK_POLL_WORK};
 use crate::limits::OperationError;
+use crate::limits::poll::{CLOCK_POLL_WORK, CLOCK_POLLS, ClockReading};
 use std::time::{Duration, Instant};
 
 /// A gate that ends a level holding less than one stride still charges what it
@@ -17,7 +17,11 @@ fn a_dropped_gate_charges_the_residue_it_never_flushed() {
         gate.poll(7).expect("well under the stride, so no poll");
         assert_eq!(lim.work_units(), before, "the gate has not come due");
     }
-    assert_eq!(lim.work_units(), before + 7, "the residue reached the clock on drop");
+    assert_eq!(
+        lim.work_units(),
+        before + 7,
+        "the residue reached the clock on drop"
+    );
 }
 
 /// The flush and the drop take the residue out of the same place, so a gate
@@ -40,9 +44,10 @@ fn a_flushed_gate_is_not_charged_again_when_it_drops() {
 #[test]
 fn only_the_flush_reports_a_stop() {
     let lim = Limits::new();
-    let _prior = lim.install(
-        LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(1))))),
-    );
+    let _prior =
+        lim.install(LimitConfig::none().with_stop_rules(
+            StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(1)))),
+        ));
     let mut gate = lim.gate_with(1000);
     gate.poll(7).expect("under the stride, so nothing is read");
     assert!(matches!(gate.flush(), Err(OperationError::Stopped)));
@@ -63,38 +68,45 @@ fn finish_tests_the_stop_without_adding_work() {
     let _prior = lim.install(LimitConfig::none().with_stop_rules(
         StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(before + 7)))),
     ));
-    assert!(matches!(lim.gate_with(1000).finish(), Err(OperationError::Stopped)));
+    assert!(matches!(
+        lim.gate_with(1000).finish(),
+        Err(OperationError::Stopped)
+    ));
     assert_eq!(lim.work_units(), before + 7);
+}
+
+fn run_gated_poll(
+    stride: u64,
+    held: u64,
+    stop_at: u64,
+    step: impl FnOnce(&mut PollGate<'_>) -> Result<(), OperationError>,
+) -> (Result<(), OperationError>, u64, u64) {
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(
+        StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(stop_at)))),
+    ));
+    let mut gate = lim.gate_with(stride);
+    let mut result = gate.poll(held);
+    if result.is_ok() {
+        result = step(&mut gate);
+    }
+    let charged = lim.work_units();
+    drop(gate);
+    (result, charged, lim.work_units())
 }
 
 /// `poll_each` is that many polls of one unit: the same charges at the same
 /// points, the same stop, the same residue for the drop.
 #[test]
 fn poll_each_charges_and_stops_as_single_polls_do() {
-    fn run(stride: u64, held: u64, units: u64, stop_at: u64, each: bool) -> (Result<(), OperationError>, u64, u64) {
-        let lim = Limits::new();
-        let _prior = lim.install(
-            LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(stop_at))))),
-        );
-        let mut gate = lim.gate_with(stride);
-        let mut result = gate.poll(held);
-        if result.is_ok() {
-            result = match each {
-                true => gate.poll_each(units),
-                false => (0..units).try_for_each(|_| gate.poll(1)),
-            };
-        }
-        let charged = lim.work_units();
-        drop(gate);
-        (result, charged, lim.work_units())
-    }
     for stride in [0, 1, 4, 7] {
         for held in [0, 2, 5] {
             for units in [0, 1, 3, 4, 10, 29] {
                 for stop_at in [1, 6, 9, 20, 1000] {
                     assert_eq!(
-                        run(stride, held, units, stop_at, true),
-                        run(stride, held, units, stop_at, false),
+                        run_gated_poll(stride, held, stop_at, |g| g.poll_each(units)),
+                        run_gated_poll(stride, held, stop_at, |g| (0..units)
+                            .try_for_each(|_| g.poll(1))),
                         "stride {stride}, held {held}, units {units}, stop at {stop_at}",
                     );
                 }
@@ -107,31 +119,15 @@ fn poll_each_charges_and_stops_as_single_polls_do() {
 /// same points, the same stop, the same residue for the drop.
 #[test]
 fn poll_times_charges_and_stops_as_repeated_polls_do() {
-    fn run(stride: u64, held: u64, work: u64, times: u64, stop_at: u64, once: bool) -> (Result<(), OperationError>, u64, u64) {
-        let lim = Limits::new();
-        let _prior = lim.install(
-            LimitConfig::none().with_stop_rules(StopRules::default().with_after_pairs(Some((0, StopAt::WorkUnits(stop_at))))),
-        );
-        let mut gate = lim.gate_with(stride);
-        let mut result = gate.poll(held);
-        if result.is_ok() {
-            result = match once {
-                true => gate.poll_times(work, times),
-                false => (0..times).try_for_each(|_| gate.poll(work)),
-            };
-        }
-        let charged = lim.work_units();
-        drop(gate);
-        (result, charged, lim.work_units())
-    }
     for stride in [0, 1, 4, 7, 16] {
         for held in [0, 2, 5] {
             for work in [0, 1, 2, 3, 5] {
                 for times in [0, 1, 3, 4, 10, 29] {
                     for stop_at in [1, 6, 9, 20, 1000] {
                         assert_eq!(
-                            run(stride, held, work, times, stop_at, true),
-                            run(stride, held, work, times, stop_at, false),
+                            run_gated_poll(stride, held, stop_at, |g| g.poll_times(work, times)),
+                            run_gated_poll(stride, held, stop_at, |g| (0..times)
+                                .try_for_each(|_| g.poll(work))),
                             "stride {stride}, held {held}, work {work}, times {times}, stop at {stop_at}",
                         );
                     }
@@ -147,7 +143,8 @@ fn poll_times_charges_and_stops_as_repeated_polls_do() {
 #[test]
 fn a_spent_deadline_stops_every_poll_from_the_first() {
     let lim = Limits::new();
-    let _prior = lim.install(LimitConfig::none().with_deadline(Some(Instant::now() - Duration::from_secs(1))));
+    let _prior = lim
+        .install(LimitConfig::none().with_deadline(Some(Instant::now() - Duration::from_secs(1))));
     for _ in 0..3 * CLOCK_POLLS {
         assert!(lim.should_stop());
     }
@@ -164,21 +161,38 @@ fn a_test_between_readings_answers_from_the_last_one() {
     let lim = Limits::new();
     let _prior = lim.install(LimitConfig::none().with_deadline(Some(deadline)));
     // A reading taken before the deadline, with three tests left on it.
-    lim.clock.set(ClockReading { at: Some(before), polls_left: 3, work_at: lim.work_units() });
+    lim.clock.set(ClockReading {
+        at: Some(before),
+        polls_left: 3,
+        work_at: lim.work_units(),
+    });
     for _ in 0..3 {
-        assert!(!lim.should_stop(), "answered from a reading before the deadline");
+        assert!(
+            !lim.should_stop(),
+            "answered from a reading before the deadline"
+        );
     }
     assert!(lim.should_stop(), "the fourth test reads the clock");
-    assert!(lim.should_stop(), "and the reading past the deadline stands");
+    assert!(
+        lim.should_stop(),
+        "and the reading past the deadline stands"
+    );
 
     // The work rule: a span of work as long as one dense poll's reads it.
     let lim = Limits::new();
     let _prior = lim.install(LimitConfig::none().with_deadline(Some(deadline)));
-    lim.clock.set(ClockReading { at: Some(before), polls_left: CLOCK_POLLS, work_at: lim.work_units() });
+    lim.clock.set(ClockReading {
+        at: Some(before),
+        polls_left: CLOCK_POLLS,
+        work_at: lim.work_units(),
+    });
     lim.charge_work(CLOCK_POLL_WORK - 1);
     assert!(!lim.should_stop());
     lim.charge_work(1);
-    assert!(lim.should_stop(), "a span of CLOCK_POLL_WORK units reads the clock");
+    assert!(
+        lim.should_stop(),
+        "a span of CLOCK_POLL_WORK units reads the clock"
+    );
 
     // Without a deadline nothing is read and nothing counted down.
     let lim = Limits::new();
@@ -196,10 +210,12 @@ fn a_callback_sees_a_fresh_instant_every_poll() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let log = Arc::clone(&seen);
     let lim = Limits::new();
-    let _prior = lim.install(LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, now| {
-        log.lock().unwrap().push(now);
-        StopDecision::Continue
-    }))));
+    let _prior = lim.install(
+        LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, now| {
+            log.lock().unwrap().push(now);
+            StopDecision::Continue
+        }))),
+    );
     let start = Instant::now();
     for _ in 0..4 {
         assert!(!lim.should_stop());

@@ -1124,34 +1124,18 @@ where
             let Some((p0, p1, n)) = f_row(next) else {
                 break 'runs;
             };
-            // A row of one pair has no second intersection.
-            let second = 0u64.wrapping_sub(n - 1);
-            let wl0 = two_col_word(left, two.left_words, two.all, p0.left.raw());
-            let wr0 = two_col_word(right, two.right_words, two.all, p0.right.raw());
-            let wl1 = two_col_word(left, two.left_words, two.all, p1.left.raw()) & second;
-            let wr1 = two_col_word(right, two.right_words, two.all, p1.right.raw()) & second;
-            let both = (wl0 | wl1) & (wr0 | wr1);
-            let mut row = [NO_PRODUCT; 2];
-            if both & ROW_LIVE != 0 {
-                // The row's f pairs against each column entered, and its
-                // width.
-                let entered = both & 3;
-                added += n * ((entered & 1) + (entered >> 1)) + 2;
-                if n == 2 {
-                    super::super::note_pair_row_unrolled();
-                }
-                // Safety: the child grids are below the slab's length, and
-                // no cell is written while this view is read.
-                let grid = unsafe { std::slice::from_raw_parts(cells, filled) };
-                row = eval_two_column_cells(
-                    &mut c,
-                    grid,
-                    (left, right),
-                    (p0, p1),
-                    [q0, q1],
-                    (wl0 & wr0, wl1 & wr1),
-                );
-            }
+            // Safety: the child grids are below the slab's length, and
+            // no cell is written while this view is read.
+            let grid = unsafe { std::slice::from_raw_parts(cells, filled) };
+            let row = eval_two_column_row(
+                two,
+                &mut c,
+                grid,
+                (left, right),
+                (p0, p1, n),
+                [q0, q1],
+                &mut added,
+            );
             // Safety: the claim reserved the grid's cells to `end`.
             unsafe {
                 cells
@@ -1169,6 +1153,34 @@ where
         unsafe { slab.set_len(written) };
     }
     (next, added, c)
+}
+
+#[inline(always)]
+fn eval_two_column_row<L: ChildLookup, R: ChildLookup>(
+    two: &TwoColumns<'_>,
+    c: &mut RowCursor,
+    grid: &[u32],
+    (left, right): (&L, &R),
+    (p0, p1, n): (ChildPair, ChildPair, u64),
+    q: [ChildPair; 2],
+    added: &mut u64,
+) -> [u32; 2] {
+    // A row of one pair has no second intersection.
+    let second = 0u64.wrapping_sub(n - 1);
+    let wl0 = two_col_word(left, two.left_words, two.all, p0.left.raw());
+    let wr0 = two_col_word(right, two.right_words, two.all, p0.right.raw());
+    let wl1 = two_col_word(left, two.left_words, two.all, p1.left.raw()) & second;
+    let wr1 = two_col_word(right, two.right_words, two.all, p1.right.raw()) & second;
+    let both = (wl0 | wl1) & (wr0 | wr1);
+    if both & ROW_LIVE == 0 {
+        return [NO_PRODUCT; 2];
+    }
+    let entered = both & 3;
+    *added += n * ((entered & 1) + (entered >> 1)) + 2;
+    if n == 2 {
+        super::super::note_pair_row_unrolled();
+    }
+    eval_two_column_cells(c, grid, (left, right), (p0, p1), q, (wl0 & wr0, wl1 & wr1))
 }
 
 #[inline(always)]
