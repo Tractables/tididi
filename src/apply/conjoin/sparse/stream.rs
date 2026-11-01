@@ -682,15 +682,7 @@ const AHEAD: usize = 16;
 /// Miri, which lacks the intrinsic.
 #[inline(always)]
 fn prefetch<T>(column: &[T], k: usize) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        let at = column.as_ptr().wrapping_add(k).cast::<i8>();
-        // Sound whatever the address: a prefetch reads nothing the program
-        // sees and never faults.
-        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = (column, k);
+    crate::isa::prefetch_at(column, k);
 }
 
 /// `Q`'s pairs at `c` by the child a walk starts from, as that walk reads

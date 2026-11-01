@@ -4,6 +4,7 @@
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
+use crate::isa::prefetch_line;
 use crate::limits::{Limits, OperationError};
 use crate::diagram::{ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, RangeTable, Tdd, TddLevel};
 
@@ -42,21 +43,6 @@ const PAIRS_AHEAD: usize = 16;
 
 /// The group of a member [`rebuild_in_order`] drops.
 const NO_GROUP: u32 = u32::MAX;
-
-/// Ask the cache for the line holding `at`. A hint only: a prefetch reads
-/// nothing the program sees and never faults, so any address is sound. A
-/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
-#[inline(always)]
-fn prefetch_line<T>(at: *const T) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        // Sound whatever the address: a prefetch reads nothing the program
-        // sees and never faults.
-        unsafe { core::arch::x86_64::_mm_prefetch(at.cast::<i8>(), core::arch::x86_64::_MM_HINT_T0) };
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = at;
-}
 
 /// Ask the cache for the first pairs of the member [`PAIRS_AHEAD`] places
 /// after the `k`th, off its word in `words`.

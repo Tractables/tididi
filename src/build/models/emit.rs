@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{Assembly, ChildPair, NodeIdx, TddNodeId, ONE_LEAF_IDX};
+use crate::diagram::{Assembly, ChildPair, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::Engine;
@@ -22,24 +22,24 @@ impl Charged for Finished {
 }
 
 /// The per-level emission pass over a planned [`Layout`].
-struct Emit<'a, 'b> {
+struct Emit<'a> {
     eng: &'a Engine,
-    assembly: &'a mut Assembly<'b>,
+    assembly: Assembly<'a>,
     vtree: &'a Arc<Vtree>,
     state: Vec<Option<Finished>>,
     pair_list: Vec<ChildPair>,
 }
 
-/// Store every level bottom-up from the plans and return the diagram's
-/// output node.
+/// Store every level bottom-up from the plans and seat the resulting canonical
+/// diagram.
 pub(super) fn fill(
     eng: &Engine,
-    assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     layout: &Layout,
     plans: &mut [Option<Plan>],
-) -> Result<TddNodeId, OperationError> {
+) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
+    let assembly = Assembly::new(eng, vtree)?;
     let mut state: Vec<Option<Finished>> = Vec::new();
     lim.reserve_exact(&mut state, vtree.num_nodes())?;
     state.resize_with(vtree.num_nodes(), || None);
@@ -74,7 +74,10 @@ pub(super) fn fill(
     let root = vtree.root();
     let done = emit.state[root.idx()].as_ref().expect("the root was just finished");
     debug_assert_eq!(done.locals.len(), 1, "the root level holds one atom");
-    Ok(TddNodeId { vtree: root, local: done.locals[0] })
+    let output = TddNodeId { vtree: root, local: done.locals[0] };
+    // The levels are canonical as built: seat them with nothing to reduce.
+    let (levels, _) = emit.assembly.parts_mut();
+    Ok(crate::build::seat_canonical(eng, vtree, std::mem::take(levels), output))
 }
 
 /// The constrained child of an internal node whose other child constrains
@@ -103,7 +106,7 @@ fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
     state[t.idx()].as_ref().expect("a child is finished before its parent")
 }
 
-impl Emit<'_, '_> {
+impl Emit<'_> {
     /// A node whose subtree holds no constrained variable: one atom, true over
     /// every assignment to the subtree's leaves.
     fn free_subtree(&mut self, t: VtreeIdx, leaf: bool) -> Result<Finished, OperationError> {
@@ -184,7 +187,7 @@ fn in_order(order: &[u32], atoms: usize) -> impl Iterator<Item = usize> + '_ {
     order.iter().map(|&atom| atom as usize).chain(own)
 }
 
-impl Emit<'_, '_> {
+impl Emit<'_> {
     /// Store one node per atom of a node constrained on both sides, in the
     /// order of their least pairs (see [`pair_key`]), and record where each
     /// landed.

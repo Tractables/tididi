@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{Assembly, NodeIdx, Tdd};
+use crate::diagram::{NodeIdx, Tdd};
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
@@ -186,11 +186,7 @@ fn build_sorted(
     direct: Direct,
 ) -> Result<Tdd, OperationError> {
     let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix, direct)?;
-    let mut assembly = Assembly::new(eng, vtree)?;
-    let output = emit::fill(eng, &mut assembly, vtree, layout, &mut plans)?;
-    // The levels are canonical as built: seat them with nothing to reduce.
-    let (levels, _) = assembly.parts_mut();
-    Ok(super::seat_canonical(eng, vtree, std::mem::take(levels), output))
+    emit::fill(eng, vtree, layout, &mut plans)
 }
 
 #[cfg(test)]

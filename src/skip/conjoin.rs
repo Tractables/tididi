@@ -467,8 +467,6 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     // products, listed once the level is done.
     let mut batch = NodeBatch::default();
     let mut ends: Vec<(Ref, Ref)> = Vec::new();
-    let mut fb = [(0, 0); 1];
-    let mut gb = [(0, 0); 1];
     for &u in &todo {
         // The products with `true` the levels below would have listed.
         while next_seed < seeds.len() && seeds[next_seed].0 > sh.pre[u as usize] {
@@ -482,41 +480,7 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
         let mut work = 0u64;
         let (fl, gl) = (&f.levels[u as usize], &g.levels[u as usize]);
         if sh.is_leaf(l) && sh.is_leaf(r) {
-            // Every reference each side reads here, against every other.
-            let refs = |s: &SkipForm, nb: &Numbered| -> Result<Vec<Ref>, OperationError> {
-                let mut v: Vec<Ref> = Vec::new();
-                lim.reserve_exact(&mut v, s.levels[u as usize].width() + 6)?;
-                v.extend((0..s.levels[u as usize].width() as u32).map(|i| mk(u, i)));
-                v.extend(nb.leaf_refs(sh, l, u));
-                v.extend(nb.leaf_refs(sh, r, u));
-                Ok(v)
-            };
-            let (fr, gr) = (refs(f, &nf)?, refs(g, &ng)?);
-            for &a in &fr {
-                for &b in &gr {
-                    if vt(a) != u && vt(a) == vt(b) {
-                        continue;
-                    }
-                    let mut cell = NIL;
-                    for &(la, ra) in f.pairs_at(u, a, &mut fb) {
-                        for &(lb, rb) in g.pairs_at(u, b, &mut gb) {
-                            let (Some(x), Some(y)) = (land_pair(sh, la, lb), land_pair(sh, ra, rb)) else {
-                                unreachable!("leaf products are known")
-                            };
-                            if x != ZREF && y != ZREF {
-                                if cell == NIL {
-                                    lim.try_push(&mut batch.keys, (a, b))?;
-                                    cell = (batch.keys.len() - 1) as u32;
-                                }
-                                lim.try_push(&mut batch.combos, (cell, x, y))?;
-                            }
-                        }
-                    }
-                    work += batch.emit(u, &mut out, lim)?;
-                }
-            }
-            lim.discard(fr);
-            lim.discard(gr);
+            work += conjoin_leaf_pair(sh, u, (f, &nf), (g, &ng), &mut batch, &mut out, lim)?;
         } else {
             // The anchor: the right child unless it is a leaf.
             let right = !sh.is_leaf(r);
@@ -659,10 +623,78 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     ng.discard(lim);
     out.collect_pushed(lim)?;
     lim.discard(todo);
+    splice_outside_cone(f, nf, f_cone, &mut out, &mut cone, lim)?;
+    Ok((out, cone))
+}
+
+/// Conjoin a level `u` whose children are both leaves: every reference each
+/// side reads here, against every other.
+fn conjoin_leaf_pair(
+    sh: &Shape,
+    u: u32,
+    (f, nf): (&SkipForm, &Numbered),
+    (g, ng): (&SkipForm, &Numbered),
+    batch: &mut NodeBatch,
+    out: &mut SkipForm,
+    lim: &Limits,
+) -> Result<u64, OperationError> {
+    let (l, r) = sh.kids[u as usize];
+    let refs = |s: &SkipForm, nb: &Numbered| -> Result<Vec<Ref>, OperationError> {
+        let mut v: Vec<Ref> = Vec::new();
+        lim.reserve_exact(&mut v, s.levels[u as usize].width() + 6)?;
+        v.extend((0..s.levels[u as usize].width() as u32).map(|i| mk(u, i)));
+        v.extend(nb.leaf_refs(sh, l, u));
+        v.extend(nb.leaf_refs(sh, r, u));
+        Ok(v)
+    };
+    let (fr, gr) = (refs(f, nf)?, refs(g, ng)?);
+    let mut fb = [(0, 0); 1];
+    let mut gb = [(0, 0); 1];
+    let mut work = 0u64;
+    for &a in &fr {
+        for &b in &gr {
+            if vt(a) != u && vt(a) == vt(b) {
+                continue;
+            }
+            let mut cell = NIL;
+            for &(la, ra) in f.pairs_at(u, a, &mut fb) {
+                for &(lb, rb) in g.pairs_at(u, b, &mut gb) {
+                    let (Some(x), Some(y)) = (land_pair(sh, la, lb), land_pair(sh, ra, rb)) else {
+                        unreachable!("leaf products are known")
+                    };
+                    if x != ZREF && y != ZREF {
+                        if cell == NIL {
+                            lim.try_push(&mut batch.keys, (a, b))?;
+                            cell = (batch.keys.len() - 1) as u32;
+                        }
+                        lim.try_push(&mut batch.combos, (cell, x, y))?;
+                    }
+                }
+            }
+            work += batch.emit(u, out, lim)?;
+        }
+    }
+    lim.discard(fr);
+    lim.discard(gr);
+    Ok(work)
+}
+
+/// Copy `f`'s active levels outside `cone` that `out` still reaches into `out`,
+/// pruning any outside-cone levels whose boundary references were dropped and
+/// growing `cone` to include outside-cone levels whose width shrank.
+fn splice_outside_cone(
+    f: &SkipForm,
+    nf: Numbered,
+    f_cone: Vec<u32>,
+    out: &mut SkipForm,
+    cone: &mut [bool],
+    lim: &Limits,
+) -> Result<(), OperationError> {
+    let sh = &*f.shape;
     if out.out == ZREF || f_cone.len() == f.active.len() {
         lim.discard(f_cone);
         nf.discard(lim);
-        return Ok((out, cone));
+        return Ok(());
     }
     let mut mark_out = filled(lim, nf.len(), 0u8)?;
     let mut boundary: Vec<Ref> = Vec::new();
@@ -715,7 +747,7 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
             out.active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
         } else {
             let mut dirty = filled(lim, sh.num_nodes(), false)?;
-            dirty.copy_from_slice(&cone);
+            dirty.copy_from_slice(cone);
             let mut dropped_roots = filled(lim, sh.num_nodes(), false)?;
             for &x in &boundary {
                 if mark_out[nf.id(x)] == 1 {
@@ -758,5 +790,5 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     lim.discard(boundary);
     lim.discard(mark_out);
     nf.discard(lim);
-    Ok((out, cone))
+    Ok(())
 }

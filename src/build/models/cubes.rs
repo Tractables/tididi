@@ -33,13 +33,13 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{Assembly, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::diagram::{NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
 use super::layout::Layout;
-use super::rows::words_per_row;
+use super::rows::{extract, index_bits, words_per_row};
 use crate::sort::Radix;
 use super::split::{Decomposition, Plan};
 
@@ -127,11 +127,7 @@ impl Engine {
         let root = root_pieces(lim, &mut scratch, vars.len(), &layout, cubes, w)?;
         let mut plans = plan(lim, &mut scratch, vtree, &layout, root)?;
         scratch.discard(lim);
-        let mut assembly = Assembly::new(self, vtree)?;
-        let output = super::emit::fill(self, &mut assembly, vtree, &layout, &mut plans)?;
-        // The levels are canonical as built: seat them with nothing to reduce.
-        let (levels, _) = assembly.parts_mut();
-        Ok(crate::build::seat_canonical(self, vtree, std::mem::take(levels), output))
+        super::emit::fill(self, vtree, &layout, &mut plans)
     }
 }
 
@@ -187,11 +183,6 @@ impl Scratch {
     }
 }
 
-/// Bits needed to write every index below `count`.
-fn index_bits(count: usize) -> usize {
-    (usize::BITS - count.saturating_sub(1).leading_zeros()) as usize
-}
-
 /// Cubes from which one-word cubes are re-encoded through byte tables, as
 /// rows are.
 const BYTE_TABLE_MIN_CUBES: usize = 64;
@@ -213,22 +204,13 @@ fn root_pieces(
     if w == 1 && n >= BYTE_TABLE_MIN_CUBES {
         // One table per byte of the input word holds where that byte's bits
         // land, so a word is re-encoded by eight lookups.
-        let mut table = filled(lim, 8 * 256, 0u64)?;
-        for (bit, &to) in layout.position.iter().enumerate() {
-            let (byte, within) = (bit / 8, bit % 8);
-            for (byte_value, entry) in table[byte * 256..][..256].iter_mut().enumerate() {
-                if (byte_value >> within) & 1 == 1 {
-                    *entry |= 1u64 << to;
-                }
-            }
-        }
-        let map = |word: u64| (0..8).fold(0, |acc, byte| acc | table[byte * 256 + ((word >> (8 * byte)) & 0xff) as usize]);
+        let table = layout.byte_table(lim)?;
         let live = if num_vars >= 64 { !0u64 } else { (1u64 << num_vars) - 1 };
         gate.poll(2 * n as u64)?;
         for k in 0..n {
             let care = cubes[2 * k + 1] & live;
-            fixed[k] = map(care);
-            value[k] = map(cubes[2 * k] & care);
+            fixed[k] = Layout::reencode_word(&table, care);
+            value[k] = Layout::reencode_word(&table, cubes[2 * k] & care);
         }
         lim.discard(table);
     } else {
@@ -320,7 +302,7 @@ fn distinct(
     let mut ids = filled(lim, n, 0u32)?;
     let mut firsts = Vec::new();
     lim.reserve_exact(&mut firsts, n)?;
-    let index = index_bits(n);
+    let index = index_bits(n) as usize;
     if words == 1 && 2 * width + index <= 64 {
         // The value above the mask above the position, in one word: a stable
         // radix sort of the cube bits leaves each cube's positions ascending.
@@ -377,7 +359,7 @@ fn plan(
     lim.reserve_exact(&mut plans, vtree.num_nodes())?;
     plans.resize_with(vtree.num_nodes(), || None);
     let mut pending = Vec::new();
-    lim.try_push(&mut pending, (split_node(vtree, layout, vtree.root()), root))?;
+    lim.try_push(&mut pending, (layout.split_node(vtree, vtree.root()), root))?;
     let mut planned = 0u64;
     while let Some((t, pieces)) = pending.pop() {
         lim.check_stop()?;
@@ -393,24 +375,10 @@ fn plan(
         lim.check_output_cap(planned)?;
         lim.discard(pieces);
         plans[t.idx()] = Some(Plan::Branch(split));
-        lim.try_push(&mut pending, (split_node(vtree, layout, low), low_pieces))?;
-        lim.try_push(&mut pending, (split_node(vtree, layout, high), high_pieces))?;
+        lim.try_push(&mut pending, (layout.split_node(vtree, low), low_pieces))?;
+        lim.try_push(&mut pending, (layout.split_node(vtree, high), high_pieces))?;
     }
     Ok(plans)
-}
-
-/// The node at or below the constrained node `t` whose atoms are `t`'s, as
-/// `split` finds it for rows.
-fn split_node(vtree: &Vtree, layout: &Layout, mut t: VtreeIdx) -> VtreeIdx {
-    while !vtree.node(t).is_leaf() {
-        let (left, right) = vtree.children(t);
-        match (layout.count[left.idx()], layout.count[right.idx()]) {
-            (0, _) => t = right,
-            (_, 0) => t = left,
-            _ => break,
-        }
-    }
-    t
 }
 
 /// A leaf's atoms as the leaf nodes that stand for them: a free piece is
@@ -428,32 +396,6 @@ fn leaf_nodes(lim: &Limits, pieces: &Pieces) -> Result<Vec<NodeIdx>, OperationEr
         locals[atom as usize] = if pieces.value[k] & 1 == 0 { NEG_LEAF_IDX } else { POS_LEAF_IDX };
     }
     Ok(locals)
-}
-
-/// Words a value of `width` bits occupies.
-fn words_for(width: usize) -> usize {
-    width.div_ceil(64).max(1)
-}
-
-/// Copy the `width` bits of `src` from bit `start` on into `dst`, low word
-/// first, clearing the bits of the last word past `width`.
-fn extract(src: &[u64], start: usize, width: usize, dst: &mut [u64]) {
-    let (skip, shift) = (start / 64, start % 64);
-    for (k, out) in dst.iter_mut().enumerate() {
-        let low = src.get(skip + k).copied().unwrap_or(0) >> shift;
-        let high = match shift {
-            0 => 0,
-            _ => src.get(skip + k + 1).copied().unwrap_or(0) << (64 - shift),
-        };
-        *out = low | high;
-    }
-    let tail = width % 64;
-    if let (true, Some(last)) = (tail != 0, dst.last_mut()) {
-        *last &= (1u64 << tail) - 1;
-    }
-    if width == 0 {
-        dst.fill(0);
-    }
 }
 
 /// One side's distinct parts, the pieces they refine into, and which
@@ -554,7 +496,7 @@ fn sorted_triples(
     atoms: [u32; 3],
     each: impl Iterator<Item = [u32; 3]>,
 ) -> Result<Vec<[u32; 3]>, OperationError> {
-    let bits = atoms.map(|a| index_bits(a as usize));
+    let bits = atoms.map(|a| index_bits(a as usize) as usize);
     let mut triples = Vec::new();
     let mut gate = lim.gate();
     gate.poll(count as u64)?;
@@ -651,7 +593,7 @@ fn coarse_atoms(
     let n = parent.len();
     // Each coarse piece's (fine part, atom) pairs, ascending, once each:
     // packed into one word and radix sorted where the three fit.
-    let bits = [coarse.pieces.len(), fine.starts.len() - 1, parent.atoms as usize].map(index_bits);
+    let bits = [coarse.pieces.len(), fine.starts.len() - 1, parent.atoms as usize].map(|c| index_bits(c) as usize);
     let mut gate = lim.gate();
     gate.poll(incidence as u64)?;
     let lists = if bits.iter().sum::<usize>() <= 64 {
@@ -845,7 +787,7 @@ fn number_lists(lim: &Limits, lists: &Lists) -> Result<(Vec<u32>, Vec<u32>), Ope
 /// distinct values, and the pieces those refine into.
 fn side(lim: &Limits, s: &mut Scratch, parent: &Pieces, start: usize, width: usize) -> Result<Side, OperationError> {
     let n = parent.len();
-    let (w, pw) = (words_for(width), parent.words);
+    let (w, pw) = (words_per_row(width), parent.words);
     let mut value = filled(lim, n * w, 0u64)?;
     let mut fixed = filled(lim, n * w, 0u64)?;
     let mut gate = lim.gate();

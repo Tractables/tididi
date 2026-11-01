@@ -10,6 +10,7 @@ use super::convert::{from_tdd, to_tdd};
 use super::negate::negate;
 use super::{Shape, SkipForm};
 use crate::diagram::Tdd;
+use crate::limits::Limits;
 use crate::vtree::Vtree;
 use crate::{Engine, LiteralInput, OperationError};
 
@@ -134,10 +135,7 @@ impl Engine {
         } else {
             (&f.form, &g.form)
         };
-        let (raw, cone) = conjoin::and_scoped(a, b, lim)?;
-        let res = contract_in(raw, Some(&cone), lim);
-        lim.discard(cone);
-        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: res? })
+        conjoin_and_contract(&f.vtree, a, b, lim)
     }
 
     /// `f ∧ (l₁ ∨ … ∨ lₖ)` for the literals of `clause`, signed integers or
@@ -153,10 +151,7 @@ impl Engine {
         let c = self.and_clause(Tdd::one(&f.vtree), clause)?;
         let c = from_tdd(&c, Arc::clone(&f.form.shape), lim)?;
         let c = contract(c, lim)?;
-        let (raw, cone) = conjoin::and_scoped(&f.form, &c, lim)?;
-        let res = contract_in(raw, Some(&cone), lim);
-        lim.discard(cone);
-        Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form: res? })
+        conjoin_and_contract(&f.vtree, &f.form, &c, lim)
     }
 
     /// `¬f`.
@@ -192,4 +187,16 @@ impl Engine {
         let _op = lim.enter()?;
         f.form.model_count(lim)
     }
+}
+
+fn conjoin_and_contract(
+    vtree: &Arc<Vtree>,
+    a: &SkipForm,
+    b: &SkipForm,
+    lim: &Limits,
+) -> Result<SkipTdd, OperationError> {
+    let (raw, cone) = conjoin::and_scoped(a, b, lim)?;
+    let res = contract_in(raw, Some(&cone), lim);
+    lim.discard(cone);
+    Ok(SkipTdd { vtree: Arc::clone(vtree), form: res? })
 }

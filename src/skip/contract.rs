@@ -131,7 +131,7 @@ pub(crate) fn contract(s: SkipForm, lim: &Limits) -> Result<SkipForm, OperationE
 /// `scope` is `Some(cone)`: levels outside `cone` whose parent had no merge
 /// and lost no node are already canonical and are not walked.
 pub(crate) fn contract_in(
-    mut s: SkipForm,
+    s: SkipForm,
     scope: Option<&[bool]>,
     lim: &Limits,
 ) -> Result<SkipForm, OperationError> {
@@ -392,8 +392,21 @@ pub(crate) fn contract_in(
         }
         return Ok(s);
     }
-    // Patch from the leaves up. A side read at `d` resolves through a
-    // group a skip joined there, else through its node's result.
+    patch_merged(s, lvs, &at, lim)
+}
+
+/// Patch `s` from the leaves up with the merged groups and rewrites in `lvs`,
+/// then collect unreachable nodes across the visited levels.
+fn patch_merged(
+    mut s: SkipForm,
+    mut lvs: Vec<CLv>,
+    at: &[u32],
+    lim: &Limits,
+) -> Result<SkipForm, OperationError> {
+    let shape = s.shape.clone();
+    let sh = &*shape;
+    // A side read at `d` resolves through a group a skip joined there, else
+    // through its node's result.
     let resolve = |lvs: &Vec<CLv>, d: u32, x: Ref| -> Ref {
         if !sh.is_leaf(d) && vt(x) != d {
             let e = at[d as usize];

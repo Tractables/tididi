@@ -10,25 +10,11 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
 use crate::diagram::{NodeChunks, Pairs, TddLevel};
+use crate::isa::prefetch_at;
 
 /// How many nodes ahead of the one it sums [`IntFold::fill_structural_u64`]
 /// asks the cache for the child counts a node reads.
 const NODES_AHEAD: usize = 8;
-
-/// Ask the cache for the line holding `column[k]`, which need not be in
-/// bounds: a prefetch reads nothing the program sees and never faults. A
-/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
-#[inline(always)]
-fn prefetch_at<T>(column: &[T], k: usize) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        let at = column.as_ptr().wrapping_add(k).cast::<i8>();
-        // Sound whatever the address, as above.
-        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = (column, k);
-}
 
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
 pub(crate) struct IntFold;

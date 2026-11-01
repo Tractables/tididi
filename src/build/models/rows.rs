@@ -12,6 +12,32 @@ pub(super) fn words_per_row(num_vars: usize) -> usize {
     num_vars.div_ceil(64).max(1)
 }
 
+/// Bits needed to write every index below `count`.
+pub(super) fn index_bits(count: usize) -> u32 {
+    usize::BITS - count.saturating_sub(1).leading_zeros()
+}
+
+/// Copy the `width` bits of `src` from bit `start` on into `dst`, low word
+/// first, clearing the bits of the last word past `width`.
+pub(super) fn extract(src: &[u64], start: usize, width: usize, dst: &mut [u64]) {
+    let (skip, shift) = (start / 64, start % 64);
+    for (k, out) in dst.iter_mut().enumerate() {
+        let low = src.get(skip + k).copied().unwrap_or(0) >> shift;
+        let high = match shift {
+            0 => 0,
+            _ => src.get(skip + k + 1).copied().unwrap_or(0) << (64 - shift),
+        };
+        *out = low | high;
+    }
+    let tail = width % 64;
+    if let (true, Some(last)) = (tail != 0, dst.last_mut()) {
+        *last &= (1u64 << tail) - 1;
+    }
+    if width == 0 {
+        dst.fill(0);
+    }
+}
+
 /// Re-encode the rows into leaf order, sort them and drop the repeats.
 ///
 /// The order is numeric, the highest bit first, which is the order the split
@@ -125,20 +151,9 @@ fn owned_rows(
         // One table per byte of the input word holds where that byte's bits
         // land, so a row is re-encoded by eight lookups instead of one step
         // per set bit.
-        let mut table: Vec<u64> = Vec::new();
-        lim.try_resize(&mut table, 8 * 256, 0u64)?;
-        for (bit, &to) in layout.position.iter().enumerate() {
-            let (byte, within) = (bit / 8, bit % 8);
-            for (value, entry) in table[byte * 256..][..256].iter_mut().enumerate() {
-                if (value >> within) & 1 == 1 {
-                    *entry |= 1u64 << to;
-                }
-            }
-        }
+        let table = layout.byte_table(lim)?;
         gate.poll(n as u64)?;
-        packed.extend(rows.iter().map(|&word| {
-            (0..8).fold(0, |acc, byte| acc | table[byte * 256 + ((word >> (8 * byte)) & 0xff) as usize])
-        }));
+        packed.extend(rows.iter().map(|&word| Layout::reencode_word(&table, word)));
         lim.discard(table);
     } else {
         packed.resize(rows.len(), 0);

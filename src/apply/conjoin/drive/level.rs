@@ -244,12 +244,7 @@ fn seed_kept_counts(
     // The operand each level was moved from untouched: 1 for `f`, 2 for `g`.
     let mut moved = Vec::new();
     eng.limits().try_resize(&mut moved, vtree.num_nodes(), 0u8)?;
-    for &(t, from_f) in &run.carried {
-        moved[t] = if from_f { 1 } else { 2 };
-    }
-    for &t in &run.relabel_moved {
-        moved[t] = 0;
-    }
+    super::identity_carriers(&run.carried, &run.relabel_moved, &mut moved);
     let mut seeded = 0;
     for &(ti, from_f) in &run.carried {
         let t = VtreeIdx(ti as u32);
@@ -1273,14 +1268,15 @@ pub(super) fn build_level_dense(
             }
         }
 
+        let rows = RowLoop {
+            f_level: f.level(t), g_level: g.level(t),
+            children: Sides { left: left_level, right: right_level },
+            ctx: &cell_ctx, f_width: fw.here,
+        };
+        let f_rows = Sides { left: fw.left, right: fw.right };
+
         if use_sparse_marginal {
-            let rows = RowLoop {
-                f_level: f.level(t), g_level: g.level(t),
-                children: Sides { left: left_level, right: right_level },
-                ctx: &cell_ctx, f_width: fw.here,
-            };
             // Read by g-pair vectors where they pay.
-            let f_rows = Sides { left: fw.left, right: fw.right };
             let words = !(passthrough.left && passthrough.right)
                 && super::super::word_cells_forced().unwrap_or_else(|| {
                     words_pay_marginal(eng, rows, &mut *run.words, true, f_rows, run.products.arena.slab())
@@ -1303,7 +1299,6 @@ pub(super) fn build_level_dense(
         // by g-pair vectors (`run_level_rows_words`,
         // `run_level_rows_stream_words`); a streaming level needs a side
         // that is not carried through.
-        let f_rows = Sides { left: fw.left, right: fw.right };
         let words = !pairs
             && match route {
                 Route::PlainDense => !single_pair && stream_state.is_none(),
@@ -1313,11 +1308,6 @@ pub(super) fn build_level_dense(
             }
             && !matches!(lookups, PlainLookups::Complete { .. })
             && super::super::word_cells_forced().unwrap_or_else(|| {
-                let rows = RowLoop {
-                    f_level: f.level(t), g_level: g.level(t),
-                    children: Sides { left: left_level, right: right_level },
-                    ctx: &cell_ctx, f_width: fw.here,
-                };
                 let slab = run.products.arena.slab();
                 match route {
                     Route::Stream { marginal_children } => words_pay_marginal(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
@@ -1330,11 +1320,7 @@ pub(super) fn build_level_dense(
             eng, (route, lookups, single_pair, pairs, relay),
             words.then_some((&mut *run.words, f_rows)),
             (
-                RowLoop {
-                    f_level: f.level(t), g_level: g.level(t),
-                    children: Sides { left: left_level, right: right_level },
-                    ctx: &cell_ctx, f_width: fw.here,
-                },
+                rows,
                 RowScratch {
                     f_pairs: run.f_pairs_scratch,
                     g_pairs: run.g_pairs_scratch,

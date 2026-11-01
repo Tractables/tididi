@@ -27,23 +27,7 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     let n = sh.num_nodes();
     let mut out = SkipForm::zero(shape.clone());
     if f.out == ZREF {
-        // `true`, resolved from the root.
-        let mut t = sh.root;
-        while !sh.is_leaf(t) {
-            let (l, r) = sh.kids[t as usize];
-            if sh.is_leaf(l) {
-                t = r;
-            } else if sh.is_leaf(r) {
-                t = l;
-            } else {
-                break;
-            }
-        }
-        if sh.is_leaf(t) {
-            out.out = mk(t, ONE);
-            return Ok(out);
-        }
-        return top_at(f, t, lim);
+        return top_at(f, sh.root, lim);
     }
     // Skips that end on a leaf label, by the level they end below.
     let mut leaf_skips: FxHashMap<u32, Vec<Ref>> = FxHashMap::default();

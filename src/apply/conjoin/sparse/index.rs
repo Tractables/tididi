@@ -491,20 +491,7 @@ impl<'a, T> GroupedView<'a, T> {
 /// prefetcher follows.
 const BUCKET_LINES: usize = 4;
 
-/// Ask the cache for the line holding `at`. A hint only: a prefetch reads
-/// nothing the program sees and never faults, so any address is sound. A
-/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
-#[inline(always)]
-pub(super) fn prefetch_line(at: *const u8) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        // Sound whatever the address: a prefetch reads nothing the program
-        // sees and never faults.
-        unsafe { core::arch::x86_64::_mm_prefetch(at.cast::<i8>(), core::arch::x86_64::_MM_HINT_T0) };
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = at;
-}
+pub(super) use crate::isa::prefetch_line;
 
 /// How many f pairs ahead of the one it reads a walk through inner buckets
 /// asks the cache for a bucket's bounds ([`GroupedView::prefetch_bounds`]),

@@ -12,15 +12,7 @@ use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 /// known D iterations ahead. No-op on non-x86_64, and under Miri, which does
 /// not implement the intrinsic.
 fn prefetch_slot(p: *const TwinSlot, slot: usize) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    unsafe {
-        core::arch::x86_64::_mm_prefetch(
-            p.add(slot) as *const i8,
-            core::arch::x86_64::_MM_HINT_T0,
-        );
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = (p, slot);
+    crate::isa::prefetch_line(p.wrapping_add(slot));
 }
 
 /// Iterate parent pairs and yield `(parent_i, target, sibling)` to `f`,

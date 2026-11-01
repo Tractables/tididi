@@ -20,9 +20,10 @@ use std::borrow::Cow;
 
 use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::Vtree;
 
 use super::layout::Layout;
+use super::rows::{extract, index_bits, words_per_row};
 use crate::sort::Radix;
 
 /// The distinct values one constrained vtree node takes over the rows, and
@@ -261,7 +262,7 @@ pub(super) fn plan(
     // holds them all, so every row there has the same empty completion.
     let whole = Values { words: w, data: sorted, atom, atoms: 1 };
     let mut pending = Vec::new();
-    lim.try_push(&mut pending, (split_node(vtree, layout, vtree.root()), whole))?;
+    lim.try_push(&mut pending, (layout.split_node(vtree, vtree.root()), whole))?;
     let mut scratch = Scratch { radix, sparse: direct == Direct::On, ..Scratch::default() };
     let mut planned = 0u64;
     while let Some((t, mut values)) = pending.pop() {
@@ -282,26 +283,11 @@ pub(super) fn plan(
         lim.check_output_cap(planned)?;
         lim.discard(values);
         plans[t.idx()] = Some(Plan::Branch(split));
-        lim.try_push(&mut pending, (split_node(vtree, layout, low), low_values))?;
-        lim.try_push(&mut pending, (split_node(vtree, layout, high), high_values))?;
+        lim.try_push(&mut pending, (layout.split_node(vtree, low), low_values))?;
+        lim.try_push(&mut pending, (layout.split_node(vtree, high), high_values))?;
     }
     scratch.discard(lim);
     Ok(plans)
-}
-
-/// The node at or below the constrained node `t` whose atoms are `t`'s: `t`
-/// itself if it is a leaf or constrained on both sides, else the same for its
-/// constrained child.
-fn split_node(vtree: &Vtree, layout: &Layout, mut t: VtreeIdx) -> VtreeIdx {
-    while !vtree.node(t).is_leaf() {
-        let (left, right) = vtree.children(t);
-        match (layout.count[left.idx()], layout.count[right.idx()]) {
-            (0, _) => t = right,
-            (_, 0) => t = left,
-            _ => break,
-        }
-    }
-    t
 }
 
 /// A leaf has one literal atom, two literal atoms, or one free atom.
@@ -314,16 +300,6 @@ fn leaf_nodes(lim: &Limits, values: &Values) -> Result<Vec<NodeIdx>, OperationEr
         _ => locals.push(if values.data[0] == 0 { NEG_LEAF_IDX } else { POS_LEAF_IDX }),
     }
     Ok(locals)
-}
-
-/// Words a value of `width` bits occupies.
-fn words_for(width: usize) -> usize {
-    width.div_ceil(64).max(1)
-}
-
-/// Bits needed to write every index below `count`.
-fn index_bits(count: usize) -> u32 {
-    usize::BITS - count.saturating_sub(1).leading_zeros()
 }
 
 /// Split a node's values into its children's, whose widths are `(low,
@@ -1945,15 +1921,7 @@ const PROBE_AHEAD: usize = 16;
 /// under Miri, which lacks the intrinsic.
 #[inline(always)]
 fn prefetch_slot<T>(slots: &[T], bits: u32, hash: u64) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        let at = slots.as_ptr().wrapping_add((finish(hash) >> (64 - bits)) as usize).cast::<i8>();
-        // Sound whatever the address: a prefetch reads nothing the program
-        // sees and never faults.
-        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    let _ = (slots, bits, hash);
+    crate::isa::prefetch_at(slots, (finish(hash) >> (64 - bits)) as usize);
 }
 
 /// The number of run `k`, of `hash`, in the table `slots` of
@@ -2034,7 +2002,7 @@ fn split_parts(
     distinct: bool,
 ) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
     let n = parent.len();
-    let (lw, rw) = (words_for(low_width), words_for(high_width));
+    let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
     runs_of_parts(lim, s, parent, low_width, high_width, distinct)?;
     let (low_count, high_count) = (s.low_starts.len(), s.high_starts.len());
 
@@ -2086,7 +2054,7 @@ fn runs_of_parts(
     distinct: bool,
 ) -> Result<(), OperationError> {
     let n = parent.len();
-    let (lw, rw) = (words_for(low_width), words_for(high_width));
+    let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
     parts(lim, s, parent, low_width, high_width)?;
 
     // The parent's order sorts by the high part first, so each high value
@@ -2155,7 +2123,7 @@ fn parts(
     high_width: usize,
 ) -> Result<(), OperationError> {
     let n = parent.len();
-    let (lw, rw) = (words_for(low_width), words_for(high_width));
+    let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
     s.low.clear();
     lim.reserve_exact(&mut s.low, n * lw)?;
     s.high.clear();
@@ -2178,24 +2146,6 @@ fn parts(
         }
     }
     gate.flush()
-}
-
-/// Copy the `width` bits of `src` from bit `start` on into `dst`, low word
-/// first, clearing the bits of the last word past `width`.
-fn extract(src: &[u64], start: usize, width: usize, dst: &mut [u64]) {
-    let (skip, shift) = (start / 64, start % 64);
-    for (k, out) in dst.iter_mut().enumerate() {
-        let low = src.get(skip + k).copied().unwrap_or(0) >> shift;
-        let high = match shift {
-            0 => 0,
-            _ => src.get(skip + k + 1).copied().unwrap_or(0) << (64 - shift),
-        };
-        *out = low | high;
-    }
-    let tail = width % 64;
-    if let (true, Some(last)) = (tail != 0, dst.last_mut()) {
-        *last &= (1u64 << tail) - 1;
-    }
 }
 
 /// Order the parent values by their low part, ties in parent order, into

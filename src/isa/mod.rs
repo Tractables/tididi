@@ -44,5 +44,28 @@ macro_rules! avx2_fn {
 }
 pub(crate) use avx2_fn;
 
+/// Ask the cache for the line holding `at`. A hint only: a prefetch reads
+/// nothing the program sees and never faults, so any address is sound. A
+/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
+#[inline(always)]
+pub(crate) fn prefetch_line<T>(at: *const T) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        // Sound whatever the address: a prefetch reads nothing the program
+        // sees and never faults.
+        unsafe { core::arch::x86_64::_mm_prefetch(at.cast::<i8>(), core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = at;
+}
+
+/// Ask the cache for the line holding `slice[k]`, which need not be in
+/// bounds: a prefetch reads nothing the program sees and never faults. A
+/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
+#[inline(always)]
+pub(crate) fn prefetch_at<T>(slice: &[T], k: usize) {
+    prefetch_line(slice.as_ptr().wrapping_add(k));
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

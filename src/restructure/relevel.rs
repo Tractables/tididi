@@ -159,6 +159,16 @@ fn tri_axis<W: Word>(p: W, layout: &Layout) -> EncodedChildRef {
     EncodedChildRef::from_raw(p.field(layout, 2))
 }
 
+/// A rotation move at `info` in `dir`, crossed or not, bounded at
+/// `max_pairs`.
+#[derive(Clone, Copy)]
+pub(crate) struct RotationStep<'a> {
+    pub(crate) info: &'a RotationInfo,
+    pub(crate) dir: RotationKind,
+    pub(crate) crossed: bool,
+    pub(crate) max_pairs: usize,
+}
+
 /// Rebuild the two levels of a rotation in `dir` and return the levels the
 /// rotation replaced, or `None` if the probe was abandoned.
 ///
@@ -183,16 +193,6 @@ fn tri_axis<W: Word>(p: W, layout: &Layout) -> EncodedChildRef {
 /// expansion grows, the pair table included, is charged through the engine's
 /// limits, so a rotation too wide for the host comes back as an answer rather
 /// than an abort.
-/// A rotation move at `info` in `dir`, crossed or not, bounded at
-/// `max_pairs`.
-#[derive(Clone, Copy)]
-pub(crate) struct RotationStep<'a> {
-    pub(crate) info: &'a RotationInfo,
-    pub(crate) dir: RotationKind,
-    pub(crate) crossed: bool,
-    pub(crate) max_pairs: usize,
-}
-
 pub(crate) fn rebuild_rotated_levels(
     lim: &Limits,
     tdd: &mut Tdd,
@@ -477,16 +477,16 @@ fn next_stamp(stamp: &mut u32, marks: &mut [Mark]) -> u32 {
 
 /// A 64-bit mix of `x` (the `splitmix64` finalizer).
 #[inline(always)]
-fn mix(x: u64) -> u64 {
+pub(super) fn mix(x: u64) -> u64 {
     let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
 
-/// The pairs the two levels of a rotation in `dir` would hold, scored
+/// The pairs the two levels of a rotation `step` would hold, scored
 /// without building them, or `None` where [`prepare_levels`] would give up
-/// at `max_pairs` or where the pairs reach `cap`, which the score may then
+/// at `step.max_pairs` or where the pairs reach `cap`, which the score may then
 /// find before it has read the rows to the end. The diagram is only read.
 /// The score is never above the count [`prepare_levels`] gives, and equals
 /// it unless two different contexts collide on a 64-bit hash, so a score at

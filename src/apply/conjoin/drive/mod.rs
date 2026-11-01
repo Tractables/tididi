@@ -614,12 +614,7 @@ fn apply_and_held(
         // 2 for `g`, 0 for a level the conjunction built and for every
         // level outside the cone.
         let mut carrier = vec![0u8; num_nodes];
-        for &(t, from_f) in &carried {
-            carrier[t] = if from_f { 1 } else { 2 };
-        }
-        for &t in &relabel_moved {
-            carrier[t] = 0;
-        }
+        identity_carriers(&carried, &relabel_moved, &mut carrier);
         // The result's loose levels (`loose::loose_levels`): a carried level
         // where its carrier has it loose, and a level under one the
         // conjunction built where the operands and the sibling's product
@@ -799,4 +794,16 @@ fn adds_no_twins(vtree: &crate::vtree::Vtree, f_identity: &[bool], g_identity: &
         vtree.node(child).is_leaf() || f_identity[sibling.idx()] || g_identity[sibling.idx()]
     };
     side(left, right) && side(right, left)
+}
+
+/// The operand each level in `carried` was moved from untouched (`1` for `f`,
+/// `2` for `g`, `0` for built levels and levels in `relabel_moved`), written
+/// into zero-initialized `out`.
+pub(super) fn identity_carriers(carried: &[(usize, bool)], relabel_moved: &[usize], out: &mut [u8]) {
+    for &(t, from_f) in carried {
+        out[t] = if from_f { 1 } else { 2 };
+    }
+    for &t in relabel_moved {
+        out[t] = 0;
+    }
 }

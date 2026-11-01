@@ -181,10 +181,7 @@ fn same_variables(source: &Vtree, target: &Vtree) -> Result<(), RestructureError
 /// A deterministic 64-bit image of a variable, summed over a subtree to name
 /// its variable set. The planner checks candidate shared sets exactly.
 fn scramble(var: VarId) -> u64 {
-    let mut z = u64::from(var.0).wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    super::relevel::mix(u64::from(var.0))
 }
 
 /// The variable-set fingerprint and leaf count of every node under `root`.

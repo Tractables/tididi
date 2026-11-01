@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 /// Where each constrained variable sits once the rows are re-encoded, and how
 /// many of them each vtree node's subtree holds.
@@ -89,6 +89,44 @@ impl Layout {
     /// re-encoding a row reverses its bits.
     pub(super) fn is_reversed(&self) -> bool {
         self.reversed
+    }
+
+    /// The node at or below the constrained node `t` whose atoms are `t`'s: `t`
+    /// itself if it is a leaf or constrained on both sides, else the same for its
+    /// constrained child.
+    pub(super) fn split_node(&self, vtree: &Vtree, mut t: VtreeIdx) -> VtreeIdx {
+        while !vtree.node(t).is_leaf() {
+            let (left, right) = vtree.children(t);
+            match (self.count[left.idx()], self.count[right.idx()]) {
+                (0, _) => t = right,
+                (_, 0) => t = left,
+                _ => break,
+            }
+        }
+        t
+    }
+
+    /// One table per byte of an input word holding where that byte's bits land
+    /// in a re-encoded word, so a one-word row is re-encoded by eight lookups
+    /// ([`Self::reencode_word`]).
+    pub(super) fn byte_table(&self, lim: &Limits) -> Result<Vec<u64>, OperationError> {
+        let mut table = Vec::new();
+        lim.try_resize(&mut table, 8 * 256, 0u64)?;
+        for (bit, &to) in self.position.iter().enumerate() {
+            let (byte, within) = (bit / 8, bit % 8);
+            for (value, entry) in table[byte * 256..][..256].iter_mut().enumerate() {
+                if (value >> within) & 1 == 1 {
+                    *entry |= 1u64 << to;
+                }
+            }
+        }
+        Ok(table)
+    }
+
+    /// Re-encode `word` into leaf order through [`Self::byte_table`].
+    #[inline]
+    pub(super) fn reencode_word(table: &[u64], word: u64) -> u64 {
+        (0..8).fold(0, |acc, byte| acc | table[byte * 256 + ((word >> (8 * byte)) & 0xff) as usize])
     }
 }
 
