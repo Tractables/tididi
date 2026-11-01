@@ -36,6 +36,13 @@ impl PyCircuit {
         let vtree = Arc::clone(f.vtree());
         operations::run(py, &vtree, limits, move |engine| operation(engine, f)).map(Self::new)
     }
+
+    fn quantify(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>,
+        operation: fn(&Engine, Tdd, &[tididi::vtree::VarId]) -> Result<Tdd, OperationError>) -> PyResult<Self> {
+        let vars = domain::variable_ids(&variables)?;
+        domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
+        self.transform(py, limits, move |e, f| operation(e, f, &vars))
+    }
 }
 
 fn consumed() -> PyErr {
@@ -101,18 +108,14 @@ impl PyCircuit {
     /// Quantified variables remain free in the vtree; use projected_model_count to count distinct projections.
     #[pyo3(signature = (variables, *, limits=None))]
     fn exists(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        let vars = domain::variable_ids(&variables)?;
-        domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
-        self.transform(py, limits, move |e, f| e.exists_vars(f, &vars))
+        self.quantify(py, variables, limits, Engine::exists_vars)
     }
 
     /// Universally quantify variables, consuming this circuit: the result holds where every value of them satisfies it.
     /// Quantified variables remain free in the vtree.
     #[pyo3(signature = (variables, *, limits=None))]
     fn forall(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        let vars = domain::variable_ids(&variables)?;
-        domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
-        self.transform(py, limits, move |e, f| e.forall_vars(f, &vars))
+        self.quantify(py, variables, limits, Engine::forall_vars)
     }
 
     /// Simultaneously rename variables using a dict {source: target}, consuming this circuit.
