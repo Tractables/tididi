@@ -1172,7 +1172,7 @@ impl Partition<'_> {
     /// far, held in registers, ORs its bit into the node's code and lists
     /// the node at its first pair, in `wide.bucket`. The second takes each listed
     /// node's code, into `wide.touched`, and reads its class: a class met keeps the
-    /// first code it meets in `dest` and counts its members in `hits`, and
+    /// first code it meets in `wide.dest` and counts its members in `wide.hits`, and
     /// only a class that meets a second code counts its members by code, in
     /// a row of `wide.rows`. Each class met then gets the class its members of
     /// each code move to, as [`Partition::split_sibling`] gives them, and

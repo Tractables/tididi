@@ -265,12 +265,12 @@ pub(super) fn described_rows(
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
-/// cannot skip anything: `ctx.masked` false and neither side a pass-through, where
+/// cannot skip anything: `rows.ctx.masked` false and neither side a pass-through, where
 /// `row_alive_masks` always returns `(0, u128::MAX)`, or neither side able to
 /// [kill](ChildLookup::kills) a candidate, where no mask can clear. Only the
 /// plain routes reach those regimes; the other three always fold.
 ///
-/// `right_width` and `output_grid_base` are read from `ctx` rather than passed alongside it, so
+/// `rows.ctx.right_width` and `rows.ctx.output_grid_base` are read from `rows.ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
 /// construction.
 #[inline(always)]
@@ -585,7 +585,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesid
 }
 
 /// The `Route::MarginalChild` row loop: a level with at least one marginal
-/// child. Iterates rows `0..left_width` in forward order, running the emit
+/// child. Iterates rows `0..rows.f_width` in forward order, running the emit
 /// kernel for each cell.
 ///
 /// Never streams: streaming marginal-child levels fold their cells as they
@@ -715,15 +715,15 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// whose output is structural (never a marginalization target).
 ///
 /// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
-/// `left_width*right_width` slab it reuses one `right_width`-wide row scratch
-/// at `cell_ctx.output_grid_base` and records each surviving cell in
+/// `rows.f_width*rows.ctx.right_width` slab it reuses one `rows.ctx.right_width`-wide row scratch
+/// at `rows.ctx.output_grid_base` and records each surviving cell in
 /// `product_list`. The marginal child is a pass-through carrier that kills no
 /// pair, so the structural sibling alone decides which cells are alive and a
 /// dense slab would be mostly `NO_PRODUCT`. The parent densifies the
 /// `product_list` through `ensure_grid` when it needs the grid.
 ///
 /// Every cell is built at grid row 0, so the kernel's
-/// `grid_pos == cell_ctx.output_grid_base + j`, then read back from the scratch
+/// `grid_pos == rows.ctx.output_grid_base + j`, then read back from the scratch
 /// and, if alive, pushed as
 /// `ProductEntry { f_idx: row i, g_idx: col j, prod_idx: node }`.
 ///
@@ -754,11 +754,11 @@ pub(crate) fn run_level_rows_marginal_sparse(
 }
 
 /// The row loop of `Route::PlainDense` and `Route::Dense`: a level with no
-/// marginal child. Iterates rows in forward order.
+/// marginal child. Iterates rows `0..rows.f_width` in forward order.
 /// Runs the emit kernel with positional grid lookups on both sides (no
 /// pass-through, no mask decode — the caller guarantees no marginal child).
 ///
-/// `DENSE = true` asserts two level-invariant facts, `cell_ctx.masked ==
+/// `DENSE = true` asserts two level-invariant facts, `rows.ctx.masked ==
 /// false` and no pass-through side, so the inner loop carries no branch on
 /// them; `DENSE = false` keeps the masked row-skip checks.
 ///

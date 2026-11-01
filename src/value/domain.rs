@@ -62,23 +62,24 @@ pub(crate) struct StreamChild<'a, D: ValueDomain> {
 /// One value domain: the arithmetic, its column, and what the two folds need
 /// from it.
 ///
-/// Each method is a place where the two domains differ; what they share (the
+/// Each method is a place where the three domains differ; what they share (the
 /// bottom-up ensure walk and the column fill in [`Self::fold_column`]) is
 /// written once here. Each domain's `Σ pairs (left × right)` fold is an
 /// inherent method ([`IntFold::fold`](super::IntFold::fold),
-/// [`WeightFold::fold`](super::WeightFold::fold)), because the two reader
-/// shapes differ: a lazy `CountRead` per side against a `Cow<WeightValue>` per
-/// side.
+/// [`WeightFold::fold`](super::WeightFold::fold),
+/// [`FloatFold::fold`](super::FloatFold::fold)), because the three reader
+/// shapes differ: a lazy `CountRead` per side, a `Cow<WeightValue>` per
+/// side, or a [`ScaledFloat`](crate::diagram::ScaledFloat) per side.
 ///
 /// The ensure walk builds a column with [`Self::alloc_col`] and
 /// [`Self::set_col`]; the apply's streaming driver with
 /// [`Self::try_with_capacity`] and [`Self::push_col`], one push per alive
 /// cell.
 pub(crate) trait ValueDomain: Sized {
-    /// One per-node fold result (`Count` | `WeightValue`).
+    /// One per-node fold result (`Count` | `WeightValue` | `ScaledFloat`).
     type Scalar;
 
-    /// The column of one level's values.
+    /// The column of one level's values (`CountVec` | `Vec<WeightValue>` | `FloatCol`).
     type Col;
 
     /// State the domain carries beside the diagram: the weight store, or
@@ -140,8 +141,8 @@ pub(crate) trait ValueDomain: Sized {
     /// This domain's store, given the apply's weight store.
     ///
     /// The integer domain carries no state and ignores the argument; the
-    /// weighted domain requires one, and a weighted column is only ever opened
-    /// where a store is attached.
+    /// weighted and scaled-float domains require one, and their columns are
+    /// only ever opened where a store is attached.
     fn store_of(ws: Option<&WeightStore>) -> &Self::Store;
 
     /// Fold a node of the scope's level, whose pairs are `pairs`:
