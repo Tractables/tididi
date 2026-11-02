@@ -292,78 +292,52 @@ impl Walk<'_> {
                 }
             }
             (Pieces::List(ls), Pieces::List(rs)) => {
-                return self.meet_list_list(t, a, ls, rs, leafy, hits);
-            }
-        }
-        Ok(())
-    }
-
-    fn meet_list_list(
-        &mut self,
-        t: VtreeIdx,
-        a: u32,
-        ls: &[(u32, u32)],
-        rs: &[(u32, u32)],
-        leafy: bool,
-        hits: &mut Vec<Hit>,
-    ) -> Result<(), OperationError> {
-        if ls.is_empty() || rs.is_empty() {
-            return Ok(());
-        }
-        let index = self.index;
-        let lim = self.lim;
-        let mut hit = |b: u32, l: u32, r: u32| {
-            lim.try_push(
-                hits,
-                Hit {
-                    a,
-                    b,
-                    pair: ChildPair::new(NodeIdx(l), NodeIdx(r)),
-                },
-            )
-        };
-        let probes = &mut self.work.probes;
-        let cross = ls.len() as u64 * rs.len() as u64;
-        // With a leaf side the crossing is at most three times the
-        // other side, and the runs are not read to compare.
-        let (by_left, by_right) = match leafy {
-            true => (u64::MAX, u64::MAX),
-            false => {
-                *probes += (ls.len() + rs.len()) as u64;
-                (
-                    ls.iter()
-                        .map(|&(bl, _)| index.left_run(t, bl).len() as u64)
-                        .sum(),
-                    rs.iter()
-                        .map(|&(br, _)| index.right_run(t, br).len() as u64)
-                        .sum(),
-                )
-            }
-        };
-        if cross <= by_left && cross <= by_right {
-            *probes += cross;
-            for &(bl, lp) in ls {
-                for &(br, rp) in rs {
-                    if let Some(b) = index.owner_of(t, bl, br) {
-                        hit(b, lp, rp)?;
-                    }
+                if ls.is_empty() || rs.is_empty() {
+                    return Ok(());
                 }
-            }
-        } else if by_left <= by_right {
-            *probes += by_left;
-            for &(bl, lp) in ls {
-                for &(br, b) in index.left_run(t, bl) {
-                    if let Ok(k) = rs.binary_search_by_key(&br, |e| e.0) {
-                        hit(b, lp, rs[k].1)?;
+                let cross = ls.len() as u64 * rs.len() as u64;
+                // With a leaf side the crossing is at most three times the
+                // other side, and the runs are not read to compare.
+                let (by_left, by_right) = match leafy {
+                    true => (u64::MAX, u64::MAX),
+                    false => {
+                        *probes += (ls.len() + rs.len()) as u64;
+                        (
+                            ls.iter()
+                                .map(|&(bl, _)| index.left_run(t, bl).len() as u64)
+                                .sum(),
+                            rs.iter()
+                                .map(|&(br, _)| index.right_run(t, br).len() as u64)
+                                .sum(),
+                        )
                     }
-                }
-            }
-        } else {
-            *probes += by_right;
-            for &(br, rp) in rs {
-                for &(bl, b) in index.right_run(t, br) {
-                    if let Ok(k) = ls.binary_search_by_key(&bl, |e| e.0) {
-                        hit(b, ls[k].1, rp)?;
+                };
+                if cross <= by_left && cross <= by_right {
+                    *probes += cross;
+                    for &(bl, lp) in ls {
+                        for &(br, rp) in rs {
+                            if let Some(b) = index.owner_of(t, bl, br) {
+                                hit(b, lp, rp)?;
+                            }
+                        }
+                    }
+                } else if by_left <= by_right {
+                    *probes += by_left;
+                    for &(bl, lp) in ls {
+                        for &(br, b) in index.left_run(t, bl) {
+                            if let Ok(k) = rs.binary_search_by_key(&br, |e| e.0) {
+                                hit(b, lp, rs[k].1)?;
+                            }
+                        }
+                    }
+                } else {
+                    *probes += by_right;
+                    for &(br, rp) in rs {
+                        for &(bl, b) in index.right_run(t, br) {
+                            if let Ok(k) = ls.binary_search_by_key(&bl, |e| e.0) {
+                                hit(b, ls[k].1, rp)?;
+                            }
+                        }
                     }
                 }
             }
@@ -408,15 +382,6 @@ impl Walk<'_> {
         }
         hits.sort_unstable_by_key(|h| (h.a, h.b, h.pair.key()));
         let width = self.f.reference_slot_count(t);
-        self.group_product_hits(width, by_f, &hits)
-    }
-
-    fn group_product_hits(
-        &mut self,
-        width: usize,
-        by_f: bool,
-        hits: &[Hit],
-    ) -> Result<Products, OperationError> {
         let mut out = Products {
             start: Vec::new(),
             items: Vec::new(),
@@ -425,39 +390,42 @@ impl Walk<'_> {
         };
         self.lim.reserve_exact(&mut out.made, hits.len())?;
         let mut last: Option<(u32, u32)> = None;
-        if by_f {
-            // One product per node of `f`, empty where nothing met it.
-            self.lim.reserve_exact(&mut out.made_at, width + 1)?;
-            let mut h = 0;
-            for x in 0..width as u32 {
-                out.made_at.push(out.made.len() as u32);
-                while h < hits.len() && hits[h].a == x {
-                    if last != Some((hits[h].a, hits[h].b)) {
-                        last = Some((hits[h].a, hits[h].b));
-                        self.work.products += 1;
+        match by_f {
+            true => {
+                // One product per node of `f`, empty where nothing met it.
+                self.lim.reserve_exact(&mut out.made_at, width + 1)?;
+                let mut h = 0;
+                for x in 0..width as u32 {
+                    out.made_at.push(out.made.len() as u32);
+                    while h < hits.len() && hits[h].a == x {
+                        if last != Some((hits[h].a, hits[h].b)) {
+                            last = Some((hits[h].a, hits[h].b));
+                            self.work.products += 1;
+                        }
+                        out.made.push(hits[h].pair);
+                        h += 1;
                     }
-                    out.made.push(hits[h].pair);
-                    h += 1;
                 }
+                out.made_at.push(out.made.len() as u32);
             }
-            out.made_at.push(out.made.len() as u32);
-        } else {
-            self.lim.try_resize(&mut out.start, width + 1, 0)?;
-            for h in hits {
-                if last != Some((h.a, h.b)) {
-                    last = Some((h.a, h.b));
-                    let k = out.made_at.len() as u32;
-                    self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-                    self.lim.try_push(&mut out.items, (h.b, k))?;
-                    out.start[h.a as usize + 1] += 1;
+            false => {
+                self.lim.try_resize(&mut out.start, width + 1, 0)?;
+                for h in &hits {
+                    if last != Some((h.a, h.b)) {
+                        last = Some((h.a, h.b));
+                        let k = out.made_at.len() as u32;
+                        self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
+                        self.lim.try_push(&mut out.items, (h.b, k))?;
+                        out.start[h.a as usize + 1] += 1;
+                    }
+                    out.made.push(h.pair);
                 }
-                out.made.push(h.pair);
+                self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
+                for x in 0..width {
+                    out.start[x + 1] += out.start[x];
+                }
+                self.work.products += out.items.len() as u64;
             }
-            self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-            for x in 0..width {
-                out.start[x + 1] += out.start[x];
-            }
-            self.work.products += out.items.len() as u64;
         }
         if u32::try_from(out.made.len()).is_err() {
             return Err(OperationError::IndexOverflow);
@@ -755,7 +723,26 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
         work: IndexedWork::default(),
     };
     if g.is_zero() {
-        return Ok((empty_indexed_column(&vtree, at, width, algebra), walk.work));
+        // `g` reaches no node at `at`: every node's value is the empty sum.
+        let mut col = algebra.column(at, width);
+        let none: [ChildPair; 0] = [];
+        let (l, r) = vtree.children(at);
+        for k in 0..width {
+            let pairs = SlotPairs::new(
+                PairsIter::slice(&none),
+                InlineSlots::default(),
+                InlineSlots::default(),
+            );
+            algebra.fold(
+                at,
+                k,
+                pairs,
+                &algebra.column(l, 0),
+                &algebra.column(r, 0),
+                &mut col,
+            );
+        }
+        return Ok((col, walk.work));
     }
     let plan = walk.plan(at, (0..width as u32).collect(), true)?;
     let work = walk.work;
@@ -793,28 +780,6 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
     }
     gate.flush()?;
     Ok((std::mem::take(&mut cols[at.idx()]), work))
-}
-
-fn empty_indexed_column<A: ColumnAlgebra>(
-    vtree: &Vtree,
-    at: VtreeIdx,
-    width: usize,
-    algebra: &A,
-) -> A::Column {
-    // `g` reaches no node at `at`: every node's value is the empty sum.
-    let mut col = algebra.column(at, width);
-    let none: [ChildPair; 0] = [];
-    let (l, r) = vtree.children(at);
-    let (left_col, right_col) = (algebra.column(l, 0), algebra.column(r, 0));
-    for k in 0..width {
-        let pairs = SlotPairs::new(
-            PairsIter::slice(&none),
-            InlineSlots::default(),
-            InlineSlots::default(),
-        );
-        algebra.fold(at, k, pairs, &left_col, &right_col, &mut col);
-    }
-    col
 }
 
 impl Engine {

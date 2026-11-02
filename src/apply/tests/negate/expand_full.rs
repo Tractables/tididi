@@ -160,6 +160,10 @@ fn negate_matches_the_truth_table_on_random_formulas() {
     }
 }
 
+/// A cover's missing cells, kept in a word for a basis of fewer than 64
+/// cells and read four words at a time for a larger one, are the unmarked
+/// cells in order, on bases of every length up to past a few groups of
+/// thirty-two cells and with covers from empty to full.
 #[test]
 fn a_cover_reads_its_missing_cells_in_order() {
     use crate::apply::negate::{ChildBasis, Cover, LeafForm};

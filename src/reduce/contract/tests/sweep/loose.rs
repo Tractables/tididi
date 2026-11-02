@@ -18,14 +18,7 @@ fn a_contraction_keeps_the_loose_levels_known() {
     for seed in 0..40u64 {
         let num_vars = 6 + (seed % 5) as u32;
         let mut rng = Lcg::new(seed ^ 0x1005_e1e7);
-        let clauses = rand_cnf(
-            &mut rng,
-            num_vars,
-            CnfShape {
-                clauses: 16,
-                width: 3,
-            },
-        );
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 16, width: 3 });
         for (label, vtree) in vtree_shapes(num_vars) {
             // A minimized operand knows its loose levels: it has none.
             let settled = |mut g: crate::Tdd| {
@@ -34,9 +27,7 @@ fn a_contraction_keeps_the_loose_levels_known() {
             };
             let mut f = settled(eng.cube(&vtree, std::iter::empty::<i32>()).unwrap());
             for c in &clauses {
-                f = eng
-                    .and(f, settled(eng.clause(&vtree, c.iter().copied()).unwrap()))
-                    .unwrap();
+                f = eng.and(f, settled(eng.clause(&vtree, c.iter().copied()).unwrap())).unwrap();
                 let was_known = f.dirty.loose().is_some();
                 let before = f.node_count();
                 eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
@@ -54,11 +45,6 @@ fn a_contraction_keeps_the_loose_levels_known() {
             assert_same_shape(&f, &whole, &format!("seed {seed}, {label}"));
         }
     }
-    eprintln!(
-        "contractions with the loose levels known: {known}, merging: {merged}, leaving a level listed: {listed}"
-    );
-    assert!(
-        merged > 0 && listed > 0,
-        "{known} contractions knew their loose levels, {merged} merged, {listed} left one listed"
-    );
+    eprintln!("contractions with the loose levels known: {known}, merging: {merged}, leaving a level listed: {listed}");
+    assert!(merged > 0 && listed > 0, "{known} contractions knew their loose levels, {merged} merged, {listed} left one listed");
 }

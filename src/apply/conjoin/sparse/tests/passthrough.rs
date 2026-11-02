@@ -215,6 +215,11 @@ fn the_pass_through_scatter_builds_what_the_grid_walk_builds() {
         ..SparseThresholds::PRODUCTION
     };
     let store = weights(18);
+    // A dense `e` leaves the running conjunction wider than `k`, which keeps
+    // it on the left and makes it the carrier; a sparse one narrows it, so
+    // the conjunction swaps the operands and `k` holds the left side. One `c`
+    // for every key leaves `k` a single node at the level, where the scatter
+    // writes the one product's pairs straight into the level.
     let cases = [
         (
             Rows {

@@ -338,6 +338,7 @@ impl LevelOverlay<'_> {
         let mut poll = lim.gate();
         let walk_g = op != Overlay::AndNot;
         let f_width = fl.slot_count();
+        let g_width = gl.slot_count();
         index_owners(eng, gl, &mut s.owner)?;
         lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
         pieces.f_start.push(0);
@@ -385,66 +386,48 @@ impl LevelOverlay<'_> {
         }
 
         if walk_g {
-            self.walk_g_inner_level(eng, out, s, pieces, &mut poll)?;
+            index_pairs(eng, fl, 0..f_width, &mut s.held)?;
+            // Stable by `g` node, so each node's products stay in output order.
+            s.products.sort_by_key(|&(b, _)| b);
+            lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
+            pieces.g_start.push(0);
+            let mut next = 0;
+            for b in 0..g_width {
+                while next < s.products.len() && s.products[next].0 == b as u32 {
+                    lim.try_push(&mut pieces.g_items, s.products[next].1)?;
+                    next += 1;
+                }
+                s.pairs.clear();
+                for p in gl.pairs_iter_of_idx(b) {
+                    let xs = lp.of_g(p.left.0);
+                    let ys = rp.of_g(p.right.0);
+                    for &x in xs {
+                        let fx = lp.f_part[x as usize];
+                        for &y in ys {
+                            let fy = rp.f_part[y as usize];
+                            if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
+                                continue;
+                            }
+                            lim.try_push(
+                                &mut s.pairs,
+                                ChildPair::new(
+                                    EncodedChildRef::from_raw(x),
+                                    EncodedChildRef::from_raw(y),
+                                ),
+                            )?;
+                        }
+                    }
+                    poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+                }
+                if !s.pairs.is_empty() {
+                    crate::diagram::sort_pairs(&mut s.pairs);
+                    let o = out.push_node(lim, &s.pairs)?.0;
+                    pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
+                }
+                lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
+            }
         }
         poll.flush()?;
-        Ok(())
-    }
-
-    /// Walk `gl` for a disjunction, emitting the cells of each `g` node that no
-    /// `f` node holds as `g`'s residues.
-    fn walk_g_inner_level(
-        &self,
-        eng: &Engine,
-        out: &mut TddLevel,
-        s: &mut Scratch,
-        pieces: &mut Pieces,
-        poll: &mut crate::limits::PollGate<'_>,
-    ) -> Result<(), OperationError> {
-        let &LevelOverlay { fl, gl, lp, rp } = self;
-        let lim = eng.limits();
-        let f_width = fl.slot_count();
-        let g_width = gl.slot_count();
-        index_pairs(eng, fl, 0..f_width, &mut s.held)?;
-        // Stable by `g` node, so each node's products stay in output order.
-        s.products.sort_by_key(|&(b, _)| b);
-        lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
-        pieces.g_start.push(0);
-        let mut next = 0;
-        for b in 0..g_width {
-            while next < s.products.len() && s.products[next].0 == b as u32 {
-                lim.try_push(&mut pieces.g_items, s.products[next].1)?;
-                next += 1;
-            }
-            s.pairs.clear();
-            for p in gl.pairs_iter_of_idx(b) {
-                let xs = lp.of_g(p.left.0);
-                let ys = rp.of_g(p.right.0);
-                for &x in xs {
-                    let fx = lp.f_part[x as usize];
-                    for &y in ys {
-                        let fy = rp.f_part[y as usize];
-                        if fx != ABSENT && fy != ABSENT && s.held.contains(&key(fx, fy)) {
-                            continue;
-                        }
-                        lim.try_push(
-                            &mut s.pairs,
-                            ChildPair::new(
-                                EncodedChildRef::from_raw(x),
-                                EncodedChildRef::from_raw(y),
-                            ),
-                        )?;
-                    }
-                }
-                poll.poll((xs.len() * ys.len()) as u64 + 1)?;
-            }
-            if !s.pairs.is_empty() {
-                crate::diagram::sort_pairs(&mut s.pairs);
-                let o = out.push_node(lim, &s.pairs)?.0;
-                pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
-            }
-            lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
-        }
         Ok(())
     }
 
@@ -485,7 +468,22 @@ impl LevelOverlay<'_> {
             &mut s.held,
         )?;
         if op != Overlay::AndNot {
-            self.push_f_output_cells(lim, &mut poll, f_out, &mut s.pairs)?;
+            for p in fl.pairs_iter_of_idx(f_out.idx()) {
+                let xs = lp.of_f(p.left.0);
+                let ys = rp.of_f(p.right.0);
+                for &x in xs {
+                    for &y in ys {
+                        lim.try_push(
+                            &mut s.pairs,
+                            ChildPair::new(
+                                EncodedChildRef::from_raw(x),
+                                EncodedChildRef::from_raw(y),
+                            ),
+                        )?;
+                    }
+                }
+                poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+            }
         }
         // The walked operand: `g` for a disjunction, `f` for a difference; a cell
         // is kept when its components in the other operand are not a pair of that
@@ -531,31 +529,6 @@ impl LevelOverlay<'_> {
         poll.flush()?;
         crate::diagram::sort_pairs(&mut s.pairs);
         Ok(&s.pairs)
-    }
-
-    /// Push all expanded child-cell pairs of `f_out` into `pairs`.
-    fn push_f_output_cells(
-        &self,
-        lim: &crate::limits::Limits,
-        poll: &mut crate::limits::PollGate<'_>,
-        f_out: NodeIdx,
-        pairs: &mut Vec<ChildPair>,
-    ) -> Result<(), OperationError> {
-        let &LevelOverlay { fl, lp, rp, .. } = self;
-        for p in fl.pairs_iter_of_idx(f_out.idx()) {
-            let xs = lp.of_f(p.left.0);
-            let ys = rp.of_f(p.right.0);
-            for &x in xs {
-                for &y in ys {
-                    lim.try_push(
-                        pairs,
-                        ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)),
-                    )?;
-                }
-            }
-            poll.poll((xs.len() * ys.len()) as u64 + 1)?;
-        }
-        Ok(())
     }
 }
 

@@ -55,6 +55,8 @@ fn build_by_rotation_round_trip(
     let mut acc = build_by_folding(eng, vtree, clauses.iter().rev());
     let mut vt = (**vtree).clone();
     let root = vt.root();
+    // A left rotation needs a right child that is internal; a linear-enough
+    // vtree at the root has none, and there is nothing to round-trip.
     let left = rotate_left(&mut vt, root)?;
     acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::default();

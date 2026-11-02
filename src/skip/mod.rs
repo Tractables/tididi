@@ -367,43 +367,9 @@ impl SkipForm {
             }
             return Ok(());
         }
-        let [pos, base, live] = self.mark_and_number_live_candidates(&cand, lim)?;
-        let fix = |live: &[u32], r: Ref| -> Ref {
-            let p = pos[vt(r) as usize];
-            if p == NONE {
-                r
-            } else {
-                mk(vt(r), live[base[p as usize] as usize + ix(r) as usize])
-            }
-        };
-        let mut active = Vec::with_capacity(cand.len() + self.active.len());
-        for &t in &self.active {
-            if pos[t as usize] == NONE && self.levels[t as usize].width() > 0 {
-                active.push(t);
-            }
-        }
-        for (i, &t) in cand.iter().enumerate() {
-            let lslice = &live[base[i] as usize..base[i + 1] as usize];
-            if compact_candidate_level(&mut self.levels[t as usize], lslice, fix, &live, lim) {
-                active.push(t);
-            }
-        }
-        active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
-        active.dedup();
-        self.active = active;
-        self.out = fix(&live, self.out);
-        lim.discard(live);
-        Ok(())
-    }
-
-    fn mark_and_number_live_candidates(
-        &self,
-        cand: &[u32],
-        lim: &Limits,
-    ) -> Result<[Vec<u32>; 3], OperationError> {
         // Per candidate level (by its position in `cand`): which nodes are
         // live, then their new numbers, packed into `live[base[i]..base[i + 1]]`.
-        let mut pos = vec![NONE; self.shape.num_nodes()];
+        let mut pos = vec![NONE; sh.num_nodes()];
         let mut base = Vec::with_capacity(cand.len() + 1);
         let mut total = 0usize;
         for (i, &t) in cand.iter().enumerate() {
@@ -444,7 +410,54 @@ impl SkipForm {
                 };
             }
         }
-        Ok([pos, base, live])
+        let fix = |live: &[u32], r: Ref| -> Ref {
+            let p = pos[vt(r) as usize];
+            if p == NONE {
+                r
+            } else {
+                mk(vt(r), live[base[p as usize] as usize + ix(r) as usize])
+            }
+        };
+        let mut active = Vec::with_capacity(cand.len() + self.active.len());
+        for &t in &self.active {
+            if pos[t as usize] == NONE && self.levels[t as usize].width() > 0 {
+                active.push(t);
+            }
+        }
+        for (i, &t) in cand.iter().enumerate() {
+            let lslice = &live[base[i] as usize..base[i + 1] as usize];
+            // Compacted in place: a kept node moves down to its new number.
+            let lvl = &mut self.levels[t as usize];
+            let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
+            for &new_k in lslice {
+                let hi = lvl.start[lo + 1] as usize;
+                let pair_lo = lvl.start[lo] as usize;
+                if new_k != NONE {
+                    for q in pair_lo..hi {
+                        let (a, b) = lvl.pairs[q];
+                        lvl.pairs[w] = (fix(&live, a), fix(&live, b));
+                        w += 1;
+                    }
+                    j += 1;
+                    lvl.start[j] = w as u32;
+                }
+                lo += 1;
+            }
+            if j == 0 {
+                lim.release_bytes(lvl.bytes());
+                *lvl = SLevel::default();
+            } else {
+                lvl.pairs.truncate(w);
+                lvl.start.truncate(j + 1);
+                active.push(t);
+            }
+        }
+        active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+        active.dedup();
+        self.active = active;
+        self.out = fix(&live, self.out);
+        lim.discard(live);
+        Ok(())
     }
 
     /// The model count over the vtree's variables.
@@ -527,7 +540,29 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
     let (l, r) = sh.kids[u as usize];
     let (ll, rl) = (sh.is_leaf(l), sh.is_leaf(r));
     if ll != rl {
-        merge_single_leaf_cells(l, r, ll, pairs);
+        // One leaf side: per other side, the literals its pairs cover.
+        let lit = |p: &(Ref, Ref)| if ll { p.0 } else { p.1 };
+        let other = |p: &(Ref, Ref)| if ll { p.1 } else { p.0 };
+        let leaf = if ll { l } else { r };
+        if pairs.len() > 1 {
+            pairs.sort_unstable_by_key(|p| (other(p), lit(p)));
+        }
+        let (mut w, mut i) = (0, 0);
+        while i < pairs.len() {
+            let o = other(&pairs[i]);
+            let mut m = 0u8;
+            while i < pairs.len() && other(&pairs[i]) == o {
+                m |= literal_cells(ix(lit(&pairs[i])));
+                i += 1;
+            }
+            let x = mk(leaf, cells_label(m));
+            pairs[w] = if ll { (x, o) } else { (o, x) };
+            w += 1;
+        }
+        pairs.truncate(w);
+        if ll && w > 1 {
+            pairs.sort_unstable();
+        }
         return;
     }
     // Cells: every One against a leaf child as both literals.
@@ -590,32 +625,6 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
     }
 }
 
-fn merge_single_leaf_cells(l: u32, r: u32, ll: bool, pairs: &mut Vec<(Ref, Ref)>) {
-    // One leaf side: per other side, the literals its pairs cover.
-    let lit = |p: &(Ref, Ref)| if ll { p.0 } else { p.1 };
-    let other = |p: &(Ref, Ref)| if ll { p.1 } else { p.0 };
-    let leaf = if ll { l } else { r };
-    if pairs.len() > 1 {
-        pairs.sort_unstable_by_key(|p| (other(p), lit(p)));
-    }
-    let (mut w, mut i) = (0, 0);
-    while i < pairs.len() {
-        let o = other(&pairs[i]);
-        let mut m = 0u8;
-        while i < pairs.len() && other(&pairs[i]) == o {
-            m |= literal_cells(ix(lit(&pairs[i])));
-            i += 1;
-        }
-        let x = mk(leaf, cells_label(m));
-        pairs[w] = if ll { (x, o) } else { (o, x) };
-        w += 1;
-    }
-    pairs.truncate(w);
-    if ll && w > 1 {
-        pairs.sort_unstable();
-    }
-}
-
 /// The literal cells a leaf label covers: bit 0 positive, bit 1 negative.
 #[inline]
 pub(crate) fn literal_cells(label: u32) -> u8 {
@@ -633,40 +642,5 @@ pub(crate) fn cells_label(cells: u8) -> u32 {
         3 => ONE,
         1 => POS,
         _ => NEG,
-    }
-}
-
-/// Compact `lvl` in place onto the live nodes in `lslice`, rewriting pair
-/// references through `fix`, and return `true` when at least one node survives.
-fn compact_candidate_level(
-    lvl: &mut SLevel,
-    lslice: &[u32],
-    fix: impl Fn(&[u32], Ref) -> Ref,
-    live: &[u32],
-    lim: &Limits,
-) -> bool {
-    let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
-    for &new_k in lslice {
-        let hi = lvl.start[lo + 1] as usize;
-        let pair_lo = lvl.start[lo] as usize;
-        if new_k != NONE {
-            for q in pair_lo..hi {
-                let (a, b) = lvl.pairs[q];
-                lvl.pairs[w] = (fix(live, a), fix(live, b));
-                w += 1;
-            }
-            j += 1;
-            lvl.start[j] = w as u32;
-        }
-        lo += 1;
-    }
-    if j == 0 {
-        lim.release_bytes(lvl.bytes());
-        *lvl = SLevel::default();
-        false
-    } else {
-        lvl.pairs.truncate(w);
-        lvl.start.truncate(j + 1);
-        true
     }
 }

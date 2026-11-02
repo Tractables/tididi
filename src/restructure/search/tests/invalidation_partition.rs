@@ -20,6 +20,13 @@ enum Kind {
     Right,
 }
 
+fn child_pair(vtree: &Vtree, u: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
+    match *vtree.node(u) {
+        VtreeNode::Internal { left, right, .. } => (left, right),
+        _ => panic!("expected internal at {:?}", u),
+    }
+}
+
 fn vars_under(vtree: &Vtree, node: VtreeIdx) -> BTreeSet<u32> {
     let mut out = BTreeSet::new();
     fn rec(vtree: &Vtree, node: VtreeIdx, out: &mut BTreeSet<u32>) {
@@ -42,35 +49,24 @@ type Partition = (BTreeSet<u32>, BTreeSet<u32>, BTreeSet<u32>);
 /// Grandchild partition for probe `(u, kind)` — the triple of var-sets the
 /// canonicity formula reads. `None` if the probe is structurally inapplicable.
 fn partition(vtree: &Vtree, u: VtreeIdx, kind: Kind) -> Option<Partition> {
-    let VtreeNode::Internal { left, right, .. } = *vtree.node(u) else {
-        return None;
+    let (left, right) = match *vtree.node(u) {
+        VtreeNode::Internal { left, right, .. } => (left, right),
+        _ => return None,
     };
     match kind {
         Kind::Left => {
-            let VtreeNode::Internal {
-                left: m, right: r, ..
-            } = *vtree.node(right)
-            else {
-                return None;
+            let (m, r) = match *vtree.node(right) {
+                VtreeNode::Internal { left, right, .. } => (left, right),
+                _ => return None,
             };
-            Some((
-                vars_under(vtree, left),
-                vars_under(vtree, m),
-                vars_under(vtree, r),
-            ))
+            Some((vars_under(vtree, left), vars_under(vtree, m), vars_under(vtree, r)))
         }
         Kind::Right => {
-            let VtreeNode::Internal {
-                left: l, right: m, ..
-            } = *vtree.node(left)
-            else {
-                return None;
+            let (l, m) = match *vtree.node(left) {
+                VtreeNode::Internal { left, right, .. } => (left, right),
+                _ => return None,
             };
-            Some((
-                vars_under(vtree, l),
-                vars_under(vtree, m),
-                vars_under(vtree, right),
-            ))
+            Some((vars_under(vtree, l), vars_under(vtree, m), vars_under(vtree, right)))
         }
     }
 }
@@ -94,14 +90,15 @@ fn invalidation_set_matches_partition_diffs() {
     let mut vtree = Vtree::balanced(16);
 
     let p = vtree.root();
-    let (x_idx, v_idx) = vtree.children(p);
-    let (a_idx, w_idx) = vtree.children(v_idx);
-    let (b_idx, c_idx) = vtree.children(w_idx);
+    let (x_idx, v_idx) = child_pair(&vtree, p);
+    let (a_idx, w_idx) = child_pair(&vtree, v_idx);
+    let (b_idx, c_idx) = child_pair(&vtree, w_idx);
 
     // v_idx = p.right, so the through-v_idx parent direction is Left.
     let parent_kind_through_v = Kind::Left;
 
-    let named = [
+    // Sanity: all named subtrees are internal.
+    for (name, idx) in [
         ("p", p),
         ("X", x_idx),
         ("v_idx", v_idx),
@@ -109,29 +106,43 @@ fn invalidation_set_matches_partition_diffs() {
         ("w_idx", w_idx),
         ("B", b_idx),
         ("C", c_idx),
-    ];
-    for (name, idx) in named {
+    ] {
         assert!(
             matches!(*vtree.node(idx), VtreeNode::Internal { .. }),
-            "{name} ({idx:?}) must be internal",
+            "{} ({:?}) must be internal",
+            name,
+            idx
         );
     }
 
     let snapshot = |vt: &Vtree| -> Vec<((VtreeIdx, Kind), Option<Partition>)> {
-        (0..vt.num_nodes())
-            .map(|i| VtreeIdx(i as u32))
-            .filter(|&u| matches!(vt.node(u), VtreeNode::Internal { .. }))
-            .flat_map(|u| [Kind::Left, Kind::Right].map(|k| ((u, k), partition(vt, u, k))))
-            .collect()
+        let mut out = Vec::new();
+        for i in 0..vt.num_nodes() {
+            if !matches!(vt.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) {
+                continue;
+            }
+            let u = VtreeIdx(i as u32);
+            for k in [Kind::Left, Kind::Right] {
+                out.push(((u, k), partition(vt, u, k)));
+            }
+        }
+        out
     };
 
     let snapshot_pre = snapshot(&vtree);
     rotate_left(&mut vtree, v_idx).expect("left rotation at v_idx must be applicable");
     let snapshot_post = snapshot(&vtree);
+
     assert_eq!(snapshot_pre.len(), snapshot_post.len());
 
     let in_invalidation_set = |u: VtreeIdx, kind: Kind| -> bool {
-        u == v_idx || u == w_idx || (u == p && kind == parent_kind_through_v)
+        if u == v_idx || u == w_idx {
+            return true;
+        }
+        if u == p && kind == parent_kind_through_v {
+            return true;
+        }
+        false
     };
 
     println!();
@@ -147,23 +158,38 @@ fn invalidation_set_matches_partition_diffs() {
         let (u, kind) = *key;
         let expected_diff = in_invalidation_set(u, kind);
         let actual_diff = pre_part != post_part;
-        let label = named
-            .iter()
-            .find_map(|&(name, idx)| (idx == u).then_some(name))
-            .unwrap_or(".");
+        let label = if u == p {
+            "p"
+        } else if u == v_idx {
+            "v_idx"
+        } else if u == w_idx {
+            "w_idx"
+        } else if u == x_idx {
+            "X"
+        } else if u == a_idx {
+            "A"
+        } else if u == b_idx {
+            "B"
+        } else if u == c_idx {
+            "C"
+        } else {
+            "."
+        };
         let applic = match (pre_part, post_part) {
             (Some(_), Some(_)) => "applic2",
             (None, None) => "N/A both",
             (Some(_), None) => "lost",
             (None, Some(_)) => "gained",
         };
-        let verdict = match (expected_diff == actual_diff, expected_diff) {
-            (true, true) => "INVALIDATE OK",
-            (true, false) => "stable OK",
-            (false, _) => {
-                violations += 1;
-                "**MISMATCH**"
+        let verdict = if expected_diff == actual_diff {
+            if expected_diff {
+                "INVALIDATE OK"
+            } else {
+                "stable OK"
             }
+        } else {
+            violations += 1;
+            "**MISMATCH**"
         };
         println!(
             "{:>6}({}) {:>6?} {:<6} {:<10} {:<14}  {:?}  ->  {:?}",

@@ -13,6 +13,9 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
 use num_bigint::BigUint;
 
+/// Build a diagram by folding clauses with `apply_and` — every operand shares
+/// the same `vtree` `Arc` (`clause_to_tdd` / `constant_one` clone it), so the
+/// final conjoin's pointer-identical-vtree precondition holds.
 fn fold_clauses(vtree: &Arc<Vtree>, clauses: &[&[i32]], minimize_each: bool) -> Tdd {
     let eng = &crate::Engine::new();
     let mut acc = constant_one(eng, vtree);

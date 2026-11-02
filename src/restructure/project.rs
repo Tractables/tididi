@@ -18,9 +18,7 @@ use super::EmbedError;
 use super::embed::Plan;
 
 use crate::Engine;
-use crate::diagram::{
-    Assembly, ChildSide, LevelView, NodeIdx, ONE_LEAF_IDX, Tdd, TddNodeId, for_each_side_ref_mut,
-};
+use crate::diagram::{for_each_side_ref_mut, Assembly, ChildSide, LevelView, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX};
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeError};
 
@@ -84,9 +82,7 @@ impl Tdd {
         local_of: impl Fn(VarId) -> Option<VarId>,
         num_local: u32,
     ) -> Result<Tdd, EmbedError> {
-        self.vtree
-            .context()
-            .run(|eng| eng.project_to_vars(self, local_of, num_local))
+        self.vtree.context().run(|eng| eng.project_to_vars(self, local_of, num_local))
     }
 }
 
@@ -116,10 +112,7 @@ impl Engine {
             match local_of(var) {
                 Some(local) => {
                     if local.0 == 0 || local.0 > num_local {
-                        return Err(EmbedError::VariableOutOfRange {
-                            variable: local,
-                            num_vars: num_local,
-                        });
+                        return Err(EmbedError::VariableOutOfRange { variable: local, num_vars: num_local });
                     }
                     if original[local.idx()].replace(var).is_some() {
                         return Err(VtreeError::OverlappingVariable(local).into());
@@ -130,10 +123,7 @@ impl Engine {
             }
         }
         if kept == 0 {
-            return Err(VtreeError::Invalid(
-                "a projection keeps at least one variable".to_string(),
-            )
-            .into());
+            return Err(VtreeError::Invalid("a projection keeps at least one variable".to_string()).into());
         }
         crate::vtree::check_var_space(num_local, 2 * kept - 1)?;
         let into = Arc::new(
@@ -141,13 +131,7 @@ impl Engine {
                 .project_to_vars(&local_of, num_local)
                 .expect("a checked renaming that keeps a variable restricts the vtree"),
         );
-        let plan = Plan::build(
-            self,
-            &into,
-            vtree,
-            |local| original[local.idx()].expect("a leaf of the restriction"),
-            false,
-        )?;
+        let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
         let result = self.project_along(tdd, &into, &plan, &dropped);
         plan.recycle(self);
         result
@@ -155,13 +139,7 @@ impl Engine {
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in
     /// the diagram's vtree as `plan`, `dropped` the variables it leaves out.
-    fn project_along(
-        &self,
-        tdd: &Tdd,
-        into: &Arc<Vtree>,
-        plan: &Plan,
-        dropped: &[VarId],
-    ) -> Result<Tdd, EmbedError> {
+    fn project_along(&self, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, dropped: &[VarId]) -> Result<Tdd, EmbedError> {
         if tdd.is_zero() {
             return Ok(crate::build::constant_zero(self, into));
         }
@@ -191,69 +169,17 @@ impl Engine {
 
 /// The reference to the true node of a level with no kept variable.
 fn true_ref(vtree: &Vtree, t: crate::vtree::VtreeIdx) -> u32 {
-    if vtree.node(t).is_leaf() {
-        ONE_LEAF_IDX.0
-    } else {
-        0
-    }
+    if vtree.node(t).is_leaf() { ONE_LEAF_IDX.0 } else { 0 }
 }
 
 /// `f`, canonical, restricted to `into` along `plan` (`into`'s match in
 /// `f`'s vtree); `None` when `f` depends on a dropped variable, which shows
 /// as a level of dropped variables other than the true node, or a level with
 /// kept variables on one side whose nodes are not each one pair with it.
-fn splice(
-    eng: &Engine,
-    f: &Tdd,
-    into: &Arc<Vtree>,
-    plan: &Plan,
-) -> Result<Option<Tdd>, OperationError> {
+fn splice(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Option<Tdd>, OperationError> {
+    let lim = eng.limits();
     let vtree = f.vtree();
-    let mut gate = eng.limits().gate();
-    let Some(chain) = compute_spliced_chains(eng.limits(), f, plan, &mut gate)? else {
-        return Ok(None);
-    };
-    let mut assembly = Assembly::new(eng, into)?;
-    for (s, _, _) in into.internal_bottomup() {
-        gate.poll(1)?;
-        let d = plan.embedding.levels[s.idx()];
-        let view = LevelView::unweighted(f.level(d)).expect("a structural diagram");
-        assembly.replace_level(eng, s, view)?;
-        let (dl, dr) = vtree.children(d);
-        let (levels, _) = assembly.parts_mut();
-        for (child, side) in [(dl, ChildSide::Left), (dr, ChildSide::Right)] {
-            if let Some(map) = &chain[child.idx()] {
-                for_each_side_ref_mut(&mut levels[s.idx()], side, |r| *r = map[*r as usize]);
-            }
-        }
-    }
-    gate.flush()?;
-    let output = f.output();
-    debug_assert_eq!(
-        output.vtree,
-        vtree.root(),
-        "a diagram's output sits at its root level"
-    );
-    let local = match &chain[vtree.root().idx()] {
-        Some(map) => NodeIdx(map[output.local.idx()]),
-        None => output.local,
-    };
-    Ok(Some(assembly.finish_asserted(
-        TddNodeId {
-            vtree: into.root(),
-            local,
-        },
-        None,
-    )?))
-}
-
-fn compute_spliced_chains(
-    lim: &crate::limits::Limits,
-    f: &Tdd,
-    plan: &Plan,
-    gate: &mut crate::limits::PollGate<'_>,
-) -> Result<Option<Vec<Option<Vec<u32>>>>, OperationError> {
-    let vtree = f.vtree();
+    let mut gate = lim.gate();
     // Per node of `f`'s vtree with no kept variable: whether its level is
     // the true node alone.
     let mut free = Vec::new();
@@ -266,22 +192,18 @@ fn compute_spliced_chains(
         gate.poll(1)?;
         let leaf = vtree.node(t).is_leaf();
         if plan.free[t.idx()] {
-            free[t.idx()] = leaf
-                || {
-                    let (left, right) = vtree.children(t);
-                    let level = f.level(t);
-                    let mut nodes = level.internal_inputs_iter();
-                    let true_pair = |(_, mut pairs): (usize, crate::diagram::PairsIter<'_>)| {
-                        matches!(
-                            (pairs.next(), pairs.next()),
-                            (Some(p), None) if p.left.raw() == true_ref(vtree, left) && p.right.raw() == true_ref(vtree, right)
-                        )
-                    };
-                    free[left.idx()]
-                        && free[right.idx()]
-                        && nodes.next().is_some_and(true_pair)
-                        && nodes.next().is_none()
+            free[t.idx()] = leaf || {
+                let (left, right) = vtree.children(t);
+                let level = f.level(t);
+                let mut nodes = level.internal_inputs_iter();
+                let true_pair = |(_, mut pairs): (usize, crate::diagram::PairsIter<'_>)| {
+                    matches!(
+                        (pairs.next(), pairs.next()),
+                        (Some(p), None) if p.left.raw() == true_ref(vtree, left) && p.right.raw() == true_ref(vtree, right)
+                    )
                 };
+                free[left.idx()] && free[right.idx()] && nodes.next().is_some_and(true_pair) && nodes.next().is_none()
+            };
             continue;
         }
         if leaf || plan.covered_by[t.idx()].is_some() {
@@ -300,9 +222,7 @@ fn compute_spliced_chains(
         lim.try_resize(&mut map, level.nodes().len(), u32::MAX)?;
         for (i, mut pairs) in level.internal_inputs_iter() {
             gate.poll(1)?;
-            let (Some(p), None) = (pairs.next(), pairs.next()) else {
-                return Ok(None);
-            };
+            let (Some(p), None) = (pairs.next(), pairs.next()) else { return Ok(None) };
             let (kept, other) = match carried_left {
                 true => (p.left.raw(), p.right.raw()),
                 false => (p.right.raw(), p.left.raw()),
@@ -317,7 +237,29 @@ fn compute_spliced_chains(
         }
         chain[t.idx()] = Some(map);
     }
-    Ok(Some(chain))
+
+    let mut assembly = Assembly::new(eng, into)?;
+    for (s, _, _) in into.internal_bottomup() {
+        gate.poll(1)?;
+        let d = plan.embedding.levels[s.idx()];
+        let view = LevelView::unweighted(f.level(d)).expect("a structural diagram");
+        assembly.replace_level(eng, s, view)?;
+        let (dl, dr) = vtree.children(d);
+        let (levels, _) = assembly.parts_mut();
+        for (child, side) in [(dl, ChildSide::Left), (dr, ChildSide::Right)] {
+            if let Some(map) = &chain[child.idx()] {
+                for_each_side_ref_mut(&mut levels[s.idx()], side, |r| *r = map[*r as usize]);
+            }
+        }
+    }
+    gate.flush()?;
+    let output = f.output();
+    debug_assert_eq!(output.vtree, vtree.root(), "a diagram's output sits at its root level");
+    let local = match &chain[vtree.root().idx()] {
+        Some(map) => NodeIdx(map[output.local.idx()]),
+        None => output.local,
+    };
+    Ok(Some(assembly.finish_asserted(TddNodeId { vtree: into.root(), local }, None)?))
 }
 
 #[cfg(test)]

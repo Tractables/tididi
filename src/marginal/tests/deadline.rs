@@ -16,15 +16,44 @@
 use super::*;
 
 use crate::Engine;
-use crate::test_helpers::check::marginal::{check_inline_discipline, check_slot_count_uniqueness};
-use crate::test_helpers::{compile_clauses, deadline_probe};
+use crate::diagram::Literal;
+use crate::vtree::{VarId};
+use crate::test_helpers::clause_to_tdd;
+
+
+use crate::test_helpers::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};
+use crate::apply::apply_and;
+use crate::test_helpers::deadline_probe;
 use std::sync::Arc;
 
 /// A four-variable diagram and the two internal levels under its root, in the
 /// bottom-up order a batch requires.
+///
+/// Both targets carry real nodes, so a batch over them is two units of metered
+/// work — which is what lets a stride cut between them rather than only before
+/// the first.
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-1, -4]]);
+    let lit = |v: u32, sign: bool| Literal::new(VarId(v + 1), sign);
+    let clauses = [
+        vec![lit(0, true), lit(1, true)],
+        vec![lit(1, false), lit(2, true)],
+        vec![lit(2, true), lit(3, true)],
+        vec![lit(0, false), lit(3, false)],
+    ];
+    let mut acc: Option<Tdd> = None;
+    for c in &clauses {
+        let clause = clause_to_tdd(&vtree, c);
+        acc = Some(match acc {
+            Some(prev) => {
+                let mut r = apply_and(prev, clause);
+                r.minimize().unwrap();
+                r
+            }
+            None => clause,
+        });
+    }
+    let mut tdd = acc.expect("four clauses build a diagram");
     tdd.minimize().unwrap();
 
     let (left, right) = vtree.children(vtree.root());
@@ -48,9 +77,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
 fn an_expired_wall_cuts_the_forget_batch() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
-    let r = deadline_probe(Some(1), |eng| {
-        marginalize_batch(eng, &mut tdd, &targets, &vtree)
-    });
+    let r = deadline_probe(Some(1), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
         matches!(r, Err(OperationError::Stopped)),
@@ -84,9 +111,7 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     };
     let stride = first + 1;
 
-    let r = deadline_probe(Some(stride), |eng| {
-        marginalize_batch(eng, &mut tdd, &targets, &vtree)
-    });
+    let r = deadline_probe(Some(stride), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     assert!(
         matches!(r, Err(OperationError::Stopped)),
@@ -106,8 +131,7 @@ fn a_cut_batch_leaves_a_readable_diagram() {
         "forgetting is count-preserving, so a partly-forgotten diagram must still count the formula",
     );
     check_slot_count_uniqueness(&tdd).expect("invariant 10 must hold on a cut batch's stores");
-    check_inline_discipline(&tdd)
-        .expect("invariant 7 must hold: the cut path runs the end-sweep tagger");
+    check_inline_discipline(&tdd).expect("invariant 7 must hold: the cut path runs the end-sweep tagger");
 }
 
 /// Armed but with no wall installed, the batch runs to completion: the poll reads
@@ -131,11 +155,7 @@ fn no_wall_installed_completes() {
         targets.iter().all(|t| tdd.levels[t.idx()].is_marginal()),
         "the completed batch must forget every target",
     );
-    assert_eq!(
-        before,
-        tdd.model_count().unwrap(),
-        "forgetting is count-preserving"
-    );
+    assert_eq!(before, tdd.model_count().unwrap(), "forgetting is count-preserving");
 }
 
 /// The poll is amortized, not per-target: with a stride wider than the whole
@@ -148,9 +168,7 @@ fn no_wall_installed_completes() {
 fn a_stride_wider_than_the_batch_never_polls() {
     let (mut tdd, vtree, targets) = two_target_tdd();
 
-    let r = deadline_probe(Some(u64::MAX), |eng| {
-        marginalize_batch(eng, &mut tdd, &targets, &vtree)
-    });
+    let r = deadline_probe(Some(u64::MAX), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
     r.expect("a stride the batch never reaches must not read the clock at all");
     assert!(

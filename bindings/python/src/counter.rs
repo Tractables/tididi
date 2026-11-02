@@ -10,73 +10,6 @@ use crate::domain::{self, PyLimits};
 use crate::operations;
 
 
-type NativeEvaluator = tididi::query::OwnedEvaluator<tididi::diagram::RationalWeights>;
-
-trait OwnedQuery: Sized {
-    const FINISHED_MSG: &'static str;
-    fn observe_lits(&mut self, literals: Vec<tididi::Literal>) -> Result<(), tididi::OperationError>;
-    fn clear_var(&mut self, var: tididi::vtree::VarId) -> Result<(), tididi::OperationError>;
-    fn clear_all_pins(&mut self);
-    fn into_circuit(self) -> Tdd;
-}
-
-impl OwnedQuery for OwnedModelCounter {
-    const FINISHED_MSG: &'static str = "Counter has been finished";
-    fn observe_lits(&mut self, literals: Vec<tididi::Literal>) -> Result<(), tididi::OperationError> {
-        self.observe(literals)
-    }
-    fn clear_var(&mut self, var: tididi::vtree::VarId) -> Result<(), tididi::OperationError> {
-        self.set_pin(var, None)
-    }
-    fn clear_all_pins(&mut self) {
-        self.clear_pins();
-    }
-    fn into_circuit(self) -> Tdd {
-        self.into_inner()
-    }
-}
-
-impl OwnedQuery for NativeEvaluator {
-    const FINISHED_MSG: &'static str = "Evaluator has been finished";
-    fn observe_lits(&mut self, literals: Vec<tididi::Literal>) -> Result<(), tididi::OperationError> {
-        self.observe(literals)
-    }
-    fn clear_var(&mut self, var: tididi::vtree::VarId) -> Result<(), tididi::OperationError> {
-        self.set_pin(var, None)
-    }
-    fn clear_all_pins(&mut self) {
-        self.clear_pins();
-    }
-    fn into_circuit(self) -> Tdd {
-        self.into_inner()
-    }
-}
-
-fn open_cell<Q: OwnedQuery>(cell: &mut Option<Q>) -> PyResult<&mut Q> {
-    cell.as_mut().ok_or_else(|| PyRuntimeError::new_err(Q::FINISHED_MSG))
-}
-
-fn observe_query<Q: OwnedQuery>(cell: &mut Option<Q>, literals: &Bound<'_, PyAny>) -> PyResult<()> {
-    let literals = domain::read_literals(literals)?;
-    open_cell(cell)?.observe_lits(literals).map_err(crate::operation_error)
-}
-
-fn clear_query<Q: OwnedQuery>(cell: &mut Option<Q>, variable: u32) -> PyResult<()> {
-    let var = domain::variable_id(variable)?;
-    open_cell(cell)?.clear_var(var).map_err(crate::operation_error)
-}
-
-fn clear_all_query<Q: OwnedQuery>(cell: &mut Option<Q>) -> PyResult<()> {
-    open_cell(cell)?.clear_all_pins();
-    Ok(())
-}
-
-fn finish_query<Q: OwnedQuery>(cell: &mut Option<Q>) -> PyResult<PyCircuit> {
-    cell.take()
-        .map(|q| PyCircuit::new(q.into_circuit()))
-        .ok_or_else(|| PyRuntimeError::new_err(Q::FINISHED_MSG))
-}
-
 /// Reuse cached counts while observations change. Created by Circuit.counter(), which consumes it.
 /// observe() replaces pins for the named variables; other pins remain. finish() returns the original circuit.
 #[pyclass(name = "Counter", module = "tididi")]
@@ -90,7 +23,7 @@ impl PyCounter {
         Ok(Self { cell: Some(cell) })
     }
     fn cell(&mut self) -> PyResult<&mut OwnedModelCounter> {
-        open_cell(&mut self.cell)
+        self.cell.as_mut().ok_or_else(|| PyRuntimeError::new_err("Counter has been finished"))
     }
 }
 
@@ -99,17 +32,22 @@ impl PyCounter {
     /// Set observations from signed integers or Literal values without changing the circuit.
     /// A later observation for a variable replaces its previous value.
     fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
-        observe_query(&mut self.cell, literals)
+        let literals = domain::read_literals(literals)?;
+        let cell = self.cell()?;
+        cell.observe(literals).map_err(crate::operation_error)
     }
 
     /// Remove one observation, leaving that variable free again.
     fn clear(&mut self, variable: u32) -> PyResult<()> {
-        clear_query(&mut self.cell, variable)
+        let var = domain::variable_id(variable)?;
+        let cell = self.cell()?;
+        cell.set_pin(var, None).map_err(crate::operation_error)
     }
 
     /// Remove all observations.
     fn clear_observations(&mut self) -> PyResult<()> {
-        clear_all_query(&mut self.cell)
+        self.cell()?.clear_pins();
+        Ok(())
     }
 
     /// Count assignments consistent with the observations. Borrows the owned circuit.
@@ -125,7 +63,8 @@ impl PyCounter {
 
     /// Discard cached counts and observations, returning the original circuit. Closes this counter.
     fn finish(&mut self) -> PyResult<PyCircuit> {
-        finish_query(&mut self.cell)
+        self.cell.take().map(|cell| PyCircuit::new(cell.into_inner()))
+            .ok_or_else(|| PyRuntimeError::new_err("Counter has been finished"))
     }
 
     fn __repr__(&self) -> &'static str {
@@ -133,6 +72,8 @@ impl PyCounter {
     }
 }
 
+
+type NativeEvaluator = tididi::query::OwnedEvaluator<tididi::diagram::RationalWeights>;
 
 /// Cache exact weighted sums under changing evidence. Circuit.evaluator(weights) consumes the circuit.
 /// value() returns the joint weight of the circuit and observations. finish() returns the circuit.
@@ -145,7 +86,7 @@ impl PyEvaluator {
         Ok(Self { cell: Some(cell) })
     }
     fn cell(&mut self) -> PyResult<&mut NativeEvaluator> {
-        open_cell(&mut self.cell)
+        self.cell.as_mut().ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
     }
 }
 
@@ -153,15 +94,18 @@ impl PyEvaluator {
 impl PyEvaluator {
     /// Observe signed integers or Literal values. Invalid input preserves all observations.
     fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
-        observe_query(&mut self.cell, literals)
+        let literals = domain::read_literals(literals)?;
+        self.cell()?.observe(literals).map_err(crate::operation_error)
     }
     /// Clear one observation.
     fn clear(&mut self, variable: u32) -> PyResult<()> {
-        clear_query(&mut self.cell, variable)
+        let variable = domain::variable_id(variable)?;
+        self.cell()?.set_pin(variable, None).map_err(crate::operation_error)
     }
     /// Clear all observations, retaining cached storage.
     fn clear_observations(&mut self) -> PyResult<()> {
-        clear_all_query(&mut self.cell)
+        self.cell()?.clear_pins();
+        Ok(())
     }
     /// Replace every variable's (negative, positive) weights, retaining observations.
     /// Weights are int or Fraction values. Invalid input leaves previous weights in place.
@@ -182,7 +126,8 @@ impl PyEvaluator {
     }
     /// Close this evaluator and return the original circuit without its observations.
     fn finish(&mut self) -> PyResult<PyCircuit> {
-        finish_query(&mut self.cell)
+        self.cell.take().map(|cell| PyCircuit::new(cell.into_inner()))
+            .ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
     }
     fn __repr__(&self) -> &'static str {
         if self.cell.is_some() { "Evaluator(open)" } else { "Evaluator(finished)" }

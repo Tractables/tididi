@@ -128,12 +128,40 @@ impl Engine {
                 VtreeNode::Leaf { var, .. } => {
                     let replacement =
                         by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
-                    self.build_leaf_substitute_column(
-                        &vtree,
-                        replacement,
-                        &uses[t.idx()],
-                        &mut columns[t.idx()],
-                    )?;
+                    lim.reserve_exact(&mut columns[t.idx()], 3)?;
+                    // LeafLabel's stable slot order is One, Pos, Neg.
+                    debug_assert_eq!(LeafLabel::Pos as usize, 1);
+                    for (slot, &count) in uses[t.idx()].iter().enumerate() {
+                        let value = if count == 0 {
+                            SharedCircuit::default()
+                        } else {
+                            let value = if slot == 0 {
+                                self.cube(&vtree, std::iter::empty::<Literal>())?
+                            } else {
+                                match replacement {
+                                    Replacement::Diagram(diagram) => {
+                                        let mut value = diagram.try_clone_on(self)?;
+                                        value.weights = None;
+                                        if slot == 2 {
+                                            self.negate(value)?
+                                        } else {
+                                            value
+                                        }
+                                    }
+                                    Replacement::Literal(literal) => self.literal(
+                                        &vtree,
+                                        if slot == 2 {
+                                            literal.negated()
+                                        } else {
+                                            literal
+                                        },
+                                    )?,
+                                }
+                            };
+                            SharedCircuit::new(value, count)
+                        };
+                        columns[t.idx()].push(value);
+                    }
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = f.level(t);
@@ -165,52 +193,6 @@ impl Engine {
         // A leaf output can be a cloned replacement, which need not be minimized.
         self.minimize(&mut result)?;
         Ok(result)
-    }
-
-    /// Populate `column` with the three leaf-slot [`SharedCircuit`] entries for
-    /// `replacement` according to `uses`.
-    fn build_leaf_substitute_column(
-        &self,
-        vtree: &std::sync::Arc<crate::Vtree>,
-        replacement: Replacement<'_>,
-        uses: &[usize],
-        column: &mut Vec<SharedCircuit>,
-    ) -> Result<(), OperationError> {
-        self.limits().reserve_exact(column, 3)?;
-        // LeafLabel's stable slot order is One, Pos, Neg.
-        debug_assert_eq!(LeafLabel::Pos as usize, 1);
-        for (slot, &count) in uses.iter().enumerate() {
-            let value = if count == 0 {
-                SharedCircuit::default()
-            } else {
-                let value = if slot == 0 {
-                    self.cube(vtree, std::iter::empty::<Literal>())?
-                } else {
-                    match replacement {
-                        Replacement::Diagram(diagram) => {
-                            let mut value = diagram.try_clone_on(self)?;
-                            value.weights = None;
-                            if slot == 2 {
-                                self.negate(value)?
-                            } else {
-                                value
-                            }
-                        }
-                        Replacement::Literal(literal) => self.literal(
-                            vtree,
-                            if slot == 2 {
-                                literal.negated()
-                            } else {
-                                literal
-                            },
-                        )?,
-                    }
-                };
-                SharedCircuit::new(value, count)
-            };
-            column.push(value);
-        }
-        Ok(())
     }
 }
 

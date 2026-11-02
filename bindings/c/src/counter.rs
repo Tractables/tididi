@@ -6,32 +6,9 @@ use crate::*;
 
 /// A reusable evidence counter that owns its circuit until finish. Free its handle even after finish.
 pub struct TididiCounter(RefCell<Option<OwnedModelCounter>>);
-
-unsafe fn borrow_open<'a, H: 'a, T>(
-    value: *mut H,
-    cell: impl FnOnce(&H) -> &RefCell<Option<T>>,
-    finished_msg: &'static str,
-) -> Result<RefMut<'a, T>> {
-    let value = cell(unsafe { required(value)? }).try_borrow_mut().map_err(|_| busy())?;
-    RefMut::filter_map(value, Option::as_mut).map_err(|_| invalid(finished_msg))
-}
-
-unsafe fn finish_open<H, T>(
-    value: *mut H,
-    out: *mut *mut TididiCircuit,
-    cell: impl FnOnce(&H) -> &RefCell<Option<T>>,
-    into_inner: impl FnOnce(T) -> tididi::Tdd,
-    finished_msg: &'static str,
-) -> Result<()> {
-    let out = unsafe { vacant(out)? };
-    let mut cell = cell(unsafe { required(value)? }).try_borrow_mut().map_err(|_| busy())?;
-    let inner = cell.take().ok_or_else(|| invalid(finished_msg))?;
-    *out = circuit(into_inner(inner));
-    Ok(())
-}
-
 unsafe fn counter<'a>(value: *mut TididiCounter) -> Result<RefMut<'a, OwnedModelCounter>> {
-    unsafe { borrow_open(value, |h| &h.0, "counter has been finished") }
+    let value = unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?;
+    RefMut::filter_map(value, Option::as_mut).map_err(|_| invalid("counter has been finished"))
 }
 /// Move a circuit into an evidence counter. Copy first if the original must remain usable.
 #[unsafe(no_mangle)]
@@ -73,7 +50,8 @@ pub unsafe extern "C" fn tididi_counter_model_count_decimal(value: *mut TididiCo
 /// Discard observations/cache and return the original circuit. Closes the counter; its handle still needs freeing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_counter_finish(value: *mut TididiCounter, out: *mut *mut TididiCircuit) -> *mut TididiError {
-    boundary(|| unsafe { finish_open(value, out, |h| &h.0, OwnedModelCounter::into_inner, "counter has been finished") })
+    boundary(|| { let out = unsafe { vacant(out)? }; let mut cell = unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?;
+        *out = circuit(cell.take().ok_or_else(|| invalid("counter has been finished"))?.into_inner()); Ok(()) })
 }
 /// Free a counter handle, whether open or finished. NULL is accepted; active handles return BorrowConflict.
 #[unsafe(no_mangle)]
@@ -86,7 +64,8 @@ type NativeEvaluator = tididi::query::OwnedEvaluator<tididi::diagram::RationalWe
 /// A reusable exact weighted evaluator owning its circuit until finish. Free even after finish.
 pub struct TididiEvaluator(RefCell<Option<NativeEvaluator>>);
 unsafe fn evaluator<'a>(value: *mut TididiEvaluator) -> Result<RefMut<'a, NativeEvaluator>> {
-    unsafe { borrow_open(value, |h| &h.0, "evaluator has been finished") }
+    let value = unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?;
+    RefMut::filter_map(value, Option::as_mut).map_err(|_| invalid("evaluator has been finished"))
 }
 /// Move a circuit into an evaluator. Supply weights for every variable; they are copied.
 /// Invalid weights leave the circuit usable. Copy the circuit first to retain it after success.
@@ -135,7 +114,8 @@ pub unsafe extern "C" fn tididi_evaluator_value(value: *mut TididiEvaluator, out
 /// Close an evaluator and return its original circuit, discarding observations. The handle still needs freeing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_evaluator_finish(value: *mut TididiEvaluator, out: *mut *mut TididiCircuit) -> *mut TididiError {
-    boundary(|| unsafe { finish_open(value, out, |h| &h.0, NativeEvaluator::into_inner, "evaluator has been finished") })
+    boundary(|| { let out = unsafe { vacant(out)? }; let mut cell = unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?;
+        *out = circuit(cell.take().ok_or_else(|| invalid("evaluator has been finished"))?.into_inner()); Ok(()) })
 }
 /// Free an evaluator handle. NULL is accepted; active handles return BorrowConflict.
 #[unsafe(no_mangle)]

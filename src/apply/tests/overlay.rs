@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::Engine;
-use crate::test_helpers::{Lcg, assert_canonical, assert_same_shape, eval};
+use crate::test_helpers::{assert_canonical, assert_same_shape, eval, Lcg};
 use crate::vtree::{VarId, Vtree};
 
 /// A vtree shape to spell as vtree text: a variable, or two subtrees.
@@ -77,14 +77,8 @@ fn shapes(n: u32) -> Vec<(&'static str, Arc<Vtree>)> {
     ];
     if n >= 3 {
         let (a, b) = vars.split_at(((n as usize) / 3).max(1));
-        out.push((
-            "uneven blocks",
-            vtree_of(&join(balanced(a), right_linear(b))),
-        ));
-        out.push((
-            "uneven blocks, left-linear",
-            vtree_of(&join(left_linear(b), balanced(a))),
-        ));
+        out.push(("uneven blocks", vtree_of(&join(balanced(a), right_linear(b)))));
+        out.push(("uneven blocks, left-linear", vtree_of(&join(left_linear(b), balanced(a)))));
     }
     out
 }
@@ -93,9 +87,7 @@ fn shapes(n: u32) -> Vec<(&'static str, Arc<Vtree>)> {
 /// subset of the variables so the others are free.
 fn random_function(rng: &mut Lcg, vtree: &Arc<Vtree>, n: u32, rows: usize) -> Tdd {
     let vars: Vec<VarId> = (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect();
-    let packed: Vec<u64> = (0..rows)
-        .map(|_| rng.next_u64() & ((1u64 << vars.len()) - 1))
-        .collect();
+    let packed: Vec<u64> = (0..rows).map(|_| rng.next_u64() & ((1u64 << vars.len()) - 1)).collect();
     let f = Tdd::from_models(vtree, &vars, &packed).unwrap();
     assert_canonical(&f);
     f
@@ -133,21 +125,13 @@ fn check_pair(eng: &Engine, f: &Tdd, g: &Tdd, n: u32, what: &str) {
     assert_canonical(&or);
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a || *b).collect();
     assert_eq!(truth(&or, n), want, "{what}: or");
-    assert_same_shape(
-        &or,
-        &de_morgan_or(eng, f.clone(), g.clone()),
-        &format!("{what}: or"),
-    );
+    assert_same_shape(&or, &de_morgan_or(eng, f.clone(), g.clone()), &format!("{what}: or"));
 
     let diff = overlay_on(eng, Overlay::AndNot, f.clone(), g.clone()).unwrap();
     assert_canonical(&diff);
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a && !*b).collect();
     assert_eq!(truth(&diff, n), want, "{what}: and_not");
-    assert_same_shape(
-        &diff,
-        &and_of_complement(eng, f.clone(), g.clone()),
-        &format!("{what}: and_not"),
-    );
+    assert_same_shape(&diff, &and_of_complement(eng, f.clone(), g.clone()), &format!("{what}: and_not"));
 }
 
 #[test]
@@ -184,20 +168,8 @@ fn the_overlay_matches_the_complement_forms_on_wide_levels() {
                 let both = eng.and(f.clone(), g.clone()).unwrap();
                 let mut inner = both;
                 inner.minimize().unwrap();
-                check_pair(
-                    eng,
-                    &inner,
-                    &f,
-                    n,
-                    &format!("{name}, {n} vars, round {round}, inner first"),
-                );
-                check_pair(
-                    eng,
-                    &f,
-                    &inner,
-                    n,
-                    &format!("{name}, {n} vars, round {round}, inner second"),
-                );
+                check_pair(eng, &inner, &f, n, &format!("{name}, {n} vars, round {round}, inner first"));
+                check_pair(eng, &f, &inner, n, &format!("{name}, {n} vars, round {round}, inner second"));
             }
         }
     }
@@ -221,13 +193,7 @@ fn unreduced_operands_give_the_same_result() {
                 // Neither conjunction is reduced.
                 let f = eng.and(parts[0].clone(), parts[1].clone()).unwrap();
                 let g = eng.and(parts[2].clone(), parts[3].clone()).unwrap();
-                check_pair(
-                    eng,
-                    &f,
-                    &g,
-                    n,
-                    &format!("{name}, {n} vars, round {round}, unreduced"),
-                );
+                check_pair(eng, &f, &g, n, &format!("{name}, {n} vars, round {round}, unreduced"));
             }
         }
     }
@@ -295,10 +261,7 @@ fn operands_on_different_vtrees_are_refused() {
     let b = Arc::new(Vtree::balanced(3));
     let f = crate::literal(&a, 1).unwrap();
     let g = crate::literal(&b, 1).unwrap();
-    assert_eq!(
-        crate::and_not(f, g).unwrap_err(),
-        OperationError::VtreeMismatch
-    );
+    assert_eq!(crate::and_not(f, g).unwrap_err(), OperationError::VtreeMismatch);
 }
 
 #[test]
@@ -315,14 +278,8 @@ fn every_overlay_refusal_leaves_the_engine_reusable() {
             let mut refusals = 0;
             for cut in 0..5000 {
                 let scope = if stopping {
-                    let stop = StopRules {
-                        unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)),
-                        after_pairs: None,
-                    };
-                    Some(
-                        eng.limits()
-                            .scope(LimitConfig::none().with_stop_rules(stop)),
-                    )
+                    let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+                    Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
                 } else {
                     eng.limits().refuse_nth_reserve(cut as u32);
                     None

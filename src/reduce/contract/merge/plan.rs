@@ -2,8 +2,8 @@
 
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{Tdd, TddLevel};
 use crate::limits::{Limits, OperationError};
+use crate::diagram::Tdd;
 
 use super::super::scratch::MergeBuffers;
 
@@ -43,12 +43,7 @@ impl MergePolicy {
     /// here. `t1_scalable` starts false; the caller sets it from
     /// [`scalable`](Self::scalable) at a plain level of a diagram with a
     /// marginal level.
-    pub(super) fn decide(
-        tdd: &Tdd,
-        t1: VtreeIdx,
-        parent: VtreeIdx,
-        diagram_marginal: bool,
-    ) -> Self {
+    pub(super) fn decide(tdd: &Tdd, t1: VtreeIdx, parent: VtreeIdx, diagram_marginal: bool) -> Self {
         // At a plain (no inlined side) level, twin members whose supports
         // overlap (share a pair) are not concat-merged: the union would hold
         // duplicate pairs, which carry a multiplicity only at marginal-flagged
@@ -63,12 +58,7 @@ impl MergePolicy {
         // sums. Under a plain parent the multiplicity has nowhere to live, so
         // they stay apart.
         let parent_marginal = tdd.levels[parent.idx()].any_value_ref_side();
-        Self {
-            plain_level,
-            parent_marginal,
-            t1_scalable: false,
-            disjoint_supports: !diagram_marginal,
-        }
+        Self { plain_level, parent_marginal, t1_scalable: false, disjoint_supports: !diagram_marginal }
     }
 
     /// Whether a child side of the plain level `t1` has marginalization
@@ -103,10 +93,7 @@ pub(super) fn plan_groups(
     bufs: &mut MergeBuffers,
 ) -> Result<(), OperationError> {
     let MergeBuffers {
-        sel,
-        group_plans,
-        words,
-        ..
+        filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, words, ..
     } = bufs;
     let plain_level = policy.plain_level;
     // Without a marginal level no pair can repeat, and every group takes
@@ -118,11 +105,7 @@ pub(super) fn plan_groups(
     let level = &tdd.levels[t1.idx()];
     let group_bounds = |g: usize| {
         let start = group_starts[g] as usize;
-        let end = if g + 1 < group_starts.len() {
-            group_starts[g + 1] as usize
-        } else {
-            flat_groups.len()
-        };
+        let end = if g + 1 < group_starts.len() { group_starts[g + 1] as usize } else { flat_groups.len() };
         (start, end)
     };
     lim.reserve_exact(sel, flat_groups.len())?;
@@ -134,190 +117,133 @@ pub(super) fn plan_groups(
         sel.extend_from_slice(flat_groups);
         group_plans.extend((0..group_starts.len()).map(|g| {
             let (start, end) = group_bounds(g);
-            GroupPlan {
-                action: GroupAction::Concat,
-                start: start as u32,
-                end: end as u32,
-            }
+            GroupPlan { action: GroupAction::Concat, start: start as u32, end: end as u32 }
         }));
         if !group_plans.is_sorted_by_key(|p| sel[p.start as usize]) {
             group_plans.sort_unstable_by_key(|p| sel[p.start as usize]);
         }
         return Ok(());
     }
-    reserve_overlap_filter(lim, level, group_starts, flat_groups, bufs)?;
+    if plain_level && !t1_scalable {
+        // The overlap filter below holds one group's members and pairs at a
+        // time: `filtered` and `duplicate_members` up to the widest group,
+        // `keep_pairs_sorted` and `member_pairs` up to the longest pair list,
+        // `seen_pairs` up to one group's pair mass.
+        let (mut max_members, mut max_pairs, mut max_mass) = (0usize, 0usize, 0usize);
+        for g in 0..group_starts.len() {
+            let (start, end) = group_bounds(g);
+            max_members = max_members.max(end - start);
+            let mut mass = 0usize;
+            for &idx in &flat_groups[start..end] {
+                let n = level.pair_count_at(idx as usize);
+                max_pairs = max_pairs.max(n);
+                mass += n;
+            }
+            max_mass = max_mass.max(mass);
+        }
+        lim.reserve_exact(filtered, max_members)?;
+        lim.reserve_exact(duplicate_members, max_members)?;
+        lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
+        lim.reserve_exact(member_pairs, max_pairs)?;
+        lim.reserve_set(seen_pairs, max_mass)?;
+        seen_pairs.clear();
+    }
     // The per-group buffers are cleared before each group below.
     for g in 0..group_starts.len() {
         let (start, end) = group_bounds(g);
-        plan_overlap_group(level, parent_marginal, &flat_groups[start..end], bufs);
+        let group = &flat_groups[start..end];
+        let keep = group[0];
+        if !plain_level || t1_scalable {
+            // Concat every member, overlapping or not: at a marginal-flagged
+            // level duplicate pairs are legal multiset entries, and on the
+            // scalable plain path fork-down resolves them right after
+            // compaction (`duplicate_pair`).
+            let sel_start = sel.len();
+            sel.extend_from_slice(group);
+            group_plans.push(GroupPlan {
+                action: GroupAction::Concat,
+                start: sel_start as u32,
+                end: sel.len() as u32,
+            });
+            continue;
+        }
+        filtered.clear();
+        duplicate_members.clear();
+        debug_assert!(seen_pairs.is_empty(), "the previous group emptied the overlap set");
+        keep_pairs_sorted.clear();
+        filtered.push(keep);
+        for p in level.pairs_iter_of_idx(keep as usize) {
+            seen_pairs.insert((p.left.0, p.right.0));
+            keep_pairs_sorted.push((p.left.0, p.right.0));
+        }
+        keep_pairs_sorted.sort_unstable();
+        for &idx in &group[1..] {
+            let mut overlap = false;
+            member_pairs.clear();
+            for p in level.pairs_iter_of_idx(idx as usize) {
+                let lr = (p.left.0, p.right.0);
+                overlap |= seen_pairs.contains(&lr);
+                member_pairs.push(lr);
+            }
+            if !overlap {
+                for &(l, r) in member_pairs.iter() {
+                    seen_pairs.insert((l, r));
+                }
+                filtered.push(idx);
+            } else if parent_marginal {
+                member_pairs.sort_unstable();
+                if member_pairs == keep_pairs_sorted {
+                    duplicate_members.push(idx);
+                }
+            }
+        }
+        // Empty the overlap set for the next group. It holds the pairs of the
+        // members kept in `filtered` and has the capacity of the largest
+        // group's pairs, and `clear` costs that capacity: after one large
+        // group, every small one would pay for it. A set much larger than this
+        // group's pairs has them removed one by one instead.
+        let mass: usize = filtered.iter().map(|&i| level.pair_count_at(i as usize)).sum();
+        if seen_pairs.capacity() > 4 * mass.max(16) {
+            for &idx in filtered.iter() {
+                for p in level.pairs_iter_of_idx(idx as usize) {
+                    seen_pairs.remove(&(p.left.0, p.right.0));
+                }
+            }
+        } else {
+            seen_pairs.clear();
+        }
+        // Dups are redirected only when no two members have disjoint
+        // supports; a mixed group concatenates first, and the duplicate member
+        // is then no longer content-equal to the grown survivor, so it
+        // stays a separate node.
+        let take_dups = !duplicate_members.is_empty() && filtered.len() < 2;
+        let sel_start = sel.len();
+        let action = if take_dups {
+            // Redirect the content-equal members onto the survivor without
+            // touching its pair list; the parent rewrite keeps the members'
+            // pairs and pair fusion sums the multiplicity. Appends nothing to
+            // the arena, so this group is charged nothing below.
+            sel.push(keep);
+            sel.extend_from_slice(duplicate_members);
+            GroupAction::DupRedirect
+        } else if filtered.len() >= 2 {
+            // Disjoint-support concat merge. Content-equal members (if any)
+            // are skipped this round: the survivor's function grows, so a
+            // duplicate redirect against the grown survivor would no longer carry
+            // the right value. They are re-examined on the next fixpoint
+            // iteration (and stay unmerged if no longer content-equal —
+            // sound, non-canonical residue).
+            sel.extend_from_slice(filtered); // filtered[0] == keep
+            GroupAction::Concat
+        } else {
+            // Nothing in this group can act this round.
+            continue;
+        };
+        group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
     }
     // The searches list groups by lowest member already; the sort is a check.
-    if !bufs
-        .group_plans
-        .is_sorted_by_key(|p| bufs.sel[p.start as usize])
-    {
-        bufs.group_plans
-            .sort_unstable_by_key(|p| bufs.sel[p.start as usize]);
+    if !group_plans.is_sorted_by_key(|p| sel[p.start as usize]) {
+        group_plans.sort_unstable_by_key(|p| sel[p.start as usize]);
     }
     Ok(())
-}
-
-/// Reserve the per-group overlap-filter scratch buffers up to the widest group
-/// and its pair mass.
-fn reserve_overlap_filter(
-    lim: &Limits,
-    level: &TddLevel,
-    group_starts: &[u32],
-    flat_groups: &[u32],
-    bufs: &mut MergeBuffers,
-) -> Result<(), OperationError> {
-    // The overlap filter holds one group's members and pairs at a
-    // time: `filtered` and `duplicate_members` up to the widest group,
-    // `keep_pairs_sorted` and `member_pairs` up to the longest pair list,
-    // `seen_pairs` up to one group's pair mass.
-    let (mut max_members, mut max_pairs, mut max_mass) = (0usize, 0usize, 0usize);
-    for g in 0..group_starts.len() {
-        let start = group_starts[g] as usize;
-        let end = if g + 1 < group_starts.len() {
-            group_starts[g + 1] as usize
-        } else {
-            flat_groups.len()
-        };
-        max_members = max_members.max(end - start);
-        let mut mass = 0usize;
-        for &idx in &flat_groups[start..end] {
-            let n = level.pair_count_at(idx as usize);
-            max_pairs = max_pairs.max(n);
-            mass += n;
-        }
-        max_mass = max_mass.max(mass);
-    }
-    lim.reserve_exact(&mut bufs.filtered, max_members)?;
-    lim.reserve_exact(&mut bufs.duplicate_members, max_members)?;
-    lim.reserve_exact(&mut bufs.keep_pairs_sorted, max_pairs)?;
-    lim.reserve_exact(&mut bufs.member_pairs, max_pairs)?;
-    lim.reserve_set(&mut bufs.seen_pairs, max_mass)?;
-    bufs.seen_pairs.clear();
-    Ok(())
-}
-
-/// Plan one twin `group` under the overlap filter, pushing a [`GroupPlan`]
-/// when the group has disjoint-support members to concatenate or
-/// content-equal duplicates to redirect.
-fn plan_overlap_group(
-    level: &TddLevel,
-    parent_marginal: bool,
-    group: &[u32],
-    bufs: &mut MergeBuffers,
-) {
-    partition_overlap_members(level, parent_marginal, group, bufs);
-    let MergeBuffers {
-        filtered,
-        duplicate_members,
-        seen_pairs,
-        sel,
-        group_plans,
-        ..
-    } = bufs;
-    let keep = group[0];
-    // Empty the overlap set for the next group. It holds the pairs of the
-    // members kept in `filtered` and has the capacity of the largest
-    // group's pairs, and `clear` costs that capacity: after one large
-    // group, every small one would pay for it. A set much larger than this
-    // group's pairs has them removed one by one instead.
-    let mass: usize = filtered
-        .iter()
-        .map(|&i| level.pair_count_at(i as usize))
-        .sum();
-    if seen_pairs.capacity() > 4 * mass.max(16) {
-        for &idx in filtered.iter() {
-            for p in level.pairs_iter_of_idx(idx as usize) {
-                seen_pairs.remove(&(p.left.0, p.right.0));
-            }
-        }
-    } else {
-        seen_pairs.clear();
-    }
-    // Dups are redirected only when no two members have disjoint
-    // supports; a mixed group concatenates first, and the duplicate member
-    // is then no longer content-equal to the grown survivor, so it
-    // stays a separate node.
-    let take_dups = !duplicate_members.is_empty() && filtered.len() < 2;
-    let sel_start = sel.len();
-    let action = if take_dups {
-        // Redirect the content-equal members onto the survivor without
-        // touching its pair list; the parent rewrite keeps the members'
-        // pairs and pair fusion sums the multiplicity. Appends nothing to
-        // the arena, so this group is charged nothing below.
-        sel.push(keep);
-        sel.extend_from_slice(duplicate_members);
-        GroupAction::DupRedirect
-    } else if filtered.len() >= 2 {
-        // Disjoint-support concat merge. Content-equal members (if any)
-        // are skipped this round: the survivor's function grows, so a
-        // duplicate redirect against the grown survivor would no longer carry
-        // the right value. They are re-examined on the next fixpoint
-        // iteration (and stay unmerged if no longer content-equal —
-        // sound, non-canonical residue).
-        sel.extend_from_slice(filtered); // filtered[0] == keep
-        GroupAction::Concat
-    } else {
-        // Nothing in this group can act this round.
-        return;
-    };
-    group_plans.push(GroupPlan {
-        action,
-        start: sel_start as u32,
-        end: sel.len() as u32,
-    });
-}
-
-fn partition_overlap_members(
-    level: &TddLevel,
-    parent_marginal: bool,
-    group: &[u32],
-    bufs: &mut MergeBuffers,
-) {
-    let MergeBuffers {
-        filtered,
-        duplicate_members,
-        keep_pairs_sorted,
-        member_pairs,
-        seen_pairs,
-        ..
-    } = bufs;
-    let keep = group[0];
-    filtered.clear();
-    duplicate_members.clear();
-    debug_assert!(
-        seen_pairs.is_empty(),
-        "the previous group emptied the overlap set"
-    );
-    keep_pairs_sorted.clear();
-    filtered.push(keep);
-    for p in level.pairs_iter_of_idx(keep as usize) {
-        seen_pairs.insert((p.left.0, p.right.0));
-        keep_pairs_sorted.push((p.left.0, p.right.0));
-    }
-    keep_pairs_sorted.sort_unstable();
-    for &idx in &group[1..] {
-        let mut overlap = false;
-        member_pairs.clear();
-        for p in level.pairs_iter_of_idx(idx as usize) {
-            let lr = (p.left.0, p.right.0);
-            overlap |= seen_pairs.contains(&lr);
-            member_pairs.push(lr);
-        }
-        if !overlap {
-            for &(l, r) in member_pairs.iter() {
-                seen_pairs.insert((l, r));
-            }
-            filtered.push(idx);
-        } else if parent_marginal {
-            member_pairs.sort_unstable();
-            if member_pairs == keep_pairs_sorted {
-                duplicate_members.push(idx);
-            }
-        }
-    }
 }

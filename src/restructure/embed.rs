@@ -1041,10 +1041,19 @@ fn assemble_moving<'a>(
     // owes the contraction passes what it owed in `tdd`. New pass-through
     // nodes have distinct child identities, and free levels have one node,
     // so neither introduces twins. A later child contraction queues its parents.
-    let (carried, loose, listed) = match prepare_moving_carried(eng, &tdd, into, plan) {
-        Ok(state) => state,
+    let mut listed = Vec::new();
+    let carried = eng
+        .limits()
+        .reserve_exact(&mut listed, into.num_nodes())
+        .and_then(|()| tdd.dirty.clone_on(eng));
+    let mut carried = match carried {
+        Ok(carried) => carried,
         Err(e) => return Err((e, tdd)),
     };
+    carried.remap(&plan.embedding.levels);
+    // The images of the levels that may hold a node no pair of their parent
+    // level names, from which `moved_loose` lists the result's.
+    let loose = carried.loose().map(<[u32]>::to_vec);
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -1079,7 +1088,7 @@ fn assemble_moving<'a>(
     // call, so anything that reorders a mirrored level's pairs belongs on
     // the seated result, past the last refusal.
     placement.mirror(plan);
-    let literal_tops =
+    let mut literal_tops =
         match build_embedded_levels(eng, into, plan, free, tdd.output().local, &mut placement) {
             Ok(tops) => tops,
             Err(e) => return Err(refuse(e, placement, tdd)),
@@ -1093,49 +1102,10 @@ fn assemble_moving<'a>(
     if let Cow::Owned(moved) = &mut tdd {
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
     }
-    finalize_moved_result(
-        &mut result,
-        tdd.vtree(),
-        into,
-        plan,
-        literal_tops,
-        loose,
-        listed,
-    );
-    Ok(result)
-}
-
-type MovingCarried = (crate::diagram::Dirty, Option<Vec<u32>>, Vec<u32>);
-
-fn prepare_moving_carried(
-    eng: &Engine,
-    tdd: &Tdd,
-    into: &Arc<Vtree>,
-    plan: &Plan,
-) -> Result<MovingCarried, OperationError> {
-    let mut listed = Vec::new();
-    eng.limits().reserve_exact(&mut listed, into.num_nodes())?;
-    let mut carried = tdd.dirty.clone_on(eng)?;
-    carried.remap(&plan.embedding.levels);
-    // The images of the levels that may hold a node no pair of their parent
-    // level names, from which `moved_loose` lists the result's.
-    let loose = carried.loose().map(<[u32]>::to_vec);
-    Ok((carried, loose, listed))
-}
-
-fn finalize_moved_result(
-    result: &mut Tdd,
-    from: &Vtree,
-    into: &Vtree,
-    plan: &Plan,
-    mut literal_tops: Vec<VtreeIdx>,
-    loose: Option<Vec<u32>>,
-    mut listed: Vec<u32>,
-) {
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
     let closed = result.levels.is_closed();
     for &top in &literal_tops {
-        crate::diagram::remap_refs_into(result, top, &[u32::MAX, 0, 1]);
+        crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
     }
     if !literal_tops.is_empty() {
         result.close_marked_levels(closed);
@@ -1143,9 +1113,10 @@ fn finalize_moved_result(
     if let Some(mut loose) = loose {
         loose.sort_unstable();
         literal_tops.sort_unstable();
-        moved_loose(from, into, plan, &loose, &literal_tops, &mut listed);
+        moved_loose(tdd.vtree(), into, plan, &loose, &literal_tops, &mut listed);
         result.dirty.set_loose(Some(listed));
     }
+    Ok(result)
 }
 
 /// Mark mirrored images as changed and build the free and pass-through levels

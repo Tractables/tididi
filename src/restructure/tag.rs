@@ -109,7 +109,40 @@ impl Engine {
 
         let image = match_tagged_subtree(lim, &mut gate, source, at, into, left, map)?;
         let leaf_bit = code_leaves_in_order(lim, into, right, code_vars)?;
-        let words = validate_tag_inputs(tdd, at, tags, code_vars, codes)?;
+
+        // One tag per slot, naming a code there is.
+        let words = code_vars.len().div_ceil(64).max(1);
+        if !codes.len().is_multiple_of(words) {
+            return Err(TagError::Tags(format!(
+                "{} code words are not a whole number of {words}-word codes",
+                codes.len()
+            )));
+        }
+        let num_codes = codes.len() / words;
+        let width = match source.node(at).is_leaf() {
+            true => LEAF_WIDTH,
+            false => tdd.level(at).nodes().len(),
+        };
+        if tags.len() != width {
+            return Err(TagError::Tags(format!(
+                "{} tags for a level of {width} slots",
+                tags.len()
+            )));
+        }
+        // A leaf's `One` holds both literals' assignments.
+        if source.node(at).is_leaf()
+            && tags[ONE_LEAF_IDX.idx()].is_some()
+            && (tags[POS_LEAF_IDX.idx()].is_some() || tags[NEG_LEAF_IDX.idx()].is_some())
+        {
+            return Err(TagError::Tags(
+                "a leaf's true node and a literal overlap".to_string(),
+            ));
+        }
+        if let Some(k) = tags.iter().flatten().find(|&&k| k as usize >= num_codes) {
+            return Err(TagError::Tags(format!(
+                "tag {k} names no code of {num_codes}"
+            )));
+        }
         if tdd.is_zero() || tags.iter().all(Option::is_none) {
             return Ok(crate::build::constant_zero(self, into));
         }
@@ -153,52 +186,6 @@ impl Engine {
         self.minimize(&mut result)?;
         Ok(result)
     }
-}
-
-/// Validate `tags`, `code_vars`, and `codes` against `tdd` at `at`, returning
-/// the number of `u64` words per code.
-fn validate_tag_inputs(
-    tdd: &Tdd,
-    at: VtreeIdx,
-    tags: &[Option<u32>],
-    code_vars: &[VarId],
-    codes: &[u64],
-) -> Result<usize, TagError> {
-    let source = tdd.vtree();
-    // One tag per slot, naming a code there is.
-    let words = code_vars.len().div_ceil(64).max(1);
-    if !codes.len().is_multiple_of(words) {
-        return Err(TagError::Tags(format!(
-            "{} code words are not a whole number of {words}-word codes",
-            codes.len()
-        )));
-    }
-    let num_codes = codes.len() / words;
-    let width = match source.node(at).is_leaf() {
-        true => LEAF_WIDTH,
-        false => tdd.level(at).nodes().len(),
-    };
-    if tags.len() != width {
-        return Err(TagError::Tags(format!(
-            "{} tags for a level of {width} slots",
-            tags.len()
-        )));
-    }
-    // A leaf's `One` holds both literals' assignments.
-    if source.node(at).is_leaf()
-        && tags[ONE_LEAF_IDX.idx()].is_some()
-        && (tags[POS_LEAF_IDX.idx()].is_some() || tags[NEG_LEAF_IDX.idx()].is_some())
-    {
-        return Err(TagError::Tags(
-            "a leaf's true node and a literal overlap".to_string(),
-        ));
-    }
-    if let Some(k) = tags.iter().flatten().find(|&&k| k as usize >= num_codes) {
-        return Err(TagError::Tags(format!(
-            "tag {k} names no code of {num_codes}"
-        )));
-    }
-    Ok(words)
 }
 
 /// The image of each node of `at`'s subtree in `source` under `left` in `into`,

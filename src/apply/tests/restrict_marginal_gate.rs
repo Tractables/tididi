@@ -47,17 +47,23 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
 
     // Leaf-var support under an internal subtree root (inclusive).
     let support_of = |root: VtreeIdx| -> Vec<u32> {
-        vtree
-            .leaf_bottomup()
-            .filter(|&(vi, _)| vtree.in_subtree(vi, root))
-            .map(|(_, var)| var.0)
-            .collect()
+        let mut s = Vec::new();
+        for vi in 0..vtree.num_nodes() {
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(vi as u32))
+                && vtree.in_subtree(VtreeIdx(vi as u32), root)
+            {
+                s.push(var.0);
+            }
+        }
+        s
     };
     // V2 = a small non-root internal subtree (contiguous vars, forgotten
     // bottom-up); V1 = the complement, leaving ≥2 vars for care to bite on.
     let marginal_root = (0..vtree.num_nodes())
+        .filter(|&vi| {
+            matches!(*vtree.node(VtreeIdx(vi as u32)), VtreeNode::Internal { .. }) && vi != vtree.root().idx()
+        })
         .map(|vi| VtreeIdx(vi as u32))
-        .filter(|&vi| matches!(*vtree.node(vi), VtreeNode::Internal { .. }) && vi != vtree.root())
         .find(|&r| {
             let n = support_of(r).len();
             n >= 1 && (nvars as usize - n) >= 2
@@ -65,14 +71,8 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
         .expect("balanced(8) has a small non-root internal subtree");
     let v2: Vec<u32> = support_of(marginal_root);
     let v1: Vec<u32> = (1..=nvars).filter(|v| !v2.contains(v)).collect();
-    let mut v2_targets: Vec<VtreeIdx> = v2
-        .iter()
-        .map(|&v| {
-            vtree
-                .leaf_of(VarId(v))
-                .expect("the vtree carries this variable")
-        })
-        .collect();
+    let mut v2_targets: Vec<VtreeIdx> =
+        v2.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
     v2_targets.sort_by_key(|vi| vtree.topo_pos(*vi));
 
     let mut rng = Lcg::new(0xa5a5_5a5a_1234_9e37);
@@ -80,12 +80,17 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
     // same descendant-forget the bottom-up compile does; leaves marginal levels at
     // the subtree, non-marginal V1 structure above.
     let forget_v2 = |t: &mut Tdd| {
-        crate::marginal::marginalize_batch(&eng, t, &v2_targets, &vtree)
-            .expect("no wall is installed in a test");
+        crate::marginal::marginalize_batch(&eng, t, &v2_targets, &vtree).expect("no wall is installed in a test");
+        // The batch is a step of `marginalize_levels`, whose end closes the
+        // levels.
         t.close_levels();
     };
-    let has_marginal =
-        |t: &Tdd| -> bool { (0..vtree.num_nodes()).any(|i| t.levels[i].is_marginal()) };
+    // The production `marginalize_batch` marks the forgotten LEAF levels marginal
+    // (a contiguous subtree summed out ⇒ its leaf levels carry the marginal counts),
+    // so check any level, not just internal ones.
+    let has_marginal = |t: &Tdd| -> bool {
+        (0..vtree.num_nodes()).any(|i| t.levels[i].is_marginal())
+    };
 
     let mut checked = 0usize;
     let mut shrunk = 0usize; // RestrictionOutcome::Shrunk outcomes (non-vacuity)
@@ -131,25 +136,32 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
     // b must ENTANGLE V1 and V2 (clauses mixing both) — else the forgotten V2
     // factors out as a scalar and minimize strips the marginal level, which is
     // not the production shape. p,q ∈ V1; z,z2 ∈ V2 keep the marginal level live. ──
-    let (p, q, z, z2) = (v1[0], v1[1], v2[0], *v2.last().unwrap());
-    for (label, p_sign, care_var) in [("det1", true, p), ("det2", false, q)] {
-        let f = clause_to_tdd(
-            &vtree,
-            &crate::test_helpers::clause(&[(p, p_sign), (q, true)]),
-        );
-        let g = clause_to_tdd(
-            &vtree,
-            &crate::test_helpers::clause(&[(p, true), (z, true)]),
-        );
-        let c3 = clause_to_tdd(
-            &vtree,
-            &crate::test_helpers::clause(&[(q, true), (z2, true)]),
-        );
+    let p = v1[0];
+    let q = v1[1];
+    let z = v2[0];
+    let z2 = *v2.last().unwrap();
+    {
+        // b = (p∨q) ∧ (p∨z) ∧ (q∨z2) ; forgetting V2 keeps (p,q) entangled with a
+        // surviving marginal level. care=(¬p) forces p=false ⇒ prunes the p-branch.
+        let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (q, true)]));
+        let g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
         let mut b = and2(&and2(&f, &g), &c3);
         forget_v2(&mut b);
-        assert!(has_marginal(&b), "{label} lost its marginal level");
-        let care = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(care_var, false)]));
-        check(&b, &care, label, &mut fail, &mut first_fail);
+        assert!(has_marginal(&b), "deterministic case 1 lost its marginal level");
+        let care = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, false)])); // ¬p
+        check(&b, &care, "det1", &mut fail, &mut first_fail);
+    }
+    {
+        // b = (¬p∨q) ∧ (p∨z) ∧ (q∨z2) ; care=(¬q) forces q=false ⇒ ¬p, prunes branches.
+        let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, false), (q, true)]));
+        let g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
+        let mut b = and2(&and2(&f, &g), &c3);
+        forget_v2(&mut b);
+        assert!(has_marginal(&b), "deterministic case 2 lost its marginal level");
+        let care = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, false)])); // ¬q
+        check(&b, &care, "det2", &mut fail, &mut first_fail);
     }
 
     // ── Randomized cases (≥50 checked across seeds) ──────────────────────────

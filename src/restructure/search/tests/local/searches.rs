@@ -59,6 +59,13 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
     );
 }
 
+/// The public rotation search must not panic — and must preserve the model
+/// count — when handed a diagram compiled clause-by-clause without an
+/// intervening full minimize (`Tdd::one` + `and_clause`). `and_clause` only
+/// rebuilds the clause spine; it does not run a global twin contraction, so a
+/// rotation on a non-canonical diagram can expose an unresolved twin at a
+/// level above `w_idx`. The contract cascade is count-exact regardless of
+/// where it fires, so the count must survive the whole search.
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
     for cnf in [

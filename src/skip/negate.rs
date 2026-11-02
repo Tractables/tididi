@@ -19,31 +19,6 @@ use super::{
 use crate::OperationError;
 use crate::limits::{Charged, Limits};
 
-/// A child's Z as a side: `ZTAG | level`, the level [`zlev`] names.
-const ZTAG: Ref = 1 << 62;
-
-/// The level whose complement child level `c` reads, or `NONE` where nothing
-/// is read at `c`.
-fn zlev(sh: &super::Shape, pos: &[u32], mut c: u32) -> u32 {
-    while !sh.is_leaf(c) && pos[c as usize] == NONE {
-        let (l, r) = sh.kids[c as usize];
-        c = if sh.is_leaf(l) {
-            r
-        } else if sh.is_leaf(r) {
-            l
-        } else {
-            return NONE;
-        };
-    }
-    if sh.is_leaf(c) { NONE } else { c }
-}
-
-/// The pending `Z` reference of child `c`, or `None` when empty.
-fn zof(sh: &super::Shape, pos: &[u32], zpairs: &[Vec<(Ref, Ref)>], c: u32) -> Option<Ref> {
-    let w = zlev(sh, pos, c);
-    (w != NONE && !zpairs[pos[w as usize] as usize].is_empty()).then_some(ZTAG | w as u64)
-}
-
 /// `¬f`, for `f` pruned (no false side, no node without pairs) and free of
 /// twins; canonical when `f` is.
 pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
@@ -86,212 +61,142 @@ pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationEr
     for (i, &t) in lv.iter().enumerate() {
         pos[t as usize] = i as u32;
     }
-    let mut zpairs = build_z_pairs(f, &lv, &pos, &leaf_skips, lim)?;
-    lim.check_stop()?;
-    let top = mark_top_classes(f, &lv, &pos, &zpairs, lim)?;
-    let zres = emit_negated_levels(f, &lv, &pos, &top, &mut zpairs, &mut out, lim)?;
-    // The root's Z, read from the root: where f skips below the root, the
-    // Z of the level the skip lands on, behind `true` on the skipped
-    // variables.
-    out.out = if sh.is_leaf(sh.root) {
-        let c = 3 & !literal_cells(ix(f.out));
-        if c == 0 {
-            ZREF
-        } else {
-            mk(sh.root, cells_label(c))
+    // The level whose complement child level `c` reads, or `NONE` where
+    // nothing is read at `c`.
+    let zlev = |c: u32| -> u32 {
+        let mut c = c;
+        while !sh.is_leaf(c) && pos[c as usize] == NONE {
+            let (l, r) = sh.kids[c as usize];
+            c = if sh.is_leaf(l) {
+                r
+            } else if sh.is_leaf(r) {
+                l
+            } else {
+                return NONE;
+            };
         }
-    } else {
-        let w = zlev(sh, &pos, sh.root);
-        if w == NONE {
-            ZREF
-        } else {
-            zres[pos[w as usize] as usize]
-        }
+        if sh.is_leaf(c) { NONE } else { c }
     };
-    for v in top {
-        lim.discard(v);
-    }
-    for (_, v) in leaf_skips {
-        lim.discard(v);
-    }
-    out.collect_pushed(lim)?;
-    Ok(out)
-}
-
-/// Pass 1, children first: each level's `Z`, as pairs over `f`'s references
-/// and the children's `Z` (a pending reference, resolved in pass 3).
-fn build_z_pairs(
-    f: &SkipForm,
-    lv: &[u32],
-    pos: &[u32],
-    leaf_skips: &FxHashMap<u32, Vec<Ref>>,
-    lim: &Limits,
-) -> Result<Vec<Vec<(Ref, Ref)>>, OperationError> {
-    let sh = &*f.shape;
+    // Pass 1, children first: each level's Z, as pairs over f's references
+    // and the children's Z (a pending reference, resolved in pass 3), and
+    // whether it is empty.
     let mut zpairs: Vec<Vec<(Ref, Ref)>> = vec![Vec::new(); lv.len()];
+    // A child's Z as a side: `ZTAG | level`, the level `zlev` names.
+    const ZTAG: Ref = 1 << 62;
+    let zof = |zpairs: &Vec<Vec<(Ref, Ref)>>, c: u32| -> Option<Ref> {
+        let w = zlev(c);
+        (w != NONE && !zpairs[pos[w as usize] as usize].is_empty()).then_some(ZTAG | w as u64)
+    };
     for (k, &t) in lv.iter().enumerate() {
         let (l, r) = sh.kids[t as usize];
         let lvl = &f.levels[t as usize];
         let mut z = Vec::new();
         match (sh.is_leaf(l), sh.is_leaf(r)) {
             (true, true) => {
-                let skips = leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]);
-                z_pairs_leaf_leaf(&lvl.pairs, l, r, skips, &mut z, lim)?;
+                // The 2 x 2 grid.
+                let mut owned = [[false; 2]; 2];
+                let mut own = |a: u8, b: u8| {
+                    for (i, row) in owned.iter_mut().enumerate() {
+                        for (j, cell) in row.iter_mut().enumerate() {
+                            if a >> i & 1 != 0 && b >> j & 1 != 0 {
+                                *cell = true;
+                            }
+                        }
+                    }
+                };
+                for &(a, b) in &lvl.pairs {
+                    own(literal_cells(ix(a)), literal_cells(ix(b)));
+                }
+                for &x in leaf_skips.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
+                    if vt(x) == l {
+                        own(literal_cells(ix(x)), 3)
+                    } else {
+                        own(3, literal_cells(ix(x)))
+                    }
+                }
+                for i in 0..2u32 {
+                    for j in 0..2u32 {
+                        if !owned[i as usize][j as usize] {
+                            lim.try_push(&mut z, (mk(l, POS + i), mk(r, POS + j)))?;
+                        }
+                    }
+                }
             }
             (true, false) | (false, true) => {
                 let left_leaf = sh.is_leaf(l);
                 let (leaf, inner) = if left_leaf { (l, r) } else { (r, l) };
-                let zi = zof(sh, pos, &zpairs, inner);
-                z_pairs_leaf_inner(&lvl.pairs, left_leaf, leaf, zi, &mut z, lim)?;
+                let mut cov: FxHashMap<Ref, u8> = FxHashMap::default();
+                lim.reserve_map(&mut cov, lvl.pairs.len())?;
+                for &(a, b) in &lvl.pairs {
+                    let (lab, e) = if left_leaf { (a, b) } else { (b, a) };
+                    *cov.entry(e).or_insert(0) |= literal_cells(ix(lab));
+                }
+                let mut v: Vec<(Ref, u8)> = Vec::new();
+                lim.reserve_exact(&mut v, cov.len())?;
+                v.extend(cov.iter().map(|(&e, &c)| (e, c)).filter(|&(_, c)| c != 3));
+                lim.discard(cov);
+                v.sort_unstable();
+                lim.reserve_exact(&mut z, v.len() + 1)?;
+                for &(e, c) in &v {
+                    let lab = mk(leaf, cells_label(3 & !c));
+                    z.push(if left_leaf { (lab, e) } else { (e, lab) });
+                }
+                lim.discard(v);
+                if let Some(zi) = zof(&zpairs, inner) {
+                    z.push(if left_leaf {
+                        (mk(leaf, ONE), zi)
+                    } else {
+                        (zi, mk(leaf, ONE))
+                    });
+                }
             }
             (false, false) => {
-                z_pairs_inner_inner(
-                    &lvl.pairs,
-                    zof(sh, pos, &zpairs, l),
-                    zof(sh, pos, &zpairs, r),
-                    &mut z,
-                    lim,
-                )?;
+                let mut owned: FxHashSet<(Ref, Ref)> = FxHashSet::default();
+                let (mut aa, mut bb) = (Vec::new(), Vec::new());
+                lim.reserve_set(&mut owned, lvl.pairs.len())?;
+                lim.reserve_exact(&mut aa, lvl.pairs.len())?;
+                lim.reserve_exact(&mut bb, lvl.pairs.len())?;
+                for &(a, b) in &lvl.pairs {
+                    owned.insert((a, b));
+                    aa.push(a);
+                    bb.push(b);
+                }
+                aa.sort_unstable();
+                aa.dedup();
+                bb.sort_unstable();
+                bb.dedup();
+                let (zlh, zrh) = (zof(&zpairs, l), zof(&zpairs, r));
+                for &a in &aa {
+                    for &b in &bb {
+                        if !owned.contains(&(a, b)) {
+                            lim.try_push(&mut z, (a, b))?;
+                        }
+                    }
+                    if let Some(zr) = zrh {
+                        lim.try_push(&mut z, (a, zr))?;
+                    }
+                }
+                if let Some(zl) = zlh {
+                    for &b in &bb {
+                        lim.try_push(&mut z, (zl, b))?;
+                    }
+                    if let Some(zr) = zrh {
+                        lim.try_push(&mut z, (zl, zr))?;
+                    }
+                }
+                lim.charge_work((aa.len() * bb.len()) as u64);
+                lim.discard(owned);
+                lim.discard(aa);
+                lim.discard(bb);
             }
         }
         zpairs[k] = z;
     }
-    Ok(zpairs)
-}
-
-fn z_pairs_leaf_leaf(
-    pairs: &[(Ref, Ref)],
-    l: u32,
-    r: u32,
-    skips: &[Ref],
-    z: &mut Vec<(Ref, Ref)>,
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    let mut owned = [[false; 2]; 2];
-    let mut own = |a: u8, b: u8| {
-        for (i, row) in owned.iter_mut().enumerate() {
-            for (j, cell) in row.iter_mut().enumerate() {
-                if a >> i & 1 != 0 && b >> j & 1 != 0 {
-                    *cell = true;
-                }
-            }
-        }
-    };
-    for &(a, b) in pairs {
-        own(literal_cells(ix(a)), literal_cells(ix(b)));
-    }
-    for &x in skips {
-        if vt(x) == l {
-            own(literal_cells(ix(x)), 3);
-        } else {
-            own(3, literal_cells(ix(x)));
-        }
-    }
-    for i in 0..2u32 {
-        for j in 0..2u32 {
-            if !owned[i as usize][j as usize] {
-                lim.try_push(z, (mk(l, POS + i), mk(r, POS + j)))?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn z_pairs_leaf_inner(
-    pairs: &[(Ref, Ref)],
-    left_leaf: bool,
-    leaf: u32,
-    zi: Option<Ref>,
-    z: &mut Vec<(Ref, Ref)>,
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    let mut cov: FxHashMap<Ref, u8> = FxHashMap::default();
-    lim.reserve_map(&mut cov, pairs.len())?;
-    for &(a, b) in pairs {
-        let (lab, e) = if left_leaf { (a, b) } else { (b, a) };
-        *cov.entry(e).or_insert(0) |= literal_cells(ix(lab));
-    }
-    let mut v: Vec<(Ref, u8)> = Vec::new();
-    lim.reserve_exact(&mut v, cov.len())?;
-    v.extend(cov.iter().map(|(&e, &c)| (e, c)).filter(|&(_, c)| c != 3));
-    lim.discard(cov);
-    v.sort_unstable();
-    lim.reserve_exact(z, v.len() + 1)?;
-    for &(e, c) in &v {
-        let lab = mk(leaf, cells_label(3 & !c));
-        z.push(if left_leaf { (lab, e) } else { (e, lab) });
-    }
-    lim.discard(v);
-    if let Some(zi) = zi {
-        z.push(if left_leaf {
-            (mk(leaf, ONE), zi)
-        } else {
-            (zi, mk(leaf, ONE))
-        });
-    }
-    Ok(())
-}
-
-/// Fill `z` with the unowned pairs and child-`Z` cross pairs of an inner-inner
-/// level.
-fn z_pairs_inner_inner(
-    pairs: &[(Ref, Ref)],
-    zlh: Option<Ref>,
-    zrh: Option<Ref>,
-    z: &mut Vec<(Ref, Ref)>,
-    lim: &Limits,
-) -> Result<(), OperationError> {
-    let mut owned: FxHashSet<(Ref, Ref)> = FxHashSet::default();
-    let (mut aa, mut bb) = (Vec::new(), Vec::new());
-    lim.reserve_set(&mut owned, pairs.len())?;
-    lim.reserve_exact(&mut aa, pairs.len())?;
-    lim.reserve_exact(&mut bb, pairs.len())?;
-    for &(a, b) in pairs {
-        owned.insert((a, b));
-        aa.push(a);
-        bb.push(b);
-    }
-    aa.sort_unstable();
-    aa.dedup();
-    bb.sort_unstable();
-    bb.dedup();
-    for &a in &aa {
-        for &b in &bb {
-            if !owned.contains(&(a, b)) {
-                lim.try_push(z, (a, b))?;
-            }
-        }
-        if let Some(zr) = zrh {
-            lim.try_push(z, (a, zr))?;
-        }
-    }
-    if let Some(zl) = zlh {
-        for &b in &bb {
-            lim.try_push(z, (zl, b))?;
-        }
-        if let Some(zr) = zrh {
-            lim.try_push(z, (zl, zr))?;
-        }
-    }
-    lim.charge_work((aa.len() * bb.len()) as u64);
-    lim.discard(owned);
-    lim.discard(aa);
-    lim.discard(bb);
-    Ok(())
-}
-
-/// Pass 2, parents first: the classes on which `f` is true whatever lies
-/// outside them. At the root, the output.
-fn mark_top_classes(
-    f: &SkipForm,
-    lv: &[u32],
-    pos: &[u32],
-    zpairs: &[Vec<(Ref, Ref)>],
-    lim: &Limits,
-) -> Result<Vec<Vec<bool>>, OperationError> {
-    let sh = &*f.shape;
+    lim.check_stop()?;
+    // Pass 2, parents first: the classes on which f is true whatever lies
+    // outside them. At the root, the output.
     let mut top: Vec<Vec<bool>> = Vec::with_capacity(lv.len());
-    for &t in lv {
+    for &t in &lv {
         top.push(filled(lim, f.levels[t as usize].width(), false)?);
     }
     let mark = |top: &mut Vec<Vec<bool>>, x: Ref| {
@@ -308,7 +213,7 @@ fn mark_top_classes(
             continue;
         }
         for (c, sib, left) in [(l, r, true), (r, l, false)] {
-            if sh.is_leaf(c) || zof(sh, pos, zpairs, sib).is_some() {
+            if sh.is_leaf(c) || zof(&zpairs, sib).is_some() {
                 continue;
             }
             // The sibling's classes each entity's true cells cover.
@@ -351,23 +256,11 @@ fn mark_top_classes(
             lim.discard(all_sib);
         }
     }
-    Ok(top)
-}
-
-/// Pass 3, children first: the kept classes and `Z`, renumbered and resolved.
-fn emit_negated_levels(
-    f: &SkipForm,
-    lv: &[u32],
-    pos: &[u32],
-    top: &[Vec<bool>],
-    zpairs: &mut [Vec<(Ref, Ref)>],
-    out: &mut SkipForm,
-    lim: &Limits,
-) -> Result<Vec<Ref>, OperationError> {
-    let sh = &*f.shape;
+    // Pass 3, children first: the kept classes and Z, renumbered and
+    // resolved.
     let mut res: Vec<Vec<Ref>> = vec![Vec::new(); lv.len()];
     let mut zres: Vec<Ref> = vec![ZREF; lv.len()];
-    let fix = |res: &[Vec<Ref>], zres: &[Ref], x: Ref| -> Ref {
+    let fix = |res: &Vec<Vec<Ref>>, zres: &Vec<Ref>, x: Ref| -> Ref {
         if x & ZTAG != 0 && x != ZREF {
             zres[pos[(x & !ZTAG) as usize] as usize]
         } else if sh.is_leaf(vt(x)) {
@@ -421,11 +314,36 @@ fn emit_negated_levels(
         }
         lim.discard(z);
     }
+    // The root's Z, read from the root: where f skips below the root, the
+    // Z of the level the skip lands on, behind `true` on the skipped
+    // variables.
+    out.out = if sh.is_leaf(sh.root) {
+        let c = 3 & !literal_cells(ix(f.out));
+        if c == 0 {
+            ZREF
+        } else {
+            mk(sh.root, cells_label(c))
+        }
+    } else {
+        let w = zlev(sh.root);
+        if w == NONE {
+            ZREF
+        } else {
+            zres[pos[w as usize] as usize]
+        }
+    };
+    for v in top {
+        lim.discard(v);
+    }
     for v in res {
         lim.discard(v);
     }
     lim.discard(buf);
-    Ok(zres)
+    for (_, v) in leaf_skips {
+        lim.discard(v);
+    }
+    out.collect_pushed(lim)?;
+    Ok(out)
 }
 
 /// `true` over internal `t`'s variables where both children are inner

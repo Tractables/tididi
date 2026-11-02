@@ -53,25 +53,13 @@ fn check(vtree: &Arc<Vtree>, vars: &[VarId], cubes: &[Cube], what: &str) {
     let oracle = Tdd::from_models(vtree, vars, &expanded_rows(vars.len(), cubes)).unwrap();
     assert_canonical(&built);
     assert_same_shape(&built, &oracle, what);
-    assert_eq!(
-        built.model_count().unwrap(),
-        oracle.model_count().unwrap(),
-        "{what}"
-    );
+    assert_eq!(built.model_count().unwrap(), oracle.model_count().unwrap(), "{what}");
     // Both store each level's nodes by their least pairs, so the levels
     // are the same node for node.
     for (t, (x, y)) in built.levels().iter().zip(oracle.levels()).enumerate() {
-        assert_eq!(
-            x.nodes().len(),
-            y.nodes().len(),
-            "{what}: level {t}'s nodes"
-        );
+        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {t}'s nodes");
         for i in 0..x.nodes().len() {
-            assert_eq!(
-                x.pairs_vec(i),
-                y.pairs_vec(i),
-                "{what}: level {t}, node {i}"
-            );
+            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {t}, node {i}");
         }
     }
 }
@@ -120,10 +108,7 @@ fn a_ragged_cube_buffer_and_a_bad_variable_are_refused() {
     let vtree = Arc::new(Vtree::balanced(3));
     assert_eq!(
         Tdd::from_cubes(&vtree, &[VarId(1)], &[0, 0, 0]).unwrap_err(),
-        OperationError::RaggedRows {
-            words: 3,
-            per_row: 2
-        },
+        OperationError::RaggedRows { words: 3, per_row: 2 },
     );
     assert_eq!(
         Tdd::from_cubes(&vtree, &[VarId(1), VarId(9)], &[0, 0]).unwrap_err(),
@@ -143,11 +128,7 @@ fn a_cube_free_everywhere_is_true_and_fixed_everywhere_is_a_row() {
         assert_canonical(&all);
         assert_same_shape(&all, &Tdd::one(&vtree), name);
         let row = Tdd::from_cubes(&vtree, &vars, &[0b10110, 0b11111]).unwrap();
-        assert_same_shape(
-            &row,
-            &Tdd::from_models(&vtree, &vars, &[0b10110]).unwrap(),
-            name,
-        );
+        assert_same_shape(&row, &Tdd::from_models(&vtree, &vars, &[0b10110]).unwrap(), name);
     }
 }
 
@@ -156,12 +137,7 @@ fn value_bits_under_a_free_variable_and_past_the_last_are_ignored() {
     let vtree = Arc::new(Vtree::balanced(4));
     let vars = [VarId(1), VarId(2), VarId(3)];
     let clean = Tdd::from_cubes(&vtree, &vars, &[0b001, 0b101, 0b000, 0b010]).unwrap();
-    let noisy = Tdd::from_cubes(
-        &vtree,
-        &vars,
-        &[!0b100, 0b101 | !0b111, 0b101, 0b010, 0b000, 0b010],
-    )
-    .unwrap();
+    let noisy = Tdd::from_cubes(&vtree, &vars, &[!0b100, 0b101 | !0b111, 0b101, 0b010, 0b000, 0b010]).unwrap();
     assert_canonical(&noisy);
     assert_same_shape(&clean, &noisy, "ignored bits and a repeated cube");
 }
@@ -177,9 +153,7 @@ fn random_cubes_build_what_their_assignments_build() {
         let vars = random_vars(&mut rng, total, width);
         let fix = [64, 128, 200, 240][rng.below(4) as usize];
         let n = 1 + rng.below(12) as usize;
-        let mut cubes: Vec<Cube> = (0..n)
-            .map(|_| random_cube(&mut rng, width, fix, 6))
-            .collect();
+        let mut cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, fix, 6)).collect();
         if case % 5 == 0 {
             let again = cubes[0].clone();
             cubes.push(again);
@@ -195,9 +169,7 @@ fn random_cubes_on_every_vtree_shape() {
     for round in 0..40 {
         let width = 2 + rng.below(8) as usize;
         let n = 1 + rng.below(10) as usize;
-        let cubes: Vec<Cube> = (0..n)
-            .map(|_| random_cube(&mut rng, width, 160, 5))
-            .collect();
+        let cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 160, 5)).collect();
         for (name, vtree) in vtree_shapes(width as u32 + 1) {
             let vars = random_vars(&mut rng, width as u32 + 1, width);
             check(&vtree, &vars, &cubes, &format!("round {round} {name}"));
@@ -208,13 +180,7 @@ fn random_cubes_on_every_vtree_shape() {
 /// Aligned intervals of two blocks, `bits` and `rank_bits` wide, and their
 /// products, as a rank relation's boxes make them: the cubes fix a leading
 /// part of each block and leave at most `max_free` of its bits free.
-fn block_cubes(
-    rng: &mut Lcg,
-    bits: usize,
-    rank_bits: usize,
-    n: usize,
-    max_free: usize,
-) -> Vec<Cube> {
+fn block_cubes(rng: &mut Lcg, bits: usize, rank_bits: usize, n: usize, max_free: usize) -> Vec<Cube> {
     let piece = |rng: &mut Lcg, width: usize| {
         let free = rng.below(width.min(max_free) as u64 + 1) as usize;
         let value: Vec<bool> = (0..width).map(|i| i < width - free && rng.coin()).collect();
@@ -246,12 +212,7 @@ fn products_of_aligned_intervals_build_what_their_assignments_build() {
         // Blocks laid out as the vtree's leaves, most significant first.
         let ordered = Arc::new(Vtree::balanced(total));
         let in_order: Vec<VarId> = (1..=(bits + rank_bits) as u32).map(VarId).collect();
-        check(
-            &ordered,
-            &in_order,
-            &cubes,
-            &format!("case {case}, blocks in leaf order"),
-        );
+        check(&ordered, &in_order, &cubes, &format!("case {case}, blocks in leaf order"));
     }
 }
 
@@ -264,9 +225,7 @@ fn cubes_wider_than_a_word_read_every_word() {
         let total = width as u32 + rng.below(3) as u32;
         let vars = random_vars(&mut rng, total, width);
         let n = 1 + rng.below(8) as usize;
-        let mut cubes: Vec<Cube> = (0..n)
-            .map(|_| random_cube(&mut rng, width, 250, 4))
-            .collect();
+        let mut cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 250, 4)).collect();
         // Cubes that differ only past the first word, and overlap there.
         let mut twin = cubes[0].clone();
         twin.1[width - 1] = false;
@@ -282,39 +241,24 @@ fn thousands_of_cubes_sort_through_the_radix_passes() {
     // sort's size floor; narrow enough that a cube packs into one word, and
     // wide enough that it does not.
     let mut rng = Lcg::new(0x00ad_1c5e);
-    for (case, (width, n)) in [(12, 5000), (18, 6000), (20, 4000), (40, 3000)]
-        .into_iter()
-        .enumerate()
-    {
+    for (case, (width, n)) in [(12, 5000), (18, 6000), (20, 4000), (40, 3000)].into_iter().enumerate() {
         let total = width as u32 + 2;
         let vars = random_vars(&mut rng, total, width);
-        let cubes: Vec<Cube> = (0..n)
-            .map(|_| random_cube(&mut rng, width, 230, 3))
-            .collect();
+        let cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 230, 3)).collect();
         for seed in 0..3 {
             let vtree = Arc::new(Vtree::random(total, 0x5eed + 16 * case as u64 + seed));
-            check(
-                &vtree,
-                &vars,
-                &cubes,
-                &format!("width {width}, seed {seed}"),
-            );
+            check(&vtree, &vars, &cubes, &format!("width {width}, seed {seed}"));
         }
         let rows = block_cubes(&mut rng, width / 2, width - width / 2, n, 3);
         let in_order: Vec<VarId> = (1..=width as u32).map(VarId).collect();
-        check(
-            &Arc::new(Vtree::balanced(total)),
-            &in_order,
-            &rows,
-            &format!("width {width}, blocks"),
-        );
+        check(&Arc::new(Vtree::balanced(total)), &in_order, &rows, &format!("width {width}, blocks"));
     }
 }
 
 #[test]
 fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
-    use crate::Engine;
     use crate::limits::LimitConfig;
+    use crate::Engine;
     let vtree = Arc::new(Vtree::balanced(8));
     let vars: Vec<VarId> = (1..=8).map(VarId).collect();
     let mut rng = Lcg::new(7);
@@ -334,11 +278,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
             Ok(f) => assert_canonical(&f),
             Err(e) => {
                 assert_eq!(e, OperationError::OverBudget, "cut {cut}");
-                assert_eq!(
-                    eng.scratch.levels.occupancy(),
-                    1,
-                    "cut {cut} lost a level buffer"
-                );
+                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
                 refusals += 1;
             }
         }
