@@ -350,8 +350,11 @@ mod compact_store_in_place_tests {
         );
 
         let mut remap = vec![u32::MAX; 6];
-        let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+        let values_merged = {
+            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx());
+            let plan = storage.plan_compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+            storage.compact(&[1, 2, 3, 5], &remap, plan)
+        };
 
         assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
@@ -421,8 +424,11 @@ mod compact_store_in_place_tests {
         let v = boundary_marginal_levels(&tdd)[0].0;
 
         let mut remap = vec![u32::MAX; 6];
-        let values_merged =
-            MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx()).compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+        let values_merged = {
+            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx());
+            let plan = storage.plan_compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+            storage.compact(&[1, 2, 3, 5], &remap, plan)
+        };
 
         let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 

@@ -5,6 +5,7 @@ mod fusion_twin;
 mod inline_denorm;
 mod listing;
 mod merge_scratch;
+mod refused_move;
 
 thread_local! {
     /// The listed searches this thread's sweeps have run

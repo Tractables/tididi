@@ -55,7 +55,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         local: NodeIdx(0),
     };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    inline_small_marginal_refs(&mut tdd, None);
+    inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
 
     assert!(check_pair_fusion_saturation(&tdd, None).is_err());
 

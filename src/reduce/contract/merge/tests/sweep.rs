@@ -305,7 +305,7 @@ fn twins_of_a_level_of_cubes() -> Vec<Tdd> {
     // Too wide to fit a reference, so the sibling's nodes stay slots.
     assert_can_make_marginal(&tdd.levels, &vtree, sibling);
     tdd.levels[sibling.idx()].become_marginal(vec![(1u128 << 40) + 2, (1u128 << 40) + 3], None);
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
     let before = tdd.model_count().unwrap();
 
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);

@@ -215,7 +215,7 @@ fn test_content_twins_merge_at_plain_levels() {
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
     // marginalization step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
 
     let count_before = tdd.model_count().unwrap();
     let expected: u64 = 6;
@@ -304,7 +304,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
             local: root_node,
         },
     );
-    inline_small_marginal_refs(&mut tdd, None);
+    inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
     assert!(
         tdd.levels[root_idx.idx()].has_value_refs(ChildSide::Right),
         "the tagger must inline the marginal side and mark it, or the fixture proves nothing"

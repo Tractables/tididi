@@ -134,3 +134,29 @@ fn weighted_marginalization_recovers_from_every_column_refusal() {
 fn overflowing_marginalization_recovers_from_every_column_refusal() {
     marginal_refusals(false, true);
 }
+
+/// Summing out `w` dedups its `4n` equal counts onto one slot, which moves
+/// the right sides of `v`, an implicit level, onto it. That move is not one
+/// to one and stores `v`; refusing the stored level's room returns
+/// `OverBudget` before the column is installed, with `w` structural and `v`
+/// still implicit, and the same sum-out with the room granted keeps the
+/// count.
+#[test]
+fn a_refused_move_of_the_implicit_parent_installs_nothing() {
+    use crate::test_helpers::x_decision_diagram;
+    let eng = Engine::new();
+    let (mut tdd, v, w) = x_decision_diagram(8);
+    let described = tdd.levels[v.idx()].implicit().expect("the fixture's level is implicit").clone();
+    let count = tdd.model_count().unwrap();
+    let capacity = tdd.levels[v.idx()].pairs.node_capacity();
+    tdd.levels[v.idx()].pairs.set_node_capacity(OVER_BUDGET_WIDTH);
+    assert_eq!(eng.marginalize_levels(&mut tdd, &[w]), Err(crate::OperationError::OverBudget));
+    assert!(!tdd.levels[w.idx()].is_marginal(), "a refused move installs no column");
+    assert_eq!(tdd.levels[v.idx()].implicit(), Some(&described));
+    assert_eq!(tdd.model_count().unwrap(), count);
+
+    tdd.levels[v.idx()].pairs.set_node_capacity(capacity);
+    eng.marginalize_levels(&mut tdd, &[w]).unwrap();
+    assert!(tdd.levels[w.idx()].is_marginal());
+    assert_eq!(tdd.model_count().unwrap(), count);
+}

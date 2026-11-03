@@ -18,30 +18,21 @@ use crate::vtree::VtreeIdx;
 
 // ── Compaction ───────────────────────────────────────────────────────────────
 
-/// Compact a store to the slots `kept` names, in the ascending order given,
-/// merging every slot whose key an earlier kept slot already carries onto that
-/// slot. Writes `remap[old]` for every kept slot and returns
-/// `(new_len, values_merged)`, where `values_merged` counts the kept slots
-/// that landed on an earlier equal-keyed one. The caller truncates the store
-/// to `new_len` afterwards.
+/// The compaction of a store to the slots `kept` names, in the ascending
+/// order given, decided before any slot moves: every slot whose key an
+/// earlier kept slot already carries merges onto that slot, and every other
+/// takes the next compacted slot. Writes `remap[old]` for every kept slot and
+/// returns `(new_len, values_merged)`, where `values_merged` counts the kept
+/// slots that landed on an earlier equal-keyed one. [`move_slots`] then moves
+/// them, and the caller truncates the store to `new_len`.
 ///
-/// `key_at(store, i)` reads the key of slot `i`; `move_down(store, dst, src)`
-/// moves slot `src` to `dst`, with `dst <= src`. `by_key` is an empty map;
+/// `key_at(store, i)` reads the key of slot `i`. `by_key` is an empty map;
 /// one with room for every kept slot ([`key_map`]) never grows.
-///
-/// # Soundness
-///
-/// `kept` is strictly ascending, so at step `i` the source is `old >= i` and
-/// the destination is `new_len <= i <= old`: every write lands at or below a
-/// slot already consumed, and every later read is at a strictly larger index
-/// than any write done so far. A move that swaps writes `old` as well, which
-/// is also `<= old`, and that slot is never read again.
-pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
-    store: &mut S,
+pub(crate) fn plan_slots<S: ?Sized, K: Hash + Eq>(
+    store: &S,
     kept: impl IntoIterator<Item = usize>,
     by_key: &mut FxHashMap<K, u32>,
     key_at: impl Fn(&S, usize) -> K,
-    mut move_down: impl FnMut(&mut S, usize, usize),
     remap: &mut [u32],
 ) -> (usize, usize) {
     let mut values_merged = 0usize;
@@ -56,57 +47,126 @@ pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
             continue;
         }
         by_key.insert(key, new_len as u32);
-        move_down(store, new_len, old);
         remap[old] = new_len as u32;
         new_len += 1;
     }
     (new_len, values_merged)
 }
 
-/// [`compact_slots`] merging no values: each kept slot moves down to the
-/// next compacted slot, in the ascending order given. Writes `remap[old]` for
-/// every kept slot and returns the new length, which the caller truncates the
-/// store to.
-pub(crate) fn compact_slots_apart<S: ?Sized>(
-    store: &mut S,
-    kept: impl IntoIterator<Item = usize>,
-    mut move_down: impl FnMut(&mut S, usize, usize),
-    remap: &mut [u32],
-) -> usize {
+/// [`plan_slots`] merging no values: each kept slot takes the next compacted
+/// slot, in the ascending order given. Writes `remap[old]` for every kept
+/// slot and returns the new length.
+pub(crate) fn plan_slots_apart(kept: impl IntoIterator<Item = usize>, remap: &mut [u32]) -> usize {
     let mut new_len = 0usize;
     for old in kept {
-        if new_len != old {
-            move_down(store, new_len, old);
-        }
         remap[old] = new_len as u32;
         new_len += 1;
     }
     new_len
 }
 
-/// Compact counts and rekey their overflow entries together. As with
-/// [`compact_slots`], the caller truncates the column to the returned length.
-/// `kept` is strictly ascending; unreferenced entries in `remap` are `u32::MAX`.
-pub(crate) fn compact_count_slots(
-    counts: &mut Vec<u128>,
-    big: &mut Option<CountOverflow>,
+/// Move the kept slots of a plan ([`plan_slots`], [`plan_slots_apart`]) to
+/// the compacted slots `remap` gives them: each that took a slot of its own
+/// moves down to it, and one merged onto an earlier slot is left behind.
+/// `kept` is the plan's.
+///
+/// `move_down(store, dst, src)` moves slot `src` to `dst`, with `dst < src`.
+///
+/// # Soundness
+///
+/// `kept` is strictly ascending and its slots take the compacted slots in
+/// that order, so at step `i` the source is `old >= i` and the destination
+/// is below it: every write lands below a slot already consumed, and every
+/// later read is at a strictly larger index than any write done so far. A
+/// move that swaps writes `old` as well, and that slot is never read again.
+pub(crate) fn move_slots<S: ?Sized>(
+    store: &mut S,
+    kept: impl IntoIterator<Item = usize>,
+    mut move_down: impl FnMut(&mut S, usize, usize),
+    remap: &[u32],
+) {
+    let mut next = 0usize;
+    for old in kept {
+        // A merged slot names an earlier compacted slot, below `next`.
+        if remap[old] as usize != next {
+            continue;
+        }
+        if next != old {
+            move_down(store, next, old);
+        }
+        next += 1;
+    }
+}
+
+/// [`plan_slots`] of a count store and its overflow entries.
+pub(crate) fn plan_count_slots(
+    counts: &[u128],
+    big: Option<&CountOverflow>,
     kept: impl IntoIterator<Item = usize>,
     by_key: &mut FxHashMap<Count, u32>,
     remap: &mut [u32],
 ) -> (usize, usize) {
-    let (new_len, merged) = compact_slots(
-        counts,
-        kept,
-        by_key,
-        |counts, old| count_key_at(counts, big.as_ref(), old),
-        |counts, dst, src| counts[dst] = counts[src],
-        remap,
-    );
+    plan_slots(counts, kept, by_key, |counts, old| count_key_at(counts, big, old), remap)
+}
+
+/// [`move_slots`] of a count store, with its overflow entries rekeyed, for
+/// the plan of `new_len` slots [`plan_count_slots`] made.
+pub(crate) fn move_count_slots(
+    counts: &mut [u128],
+    big: &mut Option<CountOverflow>,
+    kept: impl IntoIterator<Item = usize>,
+    remap: &[u32],
+    new_len: usize,
+) {
+    move_slots(counts, kept, |counts, dst, src| counts[dst] = counts[src], remap);
     // Keeping every slot without merging makes the remap the identity.
     if new_len != counts.len() {
         *big = rekey_big(big.take(), remap);
     }
+}
+
+/// Compact counts and rekey their overflow entries together: the plan
+/// ([`plan_count_slots`]) and its moves ([`move_count_slots`]). The caller
+/// truncates the column to the returned length. `kept` is strictly
+/// ascending; unreferenced entries in `remap` are `u32::MAX`.
+pub(crate) fn compact_count_slots(
+    counts: &mut [u128],
+    big: &mut Option<CountOverflow>,
+    kept: impl IntoIterator<Item = usize> + Clone,
+    by_key: &mut FxHashMap<Count, u32>,
+    remap: &mut [u32],
+) -> (usize, usize) {
+    let (new_len, merged) = plan_count_slots(counts, big.as_ref(), kept.clone(), by_key, remap);
+    move_count_slots(counts, big, kept, remap, new_len);
     (new_len, merged)
+}
+
+/// Compact a freshly built marginal store so that each count value occupies at
+/// most one slot (invariant 10), returning the deduped store and a slot remap,
+/// `remap[old] = new`.
+///
+/// Duplicates merge onto the first slot holding their value, so the returned
+/// column may be shorter than the input; with no duplicates both come back
+/// unchanged. Refs are not remapped here: the caller must redirect every
+/// parent-side ref into the old store through `remap` (the marginalization pass
+/// plans that with `plan_refs_remap` before it installs the store). An
+/// emit-born store does not pass through here; its invariant 10 is established
+/// by `prune_value_slots`.
+///
+/// The count column is compacted in place, so no second full-length column is
+/// resident at the peak; the overflow table is rekeyed into a fresh
+/// [`CountOverflow`], which costs only the surviving overflow entries.
+pub(crate) fn dedup_fresh_store(
+    mut counts: Vec<u128>,
+    mut big: Option<CountOverflow>,
+) -> (Vec<u128>, Option<CountOverflow>, Vec<u32>) {
+    let n = counts.len();
+    // Written for every `i`, so the remap is final as it is written and the
+    // overflow table can be rekeyed in one drain once it is complete.
+    let mut remap: Vec<u32> = vec![0; n];
+    let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut Default::default(), &mut remap);
+    truncate_with_slack(&mut counts, new_len);
+    (counts, big, remap)
 }
 
 /// Re-file an overflow table under the compacted slot indices: a slot `remap`
@@ -123,7 +183,7 @@ fn rekey_big(big: Option<CountOverflow>, remap: &[u32]) -> Option<CountOverflow>
     })
 }
 
-/// An empty key map for [`compact_slots`] with room for `keys` keys,
+/// An empty key map for [`plan_slots`] with room for `keys` keys,
 /// reserved through `lim`; give its room back with [`release_key_map`].
 pub(crate) fn key_map<K: Hash + Eq>(lim: &Limits, keys: usize) -> Result<FxHashMap<K, u32>, OperationError> {
     let mut map = FxHashMap::default();

@@ -723,12 +723,21 @@ fn apply_and_held(
         Vec::new()
     };
 
-    crate::marginal::canonicalize_weighted_leaf_refs(
+    // A refusal leaves the leaves rewritten before it onto slots of the same
+    // values, which the operands read alike.
+    if let Err(e) = crate::marginal::canonicalize_weighted_leaf_refs(
+        lim,
         &canon_leaves,
         &vtree,
         run.levels,
         ws.as_ref(),
-    );
+    ) {
+        if run.restoring {
+            give_back(run.levels, f, g, &run.carried, &run.lent);
+            region::give_back_regions(run.levels, cone, f, g);
+        }
+        return Err(e);
+    }
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
@@ -814,7 +823,18 @@ fn apply_and_held(
                 out
             })
     } else {
-        assembly.finish_or_return(output)
+        // Apply emits self-describing marginal refs — bit-30 set is an inline
+        // count, bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why
+        // that polarity — so a bit-30-clear ref here is never an already-inline
+        // count. The refs are inlined before the seat, which closes the
+        // levels as inlined, so that a refusal still finds the assembly to
+        // give the operands their levels back from. A plain conjunction has
+        // no marginal level, and so no ref to inline; leaving its levels
+        // alone keeps them known closed.
+        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, assembly.parts_mut().0, None) {
+            Ok(()) => assembly.finish_or_return(output),
+            Err(e) => Err((e, assembly)),
+        }
     };
     let mut out = match finished {
         Ok(out) => out,
@@ -831,14 +851,6 @@ fn apply_and_held(
             return Err(e);
         }
     };
-    // Apply emits self-describing marginal refs — bit-30 set is an inline count,
-    // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
-    // so a bit-30-clear ref here is never an already-inline count. A plain
-    // conjunction has no marginal level, and so no ref to inline; leaving its
-    // levels alone keeps them known closed.
-    if !plain {
-        crate::diagram::inline_small_marginal_refs(&mut out, None);
-    }
     // Recorded where the level's marginal child is still its only one.
     for &t in &fused {
         let (left, right) = vtree.children(t);

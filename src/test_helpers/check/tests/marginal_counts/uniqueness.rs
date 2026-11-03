@@ -1,5 +1,5 @@
 use crate::diagram::{ChildDecoder, CountOverflow, EncodedChildRef, ValueRef};
-use crate::marginal::transition::dedup_fresh_store;
+use crate::value::slots::dedup_fresh_store;
 use crate::test_helpers::check::marginal::check_store_counts;
 use num_bigint::BigUint;
 

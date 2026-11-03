@@ -10,7 +10,7 @@ use super::refs::{for_each_side_ref, for_each_side_ref_mut, ChildSide};
 use super::{INLINE_VALUE_BIT, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::CountOverflow;
 use crate::diagram::NodeIdx;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::value::COUNT_OVERFLOW;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
@@ -82,12 +82,14 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
 ///
 /// # Errors
 ///
-/// `Err(OperationError::OverBudget)` when an interner entry or the destination
-/// store's growth cannot be reserved. Every allocation is front-loaded by the
-/// pre-scan before the rewrite touches a single ref, and the rewrite pass is
-/// infallible by construction — so an over-budget swap leaves the diagram exactly as
-/// it found it. A half-remapped level would not merely be large: its unrewritten
-/// refs still index the source store, which miscounts silently.
+/// `Err(OperationError::OverBudget)` when an interner entry, the destination
+/// store's growth or the move of an implicit parent cannot be reserved. Every
+/// allocation of the store is front-loaded by the pre-scan before the rewrite
+/// touches a single ref, and an implicit parent's move is reserved before it
+/// changes the parent, the slots it minted taken back where it is refused —
+/// so an over-budget swap leaves the diagram exactly as it found it. A
+/// half-remapped level would not merely be large: its unrewritten refs still
+/// index the source store, which miscounts silently.
 pub(crate) fn resolve_swapped_marginal_side(
     eng: &Engine,
     levels: &mut [TddLevel],
@@ -133,8 +135,7 @@ pub(crate) fn resolve_swapped_marginal_side(
     };
     let mut interners = collect_swap_mints(parent, side, &src)?;
     reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
-    rewrite_swapped_refs(parent, side, &src, &mut interners, dst_counts, dst_big);
-    Ok(())
+    rewrite_swapped_refs(eng.limits(), parent, side, &src, &mut interners, dst_counts, dst_big)
 }
 
 /// The source child's count store, read once and carried through both passes
@@ -344,17 +345,34 @@ fn remap_swap_ref(
 
 /// Rewrite every marginal-side ref of the swapped-in parent, in the order
 /// [`for_each_side_ref_mut`] visits them.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+/// implicit parent. The move mints as it plans, so the slots it minted are
+/// taken off the destination store again, and the parent is as it was.
 fn rewrite_swapped_refs(
+    lim: &Limits,
     parent: &mut TddLevel,
     side: ChildSide,
     src: &SwapSource<'_>,
     interners: &mut SwapInterners,
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<CountOverflow>,
-) {
-    for_each_side_ref_mut(parent, side, |r| {
+) -> Result<(), OperationError> {
+    let width = dst_counts.len();
+    let moved = for_each_side_ref_mut(lim, parent, side, |r| {
         *r = remap_swap_ref(*r, src, interners, dst_counts, dst_big);
     });
+    if moved.is_err() {
+        if let Some(big) = dst_big.as_mut() {
+            for slot in width..dst_counts.len() {
+                big.take(slot);
+            }
+        }
+        dst_counts.truncate(width);
+    }
+    moved
 }
 
 /// Direct contract tests for [`resolve_swapped_marginal_side`]. Integration-level

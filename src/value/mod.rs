@@ -251,10 +251,21 @@ impl CountVec {
     }
 
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at
-    /// the `dedup_fresh_store`/`become_marginal` boundary. Both halves are exactly
-    /// what `TddLevel` stores, so the handoff is a move — no re-shaping.
+    /// the `become_marginal` boundary. Both halves are exactly what `TddLevel`
+    /// stores, so the handoff is a move — no re-shaping.
     pub(crate) fn into_parts(self) -> (Vec<u128>, Option<CountOverflow>) {
         (self.fast, self.big)
+    }
+
+    /// Merge equal values onto the first slot holding each, so that no two
+    /// slots share one (invariant 10), and return where each slot's value
+    /// went, `remap[old] = new` ([`slots::dedup_fresh_store`]). The
+    /// certificate stays sound: the values kept are some of those it covered.
+    pub(crate) fn dedup(&mut self) -> Vec<u32> {
+        let (fast, big, remap) = slots::dedup_fresh_store(std::mem::take(&mut self.fast), self.big.take());
+        self.fast = fast;
+        self.big = big;
+        remap
     }
 }
 

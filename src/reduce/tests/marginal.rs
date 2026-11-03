@@ -122,7 +122,7 @@ fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
     // No count here fits a ref, so nothing inlines; the markers enable decode in
     // `model_count`.
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
 
     // Pre-minimize model count:
     //   Q1's count at v_left = Pos_leaf0 × `C_SLR` = 1 × `C_SLR`.

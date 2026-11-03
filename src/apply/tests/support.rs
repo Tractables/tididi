@@ -83,7 +83,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     let eng = &Engine::new();
     let (vtree, mut t) = xor2_tdd();
     let leaf = vtree.leaf_of(VarId(2)).unwrap();
-    crate::marginal::marginalize_leaf_inline(&mut t, leaf, &vtree);
+    crate::marginal::marginalize_leaf_inline(&crate::limits::Limits::new(), &mut t, leaf, &vtree).unwrap();
     assert!(t.levels[leaf.idx()].is_marginal());
     t.minimize().unwrap();
     assert_canonical(&t);

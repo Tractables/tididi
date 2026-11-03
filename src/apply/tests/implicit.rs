@@ -39,8 +39,8 @@ fn summing_out_a_leaf_under_an_implicit_level_stores_it_for_the_reduction() {
     let mut stored = with_stored_copy(&implicit, v);
     let vtree = std::sync::Arc::clone(&implicit.vtree);
     let x2 = vtree.children(v).0;
-    marginalize_leaf_inline(&mut implicit, x2, &vtree);
-    marginalize_leaf_inline(&mut stored, x2, &vtree);
+    marginalize_leaf_inline(&crate::limits::Limits::new(), &mut implicit, x2, &vtree).unwrap();
+    marginalize_leaf_inline(&crate::limits::Limits::new(), &mut stored, x2, &vtree).unwrap();
     assert_eq!(sorted_pairs(&implicit), sorted_pairs(&stored));
     let level = &implicit.levels[v.idx()];
     assert!(level.pairs_iter_of_idx(0).all(|p| matches!(ChildDecoder::marginal().value(p.left), ValueRef::Inline(1))));

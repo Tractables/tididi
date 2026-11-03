@@ -3,6 +3,7 @@
 use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
 use crate::diagram::marginal_ref::{INLINE_VALUE_BIT, ValueRef};
 use crate::diagram::NodeIdx;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountBox, CountOverflow, CountState, LevelState, TddLevel};
 
@@ -11,11 +12,19 @@ impl TddLevel {
     /// reference on a side with counts, look up the child's count and
     /// replace the reference with the count itself (bit 30 set) when it
     /// fits; a larger count, the overflow marker included, keeps its slot.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+    /// implicit level's side ([`for_each_side_ref_mut`]). Each side is
+    /// rewritten whole or not at all, the left one first; a side left bare
+    /// still reads the same counts.
     pub(crate) fn inline_small_refs(
         &mut self,
+        lim: &Limits,
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
-    ) {
+    ) -> Result<(), OperationError> {
         // Inline rule: a bare marginal-side slot ref is inlined when its count
         // fits an inline value (`ValueRef::inline_raw`); otherwise it stays a
         // bare slot, which is already a correct reference.
@@ -44,11 +53,12 @@ impl TddLevel {
             ValueRef::inline_raw(counts[slot]).unwrap_or(raw)
         }
         if let Some(lc) = left_counts {
-            for_each_side_ref_mut(self, ChildSide::Left, |r| *r = emit_or_tag(*r, lc));
+            for_each_side_ref_mut(lim, self, ChildSide::Left, |r| *r = emit_or_tag(*r, lc))?;
         }
         if let Some(rc) = right_counts {
-            for_each_side_ref_mut(self, ChildSide::Right, |r| *r = emit_or_tag(*r, rc));
+            for_each_side_ref_mut(lim, self, ChildSide::Right, |r| *r = emit_or_tag(*r, rc))?;
         }
+        Ok(())
     }
 
     /// Replace this level's structure with per-node counts: `counts[i]` for

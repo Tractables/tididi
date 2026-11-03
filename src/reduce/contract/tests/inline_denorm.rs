@@ -22,7 +22,7 @@ fn balanced4_fixture(
     setup(root, v_left, v_right, &mut levels);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
     tdd.seed_contract_worklist([root.0]);
     (tdd, root, v_left, v_right)
 }

@@ -248,7 +248,7 @@ fn splice(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Optio
         let (levels, _) = assembly.parts_mut();
         for (child, side) in [(dl, ChildSide::Left), (dr, ChildSide::Right)] {
             if let Some(map) = &chain[child.idx()] {
-                for_each_side_ref_mut(&mut levels[s.idx()], side, |r| *r = map[*r as usize]);
+                for_each_side_ref_mut(eng.limits(), &mut levels[s.idx()], side, |r| *r = map[*r as usize])?;
             }
         }
     }

@@ -20,14 +20,15 @@
 //! `fuse_pairs_at_parents` sweep; the contract-only plan kills no pairs and
 //! skips it.
 //!
-//! Every buffer a level's compaction grows is reserved through the engine's
-//! limits before the level is touched, so a refusal is an error at a level
-//! boundary, never an allocation failure partway through a store.
+//! Every buffer a level's compaction grows, and the move of an implicit
+//! parent's references into it, is reserved through the engine's limits
+//! before the level is touched, so a refusal is an error at a level boundary,
+//! never an allocation failure partway through a store.
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
 
-use crate::diagram::{bounded_key, Tdd, MarginalValues, MarginalStorage, WeightValue};
+use crate::diagram::{bounded_key, Tdd, MarginalValues, WeightValue};
 
 use crate::value::slots::referenced_marginal_slots;
 use crate::diagram::boundary_marginal_levels;
@@ -74,9 +75,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // synchronization, even when no store column is installed.
         let store_len = MarginalValues::read(&tdd.levels[v.idx()], tdd.weights.as_ref(), v.idx()).map_or(0, |values| values.len());
         if store_len == 0 {
-            tdd.reindex_level(v, &[], &mut [], |level, weights, referenced, remap| {
-                MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap, true)
-            })?;
+            tdd.reindex_level(lim, v, &[], &mut [], true)?;
             continue;
         }
 
@@ -107,9 +106,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // The composed remap, old slot to final slot: unreferenced slots are
         // dropped, and equal-valued referenced slots map to one output slot
         // (first occurrence wins).
-        let values_merged = tdd.reindex_level(v, referenced, &mut remap, |level, weights, referenced, remap| {
-            MarginalStorage::new(level, weights, v.idx()).compact(lim, referenced, remap, merge)
-        })?;
+        let values_merged = tdd.reindex_level(lim, v, referenced, &mut remap, merge)?;
         if values_merged > 0 {
             merged_levels.push(v.0);
         }

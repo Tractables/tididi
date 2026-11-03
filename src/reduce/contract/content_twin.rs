@@ -129,7 +129,7 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
         dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
-        redirect_parent_refs(tdd, level_v, &scratch.remap.content_target[..width], &mut live);
+        redirect_parent_refs(lim, tdd, level_v, &scratch.remap.content_target[..width], &mut live)?;
     }
 
     Ok(dups_merged)
@@ -164,17 +164,25 @@ fn remap_groups_onto_first(
 
 /// Point the output ref and the parent's refs at each duplicate's canonical
 /// node, then mark the parent for the follow-up contract and content scans.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+/// implicit parent; the duplicates are then still referenced, which costs
+/// size, not correctness.
 fn redirect_parent_refs(
+    lim: &Limits,
     tdd: &mut Tdd,
     level_v: VtreeIdx,
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
-) {
-    let Some(parent) = tdd.merge_level_nodes(level_v, remap) else { return };
+) -> Result<(), OperationError> {
+    let Some(parent) = tdd.merge_level_nodes(lim, level_v, remap)? else { return Ok(()) };
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist means the current pass catches the new twins.
     if let Some(set) = live.as_mut() {
         set.insert(parent.0);
     }
+    Ok(())
 }

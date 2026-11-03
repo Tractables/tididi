@@ -556,12 +556,13 @@ fn install_summed(
 
         fn install<K: MarginalDomain>(
             &mut self,
+            _lim: &crate::limits::Limits,
             vtree: &crate::vtree::Vtree,
             t: InternalLevel,
-            col: K::Col,
+            mut col: K::Col,
             computed: &mut [Option<K::Col>],
             store: &mut K::Store,
-        ) {
+        ) -> Result<(), OperationError> {
             let v = t.vtree_idx();
             debug_assert!(
                 self.installed.len() < self.installed.capacity(),
@@ -570,15 +571,17 @@ fn install_summed(
             self.installed.push(v);
             if v != self.c {
                 install_streamed::<K>(self.levels, vtree, t, col, computed, store);
-                return;
+                return Ok(());
             }
             crate::diagram::assert_can_make_marginal(self.levels, vtree, v);
-            let remap = K::install(&mut self.levels[v.idx()], t, col, store);
+            let remap = K::dedup(&mut col);
             debug_assert!(
                 remap.is_some(),
                 "the integer domain dedups the column it installs"
             );
+            K::install(&mut self.levels[v.idx()], t, col, store);
             free_subsumed_marginal_children(self.levels, vtree, v, K::weight_store(store));
+            Ok(())
         }
     }
 
@@ -593,7 +596,7 @@ fn install_summed(
         c,
         installed,
     };
-    cascade::<crate::value::IntFold, Summing<'_>>(&mut target, vtree, c, computed, &mut ());
+    cascade::<crate::value::IntFold, Summing<'_>>(eng.limits(), &mut target, vtree, c, computed, &mut ())?;
     debug_assert!(
         target.levels[c.idx()].is_marginal(),
         "the cascade installs the summed child"

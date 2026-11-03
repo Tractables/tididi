@@ -66,7 +66,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
     let (mut tdd, root, gp, bp, m_v, s) =
         boundary_content_twins_fixture(|m| m.become_marginal(vec![COUNT], None));
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
@@ -280,7 +280,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
-    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), &mut tdd, None).unwrap();
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");

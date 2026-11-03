@@ -4,6 +4,7 @@ use crate::diagram::WeightValue;
 use crate::diagram::{EncodedChildRef, for_each_side_ref_mut, ChildSide, LeafLabel, ChildDecoder, ValueRef, Tdd, TddLevel};
 use crate::diagram::{leaf_canon_map, leaf_column_vals, leaf_count};
 use crate::diagram::WeightStore;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Sum out a single-variable vtree leaf by inlining its fixed model count
@@ -18,26 +19,35 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 ///
 /// No-op when the parent is already marginal: the leaf's count was then folded
 /// into the parent's store, so there are no pairs left to rewrite.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+/// implicit parent's references; the leaf and its parent are then as they
+/// were.
 pub(crate) fn marginalize_leaf_inline(
+    lim: &Limits,
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
-) {
+) -> Result<(), OperationError> {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
-        return;
+        return Ok(());
     }
     // The inline range must hold the largest leaf count (One→2).
     const _: () = assert!(crate::diagram::MARGINAL_INLINE_MAX >= 2);
     if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
         tdd.rewrite_level(parent, |plevel| {
-            inline_leaf_refs_at_parent(plevel, side);
+            inline_leaf_refs_at_parent(lim, plevel, side)?;
             plevel.set_has_value_refs(side, true);
-        });
+            Ok::<(), OperationError>(())
+        })?;
     }
     // Flip the reader/apply signal; the store stays empty (all counts are inline
     // at the parent).
     tdd.levels[leaf.idx()].become_marginal(Vec::new(), None);
+    Ok(())
 }
 
 /// `leaf`'s parent and the side `leaf` sits on, when the parent's level is
@@ -54,7 +64,7 @@ fn structural_parent(levels: &[TddLevel], vtree: &Vtree, leaf: VtreeIdx) -> Opti
 /// remapping slot indices. Bit 30 (the inline tag) is disjoint from bit 31
 /// (`RESERVED_BIT` / `MULTI_BIT`), so the rewritten refs keep their inline/multi
 /// node encoding.
-fn inline_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide) {
+fn inline_leaf_refs_at_parent(lim: &Limits, plevel: &mut TddLevel, side: ChildSide) -> Result<(), OperationError> {
     let to_inline = |raw: u32| -> u32 {
         if EncodedChildRef::from_raw(raw).is_reserved() {
             return raw; // ZERO sentinel (count 0) — already self-describing
@@ -74,7 +84,7 @@ fn inline_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide) {
         };
         ValueRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
     };
-    for_each_side_ref_mut(plevel, side, |r| *r = to_inline(*r));
+    for_each_side_ref_mut(lim, plevel, side, |r| *r = to_inline(*r))
 }
 
 /// Rewrite every leaf-side ref of `plevel`'s nodes onto the canonical slot of an
@@ -89,10 +99,12 @@ fn inline_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide) {
 /// because a marginalized leaf's variable is private (no further conjunction
 /// can case-split on it). The column itself is never touched, which is what
 /// the pin (invariant 11) permits.
-fn canonicalize_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide, values: &[WeightValue]) {
+fn canonicalize_leaf_refs_at_parent(
+    lim: &Limits, plevel: &mut TddLevel, side: ChildSide, values: &[WeightValue],
+) -> Result<(), OperationError> {
     let canon = leaf_canon_map(values);
     if canon == [0, 1, 2] {
-        return;
+        return Ok(());
     }
     let to_canon = |raw: u32| -> u32 {
         if EncodedChildRef::from_raw(raw).is_reserved() {
@@ -111,7 +123,7 @@ fn canonicalize_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide, valu
         // rather than this one panicking on an index.
         canon.get(raw as usize).copied().unwrap_or(raw)
     };
-    for_each_side_ref_mut(plevel, side, |r| *r = to_canon(*r));
+    for_each_side_ref_mut(lim, plevel, side, |r| *r = to_canon(*r))
 }
 
 /// Weighted analogue of [`marginalize_leaf_inline`]: sum out a single-variable
@@ -139,17 +151,24 @@ fn canonicalize_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide, valu
 /// appending to it would desynchronise every other holder.
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
 /// decides the invariant.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+/// implicit parent's references; the leaf and its parent are then as they
+/// were.
 pub(crate) fn marginalize_leaf_weighted(
+    lim: &Limits,
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
     ws: &mut WeightStore,
-) {
+) -> Result<(), OperationError> {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
-        return;
+        return Ok(());
     }
-    let VtreeNode::Leaf { var, .. } = *vtree.node(leaf) else { return };
+    let VtreeNode::Leaf { var, .. } = *vtree.node(leaf) else { return Ok(()) };
     // Slot i ≡ `LeafLabel::from_idx(i)`, which is what makes the parent's existing
     // bare leaf-label refs valid slot refs without a rewrite. If that order ever
     // changes, every parent ref into a weight-marginal leaf silently reads the
@@ -169,12 +188,14 @@ pub(crate) fn marginalize_leaf_weighted(
     if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
         tdd.rewrite_level(parent, |plevel| {
             // Exact domain only; see the doc above.
-            if !ws.is_bounded() {
-                canonicalize_leaf_refs_at_parent(plevel, side, &values);
+            match ws.is_bounded() {
+                true => Ok(()),
+                false => canonicalize_leaf_refs_at_parent(lim, plevel, side, &values),
             }
-        });
+        })?;
     }
     crate::diagram::MarginalStorage::new(&mut tdd.levels[leaf.idx()], Some(ws), leaf.idx()).install_weights(values);
+    Ok(())
 }
 
 /// Rewrite the leaf-side refs of every leaf that one operand made
@@ -184,15 +205,22 @@ pub(crate) fn marginalize_leaf_weighted(
 /// then, and it shares the walk the marginalization pass uses, so a leaf whose
 /// column holds equal values ends up with one representative rather than two
 /// slots the contraction would have to recognize as twins.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
+/// implicit parent's references. The leaves rewritten before it stay
+/// rewritten, which every reader resolves to the same values.
 pub(crate) fn canonicalize_weighted_leaf_refs(
+    lim: &Limits,
     canon_leaves: &[usize],
     vtree: &Vtree,
     levels: &mut [TddLevel],
     ws: Option<&WeightStore>,
-) {
+) -> Result<(), OperationError> {
     // Exact domain only: a bounded domain's key equality is `f64` bit
     // equality, not value equality.
-    let Some(ws) = ws.filter(|w| !w.is_bounded()) else { return };
+    let Some(ws) = ws.filter(|w| !w.is_bounded()) else { return Ok(()) };
     // The structural operand contributes leaf-side refs that never passed
     // through the canon map, and the grid carries them into the output
     // unchanged wherever the marginal side reads `One`; moving them onto the
@@ -202,7 +230,8 @@ pub(crate) fn canonicalize_weighted_leaf_refs(
         let leaf = VtreeIdx(leaf_idx as u32);
         let VtreeNode::Leaf { var, .. } = *vtree.node(leaf) else { continue };
         if let Some((parent, side)) = structural_parent(levels, vtree, leaf) {
-            canonicalize_leaf_refs_at_parent(&mut levels[parent.idx()], side, &leaf_column_vals(ws, var));
+            canonicalize_leaf_refs_at_parent(lim, &mut levels[parent.idx()], side, &leaf_column_vals(ws, var))?;
         }
     }
+    Ok(())
 }

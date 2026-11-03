@@ -194,9 +194,9 @@ pub(crate) use primitives::{PairRange, NodeKind, slots_below};
 pub use marginal_ref::{ChildRef, ChildDecoder, ValueRef, ValueRefError};
 pub(crate) use marginal_ref::{
     boundary_marginal_levels, boundary_marginal_levels_into,
-    for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
+    finish_refs_remap, for_each_side_ref_mut, plan_refs_remap, remap_refs_into, remap_refs_into_all, ChildSide, Sides,
     MARGINAL_INLINE_MAX,
-    inline_small_marginal_refs,
+    inline_small_marginal_refs, inline_small_marginal_refs_in,
     resolve_swapped_marginal_side,
 };
 
@@ -207,7 +207,7 @@ pub use weights::{Arithmetic, WeightStore};
 
 // level
 pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Nodes, NodesIter, Pairs, StoredPairs, TddLevel, FLOOR};
-pub(crate) use level::{assert_can_make_marginal, decoded, floor, inline_pair, sort_pairs, stored_levels_forced, ChildKept, NodeChunks, NodeCursor, RangeTable, StoreRoom};
+pub(crate) use level::{assert_can_make_marginal, decoded, floor, inline_pair, sort_pairs, stored_levels_forced, ChildKept, NodeChunks, NodeCursor, PlannedMove, RangeTable, StoreRoom};
 // The invariant checks read a level's state; they compile where `test_helpers` does.
 #[cfg(any(test, debug_assertions, feature = "testing"))]
 pub(crate) use level::LevelState;

@@ -1060,7 +1060,7 @@ fn assemble_moving<'a>(
     };
     // Moving the levels out and back forgets what `tdd` is known to be: a
     // refusal takes it back with them. A copy leaves `tdd` as it is.
-    let known = match &mut tdd {
+    let mut known = match &mut tdd {
         Cow::Owned(tdd) => {
             let known = tdd.levels.known();
             placement.move_part(tdd, &plan.embedding.levels);
@@ -1075,8 +1075,8 @@ fn assemble_moving<'a>(
         }
     };
     // Undo a refused placement: a moved diagram takes its levels back.
-    let refuse = |e: OperationError, mut placement: MovePlacement<'_>, mut tdd: Cow<'a, Tdd>| {
-        if let (Cow::Owned(source), Some(known)) = (&mut tdd, known) {
+    let mut refuse = |e: OperationError, mut placement: MovePlacement<'_>, mut tdd: Cow<'a, Tdd>| {
+        if let (Cow::Owned(source), Some(known)) = (&mut tdd, known.take()) {
             placement.mirror(plan);
             placement.move_back(source, &plan.embedding.levels);
             source.levels.reinstate_known(known);
@@ -1097,15 +1097,19 @@ fn assemble_moving<'a>(
         Ok(result) => result,
         Err((e, placement)) => return Err(refuse(e, placement, tdd)),
     };
+    // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
+    // The renumbering is planned whole, so a refusal finds `result` as
+    // seated and gives a moved diagram its levels back.
+    let closed = result.levels.is_closed();
+    if !literal_tops.is_empty()
+        && let Err(e) = crate::diagram::remap_refs_into_all(eng.limits(), &mut result, &literal_tops, &[u32::MAX, 0, 1])
+    {
+        return Err((e, unseat(eng, result, tdd, plan, known.take())));
+    }
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
-    }
-    // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
-    let closed = result.levels.is_closed();
-    for &top in &literal_tops {
-        crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
     }
     if !literal_tops.is_empty() {
         result.close_marked_levels(closed);
@@ -1117,6 +1121,36 @@ fn assemble_moving<'a>(
         result.dirty.set_loose(Some(listed));
     }
     Ok(result)
+}
+
+/// Give a moved diagram back the levels a seated `result` took from it, as
+/// the refusal before the seat does: each mirrored image read the right way
+/// round again, every level back in its place, and what was known of them.
+/// The seat's close may have described a level again, which holds the same
+/// pairs. The rest of `result`'s levels go back to the pool. A copied
+/// diagram was never touched.
+fn unseat<'a>(
+    eng: &Engine,
+    mut result: Tdd,
+    mut tdd: std::borrow::Cow<'a, Tdd>,
+    plan: &Plan,
+    known: Option<crate::diagram::Known>,
+) -> std::borrow::Cow<'a, Tdd> {
+    let mut levels = std::mem::take(&mut result.levels).into_vec();
+    if let (std::borrow::Cow::Owned(source), Some(known)) = (&mut tdd, known) {
+        for (s, &mirrored) in plan.mirrored.iter().enumerate() {
+            if mirrored {
+                levels[plan.embedding.levels[s].idx()].swap_sides();
+            }
+        }
+        let source_levels = &mut source.levels[..];
+        for (from, &to) in plan.embedding.levels.iter().enumerate() {
+            std::mem::swap(&mut source_levels[from], &mut levels[to.idx()]);
+        }
+        source.levels.reinstate_known(known);
+    }
+    return_levels(eng, levels);
+    tdd
 }
 
 /// Mark mirrored images as changed and build the free and pass-through levels

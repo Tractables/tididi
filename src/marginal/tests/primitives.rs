@@ -241,7 +241,7 @@ fn leaf_inline_preserves_count() {
         let leaf = vtree
             .leaf_of(VarId(v + 1))
             .expect("the vtree carries this variable");
-        marginalize_leaf_inline(&mut t, leaf, &vtree);
+        marginalize_leaf_inline(&crate::limits::Limits::new(), &mut t, leaf, &vtree).unwrap();
         eng.reduce(&mut t, Default::default()).unwrap();
         assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
         assert_eq!(
@@ -261,12 +261,14 @@ fn all_leaves_inline_preserve_count() {
     let baseline = t.model_count().unwrap();
     for v in 0..6u32 {
         marginalize_leaf_inline(
+            &crate::limits::Limits::new(),
             &mut t,
             vtree
                 .leaf_of(VarId(v + 1))
                 .expect("the vtree carries this variable"),
             &vtree,
-        );
+        )
+        .unwrap();
     }
     eng.reduce(&mut t, Default::default()).unwrap();
     assert_eq!(t.model_count().unwrap(), baseline);

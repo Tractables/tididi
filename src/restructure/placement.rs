@@ -425,10 +425,10 @@ impl<'a> MovePlacement<'a> {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
                     crate::marginal::canonicalize_weighted_leaf_refs(
-                        &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref());
+                        self.eng.limits(), &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref())?;
                 }
             }
-            crate::diagram::inline_small_marginal_refs(&mut result, None);
+            crate::diagram::inline_small_marginal_refs(self.eng.limits(), &mut result, None)?;
         }
         if self.contract {
             self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;

@@ -41,7 +41,13 @@ pub(crate) fn marginalize_batch(
 /// target. A cut inside a fold falls before anything is installed, so either
 /// way the target is done whole or not at all, and the domain's end sweep
 /// still runs over the prefix before the error is returned, so the diagram
-/// left behind is the one a pass over that prefix would have produced.
+/// left behind is the one a pass over that prefix would have produced. A
+/// refused install ([`cascade`]) cuts the same way, past the levels the
+/// cascade installed below it, which a pass targeting them would have
+/// installed alike. A refused end sweep leaves the sides it had not reached
+/// with bare slot references, which still read the same values, and a
+/// refused leaf sum-out leaves that leaf and the leaf targets after it as
+/// they were.
 ///
 /// Leaf targets come last: the integer end sweep keys off the pass-entry
 /// snapshot, so a leaf flipped marginal earlier would have its side
@@ -75,13 +81,14 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
         }
     }
 
-    K::end_sweep(tdd, &was_marginal);
+    let swept = K::end_sweep(lim, tdd, &was_marginal);
     if let Some(e) = cut {
         return Err(e);
     }
+    swept?;
     for &d in targets {
         if vtree.node(d).is_leaf() {
-            K::sum_out_leaf(tdd, d, vtree, store);
+            K::sum_out_leaf(lim, tdd, d, vtree, store)?;
         }
     }
     Ok(())
@@ -116,6 +123,5 @@ fn marginalize_level<K: MarginalDomain>(
         Retention::All,
         |units| poll.poll(units),
     )?;
-    cascade::<K, Tdd>(tdd, vtree, d, computed, store);
-    Ok(())
+    cascade::<K, Tdd>(eng.limits(), tdd, vtree, d, computed, store)
 }

@@ -81,8 +81,8 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     F::ensure(eng, shape.left, input, computed, &marginal, Retention::All, |_| Ok(()))?;
     F::ensure(eng, shape.right, input, computed, &marginal, Retention::All, |_| Ok(()))?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
-    cascade::<F, [TddLevel]>(levels, vtree, shape.left, computed, store);
-    cascade::<F, [TddLevel]>(levels, vtree, shape.right, computed, store);
+    cascade::<F, [TddLevel]>(eng.limits(), levels, vtree, shape.left, computed, store)?;
+    cascade::<F, [TddLevel]>(eng.limits(), levels, vtree, shape.right, computed, store)?;
     let cells = shape.f.here.saturating_mul(shape.g.here);
     F::try_with_capacity(eng, F::stream_capacity(eng, cells, shape.f.here.max(shape.g.here)))
 }

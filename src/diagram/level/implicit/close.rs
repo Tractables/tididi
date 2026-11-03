@@ -6,7 +6,7 @@ use super::{
     ChildPair, ChildSide, ImplicitLevel, PairArena, STORED, TddLevel, floor, pair,
     stored_levels_forced,
 };
-use crate::diagram::EncodedNode;
+use crate::diagram::{EncodedNode, Sides};
 use crate::limits::{Limits, OperationError};
 
 impl crate::diagram::Tdd {
@@ -97,29 +97,82 @@ impl TddLevel {
         side: ChildSide,
         f: impl Fn(i64) -> i64,
     ) -> Result<(), OperationError> {
+        let planned = self.plan_move(lim, side, &f)?;
+        self.finish_move(planned, side, f);
+        Ok(())
+    }
+
+    /// What [`move_described`](Self::move_described) does with this
+    /// implicit level, decided and reserved through `lim` without changing
+    /// it, for a pass that changes the child level on `side` before it moves
+    /// the slots that name it: the description of the moved level, or the
+    /// room it is stored in. `f` must give the same slot when
+    /// [`finish_move`](Self::finish_move) applies the plan.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when a reservation is refused.
+    pub(crate) fn plan_move(
+        &self,
+        lim: &Limits,
+        side: ChildSide,
+        f: impl Fn(i64) -> i64,
+    ) -> Result<PlannedMove, OperationError> {
+        let id = |x: i64| x;
+        match side {
+            ChildSide::Left => self.plan_moves(lim, Sides { left: true, right: false }, f, id),
+            ChildSide::Right => self.plan_moves(lim, Sides { left: false, right: true }, id, f),
+        }
+    }
+
+    /// [`plan_move`](Self::plan_move) of the sides `moving` names at once,
+    /// the left one's slots through `left` and the right one's through
+    /// `right`; a side not moving is read through the identity.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when a reservation is refused.
+    pub(crate) fn plan_moves(
+        &self,
+        lim: &Limits,
+        moving: Sides<bool>,
+        left: impl Fn(i64) -> i64,
+        right: impl Fn(i64) -> i64,
+    ) -> Result<PlannedMove, OperationError> {
         let d = self
             .pairs
             .implicit()
-            .expect("move_described on a stored level");
-        let id = |x: i64| x;
-        let moved = if d.one_to_one_on(lim, side, &f)? {
-            match side {
-                ChildSide::Left => d.pruned(lim, d.nodes, Some, || 0..d.nodes, &f, id)?,
-                ChildSide::Right => d.pruned(lim, d.nodes, Some, || 0..d.nodes, id, &f)?,
-            }
-        } else {
-            None
+            .expect("plan_move on a stored level");
+        let one = (!moving.left || d.one_to_one_on(lim, ChildSide::Left, &left)?)
+            && (!moving.right || d.one_to_one_on(lim, ChildSide::Right, &right)?);
+        let moved = match one {
+            true => d.pruned(lim, d.nodes, Some, || 0..d.nodes, &left, &right)?,
+            false => None,
         };
-        if let Some(moved) = moved {
-            self.pairs.redescribe(moved);
-            return Ok(());
-        }
-        let room = self.store_room(lim)?;
+        Ok(match moved {
+            Some(moved) => PlannedMove::Described(moved),
+            None => PlannedMove::Stored(self.store_room(lim)?),
+        })
+    }
+
+    /// Move the child slots on `side` through `f` as [`plan_move`](Self::plan_move)
+    /// planned it, with nothing left to reserve.
+    pub(crate) fn finish_move(&mut self, planned: PlannedMove, side: ChildSide, f: impl Fn(i64) -> i64) {
+        let id = |x: i64| x;
         match side {
-            ChildSide::Left => self.store_moved(room, |_| true, f, id),
-            ChildSide::Right => self.store_moved(room, |_| true, id, f),
+            ChildSide::Left => self.finish_moves(planned, f, id),
+            ChildSide::Right => self.finish_moves(planned, id, f),
         }
-        Ok(())
+    }
+
+    /// Move the child slots through `left` and `right` as
+    /// [`plan_moves`](Self::plan_moves) planned it, with nothing left to
+    /// reserve.
+    pub(crate) fn finish_moves(&mut self, planned: PlannedMove, left: impl Fn(i64) -> i64, right: impl Fn(i64) -> i64) {
+        match planned {
+            PlannedMove::Described(moved) => self.pairs.redescribe(moved),
+            PlannedMove::Stored(room) => self.store_moved(room, |_| true, left, right),
+        }
     }
 
     /// Close a stored level: hold it as the description of its pairs when it
@@ -523,4 +576,14 @@ impl TddLevel {
 pub(crate) struct StoreRoom {
     nodes: Vec<EncodedNode>,
     pairs: Vec<ChildPair>,
+}
+
+/// What moving an implicit level's child slots on a side leaves of it,
+/// decided before the level changes ([`TddLevel::plan_move`]).
+#[derive(Debug)]
+pub(crate) enum PlannedMove {
+    /// The moved pairs are affine: the level is held as this description.
+    Described(ImplicitLevel),
+    /// They are not: the level is stored moved, in this room.
+    Stored(StoreRoom),
 }
