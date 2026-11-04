@@ -100,6 +100,9 @@ impl EmbeddingPlan {
         &self.layout.embedding
     }
 
+    /// The placement itself, for the skip form's embed.
+    pub(crate) fn layout(&self) -> &Plan { &self.layout }
+
     /// Place a circuit using this plan, leaving the source unchanged.
     ///
     /// Runs on the destination's context. A different source vtree allocation
@@ -665,7 +668,7 @@ impl Plan {
     ///
     /// The buffers come from the engine's [`PlanPool`], and a refused
     /// build parks them back there.
-    pub(super) fn build(
+    pub(crate) fn build(
         eng: &Engine,
         source: &Vtree,
         into: &Vtree,

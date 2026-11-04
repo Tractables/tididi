@@ -33,6 +33,29 @@ pub(crate) fn amortized_capacity<T>(capacity: usize, additional: usize) -> usize
     capacity.saturating_mul(2).max(additional).max(least)
 }
 
+/// After a refused doubling of `v`, room for a quarter more than its length,
+/// or an eighth, and so on down to a sixteenth or `additional` if that is
+/// more. Under a limit on the address space, a buffer that grows holds its
+/// old block and its new one at once while the one is copied to the other,
+/// and the allocator keeps the address space it has freed for later
+/// requests: there a smaller growth may fit where a doubling does not. The
+/// buffers that reach this are a large share of the limit, so the copies a
+/// smaller growth adds cost little next to failing; the sixteenth bounds
+/// them, where growing by what one push needs would copy at every push.
+#[cold]
+#[inline(never)]
+pub(crate) fn grow_less<T>(v: &mut Vec<T>, additional: usize) -> Result<(), std::collections::TryReserveError> {
+    let least = additional.max(v.len() / 16);
+    let mut step = v.len() / 4;
+    while step > least {
+        if v.try_reserve_exact(step).is_ok() {
+            return Ok(());
+        }
+        step /= 2;
+    }
+    v.try_reserve_exact(least)
+}
+
 impl Limits {
     /// Remaining soft-budget headroom: `budget − in flight`, saturating, or
     /// `None` when no soft budget is armed. A single reserve of at most this
@@ -173,8 +196,9 @@ impl Limits {
     /// `EXACT` picks the `Vec` method and, with it, the size the preflight and
     /// the refusal report: exactly `additional` for the exact form, and the
     /// doubled estimate `capacity().max(additional)` for the doubling form,
-    /// whose actual grab is up to twice the current capacity. `CHARGE` off
-    /// leaves the growth uncharged, for room the meters already count.
+    /// whose actual grab is up to twice the current capacity. A refused
+    /// doubling asks for less before it is refused ([`grow_less`]). `CHARGE`
+    /// off leaves the growth uncharged, for room the meters already count.
     ///
     #[inline(always)]
     fn reserve_impl<T, const EXACT: bool, const CHARGE: bool>(
@@ -207,6 +231,10 @@ impl Limits {
             v.try_reserve_exact(additional)
         } else {
             v.try_reserve(additional)
+        };
+        let grown = match grown {
+            Err(_) if !EXACT => grow_less(v, additional),
+            grown => grown,
         };
         grown.map_err(|_| self.note_refused(grab_bytes))?;
         if !CHARGE {
@@ -352,6 +380,25 @@ impl Limits {
     #[inline(never)]
     fn push_room<T>(&self, v: &mut Vec<T>) -> Result<(), OperationError> {
         self.reserve(v, 1)
+    }
+
+    /// [`try_resize`](Self::try_resize) for a buffer grown a step at a
+    /// time: the capacity grows geometrically, so a run of steps copies the
+    /// buffer a logarithmic number of times rather than once per step.
+    #[inline]
+    pub(crate) fn try_resize_amortized<T: Clone>(
+        &self,
+        v: &mut Vec<T>,
+        new_len: usize,
+        val: T,
+    ) -> Result<(), OperationError> {
+        if v.len() >= new_len {
+            return Ok(());
+        }
+        let additional = new_len - v.len();
+        self.reserve(v, additional)?;
+        v.resize(new_len, val);
+        Ok(())
     }
 
     /// Fallible analogue of `Vec::resize` for grow-only callers. No-op when
