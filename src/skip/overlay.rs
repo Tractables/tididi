@@ -629,15 +629,12 @@ impl Build {
             if self.width > 0 {
                 out.levels.share(t, &p.levels, lim)?;
                 out.active.push(self.t);
-                super::trace::count(0, src.pairs.len() as u64);
-                super::trace::count(2, 1);
             }
             return Ok(false);
         }
         if added == 0 && self.slot.iter().all(|&s| s == DEAD) {
             // Every slot of `P` died and nothing was added: the level holds
             // no node, and no pair names a dead slot, so none is built.
-            super::trace::count(1, self.width as u64);
             return Ok(true);
         }
         let node = |j: usize| -> &[(Ref, Ref)] {
@@ -653,23 +650,16 @@ impl Build {
         lim.reserve_exact(&mut lvl.start, w + added + 1)?;
         lim.reserve_exact(&mut lvl.pairs, total)?;
         lvl.start.push(0);
-        let mut kept = 0;
         for j in 0..w {
             lvl.pairs.extend_from_slice(node(j));
             lvl.start.push(lvl.pairs.len() as u32);
-            if self.slot.get(j).is_none_or(|&s| s == KEEP) {
-                kept += src.node(j as u32).len();
-            }
         }
         if added > 0 {
             let base = lvl.pairs.len() as u32;
             lvl.pairs.extend_from_slice(&self.app.pairs);
             lvl.start.extend(self.app.start[1..].iter().map(|&s| s + base));
         }
-        super::trace::count(0, kept as u64);
         let dead = self.slot.iter().filter(|&&s| s == DEAD).count();
-        super::trace::count(1, dead as u64);
-        super::trace::count(3, self.rew.width() as u64);
         out.levels.set(t, lvl);
         out.active.push(self.t);
         Ok(dead > 0)
@@ -773,91 +763,7 @@ pub(crate) fn overlay(op: Combine, f: &SkipForm, g: &SkipForm, lim: &Limits) -> 
         return Ok(out);
     }
     let raw = overlay_raw(op, f, g, lim)?;
-    if !super::trace::on() {
-        return contract_in(raw, None, lim);
-    }
-    traced(op, f, g, raw, lim)
-}
-
-/// The contraction after an overlay under `TIDIDI_SKIP_TRACE` (experiment):
-/// one line per call on standard error with the operands' sizes, the pairs
-/// of the operand with more active levels inside the other's cone, the raw
-/// result's pairs kept from the larger operand, its dead slots, shared
-/// levels and rewritten slots, and the time of each phase (0 to 3 the raw
-/// overlay, 7 the contraction).
-fn traced(op: Combine, f: &SkipForm, g: &SkipForm, raw: SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
-    let sh = &*f.shape;
-    let pairs = |s: &SkipForm, cone: Option<&[bool]>| -> usize {
-        s.active.iter().filter(|&&t| cone.is_none_or(|c| c[t as usize])).map(|&t| s.levels[t as usize].pairs.len()).sum()
-    };
-    let (big, small) = if f.active.len() < g.active.len() { (g, f) } else { (f, g) };
-    let cone = super::conjoin::cone_of(sh, small, lim)?;
-    let (fp, gp, bc, rp) = (pairs(f, None), pairs(g, None), pairs(big, Some(&cone)), pairs(&raw, None));
-    let lv = cone.iter().filter(|&&c| c).count();
-    lim.discard(cone);
-    let mut clock = super::trace::Clock::start();
-    let res = contract_in(raw, None, lim);
-    clock.lap(7);
-    let ph = super::trace::take();
-    let cn = super::trace::take_counts();
-    if let Ok(r) = &res {
-        let (same, _) = copied(r, big);
-        eprintln!(
-            "SKIPTRACE {} f {fp} g {gp} big {} bigcone {bc} raw {rp} out {} copied {same} conelv {lv} kept {} dead {} shared {} rewritten {} us {}",
-            if op == Combine::Or { "or" } else { "andnot" },
-            if std::ptr::eq(big, f) { "f" } else { "g" },
-            pairs(r, None),
-            cn[0],
-            cn[1],
-            cn[2],
-            cn[3],
-            ph.iter().map(|n| (n / 1000).to_string()).collect::<Vec<_>>().join(" ")
-        );
-    }
-    res
-}
-
-/// Experiment (`TIDIDI_SKIP_TRACE`): the pairs of `r` in nodes equal to
-/// nodes of `big`, their sides equal too, and all of `r`'s pairs.
-pub(super) fn copied(r: &SkipForm, big: &SkipForm) -> (usize, usize) {
-    let sh = &*r.shape;
-    let mut lv: Vec<u32> = r.active.clone();
-    lv.sort_unstable_by_key(|&t| Reverse(sh.pre[t as usize]));
-    let mut copy: FxHashMap<Ref, Ref> = FxHashMap::default();
-    let map = |copy: &FxHashMap<Ref, Ref>, x: Ref| if sh.is_leaf(vt(x)) { Some(x) } else { copy.get(&x).copied() };
-    let (mut same, mut all) = (0, 0);
-    let mut buf = Vec::new();
-    for &t in &lv {
-        let bl = &big.levels[t as usize];
-        let mut index: FxHashMap<Vec<(Ref, Ref)>, u32> = FxHashMap::default();
-        for j in 0..bl.width() {
-            let mut v = bl.node(j as u32).to_vec();
-            v.sort_unstable();
-            index.insert(v, j as u32);
-        }
-        let rl = &r.levels[t as usize];
-        for i in 0..rl.width() {
-            let node = rl.node(i as u32);
-            all += node.len();
-            buf.clear();
-            let mapped = node.iter().all(|&(a, b)| match (map(&copy, a), map(&copy, b)) {
-                (Some(a), Some(b)) => {
-                    buf.push((a, b));
-                    true
-                }
-                _ => false,
-            });
-            if !mapped {
-                continue;
-            }
-            buf.sort_unstable();
-            if let Some(&j) = index.get(&buf) {
-                copy.insert(mk(t, i as u32), mk(t, j));
-                same += node.len();
-            }
-        }
-    }
-    (same, all)
+    contract_in(raw, None, lim)
 }
 
 /// The pairs a skip form holds.
@@ -873,7 +779,6 @@ pub(crate) fn overlay_raw(op: Combine, f: &SkipForm, g: &SkipForm, lim: &Limits)
     debug_assert!(!f.is_zero() && !g.is_zero() && !f.shape.is_leaf(f.shape.root));
     let shape = f.shape.clone();
     let sh = &*shape;
-    let mut clock = super::trace::Clock::start();
     let big_is_f = pair_count(f) >= pair_count(g);
     let (p, s) = if big_is_f { (f, g) } else { (g, f) };
     let rest = op == Combine::Or || big_is_f;
@@ -890,10 +795,8 @@ pub(crate) fn overlay_raw(op: Combine, f: &SkipForm, g: &SkipForm, lim: &Limits)
     let levels = w.levels(None)?;
     let mut out = SkipForm::zero(shape.clone());
     let mut dead: Vec<u32> = Vec::new();
-    clock.lap(0);
     w.run(&levels, &mut out, &mut dead)?;
     lim.discard(levels);
-    clock.lap(1);
     out.out = match (op, big_is_f) {
         (Combine::AndNot, true) => w.big.pieces(p.out).iter().find(|x| x.1 == ABSENT).map_or(ZREF, |x| x.0),
         (Combine::AndNot, false) => w.small.res(s.out),
@@ -945,7 +848,6 @@ pub(crate) fn overlay_raw(op: Combine, f: &SkipForm, g: &SkipForm, lim: &Limits)
     w.small.discard(lim);
     w.sc.discard(lim);
     w.build.discard(lim);
-    clock.lap(2);
     // A disjunction reaches every piece and residue but the tops its union
     // took in, so only dead slots and those tops go, and the levels whose
     // nodes name them or a node they renumber: those above. A difference
@@ -973,7 +875,6 @@ pub(crate) fn overlay_raw(op: Combine, f: &SkipForm, g: &SkipForm, lim: &Limits)
     };
     lim.discard(dead);
     out.collect_in(cand, lim)?;
-    clock.lap(3);
     Ok(out)
 }
 
@@ -1078,7 +979,6 @@ pub(crate) fn conjoin(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipF
     debug_assert!(!f.is_zero() && !g.is_zero() && !f.shape.is_leaf(f.shape.root));
     let shape = f.shape.clone();
     let sh = &*shape;
-    let mut clock = super::trace::Clock::start();
     let (p, s) = if g.active.len() > f.active.len() { (g, f) } else { (f, g) };
     let mut out = SkipForm::zero(shape.clone());
     let mut cone = super::conjoin::cone_of(sh, s, lim)?;
@@ -1100,7 +1000,6 @@ pub(crate) fn conjoin(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipF
         sc: Scratch::default(),
         lim,
     };
-    clock.lap(0);
     let mut mark = filled(lim, w.big.ids.len, 0u8)?;
     let mut boundary: Vec<Ref> = Vec::new();
     w.seed(p.out, sh.root, &cone, &mut mark, &mut boundary)?;
@@ -1113,10 +1012,8 @@ pub(crate) fn conjoin(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipF
             }
         }
     }
-    clock.lap(1);
     let levels = w.levels(Some(&cone))?;
     let mut dead: Vec<u32> = Vec::new();
-    clock.lap(2);
     w.run(&levels, &mut out, &mut dead)?;
     lim.discard(levels);
     lim.discard(dead);
@@ -1126,19 +1023,16 @@ pub(crate) fn conjoin(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(SkipF
     small.discard(lim);
     sc.discard(lim);
     build.discard(lim);
-    clock.lap(3);
     // A conjunction drops cells and keeps one piece of the output: unread
     // nodes may be at any level of the cone.
     let cand = out.active.clone();
     out.collect_in(cand, lim)?;
-    clock.lap(4);
     if out.out != ZREF {
-        super::conjoin::share_outside(sh, p, &mut out, &mut cone, &boundary, &mut mark, |x| ids.id(x), &mut clock, lim)?;
+        super::conjoin::share_outside(sh, p, &mut out, &mut cone, &boundary, &mut mark, |x| ids.id(x), lim)?;
     }
     lim.discard(ids.base);
     lim.discard(boundary);
     lim.discard(mark);
-    clock.lap(5);
     Ok((out, cone))
 }
 

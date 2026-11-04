@@ -17,11 +17,9 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::{discard_nested, filled, ix, merge_cells, mk, normalize, normalize_sum, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
-use crate::apply::conjoin::{apply_and_hooked, FNodeIdx, GNodeIdx, LevelHook, ProductEntry, ProductNodeIdx};
+use super::{discard_nested, filled, ix, mk, normalize, normalize_sum, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, ZREF};
 use crate::limits::Limits;
-use crate::vtree::{Vtree, VtreeIdx};
-use crate::{Engine, OperationError};
+use crate::OperationError;
 
 /// Where a product's node is.
 pub(crate) enum Land {
@@ -65,24 +63,6 @@ fn leaf_and(v: u32, a: u32, b: u32) -> Ref {
         (POS, POS) => mk(v, POS),
         (NEG, NEG) => mk(v, NEG),
         _ => ZREF,
-    }
-}
-
-/// Census of the conjunction's pair combinations (experiment, under
-/// `TIDIDI_SKIP_CENSUS`): at plain levels, and at run levels by whether the
-/// two anchor-side references are stored at the anchor (both, one, neither).
-static CENSUS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
-
-fn census_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TIDIDI_SKIP_CENSUS").is_some())
-}
-
-#[inline]
-fn census(run: bool, x_at: bool, y_at: bool) {
-    if census_on() {
-        let k = if !run { 0 } else { 1 + usize::from(!x_at) + usize::from(!y_at) };
-        CENSUS[k].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -756,16 +736,13 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     if !sh.is_weighted() {
         return super::overlay::conjoin(f, g, lim);
     }
-    let mut clock = super::trace::Clock::start();
     let ng = Numbered::of(g, lim)?;
     // Outside `g`'s cone `g` is `true`: there the result is `f`'s own levels,
     // and a product of a reference of `f` with `true` is that reference.
     let mut cone = cone_of(sh, g, lim)?;
     let nf = Numbered::of_cone(f, &cone, lim)?;
     let free = |x: Ref| !cone[vt(x) as usize];
-    clock.lap(0);
     let Outside { seeds, boundary, mark: mut mark_out } = outside(sh, f, &nf, &ng, &cone, lim)?;
-    clock.lap(1);
     // The levels in the cone products can land on, children first.
     let mut todo: Vec<u32> = Vec::new();
     lim.reserve(&mut todo, f.active.len() + g.active.len() + nf.leaves.len() + ng.leaves.len())?;
@@ -783,7 +760,6 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     let mut next_seed = 0;
     let mut st = AndSt::new(&nf, &ng, lim)?;
     let cx = AndCx { sh, f, g, nf: &nf, ng: &ng, cone: &cone, lim };
-    clock.lap(2);
     for &u in &todo {
         // The products with `true` the levels below would have listed.
         while next_seed < seeds.len() && seeds[next_seed].0 > sh.pre[u as usize] {
@@ -793,9 +769,8 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
             st.pg.push(gt, (x, x, nf.top_pre(sh, fx)), lim)?;
             next_seed += 1;
         }
-        and_level(&cx, &mut st, &mut out, u, true)?;
+        and_level(&cx, &mut st, &mut out, u)?;
     }
-    clock.lap(3);
     out.out = match land_pair(sh, f.out, g.out) {
         Land::Done(r) => r,
         Land::At(_) if is_one(sh, g.out) && free(f.out) => f.out,
@@ -806,22 +781,16 @@ pub(crate) fn and_scoped(f: &SkipForm, g: &SkipForm, lim: &Limits) -> Result<(Sk
     st.discard(lim);
     ng.discard(lim);
     out.collect_pushed(lim)?;
-    clock.lap(4);
     if out.out == ZREF {
         lim.discard(boundary);
         lim.discard(mark_out);
         nf.discard(lim);
         return Ok((out, cone));
     }
-    if census_on() {
-        let c: Vec<u64> = CENSUS.iter().map(|a| a.load(std::sync::atomic::Ordering::Relaxed)).collect();
-        eprintln!("SKIPCENSUS plain {} run_both {} run_one {} run_none {}", c[0], c[1], c[2], c[3]);
-    }
-    share_outside(sh, f, &mut out, &mut cone, &boundary, &mut mark_out, |x| nf.id(x), &mut clock, lim)?;
+    share_outside(sh, f, &mut out, &mut cone, &boundary, &mut mark_out, |x| nf.id(x), lim)?;
     lim.discard(boundary);
     lim.discard(mark_out);
     nf.discard(lim);
-    clock.lap(5);
     Ok((out, cone))
 }
 
@@ -840,7 +809,6 @@ pub(super) fn share_outside(
     boundary: &[Ref],
     mark: &mut [u8],
     id: impl Fn(Ref) -> usize,
-    clock: &mut super::trace::Clock,
     lim: &Limits,
 ) -> Result<(), OperationError> {
     let f_outside = boundary.len();
@@ -899,9 +867,7 @@ pub(super) fn share_outside(
             }
             lim.discard(dropped_roots);
             let cand: Vec<u32> = out.active.iter().copied().filter(|&t| dirty[t as usize]).collect();
-            clock.lap(5);
             out.collect_in(cand, lim)?;
-            clock.lap(6);
             for &t in &f.active {
                 if !cone[t as usize] && dirty[t as usize] && out.levels[t as usize].width() < f.levels[t as usize].width() {
                     let mut u = t;
@@ -915,153 +881,6 @@ pub(super) fn share_outside(
         }
     }
     Ok(())
-}
-
-/// The levels a hybrid conjunction ([`and_hybrid`]) builds in skip form:
-/// those that are skippable or have a skippable child.
-pub(super) fn hooked_levels(sh: &Shape) -> Vec<bool> {
-    // A level skips a node only against a leaf child (`normalize`).
-    let skips = |c: u32| {
-        let (l, r) = sh.kids[c as usize];
-        !sh.is_leaf(c) && sh.skip[c as usize] && (sh.is_leaf(l) || sh.is_leaf(r))
-    };
-    (0..sh.num_nodes() as u32)
-        .map(|t| {
-            let (l, r) = sh.kids[t as usize];
-            !sh.is_leaf(t) && (skips(t) || skips(l) || skips(r))
-        })
-        .collect()
-}
-
-/// Whether hybrid conjunctions are asked for (`TIDIDI_SKIP_HYBRID`).
-pub(crate) fn hybrid_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TIDIDI_SKIP_HYBRID").is_some())
-}
-
-/// [`and_scoped`] with the plain levels, where neither child is skippable,
-/// built by the stored driver's routes, and the others by [`and_level`]
-/// ([`apply_and_hooked`]). The plain levels of both operands go to stored
-/// diagrams ([`super::convert::stored_plain`]); the products of a plain
-/// level read by a level built in skip form go into the skip engine's
-/// lists, and those of a level built in skip form read by a plain one are
-/// published as its product list; the plain levels the driver built come
-/// back in skip form, node for node. Every level is in the cone returned.
-/// [`and_scoped`] itself where no level is plain, under weights, or where
-/// an operand's output is not a node of the root.
-///
-/// # Errors
-///
-/// The refusals of either engine.
-pub(crate) fn and_hybrid(f: &SkipForm, g: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<(SkipForm, Vec<bool>), OperationError> {
-    let lim = eng.limits();
-    let shape = Arc::clone(&f.shape);
-    let sh = &*shape;
-    let hooked = hooked_levels(sh);
-    let plain = |t: u32| !sh.is_leaf(t) && !hooked[t as usize];
-    let rooted = |x: Ref| x != ZREF && !sh.is_leaf(sh.root) && vt(x) == sh.root;
-    let filled_plain = |s: &SkipForm| sh.bottomup.iter().all(|&t| !plain(t) || s.levels[t as usize].width() > 0);
-    if !sh.bottomup.iter().any(|&t| plain(t))
-        || sh.weighted.iter().any(|&w| w)
-        || !rooted(f.out)
-        || !rooted(g.out)
-        || !filled_plain(f)
-        || !filled_plain(g)
-    {
-        return and_scoped(f, g, lim);
-    }
-    let mut sf = super::convert::stored_plain(f, eng, vtree, &hooked)?;
-    let mut sg = super::convert::stored_plain(g, eng, vtree, &hooked)?;
-    let cone = filled(lim, sh.num_nodes(), true)?;
-    let ng = Numbered::of(g, lim)?;
-    let nf = Numbered::of_cone(f, &cone, lim)?;
-    let cx = AndCx { sh, f, g, nf: &nf, ng: &ng, cone: &cone, lim };
-    let mut hook = Hybrid { cx: &cx, st: AndSt::new(&nf, &ng, lim)?, out: SkipForm::zero(Arc::clone(&shape)), hooked: &hooked };
-    let (levels, root) = apply_and_hooked(eng, &mut sf, &mut sg, &mut hook)?;
-    let Hybrid { st, mut out, .. } = hook;
-    out.out = match root {
-        Some(p) => p.map_or(ZREF, |p| mk(sh.root, p)),
-        None => st.product(&nf, f.out, g.out).unwrap_or(ZREF),
-    };
-    st.discard(lim);
-    nf.discard(lim);
-    ng.discard(lim);
-    // The plain levels in skip form, node for node, so that the references
-    // the skip engine made into them stand.
-    let mut buf: Vec<(Ref, Ref)> = Vec::new();
-    for &t in sh.bottomup.iter().filter(|&&t| plain(t)) {
-        let (l, r) = sh.kids[t as usize];
-        let level = &levels[t as usize];
-        debug_assert_eq!(level.slot_count(), level.node_count(), "the driver leaves no hole in a level it built");
-        for i in 0..level.slot_count() {
-            buf.clear();
-            for pair in level.pairs_iter_of_idx(i) {
-                lim.try_push(&mut buf, (mk(l, pair.left.raw()), mk(r, pair.right.raw())))?;
-            }
-            debug_assert!(!buf.is_empty());
-            if buf.len() > 1 {
-                merge_cells(sh, t, &mut buf);
-            }
-            let k = out.push_node(t, &buf, lim)?;
-            debug_assert_eq!(k as usize, i);
-        }
-    }
-    lim.discard(buf);
-    drop(levels);
-    out.collect_pushed(lim)?;
-    Ok((out, cone))
-}
-
-/// The skip engine's side of a hybrid conjunction: it builds the hooked
-/// levels with [`and_level`].
-struct Hybrid<'a, 'c> {
-    cx: &'c AndCx<'a>,
-    st: AndSt,
-    out: SkipForm,
-    hooked: &'c [bool],
-}
-
-impl LevelHook for Hybrid<'_, '_> {
-    fn takes(&self, t: VtreeIdx) -> bool {
-        self.hooked[t.idx()]
-    }
-
-    fn build(&mut self, t: VtreeIdx, kids: [&[ProductEntry]; 2], out: &mut Vec<ProductEntry>) -> Result<usize, OperationError> {
-        let AndCx { sh, nf, ng, lim, .. } = *self.cx;
-        let u = t.0;
-        let (l, r) = sh.kids[u as usize];
-        // The products of a plain child, as the skip engine lists its own.
-        for (c, list) in [l, r].into_iter().zip(kids) {
-            if list.is_empty() {
-                continue;
-            }
-            let lookup = sh.looked_up[c as usize];
-            if lookup {
-                lim.reserve_map(&mut self.st.live, list.len())?;
-            }
-            for e in list {
-                let (a, b, res) = (mk(c, e.f_idx.0), mk(c, e.g_idx.0), mk(c, e.prod_idx.0));
-                let (fa, gb) = (nf.id(a), ng.id(b));
-                self.st.pf.push(fa, (b, res, ng.top_pre(sh, gb)), lim)?;
-                self.st.pg.push(gb, (a, res, nf.top_pre(sh, fa)), lim)?;
-                if lookup {
-                    self.st.live.insert(((fa as u64) << 32) | gb as u64, res);
-                }
-            }
-        }
-        let p = sh.parent[u as usize];
-        // A plain parent reads the level's products from the list built here.
-        and_level(self.cx, &mut self.st, &mut self.out, u, p == NONE || self.hooked[p as usize])?;
-        if p != NONE && !self.hooked[p as usize] {
-            // A level that is not skippable stores each of its products.
-            lim.reserve(out, self.st.made.len())?;
-            for &(a, b, res) in &self.st.made {
-                debug_assert!(vt(a) == u && vt(b) == u && vt(res) == u, "a product at {u} is a node there");
-                out.push(ProductEntry { f_idx: FNodeIdx(ix(a)), g_idx: GNodeIdx(ix(b)), prod_idx: ProductNodeIdx(ix(res)) });
-            }
-        }
-        Ok(self.out.levels[u as usize].width())
-    }
 }
 
 /// The conjunction's immutable context at every level.
@@ -1185,9 +1004,8 @@ impl AndSt {
 }
 
 /// Build the conjunction's level `u` into `out` and list its products, the
-/// levels below it done; `parent_reads`: whether this engine builds `u`'s
-/// parent, the one reader of the products held by node ([`Fresh`]).
-fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_reads: bool) -> Result<(), OperationError> {
+/// levels below it done.
+fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32) -> Result<(), OperationError> {
     let AndCx { sh, f, g, nf, ng, cone, lim } = *cx;
     let free = |x: Ref| !cone[vt(x) as usize];
     let key = |a: usize, b: usize| ((a as u64) << 32) | b as u64;
@@ -1230,7 +1048,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                                 cell = key_of(&mut *keys, a, b, lim)?;
                             }
                             combo(&mut *keys, &mut *combos, cell, (x, y), lim)?;
-                            census(false, true, true);
                         }
                     }
                 }
@@ -1246,7 +1063,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
         let split = |p: (Ref, Ref)| if right { (p.1, p.0) } else { (p.0, p.1) };
         let join = |anchor: Ref, other: Ref| if right { (other, anchor) } else { (anchor, other) };
         let skips = sh.is_leaf(co);
-        let run = sh.skip[cs as usize];
         let at = |r: Ref| vt(r) == cs;
         let (pcs, pco) = (sh.pre[cs as usize], sh.pre[co as usize]);
         // The children's products by node.
@@ -1429,7 +1245,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                             while e != NIL {
                                 let (j, next) = by_other.cent[e as usize];
                                 e = next;
-                                census(run, at(x), at(y));
                                 push((gbase + j) as usize, mk(u, j), join(res, o), &mut *keys, &mut *combos)?;
                             }
                         }
@@ -1452,7 +1267,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                             e = next;
                             let (st, res) = ymark[ng.id(y)];
                             if st == pstamp {
-                                census(run, at(x), at(y));
                                 push((gbase + j) as usize, mk(u, j), join(res, o), &mut *keys, &mut *combos)?;
                             }
                         }
@@ -1466,7 +1280,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                             let o = other(live, omark, listed.then_some(qstamp), oa, ob);
                             debug_assert_eq!(o, other(live, omark, None, oa, ob));
                             if o != ZREF {
-                                census(run, at(x), at(y));
                                 push((gbase + j) as usize, mk(u, j), join(res, o), &mut *keys, &mut *combos)?;
                             }
                         }
@@ -1475,7 +1288,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                         // `y` skips through this level, `true` on the
                         // other side.
                         debug_assert!(ng.above(sh, y, u));
-                        census(run, at(x), at(y));
                         push(gy, y, join(res, oa), &mut *keys, &mut *combos)?;
                     }
                 }
@@ -1510,7 +1322,6 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
                             *c = (cstamp, key_of(&mut *keys, x, b, lim)?);
                         }
                         combo(&mut *keys, &mut *combos, c.1, join(res, ob), lim)?;
-                        census(run, at(x), at(y));
                     }
                 }
                 work += emit(sh, u, &mut lvl, &mut *keys, &mut *combos, &mut *buf, &mut *made, lim)?;
@@ -1537,16 +1348,14 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
     // `g`'s reference too where `f`'s is read above this level, the one way
     // a level above reads it by `g`'s.
     let (w, o0) = (fl.width(), fresh.off.len());
-    if parent_reads {
-        lim.try_resize_amortized(&mut fresh.off, o0 + w + 1, 0)?;
-    }
+    lim.try_resize_amortized(&mut fresh.off, o0 + w + 1, 0)?;
     let e0 = fresh.ent.len() as u32;
     let mut next = 0usize;
     for &(a, b, res) in made.iter() {
         let (fa, gb) = (nf.id(a), ng.id(b));
         let (ta, tb) = (nf.top_pre(sh, fa), ng.top_pre(sh, gb));
         debug_assert!(ta <= pu && tb <= pu, "a product is read where it is built");
-        if parent_reads && vt(a) == u && (ta == pu || tb == pu) {
+        if vt(a) == u && (ta == pu || tb == pu) {
             let i = ix(a) as usize;
             debug_assert!(next <= i + 1, "a level's products are built node by node");
             while next <= i {
@@ -1564,16 +1373,14 @@ fn and_level(cx: &AndCx<'_>, st: &mut AndSt, out: &mut SkipForm, u: u32, parent_
             live.insert(key(fa, gb), res);
         }
     }
-    if parent_reads {
-        if fresh.ent.len() as u32 == e0 {
-            fresh.off.truncate(o0);
-        } else {
-            while next <= w {
-                fresh.off[o0 + next] = fresh.ent.len() as u32;
-                next += 1;
-            }
-            lim.try_push(&mut fresh.blocks, (u, o0 as u32, false))?;
+    if fresh.ent.len() as u32 == e0 {
+        fresh.off.truncate(o0);
+    } else {
+        while next <= w {
+            fresh.off[o0 + next] = fresh.ent.len() as u32;
+            next += 1;
         }
+        lim.try_push(&mut fresh.blocks, (u, o0 as u32, false))?;
     }
     st.pstamp = pstamp;
     st.qstamp = qstamp;

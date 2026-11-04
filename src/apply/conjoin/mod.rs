@@ -94,8 +94,6 @@ use output::*;
 mod quantify;
 mod drive;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
-pub(crate) use drive::{apply_and_hooked, LevelHook};
-pub(crate) use products::{FNodeIdx, GNodeIdx, ProductEntry, ProductNodeIdx};
 use drive::Sweep;
 mod filter;
 

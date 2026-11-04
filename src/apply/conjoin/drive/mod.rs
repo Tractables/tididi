@@ -77,26 +77,6 @@ pub(super) struct Sweep<'a, 'filter> {
     /// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
     /// a level an identity fast path moves untouched keeps its column.
     pub(super) kept: Operands<Option<LevelCounts>>,
-    /// The builder of the levels the sweep's routes do not build
-    /// ([`apply_and_hooked`]).
-    pub(super) hook: Option<&'a mut dyn LevelHook>,
-}
-
-/// A builder of some of a conjunction's levels in place of the sweep's
-/// routes ([`apply_and_hooked`]).
-pub(crate) trait LevelHook {
-    /// Whether the hook builds level `t`.
-    fn takes(&self, t: VtreeIdx) -> bool;
-    /// Build level `t`, its subtree's levels built. `kids` holds the
-    /// products `(f node, g node, product node)` of each child the sweep
-    /// built, and nothing for a leaf or a level the hook built. The
-    /// products of `t` that the sweep's level above reads go into `out`.
-    /// Returns the number of nodes the level holds.
-    ///
-    /// # Errors
-    ///
-    /// A refusal of the hook's work, which ends the sweep.
-    fn build(&mut self, t: VtreeIdx, kids: [&[ProductEntry]; 2], out: &mut Vec<ProductEntry>) -> Result<usize, OperationError>;
 }
 
 /// Walk the vtree bottom-up, building one level at a time.
@@ -155,10 +135,6 @@ fn sweep_levels(
         // stands for the checks at the free levels before it.
         lim.level_done(output_nodes + cone.free_before(k))?;
 
-        if sweep.hook.as_deref().is_some_and(|h| h.takes(t)) {
-            output_nodes += hooked_level(eng, run, f, g, sweep, t, left, right)? as u64;
-            continue;
-        }
         if held.len() < 2 && holds_back(sweep, run, f, g, (t, left, right)) {
             held.push((t, left, right));
             continue;
@@ -195,46 +171,6 @@ fn sweep_levels(
     )?;
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes + cone.free_nodes)
-}
-
-/// Build the level at `t` by the sweep's hook: hand it the product lists of
-/// the children the sweep built, publish the products it lists as `t`'s
-/// list, and release the children's grids. Returns the level's nodes.
-#[expect(clippy::too_many_arguments)]
-fn hooked_level(
-    eng: &Engine,
-    run: &mut ApplyRun,
-    f: &mut Held<'_>,
-    g: &mut Held<'_>,
-    sweep: &mut Sweep<'_, '_>,
-    t: VtreeIdx,
-    left: VtreeIdx,
-    right: VtreeIdx,
-) -> Result<usize, OperationError> {
-    let vtree = sweep.vtree;
-    let hook = sweep.hook.as_deref_mut().expect("a hooked level has a hook");
-    let kids = [left, right];
-    let swept = kids.map(|c| !vtree.node(c).is_leaf() && !hook.takes(c));
-    for (c, swept) in kids.into_iter().zip(swept) {
-        if swept {
-            let (fw, gw) = (run.f_widths[c.idx()], run.g_widths[c.idx()]);
-            run.ensure_product_list_for_child(eng, c.idx(), fw, gw)?;
-        }
-    }
-    let mut out = run.products.take_list(t.idx());
-    let nodes = {
-        let list = |k: usize| if swept[k] { run.products.list(kids[k].idx()) } else { &[][..] };
-        hook.build(t, [list(0), list(1)], &mut out)
-    };
-    let live = out.len();
-    let (fw, gw) = (run.f_widths[t.idx()], run.g_widths[t.idx()]);
-    run.products.publish_list(t.idx(), out, live, fw, gw);
-    let nodes = nodes?;
-    if !run.restoring {
-        drop_dead_children(f, g, run.shape(t, left, right));
-    }
-    run.reclaim_child_grids(left.idx(), right.idx(), f.output.vtree);
-    Ok(nodes)
 }
 
 /// Build the level at `t` from its children's, by the route it is given, and
@@ -468,67 +404,6 @@ pub(crate) enum ConjoinMode {
     /// found, instead of building the pairs the marginalization pass would
     /// fuse. The caller's targets must be that level alone.
     Sum(VtreeIdx),
-}
-
-/// The conjunction of plain operands (no weights, no marginal level) whose
-/// levels `hook` takes are built by it: the sweep builds every other level
-/// by its own routes, hands a hooked level the product lists of the
-/// children it built, and reads a hooked level's products where it builds
-/// the parent ([`LevelHook`]). The operands' levels at a hooked level are
-/// read only for their widths.
-///
-/// Returns the output levels, a hooked level's left as the sweep found it,
-/// and, where the sweep built the root, the root's product: the output
-/// node, `None` where it is false. No diagram is assembled from them.
-///
-/// # Errors
-///
-/// The sweep's refusals and the hook's.
-pub(crate) fn apply_and_hooked(
-    eng: &Engine,
-    f: &mut Tdd,
-    g: &mut Tdd,
-    hook: &mut dyn LevelHook,
-) -> Result<(Vec<TddLevel>, Option<Option<u32>>), OperationError> {
-    debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
-    let lim = eng.limits();
-    lim.eager_reclaim();
-    let _op = lim.begin_operation();
-    let vtree = Arc::clone(&f.vtree);
-    let root = vtree.root();
-    let (f_out, g_out) = (f.output().local.0, g.output().local.0);
-    let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
-    let (mut f, mut g) = (Held::Owned(f), Held::Owned(g));
-    let mut scratch = eng.scratch.apply.workspace.checkout(eng);
-    let kind = super::streaming_marginal::stream_kind(None);
-    let free = Operands::default();
-    let mut run = apply_and_setup(
-        eng,
-        &vtree,
-        Operands { f: &*f, g: &*g },
-        (VtreeMask::default(), free),
-        kind,
-        &mut levels,
-        &mut scratch,
-    )?;
-    run.plain = true;
-    let cone = run.cone;
-    init_leaf_identity_over(eng, run.g_identity, &g, cone.built, cone.tops, cone.leaves)?;
-    init_leaf_identity_over(eng, run.f_identity, &f, cone.built, cone.tops, cone.leaves)?;
-    apply_leaf_levels(eng, &mut run)?;
-    let takes_root = hook.takes(root);
-    let mut sweep = Sweep {
-        vtree: &vtree, targets: VtreeMask::default(), quantified: VtreeMask::default(), ws: None, filter: None,
-        count_root: false, counted: None, sum_child: None, summed: None, kept: Operands::default(), hook: Some(hook),
-    };
-    sweep_levels(eng, &mut run, &mut f, &mut g, &mut sweep)?;
-    let out = (!takes_root).then(|| {
-        let r = root.idx();
-        run.products
-            .lookup(r, f_out, g_out, run.g_widths[r], run.g_identity[r], run.f_identity[r])
-            .map(|n| n.0)
-    });
-    Ok((levels, out))
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
@@ -826,7 +701,6 @@ fn apply_and_held(
         sum_child,
         summed: None,
         kept,
-        hook: None,
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {

@@ -167,7 +167,7 @@ impl<'a> Placer<'a> {
             let p = self.d.parent[w as usize];
             let (l, r) = self.d.kids[p as usize];
             let other = if l == w { r } else { l };
-            if !self.d.is_leaf(other) || !self.d.skip[p as usize] {
+            if !self.d.is_leaf(other) {
                 let (t, k) = self.true_at(other)?;
                 let mut pairs = [(ZREF, ZREF); 2];
                 for (pair, &t) in pairs.iter_mut().zip(&t[..k]) {
@@ -234,8 +234,7 @@ pub(super) fn embed_copying(
     }
     let copy = copy
         && !src.is_weighted()
-        && !d.is_weighted()
-        && src.bottomup.iter().all(|&s| f.levels[s as usize].width() == 0 || src.skip[s as usize] == d.skip[img[s as usize].idx()]);
+        && !d.is_weighted();
     let kept_shapes = |s: u32| {
         let ((sl, sr), (lc, rc)) = (src.kids[s as usize], image_kids(s));
         let leaf = |x: u32| src.is_leaf(x);

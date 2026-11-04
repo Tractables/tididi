@@ -265,31 +265,6 @@ impl Products {
         &self.product_lists[t]
     }
 
-    /// Level `t`'s product list, emptied and taken out of the store for a
-    /// builder to fill ([`Self::publish_list`]).
-    pub(super) fn take_list(&mut self, t: usize) -> Vec<ProductEntry> {
-        let mut list = std::mem::take(&mut self.product_lists[t]);
-        list.clear();
-        list
-    }
-
-    /// Make `list` level `t`'s product list, `live` of its products live,
-    /// and write it into the level's grid where the level has one, which
-    /// its parent then reads instead.
-    pub(super) fn publish_list(&mut self, t: usize, list: Vec<ProductEntry>, live: usize, f_width: usize, g_width: usize) {
-        if let Some(base) = self.arena.materialized(t) {
-            let grid = &mut self.arena.slab_mut()[base.idx()..base.idx() + f_width * g_width];
-            grid.fill(super::NO_PRODUCT);
-            for e in &list {
-                grid[e.f_idx.idx() * g_width + e.g_idx.idx()] = e.prod_idx.0;
-            }
-        }
-        self.product_lists[t] = list;
-        self.has_pl[t] = true;
-        self.complete[t] = false;
-        self.live_counts[t] = live;
-    }
-
     pub(super) fn lists(&mut self, left: usize, right: usize, out: usize) -> ProductLists<'_> {
         split_lists(&mut self.product_lists, left, right, out)
     }

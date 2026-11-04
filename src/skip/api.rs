@@ -316,7 +316,7 @@ impl Engine {
         };
         let (a, b) = (&f.form, &g.form);
         let (form, neg) = match (na, nb) {
-            (false, false) => (self.conjoin(&f.vtree, a, b)?, neg),
+            (false, false) => (self.conjoin(a, b)?, neg),
             (false, true) | (true, false) => {
                 // `p ∧ ¬n`. The overlay walks every level of both; the
                 // conjunction only the cone of the smaller, so a smaller `n`
@@ -325,7 +325,7 @@ impl Engine {
                 let (p, n) = if nb { (a, b) } else { (b, a) };
                 if size(n) < size(p) {
                     let not = negate(n, lim)?;
-                    let res = self.conjoin(&f.vtree, p, &not);
+                    let res = self.conjoin(p, &not);
                     not.discard(lim);
                     (res?, neg)
                 } else {
@@ -340,7 +340,7 @@ impl Engine {
                 // two negations are built and conjoined instead.
                 let x = negate(a, lim)?;
                 let res = negate(b, lim).and_then(|y| {
-                    let res = self.conjoin(&f.vtree, &x, &y);
+                    let res = self.conjoin(&x, &y);
                     y.discard(lim);
                     res
                 });
@@ -352,18 +352,15 @@ impl Engine {
         Ok(SkipTdd { vtree: Arc::clone(&f.vtree), form, neg, weights: weights.cloned() })
     }
 
-    /// `f ∧ g` for the stored diagrams of two operands on `vtree` that sum
-    /// nothing out.
-    fn conjoin(&self, vtree: &Arc<Vtree>, f: &SkipForm, g: &SkipForm) -> Result<SkipForm, OperationError> {
+    /// `f ∧ g` for the stored diagrams of two operands on one vtree that
+    /// sum nothing out.
+    fn conjoin(&self, f: &SkipForm, g: &SkipForm) -> Result<SkipForm, OperationError> {
         let lim = self.limits();
         // The walk is the larger operand, so that the levels it indexes are
         // the smaller one's.
         let (a, b) = if size(f) < size(g) { (g, f) } else { (f, g) };
-        let (raw, cone) = match conjoin::hybrid_on() {
-            true => conjoin::and_hybrid(a, b, self, vtree)?,
-            false => conjoin::and_scoped(a, b, lim)?,
-        };
-        let res = contract_traced("and", a, b, raw, &cone, lim);
+        let (raw, cone) = conjoin::and_scoped(a, b, lim)?;
+        let res = contract_in(raw, Some(&cone), lim);
         lim.discard(cone);
         res
     }
@@ -486,7 +483,7 @@ impl Engine {
             return res;
         }
         let (raw, cone) = conjoin::and_scoped(&f.form, &c, lim)?;
-        let res = contract_traced("clause", &f.form, &c, raw, &cone, lim);
+        let res = contract_in(raw, Some(&cone), lim);
         c.discard(lim);
         lim.discard(cone);
         Ok(f.with(res?))
@@ -955,40 +952,6 @@ fn quantified_leaves(f: &SkipTdd, vars: &[VarId], lim: &crate::limits::Limits) -
     leaves.sort_unstable();
     leaves.dedup();
     Ok(leaves)
-}
-
-/// The contraction after a conjunction, scoped to its cone; under
-/// `TIDIDI_SKIP_TRACE` (experiment) one line per call on standard error
-/// with the operands' sizes, the walk's counts (the raw result's pairs kept
-/// from the larger operand, its dead slots, shared levels and rewritten
-/// slots) and the time of each phase.
-fn contract_traced(tag: &str, f: &SkipForm, g: &SkipForm, raw: SkipForm, cone: &[bool], lim: &crate::limits::Limits) -> Result<SkipForm, OperationError> {
-    if !super::trace::on() {
-        return contract_in(raw, Some(cone), lim);
-    }
-    let pairs = |s: &SkipForm, inside: bool| -> usize {
-        s.active.iter().filter(|&&t| !inside || cone[t as usize]).map(|&t| s.levels[t as usize].pairs.len()).sum()
-    };
-    let (fp, fc, gp, rp) = (pairs(f, false), pairs(f, true), pairs(g, false), pairs(&raw, false));
-    let lv = cone.iter().filter(|&&c| c).count();
-    let mut clock = super::trace::Clock::start();
-    let res = contract_in(raw, Some(cone), lim);
-    clock.lap(7);
-    let ph = super::trace::take();
-    let cn = super::trace::take_counts();
-    if let Ok(r) = &res {
-        let (same, _) = super::overlay::copied(r, if fp >= gp { f } else { g });
-        eprintln!(
-            "SKIPTRACE {tag} f {fp} fcone {fc} g {gp} raw {rp} out {} copied {same} conelv {lv} kept {} dead {} shared {} rewritten {} us {}",
-            pairs(r, false),
-            cn[0],
-            cn[1],
-            cn[2],
-            cn[3],
-            ph.iter().map(|n| (n / 1000).to_string()).collect::<Vec<_>>().join(" ")
-        );
-    }
-    res
 }
 
 /// An operand's size for the conjunction's choice of its walk: the levels it

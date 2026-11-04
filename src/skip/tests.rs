@@ -64,23 +64,12 @@ fn conjunction_matches_the_stored_form() {
 
 /// A structural fingerprint: per level the sorted node hashes, and the
 /// output's. Two skip forms of one function are canonical when equal.
-/// The node types hold: a side read from child `c` that names a node below
-/// `c` crosses only levels that skip, and a level that skips stores no node
-/// that is `true` over a leaf child.
+/// The node types hold: a side read from child `c` names a node in `c`'s
+/// subtree, and no level stores a node that is `true` over a leaf child.
 fn assert_node_types(s: &SkipForm) {
     let sh = &s.shape;
     let crosses = |c: u32, x: Ref| {
-        if x == ZREF || vt(x) == c {
-            return;
-        }
-        let mut w = sh.parent[vt(x) as usize];
-        loop {
-            assert!(sh.skip[w as usize], "a skip crosses level {w}, which keeps its nodes");
-            if w == c {
-                break;
-            }
-            w = sh.parent[w as usize];
-        }
+        assert!(x == ZREF || sh.within(vt(x), c), "a side read from {c} names a node outside it");
     };
     crosses(sh.root, s.out);
     for &t in &sh.bottomup {
@@ -92,7 +81,7 @@ fn assert_node_types(s: &SkipForm) {
                 crosses(l, a);
                 crosses(r, b);
             }
-            if sh.skip[t as usize] && node.len() == 1 {
+            if node.len() == 1 {
                 let (a, b) = node[0];
                 let skippable = (sh.is_leaf(l) && a == mk(l, ONE)) || (sh.is_leaf(r) && b == mk(r, ONE));
                 assert!(!skippable, "level {t} stores a skippable node");
@@ -1376,62 +1365,6 @@ fn a_weight_marginal_stored_diagram_converts_with_its_value() {
 /// A pair's sides as (level, index), for printing.
 type Side2 = ((u32, u32), (u32, u32));
 
-/// The hybrid conjunction (plain levels by the stored driver) gives the
-/// skip engine's canonical result, on every vtree shape.
-#[test]
-fn hybrid_conjunction_is_the_skip_engines() {
-    let mut hybrid = 0;
-    let mut rng = Lcg::new(11);
-    let mut wide = Vec::new();
-    for _ in 0..40 {
-        let n = 12 + rng.below(13) as u32;
-        let shape = CnfShape { clauses: n as usize + rng.below(u64::from(n)) as usize, width: 3 };
-        for vtree in [Arc::new(crate::vtree::Vtree::balanced(n)), Arc::new(crate::vtree::Vtree::random(n, rng.below(1000)))] {
-            let eng = Engine::new();
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            wide.push((eng, f, g));
-        }
-    }
-    for (eng, f, g) in cases(11, 300).into_iter().chain(wide) {
-        let (sf, sg) = (skip(&f), skip(&g));
-        let sg = SkipForm { shape: Arc::clone(&sf.shape), ..sg };
-        let lim = eng.limits();
-        let sh = &sf.shape;
-        let hooked = conjoin::hooked_levels(sh);
-        let rooted = |x: Ref| x != ZREF && !sh.is_leaf(sh.root) && vt(x) == sh.root;
-        if sh.bottomup.iter().any(|&t| !sh.is_leaf(t) && !hooked[t as usize]) && rooted(sf.out) && rooted(sg.out) {
-            hybrid += 1;
-        }
-        let (raw, cone) = conjoin::and_hybrid(&sf, &sg, &eng, f.vtree()).unwrap();
-        let h = contract_in(raw, Some(&cone), lim).unwrap();
-        lim.discard(cone);
-        let (raw, cone) = conjoin::and_scoped(&sf, &sg, lim).unwrap();
-        let want = contract_in(raw, Some(&cone), lim).unwrap();
-        lim.discard(cone);
-        if fingerprint(&h) != fingerprint(&want) {
-            let same = eng.equivalent(&to_tdd(&h, &eng, f.vtree()).unwrap(), &to_tdd(&want, &eng, f.vtree()).unwrap()).unwrap();
-            eprintln!("same function {same}; counts {:?} {:?}", h.model_count(lim).unwrap(), want.model_count(lim).unwrap());
-            eprintln!("kids {:?}\nskip {:?}\nhooked {hooked:?}", sh.kids, sh.skip);
-            for (name, s) in [("f", &sf), ("g", &sg), ("hybrid", &h), ("scoped", &want)] {
-                eprintln!("{name} out {:?}", (vt(s.out), ix(s.out)));
-                for &t in &sh.bottomup {
-                    let l = &s.levels[t as usize];
-                    let nodes: Vec<Vec<Side2>> = (0..l.width() as u32)
-                        .map(|i| l.node(i).iter().map(|&(a, b)| ((vt(a), ix(a)), (vt(b), ix(b)))).collect())
-                        .collect();
-                    if !nodes.is_empty() {
-                        eprintln!("  {t}: {nodes:?}");
-                    }
-                }
-            }
-            panic!("the hybrid differs");
-        }
-    }
-    assert!(hybrid > 30, "only {hybrid} cases have a plain level");
-    eprintln!("hybrid cases {hybrid}");
-}
-
 /// A skip-form result against the stored one: the canonical skip form of
 /// its function, with its model count, and the same function stored.
 /// Every node holds its pairs in their stored form, which [`super::normalize`]
@@ -1453,7 +1386,7 @@ fn assert_canonical(eng: &Engine, s: &crate::SkipTdd, t: &Tdd, what: &str) {
     let held = built(eng, s);
     assert_stored_order(&held, what);
     if fingerprint(&held) != fingerprint(&want.form) {
-        eprintln!("kids {:?}\nskip {:?}", held.shape.kids, held.shape.skip);
+        eprintln!("kids {:?}", held.shape.kids);
         eprintln!("mine {:?} out {:?}", dump(&held), (vt(held.out), ix(held.out)));
         eprintln!("want {:?} out {:?}", dump(&want.form), (vt(want.form.out), ix(want.form.out)));
         panic!("{what}: not the canonical skip form");
@@ -1797,12 +1730,7 @@ fn none_of_a_table_on_a_spine_of_switches_is_linear_in_its_rows() {
             let got = eng.skip_none_of(&vtree, &rows).unwrap();
             assert_eq!(fingerprint(&got.form), fingerprint(&eng.to_skip(&want).unwrap().form));
             let (skip, stored) = (got.pair_count(), want.pair_count());
-            // Where the spine's nodes skip (not under a `TIDIDI_SKIP_RUN`
-            // longer than the spine).
-            let sh = &got.form.shape;
-            let switch = |c: u32| sh.is_leaf(c) && sh.var[c as usize] <= r;
-            let spine_skips = sh.bottomup.iter().filter(|&&t| switch(sh.kids[t as usize].0) || switch(sh.kids[t as usize].1)).all(|&t| sh.skip[t as usize]);
-            assert!(!spine_skips || skip <= 6 * r as usize, "k {k}, mirror {mirror}, balanced {balanced}: {skip} pairs against {stored} stored");
+            assert!(skip <= 6 * r as usize, "k {k}, mirror {mirror}, balanced {balanced}: {skip} pairs against {stored} stored");
             if k == 6 {
                 assert!(stored >= (r * r / 2) as usize, "{stored} stored pairs");
             }

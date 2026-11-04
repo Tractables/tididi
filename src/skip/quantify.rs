@@ -88,18 +88,6 @@ pub(crate) fn free(mut f: SkipForm, leaf: u32, lim: &Limits) -> Result<SkipForm,
         return Ok(f);
     }
     let (l, r) = sh.kids[t as usize];
-    if !sh.skip[t as usize] {
-        // Nothing skips `t`: each node's literal becomes `One` in place, and
-        // the nodes stay distinct, as their other sides are.
-        for p in f.levels[t as usize].pairs.iter_mut() {
-            if l == leaf {
-                p.0 = mk(leaf, ONE);
-            } else {
-                p.1 = mk(leaf, ONE);
-            }
-        }
-        return Ok(f);
-    }
     let level = f.levels.take(t as usize);
     let mut other = Vec::new();
     lim.reserve_exact(&mut other, level.width())?;
@@ -721,21 +709,19 @@ impl<'a> Regroup<'a> {
         // Where skips pass `w` into an internal child, the child whose cells
         // a skip may hold, and whether it is the left one.
         let mut watch = None;
-        if sh.skip[w as usize] {
-            if ll && rl {
-                // Skips to a quantified leaf: `true` over the leaf, beside
-                // the other, is written on the right leaf.
-                for (c, left) in [(l, true), (r, false)] {
-                    if self.role[c as usize] == Role::Whole && self.hi_in[c as usize] <= dw {
-                        let t = self.top(c)?;
-                        lim.try_push(&mut self.lam, (t, left))?;
-                    }
+        if ll && rl {
+            // Skips to a quantified leaf: `true` over the leaf, beside the
+            // other, is written on the right leaf.
+            for (c, left) in [(l, true), (r, false)] {
+                if self.role[c as usize] == Role::Whole && self.hi_in[c as usize] <= dw {
+                    let t = self.top(c)?;
+                    lim.try_push(&mut self.lam, (t, left))?;
                 }
-            } else if ll != rl {
-                let (c, left) = if ll { (r, false) } else { (l, true) };
-                if self.low_of(c) <= dw {
-                    watch = Some(left);
-                }
+            }
+        } else if ll != rl {
+            let (c, left) = if ll { (r, false) } else { (l, true) };
+            if self.low_of(c) <= dw {
+                watch = Some(left);
             }
         }
         self.trip.clear();
@@ -787,7 +773,7 @@ impl<'a> Regroup<'a> {
         let owners = width as usize + self.lam.len();
         // The cells of the child skips pass into that no stored node met
         // pass up as they are.
-        let into_low = if sh.skip[w as usize] && ll != rl { self.low_of(if ll { r } else { l }) } else { UNREAD };
+        let into_low = if ll != rl { self.low_of(if ll { r } else { l }) } else { UNREAD };
         if self.trip.is_empty() {
             // No class here is read.
             self.low[w as usize] = into_low;

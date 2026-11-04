@@ -30,56 +30,6 @@ pub(crate) mod sum;
 #[cfg(test)]
 mod tests;
 
-/// Experiment: phase times of the skip conjunction (`TIDIDI_SKIP_TRACE`),
-/// summed per phase until a call's trace line takes them. Phases 8 to 10
-/// split the contraction: its top-down search, its patch and its collect.
-pub(crate) mod trace {
-    use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-    use std::time::Instant;
-
-    static PH: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
-
-    pub(crate) fn on() -> bool {
-        static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("TIDIDI_SKIP_TRACE").is_some())
-    }
-
-    pub(crate) struct Clock(Option<Instant>);
-
-    impl Clock {
-        pub(crate) fn start() -> Clock {
-            Clock(on().then(Instant::now))
-        }
-
-        /// Add the time since the last lap to phase `i`.
-        pub(crate) fn lap(&mut self, i: usize) {
-            if let Some(t) = &mut self.0 {
-                let n = Instant::now();
-                PH[i].fetch_add((n - *t).as_nanos() as u64, Relaxed);
-                *t = n;
-            }
-        }
-    }
-
-    pub(crate) fn take() -> [u64; 11] {
-        std::array::from_fn(|i| PH[i].swap(0, Relaxed))
-    }
-
-    static CN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
-
-    /// Add `n` to count `i`, summed until a call's trace line takes them.
-    pub(crate) fn count(i: usize, n: u64) {
-        if on() {
-            CN[i].fetch_add(n, Relaxed);
-        }
-    }
-
-    pub(crate) fn take_counts() -> [u64; 4] {
-        std::array::from_fn(|i| CN[i].swap(0, Relaxed))
-    }
-}
-
 use std::sync::Arc;
 
 use crate::limits::Limits;
@@ -139,13 +89,6 @@ pub(crate) struct Shape {
     /// Per node, `true` over its variables where [`build_top`] skips it to a
     /// leaf: that leaf's `One`; [`ZREF`] where it is a stored node.
     pub(crate) one: Vec<Ref>,
-    /// Per internal node, whether a node there that is `true` over a leaf
-    /// child of the shape is skipped ([`normalize`]): every node where the
-    /// minimal run ([`skip_run`]) is 1, otherwise the nodes of the vtree
-    /// with a leaf child in a run of at least that many, each one's internal
-    /// child the next, read off the vtree before any subtree is summed out
-    /// so that summing never changes it.
-    pub(crate) skip: Vec<bool>,
     /// Per node, what it is: [`INNER`], [`VAR`], or a summed-out subtree,
     /// [`SUMMED_VAR`] or [`SUMMED`], which this shape reads as a leaf.
     pub(crate) kind: Vec<u8>,
@@ -199,7 +142,6 @@ impl Shape {
                 }
             }
         }
-        let skip = skip_flags(&kids, vt.root().0, skip_run());
         let mut owner = vec![NONE; n];
         for &(m, _) in summed {
             let mut stack = vec![m];
@@ -257,9 +199,6 @@ impl Shape {
         let mut chain_up: Vec<u32> = (0..n as u32).collect();
         for &t in &topdown {
             let (l, r) = kids[t as usize];
-            if !skip[t as usize] {
-                continue;
-            }
             if kids[r as usize].0 == NONE {
                 chain_up[l as usize] = chain_up[t as usize];
             }
@@ -278,13 +217,15 @@ impl Shape {
             weighted[t as usize] = weighted[l as usize] || weighted[r as usize];
             // `build_top`'s descent.
             let leaf = |c: u32| kids[c as usize].0 == NONE;
-            one[t as usize] = match skip[t as usize] {
-                true if leaf(l) => one[r as usize],
-                true if leaf(r) => one[l as usize],
-                _ => ZREF,
+            one[t as usize] = if leaf(l) {
+                one[r as usize]
+            } else if leaf(r) {
+                one[l as usize]
+            } else {
+                ZREF
             };
         }
-        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up, chain_up, one, skip, kind, labels, weighted, owner }
+        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up, chain_up, one, kind, labels, weighted, owner }
     }
 
     /// Whether a subtree is summed out somewhere.
@@ -790,9 +731,9 @@ pub(crate) fn build_top(
 ) -> Result<Ref, OperationError> {
     while !sh.is_leaf(t) {
         let (l, r) = sh.kids[t as usize];
-        if sh.is_leaf(l) && sh.skip[t as usize] {
+        if sh.is_leaf(l) {
             t = r;
-        } else if sh.is_leaf(r) && sh.skip[t as usize] {
+        } else if sh.is_leaf(r) {
             t = l;
         } else {
             let pair = (build_top(sh, l, node)?, build_top(sh, r, node)?);
@@ -800,64 +741,6 @@ pub(crate) fn build_top(
         }
     }
     Ok(mk(t, ONE))
-}
-
-/// The least length of a run of nodes with a leaf child whose nodes skip
-/// (`TIDIDI_SKIP_RUN`, default 1: every such node). An experiment's knob.
-pub(crate) fn skip_run() -> u32 {
-    static RUN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *RUN.get_or_init(|| std::env::var("TIDIDI_SKIP_RUN").ok().and_then(|v| v.parse().ok()).unwrap_or(1))
-}
-
-/// [`Shape::skip`] over children `kids` (`(NONE, NONE)` on a leaf): a node
-/// with a leaf child skips where its run, the chain of such nodes through
-/// each one's internal child, has at least `run` nodes.
-fn skip_flags(kids: &[(u32, u32)], root: u32, run: u32) -> Vec<bool> {
-    let n = kids.len();
-    let leaf = |v: u32| kids[v as usize].0 == NONE;
-    let lop = |t: u32| !leaf(t) && (leaf(kids[t as usize].0) || leaf(kids[t as usize].1));
-    // Every node, so that the shape's leaves decide: a summed-out subtree
-    // read as a leaf is skipped through as the leaf it is read as.
-    if run <= 1 {
-        return vec![true; n];
-    }
-    // The run's next node: the internal child, where it has a leaf child too.
-    let next = |t: u32| -> u32 {
-        let (l, r) = kids[t as usize];
-        let c = if !leaf(l) { l } else if !leaf(r) { r } else { return NONE };
-        if lop(c) { c } else { NONE }
-    };
-    let mut order = Vec::with_capacity(n);
-    let mut stack = vec![root];
-    while let Some(t) = stack.pop() {
-        order.push(t);
-        let (l, r) = kids[t as usize];
-        if l != NONE {
-            stack.push(l);
-            stack.push(r);
-        }
-    }
-    // Run lengths below each node, then each run's length on all its nodes.
-    let mut down = vec![0u32; n];
-    for &t in order.iter().rev() {
-        if lop(t) {
-            let c = next(t);
-            down[t as usize] = 1 + if c == NONE { 0 } else { down[c as usize] };
-        }
-    }
-    let mut len = vec![0u32; n];
-    for &t in &order {
-        if lop(t) {
-            if len[t as usize] == 0 {
-                len[t as usize] = down[t as usize];
-            }
-            let c = next(t);
-            if c != NONE {
-                len[c as usize] = len[t as usize];
-            }
-        }
-    }
-    (0..n).map(|i| len[i] >= run).collect()
 }
 
 /// Per vtree node arrays for [`SkipForm::collect_in`], kept on the thread
@@ -925,7 +808,7 @@ pub(crate) fn normalize(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Resu
         merge_cells(sh, u, pairs);
     }
     let (l, r) = sh.kids[u as usize];
-    if pairs.len() == 1 && sh.skip[u as usize] {
+    if pairs.len() == 1 {
         let (a, b) = pairs[0];
         if sh.is_leaf(l) && a == mk(l, ONE) {
             return Err(b);
@@ -1074,7 +957,7 @@ pub(crate) fn normalize_sum(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> 
         }
         pairs.sort_unstable();
     }
-    if pairs.len() == 1 && sh.skip[u as usize] {
+    if pairs.len() == 1 {
         let (a, b) = pairs[0];
         if sh.is_leaf(l) && a == mk(l, ONE) {
             return Err(b);

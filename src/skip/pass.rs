@@ -370,7 +370,7 @@ impl<V: Clone> SkipCount<V> {
             }
             let (l, r) = sh.kids[p as usize];
             let sib = if l == w { r } else { l };
-            if !sh.is_leaf(sib) || !sh.skip[p as usize] {
+            if !sh.is_leaf(sib) {
                 break;
             }
             let list = &down.skips[p as usize];

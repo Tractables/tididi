@@ -388,7 +388,7 @@ impl Build<'_> {
         let sh = self.sh;
         let (l, r) = sh.kids[t as usize];
         self.stamp += 1;
-        if sh.skip[t as usize] && sh.is_leaf(l) != sh.is_leaf(r) {
+        if sh.is_leaf(l) != sh.is_leaf(r) {
             if sh.is_leaf(l) && self.passes(l, r, &cl) {
                 let ct = self.carry(t, l, true, &cl, cr, out, gate, lim);
                 cl.discard(lim);

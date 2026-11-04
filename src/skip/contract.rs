@@ -295,7 +295,6 @@ pub(crate) fn contract_in(
     let mut tparts: Vec<(u32, u32, u32)> = Vec::new();
     let mut qbuf: Vec<Ref> = Vec::new();
     let mut mbuf: Vec<Ref> = Vec::new();
-    let mut clock = super::trace::Clock::start();
     while let Some(Reverse((_, c))) = heap.pop() {
         let width = s.levels[c as usize].width() as u32;
         let mut cl = CLv::new(c, width);
@@ -706,7 +705,6 @@ pub(crate) fn contract_in(
         lvs.push(cl);
     }
     lim.check_stop()?;
-    clock.lap(8);
     // Patch from the leaves up. A side read at `d` resolves through a
     // group a skip joined there, else through its node's result, a group's
     // only where its member is stored at `d`. `changed[v]` is the visited
@@ -830,7 +828,6 @@ pub(crate) fn contract_in(
         s.levels.set(c as usize, out);
     }
     s.out = resolve(&lvs, &ids, &changed, Side::new(sh, &at, &lvs, sh.root), s.out);
-    clock.lap(9);
     lim.discard(qbuf);
     lim.discard(mbuf);
     for v in [order, firsts, table] {
@@ -866,7 +863,6 @@ pub(crate) fn contract_in(
     } else {
         s.active.retain(|&t| s.levels[t as usize].width() > 0);
     }
-    clock.lap(10);
     Ok(s)
 }
 

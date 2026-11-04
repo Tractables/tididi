@@ -37,36 +37,8 @@ fn label_of(cells: u8) -> u32 {
 }
 
 /// `¬f`, for `f` pruned (no false side, no node without pairs) and free of
-/// twins; canonical when `f` is. Under `TIDIDI_SKIP_TRACE` (experiment), one
-/// line per call: `f`'s pairs and nodes by the number of leaf children of
-/// their level, the nodes with more than two pairs, and the time.
+/// twins; canonical when `f` is.
 pub(crate) fn negate(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
-    if !super::trace::on() {
-        return negate_in(f, lim);
-    }
-    let sh = &*f.shape;
-    let (mut pairs, mut nodes, mut big) = ([0u64; 3], [0u64; 3], 0u64);
-    for &t in &f.active {
-        let (l, r) = sh.kids[t as usize];
-        let k = usize::from(sh.is_leaf(l)) + usize::from(sh.is_leaf(r));
-        let lvl = &f.levels[t as usize];
-        pairs[k] += lvl.pairs.len() as u64;
-        nodes[k] += lvl.width() as u64;
-        big += (0..lvl.width() as u32).filter(|&i| lvl.node(i).len() > 2).count() as u64;
-    }
-    let t0 = std::time::Instant::now();
-    let res = negate_in(f, lim);
-    if let Ok(r) = &res {
-        let out: usize = r.active.iter().map(|&t| r.levels[t as usize].pairs.len()).sum();
-        eprintln!(
-            "SKIPNEG pairs {} {} {} nodes {} {} {} big {big} out {out} levels {} us {}",
-            pairs[0], pairs[1], pairs[2], nodes[0], nodes[1], nodes[2], f.active.len(), t0.elapsed().as_micros()
-        );
-    }
-    res
-}
-
-fn negate_in(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
     let shape = f.shape.clone();
     let sh = &*shape;
     let n = sh.num_nodes();
@@ -76,9 +48,9 @@ fn negate_in(f: &SkipForm, lim: &Limits) -> Result<SkipForm, OperationError> {
         let mut t = sh.root;
         while !sh.is_leaf(t) {
             let (l, r) = sh.kids[t as usize];
-            if sh.is_leaf(l) && sh.skip[t as usize] {
+            if sh.is_leaf(l) {
                 t = r;
-            } else if sh.is_leaf(r) && sh.skip[t as usize] {
+            } else if sh.is_leaf(r) {
                 t = l;
             } else {
                 break;
@@ -440,9 +412,9 @@ pub(crate) fn is_true(f: &SkipForm) -> bool {
         let sh = &*f.shape;
         while !sh.is_leaf(t) {
             let (l, r) = sh.kids[t as usize];
-            if sh.is_leaf(l) && sh.skip[t as usize] {
+            if sh.is_leaf(l) {
                 t = r;
-            } else if sh.is_leaf(r) && sh.skip[t as usize] {
+            } else if sh.is_leaf(r) {
                 t = l;
             } else {
                 return x != ZREF
