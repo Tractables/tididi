@@ -35,9 +35,7 @@ children before parents.
 A *marginal level* stores a value per node instead of pairs, and a reference
 into it may carry that value inline, so code outside the `diagram` module
 decodes references through [`ChildDecoder`]; see
-[Marginal levels](#marginal-levels). A [`SkipTdd`] omits pass-through nodes
-at levels with a single-variable child so pair references can name lower
-descendants directly.
+[Marginal levels](#marginal-levels).
 
 Vtree constructors and grafts all finish through one checked constructor,
 which derives parent links and returns the node permutation that grafting uses
@@ -215,7 +213,6 @@ it does not substitute into the replacement functions.
 | `value` | Shared count, exact-weight and scaled-float column domains (`FloatCol`) and sum-of-products fold kernels. |
 | `sort` | Radix and comparison sorting over pair keys and scratch buffers. |
 | `isa` | Architecture-specific bit, table and arithmetic primitives. |
-| `skip` | Canonical [`SkipTdd`] diagrams whose pairs skip pass-through levels, with their conversions, Boolean operations and model counter. |
 | `build` | Constants, literals, cubes and sets of models. |
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
 | `marginal` | Summing levels into values and restoring marginal invariants. |
@@ -334,7 +331,6 @@ release build, as described under [Testing](#testing).
 [`RotationObjective`]: crate::restructure::search::RotationObjective
 [`ChildDecoder`]: crate::diagram::ChildDecoder
 [`EncodedChildRef`]: crate::diagram::EncodedChildRef
-[`SkipTdd`]: crate::SkipTdd
 [`Tdd`]: crate::Tdd
 [`Tdd::output`]: crate::Tdd::output
 [`Tdd::is_zero`]: crate::Tdd::is_zero
