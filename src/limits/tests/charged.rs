@@ -112,3 +112,19 @@ fn a_reserve_as_pushed_is_a_run_of_pushes() {
         }
     }
 }
+
+#[test]
+fn a_refused_doubling_asks_for_a_quarter_more_or_for_what_is_needed() {
+    use crate::limits::growth::grow_less;
+    // Room for a quarter more than the length where that covers the request;
+    // the request alone where it does not. Either way no more than that.
+    for (len, additional, room) in [(1000usize, 1usize, 250usize), (1000, 249, 250), (1000, 250, 250), (1000, 251, 251), (1000, 4000, 4000), (3, 1, 1), (64, 1, 16)] {
+        let mut v: Vec<u64> = vec![7; len];
+        v.shrink_to_fit();
+        grow_less(&mut v, additional).unwrap();
+        assert!(v.capacity() >= len + room, "{len} {additional}: {}", v.capacity());
+        assert!(v.capacity() < 2 * len.max(1) + additional, "{len} {additional}: grew to {}", v.capacity());
+        assert_eq!(v.len(), len);
+        assert!(v.iter().all(|&x| x == 7));
+    }
+}
