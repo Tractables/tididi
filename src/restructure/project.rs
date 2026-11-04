@@ -22,6 +22,16 @@ use crate::diagram::{for_each_side_ref_mut, Assembly, ChildSide, LevelView, Node
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeError};
 
+/// A projection's restricted vtree and its renaming.
+pub(crate) struct Scope {
+    /// The kept variables' originals, by local id.
+    pub(crate) original: Vec<Option<VarId>>,
+    /// The variables it drops.
+    pub(crate) dropped: Vec<VarId>,
+    /// The restricted vtree.
+    pub(crate) into: Arc<Vtree>,
+}
+
 impl Tdd {
     /// This diagram restricted to some of its variables: every other variable
     /// existentially quantified, and the vtree restricted as
@@ -103,7 +113,26 @@ impl Engine {
         let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = tdd.vtree();
-        // The kept variables' originals by local id, and the dropped ones.
+        let Scope { original, dropped, into } = self.projection_scope(vtree, &local_of, num_local)?;
+        let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
+        let result = self.project_along(tdd, &into, &plan, &dropped);
+        plan.recycle(self);
+        result
+    }
+
+    /// The restriction of `vtree` that [`project_to_vars`](Self::project_to_vars)
+    /// projects onto, with the renaming checked.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::project_to_vars`] for the renaming.
+    pub(crate) fn projection_scope(
+        &self,
+        vtree: &Vtree,
+        local_of: &impl Fn(VarId) -> Option<VarId>,
+        num_local: u32,
+    ) -> Result<Scope, EmbedError> {
+        let lim = self.limits();
         let mut original = Vec::new();
         lim.try_resize(&mut original, num_local as usize, None)?;
         let mut dropped = Vec::new();
@@ -128,13 +157,10 @@ impl Engine {
         crate::vtree::check_var_space(num_local, 2 * kept - 1)?;
         let into = Arc::new(
             vtree
-                .project_to_vars(&local_of, num_local)
+                .project_to_vars(local_of, num_local)
                 .expect("a checked renaming that keeps a variable restricts the vtree"),
         );
-        let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        let result = self.project_along(tdd, &into, &plan, &dropped);
-        plan.recycle(self);
-        result
+        Ok(Scope { original, dropped, into })
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in

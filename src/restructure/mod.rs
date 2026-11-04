@@ -18,7 +18,7 @@ pub(crate) mod expand;
 pub(crate) mod graft;
 mod distinct;
 pub(crate) mod placement;
-mod project;
+pub(crate) mod project;
 mod tag;
 mod splice;
 pub(crate) mod target;

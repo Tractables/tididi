@@ -382,6 +382,25 @@ impl Limits {
         self.reserve(v, 1)
     }
 
+    /// [`try_resize`](Self::try_resize) for a buffer grown a step at a
+    /// time: the capacity grows geometrically, so a run of steps copies the
+    /// buffer a logarithmic number of times rather than once per step.
+    #[inline]
+    pub(crate) fn try_resize_amortized<T: Clone>(
+        &self,
+        v: &mut Vec<T>,
+        new_len: usize,
+        val: T,
+    ) -> Result<(), OperationError> {
+        if v.len() >= new_len {
+            return Ok(());
+        }
+        let additional = new_len - v.len();
+        self.reserve(v, additional)?;
+        v.resize(new_len, val);
+        Ok(())
+    }
+
     /// Fallible analogue of `Vec::resize` for grow-only callers. No-op when
     /// `v.len() >= new_len`. Uses `try_reserve_exact` so address space is not
     /// over-reserved.

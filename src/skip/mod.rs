@@ -12,19 +12,79 @@
 //! the named node and its index there (a leaf label on a leaf level), so a
 //! side whose node is not its child level's is a skip.
 
+#![allow(dead_code)]
+
 pub(crate) mod api;
 pub(crate) mod conjoin;
 pub(crate) mod contract;
 pub(crate) mod convert;
+pub(crate) mod embed;
+pub(crate) mod eval;
 pub(crate) mod negate;
+pub(crate) mod none_of;
+pub(crate) mod overlay;
+pub(crate) mod pass;
+pub(crate) mod project;
+pub(crate) mod quantify;
+pub(crate) mod sum;
 #[cfg(test)]
 mod tests;
 
+/// Experiment: phase times of the skip conjunction (`TIDIDI_SKIP_TRACE`),
+/// summed per phase until a call's trace line takes them. Phases 8 to 10
+/// split the contraction: its top-down search, its patch and its collect.
+pub(crate) mod trace {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::time::Instant;
+
+    static PH: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
+
+    pub(crate) fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("TIDIDI_SKIP_TRACE").is_some())
+    }
+
+    pub(crate) struct Clock(Option<Instant>);
+
+    impl Clock {
+        pub(crate) fn start() -> Clock {
+            Clock(on().then(Instant::now))
+        }
+
+        /// Add the time since the last lap to phase `i`.
+        pub(crate) fn lap(&mut self, i: usize) {
+            if let Some(t) = &mut self.0 {
+                let n = Instant::now();
+                PH[i].fetch_add((n - *t).as_nanos() as u64, Relaxed);
+                *t = n;
+            }
+        }
+    }
+
+    pub(crate) fn take() -> [u64; 11] {
+        std::array::from_fn(|i| PH[i].swap(0, Relaxed))
+    }
+
+    static CN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+    /// Add `n` to count `i`, summed until a call's trace line takes them.
+    pub(crate) fn count(i: usize, n: u64) {
+        if on() {
+            CN[i].fetch_add(n, Relaxed);
+        }
+    }
+
+    pub(crate) fn take_counts() -> [u64; 4] {
+        std::array::from_fn(|i| CN[i].swap(0, Relaxed))
+    }
+}
+
 use std::sync::Arc;
 
-use crate::OperationError;
 use crate::limits::Limits;
 use crate::vtree::{Vtree, VtreeNode};
+use crate::OperationError;
 
 /// A resolved reference: the vtree node in bits 32 to 61, the index in the
 /// low word. [`ZREF`] is the constant false.
@@ -64,33 +124,100 @@ pub(crate) struct Shape {
     pub(crate) topdown: Vec<u32>,
     /// Internal nodes, every child before its parent.
     pub(crate) bottomup: Vec<u32>,
+    /// A leaf's variable id; 0 on an internal node.
+    pub(crate) var: Vec<u32>,
     /// Edges from the root.
     pub(crate) depth: Vec<u32>,
     /// Whether a node or one of its ancestors is the left child of a level
     /// whose children are both internal: a conjunction looks the products
     /// read there up by both references.
     pub(crate) looked_up: Vec<bool>,
+    /// The highest ancestor a node reaches through parents whose other
+    /// child is a leaf (the node itself where its sibling is internal or it
+    /// is the root): a reference read there skips every level between.
+    pub(crate) chain_up: Vec<u32>,
+    /// Per node, `true` over its variables where [`build_top`] skips it to a
+    /// leaf: that leaf's `One`; [`ZREF`] where it is a stored node.
+    pub(crate) one: Vec<Ref>,
+    /// Per internal node, whether a node there that is `true` over a leaf
+    /// child of the shape is skipped ([`normalize`]): every node where the
+    /// minimal run ([`skip_run`]) is 1, otherwise the nodes of the vtree
+    /// with a leaf child in a run of at least that many, each one's internal
+    /// child the next, read off the vtree before any subtree is summed out
+    /// so that summing never changes it.
+    pub(crate) skip: Vec<bool>,
+    /// Per node, what it is: [`INNER`], [`VAR`], or a summed-out subtree,
+    /// [`SUMMED_VAR`] or [`SUMMED`], which this shape reads as a leaf.
+    pub(crate) kind: Vec<u8>,
+    /// Per leaf, its labels: three on a variable, a summed-out subtree's
+    /// value slots on one; 0 on an internal node.
+    pub(crate) labels: Vec<u32>,
+    /// Per node, whether a summed-out subtree is at or below it.
+    pub(crate) weighted: Vec<bool>,
+    /// Per node of the vtree, the root of the summed-out subtree it is in,
+    /// or `NONE`.
+    pub(crate) owner: Vec<u32>,
 }
+
+/// An internal node of the shape.
+pub(crate) const INNER: u8 = 0;
+/// A variable.
+pub(crate) const VAR: u8 = 1;
+/// A summed-out variable: its labels `One`, `Pos` and `Neg` weigh both
+/// literals, the positive one and the negative one.
+pub(crate) const SUMMED_VAR: u8 = 2;
+/// A summed-out internal subtree: label `One` weighs every assignment to
+/// its variables, and every other label is a value slot.
+pub(crate) const SUMMED: u8 = 3;
 
 impl Shape {
     pub(crate) fn of(vt: &Vtree) -> Shape {
+        Self::summed(vt, &[])
+    }
+
+    /// The shape of `vt` where each subtree `(root, labels)` of `summed` is
+    /// summed out: read as one leaf with `labels` labels, three on a
+    /// variable. The roots are disjoint subtrees.
+    pub(crate) fn summed(vt: &Vtree, summed: &[(u32, u32)]) -> Shape {
         let n = vt.num_nodes();
         let mut kids = vec![(NONE, NONE); n];
         let mut parent = vec![NONE; n];
+        let mut var = vec![0u32; n];
+        let mut kind = vec![INNER; n];
+        let mut labels = vec![0u32; n];
         for i in 0..n {
             match vt.node(crate::vtree::VtreeIdx(i as u32)) {
-                VtreeNode::Leaf { parent: p, .. } => {
+                VtreeNode::Leaf { var: v, parent: p } => {
+                    var[i] = v.0;
                     parent[i] = p.map_or(NONE, |p| p.0);
+                    kind[i] = VAR;
+                    labels[i] = 3;
                 }
-                VtreeNode::Internal {
-                    left,
-                    right,
-                    parent: p,
-                } => {
+                VtreeNode::Internal { left, right, parent: p } => {
                     kids[i] = (left.0, right.0);
                     parent[i] = p.map_or(NONE, |p| p.0);
                 }
             }
+        }
+        let skip = skip_flags(&kids, vt.root().0, skip_run());
+        let mut owner = vec![NONE; n];
+        for &(m, _) in summed {
+            let mut stack = vec![m];
+            while let Some(t) = stack.pop() {
+                owner[t as usize] = m;
+                let (l, r) = kids[t as usize];
+                if l != NONE {
+                    stack.push(l);
+                    stack.push(r);
+                }
+            }
+        }
+        for &(m, k) in summed {
+            let m = m as usize;
+            debug_assert!(kind[m] == INNER || k == 3, "a summed variable keeps its three labels");
+            kind[m] = if kind[m] == VAR { SUMMED_VAR } else { SUMMED };
+            kids[m] = (NONE, NONE);
+            labels[m] = k;
         }
         let root = vt.root().0;
         let (mut pre, mut size) = (vec![0u32; n], vec![1u32; n]);
@@ -127,17 +254,49 @@ impl Shape {
             looked_up[l as usize] = looked_up[t as usize] || both;
             looked_up[r as usize] = looked_up[t as usize];
         }
-        Shape {
-            root,
-            kids,
-            parent,
-            pre,
-            size,
-            topdown,
-            bottomup,
-            depth,
-            looked_up,
+        let mut chain_up: Vec<u32> = (0..n as u32).collect();
+        for &t in &topdown {
+            let (l, r) = kids[t as usize];
+            if !skip[t as usize] {
+                continue;
+            }
+            if kids[r as usize].0 == NONE {
+                chain_up[l as usize] = chain_up[t as usize];
+            }
+            if kids[l as usize].0 == NONE {
+                chain_up[r as usize] = chain_up[t as usize];
+            }
         }
+        let mut weighted: Vec<bool> = kind.iter().map(|&k| k >= SUMMED_VAR).collect();
+        let mut one = vec![ZREF; n];
+        for &t in order.iter().rev() {
+            let (l, r) = kids[t as usize];
+            if l == NONE {
+                one[t as usize] = mk(t, ONE);
+                continue;
+            }
+            weighted[t as usize] = weighted[l as usize] || weighted[r as usize];
+            // `build_top`'s descent.
+            let leaf = |c: u32| kids[c as usize].0 == NONE;
+            one[t as usize] = match skip[t as usize] {
+                true if leaf(l) => one[r as usize],
+                true if leaf(r) => one[l as usize],
+                _ => ZREF,
+            };
+        }
+        Shape { root, kids, parent, pre, size, topdown, bottomup, var, depth, looked_up, chain_up, one, skip, kind, labels, weighted, owner }
+    }
+
+    /// Whether a subtree is summed out somewhere.
+    #[inline]
+    pub(crate) fn is_weighted(&self) -> bool {
+        self.weighted[self.root as usize]
+    }
+
+    /// Whether leaf `v`'s labels are literals, summed out or not.
+    #[inline]
+    pub(crate) fn literal_leaf(&self, v: u32) -> bool {
+        matches!(self.kind[v as usize], VAR | SUMMED_VAR)
     }
 
     #[inline]
@@ -162,6 +321,21 @@ impl Shape {
     pub(crate) fn num_nodes(&self) -> usize {
         self.kids.len()
     }
+
+    /// The lowest common ancestor of `a` and `b`.
+    pub(crate) fn lca(&self, mut a: u32, mut b: u32) -> u32 {
+        while self.depth[a as usize] > self.depth[b as usize] {
+            a = self.parent[a as usize];
+        }
+        while self.depth[b as usize] > self.depth[a as usize] {
+            b = self.parent[b as usize];
+        }
+        while a != b {
+            a = self.parent[a as usize];
+            b = self.parent[b as usize];
+        }
+        a
+    }
 }
 
 /// One level's real nodes: node `i`'s pairs are `pairs[start[i]..start[i + 1]]`.
@@ -181,28 +355,42 @@ impl SLevel {
         &self.pairs[self.start[i as usize] as usize..self.start[i as usize + 1] as usize]
     }
     /// Append a node and return its index; the growth is charged to `lim`.
-    pub(crate) fn push(
-        &mut self,
-        pairs: &[(Ref, Ref)],
-        lim: &Limits,
-    ) -> Result<u32, OperationError> {
+    pub(crate) fn push(&mut self, pairs: &[(Ref, Ref)], lim: &Limits) -> Result<u32, OperationError> {
         if self.start.is_empty() {
             lim.try_push(&mut self.start, 0)?;
         }
-        lim.reserve(&mut self.pairs, pairs.len())?;
-        self.pairs.extend_from_slice(pairs);
+        if self.pairs.capacity() - self.pairs.len() < pairs.len() {
+            lim.reserve(&mut self.pairs, pairs.len())?;
+        }
+        // One or two pairs, most nodes, without a call to copy them.
+        match *pairs {
+            [p] => self.pairs.push(p),
+            [p, q] => {
+                self.pairs.push(p);
+                self.pairs.push(q);
+            }
+            _ => self.pairs.extend_from_slice(pairs),
+        }
         lim.try_push(&mut self.start, self.pairs.len() as u32)?;
         Ok((self.start.len() - 2) as u32)
     }
 
-    /// A copy of the level, charged to `lim`.
-    pub(crate) fn copy(&self, lim: &Limits) -> Result<SLevel, OperationError> {
-        let mut c = SLevel::default();
-        lim.reserve_exact(&mut c.start, self.start.len())?;
-        c.start.extend_from_slice(&self.start);
-        lim.reserve_exact(&mut c.pairs, self.pairs.len())?;
-        c.pairs.extend_from_slice(&self.pairs);
-        Ok(c)
+    /// Append nodes `lo..hi` of `src` as they are, numbered on from this
+    /// level's last.
+    pub(crate) fn copy_run(&mut self, src: &SLevel, lo: usize, hi: usize, lim: &Limits) -> Result<(), OperationError> {
+        if lo >= hi {
+            return Ok(());
+        }
+        if self.start.is_empty() {
+            lim.try_push(&mut self.start, 0)?;
+        }
+        let (a, b) = (src.start[lo], src.start[hi]);
+        let shift = (self.pairs.len() as u32).wrapping_sub(a);
+        lim.reserve(&mut self.pairs, (b - a) as usize)?;
+        self.pairs.extend_from_slice(&src.pairs[a as usize..b as usize]);
+        lim.reserve(&mut self.start, hi - lo)?;
+        self.start.extend(src.start[lo + 1..=hi].iter().map(|&x| x.wrapping_add(shift)));
+        Ok(())
     }
 
     /// The bytes the level's arenas hold.
@@ -212,24 +400,63 @@ impl SLevel {
 }
 
 /// Per vtree node its [`SLevel`], stored only for levels that were written:
-/// reading an unwritten level gives the empty one.
+/// reading an unwritten level gives the empty one. A level may be shared
+/// with another diagram's ([`LevelMap::share`]) and is copied when either
+/// changes it.
 #[derive(Clone, Debug)]
 pub(crate) struct LevelMap {
     idx: Vec<u32>,
-    lv: Vec<SLevel>,
+    lv: Vec<Arc<SLevel>>,
 }
 
-static EMPTY: SLevel = SLevel {
-    start: Vec::new(),
-    pairs: Vec::new(),
-};
+static EMPTY: SLevel = SLevel { start: Vec::new(), pairs: Vec::new() };
 
 impl LevelMap {
     fn new(n: usize) -> LevelMap {
-        LevelMap {
-            idx: vec![NONE; n],
-            lv: Vec::new(),
+        LevelMap { idx: vec![NONE; n], lv: Vec::new() }
+    }
+    /// Every vtree node's level, in vtree index order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SLevel> + '_ {
+        self.idx.iter().map(|&i| if i == NONE { &EMPTY } else { &*self.lv[i as usize] })
+    }
+
+    /// Replace level `u` by `lvl`, without copying a shared level first.
+    pub(crate) fn set(&mut self, u: usize, lvl: SLevel) {
+        match self.idx[u] {
+            NONE => {
+                self.idx[u] = self.lv.len() as u32;
+                self.lv.push(Arc::new(lvl));
+            }
+            i => self.lv[i as usize] = Arc::new(lvl),
         }
+    }
+
+    /// Level `u`, leaving it empty: moved out where this map held it alone.
+    pub(crate) fn take(&mut self, u: usize) -> SLevel {
+        match self.idx[u] {
+            NONE => SLevel::default(),
+            i => {
+                let lvl = std::mem::take(&mut self.lv[i as usize]);
+                Arc::try_unwrap(lvl).unwrap_or_else(|a| (*a).clone())
+            }
+        }
+    }
+
+    /// Level `u` of `src` as this map's level `u`, shared until either
+    /// changes it, charged to `lim` as a copy is: each diagram releases its
+    /// levels' bytes when it is discarded.
+    pub(crate) fn share(&mut self, u: usize, src: &LevelMap, lim: &Limits) -> Result<(), OperationError> {
+        let j = src.idx[u];
+        let lvl = if j == NONE { Arc::new(SLevel::default()) } else { Arc::clone(&src.lv[j as usize]) };
+        lim.charge_bytes(lvl.bytes())?;
+        match self.idx[u] {
+            NONE => {
+                self.idx[u] = self.lv.len() as u32;
+                self.lv.push(lvl);
+            }
+            i => self.lv[i as usize] = lvl,
+        }
+        Ok(())
     }
 }
 
@@ -238,11 +465,7 @@ impl std::ops::Index<usize> for LevelMap {
     #[inline]
     fn index(&self, u: usize) -> &SLevel {
         let i = self.idx[u];
-        if i == NONE {
-            &EMPTY
-        } else {
-            &self.lv[i as usize]
-        }
+        if i == NONE { &EMPTY } else { &self.lv[i as usize] }
     }
 }
 
@@ -253,9 +476,18 @@ impl std::ops::IndexMut<usize> for LevelMap {
         if i == NONE {
             i = self.lv.len() as u32;
             self.idx[u] = i;
-            self.lv.push(SLevel::default());
+            self.lv.push(Arc::new(SLevel::default()));
         }
-        &mut self.lv[i as usize]
+        let lvl = &mut self.lv[i as usize];
+        // No `Weak` to a level is ever made, so a count of one means this
+        // map holds the level alone; the fence orders this access after a
+        // drop of the last other holder on another thread.
+        if Arc::strong_count(lvl) == 1 {
+            std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+            // Safety: the level's only holder is `self`, borrowed mutably.
+            return unsafe { &mut *Arc::as_ptr(lvl).cast_mut() };
+        }
+        Arc::make_mut(lvl)
     }
 }
 
@@ -271,25 +503,25 @@ pub(crate) struct SkipForm {
     pub(crate) out: Ref,
 }
 
+/// Sizes of a skip-form diagram.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SkipSize {
+    pub(crate) nodes: u64,
+    pub(crate) pairs: u64,
+    /// Pair sides that skip, and their distinct (child level, target).
+    pub(crate) skips: u64,
+    pub(crate) forwarders: u64,
+}
+
 impl SkipForm {
     pub(crate) fn zero(shape: Arc<Shape>) -> SkipForm {
         let n = shape.num_nodes();
-        SkipForm {
-            shape,
-            levels: LevelMap::new(n),
-            active: Vec::new(),
-            out: ZREF,
-        }
+        SkipForm { shape, levels: LevelMap::new(n), active: Vec::new(), out: ZREF }
     }
 
     /// Append a node at level `u`, noting the level among those that hold
     /// nodes ([`SkipForm::collect_in`] orders them), and return its index.
-    pub(crate) fn push_node(
-        &mut self,
-        u: u32,
-        pairs: &[(Ref, Ref)],
-        lim: &Limits,
-    ) -> Result<u32, OperationError> {
+    pub(crate) fn push_node(&mut self, u: u32, pairs: &[(Ref, Ref)], lim: &Limits) -> Result<u32, OperationError> {
         if self.levels[u as usize].width() == 0 {
             self.active.push(u);
         }
@@ -303,10 +535,14 @@ impl SkipForm {
         self.collect_in(cand, lim)
     }
 
+    /// The bytes the levels' arenas hold.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.active.iter().map(|&t| self.levels[t as usize].bytes()).sum()
+    }
+
     /// Drop the diagram, handing the charge for its levels back to `lim`.
     pub(crate) fn discard(self, lim: &Limits) {
-        let bytes: u64 = self.levels.lv.iter().map(SLevel::bytes).sum();
-        lim.release_bytes(bytes);
+        lim.release_bytes(self.bytes());
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -318,12 +554,7 @@ impl SkipForm {
     /// is the one pair `(r, One)` or `(One, r)` that `true` on the skipped
     /// leaf side makes.
     #[inline]
-    pub(crate) fn pairs_at<'a>(
-        &'a self,
-        u: u32,
-        r: Ref,
-        buf: &'a mut [(Ref, Ref); 1],
-    ) -> &'a [(Ref, Ref)] {
+    pub(crate) fn pairs_at<'a>(&'a self, u: u32, r: Ref, buf: &'a mut [(Ref, Ref); 1]) -> &'a [(Ref, Ref)] {
         if vt(r) == u {
             return self.levels[u as usize].node(ix(r));
         }
@@ -338,6 +569,32 @@ impl SkipForm {
         &buf[..]
     }
 
+    pub(crate) fn size(&self) -> SkipSize {
+        let sh = &self.shape;
+        let mut s = SkipSize::default();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for &t in &self.active {
+            let lvl = &self.levels[t as usize];
+            s.nodes += lvl.width() as u64;
+            s.pairs += lvl.pairs.len() as u64;
+            let (l, r) = sh.kids[t as usize];
+            for &(a, b) in &lvl.pairs {
+                for (c, x) in [(l, a), (r, b)] {
+                    if vt(x) != c {
+                        s.skips += 1;
+                        seen.insert((c, x));
+                    }
+                }
+            }
+        }
+        if self.out != ZREF && vt(self.out) != sh.root {
+            s.skips += 1;
+            seen.insert((sh.root, self.out));
+        }
+        s.forwarders = seen.len() as u64;
+        s
+    }
+
     /// Drop nodes the output does not reach and number the rest in order.
     pub(crate) fn collect(&mut self, lim: &Limits) -> Result<(), OperationError> {
         let all = self.shape.topdown.clone();
@@ -347,11 +604,7 @@ impl SkipForm {
     /// [`SkipForm::collect`] where only the upward-closed levels in `cand` may
     /// hold unreachable or renumbered nodes; active levels outside `cand` stay
     /// as they are.
-    pub(crate) fn collect_in(
-        &mut self,
-        mut cand: Vec<u32>,
-        lim: &Limits,
-    ) -> Result<(), OperationError> {
+    pub(crate) fn collect_in(&mut self, mut cand: Vec<u32>, lim: &Limits) -> Result<(), OperationError> {
         let sh = Arc::clone(&self.shape);
         cand.retain(|&t| self.levels[t as usize].width() > 0);
         cand.sort_unstable_by_key(|&t| sh.pre[t as usize]);
@@ -363,45 +616,80 @@ impl SkipForm {
             drop_all.dedup();
             for &t in &drop_all {
                 lim.release_bytes(self.levels[t as usize].bytes());
-                self.levels[t as usize] = SLevel::default();
+                self.levels.set(t as usize, SLevel::default());
             }
             return Ok(());
         }
-        // Per candidate level (by its position in `cand`): which nodes are
-        // live, then their new numbers, packed into `live[base[i]..base[i + 1]]`.
-        let mut pos = vec![NONE; sh.num_nodes()];
-        let mut base = Vec::with_capacity(cand.len() + 1);
-        let mut total = 0usize;
-        for (i, &t) in cand.iter().enumerate() {
-            pos[t as usize] = i as u32;
-            base.push(total as u32);
-            total += self.levels[t as usize].width();
+        // Per candidate level, the offset of its nodes in one array of all
+        // of theirs (`NONE` on any other node of the vtree): which nodes are
+        // live, then their new numbers. The per-node arrays are the thread's,
+        // kept at `NONE` and `false` between calls ([`NodeArrays`]).
+        let mut na = NodeArrays::take(sh.num_nodes());
+        let res = self.collect_marked(&sh, &cand, &mut na, lim);
+        na.put_back(&cand);
+        res
+    }
+
+    fn collect_marked(&mut self, sh: &Shape, cand: &[u32], na: &mut NodeArrays, lim: &Limits) -> Result<(), OperationError> {
+        let NodeArrays { off, moved, below, set_below } = na;
+        let mut total = 0u32;
+        for &t in cand {
+            off[t as usize] = total;
+            total += self.levels[t as usize].width() as u32;
         }
-        base.push(total as u32);
-        let mut live = filled(lim, total, 0u32)?;
-        let mark = |live: &mut [u32], r: Ref| {
-            let p = pos[vt(r) as usize];
-            if p != NONE {
-                live[base[p as usize] as usize + ix(r) as usize] = 1;
-            }
+        let mut live = filled(lim, total as usize, 0u32)?;
+        let slot = |off: &[u32], r: Ref| -> Option<usize> {
+            let o = off[vt(r) as usize];
+            (o != NONE).then(|| (o + ix(r)) as usize)
         };
-        mark(&mut live, self.out);
-        for (i, &t) in cand.iter().enumerate() {
+        if let Some(k) = slot(off, self.out) {
+            live[k] = 1;
+        }
+        let mut alive = 0u32;
+        for &t in cand {
             let lvl = &self.levels[t as usize];
-            let b = base[i] as usize;
-            for k in 0..lvl.width() {
-                if live[b + k] != 0 {
-                    for &(a, r) in lvl.node(k as u32) {
-                        mark(&mut live, a);
-                        mark(&mut live, r);
+            let o = off[t as usize] as usize;
+            let end = o + lvl.width();
+            // A level's pairs name levels below it, later in `cand`, whose
+            // slots follow its own.
+            let (own, below) = live.split_at_mut(end);
+            let own = &own[o..];
+            let mut lo = 0usize;
+            for (&flag, &hi) in own.iter().zip(&lvl.start[1..]) {
+                let hi = hi as usize;
+                if flag != 0 {
+                    alive += 1;
+                    for &(a, b) in &lvl.pairs[lo..hi] {
+                        for x in [a, b] {
+                            if let Some(q) = slot(off, x) {
+                                below[q - end] = 1;
+                            }
+                        }
                     }
                 }
+                lo = hi;
             }
         }
-        for i in 0..cand.len() {
-            let (lo, hi) = (base[i] as usize, base[i + 1] as usize);
+        let mut active = std::mem::take(&mut self.active);
+        if alive == total {
+            // Every node is reached: the numbers stand.
+            lim.discard(live);
+            active.extend(cand.iter().copied());
+            active.retain(|&t| self.levels[t as usize].width() > 0);
+            active.sort_unstable_by_key(|&t| sh.pre[t as usize]);
+            active.dedup();
+            self.active = active;
+            return Ok(());
+        }
+        // The new numbers. `moved` keeps the offsets of the levels that lose
+        // a node, the only ones whose references change, and `below` marks
+        // the levels with one of them in their subtree, the only ones whose
+        // pairs change.
+        for &t in cand {
+            let o = off[t as usize] as usize;
+            let w = self.levels[t as usize].width();
             let mut next = 0u32;
-            for x in &mut live[lo..hi] {
+            for x in &mut live[o..o + w] {
                 *x = if *x != 0 {
                     next += 1;
                     next - 1
@@ -409,31 +697,48 @@ impl SkipForm {
                     NONE
                 };
             }
+            if next < w as u32 {
+                moved[t as usize] = o as u32;
+                let mut u = sh.parent[t as usize];
+                while u != NONE && !below[u as usize] {
+                    below[u as usize] = true;
+                    set_below.push(u);
+                    u = sh.parent[u as usize];
+                }
+            }
         }
         let fix = |live: &[u32], r: Ref| -> Ref {
-            let p = pos[vt(r) as usize];
-            if p == NONE {
-                r
-            } else {
-                mk(vt(r), live[base[p as usize] as usize + ix(r) as usize])
+            match slot(moved, r) {
+                None => r,
+                Some(q) => mk(vt(r), live[q]),
             }
         };
-        let mut active = Vec::with_capacity(cand.len() + self.active.len());
-        for &t in &self.active {
-            if pos[t as usize] == NONE && self.levels[t as usize].width() > 0 {
+        active.retain(|&t| off[t as usize] == NONE && self.levels[t as usize].width() > 0);
+        for &t in cand {
+            if moved[t as usize] == NONE {
+                // Every node kept: only the references below change. The
+                // level is rewritten only from its first pair that names a
+                // renumbered node, so a level shared with another diagram and
+                // naming none stays shared.
+                if below[t as usize] {
+                    let pairs = &self.levels[t as usize].pairs;
+                    if let Some(q0) = pairs.iter().position(|&(a, b)| fix(&live, a) != a || fix(&live, b) != b) {
+                        for p in &mut self.levels[t as usize].pairs[q0..] {
+                            *p = (fix(&live, p.0), fix(&live, p.1));
+                        }
+                    }
+                }
                 active.push(t);
+                continue;
             }
-        }
-        for (i, &t) in cand.iter().enumerate() {
-            let lslice = &live[base[i] as usize..base[i + 1] as usize];
             // Compacted in place: a kept node moves down to its new number.
+            let o = off[t as usize] as usize;
             let lvl = &mut self.levels[t as usize];
             let (mut w, mut j, mut lo) = (0usize, 0usize, 0usize);
-            for &new_k in lslice {
-                let hi = lvl.start[lo + 1] as usize;
-                let pair_lo = lvl.start[lo] as usize;
-                if new_k != NONE {
-                    for q in pair_lo..hi {
+            for k in 0..lvl.width() {
+                let hi = lvl.start[k + 1] as usize;
+                if live[o + k] != NONE {
+                    for q in lo..hi {
                         let (a, b) = lvl.pairs[q];
                         lvl.pairs[w] = (fix(&live, a), fix(&live, b));
                         w += 1;
@@ -441,7 +746,7 @@ impl SkipForm {
                     j += 1;
                     lvl.start[j] = w as u32;
                 }
-                lo += 1;
+                lo = hi;
             }
             if j == 0 {
                 lim.release_bytes(lvl.bytes());
@@ -449,6 +754,15 @@ impl SkipForm {
             } else {
                 lvl.pairs.truncate(w);
                 lvl.start.truncate(j + 1);
+                // A level that lost most of its pairs (the conjunction copies
+                // `P`'s level whole where it changes) hands the rest of its
+                // arenas back, so that the result does not hold them.
+                if lvl.pairs.capacity() > 2 * w {
+                    let before = lvl.bytes();
+                    lvl.pairs.shrink_to_fit();
+                    lvl.start.shrink_to_fit();
+                    lim.release_bytes(before.saturating_sub(lvl.bytes()));
+                }
                 active.push(t);
             }
         }
@@ -462,41 +776,130 @@ impl SkipForm {
 
     /// The model count over the vtree's variables.
     pub(crate) fn model_count(&self, lim: &Limits) -> Result<num_bigint::BigUint, OperationError> {
-        use num_bigint::BigUint;
-        let sh = &self.shape;
-        if self.out == ZREF {
-            return Ok(BigUint::from(0u32));
+        self.evaluate(&eval::Count, lim)
+    }
+}
+
+/// `true` over `t`'s variables as [`normalize`] writes it: skipped through
+/// a leaf child, the left one first, and where both children are internal
+/// the node `(true, true)`, which `node` makes at its level.
+pub(crate) fn build_top(
+    sh: &Shape,
+    mut t: u32,
+    node: &mut impl FnMut(u32, (Ref, Ref)) -> Result<Ref, OperationError>,
+) -> Result<Ref, OperationError> {
+    while !sh.is_leaf(t) {
+        let (l, r) = sh.kids[t as usize];
+        if sh.is_leaf(l) && sh.skip[t as usize] {
+            t = r;
+        } else if sh.is_leaf(r) && sh.skip[t as usize] {
+            t = l;
+        } else {
+            let pair = (build_top(sh, l, node)?, build_top(sh, r, node)?);
+            return node(t, pair);
         }
-        let mut val: Vec<Vec<BigUint>> = vec![Vec::new(); sh.num_nodes()];
-        let value = |val: &Vec<Vec<BigUint>>, c: u32, r: Ref| -> BigUint {
-            let v = vt(r);
-            let base = if sh.is_leaf(v) {
-                BigUint::from(if ix(r) == ONE { 2u32 } else { 1 })
-            } else {
-                val[v as usize][ix(r) as usize].clone()
-            };
-            // Each level crossed from `c` to `v` skips one variable.
-            base << (sh.depth[v as usize] - sh.depth[c as usize])
-        };
-        for &t in self.active.iter().rev() {
-            let (l, r) = sh.kids[t as usize];
-            let lvl = &self.levels[t as usize];
-            let mut out = Vec::new();
-            lim.reserve_exact(&mut out, lvl.width())?;
-            for i in 0..lvl.width() {
-                let mut s = BigUint::from(0u32);
-                for &(a, b) in lvl.node(i as u32) {
-                    s += value(&val, l, a) * value(&val, r, b);
-                }
-                out.push(s);
+    }
+    Ok(mk(t, ONE))
+}
+
+/// The least length of a run of nodes with a leaf child whose nodes skip
+/// (`TIDIDI_SKIP_RUN`, default 1: every such node). An experiment's knob.
+pub(crate) fn skip_run() -> u32 {
+    static RUN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *RUN.get_or_init(|| std::env::var("TIDIDI_SKIP_RUN").ok().and_then(|v| v.parse().ok()).unwrap_or(1))
+}
+
+/// [`Shape::skip`] over children `kids` (`(NONE, NONE)` on a leaf): a node
+/// with a leaf child skips where its run, the chain of such nodes through
+/// each one's internal child, has at least `run` nodes.
+fn skip_flags(kids: &[(u32, u32)], root: u32, run: u32) -> Vec<bool> {
+    let n = kids.len();
+    let leaf = |v: u32| kids[v as usize].0 == NONE;
+    let lop = |t: u32| !leaf(t) && (leaf(kids[t as usize].0) || leaf(kids[t as usize].1));
+    // Every node, so that the shape's leaves decide: a summed-out subtree
+    // read as a leaf is skipped through as the leaf it is read as.
+    if run <= 1 {
+        return vec![true; n];
+    }
+    // The run's next node: the internal child, where it has a leaf child too.
+    let next = |t: u32| -> u32 {
+        let (l, r) = kids[t as usize];
+        let c = if !leaf(l) { l } else if !leaf(r) { r } else { return NONE };
+        if lop(c) { c } else { NONE }
+    };
+    let mut order = Vec::with_capacity(n);
+    let mut stack = vec![root];
+    while let Some(t) = stack.pop() {
+        order.push(t);
+        let (l, r) = kids[t as usize];
+        if l != NONE {
+            stack.push(l);
+            stack.push(r);
+        }
+    }
+    // Run lengths below each node, then each run's length on all its nodes.
+    let mut down = vec![0u32; n];
+    for &t in order.iter().rev() {
+        if lop(t) {
+            let c = next(t);
+            down[t as usize] = 1 + if c == NONE { 0 } else { down[c as usize] };
+        }
+    }
+    let mut len = vec![0u32; n];
+    for &t in &order {
+        if lop(t) {
+            if len[t as usize] == 0 {
+                len[t as usize] = down[t as usize];
             }
-            val[t as usize] = out;
+            let c = next(t);
+            if c != NONE {
+                len[c as usize] = len[t as usize];
+            }
         }
-        let count = value(&val, sh.root, self.out);
-        for v in val {
-            lim.discard(v);
+    }
+    (0..n).map(|i| len[i] >= run).collect()
+}
+
+/// Per vtree node arrays for [`SkipForm::collect_in`], kept on the thread
+/// from one call to the next at `NONE` and `false`: a call resets only the
+/// entries it set, so that its cost follows the levels it collects rather
+/// than the vtree.
+#[derive(Default)]
+struct NodeArrays {
+    off: Vec<u32>,
+    moved: Vec<u32>,
+    below: Vec<bool>,
+    /// The entries of `below` set.
+    set_below: Vec<u32>,
+}
+
+thread_local! {
+    static NODE_ARRAYS: std::cell::Cell<NodeArrays> = std::cell::Cell::new(NodeArrays::default());
+}
+
+impl NodeArrays {
+    fn take(n: usize) -> NodeArrays {
+        let mut na = NODE_ARRAYS.with(|c| c.take());
+        if na.off.len() < n {
+            na.off.resize(n, NONE);
+            na.moved.resize(n, NONE);
+            na.below.resize(n, false);
         }
-        Ok(count)
+        na
+    }
+
+    /// Reset the entries a collection over `cand` set and keep the arrays.
+    fn put_back(mut self, cand: &[u32]) {
+        for &t in cand {
+            self.off[t as usize] = NONE;
+            self.moved[t as usize] = NONE;
+        }
+        for &u in &self.set_below {
+            self.below[u as usize] = false;
+        }
+        self.set_below.clear();
+        debug_assert!(self.off.iter().chain(&self.moved).all(|&x| x == NONE) && !self.below.contains(&true));
+        NODE_ARRAYS.with(|c| c.set(self));
     }
 }
 
@@ -522,7 +925,7 @@ pub(crate) fn normalize(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Resu
         merge_cells(sh, u, pairs);
     }
     let (l, r) = sh.kids[u as usize];
-    if pairs.len() == 1 {
+    if pairs.len() == 1 && sh.skip[u as usize] {
         let (a, b) = pairs[0];
         if sh.is_leaf(l) && a == mk(l, ONE) {
             return Err(b);
@@ -544,15 +947,35 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
         let lit = |p: &(Ref, Ref)| if ll { p.0 } else { p.1 };
         let other = |p: &(Ref, Ref)| if ll { p.1 } else { p.0 };
         let leaf = if ll { l } else { r };
-        if pairs.len() > 1 {
-            pairs.sort_unstable_by_key(|p| (other(p), lit(p)));
+        if let [p, q] = pairs[..] {
+            // Two pairs, the most a level against a leaf meets: one cell, or
+            // two in their order.
+            if other(&p) == other(&q) {
+                let x = mk(leaf, cells_label(literal_cells(ix(lit(&p))) | literal_cells(ix(lit(&q)))));
+                pairs[0] = if ll { (x, other(&p)) } else { (other(&p), x) };
+                pairs.truncate(1);
+            } else if if ll { q < p } else { other(&q) < other(&p) } {
+                pairs.swap(0, 1);
+            }
+            return;
+        }
+        // Each pair packed in its first slot as one integer, the other side
+        // above the literal's cells, and sorted by it unless the other sides
+        // already come in order: then per other side the cells its pairs
+        // cover.
+        for p in pairs.iter_mut() {
+            debug_assert!(other(p) >> 62 == 0, "a reference fits in 62 bits");
+            *p = ((other(p) << 2) | u64::from(literal_cells(ix(lit(p)))), 0);
+        }
+        if !pairs.is_sorted_by_key(|p| p.0 >> 2) {
+            pairs.sort_unstable_by_key(|p| p.0);
         }
         let (mut w, mut i) = (0, 0);
         while i < pairs.len() {
-            let o = other(&pairs[i]);
+            let o = pairs[i].0 >> 2;
             let mut m = 0u8;
-            while i < pairs.len() && other(&pairs[i]) == o {
-                m |= literal_cells(ix(lit(&pairs[i])));
+            while i < pairs.len() && pairs[i].0 >> 2 == o {
+                m |= (pairs[i].0 & 3) as u8;
                 i += 1;
             }
             let x = mk(leaf, cells_label(m));
@@ -560,23 +983,27 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
             w += 1;
         }
         pairs.truncate(w);
-        if ll && w > 1 {
-            pairs.sort_unstable();
+        if ll && w > 1 && !pairs.is_sorted_by_key(|p| ix(p.0)) {
+            // By label, then other side: the pairs, in other side order,
+            // copied label by label behind the input, which is then dropped.
+            for l in [ONE, POS, NEG] {
+                for i in 0..w {
+                    if ix(pairs[i].0) == l {
+                        pairs.push(pairs[i]);
+                    }
+                }
+            }
+            pairs.drain(..w);
         }
         return;
     }
     // Cells: every One against a leaf child as both literals.
-    if (ll && pairs.iter().any(|p| ix(p.0) == ONE)) || (rl && pairs.iter().any(|p| ix(p.1) == ONE))
-    {
+    if (ll && pairs.iter().any(|p| ix(p.0) == ONE)) || (rl && pairs.iter().any(|p| ix(p.1) == ONE)) {
         // Expanded behind the input, which is then dropped from the front.
         let m = pairs.len();
         for i in 0..m {
             let (a, b) = pairs[i];
-            let lefts: &[Ref] = if ll && ix(a) == ONE {
-                &[mk(l, POS), mk(l, NEG)]
-            } else {
-                &[a]
-            };
+            let lefts: &[Ref] = if ll && ix(a) == ONE { &[mk(l, POS), mk(l, NEG)] } else { &[a] };
             for &x in lefts {
                 if rl && ix(b) == ONE {
                     pairs.push((x, mk(r, POS)));
@@ -623,6 +1050,70 @@ pub(crate) fn merge_cells(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) {
         }
         pairs.truncate(w);
     }
+}
+
+/// Drop a charged vector of charged vectors, handing every charge back.
+pub(crate) fn discard_nested<T>(lim: &Limits, mut v: Vec<Vec<T>>) {
+    for x in v.iter_mut() {
+        lim.discard(std::mem::take(x));
+    }
+    lim.discard(v);
+}
+
+/// [`normalize`] for a node at a level with a summed-out subtree below it,
+/// whose pairs are a multiset of products to add: no pair goes as a repeat
+/// of another. Against a literal leaf, a positive and a negative literal
+/// with the same other side make one `One`; nothing else merges.
+pub(crate) fn normalize_sum(sh: &Shape, u: u32, pairs: &mut Vec<(Ref, Ref)>) -> Result<(), Ref> {
+    let (l, r) = sh.kids[u as usize];
+    if pairs.len() > 1 {
+        for (leaf, left) in [(l, true), (r, false)] {
+            if sh.literal_leaf(leaf) {
+                merge_literals(pairs, left);
+            }
+        }
+        pairs.sort_unstable();
+    }
+    if pairs.len() == 1 && sh.skip[u as usize] {
+        let (a, b) = pairs[0];
+        if sh.is_leaf(l) && a == mk(l, ONE) {
+            return Err(b);
+        }
+        if sh.is_leaf(r) && b == mk(r, ONE) {
+            return Err(a);
+        }
+    }
+    Ok(())
+}
+
+/// Per other side, each positive literal of the leaf side (`left` or the
+/// right) beside a negative one becomes `One` with it, in a multiset.
+fn merge_literals(pairs: &mut Vec<(Ref, Ref)>, left: bool) {
+    let lit = |p: &(Ref, Ref)| if left { p.0 } else { p.1 };
+    let other = |p: &(Ref, Ref)| if left { p.1 } else { p.0 };
+    pairs.sort_unstable_by_key(|p| (other(p), lit(p)));
+    let (mut w, mut i) = (0, 0);
+    while i < pairs.len() {
+        let o = other(&pairs[i]);
+        let leaf = vt(lit(&pairs[i]));
+        let mut count = [0usize; 3];
+        while i < pairs.len() && other(&pairs[i]) == o {
+            count[ix(lit(&pairs[i])) as usize] += 1;
+            i += 1;
+        }
+        let both = count[POS as usize].min(count[NEG as usize]);
+        count[ONE as usize] += both;
+        count[POS as usize] -= both;
+        count[NEG as usize] -= both;
+        for (label, &k) in count.iter().enumerate() {
+            for _ in 0..k {
+                let x = mk(leaf, label as u32);
+                pairs[w] = if left { (x, o) } else { (o, x) };
+                w += 1;
+            }
+        }
+    }
+    pairs.truncate(w);
 }
 
 /// The literal cells a leaf label covers: bit 0 positive, bit 1 negative.

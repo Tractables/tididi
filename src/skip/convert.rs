@@ -4,35 +4,47 @@
 use std::sync::Arc;
 
 use super::conjoin::Numbered;
-use super::{NEG, NONE, ONE, POS, Ref, Shape, SkipForm, ZREF, filled, ix, mk, normalize, vt};
+use super::{filled, ix, mk, normalize, normalize_sum, vt, Ref, Shape, SkipForm, NEG, NONE, ONE, POS, SUMMED, ZREF};
 use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ZERO};
-use crate::limits::Limits;
 use crate::vtree::{Vtree, VtreeIdx};
+use crate::limits::Limits;
 use crate::{Engine, OperationError};
 
-/// Compute top-down reachability flags for every internal level of `f` when
-/// `f` is not certified canonical.
-fn compute_untrimmed_reach(
-    f: &Tdd,
-    sh: &Shape,
-    lim: &Limits,
-) -> Result<Vec<Vec<bool>>, OperationError> {
+/// The skip form of `f` on `shape`, which sums out [`summed_roots`] of `f`.
+/// Any valid diagram converts; a canonical one without marginal levels
+/// converts to the canonical skip form. A side into a weight-marginal
+/// variable keeps its label, and one into a weight-marginal internal level
+/// names the slot after its own, since slot 0 of a skip column is `true`.
+///
+/// # Errors
+///
+/// [`OperationError::MarginalLevel`] where a level holds model counts
+/// rather than weights, and [`OperationError::OverBudget`] where the skip
+/// form does not fit.
+pub(crate) fn from_tdd(f: &Tdd, shape: Arc<Shape>, lim: &Limits) -> Result<SkipForm, OperationError> {
+    if let Some(t) = f.levels.iter().position(|l| l.is_marginal() && !l.is_weight_marginal()) {
+        return Err(OperationError::MarginalLevel(VtreeIdx(t as u32)));
+    }
+    let sh = &*shape;
     let n = sh.num_nodes();
+    let mut form = SkipForm::zero(Arc::clone(&shape));
+    if f.is_zero() {
+        return Ok(form);
+    }
     let root = sh.root;
     let levels = &f.levels;
-    let mut reach: Vec<Vec<bool>> = Vec::new();
-    reach.reserve_exact(n);
+    // A canonical diagram holds only nodes its output reaches, and its skip
+    // form only nodes their referrers name.
+    let canonical = levels.is_canonical(f.output);
+    // The nodes the output reaches, top-down.
+    let mut reach: Vec<Vec<bool>> = Vec::with_capacity(n);
     for i in 0..n {
-        reach.push(if sh.is_leaf(i as u32) {
-            Vec::new()
-        } else {
-            filled(lim, levels[i].slot_count(), false)?
-        });
+        reach.push(if sh.is_leaf(i as u32) || canonical { Vec::new() } else { filled(lim, levels[i].slot_count(), false)? });
     }
-    if !sh.is_leaf(root) {
+    if !sh.is_leaf(root) && !canonical {
         reach[root as usize][f.output().local.idx()] = true;
     }
-    for &t in &sh.topdown {
+    for &t in sh.topdown.iter().filter(|_| !canonical) {
         let (l, r) = sh.kids[t as usize];
         for i in 0..reach[t as usize].len() {
             if !reach[t as usize][i] {
@@ -48,50 +60,12 @@ fn compute_untrimmed_reach(
             }
         }
     }
-    Ok(reach)
-}
-
-/// The skip form of `f`. Any valid diagram converts; a canonical one
-/// converts to the canonical skip form.
-///
-/// # Errors
-///
-/// [`OperationError::IncompatibleWeights`] where `f` carries weights,
-/// [`OperationError::MarginalLevel`] where a level is summed out, and
-/// [`OperationError::OverBudget`] where the skip form does not fit.
-pub(crate) fn from_tdd(
-    f: &Tdd,
-    shape: Arc<Shape>,
-    lim: &Limits,
-) -> Result<SkipForm, OperationError> {
-    if f.weights.is_some() {
-        return Err(OperationError::IncompatibleWeights);
-    }
-    if let Some(t) = f.levels.iter().position(|l| l.is_marginal()) {
-        return Err(OperationError::MarginalLevel(VtreeIdx(t as u32)));
-    }
-    let sh = &*shape;
-    let n = sh.num_nodes();
-    let mut form = SkipForm::zero(Arc::clone(&shape));
-    if f.is_zero() {
-        return Ok(form);
-    }
-    let root = sh.root;
-    let levels = &f.levels;
-    // A canonical diagram holds only nodes its output reaches, and its skip
-    // form only nodes their referrers name.
-    let canonical = levels.is_canonical(f.output);
-    let reach = if canonical {
-        Vec::new()
-    } else {
-        compute_untrimmed_reach(f, sh, lim)?
-    };
     // Resolve bottom-up.
     let mut res: Vec<Vec<Ref>> = vec![Vec::new(); n];
     let mut buf = Vec::new();
     for &t in &sh.bottomup {
         let (l, r) = sh.kids[t as usize];
-        let width = levels[t as usize].slot_count();
+        let width = if sh.is_leaf(t) { 0 } else { levels[t as usize].slot_count() };
         let mut out = filled(lim, width, ZREF)?;
         for i in 0..out.len() {
             if !canonical && !reach[t as usize][i] {
@@ -99,19 +73,15 @@ pub(crate) fn from_tdd(
             }
             buf.clear();
             for pair in levels[t as usize].pairs_iter_of_idx(i) {
-                let side = |c: u32, raw: u32| {
-                    if sh.is_leaf(c) {
-                        mk(c, raw)
-                    } else {
-                        res[c as usize][raw as usize]
-                    }
+                let side = |c: u32, raw: u32| match sh.kind[c as usize] {
+                    SUMMED => mk(c, raw + 1),
+                    _ if sh.is_leaf(c) => mk(c, raw),
+                    _ => res[c as usize][raw as usize],
                 };
-                lim.try_push(
-                    &mut buf,
-                    (side(l, pair.left.raw()), side(r, pair.right.raw())),
-                )?;
+                lim.try_push(&mut buf, (side(l, pair.left.raw()), side(r, pair.right.raw())))?;
             }
-            out[i] = match normalize(sh, t, &mut buf) {
+            let made = if sh.weighted[t as usize] { normalize_sum(sh, t, &mut buf) } else { normalize(sh, t, &mut buf) };
+            out[i] = match made {
                 Err(target) => target,
                 Ok(()) => mk(t, form.levels[t as usize].push(&buf, lim)?),
             };
@@ -119,10 +89,10 @@ pub(crate) fn from_tdd(
         res[t as usize] = out;
     }
     let o = f.output().local.0;
-    form.out = if sh.is_leaf(root) {
-        mk(root, o)
-    } else {
-        res[root as usize][o as usize]
+    form.out = match sh.kind[root as usize] {
+        SUMMED => mk(root, o + 1),
+        _ if sh.is_leaf(root) => mk(root, o),
+        _ => res[root as usize][o as usize],
     };
     for v in reach {
         lim.discard(v);
@@ -132,27 +102,68 @@ pub(crate) fn from_tdd(
     }
     lim.discard(buf);
     if canonical {
-        form.active = sh
-            .topdown
-            .iter()
-            .copied()
-            .filter(|&t| form.levels[t as usize].width() > 0)
-            .collect();
+        form.active = sh.topdown.iter().copied().filter(|&t| form.levels[t as usize].width() > 0).collect();
     } else {
         form.collect(lim)?;
     }
     Ok(form)
 }
 
+/// The subtrees `f` sums out: each marginal level whose parent is not,
+/// with its labels in skip form, three on a variable and on an internal
+/// level its column's slots after `One`.
+pub(crate) fn summed_roots(f: &Tdd) -> Vec<(u32, u32)> {
+    let vt = f.vtree();
+    let ws = f.weights.as_ref();
+    vt.bottomup()
+        .filter(|&t| f.levels[t.idx()].is_marginal())
+        .filter(|&t| vt.node(t).parent().is_none_or(|p| !f.levels[p.idx()].is_marginal()))
+        .map(|t| {
+            let labels = if vt.node(t).is_leaf() {
+                3
+            } else {
+                1 + ws.and_then(|ws| ws.level(t.idx())).map_or(0, <[_]>::len) as u32
+            };
+            (t.0, labels)
+        })
+        .collect()
+}
+
+/// The nodes the stored form of `s` holds ([`to_tdd`]), counted without
+/// building it: `s`'s own nodes, and for each reference read at levels
+/// above its own, a pass-through node at every level from the highest one
+/// it is read at down to its own.
+pub(crate) fn stored_nodes(s: &SkipForm, lim: &Limits) -> Result<u64, OperationError> {
+    let sh = &*s.shape;
+    if s.out == ZREF || sh.is_leaf(sh.root) {
+        return Ok(0);
+    }
+    let nb = Numbered::of(s, lim)?;
+    let mut n: u64 = s.active.iter().map(|&t| s.levels[t as usize].width() as u64).sum();
+    let mut chains = |v: u32, width: u32| {
+        let b = nb.base[v as usize];
+        for i in 0..width {
+            let top = nb.top[(b + i) as usize];
+            if top != NONE {
+                n += u64::from(sh.depth[v as usize] - sh.depth[top as usize]);
+            }
+        }
+    };
+    for &t in &s.active {
+        chains(t, s.levels[t as usize].width() as u32);
+    }
+    for &c in &nb.leaves {
+        chains(c, sh.labels[c as usize]);
+    }
+    nb.discard(lim);
+    Ok(n)
+}
+
 /// The stored form of `s` over `vtree` (the vtree `s`'s shape was read
 /// from): every level a skip crosses holds the node `true` on the skipped
 /// variable makes, one per (level, target). The stored form of a canonical
 /// skip form is canonical, but it is not certified as such here.
-pub(crate) fn to_tdd(
-    s: &SkipForm,
-    eng: &Engine,
-    vtree: &Arc<Vtree>,
-) -> Result<Tdd, OperationError> {
+pub(crate) fn to_tdd(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     let sh = &*s.shape;
     let n = sh.num_nodes();
     if s.out == ZREF {
@@ -160,10 +171,7 @@ pub(crate) fn to_tdd(
     }
     if sh.is_leaf(sh.root) {
         return Tdd::builder(eng, vtree)?
-            .finish(TddNodeId {
-                vtree: VtreeIdx(sh.root),
-                local: NodeIdx(ix(s.out)),
-            })
+            .finish(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(ix(s.out)) })
             .map_err(|_| OperationError::IndexOverflow);
     }
     let lim = eng.limits();
@@ -217,16 +225,13 @@ pub(crate) fn to_tdd(
     // chain written: the levels are written children first, and a
     // reference's next level up its chain is the parent of the last.
     let mut cur = filled(lim, nb.len(), 0u32)?;
-    let width = |c: u32| {
-        if sh.is_leaf(c) {
-            0
-        } else {
-            s.levels[c as usize].width() as u32
-        }
-    };
+    let width = |c: u32| if sh.is_leaf(c) { 0 } else { s.levels[c as usize].width() as u32 };
     let mut b = Tdd::builder(eng, vtree)?;
     let mut node: Vec<ChildPair> = Vec::new();
     for &t in &sh.bottomup {
+        if sh.is_leaf(t) {
+            continue;
+        }
         let (l, r) = sh.kids[t as usize];
         let lvl = &s.levels[t as usize];
         let here = &pts[start[t as usize] as usize..start[t as usize + 1] as usize];
@@ -235,50 +240,21 @@ pub(crate) fn to_tdd(
         let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
         let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
         let raw = |cur: &[u32], c: u32, x: Ref| -> u32 {
-            if sh.is_leaf(c) || vt(x) == c {
-                ix(x)
-            } else {
-                width(c) + cur[nb.id(x)]
+            if sh.is_leaf(c) || vt(x) == c { ix(x) } else { width(c) + cur[nb.id(x)] }
+        };
+        let expand = |node: &mut Vec<ChildPair>, left: u32, a_one: bool, right: u32, c_one: bool| {
+            let lefts: &[u32] = if lit_l && a_one { &[POS, NEG] } else { std::slice::from_ref(&left) };
+            for &la in lefts {
+                if lit_r && c_one {
+                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(POS)));
+                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(NEG)));
+                } else {
+                    node.push(ChildPair::new(EncodedChildRef::from_raw(la), EncodedChildRef::from_raw(right)));
+                }
             }
         };
-        let expand =
-            |node: &mut Vec<ChildPair>, left: u32, a_one: bool, right: u32, c_one: bool| {
-                let lefts: &[u32] = if lit_l && a_one {
-                    &[POS, NEG]
-                } else {
-                    std::slice::from_ref(&left)
-                };
-                for &la in lefts {
-                    if lit_r && c_one {
-                        node.push(ChildPair::new(
-                            EncodedChildRef::from_raw(la),
-                            EncodedChildRef::from_raw(POS),
-                        ));
-                        node.push(ChildPair::new(
-                            EncodedChildRef::from_raw(la),
-                            EncodedChildRef::from_raw(NEG),
-                        ));
-                    } else {
-                        node.push(ChildPair::new(
-                            EncodedChildRef::from_raw(la),
-                            EncodedChildRef::from_raw(right),
-                        ));
-                    }
-                }
-            };
-        let grow = |one_l: bool, one_r: bool| {
-            (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 })
-        };
-        let mut npairs: usize = lvl
-            .pairs
-            .iter()
-            .map(|p| {
-                grow(
-                    ix(p.0) == ONE && sh.is_leaf(l),
-                    ix(p.1) == ONE && sh.is_leaf(r),
-                )
-            })
-            .sum();
+        let grow = |one_l: bool, one_r: bool| (if lit_l && one_l { 2 } else { 1 }) * (if lit_r && one_r { 2 } else { 1 });
+        let mut npairs: usize = lvl.pairs.iter().map(|p| grow(ix(p.0) == ONE && sh.is_leaf(l), ix(p.1) == ONE && sh.is_leaf(r))).sum();
         npairs += here.len() * grow(sh.is_leaf(l), sh.is_leaf(r));
         b.reserve(eng, VtreeIdx(t), lvl.width() + here.len(), npairs)?;
         for i in 0..lvl.width() {
@@ -302,23 +278,75 @@ pub(crate) fn to_tdd(
             cur[id as usize] = k as u32;
         }
     }
-    let o = if vt(s.out) == sh.root {
-        ix(s.out)
-    } else {
-        width(sh.root) + cur[nb.id(s.out)]
-    };
+    let o = if vt(s.out) == sh.root { ix(s.out) } else { width(sh.root) + cur[nb.id(s.out)] };
     // Safety: every pair side names a node written at its child level
     // (pass-through nodes before their parents), or a leaf label.
-    let tdd = unsafe {
-        b.finish_unchecked(TddNodeId {
-            vtree: VtreeIdx(sh.root),
-            local: NodeIdx(o),
-        })
-    };
+    let tdd = unsafe { b.finish_unchecked(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(o) }) };
     debug_assert!(o != ZERO.0);
     lim.discard(refs);
     lim.discard(pts);
     lim.discard(cur);
     nb.discard(lim);
     Ok(tdd)
+}
+
+/// The stored operand of a hybrid conjunction ([`super::conjoin::and_hybrid`]):
+/// `s`'s levels where `hooked` is false as stored levels, a node naming
+/// nodes of its children (no reference skips a level that is not
+/// skippable), expanded as [`to_tdd`] does where the level names literals
+/// of a leaf child. The stored driver reads a hooked level only for its
+/// width, and that only where its parent is not hooked: there it holds as
+/// many nodes as `s` does, at least one, and elsewhere one; each node one
+/// pair naming the first node or `One` of each child, so that the diagram
+/// is valid.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] where the levels do not fit.
+pub(crate) fn stored_plain(s: &SkipForm, eng: &Engine, vtree: &Arc<Vtree>, hooked: &[bool]) -> Result<Tdd, OperationError> {
+    let sh = &*s.shape;
+    debug_assert!(vt(s.out) == sh.root && !sh.is_leaf(sh.root));
+    let mut b = Tdd::builder(eng, vtree)?;
+    let mut node: Vec<ChildPair> = Vec::new();
+    let raw = |x: u32| EncodedChildRef::from_raw(x);
+    for &t in &sh.bottomup {
+        if sh.is_leaf(t) {
+            continue;
+        }
+        let (l, r) = sh.kids[t as usize];
+        let lvl = &s.levels[t as usize];
+        let v = VtreeIdx(t);
+        if hooked[t as usize] {
+            let p = sh.parent[t as usize];
+            let width = if p != NONE && !hooked[p as usize] { lvl.width().max(1) } else { 1 };
+            b.reserve(eng, v, width, width)?;
+            for _ in 0..width {
+                b.push(eng, v, &[ChildPair::new(raw(0), raw(0))])?;
+            }
+            continue;
+        }
+        let lit_l = sh.is_leaf(l) && lvl.pairs.iter().any(|p| ix(p.0) != ONE);
+        let lit_r = sh.is_leaf(r) && lvl.pairs.iter().any(|p| ix(p.1) != ONE);
+        let grow = |p: &(Ref, Ref)| (if lit_l && ix(p.0) == ONE { 2 } else { 1 }) * (if lit_r && ix(p.1) == ONE { 2 } else { 1 });
+        b.reserve(eng, v, lvl.width(), lvl.pairs.iter().map(grow).sum())?;
+        for i in 0..lvl.width() as u32 {
+            node.clear();
+            for &(a, c) in lvl.node(i) {
+                debug_assert!(vt(a) == l && vt(c) == r, "a plain level names nodes of its children");
+                let (one_a, one_c) = ([ix(a)], [ix(c)]);
+                let lefts: &[u32] = if lit_l && ix(a) == ONE { &[POS, NEG] } else { &one_a };
+                let rights: &[u32] = if lit_r && ix(c) == ONE { &[POS, NEG] } else { &one_c };
+                for &x in lefts {
+                    for &y in rights {
+                        node.push(ChildPair::new(raw(x), raw(y)));
+                    }
+                }
+            }
+            b.push(eng, v, &node)?;
+        }
+    }
+    let o = if vt(s.out) == sh.root && !hooked[sh.root as usize] { ix(s.out) } else { 0 };
+    // Safety: every pair side names a node of its child level, which holds
+    // one at least where a pair names it, or a leaf label.
+    Ok(unsafe { b.finish_unchecked(TddNodeId { vtree: VtreeIdx(sh.root), local: NodeIdx(o) }) })
 }
