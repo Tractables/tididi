@@ -144,6 +144,7 @@ For more specialized control:
 | Expand each variable into a class of new variables | [`Tdd::expand_variables`](crate::Tdd::expand_variables), [`Vtree::expand_leaves`](crate::Vtree::expand_leaves) |
 | Build a vtree from its leaf order and the depths between leaves | [`Vtree::from_in_order`](crate::Vtree::from_in_order) |
 | Place a diagram with summed-out levels | [`Engine::embed_over`](crate::Engine::embed_over) |
+| Drop the variables a diagram has summed out from its vtree | [`Engine::project_over`](crate::Engine::project_over) |
 | Conjoin or place by moving levels, getting the operands back on refusal | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
 | Conjoin two diagrams placed on a larger vtree | [`Engine::and_onto`](crate::Engine::and_onto) |
 | Place or conjoin onto a vtree with mirrored subtrees | [`Engine::embed_moving_mirrored`](crate::Engine::embed_moving_mirrored), [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored) |
