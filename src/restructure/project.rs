@@ -18,8 +18,10 @@ use super::EmbedError;
 use super::embed::Plan;
 
 use crate::Engine;
-use crate::diagram::{for_each_side_ref_mut, Assembly, ChildSide, LevelView, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX};
-use crate::limits::OperationError;
+use crate::diagram::{
+    for_each_side_ref_mut, Assembly, ChildSide, LevelView, NodeIdx, Tdd, TddBuildError, TddNodeId, WeightStore, ONE_LEAF_IDX,
+};
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError};
 
 impl Tdd {
@@ -103,25 +105,8 @@ impl Engine {
         let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = tdd.vtree();
-        // The kept variables' originals by local id, and the dropped ones.
-        let mut original = Vec::new();
-        lim.try_resize(&mut original, num_local as usize, None)?;
-        let mut dropped = Vec::new();
-        let mut kept = 0usize;
-        for (_, var) in vtree.leaf_bottomup() {
-            match local_of(var) {
-                Some(local) => {
-                    if local.0 == 0 || local.0 > num_local {
-                        return Err(EmbedError::VariableOutOfRange { variable: local, num_vars: num_local });
-                    }
-                    if original[local.idx()].replace(var).is_some() {
-                        return Err(VtreeError::OverlappingVariable(local).into());
-                    }
-                    kept += 1;
-                }
-                None => lim.try_push(&mut dropped, var)?,
-            }
-        }
+        let (original, dropped) = renaming(lim, vtree, &local_of, num_local)?;
+        let kept = original.iter().filter(|v| v.is_some()).count();
         if kept == 0 {
             return Err(VtreeError::Invalid("a projection keeps at least one variable".to_string()).into());
         }
@@ -133,6 +118,118 @@ impl Engine {
         );
         let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
         let result = self.project_along(tdd, &into, &plan, &dropped);
+        plan.recycle(self);
+        result
+    }
+
+    /// [`project_to_vars`](Self::project_to_vars) onto `into`, for a
+    /// diagram whose levels may hold weighted marginal values, with
+    /// `weights` as the result's store: the inverse of
+    /// [`embed_over`](Self::embed_over).
+    ///
+    /// `into` is this diagram's vtree restricted to the variables `local_of`
+    /// keeps, as [`Vtree::project_to_vars`] restricts it, and `local_of`
+    /// gives each of its leaves' variables. A structural diagram is
+    /// projected as by [`project_to_vars`](Self::project_to_vars) and takes
+    /// `weights` as its store when one is given. A diagram with a marginal
+    /// level keeps its values, which sum over the variables under the
+    /// level: each variable it drops must lie under a marginal level that
+    /// `into` keeps, and the levels under that level that `into` does not
+    /// keep go with the variables. Its weighted value is the source's. It
+    /// needs `weights`, whose table must give each kept variable the
+    /// weights the source's gives it.
+    ///
+    /// A walk that sums out finished subtrees of its conjunctions can so
+    /// carry one level and two leaves of each such subtree into the
+    /// conjunctions after it, instead of every level of the subtree.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_rational::BigRational;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let third = || BigRational::new(1.into(), 3.into());
+    /// let table = |n| RationalWeights::from_literals(&vec![
+    ///     LiteralWeights { negative: third(), positive: third() }; n
+    /// ]);
+    /// let engine = Engine::new();
+    /// // (x1 ∨ x2 ∨ x3 ∨ x4) ∧ (x4 ∨ x5) on a right-linear vtree, the level
+    /// // over x2 to x5 summed out.
+    /// let vtree = Arc::new(Vtree::linear(5));
+    /// let mut f = engine.and(engine.clause(&vtree, [1, 2, 3, 4])?, engine.clause(&vtree, [4, 5])?)?;
+    /// f.set_weights(WeightStore::new(table(5), Arithmetic::ExactRational))?;
+    /// let summed = vtree.children(vtree.root()).1;
+    /// engine.marginalize_levels(&mut f, &[summed])?;
+    /// let value = f.weighted_value()?.expect("weighted").into_rational();
+    ///
+    /// // Kept: x1, and x2 and x5, one on each side of the summed level.
+    /// let local_of = |v: VarId| match v.0 {
+    ///     1 => Some(VarId(1)),
+    ///     2 => Some(VarId(2)),
+    ///     5 => Some(VarId(3)),
+    ///     _ => None,
+    /// };
+    /// let into = Arc::new(vtree.project_to_vars(local_of, 3).expect("it keeps a variable"));
+    /// let store = WeightStore::new(table(3), Arithmetic::ExactRational);
+    /// let g = engine.project_over(&f, &into, local_of, Some(store))?;
+    /// assert_eq!(g.vtree().num_leaves(), 3);
+    /// assert_eq!(g.weighted_value()?.expect("weighted").into_rational(), value);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EmbedError::VariableOutOfRange`] when `local_of` yields an id
+    /// outside `into`'s variables; [`EmbedError::Vtree`] with
+    /// [`VtreeError::OverlappingVariable`] when it yields one id twice;
+    /// [`EmbedError::NotIsomorphic`] when `into` is not the restriction,
+    /// naming the node of `into` where it stops matching;
+    /// [`EmbedError::Unsummed`] naming a variable that a diagram with a
+    /// marginal level drops outside its marginal levels;
+    /// [`OperationError::MarginalLevel`] naming a level that holds integer
+    /// counts; [`EmbedError::SourceWeights`] for a marginal level without
+    /// `weights`, or a table that disagrees with the source's on a kept
+    /// variable; [`EmbedError::DestinationWeights`] for a table that does
+    /// not cover `into`'s variables; [`OperationError::OverBudget`] where
+    /// the copy is refused.
+    pub fn project_over(
+        &self,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        local_of: impl Fn(VarId) -> Option<VarId>,
+        weights: Option<WeightStore>,
+    ) -> Result<Tdd, EmbedError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        let vtree = tdd.vtree();
+        let (original, dropped) = renaming(lim, vtree, &local_of, into.num_vars())?;
+        if let Some((leaf, _)) = into.leaf_bottomup().find(|&(_, var)| original[var.idx()].is_none()) {
+            return Err(EmbedError::NotIsomorphic { source: leaf });
+        }
+        if let Some(t) = vtree.bottomup().find(|&t| tdd.level(t).is_marginal() && !tdd.level(t).is_weight_marginal()) {
+            return Err(OperationError::MarginalLevel(t).into());
+        }
+        if let Some(store) = &weights {
+            store
+                .check_variables(into.leaf_bottomup().map(|(_, var)| var))
+                .map_err(EmbedError::DestinationWeights)?;
+        }
+        let summed = tdd.has_marginal_level();
+        if summed {
+            check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
+        }
+        let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
+        let result = match weights {
+            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
+            weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
+                if let Some(store) = weights {
+                    result.set_weights(store).map_err(OperationError::from)?;
+                }
+                Ok(result)
+            }),
+        };
         plan.recycle(self);
         result
     }
@@ -165,6 +262,103 @@ impl Engine {
         self.minimize(&mut copy)?;
         Ok(Cow::Owned(copy))
     }
+}
+
+/// The original of each local variable `local_of` keeps, by local id, and
+/// the variables of `vtree` it drops, in leaf order.
+fn renaming(
+    lim: &Limits,
+    vtree: &Vtree,
+    local_of: impl Fn(VarId) -> Option<VarId>,
+    num_local: u32,
+) -> Result<(Vec<Option<VarId>>, Vec<VarId>), EmbedError> {
+    let mut original = Vec::new();
+    lim.try_resize(&mut original, num_local as usize, None)?;
+    let mut dropped = Vec::new();
+    for (_, var) in vtree.leaf_bottomup() {
+        match local_of(var) {
+            Some(local) => {
+                if local.0 == 0 || local.0 > num_local {
+                    return Err(EmbedError::VariableOutOfRange { variable: local, num_vars: num_local });
+                }
+                if original[local.idx()].replace(var).is_some() {
+                    return Err(VtreeError::OverlappingVariable(local).into());
+                }
+            }
+            None => lim.try_push(&mut dropped, var)?,
+        }
+    }
+    Ok((original, dropped))
+}
+
+/// Check that a diagram with a weight-marginal level has a destination
+/// store, and that the store gives each kept variable the source's weights.
+fn check_kept_weights(
+    tdd: &Tdd,
+    destination: Option<&WeightStore>,
+    local_of: impl Fn(VarId) -> Option<VarId>,
+) -> Result<(), TddBuildError> {
+    let Some(destination) = destination else {
+        let level = tdd.vtree().bottomup().find(|&t| tdd.level(t).is_weight_marginal()).expect("a marginal level");
+        return Err(TddBuildError::WeightedLevelWithoutStore { level });
+    };
+    let kept = tdd.vtree().leaf_bottomup().filter_map(|(_, var)| local_of(var).map(|local| (var, local)));
+    if tdd.weights().is_some_and(|source| !source.compatible_after_rename(destination, kept)) {
+        return Err(TddBuildError::IncompatibleWeights);
+    }
+    Ok(())
+}
+
+/// `tdd`, which has a marginal level, on `into` along `plan` (`into`'s
+/// match in `tdd`'s vtree), with `weights` as its store. Every node `into`
+/// does not keep lies under a marginal level, whose values sum over the
+/// variables under it and which reads no level under it: each level `into`
+/// keeps is copied with its values, references and all, and the others
+/// are left behind.
+fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weights: WeightStore) -> Result<Tdd, EmbedError> {
+    if tdd.is_zero() {
+        let mut result = crate::build::constant_zero(eng, into);
+        result.weights = Some(weights);
+        return Ok(result);
+    }
+    let lim = eng.limits();
+    let vtree = tdd.vtree();
+    let mut gate = lim.gate();
+    for t in vtree.bottomup() {
+        gate.poll(1)?;
+        if plan.covered_by[t.idx()].is_some() || vtree.node(t).parent().is_some_and(|p| tdd.level(p).is_marginal()) {
+            continue;
+        }
+        // A node `into` does not keep has a dropped variable under it, on
+        // its side with none kept.
+        let mut n = t;
+        while !vtree.node(n).is_leaf() {
+            let (left, right) = vtree.children(n);
+            n = if plan.free[right.idx()] { right } else { left };
+        }
+        return Err(EmbedError::Unsummed { variable: vtree.leaf_var(n) });
+    }
+    let source = tdd.weights();
+    let mut assembly = Assembly::new(eng, into)?;
+    let (levels, store) = assembly.parts_mut();
+    let store = store.insert(weights);
+    for s in into.bottomup() {
+        gate.poll(1)?;
+        let d = plan.embedding.levels[s.idx()];
+        let level = tdd.level(d);
+        level.try_copy_over(lim, &mut levels[s.idx()])?;
+        if level.is_weight_marginal() {
+            let column = source.and_then(|w| w.level(d.idx())).unwrap_or(&[]);
+            let mut copy = Vec::new();
+            lim.reserve_exact(&mut copy, column.len())?;
+            copy.extend_from_slice(column);
+            store.set_level(s.idx(), copy);
+        }
+    }
+    gate.flush()?;
+    store.check_levels(into, levels).map_err(EmbedError::DestinationWeights)?;
+    let output = TddNodeId { vtree: into.root(), local: tdd.output().local };
+    Ok(assembly.finish_asserted(output, None)?)
 }
 
 /// The reference to the true node of a level with no kept variable.

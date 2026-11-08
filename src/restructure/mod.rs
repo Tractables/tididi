@@ -105,6 +105,13 @@ pub enum EmbedError {
     /// The destination weight table does not cover the result's variables or
     /// columns.
     DestinationWeights(TddBuildError),
+    /// A projection of a diagram with weighted marginal values drops a
+    /// variable that no marginal level it keeps sums over, which would take
+    /// the variable's weights out of the diagram's value.
+    Unsummed {
+        /// The dropped variable.
+        variable: VarId,
+    },
     /// An operation the copy runs was refused: a source that has discarded
     /// the structure at a level, a refused allocation, or an armed stop.
     Operation(OperationError),
@@ -128,6 +135,7 @@ impl std::fmt::Display for EmbedError {
             Self::NotIsomorphic { source } => write!(f, "the destination vtree does not contain the source vtree's shape at node {}", source.idx()),
             Self::SourceWeights(error) => write!(f, "embedded diagram: {error}"),
             Self::DestinationWeights(error) => write!(f, "embedding destination: {error}"),
+            Self::Unsummed { variable } => write!(f, "variable {} is dropped outside every marginal level that sums over it", variable.0),
             Self::Operation(error) => write!(f, "copying the diagram: {error}"),
         }
     }
@@ -139,7 +147,7 @@ impl std::error::Error for EmbedError {
             Self::Vtree(error) => Some(error),
             Self::SourceWeights(error) | Self::DestinationWeights(error) => Some(error),
             Self::Operation(error) => Some(error),
-            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } => None,
+            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } | Self::Unsummed { .. } => None,
         }
     }
 }
