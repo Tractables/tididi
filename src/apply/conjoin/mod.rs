@@ -155,8 +155,9 @@ fn same_levels(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
     // differing in marginal mass (or holding a marginal×marginal unsound
     // schedule the callers debug-assert against) would compare equal and
     // silently drop one side's content. Bail whenever either operand carries any
-    // marginal level.
-    if f.levels.iter().any(|l| l.is_marginal()) || g.levels.iter().any(|l| l.is_marginal()) {
+    // marginal level, as each operand's kept first marginal level says, once
+    // the outputs, which most operands that differ differ in, agree.
+    if f.output != g.output || f.has_marginal_level() || g.has_marginal_level() {
         return false;
     }
     same_structure(f, g, free)

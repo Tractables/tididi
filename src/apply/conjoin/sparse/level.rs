@@ -229,6 +229,10 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///
 /// [`OperationError::OverBudget`] when a workspace or output reservation is refused.
 ///
+/// `marginal` says whether a level of either operand, or a level of the
+/// output other than this one, may be marginal: pair lists may then be
+/// multisets feeding a sum.
+///
 /// Returns what was made, and whether the leaf arm joined the level under a
 /// vtree leaf with each live product of the other child held for every
 /// label ([`SparseWorkspace::outer_held`]): each f pair of that child meets
@@ -237,7 +241,7 @@ pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
     (f, g): (&mut Held<'_>, &Tdd),
-    levels: &mut [TddLevel],
+    (levels, marginal): (&mut [TddLevel], bool),
     (lists, cells): (ProductLists<'_>, Sides<CellLookup<'_>>),
     thresholds: SparseThresholds,
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
@@ -269,12 +273,9 @@ pub(crate) fn apply_sparse_level(
     // holds the same pair twice produces the same product pair twice, which
     // is exactly the multiplicity the count recurrence needs. Only the
     // pure-Boolean case still guarantees set-ness, so that is where the
-    // emit's check stays armed. `cfg!` is a compile-time constant, so the
-    // level scan is dead code in release.
-    let duplicates_legal = cfg!(debug_assertions)
-        && (f.levels.iter().any(|l| l.is_marginal())
-            || g.levels.iter().any(|l| l.is_marginal())
-            || levels.iter().any(|l| l.is_marginal()));
+    // emit's check stays armed.
+    let multisets = marginal || levels[t_idx].is_marginal();
+    let duplicates_legal = cfg!(debug_assertions) && multisets;
 
     // ── Fused scatter-filter ──────────────────────────────────────
     //
@@ -321,28 +322,13 @@ pub(crate) fn apply_sparse_level(
         && !f.vtree.node(shape.left).is_leaf()
         && !f.vtree.node(shape.right).is_leaf();
     if joined {
-        // Whether any level of the operands or of the output is marginal,
-        // a scan of every level: read only where the probe would run, past
-        // its size gate, so that a diagram of many levels does not pay a
-        // scan on each of its small ones. The level being built is split
-        // out of the scan, and read on its own.
-        let (below, rest) = levels.split_at_mut(t_idx);
-        let (level, above) = rest
-            .split_first_mut()
-            .expect("the level is one of the levels");
-        let here = level.is_marginal();
-        let multisets = || {
-            here || f.levels.iter().any(|l| l.is_marginal())
-                || g.levels.iter().any(|l| l.is_marginal())
-                || below.iter().chain(above.iter()).any(|l| l.is_marginal())
-        };
         let listed = Sides {
             left: complete.is_none_or(|c| c.side != ChildSide::Left),
             right: complete.is_none_or(|c| c.side != ChildSide::Right),
         };
         let mut live = None;
         let emit = Emit {
-            level,
+            level: &mut levels[t_idx],
             out: &mut *pl_output,
             duplicates_legal,
             thresholds,

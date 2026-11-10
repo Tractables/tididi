@@ -94,11 +94,12 @@ pub(super) fn run_sparse_level(
         identity,
         filtered,
     );
+    let marginal = run.entry_marginality.any() || run.built_marginal;
     let (made, held) = apply_sparse_level(
         eng,
         shape,
         (f, g),
-        run.levels,
+        (run.levels, marginal),
         (lists, cells),
         run.thresholds,
         (passthrough, complete),

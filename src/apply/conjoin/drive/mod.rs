@@ -198,6 +198,7 @@ fn build_level(
         // identity fast paths are skipped: what they would build is the
         // structure this route exists not to build.
         super::quantify::build_level_quantified(eng, run, f, g, shape)?;
+        run.built_marginal |= run.levels[t.idx()].is_marginal();
         run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
         return Ok(());
     }
@@ -269,6 +270,7 @@ fn build_level(
         }
     }
 
+    run.built_marginal |= run.levels[t.idx()].is_marginal();
     if let Some(filter) = sweep.filter.as_deref_mut() {
         run.products.filter_level(eng, shape, filter)?;
     }

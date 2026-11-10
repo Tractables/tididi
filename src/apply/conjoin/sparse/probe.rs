@@ -217,8 +217,7 @@ const PLAN_SAMPLE_PAIRS: u64 = 1 << 14;
 /// any route builds the same level.
 ///
 /// [`Probe::Pairs`], whose table holds each `g` pair once, is withheld where
-/// pair lists may be multisets, which `multisets` tells, read only on a
-/// level past the size gate (it may scan the diagram). A child `listed` does
+/// pair lists may be multisets, which `multisets` tells. A child `listed` does
 /// not name has no product list (a complete child read by arithmetic): no
 /// probe walks through it, and [`Probe::Pairs`], which walks through both,
 /// is withheld.
@@ -228,7 +227,7 @@ fn plan(
     (f_level, g_level): (&TddLevel, &TddLevel),
     shape: LevelShape,
     (pl, listed, cells): (Sides<&[ProductEntry]>, Sides<bool>, Sides<CellLookup<'_>>),
-    multisets: impl FnOnce() -> bool,
+    multisets: bool,
 ) -> Result<Option<(Probe, u64)>, OperationError> {
     let lim = eng.limits();
     let by_left = listed.left && cells.right.direct();
@@ -251,7 +250,7 @@ fn plan(
     if f_pairs + g_pairs < PROBE_MIN_PAIRS && !probe_forced() {
         return Ok(None);
     }
-    let pairs_ok = both_listed && !multisets();
+    let pairs_ok = both_listed && !multisets;
     if !(by_left || by_right || pairs_ok) {
         return Ok(None);
     }
@@ -332,7 +331,7 @@ pub(super) fn probe_level(
     (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
     (pl, listed, cells): (Sides<&[ProductEntry]>, Sides<bool>, Sides<CellLookup<'_>>),
-    multisets: impl FnOnce() -> bool,
+    multisets: bool,
     emit: Emit<'_>,
 ) -> Result<Option<Made>, OperationError> {
     if probe_forced_off() {

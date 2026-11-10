@@ -187,6 +187,11 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// quantified, filtered or marginal level. Only such a conjunction
     /// reads `as_operand`.
     pub(super) plain: bool,
+    /// Whether a level the sweep has built or carried so far is marginal.
+    /// With [`entry_marginality`](Self::entry_marginality) it says whether
+    /// any level of the operands or of the output may be marginal, without
+    /// a walk over the levels.
+    pub(super) built_marginal: bool,
     /// Each operand's free levels: internal nodes no variable it was placed
     /// with is under, whose levels are left empty and read as the constant
     /// true level, one node true on both sides, they stand for. The result
@@ -710,6 +715,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         outer_held: Vec::new(),
         restoring: false,
         plain: false,
+        built_marginal: false,
         cone,
     })
 }
