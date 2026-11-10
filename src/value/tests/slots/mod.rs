@@ -54,3 +54,25 @@ fn slot_growth_checks_the_reference_payload_limit() {
         assert_eq!(next_slot_index(len), Err(OperationError::IndexOverflow));
     }
 }
+
+/// A parent level held as its description names the same marginal slots,
+/// read off its digits, as its stored form names in its pairs.
+#[test]
+fn a_described_parent_references_the_slots_its_pairs_name() {
+    use crate::diagram::boundary_marginal_levels;
+    use crate::test_helpers::{BIG, stored_copy, toy};
+    use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
+    let pairs: Vec<Vec<(u32, u32)>> = (0..16u32)
+        .map(|i| (0..4u32).map(|j| (j, (i / 2) * 8 + j * 2)).collect())
+        .collect();
+    let lists: Vec<&[(u32, u32)]> = pairs.iter().map(Vec::as_slice).collect();
+    let tdd = toy(vec![BIG + 1; 64], &lists);
+    let (_, parent, side) = boundary_marginal_levels(&tdd)[0];
+    let described = &tdd.levels[parent.idx()];
+    assert!(described.implicit().is_some());
+    let stored = stored_copy(described);
+    assert!(stored.implicit().is_none());
+    let mut buf = RefSlotScratch::default();
+    let want = referenced_marginal_slots(&stored, side, &mut buf).to_vec();
+    assert_eq!(referenced_marginal_slots(described, side, &mut buf), &want[..]);
+}

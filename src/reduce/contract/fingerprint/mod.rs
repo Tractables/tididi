@@ -395,6 +395,10 @@ impl TwinEntries for ContentEntries<'_> {
         self.0
             .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
     }
+
+    fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
+        Ok(self.0.implicit().is_some_and(crate::diagram::ImplicitLevel::nodes_distinct))
+    }
 }
 
 /// The width below which a screened search of a level without a marginal
