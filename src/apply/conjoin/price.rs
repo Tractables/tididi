@@ -168,6 +168,16 @@ pub(super) fn headroom(lim: &Limits) -> Option<u64> {
     (!lim.memory_unbounded()).then(|| lim.headroom())
 }
 
+/// The bytes left for a level to claim, read afresh, where the engine
+/// bounds memory and `bytes` do not fit in them
+/// ([`Limits::headroom_short_of`]); `None` where they fit.
+fn room_short_of(lim: &Limits, bytes: u64) -> Option<u64> {
+    match lim.memory_unbounded() {
+        true => None,
+        false => lim.headroom_short_of(bytes),
+    }
+}
+
 /// Refuse the level at `t` when `needed` bytes are more than `headroom`.
 pub(super) fn refuse_over(lim: &Limits, t: VtreeIdx, needed: u64, headroom: u64) -> Result<(), OperationError> {
     match needed > headroom {
@@ -508,9 +518,11 @@ pub(super) fn price_dense_level(
     };
     let grid = cells(fw.here, gw.here) + ungridded(left, fw.left, gw.left) + ungridded(right, fw.right, gw.right);
     let grid = grid_bytes(products, grid);
-    let room = headroom(lim);
     let (f_level, g_level) = (f.level(t), g.level(t));
-    let due = room.is_some_and(|h| grid.saturating_add(output_bytes(combinations_bound(f_level, g_level))) > h);
+    // Read where the grid and every combination of pairs could outgrow it:
+    // a level they fit in is neither counted nor refused.
+    let room = room_short_of(lim, grid.saturating_add(output_bytes(combinations_bound(f_level, g_level))));
+    let due = room.is_some();
     let structural = matches!(route, Route::PlainDense | Route::Dense);
     let pairs = match structural && (due || cfg!(debug_assertions)) {
         true => match (side_of(run, left, fw.left, gw.left, filtered), side_of(run, right, fw.right, gw.right, filtered)) {
@@ -522,11 +534,7 @@ pub(super) fn price_dense_level(
         false => None,
     };
     if let Some(h) = room {
-        let output = match due {
-            true => pairs.map_or(0, |p| output_bytes(p.count)),
-            false => 0,
-        };
-        refuse_over(lim, t, grid.saturating_add(output), h)?;
+        refuse_over(lim, t, grid.saturating_add(pairs.map_or(0, |p| output_bytes(p.count))), h)?;
     }
     Ok(pairs)
 }
@@ -548,8 +556,8 @@ pub(super) fn price_sparse_level(
 ) -> Result<Option<Pairs>, OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (f_level, g_level) = (f.level(t), g.level(t));
-    let room = headroom(lim);
-    let due = room.is_some_and(|h| output_bytes(combinations_bound(f_level, g_level)) > h);
+    let room = room_short_of(lim, output_bytes(combinations_bound(f_level, g_level)));
+    let due = room.is_some();
     if !due && !cfg!(debug_assertions) {
         return Ok(None);
     }

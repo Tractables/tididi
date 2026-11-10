@@ -389,6 +389,13 @@ pub struct Limits {
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the memory hooks, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
+    /// The last address-space headroom read from the host in this
+    /// operation, with the meters at that read
+    /// ([`Limits::headroom_short_of`]); cleared where the meters are.
+    room_reading: Cell<Option<memory::RoomReading>>,
+    /// Bytes [`Limits::release_bytes`] has given back, never reset: with the
+    /// in-flight meter, the bytes charged since a reading.
+    released_bytes: Cell<u64>,
     #[cfg(test)]
     poll_stride_pin: Cell<Option<u64>>,
     /// Operations in flight on this engine; the meters are zeroed when it
@@ -446,6 +453,8 @@ impl Limits {
             memory_hooks: RefCell::new(MemoryHooks::NONE),
             hooked: Cell::new(false),
             vas_limit: Cell::new(None),
+            room_reading: Cell::new(None),
+            released_bytes: Cell::new(0),
             #[cfg(test)]
             poll_stride_pin: Cell::new(None),
             op_depth: Cell::new(0),
@@ -528,6 +537,7 @@ impl Limits {
         self.hooked.set(!set.memory_hooks.is_none());
         self.memory_hooks.replace(set.memory_hooks);
         self.vas_limit.set(None);
+        self.room_reading.set(None);
         prior
     }
 
@@ -611,6 +621,7 @@ impl Limits {
     /// metered from zero.
     pub fn reset_meters(&self) {
         self.in_flight_bytes.set(0);
+        self.room_reading.set(None);
         self.refused_bytes.set(None);
     }
 
@@ -640,6 +651,7 @@ impl Limits {
     /// Zero the meters an operation reads from its entry.
     fn zero_operation_meters(&self) {
         self.in_flight_bytes.set(0);
+        self.room_reading.set(None);
         self.pairs_in_flight.set(0);
         self.pairs_level_charge.set(0);
         self.bounded_growth.set(false);
@@ -736,6 +748,8 @@ impl Limits {
         }
         self.in_flight_bytes
             .set(self.in_flight_bytes.get().saturating_sub(bytes));
+        self.released_bytes
+            .set(self.released_bytes.get().wrapping_add(bytes));
     }
 }
 

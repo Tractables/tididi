@@ -22,6 +22,20 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
         .saturating_sub(mapped)
 }
 
+/// The share of a reading's room, as a shift, that the bytes charged since
+/// may reach before [`Limits::headroom_short_of`](super::Limits::headroom_short_of)
+/// reads the host again: an eighth.
+const ROOM_READING_SPAN_SHIFT: u32 = 3;
+
+/// An address-space headroom read from the host, with the in-flight meter
+/// and the bytes released when it was read.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RoomReading {
+    headroom: u64,
+    in_flight: u64,
+    released: u64,
+}
+
 impl super::Limits {
     /// Available bytes under the soft budget, or the host's address-space
     /// ceiling minus its mapped bytes and a safety margin. An unlimited host
@@ -34,10 +48,43 @@ impl super::Limits {
         match self.address_space_limit() {
             Some(limit) => {
                 let mem = self.memory_hooks.borrow().clone();
-                vas_headroom_with_margin(limit, mem.mapped_bytes())
+                let headroom = vas_headroom_with_margin(limit, mem.mapped_bytes());
+                self.room_reading.set(Some(RoomReading {
+                    headroom,
+                    in_flight: self.in_flight_bytes.get(),
+                    released: self.released_bytes.get(),
+                }));
+                headroom
             },
             None => VAS_UNLIMITED_HEADROOM,
         }
+    }
+
+    /// `None` when `bytes` fit in the [`headroom`](Self::headroom), and
+    /// otherwise the headroom, read afresh.
+    ///
+    /// Under the address-space ceiling, the room the operation's last read
+    /// of the host's mapped bytes left, less every byte charged since,
+    /// answers that `bytes` fit when it covers them and those charged bytes
+    /// are at most an eighth of that room; otherwise the host is read. A
+    /// charged byte maps at most one byte, and one freed and charged again
+    /// counts twice, so the room it answers from is never more than a read
+    /// would find, but for what was mapped since without a charge. A
+    /// headroom returned is always a read, so whatever a caller refuses or
+    /// bounds on it is decided as it was on a read before every call.
+    #[inline]
+    pub(crate) fn headroom_short_of(&self, bytes: u64) -> Option<u64> {
+        if !self.budget_armed.get()
+            && let Some(seen) = self.room_reading.get()
+        {
+            let released = self.released_bytes.get().wrapping_sub(seen.released);
+            let charged = self.in_flight_bytes.get().saturating_add(released).saturating_sub(seen.in_flight);
+            if charged <= seen.headroom >> ROOM_READING_SPAN_SHIFT && bytes <= seen.headroom - charged {
+                return None;
+            }
+        }
+        let headroom = self.headroom();
+        (bytes > headroom).then_some(headroom)
     }
 
     /// The installed address-space ceiling, answered once per install.
@@ -72,6 +119,11 @@ impl MemoryHooks {
     ///
     /// The address-space ceiling is cached until the next limits installation;
     /// the other callbacks run when growth or a new conjunction asks for them.
+    /// Within one operation, a conjunction level that fits in the room the
+    /// last mapped-bytes reading left, less the bytes the operation charged
+    /// since, is priced without another reading while those bytes stay under
+    /// an eighth of that room: memory mapped meanwhile outside the
+    /// operation's charges is seen at the next reading.
     /// Captured state must support transfer between threads.
     pub fn new(
         preflight: impl Fn(u64) + Send + Sync + 'static,
