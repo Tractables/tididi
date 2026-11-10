@@ -1496,7 +1496,31 @@ trait RowSum {
         grid_pos: usize,
         v: f64,
     ) -> Result<(), OperationError>;
+    /// [`push`](Self::push) the cells `x` of a run of up to
+    /// [`HELD_COLUMNS`] columns from `grid_pos` whose bit `x` of `live` is
+    /// set, each its sum `sums[x]` of products each its float, in column
+    /// order.
+    #[inline(always)]
+    fn push_bits(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        sums: &[f64],
+        mut live: u64,
+    ) -> Result<(), OperationError> {
+        while live != 0 {
+            let x = live.trailing_zeros() as usize;
+            self.push(eng, node_idx, grid_pos + x, sums[x])?;
+            live &= live - 1;
+        }
+        Ok(())
+    }
 }
+
+/// The columns of a row whose float sums [`sum_row`] holds before it
+/// appends them ([`RowSum::push_bits`]): a word of live bits.
+const HELD_COLUMNS: usize = 64;
 
 impl<'a> RowSum for PlainSink<'a> {
     const CHECKED: bool = false;
@@ -1536,6 +1560,42 @@ impl<'a> RowSum for PlainSink<'a> {
         v: f64,
     ) -> Result<(), OperationError> {
         PlainSink::push(self, eng, node_idx, grid_pos, v)
+    }
+
+    /// The run's cells checked against the slot limit and reserved for at
+    /// once, then written in one pass. A cell appended alone, between two
+    /// sums, reloads the column's length from memory and waits for its own
+    /// sum first, so the cells of a row run one after another.
+    #[inline(always)]
+    fn push_bits(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        sums: &[f64],
+        mut live: u64,
+    ) -> Result<(), OperationError> {
+        let n = live.count_ones() as usize;
+        if n == 0 {
+            return Ok(());
+        }
+        let lim = eng.limits();
+        let start = self.out.len();
+        // A cell's slot is its position, so the last one bounds the others.
+        let last = lim.next_slot(start + n - 1)?;
+        lim.reserve_as_pushed(self.out, n)?;
+        let cells = &mut self.out.spare_capacity_mut()[..n];
+        let mut slot = last + 1 - n as u32;
+        for cell in cells {
+            let x = live.trailing_zeros() as usize;
+            cell.write(sums[x]);
+            node_idx[grid_pos + x] = slot;
+            slot += 1;
+            live &= live - 1;
+        }
+        // Safety: the `n` cells past the length were written above.
+        unsafe { self.out.set_len(start + n) };
+        Ok(())
     }
 }
 
@@ -2024,7 +2084,8 @@ fn finish_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
 }
 
 /// Append the cell sums `(sums, flags)` for columns starting at `row_base`
-/// against one-pair columns `block`.
+/// against one-pair columns `block`; where each product is its float,
+/// [`HELD_COLUMNS`] columns at a time ([`RowSum::push_bits`]).
 #[inline(always)]
 fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
@@ -2036,33 +2097,49 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
     (gate, due_at, due): (&mut crate::limits::PollGate<'_>, &mut u64, &mut u64),
 ) -> Result<(), OperationError> {
     let k = f_pairs.len() as u64;
-    for (x, q) in block.iter().enumerate() {
-        if q.left.0 == DEAD_COLUMN {
-            node_idx[row_base + x] = NO_PRODUCT;
-            continue;
+    let words = block
+        .chunks(HELD_COLUMNS)
+        .zip(sums.chunks(HELD_COLUMNS).zip(flags.chunks(HELD_COLUMNS)));
+    for (c, (block, (sums, flags))) in words.enumerate() {
+        let base = row_base + c * HELD_COLUMNS;
+        let mut live = 0u64;
+        for (x, q) in block.iter().enumerate() {
+            if q.left.0 == DEAD_COLUMN {
+                node_idx[base + x] = NO_PRODUCT;
+                continue;
+            }
+            charge(gate, due_at, due, k)?;
+            let (acc, fl) = (sums[x], flags[x]);
+            if !S::CHECKED {
+                live |= u64::from(fl & LIVE) << x;
+                continue;
+            }
+            finish_cell(
+                sum,
+                eng,
+                (node_idx, base + x),
+                (acc, fl & LIVE != 0, fl & INEXACT == 0),
+                (f_pairs, std::slice::from_ref(q)),
+                (left, right),
+            )?;
         }
-        charge(gate, due_at, due, k)?;
-        let (acc, fl) = (sums[x], flags[x]);
-        finish_cell(
-            sum,
-            eng,
-            (node_idx, row_base + x),
-            (acc, fl & LIVE != 0, fl & INEXACT == 0),
-            (f_pairs, std::slice::from_ref(q)),
-            (left, right),
-        )?;
+        if !S::CHECKED {
+            sum.push_bits(eng, node_idx, base, sums, live)?;
+        }
     }
     Ok(())
 }
 
 /// The cells of a row as [`process_cell`] sums them, each cell's products
-/// added in the order it adds them and each cell charged and appended in
-/// column order as it charges and appends them: a row of one f pair a cell
+/// added in the order it adds them, charged the units it charges and
+/// appended in column order as it appends them: a row of one f pair a cell
 /// at a time, its sum held in a register, and a row of f pairs against
 /// one-pair columns ([`read_columns`]) f pair after f pair. Where `values`
 /// holds the level's [`ValueRows`] and reading an f pair's child rows reads
 /// at most [`VALUE_ROW_READS`] cells a pair it sums, the pairs read their
-/// floats off those rows, and a row of one f pair followed by such rows
+/// floats off those rows, a row whose products are each their float
+/// appends [`HELD_COLUMNS`] cells at a time once they are summed
+/// ([`RowSum::push_bits`]), and a row of one f pair followed by such rows
 /// sums with them up to [`LANES`] at a time ([`block_rows`]), on a level
 /// with room for their sums. A cell a checked sum cannot hold goes through its
 /// cell sink, its pairs in the same order. Any other row is left to the
@@ -2251,38 +2328,51 @@ fn one_pair_row_values<
     let width = ctx.right_width;
     let (lv, ld, rv, rd) = (l.vals, l.dead, r.vals, r.dead);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    for j in 0..width {
-        let g = pairs_at::<ONES>(ones, ctx, right_level_t, j, g_pairs_scratch);
-        if g.is_empty() {
-            node_idx[row_base + j] = NO_PRODUCT;
-            continue;
-        }
-        charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-        let (mut acc, mut flags) = (0.0f64, 0u8);
-        for q in g {
-            let (i, t) = (q.left.0 as usize, q.right.0 as usize);
-            // Safety: every pair field is below its side's row width
-            // (`row_width`), and a row holds a float and a mark for each.
-            let (a, b) = unsafe { (*lv.get_unchecked(i), *rv.get_unchecked(t)) };
-            let (p, ok) = S::times(a, b);
-            acc += p;
-            if TRACK {
-                // Safety: as above.
-                flags |= LIVE ^ unsafe { *ld.get_unchecked(i) | *rd.get_unchecked(t) };
+    let mut held = [0.0f64; HELD_COLUMNS];
+    for c0 in (0..width).step_by(HELD_COLUMNS) {
+        let mut held_live = 0u64;
+        for j in c0..width.min(c0 + HELD_COLUMNS) {
+            let g = pairs_at::<ONES>(ones, ctx, right_level_t, j, g_pairs_scratch);
+            if g.is_empty() {
+                node_idx[row_base + j] = NO_PRODUCT;
+                continue;
             }
-            if CHECK && !ok {
-                flags |= INEXACT;
+            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+            let (mut acc, mut flags) = (0.0f64, 0u8);
+            for q in g {
+                let (i, t) = (q.left.0 as usize, q.right.0 as usize);
+                // Safety: every pair field is below its side's row width
+                // (`row_width`), and a row holds a float and a mark for each.
+                let (a, b) = unsafe { (*lv.get_unchecked(i), *rv.get_unchecked(t)) };
+                let (p, ok) = S::times(a, b);
+                acc += p;
+                if TRACK {
+                    // Safety: as above.
+                    flags |= LIVE ^ unsafe { *ld.get_unchecked(i) | *rd.get_unchecked(t) };
+                }
+                if CHECK && !ok {
+                    flags |= INEXACT;
+                }
             }
+            let live = !TRACK || flags & LIVE != 0;
+            if !S::CHECKED {
+                // Appended with the word's other cells once all are summed.
+                held[(j - c0) % HELD_COLUMNS] = acc;
+                held_live |= u64::from(live) << (j - c0);
+                continue;
+            }
+            finish_cell(
+                sum,
+                eng,
+                (node_idx, row_base + j),
+                (acc, live, flags & INEXACT == 0),
+                (f_pairs, g),
+                (left, right),
+            )?;
         }
-        let live = !TRACK || flags & LIVE != 0;
-        finish_cell(
-            sum,
-            eng,
-            (node_idx, row_base + j),
-            (acc, live, flags & INEXACT == 0),
-            (f_pairs, g),
-            (left, right),
-        )?;
+        if !S::CHECKED {
+            sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
+        }
     }
     gate.add_short(due_at - due);
     Ok(width)
