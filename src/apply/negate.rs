@@ -29,12 +29,15 @@ pub(crate) struct NegateScratch {
     /// The cells of a basis that no node covers: a level's fill pairs, then
     /// the root's complement pairs.
     cells: Pool<Vec<ChildPair>>,
+    /// The levels `expand_full` filled, one entry per vtree node.
+    filled: Pool<Vec<bool>>,
 }
 
 impl Pools for NegateScratch {
     fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
         visit(&self.cover);
         visit(&self.cells);
+        visit(&self.filled);
     }
 }
 
@@ -125,8 +128,17 @@ pub(crate) fn complement_on(
     let vtree = Arc::clone(&tdd.vtree);
     // Read before the first change to a level, which drops both.
     let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
-    let (zero, output) = (tdd.is_zero(), tdd.output.local);
-    let at_root = tdd.output.vtree == vtree.root();
+    let (output, at_root) = (tdd.output.local, tdd.output.vtree == vtree.root());
+    if tdd.is_zero() {
+        // The constant reads nothing of the operand but its weights.
+        let weights = match tdd {
+            Cow::Owned(mut tdd) => tdd.weights.take(),
+            Cow::Borrowed(tdd) => tdd.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?,
+        };
+        let mut result = crate::build::constant_on(eng, &vtree, true)?;
+        result.weights = weights;
+        return Ok((result, None));
+    }
     let (mut levels, source, weights, owed) = match tdd {
         Cow::Owned(mut tdd) => {
             let weights = tdd.weights.take();
@@ -148,35 +160,30 @@ pub(crate) fn complement_on(
             )
         }
     };
-    let (mut result, old) = if zero {
-        (crate::build::constant_on(eng, &vtree, true)?, None)
-    } else {
-        let mut filled = Vec::new();
-        eng.limits()
-            .try_resize(&mut filled, vtree.num_nodes(), false)?;
-        expand_full(
-            eng,
-            &vtree,
-            &mut Target {
-                levels: &mut levels,
-                source,
-            },
-            canonical,
-            closed,
-            &mut filled,
-        )?;
-        let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
-        complement_full_at_root(
-            eng,
-            &vtree,
-            (levels, source),
-            output,
-            &filled,
-            (closed, owed),
-        )?
-    };
+    let mut filled = eng.scratch.negate.filled.checkout(eng);
+    eng.limits().try_resize(&mut *filled, vtree.num_nodes(), false)?;
+    expand_full(
+        eng,
+        &vtree,
+        &mut Target {
+            levels: &mut levels,
+            source,
+        },
+        canonical,
+        closed,
+        &mut filled,
+    )?;
+    let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
+    let (mut result, old) = complement_full_at_root(
+        eng,
+        &vtree,
+        (levels, source),
+        output,
+        &filled,
+        (closed, owed),
+    )?;
     #[cfg(debug_assertions)]
-    if at_root && !zero && result.output.vtree == vtree.root() {
+    if at_root && result.output.vtree == vtree.root() {
         let parents: Vec<_> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
         crate::reduce::contract::debug_assert_no_twins_under(eng, &result, &parents);
     }
