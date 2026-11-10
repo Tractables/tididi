@@ -1247,6 +1247,7 @@ pub(crate) mod tests;
 use tests::{
     ahead_after_forced, ahead_forced_off, complete_sides_listed, dense_poll_stride_forced,
     grid_lookups_forced, lend_forced_off, lone_columns_forced_off, note_ahead, note_as_operand,
+    note_closed_in_sweep,
     note_complete_side, note_held_tight, note_implied_walk, note_kept_counts, note_lent,
     note_lone_columns, note_lone_pair, note_lookups, note_one_sided_masks, note_pair_row_unrolled,
     note_pair_rows, note_pairs_grown, note_reach_columns_row, note_reach_tables, note_read_through,

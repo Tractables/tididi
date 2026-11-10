@@ -271,3 +271,7 @@ pub(super) fn builds_past_cap_forced() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_refused_past_cap() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn note_closed_in_sweep(_holes: bool) {}

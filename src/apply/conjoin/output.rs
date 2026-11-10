@@ -55,13 +55,24 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<
 
 /// Per-level tail after the cell-build route dispatch: stream commit,
 /// `live_counts` update, grid tagging, `shrink_arrays`, the output-pair meter,
-/// and the pass-through inline-emit flags.
+/// the pass-through inline-emit flags, and, where `close` holds, the close of
+/// the level ([`TddLevel::close`]).
+///
+/// `close` holds for a level of the plain dense routes in a sweep with no
+/// filter and no memory bound. After its build such a level is read only
+/// through its parent's grid and, at the seat, as a whole, so it can hold
+/// the description of its pairs from here on: the sweep then keeps stored
+/// only the levels that fit no description and the level it is building.
+/// The node count and the arena's length and capacity read as before, and
+/// the close charges nothing.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
     eng: &Engine,
     stream_state: Option<StreamLevelState>,
     shape: LevelShape,
     output_grid_base: GridBase,
     passthrough: Sides<bool>,
+    close: bool,
     run: &mut ApplyRun,
     sweep: &mut Sweep<'_, '_>,
 ) {
@@ -95,6 +106,16 @@ pub(super) fn finalize_level(
     lim.level_settled(levels[t_idx].pairs.len() as u64);
 
     mark_passthrough_inlined(&mut levels[t_idx], passthrough);
+
+    if close {
+        let level = &mut levels[t_idx];
+        let stored = level.pairs.implicit().is_none();
+        level.close();
+        if stored && level.pairs.implicit().is_some() {
+            let complete = |c: VtreeIdx| products.is_complete(c.idx());
+            note_closed_in_sweep(!(complete(shape.left) && complete(shape.right)));
+        }
+    }
 }
 
 /// The conjunction's output local index, or `None` when the product is false.

@@ -349,3 +349,44 @@ fn conditioned_products_match_the_written_route() {
     assert!(described.implicit > 0, "no level was implicit");
     assert!(described.kept > 0, "no prune kept a level described");
 }
+
+/// Tables of one class conjoined with a table of the same class, and random
+/// functions over overlapping sets of variables: their products have child
+/// grids with dead cells, the cells of two nodes that disagree on a shared
+/// variable, so the levels over them are written by the row loop. A level
+/// of those that fits a description is closed as the sweep finishes it, and
+/// the result, the work and every stop are the stored route's.
+#[test]
+fn levels_over_grids_with_holes_close_as_they_are_built() {
+    use crate::test_helpers::{LOW_FLOOR, with_floor};
+    let before = super::closed_in_sweep();
+    with_floor(LOW_FLOOR, || {
+        let vtree = Arc::new(Vtree::balanced(16));
+        let eng = Engine::new();
+        let mut rng = Lcg::new(0x11a7_0021);
+        for _ in 0..3 {
+            let parts: Vec<Tdd> = [0, 1, 0]
+                .into_iter()
+                .map(|j| affine_function(&eng, &vtree, 2, j, &mut rng))
+                .collect();
+            same_both_ways(&parts, false, &[]);
+        }
+        let vtree = Arc::new(Vtree::balanced(14));
+        let mut rng = Lcg::new(0x11a7_0022);
+        for _ in 0..4 {
+            let parts: Vec<Tdd> = (0..3)
+                .map(|c| {
+                    let vars: Vec<u32> = (1..=14).filter(|v| v % 3 != c).collect();
+                    function_of(&vtree, &vars, &mut rng)
+                })
+                .collect();
+            same_both_ways(&parts, false, &[]);
+        }
+    });
+    let (all, holes) = super::closed_in_sweep();
+    assert!(
+        holes > before.1,
+        "no level over a grid with holes was closed as it was built ({} closed)",
+        all - before.0
+    );
+}

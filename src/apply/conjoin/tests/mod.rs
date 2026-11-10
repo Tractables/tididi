@@ -211,6 +211,26 @@ fn count_complete(kind: usize) {
 }
 
 thread_local! {
+    /// The levels on this thread a sweep closed into the description of
+    /// their pairs as it finished them, and those of them over a child side
+    /// that was not complete ([`closed_in_sweep`]).
+    static CLOSED_IN_SWEEP: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+pub(super) fn note_closed_in_sweep(holes: bool) {
+    CLOSED_IN_SWEEP.with(|c| {
+        let (all, with_holes) = c.get();
+        c.set((all + 1, with_holes + u64::from(holes)));
+    });
+}
+
+/// The levels on this thread a sweep closed as it finished them so far, and
+/// those of them over a child side that was not complete.
+pub(super) fn closed_in_sweep() -> (u64, u64) {
+    CLOSED_IN_SWEEP.with(std::cell::Cell::get)
+}
+
+thread_local! {
     /// The times a level's pairs arena grew on this thread, filled or ahead
     /// of a projection ([`pairs_grown`]).
     static GROWN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };

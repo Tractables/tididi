@@ -1518,6 +1518,7 @@ pub(super) fn build_level_dense(
                 shape,
                 output_grid_base,
                 passthrough,
+                false,
                 run,
                 sweep,
             );
@@ -1767,13 +1768,16 @@ pub(super) fn build_level_dense(
     }
 
     // Per-level tail: stream commit, live_counts, grid tag, shrink,
-    // pass-through flags. See `finalize_level`.
+    // pass-through flags, and the close of a level of the plain routes. See
+    // `finalize_level`.
+    let close = plain && sweep.filter.is_none() && lim.memory_unbounded();
     finalize_level(
         eng,
         stream_state,
         shape,
         output_grid_base,
         passthrough,
+        close,
         run,
         sweep,
     );
