@@ -305,3 +305,32 @@ fn every_overlay_refusal_leaves_the_engine_reusable() {
         }
     }
 }
+
+/// A level whose pieces outgrow the 32-bit offsets that list them is
+/// refused with [`OperationError::IndexOverflow`], here under a pinned
+/// list cap, rather than read back through wrapped offsets; the engine
+/// stays reusable, and the operation that goes through is the overlay.
+#[test]
+fn pieces_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let eng = &Engine::new();
+    let mut rng = Lcg::new(0x0_c0de);
+    let n = 8;
+    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
+    for (name, vtree) in shapes(n) {
+        // Over every variable, so that neither operand is a constant.
+        let mut over_all = || {
+            let rows: Vec<u64> = (0..60).map(|_| rng.below(1 << n)).collect();
+            Tdd::from_models(&vtree, &vars, &rows).unwrap()
+        };
+        let (f, g) = (over_all(), over_all());
+        for operation in [Engine::or, Engine::and_not] {
+            let want = operation(eng, f.clone(), g.clone()).unwrap();
+            let (got, refused) =
+                eng.limits().through_caps(Limits::pin_list_cap, || operation(eng, f.clone(), g.clone()));
+            assert!(refused > 0, "{name}: no cap refused the overlay");
+            assert_canonical(&got);
+            assert!(got.equivalent(&want).unwrap(), "{name}: a different function");
+        }
+    }
+}

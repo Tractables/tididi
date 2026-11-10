@@ -112,7 +112,7 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// interpretations, or for a summed-out level holding weights, which this
 /// does not add; and [`OperationError::IndexOverflow`] when a summed-out
 /// level's values, `f`'s and `g`'s together, outgrow the slots a pair side
-/// addresses. Counts do not overflow: past `u128` they are held exactly.
+/// addresses, or a level's nodes outgrow a 32-bit index. Counts do not overflow: past `u128` they are held exactly.
 /// Allocation refusals and installed limits propagate as
 /// [`OperationError::OverBudget`], [`OperationError::Stopped`] and
 /// [`OperationError::OutputCap`].
@@ -491,10 +491,10 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                     crate::diagram::sort_pairs(&mut pairs);
                     let o = out.push_node(lim, &pairs)?.0;
                     let (start, items_len) = match of_g {
-                        true => (&mut pieces.g_start, pieces.g_items.len() as u32),
-                        false => (&mut pieces.f_start, pieces.f_items.len() as u32),
+                        true => (&mut pieces.g_start, pieces.g_items.len()),
+                        false => (&mut pieces.f_start, pieces.f_items.len()),
                     };
-                    start.push(items_len);
+                    start.push(lim.list_index(items_len)?);
                     let (f_node, g_node) = if of_g {
                         (ABSENT, a as u32)
                     } else {
@@ -506,7 +506,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
                     true => (&mut pieces.g_start, &pieces.g_items),
                     false => (&mut pieces.f_start, &pieces.f_items),
                 };
-                start.push(items.len() as u32);
+                start.push(lim.list_index(items.len())?);
             }
             poll.flush()?;
         }

@@ -436,7 +436,8 @@ impl Tdd {
     /// # Errors
     ///
     /// Returns [`OperationError::VtreeMismatch`] for different vtree allocations,
-    /// or [`OperationError::OverBudget`] if an allocation is refused.
+    /// [`OperationError::IndexOverflow`] when a level's live products outgrow a
+    /// 32-bit index, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;

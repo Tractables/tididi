@@ -284,6 +284,31 @@ fn restrict_differing_root_containment_difftest() {
     );
 }
 
+/// A level whose live products outgrow the 32-bit offsets that list them
+/// is refused with [`IndexOverflow`](crate::OperationError::IndexOverflow),
+/// here under a pinned list cap; the restriction that goes through is
+/// sound.
+#[test]
+fn products_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x11a7_ca2e_2026_1110);
+    let nvars = 6;
+    let mut refused = 0;
+    for (_, vtree) in vtree_shapes(nvars) {
+        for _ in 0..4 {
+            let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
+            let c = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
+            let (got, n) = eng
+                .limits()
+                .through_caps(Limits::pin_list_cap, || eng.restrict_to_care(f.clone(), c.clone()));
+            assert_sound_on_truth_table(&f, &c, &got.into_tdd(), nvars);
+            refused += n;
+        }
+    }
+    assert!(refused > 0, "no cap refused a restriction");
+}
+
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_brute_force_randomized_multi_vtree() {

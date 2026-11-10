@@ -142,7 +142,8 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 /// [`OperationError::VtreeMismatch`] for different vtree allocations,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
-/// even when the other operand is false. Allocation refusals propagate from
+/// even when the other operand is false; [`OperationError::IndexOverflow`] when
+/// a level's pieces outgrow a 32-bit index. Allocation refusals propagate from
 /// the component operations.
 pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     let context = std::sync::Arc::clone(f.context());

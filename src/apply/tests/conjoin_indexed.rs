@@ -108,6 +108,28 @@ fn and_indexed_on_implicit_levels() {
     same_as_stored(cases);
 }
 
+/// A level whose products outgrow the 32-bit offsets that list them is
+/// refused with [`IndexOverflow`](crate::OperationError::IndexOverflow),
+/// here under a pinned list cap; the conjunction that goes through is the
+/// conjunction.
+#[test]
+fn products_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x11a7_1dec_2026_1110);
+    let nvars = 7;
+    for (shape, vtree) in vtree_shapes(nvars) {
+        let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
+        let g = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
+        let index = PairIndex::new(&g).unwrap();
+        let (got, refused) = eng.limits().through_caps(Limits::pin_list_cap, || eng.and_indexed(&f, &g, &index));
+        if !f.is_zero() && !g.is_zero() {
+            assert!(refused > 0, "{shape}: no cap refused the conjunction");
+        }
+        agrees(&f, &g, &got, nvars, shape);
+    }
+}
+
 /// Model counts and the sum of a weighted set of variables, as one value
 /// `(count, sum)`: the moments a grouped `count` and `sum(a)` read, `a`'s
 /// bits weighted by their place.

@@ -121,6 +121,23 @@ impl Limits {
         crate::value::slots::next_slot_index(len)
     }
 
+    /// The 32-bit offset or index of position `len` in a list an operation
+    /// addresses by `u32`: the end of a run of items laid end to end, or
+    /// the id of the next entry. From `u32::MAX` up, which several lists
+    /// keep as a sentinel, [`OperationError::IndexOverflow`], which no
+    /// budget makes succeed.
+    #[inline(always)]
+    pub(crate) fn list_index(&self, len: usize) -> Result<u32, OperationError> {
+        #[cfg(test)]
+        if self.list_cap_pin.get().is_some_and(|cap| len >= cap) {
+            return Err(OperationError::IndexOverflow);
+        }
+        match u32::try_from(len) {
+            Ok(index) if index != u32::MAX => Ok(index),
+            _ => Err(OperationError::IndexOverflow),
+        }
+    }
+
     /// Refuse an emitted-node total above the installed cap.
     #[inline]
     pub(crate) fn check_output_cap(&self, out_nodes: u64) -> Result<(), OperationError> {

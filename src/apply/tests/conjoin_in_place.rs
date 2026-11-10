@@ -282,6 +282,36 @@ fn bottom_up_products_are_the_top_down_products() {
     }
 }
 
+/// A level whose products outgrow the 32-bit offsets that list them, or
+/// the node indices the level can give them, is refused with
+/// [`IndexOverflow`](crate::OperationError::IndexOverflow), here under a
+/// pinned list cap and a pinned level width; the conjunction that goes
+/// through is the conjunction, pruned and loose.
+#[test]
+fn products_past_the_list_cap_or_the_level_width_are_refused() {
+    use crate::limits::Limits;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x11a7_c0de_2026_1110);
+    let nvars = 10u32;
+    let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
+    type Pin = fn(&Limits, Option<usize>);
+    let pins: [(Pin, &str); 2] =
+        [(Limits::pin_list_cap, "list cap"), (Limits::pin_level_width_cap, "level width")];
+    for (pin, what) in pins {
+        let mut refused = 0;
+        for (shape, vtree) in vtree_shapes(nvars) {
+            let f = random_model_tdd(&vtree, &vars, nvars, 400, &mut rng);
+            let g = eng.and(block_set(&vtree, 2, &mut rng), block_set(&vtree, 3, &mut rng)).unwrap();
+            for prune in [true, false] {
+                let (got, n) = eng.limits().through_caps(pin, || and_in_place_on(&eng, f.clone(), &g, prune));
+                agrees_wide(&f, &g, &got, nvars, &format!("{shape} {what} prune {prune}"));
+                refused += n;
+            }
+        }
+        assert!(refused > 0, "no {what} refused a conjunction");
+    }
+}
+
 /// Every reservation `and_in_place` asks for, refused in turn, comes back
 /// as [`OverBudget`](crate::OperationError::OverBudget), pruned and loose,
 /// with `g` a set of codes and a cube; granted, the result is the

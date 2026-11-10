@@ -143,8 +143,8 @@ pub enum PrefixFoldError {
     /// the range of the code variables.
     Codes(String),
     /// An operation the fold runs was refused: operands on two vtrees, a
-    /// diagram that has discarded the structure at a level, a refused
-    /// allocation, or an armed stop.
+    /// diagram that has discarded the structure at a level, a list past a
+    /// 32-bit index, a refused allocation, or an armed stop.
     Operation(OperationError),
 }
 
@@ -177,6 +177,14 @@ impl From<OperationError> for PrefixFoldError {
 
 /// No node, set, state or fold.
 const NONE: u32 = u32::MAX;
+
+/// The run `items[start..end]` as `[start, len]`, refused when its end does
+/// not fit [`Limits::list_index`]; its start, no greater, then fits too.
+fn span_of(lim: &Limits, start: usize, end: usize) -> Result<[u32; 2], OperationError> {
+    let end = lim.list_index(end)?;
+    let start = start as u32;
+    Ok([start, end - start])
+}
 
 impl Engine {
     /// Each point of `points` with the fold of the values `values` holds at
@@ -314,8 +322,9 @@ impl Engine {
     /// width; [`PrefixFoldError::Operation`] with
     /// [`OperationError::VtreeMismatch`] for operands on different vtree
     /// allocations, [`OperationError::MarginalLevel`] for an operand that
-    /// has discarded the structure at a level, and for a refused allocation
-    /// or an armed stop.
+    /// has discarded the structure at a level,
+    /// [`OperationError::IndexOverflow`] when a level's states or products
+    /// outgrow a 32-bit index, and for a refused allocation or an armed stop.
     #[expect(clippy::too_many_arguments, reason = "public entry point")]
     pub fn prefix_fold<M: FoldMonoid>(
         &self,
@@ -702,11 +711,11 @@ impl Sets {
             last = at;
             at = self.next[at as usize];
         }
-        let id = self.ranges.len() as u32;
-        let start = self.items.len() as u32;
+        let id = lim.list_index(self.ranges.len())?;
+        let range = span_of(lim, self.items.len(), self.items.len() + nodes.len())?;
         lim.reserve(&mut self.items, nodes.len())?;
         self.items.extend_from_slice(nodes);
-        lim.try_push(&mut self.ranges, [start, nodes.len() as u32])?;
+        lim.try_push(&mut self.ranges, range)?;
         lim.try_push(&mut self.next, NONE)?;
         match last {
             NONE => {
@@ -741,7 +750,7 @@ impl Level {
         if let Some(&id) = self.index.get(&state) {
             return Ok(id);
         }
-        let id = self.states.len() as u32;
+        let id = lim.list_index(self.states.len())?;
         lim.try_push(&mut self.states, state)?;
         lim.reserve_map(&mut self.index, 1)?;
         self.index.insert(state, id);
@@ -829,7 +838,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         if let Some(&id) = self.val_ids.get(&v) {
             return Ok(id);
         }
-        let id = self.vals.len() as u32;
+        let id = self.lim.list_index(self.vals.len())?;
         self.lim.try_push(&mut self.vals, v.clone())?;
         self.lim.reserve_map(&mut self.val_ids, 1)?;
         self.val_ids.insert(v, id);
@@ -1039,8 +1048,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         let set = below.sets[side].intern(lim, &buf)?;
                         lim.try_push(&mut groups, [key, set])?;
                     }
-                    span[2 * side] = start as u32;
-                    span[2 * side + 1] = (groups.len() - start) as u32;
+                    let [first, len] = span_of(lim, start, groups.len())?;
+                    span[2 * side] = first;
+                    span[2 * side + 1] = len;
                 }
                 spans.push(span);
             }
@@ -1106,8 +1116,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     }
                 }
             }
-            here.ranges
-                .push([start as u32, (here.moves.len() - start) as u32]);
+            here.ranges.push(span_of(lim, start, here.moves.len())?);
         }
         if !leaf_key {
             self.mark_used(at, top as usize, &used)?;
@@ -1239,7 +1248,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 }
                 found.sort_unstable();
                 found.dedup();
-                let first = here.keys.len() as u32;
+                let first = here.keys.len();
                 let mut i = 0;
                 while i < found.len() {
                     let nb = found[i][0];
@@ -1248,18 +1257,15 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
                         i += 1;
                     }
-                    let id = here.keys.len() as u32;
+                    let id = lim.list_index(here.keys.len())?;
                     lim.try_push(&mut here.keys, [na, nb])?;
-                    lim.try_push(
-                        &mut here.ranges,
-                        [start as u32, (here.pairs.len() - start) as u32],
-                    )?;
+                    lim.try_push(&mut here.ranges, span_of(lim, start, here.pairs.len())?)?;
                     lim.reserve_map(&mut here.index, 1)?;
                     here.index.insert([na, nb], id);
                 }
+                let run = span_of(lim, first, here.keys.len())?;
                 lim.reserve_map(&mut here.of_a, 1)?;
-                here.of_a
-                    .insert(na, [first, here.keys.len() as u32 - first]);
+                here.of_a.insert(na, run);
             }
             let products = here.keys.len();
             lim.try_resize(&mut here.used, products, false)?;
@@ -1440,7 +1446,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         match self.reached_at.get(&fold) {
                             Some(&i) => i,
                             None => {
-                                let i = self.reached.len() as u32;
+                                let i = lim.list_index(self.reached.len())?;
                                 lim.try_push(&mut self.reached, fold)?;
                                 lim.reserve_map(&mut self.reached_at, 1)?;
                                 self.reached_at.insert(fold, i);
@@ -1460,8 +1466,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 lim.try_push(&mut self.levels[at].moves, [lit, next])?;
             }
             let here = &mut self.levels[at];
-            here.ranges
-                .push([start as u32, (here.moves.len() - start) as u32]);
+            here.ranges.push(span_of(lim, start, here.moves.len())?);
         }
         Ok(())
     }
@@ -1580,7 +1585,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         lim.try_push(&mut items, node)?;
                     }
                 }
-                ranges.push([start as u32, (items.len() - start) as u32]);
+                ranges.push(span_of(lim, start, items.len())?);
             }
             below = (items, ranges);
         }

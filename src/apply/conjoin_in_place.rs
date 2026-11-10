@@ -591,8 +591,11 @@ impl Settle {
     /// nodes before `a` that no pair named (none in a stored level) meet
     /// nothing.
     fn node(&mut self, lim: &Limits, a: usize, n: u32) -> Result<(), OperationError> {
-        while self.start.len() < a + 1 {
-            lim.try_push(&mut self.start, self.pieces.len() as u32)?;
+        if self.start.len() < a + 1 {
+            let at = lim.list_index(self.pieces.len())?;
+            while self.start.len() < a + 1 {
+                lim.try_push(&mut self.start, at)?;
+            }
         }
         // Within a node of `g` the pairs stay in their order; unstable, so
         // that the sort asks for no buffer.
@@ -614,15 +617,20 @@ impl Settle {
                     lim.reserve_exact(&mut self.made, group.len())?;
                     self.made.extend(group.iter().map(|h| h.2));
                     crate::diagram::sort_pairs(&mut self.made[at..]);
-                    lim.try_push(&mut self.made_at, self.made.len() as u32)?;
-                    self.width + (self.made_at.len() - 2) as u32
+                    lim.try_push(&mut self.made_at, lim.list_index(self.made.len())?)?;
+                    // The node the product is pushed as, past the level's.
+                    let node = self.width as usize + self.made_at.len() - 2;
+                    if node >= lim.level_width_cap() {
+                        return Err(OperationError::IndexOverflow);
+                    }
+                    node as u32
                 }
             };
             lim.try_push(&mut self.pieces, (b, product))?;
             i = k;
         }
         self.hits.clear();
-        lim.try_push(&mut self.start, self.pieces.len() as u32)
+        lim.try_push(&mut self.start, lim.list_index(self.pieces.len())?)
     }
 }
 
@@ -744,8 +752,11 @@ fn block_products(
         if let Some(a) = cur {
             st.node(lim, a, read)?;
         }
-        while st.start.len() < width + 1 {
-            lim.try_push(&mut st.start, st.pieces.len() as u32)?;
+        if st.start.len() < width + 1 {
+            let at = lim.list_index(st.pieces.len())?;
+            while st.start.len() < width + 1 {
+                lim.try_push(&mut st.start, at)?;
+            }
         }
         gate.poll(work)?;
         drop((sl, sr));
@@ -1220,8 +1231,9 @@ impl Engine {
     ///
     /// [`OperationError::VtreeMismatch`] when the operands do not share a
     /// vtree, [`OperationError::MarginalLevel`] when either has a marginal
-    /// level, [`OperationError::InertOption`] when either is weighted, and
-    /// the engine's refusals ([`OperationError::Stopped`],
+    /// level, [`OperationError::InertOption`] when either is weighted,
+    /// [`OperationError::IndexOverflow`] when a level's products outgrow a
+    /// 32-bit index, and the engine's refusals ([`OperationError::Stopped`],
     /// [`OperationError::OverBudget`]). A refusal consumes `f`.
     pub fn and_in_place(&self, f: Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
         and_in_place_on(self, f, g, true)

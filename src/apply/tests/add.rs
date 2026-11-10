@@ -271,3 +271,28 @@ fn a_sum_conjoins_with_a_filter_on_its_structural_variables() {
         }
     }
 }
+
+/// A count level whose nodes outgrow the 32-bit offsets that list them is
+/// refused with [`OperationError::IndexOverflow`], here under a pinned list
+/// cap; the sum that goes through counts as both operands do. On a
+/// right-linear vtree with its deepest internal subtree summed out, every
+/// level between that subtree and the root is a count level.
+#[test]
+fn count_levels_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let mut rng = Lcg::new(53);
+    let n = 6;
+    let vtree = Arc::new(Vtree::linear(n));
+    let (deepest, _, _) = vtree.internal_bottomup().next().unwrap();
+    let eng = Engine::new();
+    let shape = CnfShape { clauses: n as usize, width: 3 };
+    let (f, g) = loop {
+        let (f, g) = random_marginal_pair(&eng, &vtree, &mut rng, n, shape, &[deepest]);
+        if !f.is_zero() && !g.is_zero() {
+            break (f, g);
+        }
+    };
+    let (sum, refused) = eng.limits().through_caps(Limits::pin_list_cap, || eng.add(f.clone(), g.clone()));
+    assert!(refused > 0, "no cap refused the sum");
+    assert_sum(&sum, &f, &g, n, "under the list caps");
+}

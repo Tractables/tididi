@@ -39,6 +39,35 @@ impl Limits {
     pub(crate) fn pin_slot_cap(&self, cap: Option<usize>) {
         self.slot_cap_pin.set(cap);
     }
+
+    /// Pin a list cap standing in for the 32 bits of [`Limits::list_index`],
+    /// so a test reaches the refusal without a list of 2^32 items.
+    pub(crate) fn pin_list_cap(&self, cap: Option<usize>) {
+        self.list_cap_pin.set(cap);
+    }
+
+    /// Run `op` under each cap `pin` sets, 0, 1, 2, 4 and on, until it goes
+    /// through, and return what it built and how many caps refused it. A
+    /// refusal must be [`OperationError::IndexOverflow`].
+    pub(crate) fn through_caps<T>(
+        &self,
+        pin: fn(&Limits, Option<usize>),
+        mut op: impl FnMut() -> Result<T, OperationError>,
+    ) -> (T, u32) {
+        let (mut cap, mut refused) = (0, 0);
+        loop {
+            pin(self, Some(cap));
+            let got = op();
+            pin(self, None);
+            match got {
+                Ok(built) => return (built, refused),
+                Err(OperationError::IndexOverflow) => refused += 1,
+                Err(e) => panic!("refused with {e:?} under a cap of {cap}"),
+            }
+            assert!(cap < 1 << 24, "refused under every cap");
+            cap = (cap * 2).max(1);
+        }
+    }
 }
 
 impl Limits {

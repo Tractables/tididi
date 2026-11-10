@@ -382,7 +382,7 @@ impl LevelOverlay<'_> {
                     lim.try_push(&mut s.products, (b, o))?;
                 }
             }
-            lim.try_push(&mut pieces.f_start, pieces.f_items.len() as u32)?;
+            lim.try_push(&mut pieces.f_start, lim.list_index(pieces.f_items.len())?)?;
         }
 
         if walk_g {
@@ -424,7 +424,7 @@ impl LevelOverlay<'_> {
                     let o = out.push_node(lim, &s.pairs)?.0;
                     pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
                 }
-                lim.try_push(&mut pieces.g_start, pieces.g_items.len() as u32)?;
+                lim.try_push(&mut pieces.g_start, lim.list_index(pieces.g_items.len())?)?;
             }
         }
         poll.flush()?;
@@ -624,7 +624,8 @@ pub(crate) fn overlay_on(
 /// [`OperationError::VtreeMismatch`] for different vtree allocations,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
-/// even when the other operand is false. Allocation refusals and installed
+/// even when the other operand is false; [`OperationError::IndexOverflow`] when
+/// a level's pieces outgrow a 32-bit index. Allocation refusals and installed
 /// limits propagate as [`OperationError::OverBudget`],
 /// [`OperationError::Stopped`] and [`OperationError::OutputCap`].
 pub fn and_not(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {

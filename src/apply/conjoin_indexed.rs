@@ -427,9 +427,9 @@ impl Walk<'_> {
                 self.work.products += out.items.len() as u64;
             }
         }
-        if u32::try_from(out.made.len()).is_err() {
-            return Err(OperationError::IndexOverflow);
-        }
+        // Every offset above is at most the last, so this one check covers
+        // them all.
+        self.lim.list_index(out.made.len())?;
         Ok(out)
     }
 

@@ -22,3 +22,16 @@ fn an_invalid_diagram_exposes_the_storage_check_it_wraps() {
     assert_eq!(source.to_string(), inner.to_string());
     assert!(OperationError::OverBudget.source().is_none());
 }
+
+/// A list addressed by `u32` takes every position below `u32::MAX`, which
+/// lists keep as a sentinel, and refuses the rest as `IndexOverflow`.
+#[test]
+fn a_list_index_stops_below_the_sentinel() {
+    let lim = crate::limits::Limits::new();
+    let last = u32::MAX as usize - 1;
+    assert_eq!(lim.list_index(0), Ok(0));
+    assert_eq!(lim.list_index(last), Ok(u32::MAX - 1));
+    for len in [last + 1, (last + 1).saturating_add(1), usize::MAX] {
+        assert_eq!(lim.list_index(len), Err(OperationError::IndexOverflow));
+    }
+}

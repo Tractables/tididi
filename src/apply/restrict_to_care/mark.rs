@@ -2019,12 +2019,14 @@ fn listed(
     for (n, &(a, b, i, j)) in found.iter().enumerate() {
         if n == 0 || (found[n - 1].0, found[n - 1].1) != (a, b) {
             lim.try_push(&mut products, (a, b))?;
-            lim.try_push(&mut starts, combos.len() as u32)?;
+            lim.try_push(&mut starts, lim.list_index(combos.len())?)?;
             offsets[a as usize + 1] += 1;
         }
         combos.push((i, j));
     }
-    lim.try_push(&mut starts, combos.len() as u32)?;
+    // The products number no more than the combinations, so this bounds
+    // their positions as well.
+    lim.try_push(&mut starts, lim.list_index(combos.len())?)?;
     for k in 0..nodes {
         offsets[k + 1] += offsets[k];
     }

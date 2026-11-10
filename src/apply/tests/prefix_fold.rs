@@ -390,6 +390,52 @@ fn folds_agree_with_enumeration() {
     }
 }
 
+/// A level whose states, sets or products outgrow the 32-bit offsets and
+/// ids that list them is refused with [`OperationError::IndexOverflow`],
+/// here under a pinned list cap; the fold that goes through is the fold.
+#[test]
+fn lists_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let blocks = Blocks::new(2, 3, 2, 6);
+    let eng = Engine::new();
+    let all = blocks.all_vars();
+    let nk = blocks.keys.len();
+    let (order, value_vars, code_vars) = (
+        Blocks::vars(&blocks.order),
+        Blocks::vars(&blocks.values),
+        Blocks::vars(&blocks.codes),
+    );
+    let mut rng = Lcg::new(0x11a7_f01d_2026_1110);
+    for shape in SHAPES {
+        let (vtree, into) = blocks.vtrees(shape);
+        let (points, values) = random(&mut rng, &blocks, 3);
+        let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
+        let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
+        let a = eng.from_models(&vtree, &all[..nk + blocks.order.len()], &a_rows).unwrap();
+        let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
+        for range in RANGES {
+            let fold = || {
+                let coding = |folds: &[u64]| {
+                    let sorted: BTreeSet<u64> = folds.iter().copied().collect();
+                    let rank: BTreeMap<u64, u64> =
+                        sorted.iter().enumerate().map(|(i, &f)| (f, i as u64)).collect();
+                    coded(&into, &code_vars, folds.iter().map(|f| rank[f]).collect())
+                };
+                eng.prefix_fold(&a, &b, &order, &value_vars, range, &Sum, coding)
+                    .map_err(|e| match e {
+                        PrefixFoldError::Operation(e) => e,
+                        e => panic!("{shape:?} {range:?}: {e}"),
+                    })
+            };
+            let want = fold().unwrap();
+            let (got, refused) = eng.limits().through_caps(Limits::pin_list_cap, fold);
+            assert!(refused > 0, "{shape:?} {range:?}: no cap refused the fold");
+            assert_canonical(&got);
+            assert!(eng.equivalent(&got, &want).unwrap(), "{shape:?} {range:?}: a different fold");
+        }
+    }
+}
+
 #[test]
 fn points_before_every_value_are_left_out_and_points_after_carry_the_fold() {
     // One key bit, orders 0..8, values 0..4: key 0 has values at orders 2
