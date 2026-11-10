@@ -96,8 +96,8 @@ representation. Contributors can start with the [architecture reference].
 
 ## Citing
 
-Please cite [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537),
-which introduced TDDs.
+Please cite [*A Canonical Generalization of OBDD*](https://doi.org/10.4230/LIPIcs.SAT.2026.10),
+SAT 2026 ([arXiv](https://arxiv.org/abs/2604.05537)), which introduced TDDs.
 
 ## Acknowledgements
 

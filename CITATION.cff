@@ -26,13 +26,20 @@ keywords:
   - binary decision diagram
   - weighted model counting
 preferred-citation:
-  type: article
+  type: conference-paper
   title: "A Canonical Generalization of OBDD"
   year: 2026
-  journal: "arXiv"
-  number: "2604.05537"
-  doi: "10.48550/arXiv.2604.05537"
-  url: "https://arxiv.org/abs/2604.05537"
+  collection-title: "29th International Conference on Theory and Applications of Satisfiability Testing (SAT 2026)"
+  collection-type: proceedings
+  conference:
+    name: "SAT 2026"
+  volume: 377
+  start: "10:1"
+  end: "10:19"
+  publisher:
+    name: "Schloss Dagstuhl – Leibniz-Zentrum für Informatik"
+  doi: "10.4230/LIPIcs.SAT.2026.10"
+  url: "https://doi.org/10.4230/LIPIcs.SAT.2026.10"
   authors:
     - family-names: "Capelli"
       given-names: "Florent"
