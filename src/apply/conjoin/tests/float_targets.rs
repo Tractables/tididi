@@ -213,6 +213,26 @@ fn row_sums_match_the_cell_sums_bit_for_bit() {
     assert!(LANE_BLOCKS.with(std::cell::Cell::get) > 0, "the walks summed no block of rows");
 }
 
+/// [`row_sums_match_the_cell_sums_bit_for_bit`] on two small formulas over
+/// five variables, whose rows are summed in blocks laid side by side. Small
+/// enough for Miri.
+#[test]
+fn small_row_sums_match_the_cell_sums_bit_for_bit() {
+    let eng = Engine::new();
+    let blocks = LANE_BLOCKS.with(std::cell::Cell::get);
+    for (seed, shape) in [(0x4_5b1d, 4), (0x1_5b1d, 1)] {
+        let mut rng = Lcg::new(seed);
+        let (name, tree) = vtree_shapes(5).swap_remove(shape);
+        let clauses = rand_cnf(&mut rng, 5, CnfShape { clauses: 7, width: 3 });
+        let store = WeightStore::new(draw_weights(&mut rng, 5, false), Arithmetic::ScaledFloat);
+        let want = walk_bits(&eng, &tree, &clauses, &store, FloatRows::Cells);
+        for rows in [FloatRows::Sum, FloatRows::Eager] {
+            assert_eq!(walk_bits(&eng, &tree, &clauses, &store, rows), want, "{name}, {rows:?}");
+        }
+    }
+    assert!(LANE_BLOCKS.with(std::cell::Cell::get) > blocks, "the walks summed no block of rows");
+}
+
 /// A conjunction refused at any reserve, the conversion of its kept columns
 /// at the end of the sweep included, leaves the engine able to repeat it.
 #[test]

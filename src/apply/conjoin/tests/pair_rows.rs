@@ -242,6 +242,23 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
     );
 }
 
+/// A dense random function over 10 variables against one of two models, in
+/// both orders: levels of two one-pair columns, whose rows go to a loop of
+/// their own, build what the row loop builds. Small enough for Miri.
+#[test]
+fn levels_of_two_one_pair_columns_build_what_the_row_loop_builds() {
+    let mut rng = Lcg::new(0x0202_501d);
+    let (name, vtree) = vtree_shapes(10).swap_remove(2);
+    let vars: Vec<VarId> = (1..=10).map(VarId).collect();
+    let f = Tdd::from_models(&vtree, &vars, &(0..1u64 << 10).filter(|_| rng.coin()).collect::<Vec<_>>()).unwrap();
+    let g = Tdd::from_models(&vtree, &vars, &[rng.below(1 << 10), rng.below(1 << 10)]).unwrap();
+    let unrolled = pair_rows_unrolled();
+    let [_, _, one] = check(&f, &g, &format!("{name}, a dense random function against two models"));
+    let [_, _, one_swapped] = check(&g, &f, &format!("{name}, two models against a dense random function"));
+    assert!(one > 0 && one_swapped > 0, "expected levels of one pair a column in both orders");
+    assert!(pair_rows_unrolled() > unrolled, "expected rows of two f pairs on two one-pair columns");
+}
+
 /// Whether the conjunction of `f` and `g`, every level on a dense route,
 /// completes under a byte budget of `bytes`.
 fn completes_within(f: &Tdd, g: &Tdd, bytes: u64) -> bool {

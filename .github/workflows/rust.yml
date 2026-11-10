@@ -134,9 +134,22 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: miri
-    # Small tests at the unsafe lookup, pair-view and reused-column boundaries.
+    # Small tests at the unsafe lookups, pair views and reused columns, and
+    # at the conjunction's writes into spare capacity and reads of float lanes.
     - name: Interpret the tests over unsafe code
-      run: cargo +nightly miri test --lib -- reduce::contract::fingerprint value::domain conjoin::child_lookup::tests conjoin::cell::tests::processing::columns
+      run: >-
+        cargo +nightly miri test --lib --
+        reduce::contract::fingerprint value::domain conjoin::child_lookup::tests
+        conjoin::cell::tests::processing::columns
+        conjoin::cell::tests::processing::push_kept
+        conjoin::cell::tests::processing::the_grouped_walk
+        conjoin::cell::tests::reserved
+        conjoin::filter::tests::product_filter_retains
+        conjoin::sparse::tests::emit::a_tail_past
+        conjoin::sparse::tests::regression::leaf_alive_two_operand_apply_stick
+        conjoin::tests::pair_rows::levels_of_two_one_pair_columns
+        conjoin::tests::float_targets::small_row_sums
+        tdd::renumber::tests::false_is_copied
 
   msrv:
     runs-on: ubuntu-latest
