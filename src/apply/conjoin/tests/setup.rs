@@ -64,6 +64,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
         for (f, g) in [(&a, &b), (&b, &a), (&a, &c), (&a, &a)] {
             let ((f, f_plan), (g, g_plan)) = (place(f), place(g));
             let (mut f_widths, mut g_widths) = (vec![0; n], vec![0; n]);
+            let (mut f_marginal, mut g_marginal) = (vec![false; n], vec![false; n]);
 
             let (_, cone) = survey(
                 &eng,
@@ -71,10 +72,16 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
                 Operands { f: &f, g: &g },
                 Operands::default(),
                 0,
-                Operands {
-                    f: &mut f_widths,
-                    g: &mut g_widths,
-                },
+                (
+                    Operands {
+                        f: &mut f_widths,
+                        g: &mut g_widths,
+                    },
+                    Operands {
+                        f: &mut f_marginal,
+                        g: &mut g_marginal,
+                    },
+                ),
                 &mut lists,
             )
             .unwrap();
@@ -99,10 +106,16 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
                 Operands { f: &f, g: &g },
                 masks,
                 0,
-                Operands {
-                    f: &mut f_widths,
-                    g: &mut g_widths,
-                },
+                (
+                    Operands {
+                        f: &mut f_widths,
+                        g: &mut g_widths,
+                    },
+                    Operands {
+                        f: &mut f_marginal,
+                        g: &mut g_marginal,
+                    },
+                ),
                 &mut lists,
             )
             .unwrap();

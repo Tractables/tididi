@@ -54,13 +54,14 @@ pub(super) fn take_regions(
     let cone = run.cone;
     for &t in cone.tops {
         let at = t.idx();
+        let stack = &mut run.lists.stack;
         let width = if carried_from_f(cone, at) {
             run.g_identity[at] = true;
-            run.f_identity[at] = constant_true(vtree, f, cone, true, t);
+            run.f_identity[at] = constant_true(vtree, f, cone, true, t, stack);
             run.f_widths[at]
         } else {
             run.f_identity[at] = true;
-            run.g_identity[at] = constant_true(vtree, g, cone, false, t);
+            run.g_identity[at] = constant_true(vtree, g, cone, false, t, stack);
             run.g_widths[at]
         };
         publish_identity_level(run.products, at, width);
@@ -117,8 +118,15 @@ pub(super) fn give_back_regions(
 /// true under the internal node `t` as the sweep would have found it
 /// carrying `d` there: one node at `t` and at every internal level under it,
 /// whose pairs read each leaf below as true only, down to the levels free in
-/// `d`, which are constant true.
-fn constant_true(vtree: &Vtree, d: &Tdd, cone: Cone<'_>, is_f: bool, t: VtreeIdx) -> bool {
+/// `d`, which are constant true. `stack` is scratch for the walk.
+fn constant_true(
+    vtree: &Vtree,
+    d: &Tdd,
+    cone: Cone<'_>,
+    is_f: bool,
+    t: VtreeIdx,
+    stack: &mut Vec<VtreeIdx>,
+) -> bool {
     let free_in_d = |t: usize| {
         if is_f {
             cone.free_in_f(t)
@@ -130,7 +138,8 @@ fn constant_true(vtree: &Vtree, d: &Tdd, cone: Cone<'_>, is_f: bool, t: VtreeIdx
     if !free_in_d(t.idx()) && d.levels[t.idx()].slot_count() != 1 {
         return false;
     }
-    let mut stack = vec![t];
+    stack.clear();
+    stack.push(t);
     while let Some(t) = stack.pop() {
         if free_in_d(t.idx()) {
             continue;

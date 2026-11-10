@@ -292,7 +292,7 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     }
 
     carrier.carry(eng.limits(), t_idx, &mut levels[t_idx])?;
-    run.carried.push((t_idx, F_IS_CARRIER));
+    run.lists.carry(t_idx, F_IS_CARRIER, false);
     let carrier_levels = &carrier.levels;
 
     // When a source-marginal child remains marginal in the output, re-resolve the

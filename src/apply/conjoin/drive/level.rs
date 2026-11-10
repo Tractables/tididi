@@ -105,15 +105,15 @@ pub(super) fn run_sparse_level(
         (passthrough, complete),
     )?;
     if held {
-        run.outer_held.push(ti);
+        run.lists.outer_held.push(ti);
     }
     // A sweep that gives its operands back when refused gives f the nodes
     // and arena the level took from it.
     if made == Made::F && run.restoring {
-        run.lent.push(ti);
+        run.lists.lent.push(ti);
     }
     if made != Made::Written {
-        run.as_operand.push((ti, 1));
+        run.lists.as_operand.push((ti, 1));
         crate::apply::conjoin::note_as_operand(ti, true);
     }
     debug_assert!(
@@ -326,18 +326,15 @@ fn seed_kept_counts(
     }
     let vtree = sweep.vtree;
     // The operand each level was moved from untouched: 1 for `f`, 2 for `g`.
-    let mut moved = Vec::new();
-    eng.limits()
-        .try_resize(&mut moved, vtree.num_nodes(), 0u8)?;
-    super::identity_carriers(&run.carried, &run.relabel_moved, &mut moved);
+    let moved = |t: usize| run.lists.identity_carrier(t);
     let mut seeded = 0;
-    for &(ti, from_f) in &run.carried {
+    for &(ti, from_f) in &run.lists.carried {
         let t = VtreeIdx(ti as u32);
-        let side = moved[ti];
+        let side = moved(ti);
         let topmost = vtree
             .node(t)
             .parent()
-            .is_none_or(|p| moved[p.idx()] != side);
+            .is_none_or(|p| moved(p.idx()) != side);
         let kept = if from_f {
             sweep.kept.f.as_ref()
         } else {

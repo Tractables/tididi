@@ -126,34 +126,30 @@ impl ConeLists {
     }
 }
 
-/// Bundled result of `apply_and_setup` — the per-apply working state produced
-/// before the bottom-up level sweep.
-pub(super) struct ApplyRun<'a, 'r> {
-    pub(super) levels: &'a mut [TddLevel],
-    pub(super) f_widths: &'a mut Vec<usize>,
-    pub(super) g_widths: &'a mut Vec<usize>,
-    /// The sparse-route thresholds this apply decides by.
-    pub(super) thresholds: SparseThresholds,
-    /// Lazily computed child columns for the streaming-marginal path. See
-    /// [`StreamCache`].
-    pub(super) stream_cache: &'a mut StreamCache,
-    pub(super) products: &'a mut Products,
-    /// Which levels of each operand were marginal at apply entry. See
-    /// [`EntryMarginality`].
-    pub(super) entry_marginality: EntryMarginality,
-    /// `g_identity[t]` — g computes constant-true over subtree `t`, so f's
-    /// nodes pass through unchanged. Lazily accreted, so a false reading only
-    /// costs a fallback to the dense grid.
-    pub(super) g_identity: &'a mut Vec<bool>,
-    /// The symmetric flag for f.
-    pub(super) f_identity: &'a mut Vec<bool>,
-    /// Decode buffers for one cell's pairs, one per operand.
-    pub(super) f_pairs_scratch: &'a mut Vec<ChildPair>,
-    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
-    /// The four dead-pair pre-filter masks, reused across internal levels.
-    pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
-    /// The g-pair vectors of the levels whose cells are read by them.
-    pub(super) words: &'a mut super::WordScratch,
+/// [`SweepLists::moved`]: the level was carried from `f`.
+const MOVED_F: u8 = 1;
+/// [`SweepLists::moved`]: the level was carried from `g`.
+const MOVED_G: u8 = 2;
+/// [`SweepLists::moved`]: the relabelling route moved the level.
+const RELABELLED: u8 = 4;
+
+/// The operand a [`SweepLists::moved`] entry says an identity fast path
+/// moved the level from untouched: 1 for `f`, 2 for `g`, 0 otherwise.
+#[inline]
+fn identity_carrier(moved: u8) -> u8 {
+    if moved & RELABELLED != 0 {
+        0
+    } else {
+        moved
+    }
+}
+
+/// What one sweep lists as it goes, kept between conjunctions in the
+/// [`ApplyWorkspace`]: every list empty and `moved` all zero between
+/// conjunctions, which [`clear`](Self::clear) restores by the levels
+/// `carried` lists.
+#[derive(Default)]
+pub(super) struct SweepLists {
     /// The levels the identity fast paths and the relabelling route moved
     /// into the output, as `(level, from f)`, in the order they moved.
     pub(super) carried: Vec<(usize, bool)>,
@@ -161,6 +157,10 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// carrier's, but a subtree under it is not, so the output owes it as a
     /// level it built.
     pub(super) relabel_moved: Vec<usize>,
+    /// For each level, how the sweep moved it: [`MOVED_F`] or [`MOVED_G`],
+    /// with [`RELABELLED`] where the relabelling route moved it; zero for
+    /// every level outside `carried`.
+    moved: Vec<u8>,
     /// The levels whose nodes and arena a sparse walk took from f
     /// ([`Made::F`](super::Made::F)) on a sweep that gives its operands back
     /// when refused: f's level holds the output level's empty ones until
@@ -180,12 +180,150 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// each node of that child is named there wherever f's nodes of it are
     /// named in f, which the result's loose levels read (`loose_levels`).
     pub(super) outer_held: Vec<usize>,
+    /// The children of the root a count holds back unbuilt, as
+    /// `(level, left, right)` (`level::holds_back`).
+    pub(super) held: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
+    /// The levels a plain conjunction built, and of those the levels it owes
+    /// the twin contraction and the levels it does not.
+    pub(super) built: Vec<VtreeIdx>,
+    pub(super) owed_twins: Vec<VtreeIdx>,
+    pub(super) twin_free: Vec<VtreeIdx>,
+    /// The stack of a walk down a region (`region::constant_true`).
+    pub(super) stack: Vec<VtreeIdx>,
+}
+
+impl SweepLists {
+    /// Record that the sweep moved level `t` from `f` (`from_f`) or `g`
+    /// into the output, by the relabelling route when `relabelled`.
+    #[inline]
+    pub(super) fn carry(&mut self, t: usize, from_f: bool, relabelled: bool) {
+        self.carried.push((t, from_f));
+        let from = if from_f { MOVED_F } else { MOVED_G };
+        if relabelled {
+            self.relabel_moved.push(t);
+            self.moved[t] = from | RELABELLED;
+        } else {
+            self.moved[t] = from;
+        }
+    }
+
+    /// Whether the sweep moved level `t` from `f` (`from_f`) or `g`, by
+    /// either route.
+    #[inline]
+    pub(super) fn carried_from(&self, t: usize, from_f: bool) -> bool {
+        self.moved[t] & if from_f { MOVED_F } else { MOVED_G } != 0
+    }
+
+    /// The operand an identity fast path moved level `t` from untouched:
+    /// 1 for `f`, 2 for `g`, 0 for a level the sweep built or the
+    /// relabelling route moved.
+    #[inline]
+    pub(super) fn identity_carrier(&self, t: usize) -> u8 {
+        identity_carrier(self.moved[t])
+    }
+
+    /// List in `built` the levels of `cone` no identity fast path moved:
+    /// the levels a plain conjunction built, the relabelled ones included.
+    pub(super) fn collect_built(&mut self, cone: &[VtreeIdx]) {
+        let moved = &self.moved;
+        self.built.extend(
+            cone.iter()
+                .copied()
+                .filter(|t| identity_carrier(moved[t.idx()]) == 0),
+        );
+    }
+
+    /// Empty every list and zero `moved` where `carried` set it, for the
+    /// next conjunction.
+    pub(super) fn clear(&mut self) {
+        for &(t, _) in &self.carried {
+            self.moved[t] = 0;
+        }
+        self.carried.clear();
+        self.relabel_moved.clear();
+        self.lent.clear();
+        self.as_operand.clear();
+        self.outer_held.clear();
+        self.held.clear();
+        self.built.clear();
+        self.owed_twins.clear();
+        self.twin_free.clear();
+        self.stack.clear();
+    }
+
+    /// Ready the lists for a conjunction over `num_nodes` levels.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when `moved` cannot grow.
+    fn begin(
+        &mut self,
+        lim: &crate::limits::Limits,
+        num_nodes: usize,
+    ) -> Result<(), OperationError> {
+        debug_assert!(self.carried.is_empty() && self.moved.iter().all(|&m| m == 0));
+        if self.moved.len() < num_nodes {
+            lim.try_resize(&mut self.moved, num_nodes, 0)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn buffers(
+        &mut self,
+        visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch),
+    ) {
+        visit(&mut self.carried);
+        visit(&mut self.relabel_moved);
+        visit(&mut self.moved);
+        visit(&mut self.lent);
+        visit(&mut self.as_operand);
+        visit(&mut self.outer_held);
+        visit(&mut self.held);
+        visit(&mut self.built);
+        visit(&mut self.owed_twins);
+        visit(&mut self.twin_free);
+        visit(&mut self.stack);
+    }
+}
+
+/// Bundled result of `apply_and_setup` — the per-apply working state produced
+/// before the bottom-up level sweep.
+pub(super) struct ApplyRun<'a, 'r> {
+    pub(super) levels: &'a mut [TddLevel],
+    pub(super) f_widths: &'a mut Vec<usize>,
+    pub(super) g_widths: &'a mut Vec<usize>,
+    /// The sparse-route thresholds this apply decides by.
+    pub(super) thresholds: SparseThresholds,
+    /// Lazily computed child columns for the streaming-marginal path. See
+    /// [`StreamCache`].
+    pub(super) stream_cache: &'a mut StreamCache,
+    pub(super) products: &'a mut Products,
+    /// Which levels of each operand were marginal at apply entry. See
+    /// [`EntryMarginality`].
+    pub(super) entry_marginality: EntryMarginality<'r>,
+    /// `g_identity[t]` — g computes constant-true over subtree `t`, so f's
+    /// nodes pass through unchanged. Lazily accreted, so a false reading only
+    /// costs a fallback to the dense grid.
+    pub(super) g_identity: &'a mut Vec<bool>,
+    /// The symmetric flag for f.
+    pub(super) f_identity: &'a mut Vec<bool>,
+    /// Decode buffers for one cell's pairs, one per operand.
+    pub(super) f_pairs_scratch: &'a mut Vec<ChildPair>,
+    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
+    /// The four dead-pair pre-filter masks, reused across internal levels.
+    pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
+    /// The g-pair vectors of the levels whose cells are read by them.
+    pub(super) words: &'a mut super::WordScratch,
+    /// What the sweep lists as it goes: the levels it carried, lent and
+    /// built as an operand holds them, among others ([`SweepLists`]).
+    pub(super) lists: &'r mut SweepLists,
     /// Whether the sweep must give its operands back when refused: it drops
-    /// no operand level, and `carried` and `lent` go back to the operands.
+    /// no operand level, and the levels it carried and lent go back to the
+    /// operands.
     pub(super) restoring: bool,
     /// Whether nothing but pairs changes hands: no weights, no summed-out,
     /// quantified, filtered or marginal level. Only such a conjunction
-    /// reads `as_operand`.
+    /// reads [`SweepLists::as_operand`].
     pub(super) plain: bool,
     /// Whether a level the sweep has built or carried so far is marginal.
     /// With [`entry_marginality`](Self::entry_marginality) it says whether
@@ -421,9 +559,10 @@ struct Snapshot {
 /// Find the levels a conjunction visits ([`Cone`]), listing them in
 /// `lists` when some level is free, and snapshot both operands' widths
 /// there; note whether either operand carries a marginal level at entry,
-/// sum the dense-route cell count `preflight_dense_budget` reads, and say
-/// whether any internal level's grid, or the combinations of its operands'
-/// pairs, is over `min_grid`: all in one pass over the internal levels.
+/// and if one does, each operand's marginality at every level in
+/// `marginal`; sum the dense-route cell count `preflight_dense_budget`
+/// reads, and say whether any internal level's grid, or the combinations of
+/// its operands' pairs, is over `min_grid`: all in one pass over the levels.
 ///
 /// A free level has width 1 in its operand, so its cells are the nodes of
 /// the level the result takes there: the other operand's, or one node where
@@ -443,7 +582,7 @@ fn survey<'r>(
     ops: Operands<&Tdd>,
     masks: Operands<VtreeMask<'r>>,
     min_grid: usize,
-    widths: Operands<&mut [usize]>,
+    (widths, marginal): (Operands<&mut [usize]>, Operands<&mut [bool]>),
     lists: &'r mut ConeLists,
 ) -> Result<(Snapshot, Cone<'r>), OperationError> {
     let Operands { f, g } = ops;
@@ -451,6 +590,10 @@ fn survey<'r>(
         f: f_widths,
         g: g_widths,
     } = widths;
+    let Operands {
+        f: f_marginal,
+        g: g_marginal,
+    } = marginal;
     let internal = vtree.internal_bottomup_slice();
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
@@ -469,9 +612,20 @@ fn survey<'r>(
         cells
     };
     // A level no operand is free at, and a leaf, read off both operands.
+    // The marginality of each level is kept from the first marginal one
+    // on, the levels read before it being all clear.
     let mut level = |t: VtreeIdx, f_widths: &mut [usize], g_widths: &mut [usize]| {
         let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
-        any_entry_marginal |= fl.is_marginal() | gl.is_marginal();
+        let (fm, gm) = (fl.is_marginal(), gl.is_marginal());
+        if fm | gm && !any_entry_marginal {
+            any_entry_marginal = true;
+            f_marginal.fill(false);
+            g_marginal.fill(false);
+        }
+        if any_entry_marginal {
+            f_marginal[t.idx()] = fm;
+            g_marginal[t.idx()] = gm;
+        }
         let (w1, w2) = match vtree.node(t).is_leaf() {
             true => (LEAF_WIDTH, LEAF_WIDTH),
             false => (fl.slot_count(), gl.slot_count()),
@@ -636,7 +790,6 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
 ) -> Result<ApplyRun<'a, 'r>, OperationError> {
-    let Operands { f, g } = ops;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
     let thresholds = sparse_thresholds(lim);
@@ -654,12 +807,20 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         prefilter_masks,
         words,
         cone,
+        lists,
+        entry_marginal: marginal,
     } = scratch;
     if f_widths.len() < num_nodes {
         f_widths.resize(num_nodes, 0);
     }
     if g_widths.len() < num_nodes {
         g_widths.resize(num_nodes, 0);
+    }
+    lists.begin(lim, num_nodes)?;
+    for flags in [&mut marginal.f, &mut marginal.g] {
+        if flags.len() < num_nodes {
+            lim.try_resize(flags, num_nodes, false)?;
+        }
     }
     let (
         Snapshot {
@@ -674,14 +835,23 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         ops,
         free,
         min_grid,
-        Operands {
-            f: f_widths,
-            g: g_widths,
-        },
+        (
+            Operands {
+                f: f_widths,
+                g: g_widths,
+            },
+            Operands {
+                f: &mut marginal.f[..num_nodes],
+                g: &mut marginal.g[..num_nodes],
+            },
+        ),
         cone,
     )?;
-
-    let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
+    let marginal: &'r Operands<Vec<bool>> = marginal;
+    let entry_marginality = EntryMarginality(any_entry_marginal.then_some(Operands {
+        f: &marginal.f[..num_nodes],
+        g: &marginal.g[..num_nodes],
+    }));
 
     preflight_dense_budget(lim, total_cells)?;
 
@@ -708,11 +878,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         g_pairs_scratch,
         prefilter_masks,
         words,
-        carried: Vec::new(),
-        relabel_moved: Vec::new(),
-        lent: Vec::new(),
-        as_operand: Vec::new(),
-        outer_held: Vec::new(),
+        lists,
         restoring: false,
         plain: false,
         built_marginal: false,

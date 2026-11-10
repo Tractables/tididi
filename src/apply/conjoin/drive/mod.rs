@@ -121,7 +121,7 @@ fn sweep_levels(
     let mut output_nodes = 0u64;
     // Children of the root held back unbuilt, for a count that may stream
     // one of them (see `level::holds_back`).
-    let mut held: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)> = Vec::new();
+    let mut held = std::mem::take(&mut run.lists.held);
     for (k, &t) in cone.built.iter().enumerate() {
         let (left, right) = vtree.children(t);
         if progress {
@@ -160,6 +160,7 @@ fn sweep_levels(
         build_level(eng, run, f, g, sweep, (t, left, right))?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
+    run.lists.held = held;
     if progress {
         lim.conjunction_reached(internal.len() as u32);
     }
@@ -338,12 +339,12 @@ fn describes_marginal_child(
     .is_some()
 }
 
-/// Note in [`ApplyRun::as_operand`] the level `t` just built when it holds
-/// an operand's level at `t`, node for node and pair for pair: each node of
-/// its children then has there the contexts the operand's node of its
-/// index has. Not compared where the level adds no twins anyway or the
-/// leaf arm noted it already. The operands' levels at `t` are dropped only
-/// when its parent is built.
+/// Note in [`SweepLists::as_operand`](super::setup::SweepLists::as_operand)
+/// the level `t` just built when it holds an operand's level at `t`, node
+/// for node and pair for pair: each node of its children then has there the
+/// contexts the operand's node of its index has. Not compared where the
+/// level adds no twins anyway or the leaf arm noted it already. The
+/// operands' levels at `t` are dropped only when its parent is built.
 fn note_operand_level(
     run: &mut ApplyRun,
     f: &Tdd,
@@ -352,7 +353,7 @@ fn note_operand_level(
     t: VtreeIdx,
 ) {
     let ti = t.idx();
-    if run.as_operand.last().is_some_and(|e| e.0 == ti)
+    if run.lists.as_operand.last().is_some_and(|e| e.0 == ti)
         || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t)
     {
         return;
@@ -360,7 +361,7 @@ fn note_operand_level(
     let level = &run.levels[ti];
     let of_f = same_pairs(level, f.level(t));
     if of_f || same_pairs(level, g.level(t)) {
-        run.as_operand.push((ti, if of_f { 1 } else { 2 }));
+        run.lists.as_operand.push((ti, if of_f { 1 } else { 2 }));
         super::note_as_operand(ti, of_f);
     }
 }
@@ -420,8 +421,7 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
 fn carry_kept_counts(
     eng: &Engine,
     out: &mut Tdd,
-    carried: &[(usize, bool)],
-    carrier: &[u8],
+    lists: &super::setup::SweepLists,
     kept: &Operands<Option<LevelCounts>>,
 ) {
     if kept.f.is_none() && kept.g.is_none() {
@@ -430,7 +430,7 @@ fn carry_kept_counts(
     let Ok(mut counts) = LevelCounts::none(eng, out.vtree.num_nodes()) else {
         return;
     };
-    for &(ti, from_f) in carried {
+    for &(ti, from_f) in &lists.carried {
         let t = VtreeIdx(ti as u32);
         let side = if from_f {
             kept.f.as_ref()
@@ -441,7 +441,10 @@ fn carry_kept_counts(
             continue;
         };
         let level = &out.levels[ti];
-        if carrier[ti] != 0 && !level.is_marginal() && column.len() == level.slot_count() {
+        if lists.identity_carrier(ti) != 0
+            && !level.is_marginal()
+            && column.len() == level.slot_count()
+        {
             counts.set(t, Arc::clone(column));
         }
     }
@@ -760,7 +763,7 @@ fn apply_and_held(
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
-            give_back(run.levels, f, g, &run.carried, &run.lent);
+            give_back(run.levels, f, g, &run.lists.carried, &run.lists.lent);
             region::give_back_regions(run.levels, cone, f, g);
         }
         return Err(e);
@@ -789,7 +792,7 @@ fn apply_and_held(
         ws.as_ref(),
     ) {
         if run.restoring {
-            give_back(run.levels, f, g, &run.carried, &run.lent);
+            give_back(run.levels, f, g, &run.lists.carried, &run.lists.lent);
             region::give_back_regions(run.levels, cone, f, g);
         }
         return Err(e);
@@ -797,9 +800,6 @@ fn apply_and_held(
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
-    let carried = std::mem::take(&mut run.carried);
-    let relabel_moved = std::mem::take(&mut run.relabel_moved);
-    let lent = std::mem::take(&mut run.lent);
     let restoring = run.restoring;
     let output = TddNodeId {
         vtree: out_vtree,
@@ -813,69 +813,56 @@ fn apply_and_held(
     // made the minimization after a join as long as the diagram. A level the
     // relabelling route moved is its carrier's, but some subtree under it is
     // a product, so it is owed as built.
-    let finished = if plain {
-        // Which operand each level the sweep carried came from: 1 for `f`,
-        // 2 for `g`, 0 for a level the conjunction built and for every
-        // level outside the cone.
-        let mut carrier = vec![0u8; num_nodes];
-        identity_carriers(&carried, &relabel_moved, &mut carrier);
-        // The result's loose levels (`loose::loose_levels`): a carried level
-        // where its carrier has it loose, and a level under one the
-        // conjunction built where the operands and the sibling's product
-        // grid do not prove it tight. The other operand's entry at a carried
-        // level is for a level the result did not take: an operand embedded
-        // onto a wider scope has every level it gained loose, and a small
-        // factor joined to a large diagram gained the large one's levels,
-        // which made the prune after the join walk it. Listing every level
-        // the conjunction built made that prune walk every one of them.
+    //
+    // The result's loose levels (`loose::loose_levels`): a carried level
+    // where its carrier has it loose, and a level under one the
+    // conjunction built where the operands and the sibling's product
+    // grid do not prove it tight. The other operand's entry at a carried
+    // level is for a level the result did not take: an operand embedded
+    // onto a wider scope has every level it gained loose, and a small
+    // factor joined to a large diagram gained the large one's levels,
+    // which made the prune after the join walk it. Listing every level
+    // the conjunction built made that prune walk every one of them.
+    let loose = if plain {
         // In level order, for the lookups of the loose levels and the
         // contraction's worklists.
-        run.as_operand.sort_unstable();
-        run.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
-        // The levels it built are also all it changed, and so all the seat
-        // closes: a carried level, and a free one, is as the operand's end
-        // left it.
-        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
-        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
-        // The contraction is owed the built levels under which the
-        // conjunction can have given two nodes equal contexts
-        // ([`adds_no_twins`]); the leaf contraction every built level. A
-        // level built as an operand holds it gives the nodes of its children
-        // the operand's contexts there, which the operand, not owing the
-        // contraction the level, holds once each; where it owes it, so does
-        // the result.
-        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) =
-            built.iter().partition(|&&t| {
-                run.as_operand
-                    .binary_search_by_key(&t.idx(), |e| e.0)
-                    .is_err()
-                    && !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t)
-            });
-        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
+        run.lists.as_operand.sort_unstable();
+        run.lists.outer_held.sort_unstable();
+        let loose = operand_loose.map(|ops| loose::loose_levels(&vtree, &run, ops));
+        split_built(&vtree, &mut run);
+        loose
+    } else {
+        None
+    };
+    let lists = run.lists;
+    let finished = if plain {
+        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, lists.built.len());
         owed.requeue(
             crate::diagram::Pass::LeafContract,
-            twin_free.iter().map(|t| t.0),
+            lists.twin_free.iter().map(|t| t.0),
         );
         // A level the relabelling route moved is as its carrier's last close
         // left it; where that diagram was closed when the sweep began, the
         // live pairs it keeps are left for the seat's close.
+        // The levels it built are also all it changed, and so all the seat
+        // closes: a carried level, and a free one, is as the operand's end
+        // left it.
         let levels = assembly.parts_mut().0;
-        for &(t, from_f) in &carried {
-            if (if from_f { closed.f } else { closed.g }) && carrier[t] == 0 {
+        for &(t, from_f) in &lists.carried {
+            if (if from_f { closed.f } else { closed.g }) && lists.identity_carrier(t) == 0 {
                 levels[t].leave_kept_pairs();
             }
         }
         assembly
-            .finish_with_or_return(output, owed, &owed_twins, Some(&built[..]))
+            .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
                 if let Some(loose) = loose {
                     out.dirty.set_loose(Some(loose));
                     out.dirty.dedup_above(num_nodes);
                 }
                 #[cfg(debug_assertions)]
-                crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
-                carry_kept_counts(eng, &mut out, &carried, &carrier, &kept);
+                crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &lists.twin_free);
+                carry_kept_counts(eng, &mut out, lists, &kept);
                 out
             })
     } else {
@@ -898,10 +885,10 @@ fn apply_and_held(
             if restoring {
                 // A level the relabelling route moved goes back keeping the
                 // count its carrier kept, which is the count left on it.
-                for &t in &relabel_moved {
+                for &t in &lists.relabel_moved {
                     assembly.parts_mut().0[t].settle_held_pairs();
                 }
-                give_back(assembly.parts_mut().0, f, g, &carried, &lent);
+                give_back(assembly.parts_mut().0, f, g, &lists.carried, &lists.lent);
                 region::give_back_regions(assembly.parts_mut().0, cone, f, g);
             }
             return Err(e);
@@ -1023,18 +1010,29 @@ fn adds_no_twins(
     side(left, right) && side(right, left)
 }
 
-/// The operand each level in `carried` was moved from untouched (`1` for `f`,
-/// `2` for `g`, `0` for built levels and levels in `relabel_moved`), written
-/// into zero-initialized `out`.
-pub(super) fn identity_carriers(
-    carried: &[(usize, bool)],
-    relabel_moved: &[usize],
-    out: &mut [u8],
-) {
-    for &(t, from_f) in carried {
-        out[t] = if from_f { 1 } else { 2 };
-    }
-    for &t in relabel_moved {
-        out[t] = 0;
+/// List the levels a plain conjunction built ([`SweepLists::collect_built`])
+/// and split them into those it owes the twin contraction and those it does
+/// not. It is owed the built levels under which the conjunction can have
+/// given two nodes equal contexts ([`adds_no_twins`]); the leaf contraction
+/// every built level. A level built as an operand holds it gives the nodes
+/// of its children the operand's contexts there, which the operand, not
+/// owing the contraction the level, holds once each; where it owes it, so
+/// does the result.
+///
+/// [`SweepLists::collect_built`]: super::setup::SweepLists::collect_built
+fn split_built(vtree: &crate::vtree::Vtree, run: &mut ApplyRun) {
+    run.lists.collect_built(run.cone.built);
+    let lists = &mut *run.lists;
+    for &t in &lists.built {
+        let twin_free = lists
+            .as_operand
+            .binary_search_by_key(&t.idx(), |e| e.0)
+            .is_ok()
+            || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t);
+        if twin_free {
+            lists.twin_free.push(t);
+        } else {
+            lists.owed_twins.push(t);
+        }
     }
 }

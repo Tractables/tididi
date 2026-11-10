@@ -62,6 +62,10 @@ pub(crate) struct ApplyWorkspace {
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
     pub(super) words: WordScratch,
     pub(super) cone: super::setup::ConeLists,
+    pub(super) lists: super::setup::SweepLists,
+    /// Each operand's marginality at every level, where some level is
+    /// marginal at entry (`EntryMarginality`).
+    pub(super) entry_marginal: super::setup::Operands<Vec<bool>>,
 }
 
 impl Buffers for ApplyWorkspace {
@@ -77,6 +81,9 @@ impl Buffers for ApplyWorkspace {
         self.prefilter_masks.buffers(visit);
         self.words.buffers(visit);
         self.cone.buffers(visit);
+        self.lists.buffers(visit);
+        visit(&mut self.entry_marginal.f);
+        visit(&mut self.entry_marginal.g);
     }
 }
 
@@ -87,6 +94,7 @@ impl PooledScratch for ApplyWorkspace {
     }
 
     fn retain(&mut self, lim: &Limits) -> usize {
+        self.lists.clear();
         self.stream_cache.discard_columns();
         self.products.drop_unused_lists(lim);
         self.release_oversized(lim)

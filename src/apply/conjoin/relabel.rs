@@ -155,11 +155,7 @@ pub(super) fn take_relabel_level(
     // narrow operand is constant-true over it: each carrier reference to
     // it, a slot or an inline count, is then its own product, as the
     // general routes pass that side through.
-    let carried = |c: VtreeIdx| {
-        run.carried
-            .iter()
-            .any(|&(x, from_f)| x == c.idx() && from_f == carrier_f)
-    };
+    let carried = |c: VtreeIdx| run.lists.carried_from(c.idx(), carrier_f);
     if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
         return Ok(false);
     }
@@ -217,8 +213,7 @@ pub(super) fn take_relabel_level(
             true => f.carry(eng.limits(), ti, &mut run.levels[ti])?,
             false => g.carry(eng.limits(), ti, &mut run.levels[ti])?,
         }
-        run.carried.push((ti, carrier_f));
-        run.relabel_moved.push(ti);
+        run.lists.carry(ti, carrier_f, true);
         publish_identity_level(run.products, ti, width);
         run.products.note_complete(ti);
         note_relabelled(true);

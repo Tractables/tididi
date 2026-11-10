@@ -9,10 +9,11 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// The internal levels below the root of a plain conjunction's result that
 /// may hold a node no pair of their parent level names, given the operands'
 /// own such levels, as [`settle_loose`](crate::reduce::prune::settle_loose)
-/// leaves them, and `carrier`, which operand each level the sweep carried as
-/// an identity level came from (1 for `f`, 2 for `g`, 0 for a level it
-/// built); the result took each free level from the operand
-/// [`carried_from_f`] names.
+/// leaves them, and which operand each level the sweep carried as an
+/// identity level came from
+/// ([`SweepLists::identity_carrier`](super::super::setup::SweepLists::identity_carrier));
+/// the result took each free level from the operand [`carried_from_f`]
+/// names.
 ///
 /// A carried level, and a free one, brings its subtree along, so a level
 /// whose parent was carried or free is loose where the operand the result
@@ -40,18 +41,19 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// by (2). So `p`'s product `(i, j)` is a node, and it names `(a, b)`.
 ///
 /// A level `c` whose parent `p` the conjunction built as an operand holds
-/// its level `p` ([`ApplyRun::as_operand`]) is also tight when that
-/// operand's level `c` is tight in it and the result's level `c` has as many
-/// nodes as the operand's. Proof. `p`'s pairs are the operand's, index for
-/// index, so the nodes of `c` they name are those the operand's level `p`
+/// its level `p`
+/// ([`SweepLists::as_operand`](super::super::setup::SweepLists::as_operand))
+/// is also tight when that operand's level `c` is tight in it and the
+/// result's level `c` has as many nodes as the operand's. Proof. `p`'s pairs
+/// are the operand's, index for index, so the nodes of `c` they name are those the operand's level `p`
 /// names of its level `c`: all of its nodes, which are as many as `c`'s.
 ///
 /// A level `c` whose sibling `s` is a vtree leaf is also tight when `f`'s
 /// level `c` is tight in `f`, as in (1), and the sparse leaf arm built `p`
 /// with `g`'s level `p` holding each live product of `c` for every label
-/// ([`ApplyRun::outer_held`]). Proof. A node of `c` is a live product
-/// `(a, b)`, and `f`'s level `p` has a pair `(a, x)` in a node `i`, as
-/// above. `g`'s level `p` holds `b` with the label One, or with both
+/// ([`SweepLists::outer_held`](super::super::setup::SweepLists::outer_held)).
+/// Proof. A node of `c` is a live product `(a, b)`, and `f`'s level `p` has
+/// a pair `(a, x)` in a node `i`, as above. `g`'s level `p` holds `b` with the label One, or with both
 /// literals; one of those pairs, `(b, y)` in a node `j`, has a label that
 /// meets `x`: One meets every label, and a literal meets itself. The leaf
 /// arm joins `(a, x)` and `(b, y)` under the product `(a, b)`, and `x ∧ y`
@@ -69,11 +71,11 @@ use crate::vtree::{Vtree, VtreeIdx};
 pub(super) fn loose_levels(
     vtree: &Vtree,
     run: &ApplyRun<'_, '_>,
-    carrier: &[u8],
     operands: Operands<Vec<u32>>,
 ) -> Vec<u32> {
-    // Which operand has each level loose: 1 for `f`, 2 for `g`, as `carrier`;
-    // `LISTED` once a level under a free one is listed.
+    // Which operand has each level loose: 1 for `f`, 2 for `g`, as
+    // `identity_carrier` names them; `LISTED` once a level under a free one
+    // is listed.
     const LISTED: u8 = 4;
     let mut loose_in = vec![0u8; vtree.num_nodes()];
     for &t in &operands.f {
@@ -128,8 +130,8 @@ pub(super) fn loose_levels(
     let under_free_levels = loose.len();
     for &p in cone.built {
         let (left, right) = vtree.children(p);
-        if carrier[p.idx()] != 0 {
-            let by = carrier[p.idx()];
+        let by = run.lists.identity_carrier(p.idx());
+        if by != 0 {
             loose.extend(
                 [left, right]
                     .into_iter()
@@ -151,11 +153,12 @@ pub(super) fn loose_levels(
         };
         // The operand the conjunction built `p` as, if any.
         let as_operand = run
+            .lists
             .as_operand
             .binary_search_by_key(&p.idx(), |e| e.0)
             .ok()
-            .map(|i| run.as_operand[i].1);
-        let held = run.outer_held.binary_search(&p.idx()).is_ok();
+            .map(|i| run.lists.as_operand[i].1);
+        let held = run.lists.outer_held.binary_search(&p.idx()).is_ok();
         let named_as_operand = |c: VtreeIdx| {
             as_operand.is_some_and(|by| {
                 let widths = if by == 1 {

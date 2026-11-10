@@ -53,21 +53,11 @@ impl SidePlan {
 /// taken and every lookup is `false`. That is the dominant case — pure Boolean
 /// and plain model counting — and it is why this is an `Option` rather than two
 /// all-false vectors: the absence of a snapshot is itself the skip.
-pub(super) struct EntryMarginality(Option<Operands<Vec<bool>>>);
+///
+/// The setup's survey of the levels takes the snapshot as it reads them.
+pub(super) struct EntryMarginality<'a>(pub(super) Option<Operands<&'a [bool]>>);
 
-impl EntryMarginality {
-    /// Snapshot both operands' per-level marginality, or nothing when neither
-    /// carries a marginal level.
-    pub(super) fn snapshot(f: &Tdd, g: &Tdd, num_nodes: usize, any: bool) -> Self {
-        if !any {
-            return EntryMarginality(None);
-        }
-        EntryMarginality(Some(Operands {
-            f: (0..num_nodes).map(|i| f.levels[i].is_marginal()).collect(),
-            g: (0..num_nodes).map(|i| g.levels[i].is_marginal()).collect(),
-        }))
-    }
-
+impl EntryMarginality<'_> {
     /// Whether either operand had a marginal level at entry.
     pub(super) fn any(&self) -> bool {
         self.0.is_some()
