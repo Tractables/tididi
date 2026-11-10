@@ -1256,6 +1256,7 @@ use tests::{
     reach_tables_forced, relabel_forced_off, relay_forced_off, row_columns_forced_off,
     seed_pairs_forced, single_rows_forced_off, two_step_forced, word_cells_forced,
     word_rows_sorted_forced,
+    builds_past_cap_forced, note_refused_past_cap,
 };
 
 mod probes;

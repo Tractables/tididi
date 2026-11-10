@@ -72,16 +72,19 @@ impl Limits {
     /// clause conjunction its own per-level worst case.
     #[inline]
     pub(crate) fn begin_level(&self, pair_bound: Option<u128>) {
-        let bounded = match pair_bound {
-            Some(bound) if bound > DENSE_GROWTH_DECISION_THRESHOLD => {
-                bound
-                    .saturating_mul(3)
-                    .saturating_mul(u128::from(PAIR_ELEM_BYTES))
-                    >= u128::from(self.headroom())
-            }
-            _ => false,
-        };
-        self.bounded_growth.set(bounded);
+        self.bounded_growth.set(pair_bound.is_some_and(|bound| self.grows_bounded(bound)));
+    }
+
+    /// Whether a level whose emitted pairs are bounded by `pair_bound` grows
+    /// under the bounded-increment mode ([`Self::begin_level`]). The
+    /// headroom is read only past [`DENSE_GROWTH_DECISION_THRESHOLD`].
+    #[inline]
+    pub(crate) fn grows_bounded(&self, pair_bound: u128) -> bool {
+        pair_bound > DENSE_GROWTH_DECISION_THRESHOLD
+            && pair_bound
+                .saturating_mul(3)
+                .saturating_mul(u128::from(PAIR_ELEM_BYTES))
+                >= u128::from(self.headroom())
     }
 
     /// Is this level growing under the bounded-increment mode?
@@ -136,6 +139,12 @@ impl Limits {
             Ok(index) if index != u32::MAX => Ok(index),
             _ => Err(OperationError::IndexOverflow),
         }
+    }
+
+    /// The installed cap on emitted nodes.
+    #[inline]
+    pub(crate) fn output_node_cap(&self) -> Option<u64> {
+        self.output_node_cap.get()
     }
 
     /// Refuse an emitted-node total above the installed cap.

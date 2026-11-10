@@ -261,3 +261,13 @@ pub(super) fn note_summed_complete_root() {}
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_kept_counts(_levels: usize) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn builds_past_cap_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn note_refused_past_cap() {}

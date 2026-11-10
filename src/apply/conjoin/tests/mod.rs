@@ -2,6 +2,7 @@ use super::*;
 use super::identity::level_marginal_is_constant_true;
 
 mod borrowed;
+mod cap;
 mod complete;
 mod conjunction;
 mod described_sums;
@@ -29,6 +30,36 @@ mod word_cells;
 mod target_completion;
 mod width_cap;
 mod workspace;
+
+thread_local! {
+    /// Whether a level whose nodes pass the output-node cap is built on this
+    /// thread rather than refused before it is built ([`builds_past_cap`]).
+    static BUILDS_PAST_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread refused before they were built for passing
+    /// the output-node cap ([`refused_past_cap`]).
+    static REFUSED_PAST_CAP: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn builds_past_cap_forced() -> bool {
+    BUILDS_PAST_CAP.with(std::cell::Cell::get)
+}
+
+/// Run `f` with every level that passes the output-node cap built, and the
+/// cap checked at the next level boundary: the oracle the refusal before
+/// the build is checked against.
+pub(super) fn builds_past_cap<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&BUILDS_PAST_CAP, f)
+}
+
+pub(super) fn note_refused_past_cap() {
+    REFUSED_PAST_CAP.with(|c| c.set(c.get() + 1));
+}
+
+/// The levels on this thread refused before they were built for passing
+/// the output-node cap so far.
+pub(super) fn refused_past_cap() -> u64 {
+    REFUSED_PAST_CAP.with(std::cell::Cell::get)
+}
 
 thread_local! {
     /// Whether `and_marginalizing` takes the two-step path on this thread

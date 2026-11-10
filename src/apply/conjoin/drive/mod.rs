@@ -47,7 +47,7 @@ use level::{
 use super::*;
 
 use super::identity::init_leaf_identity_over;
-use super::price::{built_pairs, price_dense_level};
+use super::price::{built_pairs, price_dense_level, refuse_past_cap};
 use crate::Engine;
 use crate::reduce::prune::settle_loose;
 
@@ -143,7 +143,7 @@ fn sweep_levels(
             let c = pick_streamed(eng, run, f, g, &held)?;
             for (i, &(h, hl, hr)) in held.iter().enumerate() {
                 if i != c {
-                    build_level(eng, run, f, g, sweep, (h, hl, hr))?;
+                    build_level(eng, run, f, g, sweep, (h, hl, hr), None)?;
                     output_nodes += run.levels[h.idx()].slot_count() as u64;
                 }
             }
@@ -154,10 +154,11 @@ fn sweep_levels(
                 sweep.counted = Some(count);
                 continue;
             }
-            build_level(eng, run, f, g, sweep, (c_t, c_l, c_r))?;
+            build_level(eng, run, f, g, sweep, (c_t, c_l, c_r), None)?;
             output_nodes += run.levels[c_t.idx()].slot_count() as u64;
         }
-        build_level(eng, run, f, g, sweep, (t, left, right))?;
+        let before = output_nodes + cone.free_before(k);
+        build_level(eng, run, f, g, sweep, (t, left, right), Some(before))?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
     run.lists.held = held;
@@ -176,6 +177,12 @@ fn sweep_levels(
 
 /// Build the level at `t` from its children's, by the route it is given, and
 /// release the children's grids.
+///
+/// `before`, where given, is the output nodes the cap check at the next
+/// level boundary counts besides this level's: a level of known size that
+/// would fail that check is refused before it is built
+/// ([`refuse_past_cap`]). A held-back child of the root, built out of its
+/// place, is given none.
 fn build_level(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -183,6 +190,7 @@ fn build_level(
     g: &mut Held<'_>,
     sweep: &mut Sweep<'_, '_>,
     (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
+    before: Option<u64>,
 ) -> Result<(), OperationError> {
     let vtree = sweep.vtree;
     let shape = run.shape(t, left, right);
@@ -260,7 +268,24 @@ fn build_level(
                     route,
                     sweep.filter.is_some(),
                 )?;
+                let filtered = sweep.filter.is_some();
+                if let Some(before) = before {
+                    refuse_past_cap(eng.limits(), run, (f, g), shape, (route, filtered), before)?;
+                }
+                #[cfg(debug_assertions)]
+                let predicted = super::price::complete_level(run, (f, g), shape, route, filtered)
+                    .map(|level| (level, eng.limits().mark()));
                 build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?;
+                #[cfg(debug_assertions)]
+                if let Some((level, mark)) = predicted {
+                    let built = run.levels[t.idx()].slot_count() as u128;
+                    let work = u128::from(eng.limits().work_since(mark));
+                    debug_assert!(
+                        (level.nodes, level.work) == (built, work),
+                        "level {} built {built} nodes for {work} units where {level:?} was read",
+                        t.idx(),
+                    );
+                }
                 debug_assert!(
                     priced.is_none_or(|p| p.admits(built_pairs(&run.levels[t.idx()]))),
                     "level {} holds {} pairs where its count found {priced:?}",

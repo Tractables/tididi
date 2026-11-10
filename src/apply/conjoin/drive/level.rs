@@ -8,7 +8,7 @@ use super::Sweep;
 use crate::Engine;
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::grid_arena::grid_cells;
-use crate::apply::conjoin::price::{built_pairs, price_sparse_level};
+use crate::apply::conjoin::price::{built_pairs, census, emit_pair_bound, price_sparse_level};
 use crate::apply::conjoin::sparse::stream::{
     Built, StreamInput, StreamWidths, candidate_bound, choose_pivot, count as stream_count,
 };
@@ -940,28 +940,19 @@ pub(super) fn open_level_arenas(
         .max(left_width.max(right_width));
     lim.reserve(level.nodes.stored_mut(), nodes_reserve)?;
 
-    // The one per-level emit-pair bound. Every product pair emits at most
-    // once, and a product node of one pair is held inline, not in the
-    // arena: the cell of two one-pair nodes writes none there. An operand
-    // level holds `a` pairs in its arena, its multi-pair nodes', and the
-    // pairs of at most `n` one-pair nodes inline, so this level's arena
-    // takes at most `(af + nf)(ag + ng) - nf·ng = af·(ag + ng) + nf·ag`
-    // pairs. A bound of the arenas alone, `af·ag`, was zero against a level
-    // of one-pair nodes, which seeded nothing and left the arena to double
-    // from empty. Used twice — once to pick the growth mode, once to size
-    // the pairs arena — computed once so the two can never disagree.
-    let pairs = |l: &TddLevel| (l.pairs.len() as u128, l.node_count() as u128);
-    let ((af, nf), (ag, ng)) = (pairs(f.level(t)), pairs(g.level(t)));
-    let emit_pair_bound = af
-        .saturating_mul(ag.saturating_add(ng))
-        .saturating_add(nf.saturating_mul(ag));
-    lim.begin_level(Some(emit_pair_bound));
+    // The one per-level emit-pair bound ([`emit_pair_bound`]). A bound of
+    // the arenas alone, `af·ag`, was zero against a level of one-pair
+    // nodes, which seeded nothing and left the arena to double from empty.
+    // Used twice — once to pick the growth mode, once to size the pairs
+    // arena — computed once so the two can never disagree.
+    let pair_bound = emit_pair_bound(f.level(t), g.level(t));
+    lim.begin_level(Some(pair_bound));
     // Seed `level.pairs` at that bound instead of letting it double from
     // empty on every level; the emit's own `try_push_pair_into` choke
     // point, under the growth mode just armed, carries a level that
     // outgrows the cap.
     let cap = super::super::seed_pairs_forced().unwrap_or(LEVEL_RESERVE_PAIRS_CAP);
-    let pairs_reserve = emit_pair_bound.min(cap as u128) as usize;
+    let pairs_reserve = pair_bound.min(cap as u128) as usize;
     let pre_pairs_cap = level.pairs.capacity();
     lim.reserve(level.pairs.stored_mut(), pairs_reserve)?;
     // Output-pair meter: this bulk seed is real arena capacity the
@@ -1373,22 +1364,6 @@ fn complete_level_size(
     f_level: &TddLevel,
     g_level: &TddLevel,
 ) -> Result<(usize, usize), OperationError> {
-    /// Pairs in all, nodes with pairs, and nodes with one pair: an implicit
-    /// level's off its description, every node of which has its `k` pairs,
-    /// and a stored one's off its nodes ([`TddLevel::pair_census`]).
-    #[inline(always)]
-    fn census(level: &TddLevel) -> (u128, u128, u128) {
-        if let Some(d) = level.implicit() {
-            let (nodes, k) = (d.nodes() as u128, d.pairs_per_node() as u128);
-            return (
-                nodes * k,
-                if k > 0 { nodes } else { 0 },
-                if k == 1 { nodes } else { 0 },
-            );
-        }
-        let (pairs, live, single) = level.pair_census();
-        (u128::from(pairs), u128::from(live), u128::from(single))
-    }
     let (f_pairs, f_live, f_single) = census(f_level);
     let (g_pairs, g_live, g_single) = census(g_level);
     let fit = |n: u128| usize::try_from(n).map_err(|_| OperationError::OverBudget);

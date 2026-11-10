@@ -576,6 +576,149 @@ pub(super) fn price_sparse_level(
     Ok(pairs)
 }
 
+/// An operand level's pairs, its nodes with pairs, and its nodes of one
+/// pair: a described level's off its description, every node of which has
+/// its `k` pairs, and a stored one's off its nodes
+/// ([`TddLevel::pair_census`]).
+#[inline(always)]
+pub(super) fn census(level: &TddLevel) -> (u128, u128, u128) {
+    if let Some(d) = level.implicit() {
+        let (nodes, k) = (d.nodes() as u128, d.pairs_per_node() as u128);
+        return (
+            nodes * k,
+            if k > 0 { nodes } else { 0 },
+            if k == 1 { nodes } else { 0 },
+        );
+    }
+    let (pairs, live, single) = level.pair_census();
+    (u128::from(pairs), u128::from(live), u128::from(single))
+}
+
+/// The most pairs a dense level of `f` and `g` writes to its pair arena.
+/// Every product pair emits at most once, and a product node of one pair
+/// is held inline, not in the arena: the cell of two one-pair nodes writes
+/// none there. An operand level holds `a` pairs in its arena, its
+/// multi-pair nodes', and the pairs of at most `n` one-pair nodes inline,
+/// so the level's arena takes at most `(af + nf)(ag + ng) - nf·ng =
+/// af·(ag + ng) + nf·ag` pairs.
+#[inline(always)]
+pub(super) fn emit_pair_bound(f: &TddLevel, g: &TddLevel) -> u128 {
+    let pairs = |l: &TddLevel| (l.pairs.len() as u128, l.node_count() as u128);
+    let ((af, nf), (ag, ng)) = (pairs(f), pairs(g));
+    af.saturating_mul(ag.saturating_add(ng))
+        .saturating_add(nf.saturating_mul(ag))
+}
+
+/// What building a level of the plain dense routes over two complete child
+/// sides charges, read off the operand levels before it is built.
+///
+/// No candidate dies on such a level, so each cell of an `f` node and a `g`
+/// node that both have pairs is one node, holding the product of their pair
+/// counts, and every other cell is none. The row loop polls each cell's
+/// pairs and, for each `f` row with pairs, one unit per column; the
+/// implicit route charges the same ([`compose`](super::drive)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CompleteLevel {
+    /// The nodes the level holds.
+    pub(super) nodes: u128,
+    /// The units the build charges the work clock.
+    pub(super) work: u128,
+    /// The pairs its arena holds: every pair, less those of the cells of
+    /// two one-pair nodes, which are held inline.
+    pub(super) arena: u128,
+}
+
+/// The [`CompleteLevel`] of the level `shape` names, where it is one: a
+/// level the plain dense routes build, unfiltered, whose two child sides
+/// are complete and read by arithmetic.
+pub(super) fn complete_level(
+    run: &ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    shape: LevelShape,
+    route: Route,
+    filtered: bool,
+) -> Option<CompleteLevel> {
+    let products = &*run.products;
+    if filtered
+        || !matches!(route, Route::PlainDense | Route::Dense)
+        || super::grid_lookups_forced()
+        || !products.is_complete(shape.left.idx())
+        || !products.is_complete(shape.right.idx())
+    {
+        return None;
+    }
+    let (fp, fl, fs) = census(f.level(shape.t));
+    let (gp, gl, gs) = census(g.level(shape.t));
+    Some(CompleteLevel {
+        nodes: fl * gl,
+        work: fp * gp + fl * shape.g.here as u128,
+        arena: fp * gp - fs * gs,
+    })
+}
+
+/// Refuse with [`OperationError::OutputCap`], before it is built, a level
+/// of two complete child sides ([`CompleteLevel`]) whose nodes take the
+/// conjunction's past the output-node cap, `before` being the nodes the
+/// levels under it hold, where its build could end no other way: no byte
+/// budget or memory hook can refuse it, no stop rule can fire within the
+/// work it would charge nor at the pairs it would put in flight, and its
+/// nodes fit a level. The built level would fail the cap check at the next
+/// level boundary; the work clock is charged the units the build would
+/// have charged, and that check is taken here, so the caller reads the
+/// error and the work it would have read, without the level's storage.
+///
+/// # Errors
+///
+/// [`OperationError::OutputCap`] for a refused level.
+pub(super) fn refuse_past_cap(
+    lim: &Limits,
+    run: &ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    shape: LevelShape,
+    (route, filtered): (Route, bool),
+    before: u64,
+) -> Result<(), OperationError> {
+    let Some(cap) = lim.output_node_cap() else { return Ok(()) };
+    // A cell holds at most one node.
+    let widths = shape.f.here as u128 * shape.g.here as u128;
+    if u128::from(before) + widths <= u128::from(cap)
+        || !lim.memory_unbounded()
+        || super::builds_past_cap_forced()
+    {
+        return Ok(());
+    }
+    let Some(level) = complete_level(run, (f, g), shape, route, filtered) else { return Ok(()) };
+    let total = u128::from(before) + level.nodes;
+    let emit = emit_pair_bound(f.level(shape.t), g.level(shape.t));
+    // The meter rises by the arena's seed, the capacity the output level
+    // holds from the pool doubled at most, and the doublings to the
+    // arena's pairs.
+    let held = run.levels[shape.t.idx()].pairs.capacity() as u128;
+    let in_flight = held
+        .saturating_mul(2)
+        .saturating_add(emit)
+        .saturating_add(level.arena.saturating_mul(2))
+        .saturating_add(8);
+    let (Ok(total), Ok(work), Ok(in_flight)) =
+        (u64::try_from(total), u64::try_from(level.work), u64::try_from(in_flight))
+    else {
+        return Ok(());
+    };
+    if total <= cap
+        || level.nodes > lim.level_width_cap() as u128
+        || usize::try_from(level.arena).is_err()
+        || lim.grows_bounded(emit)
+        || !lim.cannot_stop_within(work, in_flight)
+    {
+        return Ok(());
+    }
+    lim.charge_work(work);
+    super::note_refused_past_cap();
+    let checked = lim.level_done(total);
+    debug_assert_eq!(checked, Err(OperationError::OutputCap));
+    checked.and(Err(OperationError::OutputCap))
+}
+
 #[cfg(test)]
 #[path = "tests/price.rs"]
 mod tests;
