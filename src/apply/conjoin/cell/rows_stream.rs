@@ -2595,42 +2595,56 @@ fn lane_values<
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut w = 0;
-    for j in 0..width {
-        let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
-        if g.is_empty() {
-            node_idx[row_base + j] = NO_PRODUCT;
-            continue;
-        }
-        charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-        let (mut acc, mut live, mut bad) =
-            ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
-        for q in g {
-            let (a, da) = l.at(q.left.0 as usize, w);
-            let (b, db) = r.at(q.right.0 as usize, w);
-            w += 1;
-            for k in 0..LANES {
-                let (p, ok) = S::times(a[k], b[k]);
-                acc[k] += p;
-                if CHECK {
-                    bad |= u8::from(!ok) << k;
+    let mut held = [0.0f64; HELD_COLUMNS];
+    for c0 in (0..width).step_by(HELD_COLUMNS) {
+        let mut held_live = 0u64;
+        for j in c0..width.min(c0 + HELD_COLUMNS) {
+            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            if g.is_empty() {
+                node_idx[row_base + j] = NO_PRODUCT;
+                continue;
+            }
+            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+            let (mut acc, mut live, mut bad) =
+                ([0.0f64; LANES], if TRACK { 0u8 } else { u8::MAX }, 0u8);
+            for q in g {
+                let (a, da) = l.at(q.left.0 as usize, w);
+                let (b, db) = r.at(q.right.0 as usize, w);
+                w += 1;
+                for k in 0..LANES {
+                    let (p, ok) = S::times(a[k], b[k]);
+                    acc[k] += p;
+                    if CHECK {
+                        bad |= u8::from(!ok) << k;
+                    }
+                }
+                if TRACK {
+                    live |= !(da | db);
                 }
             }
-            if TRACK {
-                live |= !(da | db);
+            for k in 1..m {
+                sums[(k - 1) * width + j] = acc[k];
+                flags[(k - 1) * width + j] =
+                    (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
             }
+            if !S::CHECKED {
+                // Appended with the word's other cells once all are summed.
+                held[(j - c0) % HELD_COLUMNS] = acc[0];
+                held_live |= u64::from(live & 1) << (j - c0);
+                continue;
+            }
+            finish_cell(
+                sum,
+                eng,
+                (node_idx, row_base + j),
+                (acc[0], live & 1 != 0, bad & 1 == 0),
+                (f_pairs, g),
+                (left, right),
+            )?;
         }
-        for k in 1..m {
-            sums[(k - 1) * width + j] = acc[k];
-            flags[(k - 1) * width + j] = (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
+        if !S::CHECKED {
+            sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
         }
-        finish_cell(
-            sum,
-            eng,
-            (node_idx, row_base + j),
-            (acc[0], live & 1 != 0, bad & 1 == 0),
-            (f_pairs, g),
-            (left, right),
-        )?;
     }
     gate.add_short(due_at - due);
     Ok(width)
@@ -2660,22 +2674,32 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     } = row;
     let width = ctx.right_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    for j in 0..width {
-        let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
-        if g.is_empty() {
-            node_idx[row_base + j] = NO_PRODUCT;
-            continue;
+    for c0 in (0..width).step_by(HELD_COLUMNS) {
+        let mut held_live = 0u64;
+        for j in c0..width.min(c0 + HELD_COLUMNS) {
+            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            if g.is_empty() {
+                node_idx[row_base + j] = NO_PRODUCT;
+                continue;
+            }
+            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+            let (acc, fl) = (sums[j], flags[j]);
+            if !S::CHECKED {
+                held_live |= u64::from(fl & LIVE) << (j - c0);
+                continue;
+            }
+            finish_cell(
+                sum,
+                eng,
+                (node_idx, row_base + j),
+                (acc, fl & LIVE != 0, fl & INEXACT == 0),
+                (f_pairs, g),
+                (left, right),
+            )?;
         }
-        charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-        let (acc, fl) = (sums[j], flags[j]);
-        finish_cell(
-            sum,
-            eng,
-            (node_idx, row_base + j),
-            (acc, fl & LIVE != 0, fl & INEXACT == 0),
-            (f_pairs, g),
-            (left, right),
-        )?;
+        if !S::CHECKED {
+            sum.push_bits(eng, node_idx, row_base + c0, &sums[c0..], held_live)?;
+        }
     }
     gate.add_short(due_at - due);
     Ok(width)
