@@ -1055,7 +1055,7 @@ const LANES_MIN: usize = 4;
 
 /// The pairs a level's columns hold on average where [`sum_row`] sums
 /// blocks of rows: fewer, and a cell's own work outweighs its pairs'.
-const LANE_COLUMN_PAIRS: usize = 8;
+const LANE_COLUMN_PAIRS: usize = 4;
 
 /// The share of the level's column pairs up to which a side's rows are
 /// narrow enough to lay side by side ([`ValueSide::lay`]): its floats at
