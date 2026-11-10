@@ -156,3 +156,17 @@ fn two_parents_emit_as_the_map_does() {
         }
     }
 }
+
+/// A walk's tail over a vector already longer than its cap has no room, so
+/// the walk's next write goes to the checked push.
+#[test]
+fn a_tail_past_its_cap_has_no_room() {
+    use super::super::scatter::Tail;
+    let mut v: Vec<u32> = Vec::with_capacity(8);
+    v.extend(0..5);
+    let spare = v.capacity() - v.len();
+    assert_eq!(Tail::within(&mut v, usize::MAX).room(), spare);
+    for cap in [0, 1, 4, 5] {
+        assert_eq!(Tail::within(&mut v, cap).room(), 0, "a cap of {cap} under a length of 5");
+    }
+}

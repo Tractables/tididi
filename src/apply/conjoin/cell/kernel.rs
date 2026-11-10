@@ -746,11 +746,12 @@ impl PairSink for ReservedEmitSink<'_> {
         self.level.pairs.stored_mut()
     }
 
+    /// None where the length is past the charged capacity.
     #[inline(always)]
     fn room(&mut self) -> usize {
         let charged = self.charged;
         let v = self.buf();
-        charged.min(v.capacity()) - v.len()
+        charged.min(v.capacity()).saturating_sub(v.len())
     }
 
     #[inline(always)]
@@ -1050,9 +1051,10 @@ impl PairSink for ProjectedEmitSink<'_> {
         self.sink.buf()
     }
 
+    /// None where the length is past the limit.
     #[inline(always)]
     fn room(&mut self) -> usize {
-        self.limit - self.sink.level.pairs.stored_mut().len()
+        self.limit.saturating_sub(self.sink.level.pairs.stored_mut().len())
     }
 
     #[inline(always)]

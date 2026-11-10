@@ -1739,7 +1739,7 @@ type PlacesPastRoom = (
 /// A vector's buffer, length and capacity, held apart from it while a loop
 /// writes past its length ([`owner_walk_nodes`]): a write is a store and a
 /// step, and the vector's length is set once the loop is done with it.
-struct Tail<T> {
+pub(super) struct Tail<T> {
     at: *mut T,
     len: usize,
     cap: usize,
@@ -1759,7 +1759,7 @@ impl<T> Tail<T> {
     /// [`of`](Self::of), the room ending at `cap` items where the capacity
     /// holds more.
     #[inline(always)]
-    fn within(v: &mut Vec<T>, cap: usize) -> Self {
+    pub(super) fn within(v: &mut Vec<T>, cap: usize) -> Self {
         Tail {
             at: v.as_mut_ptr(),
             len: v.len(),
@@ -1767,10 +1767,11 @@ impl<T> Tail<T> {
         }
     }
 
-    /// The writes left before the capacity.
+    /// The writes left before the capacity: none where the length is past
+    /// the cap.
     #[inline(always)]
-    fn room(&self) -> usize {
-        self.cap - self.len
+    pub(super) fn room(&self) -> usize {
+        self.cap.saturating_sub(self.len)
     }
 
     /// Write `x` at the length and step past it.

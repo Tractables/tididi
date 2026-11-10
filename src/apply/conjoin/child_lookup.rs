@@ -132,6 +132,7 @@ impl ChildLookup for DenseLookup {
         // Safety: callers only query positions within the child's
         // rows-by-columns slab. `child_grid_mul` widens before
         // the multiply so the index is exact on 64-bit targets.
+        debug_assert!(row + (col as usize) < node_idx.len(), "a grid read is past the child's slab");
         unsafe { *node_idx.get_unchecked(row + col as usize) }
     }
 }
@@ -189,6 +190,7 @@ impl ChildLookup for MarginalLookup {
             // pass-through the fields are structural coordinates within the
             // child's rows-by-columns slab. `child_grid_mul` widens before the
             // multiply so the index is exact on 64-bit targets.
+            debug_assert!(row + (col as usize) < node_idx.len(), "a grid read is past the child's slab");
             unsafe { *node_idx.get_unchecked(row + col as usize) }
         }
     }

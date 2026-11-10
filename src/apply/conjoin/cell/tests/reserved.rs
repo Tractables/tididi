@@ -120,3 +120,22 @@ fn a_projected_sink_charges_where_an_emit_sink_grows() {
         }
     }
 }
+
+/// A sink whose arena is already longer than the capacity it was charged
+/// for, or than its projection's limit, has no room, so [`push_kept`] sends
+/// the next pair to the checked push.
+#[test]
+fn a_sink_past_its_room_has_none() {
+    let eng = Engine::new();
+    let mut level = TddLevel::new();
+    level.pairs.stored_mut().extend((0..5).map(|k| pair(k, k + 1)));
+    let mut ones = 0;
+    for charged in [0, 1, 4, 5] {
+        let mut sink = ReservedEmitSink { level: &mut level, charged, inline: &mut ones };
+        assert_eq!(sink.room(), 0, "charged for {charged} under a length of 5");
+    }
+    let mut sink = ProjectedEmitSink::new(eng.limits(), (0, 0), 0, &mut level, &mut ones);
+    let past = sink.buf().capacity() as u32 + 1;
+    sink.buf().extend((0..past).map(|k| pair(k, k)));
+    assert_eq!(sink.room(), 0, "an arena grown past the projection's limit");
+}
