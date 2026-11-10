@@ -244,8 +244,13 @@ impl Engine {
         if let Some(result) = splice(self, &f, into, plan)? {
             return Ok(result);
         }
-        // The diagram reads a dropped variable: quantify it first.
-        let mut g = self.exists_vars(f.into_owned(), dropped)?;
+        // The diagram reads a dropped variable: quantify it first, on a copy
+        // the limits are charged for where `f` is the caller's.
+        let f = match f {
+            Cow::Borrowed(f) => f.try_clone_on(self)?,
+            Cow::Owned(f) => f,
+        };
+        let mut g = self.exists_vars(f, dropped)?;
         self.minimize(&mut g)?;
         match splice(self, &g, into, plan)? {
             Some(result) => Ok(result),

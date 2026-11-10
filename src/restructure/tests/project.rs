@@ -112,6 +112,33 @@ fn a_stopped_batch_refuses() {
     assert_canonical(&g);
 }
 
+#[test]
+fn a_diagram_the_budget_cannot_copy_refuses_the_projection() {
+    use crate::limits::LimitConfig;
+
+    // x1 ∧ g on a right-linear vtree, g = ∧ (x_i ∨ ¬x_{i+8}) over x2..x17:
+    // wide, and true once its variables are quantified. Projected onto x1, it
+    // is copied to be quantified, and the copy is most of what the
+    // projection charges.
+    let vtree = Arc::new(Vtree::linear(17));
+    let mut clauses = vec![vec![1]];
+    clauses.extend((2..10).map(|i| vec![i, -(i + 8)]));
+    let f = compile_clauses(&vtree, &clauses);
+    assert!(f.levels.is_canonical(f.output()), "the projection reads a certified diagram in place");
+    let keep = |v: VarId| (v.0 == 1).then_some(VarId(1));
+    let eng = Engine::new();
+    eng.try_clone(&f).unwrap();
+    let copy = eng.limits().meters().in_flight_bytes;
+    {
+        let _budget = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(copy - 1)));
+        assert_eq!(eng.project_to_vars(&f, keep, 1).unwrap_err(), EmbedError::Operation(OperationError::OverBudget));
+    }
+    assert_canonical(&f);
+    let g = eng.project_to_vars(&f, keep, 1).unwrap();
+    assert_canonical(&g);
+    assert_eq!(g.model_count().unwrap(), 1u32.into());
+}
+
 mod weighted {
     //! Projections of diagrams that have summed levels out
     //! ([`Engine::project_over`]).
