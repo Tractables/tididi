@@ -94,6 +94,12 @@ impl PollGate<'_> {
         self.lim.poll_now(done)
     }
 
+    /// The limits the gate polls.
+    #[inline(always)]
+    pub(crate) fn limits(&self) -> &Limits {
+        self.lim
+    }
+
     /// How many units the gate takes before a [`poll`](Self::poll) comes
     /// due: a poll of at least this many charges the clock.
     #[inline(always)]

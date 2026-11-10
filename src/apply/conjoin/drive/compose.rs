@@ -149,6 +149,10 @@ pub(super) fn write(
     let lim = eng.limits();
     debug_assert_eq!(cells.len(), product.nodes());
     debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
+    // Each node the description holds, implied or written, has an index.
+    if product.nodes() > lim.level_width_cap() {
+        return Err(OperationError::IndexOverflow);
+    }
     for (c, cell) in cells.iter_mut().enumerate() {
         *cell = c as u32;
     }
@@ -163,7 +167,7 @@ pub(super) fn write(
             .max(product.nodes())
     } else {
         lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
-        product.write_nodes(level)?;
+        product.write_nodes(level, lim.level_width_cap())?;
         0
     };
     lim.charge_output_pairs(meter.0);

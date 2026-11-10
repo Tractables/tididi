@@ -316,8 +316,7 @@ fn relabel_level(
             inline += 1;
         } else {
             level
-                .try_push_multi_by_range(start, survivors)
-                .map_err(|()| OperationError::OverBudget)?;
+                .try_push_multi_by_range(lim.level_width_cap(), start, survivors)?;
         }
         Ok(())
     })?;

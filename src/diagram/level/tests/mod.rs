@@ -74,3 +74,37 @@ fn a_copy_over_a_level_with_room_reuses_its_arenas() {
     assert_eq!(out.nodes.stored(), clone.nodes.stored());
     assert_eq!(out.pairs.stored(), clone.pairs.stored());
 }
+
+/// Every way a node is pushed refuses the node past the level's width cap
+/// with `IndexOverflow`, here pinned at three nodes, and leaves the level
+/// as it was: a slice, an iterator, an owned buffer, a range of the arena
+/// and a reservation of room for nodes written in place.
+#[test]
+fn a_node_past_the_width_cap_is_refused() {
+    use crate::OperationError::IndexOverflow;
+    use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX};
+    let eng = crate::Engine::new();
+    let lim = eng.limits();
+    let (a, b) = (ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX));
+    let mut level = TddLevel::new();
+    lim.pin_level_width_cap(Some(3));
+    level.push_node(lim, &[a]).unwrap();
+    level.push_node(lim, &[a, b]).unwrap();
+    level.push_node_from(lim, 2, [b, a].into_iter()).unwrap();
+    let (nodes, pairs) = (level.node_count(), level.pairs.len());
+    assert_eq!(level.push_node(lim, &[b]), Err(IndexOverflow));
+    assert_eq!(level.push_node(lim, &[a, b]), Err(IndexOverflow));
+    assert_eq!(level.push_node_from(lim, 2, [a, b].into_iter()), Err(IndexOverflow));
+    let mut owned = Vec::new();
+    lim.reserve(&mut owned, 2).unwrap();
+    owned.extend([a, b]);
+    assert_eq!(level.push_node_owned(lim, owned), Err(IndexOverflow));
+    assert_eq!(level.try_push_multi_by_range(lim.level_width_cap(), 0, 2), Err(IndexOverflow));
+    assert_eq!(crate::diagram::reserve_node_room(lim, level.nodes.stored_mut(), 1), Err(IndexOverflow));
+    assert_eq!((level.node_count(), level.pairs.len()), (nodes, pairs));
+    crate::diagram::reserve_node_room(lim, level.nodes.stored_mut(), 0).unwrap();
+    lim.pin_level_width_cap(None);
+    level.push_node(lim, &[b]).unwrap();
+    level.try_push_multi_by_range(lim.level_width_cap(), 0, 2).unwrap();
+    assert_eq!(level.node_count(), 5);
+}

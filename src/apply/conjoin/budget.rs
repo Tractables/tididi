@@ -175,8 +175,7 @@ pub(crate) fn finish_node(
     } else {
         // `try_push_multi_by_range` needs two or more pairs, which the arm
         // above guarantees.
-        level.try_push_multi_by_range(pair_start, pair_count)
-            .map_err(|_| OperationError::OverBudget)?;
+        level.try_push_multi_by_range(eng.limits().level_width_cap(), pair_start, pair_count)?;
     }
     Ok(Some(node))
 }

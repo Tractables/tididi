@@ -418,8 +418,10 @@ fn conjoin_recycling_as(
 ///
 /// [`OperationError::VtreeMismatch`] for different vtree allocations,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
-/// or [`OperationError::MarginalLevel`] when a structural operand constrains
-/// variables the other has summed out.
+/// [`OperationError::MarginalLevel`] when a structural operand constrains
+/// variables the other has summed out, or [`OperationError::IndexOverflow`]
+/// when a level of the result would hold more nodes than a node index
+/// addresses.
 ///
 /// Allocation refusal is reported as [`OperationError::OverBudget`].
 /// For explicit resource limits, use [`Context::with_limits`](crate::Context::with_limits)

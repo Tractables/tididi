@@ -1,6 +1,7 @@
 //! The `TddLevel` structure, its state predicates, and its size accessors.
 
 mod arena;
+pub(crate) use arena::reserve_node_room;
 mod ranges;
 pub(crate) use ranges::RangeTable;
 mod count_overflow;

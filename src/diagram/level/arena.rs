@@ -24,6 +24,13 @@ pub(crate) trait ArenaGrowth {
     ///
     /// `Err(OperationError::OverBudget)` when the allocator refuses it.
     fn counted_room<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError>;
+
+    /// The most nodes a level may hold, [`NodeIdx::MAX_LIVE`]: a push
+    /// past it is refused with [`OperationError::IndexOverflow`].
+    #[inline(always)]
+    fn width_cap(&self) -> usize {
+        NodeIdx::MAX_LIVE
+    }
 }
 
 impl ArenaGrowth for Limits {
@@ -37,6 +44,41 @@ impl ArenaGrowth for Limits {
     fn counted_room<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         self.reserve_counted_exact(v, additional)
     }
+
+    #[inline(always)]
+    fn width_cap(&self) -> usize {
+        self.level_width_cap()
+    }
+}
+
+/// Room in a level's node arena `nodes` for `additional` more nodes, grown
+/// by `lim` as [`Limits::reserve`] grows it. Where the nodes would pass
+/// [`Limits::level_width_cap`], [`OperationError::IndexOverflow`]: the
+/// indices of the nodes past it would not fit a [`NodeIdx`]. For the
+/// writers that store nodes into the arena themselves; the pushes below
+/// make the same test.
+#[inline(always)]
+pub(crate) fn reserve_node_room(
+    lim: &Limits, nodes: &mut Vec<EncodedNode>, additional: usize,
+) -> Result<(), OperationError> {
+    // One test for both: the room is the capacity, within the cap.
+    if nodes.len() + additional > nodes.capacity().min(lim.level_width_cap()) {
+        return node_room_past(lim, nodes, additional);
+    }
+    Ok(())
+}
+
+/// The arm of the node pushes and [`reserve_node_room`] that refuses a node
+/// past the width cap `growth` sets or grows the arena.
+#[cold]
+#[inline(never)]
+fn node_room_past<G: ArenaGrowth>(
+    growth: &G, nodes: &mut Vec<EncodedNode>, additional: usize,
+) -> Result<(), OperationError> {
+    if nodes.len() + additional > growth.width_cap() {
+        return Err(OperationError::IndexOverflow);
+    }
+    growth.grow(nodes, additional)
 }
 
 /// The allocator alone, for storage built outside an operation. A refused
@@ -456,15 +498,17 @@ impl TddLevel {
         self.push_node(&Untracked, input_pairs).expect("out of memory pushing a node")
     }
 
-    /// Ensure `self.nodes` has capacity for one more node and return its index.
+    /// Ensure `self.nodes` has capacity for one more node and return its
+    /// index, refused with [`OperationError::IndexOverflow`] where the level
+    /// already holds [`ArenaGrowth::width_cap`] nodes.
     #[inline]
     fn ensure_node_slot<G: ArenaGrowth>(&mut self, growth: &G) -> Result<NodeIdx, OperationError> {
         let nodes = self.nodes.stored_mut();
-        let idx = NodeIdx(nodes.len() as u32);
-        if nodes.len() == nodes.capacity() {
-            growth.grow(nodes, 1)?;
+        let len = nodes.len();
+        if len >= nodes.capacity().min(growth.width_cap()) {
+            node_room_past(growth, nodes, 1)?;
         }
-        Ok(idx)
+        Ok(NodeIdx(len as u32))
     }
 
     /// Append a node with these pairs and return its index, taking the arena
@@ -479,7 +523,9 @@ impl TddLevel {
     ///
     /// # Errors
     ///
-    /// `Err(OperationError::OverBudget)` when a buffer's growth is refused.
+    /// `Err(OperationError::OverBudget)` when a buffer's growth is refused,
+    /// and `Err(OperationError::IndexOverflow)` when the level already holds
+    /// as many nodes as `growth` allows ([`ArenaGrowth::width_cap`]).
     pub(crate) fn push_node<G: ArenaGrowth>(
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
@@ -707,11 +753,14 @@ impl TddLevel {
     /// The store with spare capacity and operands under 31 bits is inlined;
     /// growth and the ranged encoding are out of line in
     /// `push_multi_by_range_slow`, which keeps the per-node path's frame small.
+    /// `width_cap` is the most nodes the level may hold,
+    /// [`Limits::level_width_cap`] inside an operation.
     ///
     /// # Errors
     ///
-    /// Returns `Err(())` if the buffer reservation failed; callers map this to
-    /// `OperationError::OverBudget`.
+    /// `Err(OperationError::IndexOverflow)` where the level already holds
+    /// `width_cap` nodes, and `Err(OperationError::OverBudget)` where the
+    /// allocator refuses the growth.
     ///
     /// # Panics
     ///
@@ -720,15 +769,16 @@ impl TddLevel {
     /// caller corrupts silently in release.
     pub(crate) fn try_push_multi_by_range(
         &mut self,
+        width_cap: usize,
         pair_start: usize,
         pair_len: usize,
-    ) -> Result<(), ()> {
+    ) -> Result<(), OperationError> {
         debug_assert!(
             pair_len >= 2,
             "try_push_multi_by_range: pair_len=1 aliases multi_ranged encoding"
         );
         let nodes = self.nodes.stored_mut();
-        if nodes.len() < nodes.capacity()
+        if nodes.len() < nodes.capacity().min(width_cap)
             && pair_start < (1usize << 31)
             && pair_len < (1usize << 31)
         {
@@ -738,21 +788,25 @@ impl TddLevel {
             nodes.push(EncodedNode::multi_pair(pair_start as u32, pair_len as u32));
             return Ok(());
         }
-        self.push_multi_by_range_slow(pair_start, pair_len)
+        self.push_multi_by_range_slow(width_cap, pair_start, pair_len)
     }
 
-    /// Growth and ranged-encoding arm of `try_push_multi_by_range`, reached
-    /// only when `nodes` is full or when `pair_start`/`pair_len` overflow
-    /// 31 bits.
+    /// Growth, width and ranged-encoding arm of `try_push_multi_by_range`,
+    /// reached only when `nodes` is full or at `width_cap`, or when
+    /// `pair_start`/`pair_len` overflow 31 bits.
     #[cold]
     #[inline(never)]
     fn push_multi_by_range_slow(
         &mut self,
+        width_cap: usize,
         pair_start: usize,
         pair_len: usize,
-    ) -> Result<(), ()> {
-        let data = self.try_encode_multi(&Untracked, pair_start, pair_len).map_err(|_| ())?;
-        Untracked.grow(self.nodes.stored_mut(), 1).map_err(|_| ())?;
+    ) -> Result<(), OperationError> {
+        if self.nodes.stored().len() >= width_cap {
+            return Err(OperationError::IndexOverflow);
+        }
+        let data = self.try_encode_multi(&Untracked, pair_start, pair_len)?;
+        Untracked.grow(self.nodes.stored_mut(), 1)?;
         self.nodes.stored_mut().push(data);
         Ok(())
     }

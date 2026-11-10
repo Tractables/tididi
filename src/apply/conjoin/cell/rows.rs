@@ -1086,7 +1086,8 @@ fn relay_rows(
         }
     }
     let nodes = (next - v) as usize;
-    if nodes < crate::diagram::floor().max(2) {
+    // Past the width cap the row loop writes the nodes, and refuses them.
+    if nodes < crate::diagram::floor().max(2) || nodes > lim.level_width_cap() {
         return Ok(false);
     }
     let Some(described) =
@@ -1196,7 +1197,7 @@ fn single_rows<const W: usize>(
         // The rows' nodes are written straight into the node arena, open
         // across rows, while it has room for a node a column; a row it has
         // no room for goes through the sink, which grows it.
-        let mut out = sink.open_row(0, 0);
+        let mut out = sink.open_row(0, 0, eng.limits().level_width_cap());
         // The rows the node arena has room for, read with no test of the
         // room, the grid's length or the gate a row: the gate's units
         // counted down here, and polled as below at the row it comes due.
@@ -1644,7 +1645,8 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     let width = lone.len();
     // A cell of one f pair is a node held inline: it writes no pair to the
     // pair arena.
-    let Some(mut out) = sink.open_row(if K == 1 { 0 } else { width * K }, width) else {
+    let width_cap = gate.limits().level_width_cap();
+    let Some(mut out) = sink.open_row(if K == 1 { 0 } else { width * K }, width, width_cap) else {
         return Ok(0);
     };
     super::super::note_whole_row();
@@ -1721,7 +1723,7 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     if k > ROW_PAIRS {
         return Ok(0);
     }
-    let Some(mut out) = sink.open_row(0, width) else {
+    let Some(mut out) = sink.open_row(0, width, gate.limits().level_width_cap()) else {
         return Ok(0);
     };
     let child_rows = |p: &ChildPair| (left.row(p.left.0), right.row(p.right.0));

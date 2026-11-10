@@ -1810,8 +1810,7 @@ fn regroup_single_rows(
     } else {
         let before = level.arena_capacity_bytes();
         level
-            .try_push_multi_by_range(0, len)
-            .map_err(|()| OperationError::OverBudget)?;
+            .try_push_multi_by_range(lim.level_width_cap(), 0, len)?;
         lim.charge_bytes(level.arena_capacity_bytes().saturating_sub(before))?;
     }
     work.emitted += 1;

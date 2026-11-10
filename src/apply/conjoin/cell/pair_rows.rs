@@ -448,7 +448,7 @@ where
         // its live cells' every candidate fits their room: each cell holds
         // at most an f pair's candidates against each of g's pairs. A row
         // without room goes through the sink, which grows them.
-        let mut out = sink.open_row(0, 0);
+        let mut out = sink.open_row(0, 0, eng.limits().level_width_cap());
         while next < f_width {
             // On a level of two one-pair columns whose described rows have
             // at most two f pairs each, the rows from here go in runs to a

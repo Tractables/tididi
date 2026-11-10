@@ -583,8 +583,11 @@ impl Settle {
     /// pairs hit, `a` itself where each of its pairs met that node in one
     /// pair and came back whole, else a node of the products' pairs; the
     /// nodes before `a` that no pair named (none in a stored level) meet
-    /// nothing.
-    fn node(&mut self, lim: &Limits, a: usize, n: u32) -> Result<(), OperationError> {
+    /// nothing. A node of more pairs than the hits' 32-bit positions number
+    /// ([`Limits::list_index`]) is refused with
+    /// [`OperationError::IndexOverflow`]: its positions would have wrapped.
+    fn node(&mut self, lim: &Limits, a: usize, n: usize) -> Result<(), OperationError> {
+        lim.list_index(n)?;
         self.pieces.close_until(lim, a)?;
         // Within a node of `g` the pairs stay in their order; unstable, so
         // that the sort asks for no buffer.
@@ -594,7 +597,7 @@ impl Settle {
             let b = self.hits[i].0;
             let k = i + self.hits[i..].iter().take_while(|h| h.0 == b).count();
             let group = &self.hits[i..k];
-            let whole = group.len() == n as usize
+            let whole = group.len() == n
                 && group
                     .iter()
                     .enumerate()
@@ -690,7 +693,7 @@ fn block_products(
         st.made.begin(lim)?;
         let mut refused = None;
         let mut cur: Option<usize> = None;
-        let mut read = 0u32;
+        let mut read = 0usize;
         let mut work = 0u64;
         let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
         level.for_each_node_pair(|x, p| {
@@ -716,7 +719,7 @@ fn block_products(
                             &mut st.hits,
                             (
                                 bn,
-                                read,
+                                read as u32,
                                 ChildPair::new(NodeIdx(cl), NodeIdx(cr)),
                                 cl == pl && cr == pr,
                             ),
@@ -1276,3 +1279,7 @@ impl Engine {
         and_in_place_on(self, f, &cube, true)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/settle.rs"]
+mod tests;

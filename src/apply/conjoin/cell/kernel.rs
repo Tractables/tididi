@@ -6,7 +6,7 @@
 //! moving out of `process_cell` into the `CellAction` impls. Anything added
 //! here that the walk calls per pair belongs in the same regime.
 
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{EncodedChildRef, reserve_node_room};
 
 use super::*;
 use crate::limits::PollGate;
@@ -69,15 +69,18 @@ pub(crate) fn emit_product_node(
 }
 
 /// Emit a node holding exactly `pair`, stored inline. The push is
-/// budget-charged.
+/// budget-charged, and refused past the level's width cap
+/// ([`reserve_node_room`]).
 #[inline(always)]
 pub(in crate::apply::conjoin) fn emit_single_pair(
     eng: &Engine,
     level: &mut TddLevel,
     pair: ChildPair,
 ) -> Result<(), OperationError> {
-    eng.limits()
-        .try_push(level.nodes.stored_mut(), EncodedNode::inline(pair))
+    let nodes = level.nodes.stored_mut();
+    reserve_node_room(eng.limits(), nodes, 1)?;
+    nodes.push(EncodedNode::inline(pair));
+    Ok(())
 }
 
 /// A cell written straight into the pair arena of the level being built,
@@ -181,8 +184,7 @@ impl<'a> ArenaCell<'a> {
                 *inline += 1;
             }
             n => level
-                .try_push_multi_by_range(start, n)
-                .map_err(|_| OperationError::OverBudget)?,
+                .try_push_multi_by_range(eng.limits().level_width_cap(), start, n)?,
         }
         node_idx[grid_pos] = node;
         Ok(())
@@ -217,7 +219,7 @@ pub(crate) struct ArenaRow<'a> {
     /// The length the pair arena may reach: the sink's room, within the 31
     /// bits a node holds its range's start in.
     pair_end: usize,
-    /// The node arena's capacity.
+    /// The node arena's capacity, within the level's width cap.
     node_cap: usize,
 }
 
@@ -225,25 +227,26 @@ impl<'a> ArenaRow<'a> {
     /// A row of at most `nodes` cells at the end of `level`'s arenas whose
     /// first `pairs` pairs fit, `room` pairs past the pair arena's length
     /// being at most its spare capacity; `None` where either arena is short.
+    /// The node arena's room ends at `width_cap` nodes, so a cell past it
+    /// goes to a push that refuses it ([`reserve_node_room`]).
     #[inline(always)]
     fn open(
         level: &'a mut TddLevel,
         inline: &'a mut usize,
-        room: usize,
-        pairs: usize,
-        nodes: usize,
+        (room, pairs, nodes): (usize, usize, usize),
+        width_cap: usize,
     ) -> Option<Self> {
         let (pair_arena, node_arena) = (level.pairs.stored_mut(), level.nodes.stored_mut());
         let (len, node_len) = (pair_arena.len(), node_arena.len());
         let pair_end = (len + room).min((1 << 31) - 1);
-        if len + pairs > pair_end || node_arena.capacity() - node_len < nodes {
+        let node_cap = node_arena.capacity().min(width_cap);
+        if len + pairs > pair_end || node_cap.saturating_sub(node_len) < nodes {
             return None;
         }
         debug_assert!(
             room <= pair_arena.capacity() - len,
             "a sink's room is within its arena's capacity"
         );
-        let node_cap = node_arena.capacity();
         Some(ArenaRow {
             out: pair_arena.as_mut_ptr(),
             node_out: node_arena.as_mut_ptr(),
@@ -588,11 +591,13 @@ pub(crate) trait PairSink {
 
     /// A row of at most `nodes` cells written straight into the level the
     /// sink builds, where the sink builds one, its node arena has room for
-    /// them and its pair arena for their first `pairs` pairs; `None` sends
-    /// each cell through [`open_cell`](Self::open_cell) or
-    /// [`begin`](Self::begin).
+    /// them within `width_cap` nodes ([`Limits::level_width_cap`]) and its
+    /// pair arena for their first `pairs` pairs; `None` sends each cell
+    /// through [`open_cell`](Self::open_cell) or [`begin`](Self::begin).
+    ///
+    /// [`Limits::level_width_cap`]: crate::limits::Limits::level_width_cap
     #[inline(always)]
-    fn open_row(&mut self, _pairs: usize, _nodes: usize) -> Option<ArenaRow<'_>> {
+    fn open_row(&mut self, _pairs: usize, _nodes: usize, _width_cap: usize) -> Option<ArenaRow<'_>> {
         None
     }
 
@@ -668,9 +673,9 @@ impl PairSink for EmitSink<'_> {
     }
 
     #[inline(always)]
-    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+    fn open_row(&mut self, pairs: usize, nodes: usize, width_cap: usize) -> Option<ArenaRow<'_>> {
         let room = self.room();
-        ArenaRow::open(self.level, self.inline, room, pairs, nodes)
+        ArenaRow::open(self.level, self.inline, (room, pairs, nodes), width_cap)
     }
 }
 
@@ -770,9 +775,9 @@ impl PairSink for ReservedEmitSink<'_> {
     /// A row the meter's schedule leaves room for, as
     /// [`open_cell`](PairSink::open_cell).
     #[inline(always)]
-    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+    fn open_row(&mut self, pairs: usize, nodes: usize, width_cap: usize) -> Option<ArenaRow<'_>> {
         let room = self.room();
-        ArenaRow::open(self.level, self.inline, room, pairs, nodes)
+        ArenaRow::open(self.level, self.inline, (room, pairs, nodes), width_cap)
     }
 }
 
@@ -1085,9 +1090,9 @@ impl PairSink for ProjectedEmitSink<'_> {
     }
 
     #[inline(always)]
-    fn open_row(&mut self, pairs: usize, nodes: usize) -> Option<ArenaRow<'_>> {
+    fn open_row(&mut self, pairs: usize, nodes: usize, width_cap: usize) -> Option<ArenaRow<'_>> {
         let room = self.room();
-        ArenaRow::open(self.sink.level, self.sink.inline, room, pairs, nodes)
+        ArenaRow::open(self.sink.level, self.sink.inline, (room, pairs, nodes), width_cap)
     }
 }
 

@@ -27,6 +27,7 @@ mod stream_slots;
 mod word_cells;
 
 mod target_completion;
+mod width_cap;
 mod workspace;
 
 thread_local! {

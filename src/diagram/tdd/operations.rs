@@ -84,7 +84,9 @@ impl Tdd {
     /// Returns [`OperationError::InvalidLiteral`] for integer zero,
     /// [`OperationError::VariableNotInVtree`] for an absent variable,
     /// [`OperationError::MarginalLevel`] if a required level has discarded its
-    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    /// structure, [`OperationError::IndexOverflow`] if a rebuilt level would
+    /// hold more nodes than a node index addresses, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;

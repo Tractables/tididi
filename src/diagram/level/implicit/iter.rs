@@ -128,11 +128,13 @@ impl ImplicitLevel {
     /// empty, as the conjunction's row loop writes them: node `i` the arena
     /// range of pairs `i · k .. (i + 1) · k`, in the side table where the
     /// plain word does not hold it. The arena itself is not written.
-    pub(crate) fn write_nodes(&self, level: &mut TddLevel) -> Result<(), OperationError> {
+    /// `width_cap` is the most nodes the level may hold, as
+    /// [`TddLevel::try_push_multi_by_range`] takes it.
+    pub(crate) fn write_nodes(&self, level: &mut TddLevel, width_cap: usize) -> Result<(), OperationError> {
         debug_assert!(level.nodes().is_empty() && level.pairs.is_empty() && !self.implies_nodes());
         let k = self.per_node;
         for i in 0..self.nodes {
-            level.try_push_multi_by_range(i * k, k).map_err(|()| OperationError::OverBudget)?;
+            level.try_push_multi_by_range(width_cap, i * k, k)?;
         }
         Ok(())
     }

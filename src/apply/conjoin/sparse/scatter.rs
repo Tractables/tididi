@@ -1,7 +1,7 @@
 //! The scatter joins that find a level's candidates, and the walks that
 //! hand them to the emit.
 
-use crate::diagram::{EncodedChildRef, EncodedNode};
+use crate::diagram::{EncodedChildRef, EncodedNode, reserve_node_room};
 
 use super::*;
 use crate::apply::conjoin::marginal_plan::Carrier;
@@ -925,7 +925,10 @@ fn owner_walk_nodes<
     let mut at = arena.as_mut_ptr();
     // Safety: the length and capacity are within the allocation.
     let (mut next, mut room_end) = unsafe { (at.add(arena.len()), at.add(arena.capacity())) };
-    let mut nodes = Tail::of(level.nodes.stored_mut());
+    // The nodes' room ends at the level's width cap, so a node past it
+    // goes to a push that refuses it.
+    let width_cap = lim.level_width_cap();
+    let mut nodes = Tail::within(level.nodes.stored_mut(), width_cap);
     let mut prods = Tail::of(out);
     macro_rules! settle {
         () => {
@@ -949,7 +952,7 @@ fn owner_walk_nodes<
             unsafe {
                 (next, room_end) = (at.add(arena.len()), at.add(arena.capacity().min(charged)))
             };
-            nodes = Tail::of(level.nodes.stored_mut());
+            nodes = Tail::within(level.nodes.stored_mut(), width_cap);
             prods = Tail::of(out);
         };
     }
@@ -1297,8 +1300,7 @@ fn owner_walk_nodes<
                 settle!();
                 reserve_room(lim, level.nodes.stored_mut(), 1)?;
                 level
-                    .try_push_multi_by_range(base, count)
-                    .map_err(|_| OperationError::OverBudget)?;
+                    .try_push_multi_by_range(lim.level_width_cap(), base, count)?;
                 retake!();
             }
             // As in `emit_walked`: canonical children make a node's pairs
@@ -1754,6 +1756,17 @@ impl<T> Tail<T> {
         }
     }
 
+    /// [`of`](Self::of), the room ending at `cap` items where the capacity
+    /// holds more.
+    #[inline(always)]
+    fn within(v: &mut Vec<T>, cap: usize) -> Self {
+        Tail {
+            at: v.as_mut_ptr(),
+            len: v.len(),
+            cap: v.capacity().min(cap),
+        }
+    }
+
     /// The writes left before the capacity.
     #[inline(always)]
     fn room(&self) -> usize {
@@ -1782,7 +1795,7 @@ impl<T> Tail<T> {
     #[inline(always)]
     unsafe fn settle(&self, v: &mut Vec<T>) {
         debug_assert!(
-            v.as_mut_ptr() == self.at && v.capacity() == self.cap,
+            v.as_mut_ptr() == self.at && self.cap <= v.capacity(),
             "a tail settles into its own vector"
         );
         // Safety: as the caller's.
@@ -2128,12 +2141,8 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
             }
             crate::diagram::EncodedNode::multi_pair(base as u32, count as u32)
         };
-        if nodes.len() < nodes.capacity() {
-            nodes.push(node);
-        } else {
-            reserve_room(lim, nodes, 1)?;
-            nodes.push(node);
-        }
+        reserve_node_room(lim, nodes, 1)?;
+        nodes.push(node);
     }
     match (unwritten, lendable) {
         (Some(n), Some(stored)) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
@@ -4037,7 +4046,7 @@ fn emit_alternating(
     );
     let lim = eng.limits();
     push_product_entries(lim, pl_output, p1, &[a, b])?;
-    reserve_room(lim, level.nodes.stored_mut(), 2)?;
+    reserve_node_room(lim, level.nodes.stored_mut(), 2)?;
     let arena = level.pairs.stored_mut();
     let half = n / 2;
     if half == 1 {
@@ -4056,8 +4065,7 @@ fn emit_alternating(
     }
     for start in [base, base + half] {
         level
-            .try_push_multi_by_range(start, half)
-            .map_err(|_| OperationError::OverBudget)?;
+            .try_push_multi_by_range(lim.level_width_cap(), start, half)?;
     }
     let nodes = level.nodes().len();
     debug_assert_unique_pairs(level, nodes - 2..nodes, duplicates_legal);
@@ -4124,7 +4132,7 @@ pub(super) fn emit_owned(
     let first_node = level.nodes().len();
     let built = keyed.and_then(|()| {
         let products = pl_output.len() - first;
-        reserve_room(lim, level.nodes.stored_mut(), products)?;
+        reserve_node_room(lim, level.nodes.stored_mut(), products)?;
         let n = owners.len();
         let arena = level.pairs.stored_mut();
         if products == n {
@@ -4318,8 +4326,7 @@ fn emit_few(
                 bits &= bits - 1;
             }
             built = level
-                .try_push_multi_by_range(start, counts[k] as usize)
-                .map_err(|_| OperationError::OverBudget);
+                .try_push_multi_by_range(lim.level_width_cap(), start, counts[k] as usize);
         }
         if built.is_err() {
             break;
@@ -4358,8 +4365,11 @@ fn push_ranged_nodes(
             emit_single_pair(eng, level, singles[k])?;
         } else {
             level
-                .try_push_multi_by_range(base + start as usize, (end - start) as usize)
-                .map_err(|_| OperationError::OverBudget)?;
+                .try_push_multi_by_range(
+                    eng.limits().level_width_cap(),
+                    base + start as usize,
+                    (end - start) as usize,
+                )?;
             start = end;
         }
     }
