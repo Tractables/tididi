@@ -1762,21 +1762,21 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             j += 1;
             continue;
         }
-        let mut cand = |(l, r): (L::Row, R::Row), q: &ChildPair| {
-            let lc = left.get_in_row(node_idx, l, q.left.0);
-            if left.kills() && lc == NO_PRODUCT {
-                return;
+        // Plain loops keep the open row's write position in the row loop's
+        // registers; a closure run through `for_each` may be compiled out of
+        // line, and the row then passed to it in memory.
+        if m == 1 {
+            let q = &g_pairs[0];
+            for &f_rows in rows {
+                // Safety: the cell fits its `k * m` candidates.
+                unsafe { push_candidate(&mut out, node_idx, (left, right), f_rows, q) };
             }
-            let rc = right.get_in_row(node_idx, r, q.right.0);
-            if right.kills() && rc == NO_PRODUCT {
-                return;
+        } else {
+            let f_rows = rows[0];
+            for q in g_pairs {
+                // Safety: as above.
+                unsafe { push_candidate(&mut out, node_idx, (left, right), f_rows, q) };
             }
-            // Safety: the cell fits its `k * m` candidates.
-            unsafe { out.push(lc, rc) };
-        };
-        match g_pairs {
-            [q] => rows.iter().for_each(|&f_rows| cand(f_rows, q)),
-            _ => g_pairs.iter().for_each(|q| cand(rows[0], q)),
         }
         // Safety: the row was opened for a node a column.
         unsafe { out.close(node_idx, row_base + j) };
@@ -1784,6 +1784,32 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     }
     gate.add_short(due_at - due);
     Ok(j)
+}
+
+/// Store in `out`'s open cell the candidate of the child rows `(l, r)`
+/// against the g pair `q`, unless a side has no product there.
+///
+/// # Safety
+///
+/// The open cell fits the candidate.
+#[inline(always)]
+unsafe fn push_candidate<L: ChildLookup, R: ChildLookup>(
+    out: &mut ArenaRow<'_>,
+    node_idx: &[u32],
+    (left, right): (&L, &R),
+    (l, r): (L::Row, R::Row),
+    q: &ChildPair,
+) {
+    let lc = left.get_in_row(node_idx, l, q.left.0);
+    if left.kills() && lc == NO_PRODUCT {
+        return;
+    }
+    let rc = right.get_in_row(node_idx, r, q.right.0);
+    if right.kills() && rc == NO_PRODUCT {
+        return;
+    }
+    // Safety: as the caller's.
+    unsafe { out.push(lc, rc) };
 }
 
 /// The one pair of a level's g side, where it has one node and that node
