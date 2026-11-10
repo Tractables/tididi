@@ -936,7 +936,18 @@ fn apply_and_held(
         // give the operands their levels back from. A plain conjunction has
         // no marginal level, and so no ref to inline; leaving its levels
         // alone keeps them known closed.
-        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, assembly.parts_mut().0, None) {
+        //
+        // The subtrees both operands are constant true at are `f`'s levels
+        // as `f`'s end left them, with no marginal level and no level above
+        // them: no ref there points into a marginal level. The result owes
+        // contraction what `f` owed there and the levels the conjunction
+        // visited, which are also all the seat closes.
+        let levels = assembly.parts_mut().0;
+        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None) {
+            Ok(()) if cone.constant => {
+                let owed = crate::diagram::Dirty::stacked(&Default::default(), &f.dirty, cone.built.len());
+                assembly.finish_with_or_return(output, owed, cone.built, Some(cone.built))
+            }
             Ok(()) => assembly.finish_or_return(output),
             Err(e) => Err((e, assembly)),
         }

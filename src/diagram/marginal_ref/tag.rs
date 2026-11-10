@@ -32,10 +32,12 @@ pub(crate) fn inline_small_marginal_refs(
     was_marginal: Option<&[bool]>,
 ) -> Result<(), OperationError> {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
-    inline_small_marginal_refs_in(lim, &tdd.vtree, &mut tdd.levels, was_marginal)
+    let vtree = &tdd.vtree;
+    inline_small_marginal_refs_in(lim, vtree, &mut tdd.levels, vtree.internal_bottomup_slice(), was_marginal)
 }
 
-/// [`inline_small_marginal_refs`] on levels not yet seated as a diagram.
+/// [`inline_small_marginal_refs`] on levels not yet seated as a diagram, at
+/// the internal levels `at`, bottom-up: every level with a marginal child.
 ///
 /// # Errors
 ///
@@ -44,9 +46,11 @@ pub(crate) fn inline_small_marginal_refs_in(
     lim: &Limits,
     vtree: &Vtree,
     levels: &mut [TddLevel],
+    at: &[crate::vtree::VtreeIdx],
     was_marginal: Option<&[bool]>,
 ) -> Result<(), OperationError> {
-    for (t, left, right) in vtree.internal_bottomup() {
+    for &t in at {
+        let (left, right) = vtree.children(t);
         inline_small_marginal_refs_at_level(lim, levels, was_marginal, t, left, right)?;
     }
     Ok(())
