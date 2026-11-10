@@ -33,6 +33,30 @@ pub(crate) struct RestructureScratch {
     pub(super) by_axis: Vec<u64>,
     // The tables of a rotation's score (`score_levels`).
     pub(super) score: ScoreScratch,
+    // A pool-search probe's tables, one entry per member.
+    pub(super) probe: ProbeTables,
+}
+
+/// The tables a pool-search probe scores its members by: the pairs of each
+/// member's two levels before and after the move, whether it is scored, the
+/// least it can hold after the move, and the order it is scored in.
+#[derive(Default)]
+pub(super) struct ProbeTables {
+    pub(super) before: Vec<usize>,
+    pub(super) after: Vec<usize>,
+    pub(super) scored: Vec<bool>,
+    pub(super) floors: Vec<usize>,
+    pub(super) order: Vec<usize>,
+}
+
+impl ProbeTables {
+    pub(super) fn clear(&mut self) {
+        self.before.clear();
+        self.after.clear();
+        self.scored.clear();
+        self.floors.clear();
+        self.order.clear();
+    }
 }
 
 /// The clustering build of the inner level: the table of the first group of
@@ -56,6 +80,11 @@ impl Buffers for RestructureScratch {
         visit(&mut self.bucket.table);
         visit(&mut self.bucket.ends);
         visit(&mut self.bucket.pairs);
+        visit(&mut self.probe.before);
+        visit(&mut self.probe.after);
+        visit(&mut self.probe.scored);
+        visit(&mut self.probe.floors);
+        visit(&mut self.probe.order);
     }
 }
 
@@ -70,6 +99,7 @@ impl PooledScratch for RestructureScratch {
         self.outer_ends.clear();
         self.outer_pairs.clear();
         self.axis_ends.clear();
+        self.probe.clear();
     }
 
     /// A search whose triples outgrew their cap releases every buffer; any
