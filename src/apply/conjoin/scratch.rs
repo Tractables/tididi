@@ -66,6 +66,9 @@ pub(crate) struct ApplyWorkspace {
     /// Each operand's marginality at every level, where some level is
     /// marginal at entry (`EntryMarginality`).
     pub(super) entry_marginal: super::setup::Operands<Vec<bool>>,
+    /// The levels at which both operands are constant true, where the setup
+    /// looks for them (`mark_constant_true`).
+    pub(super) constant: Vec<bool>,
 }
 
 impl Buffers for ApplyWorkspace {
@@ -84,6 +87,7 @@ impl Buffers for ApplyWorkspace {
         self.lists.buffers(visit);
         visit(&mut self.entry_marginal.f);
         visit(&mut self.entry_marginal.g);
+        visit(&mut self.constant);
     }
 }
 

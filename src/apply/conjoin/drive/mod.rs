@@ -409,7 +409,8 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
 }
 
 /// Keep with `out` the operands' kept counts ([`Sweep::kept`]) of the levels
-/// an identity fast path moved into it untouched: such a level brings its
+/// an identity fast path moved into it untouched, and of the levels of its
+/// free regions ([`Cone`](super::setup::Cone)): such a level brings its
 /// whole subtree along, so its nodes count in `out` what they counted in
 /// their operand. A level the relabelling route moved keeps none, a subtree
 /// under it being a product.
@@ -421,7 +422,7 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
 fn carry_kept_counts(
     eng: &Engine,
     out: &mut Tdd,
-    lists: &super::setup::SweepLists,
+    (lists, cone): (&super::setup::SweepLists, super::setup::Cone<'_>),
     kept: &Operands<Option<LevelCounts>>,
 ) {
     if kept.f.is_none() && kept.g.is_none() {
@@ -430,7 +431,19 @@ fn carry_kept_counts(
     let Ok(mut counts) = LevelCounts::none(eng, out.vtree.num_nodes()) else {
         return;
     };
-    for &(ti, from_f) in &lists.carried {
+    // The levels of the free regions are their carrier's as they were,
+    // save where both operands were free and the level was built.
+    let identity = lists
+        .carried
+        .iter()
+        .filter(|&&(ti, _)| lists.identity_carrier(ti) != 0)
+        .copied();
+    let free = cone
+        .free
+        .iter()
+        .filter(|t| !(cone.free_in_f(t.idx()) && cone.free_in_g(t.idx())))
+        .map(|t| (t.idx(), region::carried_from_f(cone, t.idx())));
+    for (ti, from_f) in identity.chain(free) {
         let t = VtreeIdx(ti as u32);
         let side = if from_f {
             kept.f.as_ref()
@@ -441,10 +454,7 @@ fn carry_kept_counts(
             continue;
         };
         let level = &out.levels[ti];
-        if lists.identity_carrier(ti) != 0
-            && !level.is_marginal()
-            && column.len() == level.slot_count()
-        {
+        if !level.is_marginal() && column.len() == level.slot_count() {
             counts.set(t, Arc::clone(column));
         }
     }
@@ -657,6 +667,17 @@ fn apply_and_held(
     // level quantified or filtered, and, as the setup finds, no marginal
     // level.
     let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
+    // A conjunction that sums, quantifies or filters no level and carries
+    // no weights, built or kept, takes the subtrees at which both operands
+    // are constant true whole from `f`, as the identity fast paths carry
+    // them: the setup finds them (`mark_constant_true`). Most levels of two
+    // diagrams on a large vtree that each mention a few of its variables
+    // are such levels.
+    let find_free = ws.is_none()
+        && targets.is_empty()
+        && quantified.is_empty()
+        && filter.is_none()
+        && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore);
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
@@ -686,7 +707,7 @@ fn apply_and_held(
         eng,
         &vtree,
         Operands { f: &*f, g: &*g },
-        (targets, free),
+        (targets, free, find_free),
         kind,
         levels,
         &mut scratch,
@@ -862,7 +883,7 @@ fn apply_and_held(
                 }
                 #[cfg(debug_assertions)]
                 crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &lists.twin_free);
-                carry_kept_counts(eng, &mut out, lists, &kept);
+                carry_kept_counts(eng, &mut out, (lists, cone), &kept);
                 out
             })
     } else {

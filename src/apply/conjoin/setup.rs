@@ -61,6 +61,10 @@ pub(super) struct Cone<'a> {
     pub(super) leaves: &'a [VtreeIdx],
     /// The node count of the free levels, as the result holds them.
     pub(super) free_nodes: u64,
+    /// Whether both operands are constant true at every free level, as the
+    /// setup found them ([`mark_constant_true`]) rather than as a placement
+    /// left them: each top is then an identity level of both.
+    pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
 }
@@ -654,6 +658,7 @@ fn survey<'r>(
             free: &[],
             leaves,
             free_nodes: 0,
+            constant: false,
             masks,
         };
         let snapshot = Snapshot {
@@ -729,6 +734,7 @@ fn survey<'r>(
         free,
         leaves,
         free_nodes,
+        constant: false,
         masks,
     };
     let snapshot = Snapshot {
@@ -737,6 +743,50 @@ fn survey<'r>(
         might_use_sparse,
     };
     Ok((snapshot, cone))
+}
+
+/// Mark in `out` each internal level at which both operands are constant
+/// true in the shape the builders give a level with no variable of the
+/// diagram under it: one node of one pair, whose side toward a leaf names
+/// the One label of a structural leaf and whose side toward an internal
+/// child names the one node of a level marked so. Whether any level was
+/// marked. Such a level's subtree is the same in both operands, and in their
+/// conjunction, so the conjunction takes it whole as a free region
+/// ([`Cone`]) instead of carrying it level by level.
+///
+/// A level whose children are not both marked or leaves is decided without
+/// reading it.
+fn mark_constant_true(vtree: &Vtree, ops: Operands<&Tdd>, out: &mut [bool]) -> bool {
+    let leaves = vtree.num_leaves() as usize;
+    let mut any = false;
+    for &t in vtree.internal_bottomup_slice() {
+        let (left, right) = vtree.children(t);
+        let (left_leaf, right_leaf) = (left.idx() < leaves, right.idx() < leaves);
+        let true_node = |d: &Tdd| {
+            let level = &d.levels[t.idx()];
+            let leaf_one = |leaf: VtreeIdx, side: EncodedChildRef| {
+                !d.levels[leaf.idx()].is_marginal() && side == ONE_LEAF_IDX.into()
+            };
+            if level.is_marginal() || level.node_count() != 1 {
+                return false;
+            }
+            let mut pairs = level.pairs_iter_of_idx(0);
+            match (pairs.next(), pairs.next()) {
+                (Some(pair), None) => {
+                    (!left_leaf || leaf_one(left, pair.left))
+                        && (!right_leaf || leaf_one(right, pair.right))
+                }
+                _ => false,
+            }
+        };
+        let marked = (left_leaf || out[left.idx()])
+            && (right_leaf || out[right.idx()])
+            && true_node(ops.f)
+            && true_node(ops.g);
+        out[t.idx()] = marked;
+        any |= marked;
+    }
+    any
 }
 
 /// Conservative per-cell byte factor for the apply's product grid:
@@ -785,7 +835,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Tdd>,
-    (targets, free): (VtreeMask<'_>, Operands<VtreeMask<'r>>),
+    (targets, free, find_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -809,6 +859,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         cone,
         lists,
         entry_marginal: marginal,
+        constant,
     } = scratch;
     if f_widths.len() < num_nodes {
         f_widths.resize(num_nodes, 0);
@@ -822,6 +873,23 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
             lim.try_resize(flags, num_nodes, false)?;
         }
     }
+    // The subtrees at which both operands are constant true are free in
+    // `g`, and so taken from `f`.
+    let mut found_free = false;
+    let free = match find_free && free.f.is_empty() && free.g.is_empty() {
+        true => {
+            if constant.len() < num_nodes {
+                lim.try_resize(constant, num_nodes, false)?;
+            }
+            found_free = mark_constant_true(vtree, ops, &mut constant[..num_nodes]);
+            let constant: &'r [bool] = &constant[..num_nodes];
+            Operands {
+                f: VtreeMask::default(),
+                g: VtreeMask::new(found_free.then_some(constant)),
+            }
+        }
+        false => free,
+    };
     let (
         Snapshot {
             total_cells,
@@ -847,6 +915,10 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         ),
         cone,
     )?;
+    let cone = Cone {
+        constant: found_free,
+        ..cone
+    };
     let marginal: &'r Operands<Vec<bool>> = marginal;
     let entry_marginality = EntryMarginality(any_entry_marginal.then_some(Operands {
         f: &marginal.f[..num_nodes],

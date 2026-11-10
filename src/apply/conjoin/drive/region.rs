@@ -31,7 +31,9 @@ pub(super) fn carried_from_f(cone: Cone<'_>, t: usize) -> bool {
 }
 
 /// Take every region into the result: set each top's identity flags as the
-/// sweep would have accreted them, publish its products, and carry the
+/// sweep would have accreted them (true in both operands where the setup
+/// found both constant true there, [`Cone::constant`]), publish its
+/// products, and carry the
 /// carrier's levels of every free internal node into the output
 /// ([`Held::carry`]), building a free level where both operands are free.
 ///
@@ -57,11 +59,11 @@ pub(super) fn take_regions(
         let stack = &mut run.lists.stack;
         let width = if carried_from_f(cone, at) {
             run.g_identity[at] = true;
-            run.f_identity[at] = constant_true(vtree, f, cone, true, t, stack);
+            run.f_identity[at] = cone.constant || constant_true(vtree, f, cone, true, t, stack);
             run.f_widths[at]
         } else {
             run.f_identity[at] = true;
-            run.g_identity[at] = constant_true(vtree, g, cone, false, t, stack);
+            run.g_identity[at] = cone.constant || constant_true(vtree, g, cone, false, t, stack);
             run.g_widths[at]
         };
         publish_identity_level(run.products, at, width);
