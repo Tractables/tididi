@@ -62,8 +62,8 @@ pub(super) struct Cone<'a> {
     /// The node count of the free levels, as the result holds them.
     pub(super) free_nodes: u64,
     /// Whether both operands are constant true at every free level, as the
-    /// setup found them ([`mark_constant_true`]) rather than as a placement
-    /// left them: each top is then an identity level of both.
+    /// conjunction found them ([`mark_constant_true`]) rather than as a
+    /// placement left them: each top is then an identity level of both.
     pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
@@ -325,6 +325,11 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// no operand level, and the levels it carried and lent go back to the
     /// operands.
     pub(super) restoring: bool,
+    /// Whether the result takes `f`'s level array, which keeps `f`'s free
+    /// regions in place: the sweep builds into a side array, which takes
+    /// only each region's top from `f`, and the finish moves the levels it
+    /// visited into `f`'s array (`drive::apply_and_held`).
+    pub(super) adopted: bool,
     /// Whether nothing but pairs changes hands: no weights, no summed-out,
     /// quantified, filtered or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
@@ -756,7 +761,7 @@ fn survey<'r>(
 ///
 /// A level whose children are not both marked or leaves is decided without
 /// reading it.
-fn mark_constant_true(vtree: &Vtree, ops: Operands<&Tdd>, out: &mut [bool]) -> bool {
+pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&Tdd>, out: &mut [bool]) -> bool {
     let leaves = vtree.num_leaves() as usize;
     let mut any = false;
     for &t in vtree.internal_bottomup_slice() {
@@ -835,7 +840,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Tdd>,
-    (targets, free, find_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
+    (targets, free, found_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -860,6 +865,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         lists,
         entry_marginal: marginal,
         constant,
+        side: _,
     } = scratch;
     if f_widths.len() < num_nodes {
         f_widths.resize(num_nodes, 0);
@@ -873,19 +879,15 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
             lim.try_resize(flags, num_nodes, false)?;
         }
     }
-    // The subtrees at which both operands are constant true are free in
-    // `g`, and so taken from `f`.
-    let mut found_free = false;
-    let free = match find_free && free.f.is_empty() && free.g.is_empty() {
+    // The subtrees at which both operands are constant true, where the
+    // caller found some (`mark_constant_true`), are free in `g`, and so
+    // taken from `f`.
+    let free = match found_free {
         true => {
-            if constant.len() < num_nodes {
-                lim.try_resize(constant, num_nodes, false)?;
-            }
-            found_free = mark_constant_true(vtree, ops, &mut constant[..num_nodes]);
             let constant: &'r [bool] = &constant[..num_nodes];
             Operands {
                 f: VtreeMask::default(),
-                g: VtreeMask::new(found_free.then_some(constant)),
+                g: VtreeMask::new(Some(constant)),
             }
         }
         false => free,
@@ -952,6 +954,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         words,
         lists,
         restoring: false,
+        adopted: false,
         plain: false,
         built_marginal: false,
         cone,

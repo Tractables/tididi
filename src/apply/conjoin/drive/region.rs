@@ -82,7 +82,11 @@ pub(super) fn take_regions(
             }
         }
     }
-    for &t in cone.free {
+    // An adopting conjunction leaves `f`'s regions in `f`'s array, which
+    // becomes the result's, and takes only each top, which the levels
+    // above read.
+    let moved = if run.adopted { cone.tops } else { cone.free };
+    for &t in moved {
         let at = t.idx();
         let owned = if carried_from_f(cone, at) {
             f.owned()

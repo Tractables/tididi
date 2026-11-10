@@ -69,6 +69,9 @@ pub(crate) struct ApplyWorkspace {
     /// The levels at which both operands are constant true, where the setup
     /// looks for them (`mark_constant_true`).
     pub(super) constant: Vec<bool>,
+    /// The levels a conjunction that adopts `f`'s level array builds into,
+    /// every one empty between conjunctions (`drive::apply_and_held`).
+    pub(super) side: Vec<crate::diagram::TddLevel>,
 }
 
 impl Buffers for ApplyWorkspace {
@@ -88,6 +91,7 @@ impl Buffers for ApplyWorkspace {
         visit(&mut self.entry_marginal.f);
         visit(&mut self.entry_marginal.g);
         visit(&mut self.constant);
+        visit(&mut self.side);
     }
 }
 

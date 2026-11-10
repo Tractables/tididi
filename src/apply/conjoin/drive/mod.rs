@@ -694,25 +694,47 @@ fn apply_and_held(
             .map(Conjoined::Built);
     }
 
-    let mut assembly = diagram::Assembly::from_levels(
-        eng,
-        Arc::clone(&vtree),
-        diagram::try_take_levels(eng, num_nodes)?,
-        ws,
-    );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
+    let found_free = find_free && free.f.is_empty() && free.g.is_empty() && {
+        lim.try_resize(&mut scratch.constant, num_nodes, false)?;
+        super::setup::mark_constant_true(
+            &vtree,
+            Operands { f: &*f, g: &*g },
+            &mut scratch.constant[..num_nodes],
+        )
+    };
+    // A conjunction that consumes an owned `f` whose free regions it takes
+    // adopts `f`'s level array as the result's: the regions stay where they
+    // are, the sweep builds into the workspace's side array, and the finish
+    // moves the levels the conjunction visited into `f`'s array. No level
+    // outside them is taken from the pool, moved or given back.
+    let adopted = found_free && !keep && !f.is_borrowed();
+    let levels = match adopted {
+        true => {
+            let mut side = std::mem::take(&mut scratch.side);
+            if let Some(missing) = num_nodes.checked_sub(side.len()) {
+                lim.reserve(&mut side, missing)?;
+                side.resize_with(num_nodes, TddLevel::new);
+            }
+            side.truncate(num_nodes);
+            side
+        }
+        false => diagram::try_take_levels(eng, num_nodes)?,
+    };
+    let mut assembly = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, ws);
     let (levels, ws) = assembly.parts_mut();
     let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
     let mut run = apply_and_setup(
         eng,
         &vtree,
         Operands { f: &*f, g: &*g },
-        (targets, free, find_free),
+        (targets, free, found_free),
         kind,
         levels,
         &mut scratch,
     )?;
     run.restoring = keep;
+    run.adopted = adopted;
     let plain = unmarked && !run.entry_marginality.any();
     run.plain = plain;
     debug_assert!(
@@ -856,6 +878,25 @@ fn apply_and_held(
         None
     };
     let lists = run.lists;
+    // An adopting conjunction moves the levels it visited into `f`'s array,
+    // which becomes the result's, and gives the side array back to the
+    // workspace with what it then holds of `f` emptied.
+    let side = match adopted {
+        true => {
+            let f = f.owned().expect("an adopting conjunction owns f");
+            let mut own = std::mem::take(&mut f.levels).into_vec();
+            let levels = assembly.parts_mut().0;
+            for t in cone.nodes() {
+                std::mem::swap(&mut levels[t], &mut own[t]);
+            }
+            std::mem::swap(levels, &mut own);
+            for t in cone.nodes() {
+                own[t] = TddLevel::new();
+            }
+            Some(own)
+        }
+        false => None,
+    };
     let finished = if plain {
         let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, lists.built.len());
         owed.requeue(
@@ -935,6 +976,9 @@ fn apply_and_held(
             Some(&recorded),
             "conjunction",
         );
+    }
+    if let Some(side) = side {
+        scratch.side = side;
     }
     match summed {
         // The marks the marginalization pass leaves, which installs each

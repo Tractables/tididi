@@ -219,7 +219,16 @@ fn fill_free_cow(tdd: &mut Cow<'_, Tdd>, free: VtreeMask<'_>) {
 /// done with it; a borrowed operand is the caller's.
 fn recycle(eng: &Engine, tdd: Cow<'_, Tdd>) {
     if let Cow::Owned(mut tdd) = tdd {
-        diagram::return_levels(eng, std::mem::take(&mut tdd.levels).into_vec());
+        return_levels_of(eng, &mut tdd);
+    }
+}
+
+/// Return `tdd`'s level array to the pool, unless a conjunction that
+/// adopted it left none.
+fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
+    let levels = std::mem::take(&mut tdd.levels).into_vec();
+    if !levels.is_empty() {
+        diagram::return_levels(eng, levels);
     }
 }
 
@@ -373,8 +382,8 @@ fn conjoin_recycling_as(
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
     let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, mode, Operands::default());
-    diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
-    diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
+    return_levels_of(eng, &mut f);
+    return_levels_of(eng, &mut g);
     result
 }
 
