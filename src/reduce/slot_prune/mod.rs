@@ -78,6 +78,25 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
             tdd.reindex_level(lim, v, &[], &mut [], true)?;
             continue;
         }
+        // A bounded weighted column under a parent described over two or
+        // more pairs a node, all of whose slots the description names within
+        // the column, is left as it is: merging two of its slots or dropping
+        // one would store the parent. A parent of one pair a node holds its
+        // pairs in its node words, which the close describes again.
+        if tdd.weights.as_ref().is_some_and(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal())
+            && tdd.levels[v.idx()].slot_count() == store_len
+            && let Some(d) = tdd.levels[parent.idx()].implicit()
+            && d.pairs_per_node() >= 2
+        {
+            let (lo, hi) = d.slot_range();
+            let (lo, hi) = match side {
+                crate::diagram::ChildSide::Left => (lo.0, hi.0),
+                crate::diagram::ChildSide::Right => (lo.1, hi.1),
+            };
+            if lo >= 0 && (hi as usize) < store_len {
+                continue;
+            }
+        }
 
         slots.reserve(lim, store_len)?;
         remap.clear();

@@ -218,11 +218,14 @@ fn build_level(
         // is touched: the marginal plan and the two gates read only metadata.
         let marginal = run.level_marginal(f, g, shape, sweep.targets);
         let plan = plan_marginal_level(f, g, shape, run, &marginal);
-        let route = route_level(
+        let mut route = route_level(
             &plan,
             &marginal,
             run.sparse_gate(shape, f.level(t), g.level(t)),
         );
+        if describes_marginal_child(eng, run, (f, g), sweep, shape, (&plan, &marginal), route) {
+            route = Route::MarginalChild;
+        }
         route.validate(f, g, shape, &marginal, run)?;
         note_route(t, route);
 
@@ -280,6 +283,57 @@ fn build_level(
     // reuse, before the next iteration's own reserve fires.
     run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
     Ok(())
+}
+
+/// Whether a level the sparse routes were chosen for, with a marginal child
+/// and not summed out, takes the marginal-child route instead, so that its
+/// pairs are written as their description ([`compose::plan_marginal`]):
+/// under bounded-precision weights, where the operand levels are affine and
+/// each child side is complete or carried. Such a level is every cell of
+/// its grid, which the sparse routes would find one product at a time.
+fn describes_marginal_child(
+    eng: &Engine,
+    run: &ApplyRun,
+    (f, g): (&Tdd, &Tdd),
+    sweep: &Sweep<'_, '_>,
+    shape: LevelShape,
+    (plan, marginal): (&MarginalPlan, &LevelMarg),
+    route: Route,
+) -> bool {
+    let (t, li, ri) = (shape.t, shape.left.idx(), shape.right.idx());
+    if !matches!(route, Route::Sparse | Route::SparseMarg)
+        || !(marginal.left_any || marginal.right_any)
+        || marginal.is_target
+        || !sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
+        || sweep.filter.is_some()
+        || crate::diagram::stored_levels_forced()
+        || grid_lookups_forced()
+    {
+        return false;
+    }
+    let complete = Sides {
+        left: run.products.is_complete(li),
+        right: run.products.is_complete(ri),
+    };
+    let bases = Sides {
+        left: run.products.arena.materialized(li),
+        right: run.products.arena.materialized(ri),
+    };
+    let grouped = plan.both_multi_pair
+        && !plan.sides.left.is_passthrough()
+        && !plan.sides.right.is_passthrough();
+    compose::plan_marginal(
+        eng.limits(),
+        f.level(t),
+        g.level(t),
+        shape,
+        plan.sides,
+        complete,
+        grouped,
+        run.products.arena.slab(),
+        bases,
+    )
+    .is_some()
 }
 
 /// Note in [`ApplyRun::as_operand`] the level `t` just built when it holds

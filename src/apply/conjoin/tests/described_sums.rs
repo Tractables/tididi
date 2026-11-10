@@ -254,3 +254,103 @@ fn conditioned_and_empty_products_match_the_cells() {
         same_both_ways(&parts, &targets_up_to(&vtree, h));
     }
 }
+
+/// The two operands of [`carried_marginal_children_match_the_cells`] on a
+/// balanced vtree of `n` variables, under uniform weights, whose summed
+/// values repeat: the product of three affine functions with the subtrees
+/// of height at most 3 below the left child of every node of height 4
+/// summed out, minimized, and a fourth affine function with those
+/// subtrees' variables quantified away. Returns the vtree, the operands
+/// and the nodes of height 4.
+fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) {
+    let mut rng = Lcg::new(seed);
+    let vtree = Arc::new(Vtree::balanced(n));
+    let eng = Engine::new();
+    let half = LiteralWeights {
+        negative: rat(1, 2),
+        positive: rat(1, 2),
+    };
+    let uniform = RationalWeights::from_literals(&vec![half; n as usize]);
+    let store = WeightStore::new(uniform, Arithmetic::ScaledFloat);
+    let factors: Vec<Tdd> = (0..4)
+        .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))
+        .collect();
+    let weighted = |mut f: Tdd| {
+        f.set_weights(store.empty_like()).unwrap();
+        f
+    };
+    let f02 = weighted(eng.and(&factors[0], &factors[2]).unwrap());
+    let f1 = weighted(factors[1].clone());
+    let h3 = targets_up_to(&vtree, 3);
+    let h4: Vec<VtreeIdx> = targets_up_to(&vtree, 4)
+        .into_iter()
+        .filter(|t| !h3.contains(t))
+        .collect();
+    let (mut low, mut low_vars) = (Vec::new(), Vec::new());
+    for &p in &h4 {
+        let l = vtree.children(p).0;
+        let (ll, lr) = vtree.children(l);
+        let (lll, llr) = vtree.children(ll);
+        let (lrl, lrr) = vtree.children(lr);
+        for u in [lll, llr, lrl, lrr] {
+            let (a, b) = vtree.children(u);
+            low_vars.extend([vtree.leaf_var(a), vtree.leaf_var(b)]);
+        }
+        low.extend([lll, llr, lrl, lrr, ll, lr, l]);
+    }
+    let third = weighted(eng.exists_vars(factors[3].clone(), &low_vars).unwrap());
+    let mut partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
+    partial.minimize().unwrap();
+    (vtree, partial, third, h4)
+}
+
+/// Marginalization in two steps: a first conjunction sums out low subtrees
+/// and is minimized, which keeps its multi-pair levels over the summed
+/// children described although equal weights repeat their values; a second
+/// conjunction sums out higher levels over those children, carried or
+/// summed in it, off their descriptions, as the row loop sums them. The
+/// conjunction of the two operands with nothing summed holds the value the
+/// stored levels give.
+#[test]
+fn carried_marginal_children_match_the_cells() {
+    let run = |n: u32, seed: u64| {
+        let (vtree, partial, third, h4) = carried_operands(n, seed);
+        crate::test_helpers::assert_canonical(&partial);
+        for &p in &h4 {
+            assert!(
+                partial.levels[p.idx()].implicit().is_some(),
+                "minimizing a summed child stored its parent at level {}",
+                p.idx()
+            );
+        }
+        let value = |a: &Tdd, b: &Tdd| {
+            let eng = Engine::new();
+            let both = eng.and(a, b).unwrap();
+            crate::test_helpers::assert_canonical(&both);
+            let value = eng.weighted_value(&both).unwrap().unwrap();
+            value.as_scaled().expect("a scaled value").to_f64()
+        };
+        let described = value(&partial, &third);
+        let stored = crate::test_helpers::stored_levels(|| {
+            let (_, partial, third, _) = carried_operands(n, seed);
+            value(&partial, &third)
+        });
+        assert!(
+            (described - stored).abs() <= 1e-12 * stored.abs(),
+            "described {described} against stored {stored}"
+        );
+        let depth = n.ilog2() as usize + 1;
+        for h in 4..=depth {
+            let high = targets_up_to(&vtree, h);
+            same_both_ways(&[partial.clone(), third.clone()], &high);
+            same_both_ways(&[third.clone(), partial.clone()], &high);
+        }
+    };
+    assert_described_sums_advance(
+        "no level over carried summed children was summed off its description",
+        || {
+            run(32, 0x5d_0030);
+            with_floor(2, || run(32, 0x5d_0031));
+        },
+    );
+}

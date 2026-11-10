@@ -1450,13 +1450,11 @@ pub(super) fn build_level_dense(
             .expect("the right child's grid is materialized"),
     };
 
-    let mut lookups = plain_lookups(
-        route,
-        Sides {
-            left: run.products.is_complete(li),
-            right: run.products.is_complete(ri),
-        },
-    );
+    let complete = Sides {
+        left: run.products.is_complete(li),
+        right: run.products.is_complete(ri),
+    };
+    let mut lookups = plain_lookups(route, complete);
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
     // the materialized child grids, and either flag implies a route that has them.
     // With both sides complete no mask can clear, and the row loop reads none; on a
@@ -1490,30 +1488,24 @@ pub(super) fn build_level_dense(
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
-    // A summed level of two affine operand levels over complete child grids
-    // is summed off the description of its pairs, where its child columns
-    // keep every product a float; the row loop sums any other. The
-    // description's words are the operands' pair words, which the row loop
-    // reads as they are through a structural view, and through the
-    // marginal view of a child summed in this apply with bit 30 cleared
-    // (`ChildDecoder::coord`), which leaves the words of operand levels
-    // structural at entry and narrower than 2^30 as they are.
-    let as_they_are = |c: usize, widths: (usize, usize), view: crate::diagram::ChildDecoder| {
-        !view.is_marginal()
-            || (!run.entry_marginality.either(c) && widths.0.max(widths.1) <= 1 << 30)
-    };
+    // A summed level of two affine operand levels over child sides that are
+    // each complete or carried is summed off the description of its pairs,
+    // where its child columns keep every product a float; the row loop sums
+    // any other. The summing reads each word of the description as a slot of
+    // its child column, and sums nothing where a word lies past the column
+    // (`run_level_described_stream`): a column holds fewer than 2^30 values,
+    // so a word it reads has bit 30 clear and is the slot the row loop reads
+    // under either child view.
     if let Some(StreamLevelState::Float(values)) = &mut stream_state
         && sweep.filter.is_none()
-        && !passthrough.left
-        && !passthrough.right
-        && as_they_are(li, (fw.left, gw.left), sides.left.view)
-        && as_they_are(ri, (fw.right, gw.right), sides.right.view)
         && !crate::diagram::stored_levels_forced()
         && let Some((product, work)) = super::compose::plan_sums(
             lim,
             f.level(t),
             g.level(t),
             shape,
+            sides,
+            complete,
             grouped,
             run.products.arena.slab(),
             bases,
@@ -1567,15 +1559,42 @@ pub(super) fn build_level_dense(
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases, (lookups, pairs))?;
     }
     // A level of two complete sides whose operand levels are affine takes
-    // the implicit route; any other reads its operands' pairs, an implicit
-    // operand's generated from its description.
-    let composed = (matches!(lookups, PlainLookups::Complete { .. })
-        && !use_sparse_marginal
-        && stream_state.is_none()
-        && sweep.filter.is_none()
-        && !crate::diagram::stored_levels_forced())
-    .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, grouped))
-    .flatten();
+    // the implicit route. Under bounded-precision weights a level of the
+    // marginal-child route takes it too, over child sides that are each
+    // complete or carried: its marginal sides name slots of value columns,
+    // which the end of the apply leaves as they are. Any other level reads
+    // its operands' pairs, an implicit operand's generated from its
+    // description.
+    let plain = matches!(route, Route::PlainDense | Route::Dense);
+    let composed = if use_sparse_marginal
+        || stream_state.is_some()
+        || sweep.filter.is_some()
+        || crate::diagram::stored_levels_forced()
+    {
+        None
+    } else if matches!(lookups, PlainLookups::Complete { .. }) {
+        super::compose::plan(lim, f.level(t), g.level(t), shape, grouped)
+    } else if route == Route::MarginalChild
+        && !grid_lookups_forced()
+        && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
+    {
+        super::compose::plan_marginal(
+            lim,
+            f.level(t),
+            g.level(t),
+            shape,
+            sides,
+            complete,
+            grouped,
+            run.products.arena.slab(),
+            Sides {
+                left: Some(bases.left),
+                right: Some(bases.right),
+            },
+        )
+    } else {
+        None
+    };
     // The arenas the implicit route opened before it found it would have to
     // stop inside the level, or grow the arena in bounded steps, which the
     // row loop does on the written pairs: the capacity the meter was charged
@@ -1596,7 +1615,9 @@ pub(super) fn build_level_dense(
             } else {
                 level.pairs.capacity()
             };
-            note_lookups(PlainLookups::Complete { charged });
+            if plain {
+                note_lookups(PlainLookups::Complete { charged });
+            }
             let (work, meter, doublings) =
                 super::compose::charges((fw.here, gw.here), &product, charged);
             if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
@@ -1618,7 +1639,13 @@ pub(super) fn build_level_dense(
                 )?;
                 break 'routes;
             }
-            opened = Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?);
+            // A level of the marginal-child route reads its sides from their
+            // grids and grows its arenas as the row loop writes them.
+            opened = Some(if plain {
+                Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?)
+            } else {
+                None
+            });
         }
 
         // `t` and its two vtree children are three distinct tree nodes, so these
@@ -1655,7 +1682,8 @@ pub(super) fn build_level_dense(
         );
 
         match opened {
-            Some(charged) => lookups = PlainLookups::Complete { charged },
+            Some(Some(charged)) => lookups = PlainLookups::Complete { charged },
+            Some(None) => note_lookups(lookups),
             None => {
                 open_level_arenas(lim, f, g, shape, level, route)?;
                 if let PlainLookups::Complete { charged }
