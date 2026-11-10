@@ -1021,9 +1021,11 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
 
 /// Move the levels of a structural diagram onto the destination and build
 /// what it adds, as [`assemble`] does with copies; the diagram comes back,
-/// levels in place, when the result's storage is refused. A borrowed
-/// diagram, which has no weights, has its levels copied into the
-/// destination's instead, and a refusal drops the copies.
+/// levels and worklists in place, when the result's storage is refused. A
+/// borrowed diagram, which has no weights, has its levels copied into the
+/// destination's instead, and a refusal drops the copies. The result takes
+/// a moved diagram's worklists, and a copy of a borrowed one's, once nothing
+/// is left to refuse.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -1036,24 +1038,6 @@ fn assemble_moving<'a>(
     free: Free,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
-    // A moved level keeps its nodes and, through the pass-throughs and the
-    // renumbered literal chains, the identities of its children's, so it
-    // owes the contraction passes what it owed in `tdd`. New pass-through
-    // nodes have distinct child identities, and free levels have one node,
-    // so neither introduces twins. A later child contraction queues its parents.
-    let mut listed = Vec::new();
-    let carried = eng
-        .limits()
-        .reserve_exact(&mut listed, into.num_nodes())
-        .and_then(|()| tdd.dirty.clone_on(eng));
-    let mut carried = match carried {
-        Ok(carried) => carried,
-        Err(e) => return Err((e, tdd)),
-    };
-    carried.remap(&plan.embedding.levels);
-    // The images of the levels that may hold a node no pair of their parent
-    // level names, from which `moved_loose` lists the result's.
-    let loose = carried.loose().map(<[u32]>::to_vec);
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -1093,7 +1077,9 @@ fn assemble_moving<'a>(
             Ok(tops) => tops,
             Err(e) => return Err(refuse(e, placement, tdd)),
         };
-    let mut result = match placement.seat(tdd.output().local, carried) {
+    // Seated owing nothing: `tdd` keeps its worklists until the last
+    // refusal is behind, which leaves nothing to put back.
+    let mut result = match placement.seat(tdd.output().local, crate::diagram::Dirty::default()) {
         Ok(result) => result,
         Err((e, placement)) => return Err(refuse(e, placement, tdd)),
     };
@@ -1106,6 +1092,23 @@ fn assemble_moving<'a>(
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
+    // Room for the result's loose levels where `tdd`'s are known and some
+    // may be listed, then the worklists: a moved diagram's own, a borrowed
+    // one's copied.
+    let mut listed = Vec::new();
+    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || !literal_tops.is_empty());
+    let carried = match listing {
+        true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
+        false => Ok(()),
+    }
+    .and_then(|()| match &mut tdd {
+        Cow::Owned(moved) => Ok(moved.take_worklists()),
+        Cow::Borrowed(source) => source.dirty.clone_on(eng),
+    });
+    let mut carried = match carried {
+        Ok(carried) => carried,
+        Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
+    };
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
@@ -1114,6 +1117,18 @@ fn assemble_moving<'a>(
     if !literal_tops.is_empty() {
         result.close_marked_levels(closed);
     }
+    // A moved level keeps its nodes and, through the pass-throughs and the
+    // renumbered literal chains, the identities of its children's, so it
+    // owes the contraction passes what it owed in `tdd`, at its image. New
+    // pass-through nodes have distinct child identities, and free levels
+    // have one node, so neither introduces twins. A later child contraction
+    // queues its parents. The lists are bounded as a seat bounds an
+    // assembly's.
+    let loose = carried.take_loose();
+    carried.remap(&plan.embedding.levels);
+    carried.dedup_above(into.num_nodes());
+    debug_assert!(result.dirty.is_empty(), "a seat that rebuilt nothing owes nothing");
+    result.dirty = carried;
     if let Some(mut loose) = loose {
         loose.sort_unstable();
         literal_tops.sort_unstable();
@@ -1215,8 +1230,8 @@ fn build_embedded_levels(
 
 /// The levels of [`assemble_moving`]'s result that may hold a node no pair
 /// of their parent level names, pushed to `out` bottom-up, given `loose`,
-/// the images of the source's such levels, and `literal_tops`, the tops of
-/// the pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
+/// the source's such levels, and `literal_tops`, the tops of the
+/// pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
 /// `source` is the vtree the levels were moved from; the walk visits the
 /// images of its internal nodes and the chains under them, not the levels
 /// built with no source variable under them.
@@ -1257,7 +1272,10 @@ fn moved_loose(
             }
             let named_whole = match into.node(foot).is_leaf() {
                 true => literal_tops.binary_search(&top).is_err(),
-                false => loose.binary_search(&foot.0).is_err(),
+                false => {
+                    let from = plan.covered_by[foot.idx()].expect("a chain's foot off a leaf is an image");
+                    loose.binary_search(&from.0).is_err()
+                }
             };
             if !named_whole {
                 out.push(top.0);

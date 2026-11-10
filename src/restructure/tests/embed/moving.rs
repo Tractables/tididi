@@ -149,17 +149,39 @@ fn source_and_destination() -> (Tdd, Arc<Vtree>, impl Fn(VarId) -> VarId + Copy)
     (f, Arc::new(Vtree::linear(12)), |v: VarId| VarId(2 * v.0))
 }
 
+/// `f` owing the reduction passes work, as an unreduced result does: every
+/// internal level queued on each pass, its loose levels listed out of
+/// order, and one level's pair fusion recorded.
+fn owe_work(eng: &Engine, f: &mut Tdd) {
+    let internal = f.vtree().internal_bottomup_slice().to_vec();
+    for &t in internal.iter().rev() {
+        f.invalidate(t);
+    }
+    f.dirty.set_loose(Some(internal.iter().rev().map(|t| t.0).collect()));
+    f.dirty.set_fused(eng, internal[0].0);
+}
+
 /// Refuse the embedding at each point `arm` picks in turn, checking that
 /// every refusal hands the diagram back unchanged, stored and known as it
-/// was given ([`known`]), until one is granted.
+/// was given ([`known`]), until one is granted, and that the granted one
+/// owes the reduction passes what the diagram owed, at the images.
 ///
 /// With `mirror`, onto the destination with some children swapped, by
-/// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts.
-fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>, mirror: bool, counts: bool) -> usize {
+/// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts;
+/// with `owing`, the diagram owing work ([`owe_work`]).
+fn refuse_at_every_point(
+    arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>,
+    mirror: bool,
+    counts: bool,
+    owing: bool,
+) -> usize {
     let eng = Engine::new();
     let (mut f, big, map) = source_and_destination();
     if counts {
         eng.attach_level_counts(&mut f).unwrap();
+    }
+    if owing {
+        owe_work(&eng, &mut f);
     }
     let (canonical, closed, kept, _) = known(&f);
     assert!(canonical && closed && kept == counts, "a diagram certified, closed and keeping counts as the test needs");
@@ -182,8 +204,15 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
         drop(scope);
         eng.limits().grant_every_reserve();
         match outcome {
-            Ok((out, _)) => {
+            Ok((out, embedding)) => {
                 assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
+                let mut owed = f.dirty.clone();
+                owed.take_loose();
+                owed.remap(&embedding.levels);
+                owed.dedup_above(big.num_nodes());
+                let mut carried = out.dirty.clone();
+                carried.take_loose();
+                assert_eq!(format!("{carried:?}"), format!("{owed:?}"), "granted at {n}: other worklists");
                 break;
             }
             Err(refused) => {
@@ -199,7 +228,7 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
 
 #[test]
 fn every_refused_reserve_gives_the_diagram_back() {
-    for (mirror, counts) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (mirror, counts, owing) in [(false, false, false), (true, false, false), (false, true, false), (true, true, true), (false, false, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
                 eng.limits().refuse_nth_reserve(n as u32);
@@ -207,6 +236,7 @@ fn every_refused_reserve_gives_the_diagram_back() {
             },
             mirror,
             counts,
+            owing,
         );
         assert!(refusals >= 2, "only {refusals} refusal points, mirror {mirror}");
     }
@@ -214,7 +244,7 @@ fn every_refused_reserve_gives_the_diagram_back() {
 
 #[test]
 fn every_stop_gives_the_diagram_back() {
-    for (mirror, counts) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (mirror, counts, owing) in [(false, false, false), (true, false, false), (false, true, false), (true, true, true), (false, false, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
                 let at = eng.limits().work_units() + n;
@@ -223,6 +253,7 @@ fn every_stop_gives_the_diagram_back() {
             },
             mirror,
             counts,
+            owing,
         );
         assert!(refusals >= 1, "no stop point, mirror {mirror}");
     }
