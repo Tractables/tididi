@@ -35,6 +35,7 @@ mod operators;
 mod compose;
 mod substitute;
 mod prefix_fold;
+mod runs;
 
 pub use add::add;
 pub(crate) use conjoin::apply_and;

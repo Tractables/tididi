@@ -477,36 +477,20 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
             // A count level: a copy of each node of `f`, then of `g`.
             let (fw, gw) = (fl.slot_count(), gl.slot_count());
             for (level, width, of_g) in [(fl, fw, false), (gl, gw, true)] {
-                lim.reserve_exact(
-                    if of_g {
-                        &mut pieces.g_start
-                    } else {
-                        &mut pieces.f_start
-                    },
-                    width + 1,
-                )?;
+                pieces.side_mut(of_g).begin_exact(lim, width)?;
                 for a in 0..width {
                     pairs.clear();
                     rewrite_node(eng, level, a, (&ls, &rs), of_g, &mut pairs, &mut poll)?;
                     crate::diagram::sort_pairs(&mut pairs);
                     let o = out.push_node(lim, &pairs)?.0;
-                    let (start, items_len) = match of_g {
-                        true => (&mut pieces.g_start, pieces.g_items.len()),
-                        false => (&mut pieces.f_start, pieces.f_items.len()),
-                    };
-                    start.push(lim.list_index(items_len)?);
                     let (f_node, g_node) = if of_g {
                         (ABSENT, a as u32)
                     } else {
                         (a as u32, ABSENT)
                     };
                     pieces.push_piece(lim, o, f_node, g_node, of_g)?;
+                    pieces.side_mut(of_g).close(lim)?;
                 }
-                let (start, items) = match of_g {
-                    true => (&mut pieces.g_start, &pieces.g_items),
-                    false => (&mut pieces.f_start, &pieces.f_items),
-                };
-                start.push(lim.list_index(items.len())?);
             }
             poll.flush()?;
         }

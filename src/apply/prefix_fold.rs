@@ -20,6 +20,8 @@ use crate::diagram::{
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
+use super::runs::Runs;
+
 /// The values a prefix fold combines ([`Engine::prefix_fold`]): each model
 /// of the value block stands for a value, and `⊕` combines two values. `⊕`
 /// is commutative and associative, so the fold of a set of models does not
@@ -680,12 +682,11 @@ impl Coding {
     }
 }
 
-/// Sets of nodes of one level, each held once: sorted node indices, laid
-/// end to end.
+/// Sets of nodes of one level, each held once: sorted node indices, set
+/// `id` as run `id`.
 #[derive(Default)]
 struct Sets {
-    items: Vec<u32>,
-    ranges: Vec<[u32; 2]>,
+    sets: Runs<u32>,
     /// The first set with each hash, and per set the next one with its hash.
     first: FxHashMap<u64, u32>,
     next: Vec<u32>,
@@ -693,8 +694,7 @@ struct Sets {
 
 impl Sets {
     fn get(&self, id: u32) -> &[u32] {
-        let [start, len] = self.ranges[id as usize];
-        &self.items[start as usize..(start + len) as usize]
+        self.sets.run(id as usize)
     }
 
     /// The id of sorted, distinct `nodes`.
@@ -711,11 +711,11 @@ impl Sets {
             last = at;
             at = self.next[at as usize];
         }
-        let id = lim.list_index(self.ranges.len())?;
-        let range = span_of(lim, self.items.len(), self.items.len() + nodes.len())?;
-        lim.reserve(&mut self.items, nodes.len())?;
-        self.items.extend_from_slice(nodes);
-        lim.try_push(&mut self.ranges, range)?;
+        // A set may be empty, so the ids are bounded apart from the items.
+        let id = lim.list_index(self.sets.runs())?;
+        lim.reserve(&mut self.sets.items, nodes.len())?;
+        self.sets.items.extend_from_slice(nodes);
+        self.sets.close(lim)?;
         lim.try_push(&mut self.next, NONE)?;
         match last {
             NONE => {
@@ -738,14 +738,22 @@ struct Level {
     index: FxHashMap<[u32; 3], u32>,
     /// The sets the states name, per operand.
     sets: [Sets; 2],
-    /// Per state, its moves to the next level: a label (a literal or a
-    /// product on the key's side) and the next level's state, or below the
-    /// chain the fold's place in `Fold::reached`.
-    moves: Vec<[u32; 2]>,
-    ranges: Vec<[u32; 2]>,
+    /// Per state, its moves to the next level, as the state's run: a label
+    /// (a literal or a product on the key's side) and the next level's
+    /// state, or below the chain the fold's place in `Fold::reached`.
+    moves: Runs<[u32; 2]>,
 }
 
 impl Level {
+    /// A level with no state, its sets begun.
+    fn new(lim: &Limits) -> Result<Level, OperationError> {
+        let mut level = Level::default();
+        for sets in &mut level.sets {
+            sets.sets.begin(lim)?;
+        }
+        Ok(level)
+    }
+
     fn add(&mut self, lim: &Limits, state: [u32; 3]) -> Result<u32, OperationError> {
         if let Some(&id) = self.index.get(&state) {
             return Ok(id);
@@ -758,8 +766,7 @@ impl Level {
     }
 
     fn moves_of(&self, s: usize) -> &[[u32; 2]] {
-        let [start, len] = self.ranges[s];
-        &self.moves[start as usize..(start + len) as usize]
+        self.moves.run(s)
     }
 }
 
@@ -770,11 +777,10 @@ impl Level {
 #[derive(Default)]
 struct Products {
     /// The products, those of one node of `points` together, each with its
-    /// pairs and, once it is built, its node in the result.
+    /// pairs as its run and, once it is built, its node in the result.
     index: FxHashMap<[u32; 2], u32>,
     keys: Vec<[u32; 2]>,
-    pairs: Vec<[u32; 2]>,
-    ranges: Vec<[u32; 2]>,
+    pairs: Runs<[u32; 2]>,
     /// Per node of `points`, its run of products.
     of_a: FxHashMap<u32, [u32; 2]>,
     /// The products a move reaches, and those below them.
@@ -784,8 +790,7 @@ struct Products {
 
 impl Products {
     fn pairs_of(&self, p: usize) -> &[[u32; 2]] {
-        let [start, len] = self.ranges[p];
-        &self.pairs[start as usize..(start + len) as usize]
+        self.pairs.run(p)
     }
 
     /// The products of node `a` of `points`.
@@ -977,7 +982,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     fn descend(&mut self) -> Result<(), OperationError> {
         let (r, m) = (self.layout.path.len(), self.layout.chain.len());
         self.lim.reserve(&mut self.levels, r + m)?;
-        self.levels.extend((0..r + m).map(|_| Level::default()));
+        for _ in 0..r + m {
+            self.levels.push(Level::new(self.lim)?);
+        }
         self.lim.reserve(&mut self.products, r)?;
         self.products.extend((0..r).map(|_| KeySide::default()));
         self.lim
@@ -1004,19 +1011,17 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         let vtree = ops[0].vtree();
         let leaf_key = vtree.node(x).is_leaf();
         let lim = self.lim;
-        // Per state and operand, its groups: a key and the set it leads to.
-        let mut groups: Vec<[u32; 2]> = Vec::new();
-        let mut spans: Vec<[u32; 4]> = Vec::new();
+        // Per state `s` and operand `side`, as run `2 * s + side`, its
+        // groups: a key and the set it leads to.
+        let mut groups: Runs<[u32; 2]> = Runs::default();
         let mut scratch: Vec<[u32; 2]> = Vec::new();
         let mut buf: Vec<u32> = Vec::new();
-        {
+        let states = {
             let (here, below) = self.levels.split_at_mut(at + 1);
             let (here, below) = (&here[at], &mut below[0]);
-            lim.reserve(&mut spans, here.states.len())?;
+            groups.begin_exact(lim, 2 * here.states.len())?;
             for state in &here.states {
-                let mut span = [0u32; 4];
                 for side in 0..2 {
-                    let start = groups.len();
                     let nodes = here.sets[side].get(state[side]);
                     scratch.clear();
                     for &n in nodes {
@@ -1046,29 +1051,22 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                             i += 1;
                         }
                         let set = below.sets[side].intern(lim, &buf)?;
-                        lim.try_push(&mut groups, [key, set])?;
+                        groups.push(lim, [key, set])?;
                     }
-                    let [first, len] = span_of(lim, start, groups.len())?;
-                    span[2 * side] = first;
-                    span[2 * side + 1] = len;
+                    groups.close(lim)?;
                 }
-                spans.push(span);
             }
-        }
-        let range = |span: &[u32; 4], side: usize| {
-            let start = span[2 * side] as usize;
-            start..start + span[2 * side + 1] as usize
+            here.states.len()
         };
         // The products on an internal key's side.
         let top = match leaf_key {
             true => NONE,
             false => {
                 let mut roots: [Vec<u32>; 2] = Default::default();
-                for span in &spans {
-                    for (side, roots) in roots.iter_mut().enumerate() {
-                        lim.reserve(roots, span[2 * side + 1] as usize)?;
-                        roots.extend(groups[range(span, side)].iter().map(|g| g[0]));
-                    }
+                for k in 0..groups.runs() {
+                    let (run, into) = (groups.run(k), &mut roots[k % 2]);
+                    lim.reserve(into, run.len())?;
+                    into.extend(run.iter().map(|g| g[0]));
                 }
                 self.conjoin(at, x, roots)?;
                 self.slot[x.idx()]
@@ -1077,11 +1075,10 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         let (here, below) = self.levels.split_at_mut(at + 1);
         let (here, below) = (&mut here[at], &mut below[0]);
         let mut used: Vec<u32> = Vec::new();
-        lim.reserve(&mut here.ranges, spans.len())?;
-        for span in &spans {
-            let start = here.moves.len();
-            let gbs = &groups[range(span, 1)];
-            for ga in &groups[range(span, 0)] {
+        here.moves.begin_exact(lim, states)?;
+        for s in 0..states {
+            let gbs = groups.run(2 * s + 1);
+            for ga in groups.run(2 * s) {
                 // The groups of `values` whose key meets `ga`'s, each with
                 // its label: on a leaf the literal both hold, else their
                 // product, from the products of `ga`'s key or from the
@@ -1090,7 +1087,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     if let Ok(i) = gbs.binary_search_by_key(&ga[0], |g| g[0]) {
                         self.gate.poll(1)?;
                         let next = below.add(lim, [ga[1], gbs[i][1], NONE])?;
-                        lim.try_push(&mut here.moves, [ga[0], next])?;
+                        here.moves.push(lim, [ga[0], next])?;
                     }
                     continue;
                 }
@@ -1101,7 +1098,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         self.gate.poll(1)?;
                         if let Ok(i) = gbs.binary_search_by_key(&side.keys[p][1], |g| g[0]) {
                             let next = below.add(lim, [ga[1], gbs[i][1], NONE])?;
-                            lim.try_push(&mut here.moves, [p as u32, next])?;
+                            here.moves.push(lim, [p as u32, next])?;
                             lim.try_push(&mut used, p as u32)?;
                         }
                     }
@@ -1110,13 +1107,13 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         self.gate.poll(1)?;
                         if let Some(&p) = side.index.get(&[ga[0], gb[0]]) {
                             let next = below.add(lim, [ga[1], gb[1], NONE])?;
-                            lim.try_push(&mut here.moves, [p, next])?;
+                            here.moves.push(lim, [p, next])?;
                             lim.try_push(&mut used, p)?;
                         }
                     }
                 }
             }
-            here.ranges.push(span_of(lim, start, here.moves.len())?);
+            here.moves.close(lim)?;
         }
         if !leaf_key {
             self.mark_used(at, top as usize, &used)?;
@@ -1155,6 +1152,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             let (cl, cr) = (child_slot(vtree, slot, tl), child_slot(vtree, slot, tr));
             let (below, here) = side.at.split_at_mut(k);
             let here = &mut here[0];
+            here.pairs.begin(lim)?;
             // The pairs of `values` there, by their left child.
             b_pairs.clear();
             for &nb in &reach[1][k] {
@@ -1252,14 +1250,13 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 let mut i = 0;
                 while i < found.len() {
                     let nb = found[i][0];
-                    let start = here.pairs.len();
                     while i < found.len() && found[i][0] == nb {
-                        lim.try_push(&mut here.pairs, [found[i][1], found[i][2]])?;
+                        here.pairs.push(lim, [found[i][1], found[i][2]])?;
                         i += 1;
                     }
+                    here.pairs.close(lim)?;
                     let id = lim.list_index(here.keys.len())?;
                     lim.try_push(&mut here.keys, [na, nb])?;
-                    lim.try_push(&mut here.ranges, span_of(lim, start, here.pairs.len())?)?;
                     lim.reserve_map(&mut here.index, 1)?;
                     here.index.insert([na, nb], id);
                 }
@@ -1388,7 +1385,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         let (lim, ops) = (self.lim, self.ops);
         let mut halves: [[Vec<u32>; 2]; 2] = Default::default();
         let n = self.levels[at].states.len();
-        lim.reserve(&mut self.levels[at].ranges, n)?;
+        self.levels[at].moves.begin_exact(lim, n)?;
         for s in 0..n {
             let state = self.levels[at].states[s];
             // Per operand, the nodes below with `order[j]` false, then true.
@@ -1414,7 +1411,6 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     half.dedup();
                 }
             }
-            let start = self.levels[at].moves.len();
             let descending = self.range.descending();
             for (bit, lit) in [(0, NEG_LEAF_IDX.0), (1, POS_LEAF_IDX.0)] {
                 if halves[0][bit].is_empty() {
@@ -1463,10 +1459,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                         below.add(lim, [a, b, passed])?
                     }
                 };
-                lim.try_push(&mut self.levels[at].moves, [lit, next])?;
+                self.levels[at].moves.push(lim, [lit, next])?;
             }
-            let here = &mut self.levels[at];
-            here.ranges.push(span_of(lim, start, here.moves.len())?);
+            self.levels[at].moves.close(lim)?;
         }
         Ok(())
     }
@@ -1533,7 +1528,8 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         // The levels, bottom-up: per state, the nodes its moves lead to.
         let (r, m) = (layout.path.len(), layout.chain.len());
         let mut root = Vec::new();
-        let mut below: (Vec<u32>, Vec<[u32; 2]>) = (Vec::new(), Vec::new());
+        // Per state of the level below, as its run, the nodes its moves lead to.
+        let mut below: Runs<u32> = Runs::default();
         for at in (0..r + m).rev() {
             let (t, label_side, right) = match at.checked_sub(r) {
                 Some(j) => (layout.chain[j], None, true),
@@ -1545,11 +1541,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             let bottom = at + 1 == r + m;
             let level = &self.levels[at];
             let mut index: FxHashMap<[u32; 2], u32> = FxHashMap::default();
-            let mut items = Vec::new();
-            let mut ranges = Vec::new();
-            lim.reserve(&mut ranges, level.states.len())?;
+            let mut nodes: Runs<u32> = Runs::default();
+            nodes.begin_exact(lim, level.states.len())?;
             for s in 0..level.states.len() {
-                let start = items.len();
                 for &[label, next] in level.moves_of(s) {
                     let label = match label_side {
                         Some(Some(k)) => self.products[at].at[k].out[label as usize],
@@ -1557,10 +1551,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                     };
                     let children: &[u32] = match bottom {
                         true => std::slice::from_ref(&cubes[next as usize]),
-                        false => {
-                            let [start, len] = below.1[next as usize];
-                            &below.0[start as usize..(start + len) as usize]
-                        }
+                        false => below.run(next as usize),
                     };
                     for &c in children {
                         self.gate.poll(1)?;
@@ -1582,12 +1573,12 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                                 node
                             }
                         };
-                        lim.try_push(&mut items, node)?;
+                        nodes.push(lim, node)?;
                     }
                 }
-                ranges.push(span_of(lim, start, items.len())?);
+                nodes.close(lim)?;
             }
-            below = (items, ranges);
+            below = nodes;
         }
         if root.is_empty() {
             return Ok(crate::build::constant_zero(eng, into));

@@ -76,6 +76,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 use super::CONJOIN_GRID;
 use super::conjoin::budget::NO_PRODUCT;
 use super::conjoin_in_place::true_nodes;
+use super::runs::Runs;
 
 /// The work an indexed walk did, as the bound in the module notes counts it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,24 +103,21 @@ struct Hit {
 
 /// The products of one internal level.
 struct Products {
-    /// `f`'s node `x`'s products as `(g's node, product)`, ascending:
-    /// `items[start[x]..start[x + 1]]`. Empty when grouped by `f`'s node.
-    start: Vec<u32>,
-    items: Vec<(u32, u32)>,
-    /// Product `k`'s pairs, `made[made_at[k]..made_at[k + 1]]`: each side a
-    /// product, a node of `g` or a label of the child level, as the child's
-    /// [`Level`] says.
-    made_at: Vec<u32>,
-    made: Vec<ChildPair>,
+    /// `f`'s node `x`'s products as `(g's node, product)`, ascending, as run
+    /// `x`. Not begun when grouped by `f`'s node.
+    of_f: Runs<(u32, u32)>,
+    /// Product `k`'s pairs as run `k`: each side a product, a node of `g` or
+    /// a label of the child level, as the child's [`Level`] says.
+    made: Runs<ChildPair>,
 }
 
 impl Products {
     fn count(&self) -> usize {
-        self.made_at.len().saturating_sub(1)
+        self.made.runs()
     }
 
     fn pairs(&self, k: usize) -> &[ChildPair] {
-        &self.made[self.made_at[k] as usize..self.made_at[k + 1] as usize]
+        self.made.run(k)
     }
 }
 
@@ -232,13 +230,7 @@ impl Walk<'_> {
                 Pieces::List(buf)
             }
             Level::True => Pieces::All,
-            Level::Listed(p) => {
-                let (from, to) = (
-                    p.start[x as usize] as usize,
-                    p.start[x as usize + 1] as usize,
-                );
-                Pieces::List(&p.items[from..to])
-            }
+            Level::Listed(p) => Pieces::List(p.of_f.run(x as usize)),
         }
     }
 
@@ -383,53 +375,52 @@ impl Walk<'_> {
         hits.sort_unstable_by_key(|h| (h.a, h.b, h.pair.key()));
         let width = self.f.reference_slot_count(t);
         let mut out = Products {
-            start: Vec::new(),
-            items: Vec::new(),
-            made_at: Vec::new(),
-            made: Vec::new(),
+            of_f: Runs::default(),
+            made: Runs::default(),
         };
-        self.lim.reserve_exact(&mut out.made, hits.len())?;
+        self.lim.reserve_exact(&mut out.made.items, hits.len())?;
         let mut last: Option<(u32, u32)> = None;
         match by_f {
             true => {
                 // One product per node of `f`, empty where nothing met it.
-                self.lim.reserve_exact(&mut out.made_at, width + 1)?;
+                out.made.begin_exact(self.lim, width)?;
                 let mut h = 0;
                 for x in 0..width as u32 {
-                    out.made_at.push(out.made.len() as u32);
                     while h < hits.len() && hits[h].a == x {
                         if last != Some((hits[h].a, hits[h].b)) {
                             last = Some((hits[h].a, hits[h].b));
                             self.work.products += 1;
                         }
-                        out.made.push(hits[h].pair);
+                        out.made.items.push(hits[h].pair);
                         h += 1;
                     }
+                    out.made.close(self.lim)?;
                 }
-                out.made_at.push(out.made.len() as u32);
             }
             false => {
-                self.lim.try_resize(&mut out.start, width + 1, 0)?;
+                out.made.begin(self.lim)?;
+                out.of_f.begin_exact(self.lim, width)?;
                 for h in &hits {
                     if last != Some((h.a, h.b)) {
+                        if last.is_some() {
+                            out.made.close(self.lim)?;
+                        }
                         last = Some((h.a, h.b));
-                        let k = out.made_at.len() as u32;
-                        self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-                        self.lim.try_push(&mut out.items, (h.b, k))?;
-                        out.start[h.a as usize + 1] += 1;
+                        // Each closed run holds a pair, so as many runs as
+                        // closed fit the offset the last close checked.
+                        let k = out.made.runs() as u32;
+                        out.of_f.close_until(self.lim, h.a as usize)?;
+                        out.of_f.push(self.lim, (h.b, k))?;
                     }
-                    out.made.push(h.pair);
+                    out.made.items.push(h.pair);
                 }
-                self.lim.try_push(&mut out.made_at, out.made.len() as u32)?;
-                for x in 0..width {
-                    out.start[x + 1] += out.start[x];
+                if last.is_some() {
+                    out.made.close(self.lim)?;
                 }
-                self.work.products += out.items.len() as u64;
+                out.of_f.close_until(self.lim, width)?;
+                self.work.products += out.of_f.items.len() as u64;
             }
         }
-        // Every offset above is at most the last, so this one check covers
-        // them all.
-        self.lim.list_index(out.made.len())?;
         Ok(out)
     }
 
@@ -496,7 +487,7 @@ impl Walk<'_> {
                 Level::Listed(p) => {
                     for (c, left) in [(l, true), (r, false)] {
                         if true_side(c) {
-                            for pair in &p.made {
+                            for pair in &p.made.items {
                                 let side = if left {
                                     pair.left.raw()
                                 } else {
@@ -645,15 +636,12 @@ pub(crate) fn and_indexed_counted(
     let Some(Level::Listed(top)) = &plan.levels[root.idx()] else {
         unreachable!("the top is listed")
     };
-    let (from, to) = (
-        top.start[f.output().local.idx()] as usize,
-        top.start[f.output().local.idx() + 1] as usize,
-    );
+    let run = top.of_f.run(f.output().local.idx());
     let b = g.output().local.0;
-    let Ok(k) = top.items[from..to].binary_search_by_key(&b, |e| e.0) else {
+    let Ok(k) = run.binary_search_by_key(&b, |e| e.0) else {
         return Ok((crate::build::constant_like(eng, f, false)?, work));
     };
-    let made = top.items[from + k].1 as usize;
+    let made = run[k].1 as usize;
     let mut out = Assembly::new(eng, &vtree)?;
     let mut ids: Vec<Vec<u32>> = (0..vtree.num_nodes()).map(|_| Vec::new()).collect();
     let mut buf: SmallVec<[ChildPair; 8]> = SmallVec::new();

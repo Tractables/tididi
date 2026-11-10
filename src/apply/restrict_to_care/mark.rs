@@ -37,6 +37,7 @@ use crate::limits::{OperationError, PollGate};
 
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
+use crate::apply::runs::Runs;
 use crate::diagram::{
     ChildDecoder, ChildPair, EncodedChildRef, LEAF_WIDTH, NodeIdx, ONE_LEAF_IDX, Tdd, ZERO,
 };
@@ -116,10 +117,9 @@ struct Listed {
     products: Vec<(u32, u32)>,
     /// `products[offsets[a]..offsets[a + 1]]`: those of `f` node `a`.
     offsets: Vec<u32>,
-    /// `combos[starts[p]..starts[p + 1]]`: product `p`'s live `(f pair, care
-    /// pair)` indices, each with both child products live.
-    starts: Vec<u32>,
-    combos: Vec<(u32, u32)>,
+    /// Product `p`'s live `(f pair, care pair)` indices as run `p`, each
+    /// with both child products live.
+    combos: Runs<(u32, u32)>,
 }
 
 impl Listed {
@@ -157,7 +157,7 @@ impl Listed {
 
     /// The live pairs of pairs of the product at position `p`.
     fn combos_at(&self, p: u32) -> &[(u32, u32)] {
-        &self.combos[self.starts[p as usize] as usize..self.starts[p as usize + 1] as usize]
+        self.combos.run(p as usize)
     }
 }
 
@@ -1778,7 +1778,7 @@ impl<'a> Walk<'a> {
             for (p, &(a, _)) in l.products.iter().enumerate() {
                 self.poll.poll(1)?;
                 self.alive[u.idx()][a as usize] = true;
-                let combos = &l.combos[l.starts[p] as usize..l.starts[p + 1] as usize];
+                let combos = l.combos.run(p);
                 let count = level.pair_count_at(a as usize);
                 self.pair_alive.mark_many(
                     eng,
@@ -1997,8 +1997,7 @@ fn leaf_live() -> Listed {
     Listed {
         products,
         offsets,
-        starts: Vec::new(),
-        combos: Vec::new(),
+        combos: Runs::default(),
     }
 }
 
@@ -2011,29 +2010,32 @@ fn listed(
 ) -> Result<Listed, OperationError> {
     let lim = eng.limits();
     let mut products = Vec::new();
-    let mut starts = Vec::new();
-    let mut combos = Vec::new();
-    lim.reserve_exact(&mut combos, found.len())?;
+    let mut combos = Runs::default();
+    combos.begin(lim)?;
+    lim.reserve_exact(&mut combos.items, found.len())?;
     let mut offsets = Vec::new();
     lim.try_resize(&mut offsets, nodes + 1, 0u32)?;
     for (n, &(a, b, i, j)) in found.iter().enumerate() {
         if n == 0 || (found[n - 1].0, found[n - 1].1) != (a, b) {
+            if n > 0 {
+                combos.close(lim)?;
+            }
             lim.try_push(&mut products, (a, b))?;
-            lim.try_push(&mut starts, lim.list_index(combos.len())?)?;
             offsets[a as usize + 1] += 1;
         }
-        combos.push((i, j));
+        combos.items.push((i, j));
     }
-    // The products number no more than the combinations, so this bounds
-    // their positions as well.
-    lim.try_push(&mut starts, lim.list_index(combos.len())?)?;
+    // The products number no more than the combinations, so the last
+    // close bounds their positions as well.
+    if !found.is_empty() {
+        combos.close(lim)?;
+    }
     for k in 0..nodes {
         offsets[k + 1] += offsets[k];
     }
     Ok(Listed {
         products,
         offsets,
-        starts,
         combos,
     })
 }

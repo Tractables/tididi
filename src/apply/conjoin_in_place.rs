@@ -78,6 +78,7 @@ use crate::reduce::ReductionPlan;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::falsity::rewrite_level_pairs;
+use super::runs::Runs;
 
 /// A product that is false: no node, and the pair that names it dropped.
 const DEAD: u32 = u32::MAX;
@@ -521,12 +522,9 @@ enum Split {
     /// A leaf level: a label's products are labels ([`label_pieces`]).
     Leaf,
     /// Per original node `x` of `f`, its products with the nodes of `g` it
-    /// meets, `(g's node, product)`, at `pieces[start[x]..start[x + 1]]`:
-    /// none where it meets no node of `g`.
-    Listed {
-        start: Vec<u32>,
-        pieces: Vec<(u32, u32)>,
-    },
+    /// meets, `(g's node, product)`, as run `x`: none where it meets no
+    /// node of `g`.
+    Listed(Runs<(u32, u32)>),
 }
 
 /// The products of `f`'s leaf label `x` with each of `g`'s labels at a leaf
@@ -561,9 +559,7 @@ fn pieces_of<'s>(split: &'s Split, x: u32, buf: &'s mut [(u32, u32); 3]) -> &'s 
             let n = label_pieces(x, buf);
             &buf[..n]
         }
-        Split::Listed { start, pieces } => {
-            &pieces[start[x as usize] as usize..start[x as usize + 1] as usize]
-        }
+        Split::Listed(pieces) => pieces.run(x as usize),
     }
 }
 
@@ -576,12 +572,10 @@ struct Settle {
     /// The node being read's pairs' products, `(g's node, the pair's
     /// position, the product pair, whether it is the pair itself)`.
     hits: Vec<(u32, u32, ChildPair, bool)>,
-    start: Vec<u32>,
-    pieces: Vec<(u32, u32)>,
-    /// The products made, their pairs back to back, at
-    /// `made[made_at[k]..made_at[k + 1]]`.
-    made: Vec<ChildPair>,
-    made_at: Vec<u32>,
+    /// Per node of the level, its products, as [`Split::Listed`] holds them.
+    pieces: Runs<(u32, u32)>,
+    /// The products made, their pairs as run `k` for the `k`-th.
+    made: Runs<ChildPair>,
 }
 
 impl Settle {
@@ -591,12 +585,7 @@ impl Settle {
     /// nodes before `a` that no pair named (none in a stored level) meet
     /// nothing.
     fn node(&mut self, lim: &Limits, a: usize, n: u32) -> Result<(), OperationError> {
-        if self.start.len() < a + 1 {
-            let at = lim.list_index(self.pieces.len())?;
-            while self.start.len() < a + 1 {
-                lim.try_push(&mut self.start, at)?;
-            }
-        }
+        self.pieces.close_until(lim, a)?;
         // Within a node of `g` the pairs stay in their order; unstable, so
         // that the sort asks for no buffer.
         self.hits.sort_unstable_by_key(|h| (h.0, h.1));
@@ -613,24 +602,23 @@ impl Settle {
             let product = match whole {
                 true => a as u32,
                 false => {
-                    let at = self.made.len();
-                    lim.reserve_exact(&mut self.made, group.len())?;
-                    self.made.extend(group.iter().map(|h| h.2));
-                    crate::diagram::sort_pairs(&mut self.made[at..]);
-                    lim.try_push(&mut self.made_at, lim.list_index(self.made.len())?)?;
+                    lim.reserve_exact(&mut self.made.items, group.len())?;
+                    self.made.items.extend(group.iter().map(|h| h.2));
+                    crate::diagram::sort_pairs(self.made.open_run_mut());
+                    self.made.close(lim)?;
                     // The node the product is pushed as, past the level's.
-                    let node = self.width as usize + self.made_at.len() - 2;
+                    let node = self.width as usize + self.made.runs() - 1;
                     if node >= lim.level_width_cap() {
                         return Err(OperationError::IndexOverflow);
                     }
                     node as u32
                 }
             };
-            lim.try_push(&mut self.pieces, (b, product))?;
+            self.pieces.push(lim, (b, product))?;
             i = k;
         }
         self.hits.clear();
-        lim.try_push(&mut self.start, lim.list_index(self.pieces.len())?)
+        self.pieces.close(lim)
     }
 }
 
@@ -695,13 +683,11 @@ fn block_products(
         let mut st = Settle {
             width: width as u32,
             hits: std::mem::take(&mut hits),
-            start: Vec::new(),
-            pieces: Vec::new(),
-            made: Vec::new(),
-            made_at: Vec::new(),
+            pieces: Runs::default(),
+            made: Runs::default(),
         };
-        lim.reserve_exact(&mut st.start, width + 1)?;
-        lim.try_push(&mut st.made_at, 0)?;
+        st.pieces.begin_exact(lim, width)?;
+        st.made.begin(lim)?;
         let mut refused = None;
         let mut cur: Option<usize> = None;
         let mut read = 0u32;
@@ -752,18 +738,12 @@ fn block_products(
         if let Some(a) = cur {
             st.node(lim, a, read)?;
         }
-        if st.start.len() < width + 1 {
-            let at = lim.list_index(st.pieces.len())?;
-            while st.start.len() < width + 1 {
-                lim.try_push(&mut st.start, at)?;
-            }
-        }
+        st.pieces.close_until(lim, width)?;
         gate.poll(work)?;
         drop((sl, sr));
-        let made = st.made_at.len() - 1;
+        let made = st.made.runs();
         for k in 0..made {
-            let pairs = &st.made[st.made_at[k] as usize..st.made_at[k + 1] as usize];
-            let idx = f.levels[u.idx()].push_node(lim, pairs)?;
+            let idx = f.levels[u.idx()].push_node(lim, st.made.run(k))?;
             debug_assert_eq!(
                 idx.0 as usize,
                 width + k,
@@ -775,17 +755,9 @@ fn block_products(
         match u == t {
             true => {
                 lim.reserve_exact(&mut to, width)?;
-                to.extend((0..width).map(|x| match st.start[x] < st.start[x + 1] {
-                    true => st.pieces[st.start[x] as usize].1,
-                    false => DEAD,
-                }));
+                to.extend((0..width).map(|x| st.pieces.run(x).first().map_or(DEAD, |p| p.1)));
             }
-            false => {
-                split[u.idx()] = Some(Split::Listed {
-                    start: st.start,
-                    pieces: st.pieces,
-                })
-            }
+            false => split[u.idx()] = Some(Split::Listed(st.pieces)),
         }
     }
     gate.flush()?;

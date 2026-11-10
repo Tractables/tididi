@@ -44,6 +44,8 @@ use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
 use crate::vtree::{Vtree, VtreeIdx};
 
+use super::runs::Runs;
+
 /// Which Boolean combination the overlay emits at the root.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Overlay {
@@ -71,14 +73,10 @@ fn key(l: u32, r: u32) -> u64 {
 /// is a piece of.
 #[derive(Default)]
 pub(super) struct Pieces {
-    /// `f_items[f_start[a]..f_start[a + 1]]` are the pieces of `f`'s node `a`.
-    pub(super) f_start: Vec<u32>,
-    /// The output nodes, grouped by the `f` node they are pieces of.
-    pub(super) f_items: Vec<u32>,
-    /// As `f_start`, for `g`'s nodes; empty when the overlay never walks `g`.
-    pub(super) g_start: Vec<u32>,
-    /// As `f_items`, for `g`'s nodes.
-    pub(super) g_items: Vec<u32>,
+    /// The pieces of `f`'s node `a`, as run `a`: output nodes.
+    pub(super) f: Runs<u32>,
+    /// As `f`, for `g`'s nodes; empty when the overlay never walks `g`.
+    pub(super) g: Runs<u32>,
     /// Output node to the `f` node it lies in, or [`ABSENT`].
     pub(super) f_part: Vec<u32>,
     /// Output node to the `g` node it lies in, or [`ABSENT`].
@@ -89,19 +87,26 @@ impl Pieces {
     /// The pieces of `f`'s node `a`.
     #[inline]
     pub(super) fn of_f(&self, a: u32) -> &[u32] {
-        let a = a as usize;
-        &self.f_items[self.f_start[a] as usize..self.f_start[a + 1] as usize]
+        self.f.run(a as usize)
     }
 
     /// The pieces of `g`'s node `b`.
     #[inline]
     pub(super) fn of_g(&self, b: u32) -> &[u32] {
-        let b = b as usize;
-        &self.g_items[self.g_start[b] as usize..self.g_start[b + 1] as usize]
+        self.g.run(b as usize)
     }
 
-    /// Record output node `o` as a piece of `f_node` and `g_node`, appending `o`
-    /// to `g_items` when `of_g` is true and to `f_items` otherwise.
+    /// The pieces of `g`'s nodes when `of_g`, else of `f`'s.
+    #[inline]
+    pub(super) fn side_mut(&mut self, of_g: bool) -> &mut Runs<u32> {
+        match of_g {
+            true => &mut self.g,
+            false => &mut self.f,
+        }
+    }
+
+    /// Record output node `o` as a piece of `f_node` and `g_node`, pushing `o`
+    /// onto `g`'s open run when `of_g` is true and onto `f`'s otherwise.
     #[inline]
     pub(super) fn push_piece(
         &mut self,
@@ -111,22 +116,15 @@ impl Pieces {
         g_node: u32,
         of_g: bool,
     ) -> Result<(), OperationError> {
-        let items = if of_g {
-            &mut self.g_items
-        } else {
-            &mut self.f_items
-        };
-        lim.try_push(items, o)?;
+        self.side_mut(of_g).push(lim, o)?;
         lim.try_push(&mut self.f_part, f_node)?;
         lim.try_push(&mut self.g_part, g_node)
     }
 
     /// Empty every list, keeping the allocations for the next level.
     pub(super) fn clear(&mut self) {
-        self.f_start.clear();
-        self.f_items.clear();
-        self.g_start.clear();
-        self.g_items.clear();
+        self.f.clear();
+        self.g.clear();
         self.f_part.clear();
         self.g_part.clear();
     }
@@ -148,33 +146,24 @@ impl Pieces {
         let (one, pos, neg) = (ONE_LEAF_IDX.0, POS_LEAF_IDX.0, NEG_LEAF_IDX.0);
         if f_one && g_one {
             return Pieces {
-                f_start: vec![0, 1, 1, 1],
-                f_items: vec![one],
-                g_start: vec![0, 1, 1, 1],
-                g_items: vec![one],
+                f: Runs::from_parts(vec![one], vec![0, 1, 1, 1]),
+                g: Runs::from_parts(vec![one], vec![0, 1, 1, 1]),
                 f_part: vec![one, ABSENT, ABSENT],
                 g_part: vec![one, ABSENT, ABSENT],
             };
         }
         // Literal pieces: a `⊤` reference splits into both, a literal
         // reference is its own piece.
-        let side = |is_one: bool| -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let side = |is_one: bool| -> (Runs<u32>, Vec<u32>) {
             if is_one {
-                (vec![0, 2, 2, 2], vec![pos, neg], vec![ABSENT, one, one])
+                (Runs::from_parts(vec![pos, neg], vec![0, 2, 2, 2]), vec![ABSENT, one, one])
             } else {
-                (vec![0, 0, 1, 2], vec![pos, neg], vec![ABSENT, pos, neg])
+                (Runs::from_parts(vec![pos, neg], vec![0, 0, 1, 2]), vec![ABSENT, pos, neg])
             }
         };
-        let (f_start, f_items, f_part) = side(f_one);
-        let (g_start, g_items, g_part) = side(g_one);
-        Pieces {
-            f_start,
-            f_items,
-            g_start,
-            g_items,
-            f_part,
-            g_part,
-        }
+        let (f, f_part) = side(f_one);
+        let (g, g_part) = side(g_one);
+        Pieces { f, g, f_part, g_part }
     }
 }
 
@@ -340,8 +329,7 @@ impl LevelOverlay<'_> {
         let f_width = fl.slot_count();
         let g_width = gl.slot_count();
         index_owners(eng, gl, &mut s.owner)?;
-        lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
-        pieces.f_start.push(0);
+        pieces.f.begin_exact(lim, f_width)?;
         s.products.clear();
 
         for a in 0..f_width {
@@ -382,19 +370,18 @@ impl LevelOverlay<'_> {
                     lim.try_push(&mut s.products, (b, o))?;
                 }
             }
-            lim.try_push(&mut pieces.f_start, lim.list_index(pieces.f_items.len())?)?;
+            pieces.f.close(lim)?;
         }
 
         if walk_g {
             index_pairs(eng, fl, 0..f_width, &mut s.held)?;
             // Stable by `g` node, so each node's products stay in output order.
             s.products.sort_by_key(|&(b, _)| b);
-            lim.reserve_exact(&mut pieces.g_start, g_width + 1)?;
-            pieces.g_start.push(0);
+            pieces.g.begin_exact(lim, g_width)?;
             let mut next = 0;
             for b in 0..g_width {
                 while next < s.products.len() && s.products[next].0 == b as u32 {
-                    lim.try_push(&mut pieces.g_items, s.products[next].1)?;
+                    pieces.g.push(lim, s.products[next].1)?;
                     next += 1;
                 }
                 s.pairs.clear();
@@ -424,7 +411,7 @@ impl LevelOverlay<'_> {
                     let o = out.push_node(lim, &s.pairs)?.0;
                     pieces.push_piece(lim, o, ABSENT, b as u32, true)?;
                 }
-                lim.try_push(&mut pieces.g_start, lim.list_index(pieces.g_items.len())?)?;
+                pieces.g.close(lim)?;
             }
         }
         poll.flush()?;
