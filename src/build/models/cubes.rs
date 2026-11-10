@@ -658,6 +658,8 @@ impl Lists {
         total: usize,
         entries: impl Iterator<Item = (u32, u64)>,
     ) -> Result<Lists, OperationError> {
+        // Every start is at most `total`.
+        lim.list_index(total)?;
         let mut out = Lists {
             starts: Vec::new(),
             items: Vec::new(),
@@ -962,6 +964,8 @@ fn expand_coarse_lists(
         .flat_map(|&k| lists.get(k as usize))
         .map(|&item| fine.cover((item >> 32) as u32).len())
         .sum();
+    // The sets keep at most `total` items, so every start is at most it.
+    lim.list_index(total)?;
     let mut gate = lim.gate();
     gate.poll(total as u64)?;
     lim.reserve_exact(&mut expanded.items, total)?;
@@ -1057,8 +1061,12 @@ fn refine(
         atom: Vec::new(),
         atoms: 0,
     };
-    // Each piece's cubes, as ranges of the arena.
+    // Each piece's cubes, as ranges of the arena: a cube free at a split
+    // is listed on both sides, so the arena can outgrow a 32-bit offset.
     let mut members: Vec<(u32, u32)> = Vec::new();
+    let span = |lim: &Limits, from: usize, end: usize| {
+        lim.list_index(end).map(|end| (from as u32, end - from as u32))
+    };
     let (mut or_f, mut and_f, mut or_v, mut and_v) =
         (vec![0u64; w], vec![0u64; w], vec![0u64; w], vec![0u64; w]);
     let mut split_bits = vec![0u64; w];
@@ -1124,7 +1132,7 @@ fn refine(
                     out.fixed
                         .push(paths[frame.value + w + j] | lower_bits(j, frame.bit));
                 }
-                lim.try_push(&mut members, (at as u32, (end - at) as u32))?;
+                lim.try_push(&mut members, span(lim, at, end)?)?;
                 at = end;
             }
             continue;
@@ -1148,7 +1156,7 @@ fn refine(
                 lim.reserve_exact(&mut out.fixed, w)?;
                 out.value.extend_from_slice(&paths[path..path + w]);
                 out.fixed.extend_from_slice(&paths[path + w..path + 2 * w]);
-                lim.try_push(&mut members, (from as u32, len as u32))?;
+                lim.try_push(&mut members, span(lim, from, from + len)?)?;
             }
             Some(s) => {
                 let (j, b) = (s / 64, s % 64);
@@ -1198,6 +1206,8 @@ fn invert_piece_members(
     arena: &[u32],
     members: &[(u32, u32)],
 ) -> Result<(Vec<u32>, Vec<u32>), OperationError> {
+    // Every start is at most the cover's length, the members' total.
+    lim.list_index(members.iter().map(|&(_, len)| len as usize).sum())?;
     let mut starts = filled(lim, k + 1, 0u32)?;
     for &(from, len) in members {
         for &p in &arena[from as usize..(from + len) as usize] {

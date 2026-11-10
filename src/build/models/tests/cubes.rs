@@ -286,3 +286,32 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     }
     assert!(refusals > 0, "no reservation was refused across the sweep");
 }
+
+/// Piece lists that would outgrow their 32-bit offsets are refused with
+/// [`OperationError::IndexOverflow`], here under a pinned list cap; the
+/// build that goes through is the build.
+#[test]
+fn cube_lists_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    use crate::Engine;
+    let mut rng = Lcg::new(0x1157_ca9e);
+    let mut refused = 0;
+    for case in 0..24 {
+        let width = 4 + rng.below(8) as usize;
+        let total = width as u32 + 1;
+        let vars = random_vars(&mut rng, total, width);
+        let n = 8 + rng.below(40) as usize;
+        let cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 160, 4)).collect();
+        let packed = packed_cubes(width, &cubes);
+        let vtree = Arc::new(Vtree::random(total, 0x11 + case));
+        let eng = Engine::new();
+        let want = eng.from_cubes(&vtree, &vars, &packed).unwrap();
+        let (got, k) = eng
+            .limits()
+            .through_caps(Limits::pin_list_cap, || eng.from_cubes(&vtree, &vars, &packed));
+        assert_canonical(&got);
+        assert_same_shape(&got, &want, &format!("case {case}"));
+        refused += k;
+    }
+    assert!(refused > 0, "no list cap refused a build");
+}

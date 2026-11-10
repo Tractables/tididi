@@ -322,3 +322,34 @@ fn ordered_queries_accept_128_key_bits_and_decline_more() {
     assert_eq!(f.ordered_keys(&columns, &directions, 1).unwrap(), None);
     assert_eq!(f.ordered_models(&columns, &directions, 5, 1).unwrap(), None);
 }
+
+/// Pending lists and streams that would outgrow their 32-bit numbering are
+/// refused with [`OperationError::IndexOverflow`], here under a pinned list
+/// cap; the rows that go through are the rows.
+#[test]
+fn streams_past_the_list_cap_are_refused() {
+    use crate::limits::Limits;
+    let mut rng = Lcg::new(0x0bde_c0de);
+    let mut refused = 0;
+    for num_vars in [4u32, 6, 8] {
+        for round in 0..6 {
+            let nkey_bits = 1 + rng.below(3) as usize;
+            let key_bits: Vec<VarId> = (1..=nkey_bits as u32).map(VarId).collect();
+            let rest: Vec<VarId> = (nkey_bits as u32 + 1..=num_vars).map(VarId).collect();
+            let vtree = spine_over(num_vars, &key_bits, rng.below(1 << 20));
+            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
+            let f = compile_clauses(&vtree, &clauses);
+            let columns = [key_bits, rest];
+            let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();
+            let descending = [round % 2 == 1, false];
+            let want = f.ordered_models(&refs, &descending, 1, 1 << num_vars).unwrap();
+            let (got, k) = vtree.context().run(|e| {
+                e.limits()
+                    .through_caps(Limits::pin_list_cap, || e.ordered_models(&f, &refs, &descending, 1, 1 << num_vars))
+            });
+            assert_eq!(got, want, "{num_vars} vars, round {round}");
+            refused += k;
+        }
+    }
+    assert!(refused > 0, "no list cap refused a stream");
+}

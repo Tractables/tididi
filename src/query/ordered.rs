@@ -43,7 +43,7 @@ use rustc_hash::FxHashMap;
 
 use crate::Engine;
 use crate::diagram::{LeafLabel, Tdd};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::column_layout::roles;
@@ -228,7 +228,7 @@ impl Engine {
             walk.gate.finish()?;
             return Ok(Some(walk.out));
         }
-        let mut streams = Streams::new(tdd, &layout, false);
+        let mut streams = Streams::new(lim, tdd, &layout, false);
         let mut at = 0usize;
         loop {
             streams.ensure(vtree.root(), root, at + 1)?;
@@ -296,7 +296,7 @@ impl Engine {
         }
         let mut gate = lim.gate();
         let root = tdd.output().local.idx() as u32;
-        let mut streams = Streams::new(tdd, &layout, true);
+        let mut streams = Streams::new(lim, tdd, &layout, true);
         let mut cur = vec![0u32; columns.len()];
         for at in 0..usize::try_from(limit).unwrap_or(usize::MAX) {
             streams.ensure(vtree.root(), root, at + 1)?;
@@ -466,8 +466,12 @@ struct Stream {
 /// places in the children's streams, and whether the key is only a bound.
 type Next = (u128, u32, u32, u32, bool);
 
-/// Every node's stream, produced as far as a reader asked.
+/// Every node's stream, produced as far as a reader asked. The pending
+/// lists' cells and a stream's entries are numbered in 32 bits, and are
+/// refused with [`OperationError::IndexOverflow`] past that
+/// ([`Limits::list_index`]).
 struct Streams<'a> {
+    lim: &'a Limits,
     tdd: &'a Tdd,
     layout: &'a KeyLayout<'a>,
     /// Whether a stream keeps one entry per key and leaves nothing pending.
@@ -488,9 +492,15 @@ const UNREAD: u128 = u128::MAX;
 
 impl<'a> Streams<'a> {
     /// The streams of `tdd`, none produced yet.
-    fn new(tdd: &'a Tdd, layout: &'a KeyLayout<'a>, distinct: bool) -> Streams<'a> {
+    fn new(
+        lim: &'a Limits,
+        tdd: &'a Tdd,
+        layout: &'a KeyLayout<'a>,
+        distinct: bool,
+    ) -> Streams<'a> {
         let vtree = layout.vtree;
         Streams {
+            lim,
             tdd,
             layout,
             distinct,
@@ -595,24 +605,25 @@ impl<'a> Streams<'a> {
     }
 
     /// A pending cell `(t, n)` before the list `next`.
-    fn pend(&mut self, t: VtreeIdx, n: u32, next: u32) -> u32 {
+    fn pend(&mut self, t: VtreeIdx, n: u32, next: u32) -> Result<u32, OperationError> {
         if self.distinct {
-            return NIL;
+            return Ok(NIL);
         }
+        let at = self.lim.list_index(self.cells.len())?;
         self.cells.push(Cell { t, n, next });
-        self.cells.len() as u32 - 1
+        Ok(at)
     }
 
     /// The list `a` then the list `b`, `a`'s cells copied.
-    fn join(&mut self, a: u32, b: u32) -> u32 {
+    fn join(&mut self, a: u32, b: u32) -> Result<u32, OperationError> {
         let mut list = b;
         let mut c = a;
         while c != NIL {
             let Cell { t, n, next } = self.cells[c as usize];
-            list = self.pend(t, n, list);
+            list = self.pend(t, n, list)?;
             c = next;
         }
-        list
+        Ok(list)
     }
 
     fn produce(
@@ -664,7 +675,7 @@ impl<'a> Streams<'a> {
             let (rest, next) = match (hl, hr) {
                 (0, _) => {
                     let (_, below) = self.entry(right, r, i)?.expect("an entry the heap holds");
-                    let rest = self.pend(left, l, below);
+                    let rest = self.pend(left, l, below)?;
                     (
                         rest,
                         self.entry(right, r, i + 1)?.map(|(k, _)| (k, i + 1, 0)),
@@ -672,7 +683,7 @@ impl<'a> Streams<'a> {
                 }
                 (_, 0) => {
                     let (_, below) = self.entry(left, l, i)?.expect("an entry the heap holds");
-                    let rest = self.pend(right, r, below);
+                    let rest = self.pend(right, r, below)?;
                     (
                         rest,
                         self.entry(left, l, i + 1)?.map(|(k, _)| (k, i + 1, 0)),
@@ -681,7 +692,7 @@ impl<'a> Streams<'a> {
                 _ => {
                     let (lk, lrest) = self.entry(left, l, i)?.expect("an entry the heap holds");
                     let (_, rrest) = self.entry(right, r, j)?.expect("an entry the heap holds");
-                    let rest = self.join(lrest, rrest);
+                    let rest = self.join(lrest, rrest)?;
                     let next = match self.entry(right, r, j + 1)? {
                         Some((rk, _)) => Some(((lk << hr) | rk, i, j + 1)),
                         None => self
@@ -692,6 +703,8 @@ impl<'a> Streams<'a> {
                 }
             };
             if !(self.distinct && stream.out.last().is_some_and(|&(last, _)| last == key)) {
+                // Readers hold an entry's place, and the next one's, in 32 bits.
+                self.lim.list_index(stream.out.len())?;
                 stream.out.push((key, rest));
             }
             if let Some((k, i, j)) = next {

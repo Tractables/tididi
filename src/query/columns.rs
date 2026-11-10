@@ -117,8 +117,14 @@ impl Tdd {
 }
 
 /// Per vtree node, the column touch slices (`levels`) and flattened [`Touch`]
-/// entries (`touched`).
-fn level_touches(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> (Vec<Level>, Vec<Touch>) {
+/// entries (`touched`); [`OperationError::IndexOverflow`] where the entries
+/// outgrow the slices' 32-bit offsets ([`Limits::list_index`]).
+fn level_touches(
+    lim: &Limits,
+    vtree: &Vtree,
+    role: &[Option<(u32, u32)>],
+    widths: &[u32],
+) -> Result<(Vec<Level>, Vec<Touch>), OperationError> {
     let num_nodes = vtree.num_nodes();
     let mut level_touch: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_nodes];
     for t in vtree.bottomup() {
@@ -132,6 +138,9 @@ fn level_touches(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> 
             }
         };
     }
+    // A level touches each column under it once, so the entries can
+    // number the vtree's nodes times its columns.
+    lim.list_index(level_touch.iter().map(Vec::len).sum())?;
     let full = |j: u32| match widths[j as usize] {
         32 => u32::MAX,
         w => (1u32 << w) - 1,
@@ -147,7 +156,7 @@ fn level_touches(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> 
         };
         levels.push(Level { touch: start, touches: list.len() as u32, closed });
     }
-    (levels, touched)
+    Ok((levels, touched))
 }
 
 /// Whether the leaves, left to right, read the listed variables as column 0's
@@ -228,6 +237,7 @@ impl ModelColumns {
     /// assigned node IDs in `here`.
     fn push_leaf_level(
         &mut self,
+        lim: &Limits,
         t: VtreeIdx,
         var: VarId,
         role: Option<(u32, u32)>,
@@ -237,14 +247,14 @@ impl ModelColumns {
             if here[label as usize] == NONE {
                 continue;
             }
-            let id = self.nodes.len() as u32;
+            let id = lim.list_index(self.nodes.len())?;
             here[label as usize] = id;
             let node = match (role, label) {
                 (Some((j, bit)), LeafLabel::One) => {
                     Node { count: 2, level: t.0, kind: Kind::Free, a: j, b: bit, refs: 0 }
                 }
                 (Some((j, bit)), LeafLabel::Pos) => {
-                    let at = self.konst.len() as u32;
+                    let at = lim.list_index(self.konst.len())?;
                     self.konst.push((j, 1u32 << bit));
                     Node { count: 1, level: t.0, kind: Kind::Const, a: at, b: 1, refs: 0 }
                 }
@@ -259,9 +269,13 @@ impl ModelColumns {
     }
 
     /// Emit the reachable internal nodes of `level` at `t` into `self.nodes`
-    /// and `self.pairs`, recording their assigned node IDs in `here`.
+    /// and `self.pairs`, recording their assigned node IDs in `here`. The
+    /// node IDs, and their ranges of `self.konst`, are refused with
+    /// [`OperationError::IndexOverflow`] past 32 bits ([`Limits::list_index`]);
+    /// the pairs' were checked against the reachable pairs' total.
     fn push_internal_level(
         &mut self,
+        lim: &Limits,
         t: VtreeIdx,
         level: &TddLevel,
         here: &mut [u32],
@@ -272,7 +286,7 @@ impl ModelColumns {
             if *mark == NONE {
                 continue;
             }
-            let id = self.nodes.len() as u32;
+            let id = lim.list_index(self.nodes.len())?;
             *mark = id;
             let first = self.pairs.len() as u32;
             let mut count: u64 = 0;
@@ -295,7 +309,7 @@ impl ModelColumns {
                     // One pair, each side one row: the constants of both.
                     let [l, r] = self.pairs[first as usize];
                     self.pairs.truncate(first as usize);
-                    let (a, b) = self.merge_konst(l, r);
+                    let (a, b) = self.merge_konst(lim, l, r)?;
                     Node { count: 1, level: t.0, kind: Kind::Const, a, b, refs: 0 }
                 }
                 _ => Node { count, level: t.0, kind: Kind::Pairs, a: first, b: n, refs: 0 },
@@ -322,7 +336,7 @@ impl Engine {
 
         let role = super::column_layout::roles(&vtree, columns)?;
         let widths: Vec<u32> = columns.iter().map(|vars| vars.len() as u32).collect();
-        let (levels, touched) = level_touches(&vtree, &role, &widths);
+        let (levels, touched) = level_touches(lim, &vtree, &role, &widths)?;
         let lexicographic = is_lexicographic(&vtree, &role, &widths);
 
         let mut table = ModelColumns {
@@ -347,19 +361,21 @@ impl Engine {
         }
 
         let (mut gid, total_pairs) = number_reachable_slots(lim, tdd, &mut gate)?;
+        // A node's first pair and its count are 32-bit offsets into the pairs.
+        lim.list_index(total_pairs)?;
         lim.reserve_exact(&mut table.pairs, total_pairs)?;
         for t in vtree.bottomup() {
             gate.poll(1)?;
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
-                    table.push_leaf_level(t, var, role[var.0 as usize], &mut gid[t.idx()])?;
+                    table.push_leaf_level(lim, t, var, role[var.0 as usize], &mut gid[t.idx()])?;
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = tdd.level(t);
                     let [here, left_map, right_map] = gid
                         .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
                         .expect("three distinct vtree nodes in range");
-                    table.push_internal_level(t, level, here, left_map, right_map)?;
+                    table.push_internal_level(lim, t, level, here, left_map, right_map)?;
                 }
             }
         }
@@ -615,21 +631,23 @@ impl ModelColumns {
     }
 
     /// The constants of two one-row nodes, merged by column, as a range of
-    /// `konst`.
-    fn merge_konst(&mut self, l: u32, r: u32) -> (u32, u32) {
+    /// `konst`; [`OperationError::IndexOverflow`] where the range would end
+    /// past a 32-bit offset ([`Limits::list_index`]).
+    fn merge_konst(&mut self, lim: &Limits, l: u32, r: u32) -> Result<(u32, u32), OperationError> {
         let range = |n: &Node| (n.a as usize, (n.a + n.b) as usize);
         let (ls, le) = range(&self.nodes[l as usize]);
         let (rs, re) = range(&self.nodes[r as usize]);
         if le - ls == 0 {
-            return (rs as u32, (re - rs) as u32);
+            return Ok((rs as u32, (re - rs) as u32));
         }
         if re - rs == 0 {
-            return (ls as u32, (le - ls) as u32);
+            return Ok((ls as u32, (le - ls) as u32));
         }
         let merged = merge_masks(&self.konst[ls..le], &self.konst[rs..re]);
+        lim.list_index(self.konst.len() + merged.len())?;
         let at = self.konst.len() as u32;
         self.konst.extend_from_slice(&merged);
-        (at, merged.len() as u32)
+        Ok((at, merged.len() as u32))
     }
 
     /// Writes node `n`'s rows, each repeated `rep` times from row `start`,

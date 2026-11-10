@@ -435,3 +435,30 @@ fn column_queries_agree_on_empty_and_full_width_columns() {
     assert_eq!(f.ordered_models(columns, &[false, true, false], 3, 2).unwrap(), Some(first.clone()));
     assert_eq!(f.ordered_keys(columns, &[false, true, false], 2).unwrap(), Some(first));
 }
+
+/// A table whose node, pair, constant or touch lists would outgrow their
+/// 32-bit offsets is refused with [`OperationError::IndexOverflow`], here
+/// under a pinned list cap; the table that goes through is the table.
+#[test]
+fn tables_past_the_list_cap_are_refused() {
+    let mut rng = Lcg::new(0x7ab1_e5ca);
+    let mut refused = 0;
+    for num_vars in [3u32, 6, 9] {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
+            let f = compile_clauses(&vtree, &clauses);
+            let columns = random_columns(&mut rng, num_vars);
+            let listed: BTreeSet<VarId> = columns.iter().flatten().copied().collect();
+            let unlisted: Vec<VarId> = (1..=num_vars).map(VarId).filter(|v| !listed.contains(v)).collect();
+            let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();
+            let g = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
+            let mut want = g.model_columns(&refs).unwrap();
+            let (mut got, k) = vtree
+                .context()
+                .run(|e| e.limits().through_caps(Limits::pin_list_cap, || e.model_columns(&g, &refs)));
+            assert_eq!(got.to_columns(), want.to_columns(), "{shape} over {num_vars}, columns {columns:?}");
+            refused += k;
+        }
+    }
+    assert!(refused > 0, "no list cap refused a table");
+}
