@@ -1621,8 +1621,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
 /// cell the arenas have room for ([`ArenaRow`]): each f pair's child rows
 /// read once for the row, each cell's survivors written straight into the
 /// arena through a [`RowCursor`] held in registers and closed into its
-/// node, and the gate counted down a cell at a time and polled at the cell
-/// that brings it due, as a poll a cell would charge it.
+/// node, and the gate polled at the cell that brings it due, as a poll a
+/// cell would charge it, and counted down at once for the cells between.
 #[inline(always)]
 fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     sink: &mut ReservedEmitSink<'_>,
@@ -1656,36 +1656,51 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     let mut cursor = out.cursor();
     let units = K as u64;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    for (j, q) in lone.iter().enumerate() {
+    // The row's cells, tested once here rather than at each store.
+    assert!(row_base <= node_idx.len() && width <= node_idx.len() - row_base);
+    let mut start = 0;
+    while start < width {
+        // Cell `start` charged to the gate, which polls if it comes due,
+        // then the cells after it that leave it short of due, charged
+        // together: their loop holds no gate count.
         super::rows_stream::charge(gate, &mut due_at, &mut due, units)?;
-        let (c, d) = (q.left.0, q.right.0);
-        // An f pair's product with the column's pair: `None` where a side
-        // has none.
-        let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
-            let lc = left.get_in_row(node_idx, l, c);
-            if left.kills() && lc == NO_PRODUCT {
-                return None;
-            }
-            let rc = right.get_in_row(node_idx, r, d);
-            (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
-        };
-        let first = product(node_idx, l0, r0);
-        // Safety: the row was opened for a node a column and, with two f
-        // pairs, for two pairs a column.
-        let node = unsafe {
-            if K == 1 {
-                first.map(|(lc, rc)| cursor.single_node(lc, rc))
-            } else {
-                match (first, product(node_idx, l1, r1)) {
-                    (Some((a, b)), Some((c, d))) => Some(cursor.pair_node(a, b, c, d)),
-                    (Some((a, b)), None) | (None, Some((a, b))) => Some(cursor.single_node(a, b)),
-                    (None, None) => None,
+        let short = (due.saturating_sub(1) / units).min((width - start - 1) as u64);
+        due -= short * units;
+        let end = start + 1 + short as usize;
+        for (j, q) in (start..end).zip(&lone[start..end]) {
+            let (c, d) = (q.left.0, q.right.0);
+            // An f pair's product with the column's pair: `None` where a side
+            // has none.
+            let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
+                let lc = left.get_in_row(node_idx, l, c);
+                if left.kills() && lc == NO_PRODUCT {
+                    return None;
                 }
+                let rc = right.get_in_row(node_idx, r, d);
+                (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
+            };
+            let first = product(node_idx, l0, r0);
+            // Safety: the row was opened for a node a column and, with two f
+            // pairs, for two pairs a column.
+            let node = unsafe {
+                if K == 1 {
+                    first.map(|(lc, rc)| cursor.single_node(lc, rc))
+                } else {
+                    match (first, product(node_idx, l1, r1)) {
+                        (Some((a, b)), Some((c, d))) => Some(cursor.pair_node(a, b, c, d)),
+                        (Some((a, b)), None) | (None, Some((a, b))) => {
+                            Some(cursor.single_node(a, b))
+                        }
+                        (None, None) => None,
+                    }
+                }
+            };
+            if let Some(node) = node {
+                // Safety: `j` is below `width`, which the row's cells fit.
+                unsafe { *node_idx.get_unchecked_mut(row_base + j) = node };
             }
-        };
-        if let Some(node) = node {
-            node_idx[row_base + j] = node;
         }
+        start = end;
     }
     out.set_cursor(cursor);
     gate.add_short(due_at - due);
