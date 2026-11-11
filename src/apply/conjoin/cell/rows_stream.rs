@@ -1501,11 +1501,24 @@ trait RowSum {
         sums: &[f64],
         live: u64,
     ) -> Result<(), OperationError>;
+    /// Append a cell's sum `v` of products each its float.
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError>;
 }
 
 /// The columns of a row whose float sums [`sum_row`] holds before it
 /// appends them ([`RowSum::push_bits`]): a word of live bits.
 const HELD_COLUMNS: usize = 64;
+
+/// The row width below which [`sum_row`] appends each cell as it sums it
+/// ([`RowSum::push`]): appending a word of cells costs its setup on every
+/// row, more than it saves on a row of a few cells.
+const EACH_COLUMNS: usize = 8;
 
 impl<'a> RowSum for PlainSink<'a> {
     const CHECKED: bool = false;
@@ -1557,7 +1570,10 @@ impl<'a> RowSum for PlainSink<'a> {
         let start = self.out.len();
         // A cell's slot is its position, so the last one bounds the others.
         let last = lim.next_slot(start + n - 1)?;
-        lim.reserve_as_pushed(self.out, n)?;
+        // Checked here so the call is made only to grow the column.
+        if self.out.capacity() - start < n {
+            lim.reserve_as_pushed(self.out, n)?;
+        }
         let cells = &mut self.out.spare_capacity_mut()[..n];
         let mut slot = last + 1 - n as u32;
         for cell in cells {
@@ -1570,6 +1586,17 @@ impl<'a> RowSum for PlainSink<'a> {
         // Safety: the `n` cells past the length were written above.
         unsafe { self.out.set_len(start + n) };
         Ok(())
+    }
+
+    #[inline(always)]
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError> {
+        PlainSink::push(self, eng, node_idx, grid_pos, v)
     }
 }
 
@@ -1708,9 +1735,24 @@ impl<'a, 'data> RowSum for CheckedSum<'a, 'data> {
         sums: &[f64],
         live: u64,
     ) -> Result<(), OperationError> {
+        if live == 0 {
+            return Ok(());
+        }
         let scale = self.products.scale();
         self.counts
             .push_offsets(eng, (sums, live), scale, &mut node_idx[grid_pos..])
+    }
+
+    #[inline(always)]
+    fn push(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        v: f64,
+    ) -> Result<(), OperationError> {
+        node_idx[grid_pos] = self.counts.push_offset(eng, v, self.products.scale())?;
+        Ok(())
     }
 }
 
@@ -2042,7 +2084,8 @@ pub(super) fn charge(
 
 /// Hold cell `x` of a run of columns from `base`, its sum `acc` at
 /// `sums[x]`, for [`RowSum::push_bits`]: set its bit of `held` where it is
-/// live. A live cell whose checked sum overflowed or was inexact instead
+/// live, or with `each` (a row narrower than [`EACH_COLUMNS`]) append it
+/// now. A live cell whose checked sum overflowed or was inexact instead
 /// appends the cells `held` holds and refolds its pairs through the cell
 /// sink after them.
 #[inline(always)]
@@ -2050,12 +2093,18 @@ fn hold_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
     eng: &Engine,
     (node_idx, base, x): (&mut [u32], usize, usize),
-    (sums, held): (&[f64], &mut u64),
+    (sums, held, each): (&[f64], &mut u64, bool),
     (acc, live, exact): (f64, bool, bool),
     (f_pairs, g): (&[ChildPair], &[ChildPair]),
     (left, right): (&L, &R),
 ) -> Result<(), OperationError> {
     if !S::CHECKED || (exact && acc < f64::INFINITY) {
+        if each {
+            if live {
+                sum.push(eng, node_idx, base + x, acc)?;
+            }
+            return Ok(());
+        }
         *held |= u64::from(live) << x;
         return Ok(());
     }
@@ -2080,11 +2129,15 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
     (gate, due_at, due): (&mut crate::limits::PollGate<'_>, &mut u64, &mut u64),
 ) -> Result<(), OperationError> {
     let k = f_pairs.len() as u64;
-    let words = block
-        .chunks(HELD_COLUMNS)
-        .zip(sums.chunks(HELD_COLUMNS).zip(flags.chunks(HELD_COLUMNS)));
-    for (c, (block, (sums, flags))) in words.enumerate() {
-        let base = row_base + c * HELD_COLUMNS;
+    let each = block.len() < EACH_COLUMNS;
+    // An index loop: a row is often a few columns wide, where zipping
+    // chunk iterators costs a division and a call per row.
+    let mut c0 = 0;
+    while c0 < block.len() {
+        let end = block.len().min(c0 + HELD_COLUMNS);
+        let (base, cols) = (row_base + c0, c0..end);
+        let (block, sums, flags) = (&block[cols.clone()], &sums[cols.clone()], &flags[cols]);
+        c0 = end;
         let mut live = 0u64;
         for (x, q) in block.iter().enumerate() {
             if q.left.0 == DEAD_COLUMN {
@@ -2097,7 +2150,7 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 sum,
                 eng,
                 (node_idx, base, x),
-                (sums, &mut live),
+                (sums, &mut live, each),
                 (sums[x], fl & LIVE != 0, fl & INEXACT == 0),
                 (f_pairs, std::slice::from_ref(q)),
                 (left, right),
@@ -2237,6 +2290,7 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     let p1 = f_pairs[0];
     let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
     let mut held = [0.0f64; HELD_COLUMNS];
+    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2266,7 +2320,7 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
+                (&held, &mut held_live, each),
                 (acc, live, exact),
                 (f_pairs, g),
                 (left, right),
@@ -2313,6 +2367,7 @@ fn one_pair_row_values<
     let (lv, ld, rv, rd) = (l.vals, l.dead, r.vals, r.dead);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut held = [0.0f64; HELD_COLUMNS];
+    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2343,7 +2398,7 @@ fn one_pair_row_values<
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
+                (&held, &mut held_live, each),
                 (acc, !TRACK || flags & LIVE != 0, flags & INEXACT == 0),
                 (f_pairs, g),
                 (left, right),
@@ -2573,6 +2628,7 @@ fn lane_values<
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut w = 0;
     let mut held = [0.0f64; HELD_COLUMNS];
+    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2609,7 +2665,7 @@ fn lane_values<
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
+                (&held, &mut held_live, each),
                 (acc[0], live & 1 != 0, bad & 1 == 0),
                 (f_pairs, g),
                 (left, right),
@@ -2659,7 +2715,7 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&sums[c0..], &mut held_live),
+                (&sums[c0..], &mut held_live, width < EACH_COLUMNS),
                 (sums[j], fl & LIVE != 0, fl & INEXACT == 0),
                 (f_pairs, g),
                 (left, right),
