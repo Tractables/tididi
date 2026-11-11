@@ -73,3 +73,104 @@ fn target_completion_preserves_false_and_empty_requests() {
     assert!(eng.equivalent(&result, &f).unwrap());
     assert_canonical(&result);
 }
+
+/// Two conjunctions over eight variables, `f` with the level `ll` already
+/// summed out, and the internal levels of the balanced vtree.
+fn collapse_operands(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
+    let tree = Arc::new(Vtree::balanced(8));
+    let (left, _) = tree.children(tree.root());
+    let (ll, lr) = tree.children(left);
+    let mut f = eng.clause(&tree, [1, 2, 3, 4]).unwrap();
+    f = eng.and(f, eng.clause(&tree, [-1, -3, 5, 6]).unwrap()).unwrap();
+    f = eng.and(f, eng.clause(&tree, [2, -4, 7, 8]).unwrap()).unwrap();
+    let mut g = eng.clause(&tree, [3, 5, 7]).unwrap();
+    g = eng.and(g, eng.clause(&tree, [-4, -6, 8]).unwrap()).unwrap();
+    eng.marginalize_levels(&mut f, &[ll]).unwrap();
+    assert!(f.level(ll).is_marginal() && !f.level(lr).is_marginal());
+    (f, g, tree)
+}
+
+/// Naming a closed subtree level by level, over levels an operand already
+/// summed out and beside summed siblings, leaves what the conjunction
+/// followed by the marginalization pass leaves, at the default sparse floor
+/// and with every level over it.
+#[test]
+fn closed_target_subtrees_match_the_two_step_result() {
+    use crate::limits::{LimitConfig, SparseRoute};
+    let eng = Engine::new();
+    let (f, g, tree) = collapse_operands(&eng);
+    let root = tree.root();
+    let (left, right) = tree.children(root);
+    let (_, lr) = tree.children(left);
+    let (rl, rr) = tree.children(right);
+    let leaf = tree.leaf_of(VarId(7)).unwrap();
+    for min_grid in [SparseRoute::DEFAULT.min_grid, 0] {
+        let _scope = eng
+            .limits()
+            .scope(LimitConfig::none().with_sparse_route(SparseRoute::new(2, min_grid)));
+        for targets in [
+            vec![left, lr],
+            vec![lr],
+            vec![left, lr, rl],
+            vec![right, rl, rr],
+            vec![right, rl, rr, leaf],
+            vec![right, rl],
+            vec![root, left, lr, right, rl, rr],
+        ] {
+            let mut expected = eng.and(f.clone(), g.clone()).unwrap();
+            eng.marginalize_levels(&mut expected, &targets).unwrap();
+            let mut actual = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
+            for &t in &targets {
+                assert!(actual.level(t).is_marginal(), "target {t:?} of {targets:?}, floor {min_grid}");
+            }
+            let count = expected.model_count().unwrap();
+            assert_eq!(actual.model_count().unwrap(), count, "{targets:?}, floor {min_grid}");
+            assert_eq!(
+                eng.and_model_count(f.clone(), g.clone(), &targets).unwrap(),
+                count,
+                "counted, {targets:?}, floor {min_grid}",
+            );
+            actual.minimize().unwrap();
+            expected.minimize().unwrap();
+            assert_canonical(&actual);
+            assert_canonical(&expected);
+            assert_eq!(actual.pair_count(), expected.pair_count(), "{targets:?}, floor {min_grid}");
+            assert_eq!(actual.node_count(), expected.node_count(), "{targets:?}, floor {min_grid}");
+        }
+    }
+}
+
+/// With every level over the sparse floor, the levels under the top of a
+/// closed target subtree leave the mask, and a subtree with a level that is
+/// neither a target nor marginal keeps its top.
+#[test]
+fn collapse_clears_the_levels_under_a_closed_target() {
+    use crate::limits::{LimitConfig, SparseRoute};
+    let eng = Engine::new();
+    let (f, g, tree) = collapse_operands(&eng);
+    let _scope = eng
+        .limits()
+        .scope(LimitConfig::none().with_sparse_route(SparseRoute::new(2, 0)));
+    let (left, right) = tree.children(tree.root());
+    let (ll, lr) = tree.children(left);
+    let (rl, rr) = tree.children(right);
+    let mask_of = |targets: &[crate::vtree::VtreeIdx]| {
+        let mut mask = vec![false; tree.num_nodes()];
+        for &t in targets {
+            mask[t.idx()] = true;
+        }
+        super::super::collapse_target_subtrees(&eng, &tree, &f, &g, &mut mask).unwrap();
+        mask
+    };
+
+    let closed = mask_of(&[right, rl, rr]);
+    assert!(!closed[rl.idx()] && !closed[rr.idx()], "the levels under a closed target left in the mask");
+
+    // `ll` is marginal in `f`, so `left` is closed without naming it.
+    let over_marginal = mask_of(&[left, lr]);
+    assert!(!over_marginal[lr.idx()] && !over_marginal[ll.idx()]);
+    assert!(!over_marginal[left.idx()], "a target over an operand's marginal level is left to the pass");
+
+    let open = mask_of(&[right, rl]);
+    assert!(open[right.idx()], "a target over a level that is neither a target nor marginal left the mask");
+}

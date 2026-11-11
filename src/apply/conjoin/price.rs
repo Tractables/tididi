@@ -156,6 +156,13 @@ pub(super) fn combinations_bound(f: &TddLevel, g: &TddLevel) -> u128 {
     pairs(f).saturating_mul(pairs(g))
 }
 
+/// Whether a level of `cells` grid cells over `f` and `g` is over the sparse
+/// routes' size floor `min_grid`: by its grid, or by the combinations of its
+/// operands' pairs ([`combinations_bound`]).
+pub(super) fn over_floor(cells: u64, f: &TddLevel, g: &TddLevel, min_grid: u64) -> bool {
+    cells > min_grid || combinations_bound(f, g) > min_grid as u128
+}
+
 /// The bytes left for a level to claim, where the engine bounds memory.
 pub(super) fn headroom(lim: &Limits) -> Option<u64> {
     (!lim.memory_unbounded()).then(|| lim.headroom())

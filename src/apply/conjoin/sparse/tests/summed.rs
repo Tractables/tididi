@@ -95,6 +95,22 @@ fn both_ways(eng: &Engine, f: &Tdd, g: &Tdd, c: VtreeIdx, what: &str) -> Seen {
     assert_eq!(summed_roots(), before + u64::from(did), "{what}: the two-step path summed");
     assert_identical(&summed, &two, what);
 
+    // Naming every level under `c` as well sums at the root too, and leaves
+    // the same diagram with the leaves under `c` marked.
+    if did {
+        let subtree: Vec<VtreeIdx> = f.vtree.subtree(c).collect();
+        let before = summed_roots();
+        let named = eng.and_marginalizing(f.clone(), g.clone(), &subtree).unwrap();
+        assert_eq!(summed_roots(), before + 1, "{what}: the whole subtree did not sum at the root");
+        let mut expected = summed.clone();
+        if !expected.is_zero() {
+            for &t in subtree.iter().filter(|&&t| f.vtree.node(t).is_leaf()) {
+                crate::marginal::marginalize_leaf_inline(eng.limits(), &mut expected, t, &f.vtree).unwrap();
+            }
+        }
+        assert_identical(&named, &expected, &format!("{what}: the whole subtree"));
+    }
+
     let mut full = eng.and(f.clone(), g.clone()).unwrap();
     let vtree = Arc::clone(&full.vtree);
     let t = vtree.node(c).parent().expect("a target below the root");

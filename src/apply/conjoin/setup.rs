@@ -4,7 +4,7 @@
 //! the driver to sweep with.
 
 use super::marginal_plan::EntryMarginality;
-use super::price::combinations_bound;
+use super::price::{combinations_bound, over_floor};
 use super::products::Products;
 use super::route::{LevelMarg, SparseGate};
 use super::scratch::ApplyWorkspace;
@@ -491,8 +491,7 @@ impl ApplyRun<'_, '_> {
             fill_l + fill_r > scan_l + scan_r
         };
         let available = self.products.arena.is_bump();
-        let big = cells(f.here, g.here) > min_grid
-            || combinations_bound(f_level, g_level) > min_grid as u128;
+        let big = over_floor(cells(f.here, g.here), f_level, g_level, min_grid);
         let child_grid_wins = available && !big && child_grids();
         SparseGate {
             available,
