@@ -233,7 +233,15 @@ fn build_level(
             &marginal,
             run.sparse_gate(shape, f.level(t), g.level(t)),
         );
+        // A level taken from the sparse-marginal route meters its pairs as
+        // that route does, which returns before the per-level tail: what it
+        // charged the output-pair meter comes off at the next level that
+        // settles (`Limits::level_settled`). Settled, its pairs would stay in
+        // flight for the rest of the conjunction and could trip a pair floor
+        // the sparse-marginal route does not.
+        let mut settles = true;
         if describes_marginal_child(eng, run, (f, g), sweep, shape, (&plan, &marginal), route) {
+            settles = route != Route::SparseMarg || taken_levels_settled_forced();
             route = Route::MarginalChild;
         }
         route.validate(f, g, shape, &marginal, run)?;
@@ -254,7 +262,7 @@ fn build_level(
             // Claims no grid of its own: the parent that densifies its
             // product list prices that grid.
             Route::SparseMarg => {
-                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?
+                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan, settles }, sweep)?
             }
             _ => {
                 // Priced before its grid is claimed: a level that cannot fit
@@ -275,7 +283,7 @@ fn build_level(
                 #[cfg(debug_assertions)]
                 let predicted = super::price::complete_level(run, (f, g), shape, route, filtered)
                     .map(|level| (level, eng.limits().mark()));
-                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?;
+                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan, settles }, sweep)?;
                 #[cfg(debug_assertions)]
                 if let Some((level, mark)) = predicted {
                     let built = run.levels[t.idx()].slot_count() as u128;

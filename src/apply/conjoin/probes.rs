@@ -44,6 +44,12 @@ pub(super) fn two_step_forced() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
+pub(super) fn taken_levels_settled_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
 pub(super) fn note_summed() {}
 
 #[cfg(not(test))]

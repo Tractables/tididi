@@ -142,7 +142,10 @@ impl Limits {
     ///
     /// The early-exit routes that skip the per-level tail never settle, so what
     /// they charged comes off at the next boundary instead: the meter reads low
-    /// there, which is the direction a size floor tolerates.
+    /// there, which is the direction a size floor tolerates. A level the
+    /// marginal-child route takes from the sparse-marginal route runs the tail
+    /// but does not settle either, so that it meters its pairs as the route it
+    /// replaces.
     #[inline]
     pub(crate) fn level_settled(&self, exact_pairs: u64) {
         let charged = self.pairs_level_charge.replace(0);

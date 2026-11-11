@@ -354,3 +354,77 @@ fn carried_marginal_children_match_the_cells() {
         },
     );
 }
+
+/// The internal nodes of the subtrees under the left child of every node
+/// of height `k`, the left child included.
+fn left_subtrees(vtree: &Vtree, k: usize) -> Vec<VtreeIdx> {
+    let lower = targets_up_to(vtree, k - 1);
+    let mut out = Vec::new();
+    for p in targets_up_to(vtree, k).into_iter().filter(|t| !lower.contains(t)) {
+        let l = vtree.children(p).0;
+        out.extend(lower.iter().copied().filter(|&t| t == l || vtree.subtree(l).any(|u| u == t)));
+    }
+    out
+}
+
+/// Two products of two affine functions of four classes on a balanced
+/// vtree of `n` variables, with the subtree under the left child of every
+/// node of height 4 summed out: the levels of height 4 have one summed
+/// child, and the sparse-marginal route is chosen for them on every level
+/// big enough for a sparse route, which the marginal-child route takes.
+fn one_summed_child(n: u32, seed: u64) -> (Tdd, Tdd, Vec<VtreeIdx>) {
+    let mut rng = Lcg::new(seed);
+    let (vtree, qs) = parts(n, 4, false, &[], &mut rng);
+    let eng = Engine::new();
+    let a = eng.and(&qs[0], &qs[1]).unwrap();
+    let b = eng.and(&qs[2], &qs[3]).unwrap();
+    (a, b, left_subtrees(&vtree, 4))
+}
+
+/// A level the marginal-child route takes from the sparse-marginal route
+/// leaves what it charged the output-pair meter to come off at the next
+/// level that settles, as that route does: the least pair floor the
+/// conjunction finishes under is the one it has with the sparse-marginal
+/// route kept, and another with the taken levels settled, with the same
+/// value.
+#[test]
+fn levels_taken_from_the_sparse_marginal_route_meter_as_that_route() {
+    use crate::limits::SparseRoute;
+    let (a, b, targets) = one_summed_child(32, 0x5d_0030);
+    let run = |floor: Option<u64>| {
+        let eng = Engine::new();
+        let rules = StopRules {
+            unconditional: None,
+            after_pairs: floor.map(|f| (f, StopAt::WorkUnits(0))),
+        };
+        let _scope = eng.limits().scope(
+            LimitConfig::none()
+                .with_sparse_route(SparseRoute { sparsity: 1, min_grid: 0 })
+                .with_stop_rules(rules),
+        );
+        eng.and_marginalizing(&a, &b, &targets).ok().map(|out| {
+            let value = eng.weighted_value(&out).unwrap().unwrap();
+            value.as_scaled().expect("a scaled value").to_f64()
+        })
+    };
+    let (_, taken) = routes_taken(|| run(None));
+    let (_, kept) = grid_lookups(|| routes_taken(|| run(None)));
+    assert!(
+        taken.iter().zip(&kept).any(|((_, on), (_, off))| {
+            *on == Route::MarginalChild && *off == Route::SparseMarg
+        }),
+        "no level was taken from the sparse-marginal route"
+    );
+    let least = || {
+        let (mut lo, mut hi) = (1u64, 1 << 40);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if run(Some(mid)).is_some() { hi = mid } else { lo = mid + 1 }
+        }
+        lo
+    };
+    let floor = least();
+    assert_eq!(floor, grid_lookups(least), "the sparse-marginal route kept");
+    assert_ne!(floor, taken_levels_settled(least), "the taken levels settled");
+    assert_eq!(run(None), taken_levels_settled(|| run(None)));
+}

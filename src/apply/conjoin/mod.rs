@@ -1255,7 +1255,8 @@ use tests::{
     note_summed_complete_root, note_whole_row, note_word_cells, note_written_pairs,
     one_sided_masks_forced_off, pair_rows_forced_off, reach_columns_forced_off, reach_tables_forced,
     relabel_forced_off, relay_forced_off, row_columns_forced_off, seed_pairs_forced,
-    single_rows_forced_off, two_step_forced, word_cells_forced, word_rows_sorted_forced,
+    single_rows_forced_off, taken_levels_settled_forced, two_step_forced, word_cells_forced,
+    word_rows_sorted_forced,
     builds_past_cap_forced, note_refused_past_cap,
 };
 

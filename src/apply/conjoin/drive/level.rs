@@ -15,13 +15,15 @@ use crate::apply::conjoin::sparse::stream::{
 use crate::apply::conjoin::*;
 use crate::diagram::ChildSide;
 
-/// One level's build decision: its shape, the route chosen for it, and the
-/// marginal plan the route was chosen on.
+/// One level's build decision: its shape, the route chosen for it, the
+/// marginal plan the route was chosen on, and whether the per-level tail
+/// settles its pairs on the output-pair meter ([`finalize_level`]).
 #[derive(Clone, Copy)]
 pub(super) struct LevelBuild {
     pub(super) shape: LevelShape,
     pub(super) route: Route,
     pub(super) plan: MarginalPlan,
+    pub(super) settles: bool,
 }
 
 /// Run the sparse scatter pipeline for a level [`Route::Sparse`] was chosen
@@ -1384,7 +1386,7 @@ pub(super) fn build_level_dense(
     sweep: &mut Sweep<'_, '_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let LevelBuild { shape, route, plan } = level;
+    let LevelBuild { shape, route, plan, settles } = level;
     let LevelShape {
         t,
         left,
@@ -1519,6 +1521,7 @@ pub(super) fn build_level_dense(
                 output_grid_base,
                 passthrough,
                 false,
+                settles,
                 run,
                 sweep,
             );
@@ -1778,6 +1781,7 @@ pub(super) fn build_level_dense(
         output_grid_base,
         passthrough,
         close,
+        settles,
         run,
         sweep,
     );
