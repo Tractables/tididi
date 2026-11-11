@@ -53,6 +53,14 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<
     if passthrough.right { level.set_has_value_refs(ChildSide::Right, true); }
 }
 
+/// The fewest pairs in its arena for which a sweep closes a level as it
+/// finishes it ([`finalize_level`]); smaller levels are closed at the seat.
+/// A close reads every node, and the fit of a level whose nodes hold one pair
+/// each, kept in the node words with an empty arena, costs more per byte it
+/// frees than the stored level costs to keep until the seat; a sweep stopped
+/// before its seat never reads it again.
+pub(super) const CLOSE_IN_SWEEP_PAIRS: usize = 1 << 20;
+
 /// Per-level tail after the cell-build route dispatch: stream commit,
 /// `live_counts` update, grid tagging, `shrink_arrays`, the output-pair meter,
 /// the pass-through inline-emit flags, and, where `close` holds, the close of
@@ -61,10 +69,11 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<
 /// `close` holds for a level of the plain dense routes in a sweep with no
 /// filter and no memory bound. After its build such a level is read only
 /// through its parent's grid and, at the seat, as a whole, so it can hold
-/// the description of its pairs from here on: the sweep then keeps stored
-/// only the levels that fit no description and the level it is building.
-/// The node count and the arena's length and capacity read as before, and
-/// the close charges nothing.
+/// the description of its pairs from here on. It is closed when its arena
+/// holds [`CLOSE_IN_SWEEP_PAIRS`] pairs or more: the sweep then keeps stored
+/// only the levels that fit no description, the small ones and the level it
+/// is building. The node count and the arena's length and capacity read as
+/// before, and the close charges nothing.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
     eng: &Engine,
@@ -107,7 +116,7 @@ pub(super) fn finalize_level(
 
     mark_passthrough_inlined(&mut levels[t_idx], passthrough);
 
-    if close {
+    if close && levels[t_idx].pairs.stored_vec_len() >= close_in_sweep_pairs() {
         let level = &mut levels[t_idx];
         let stored = level.pairs.implicit().is_none();
         level.close();

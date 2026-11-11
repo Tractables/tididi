@@ -231,6 +231,23 @@ pub(super) fn closed_in_sweep() -> (u64, u64) {
 }
 
 thread_local! {
+    /// The fewest arena pairs for which a sweep on this thread closes a
+    /// level as it finishes it ([`close_in_sweep_pairs`]).
+    static CLOSE_IN_SWEEP_AT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(super::output::CLOSE_IN_SWEEP_PAIRS) };
+}
+
+pub(super) fn close_in_sweep_pairs() -> usize {
+    CLOSE_IN_SWEEP_AT.with(std::cell::Cell::get)
+}
+
+/// Run `f` with a sweep closing every level of `pairs` arena pairs or more
+/// as it finishes it, restored on the way out.
+pub(super) fn closing_in_sweep_from<R>(pairs: usize, f: impl FnOnce() -> R) -> R {
+    with_cell(&CLOSE_IN_SWEEP_AT, pairs, f)
+}
+
+thread_local! {
     /// The times a level's pairs arena grew on this thread, filled or ahead
     /// of a projection ([`pairs_grown`]).
     static GROWN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };

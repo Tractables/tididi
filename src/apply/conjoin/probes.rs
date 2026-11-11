@@ -275,3 +275,9 @@ pub(super) fn note_refused_past_cap() {}
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_closed_in_sweep(_holes: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn close_in_sweep_pairs() -> usize {
+    super::output::CLOSE_IN_SWEEP_PAIRS
+}
