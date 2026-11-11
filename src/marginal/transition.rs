@@ -388,12 +388,20 @@ impl InstallTarget for [TddLevel] {
 /// A level with no column in `computed` is left structural: the walk that
 /// filled `computed` did not visit it.
 ///
+/// The walk is a left-to-right postorder over the structural internal levels
+/// under `t`, which follows parent links back up as [`walk_bottom_up`] does,
+/// so that its stack does not grow with the depth of the vtree: a chain of
+/// structural levels as long as the vtree is deep is cascaded through where a
+/// target's descendants were carried into a conjunction unbuilt.
+///
 /// # Errors
 ///
 /// The first refusal of an install ([`InstallTarget::install`]). The levels
 /// installed before it stay installed, children before parents, as a cascade
 /// from them would have left them; the level refused and those above it are
 /// still structural.
+///
+/// [`walk_bottom_up`]: crate::value::walk_bottom_up
 pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     lim: &Limits,
     target: &mut S,
@@ -402,19 +410,47 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     computed: &mut [Option<K::Col>],
     store: &mut K::Store,
 ) -> Result<(), OperationError> {
-    let Some(level) = InternalLevel::new(vtree, t) else {
-        return Ok(());
+    // A level is walked where it is internal and still structural; each is
+    // asked when the walk reaches it, after its left sibling's subtree is
+    // installed, as a recursion would ask it.
+    let walked = |target: &S, u: VtreeIdx| {
+        !vtree.node(u).is_leaf() && !target.levels()[u.idx()].is_marginal()
     };
-    if target.levels()[t.idx()].is_marginal() {
+    if !walked(target, t) {
         return Ok(());
     }
-    let (left, right) = vtree.children(t);
-    cascade::<K, S>(lim, target, vtree, left, computed, store)?;
-    cascade::<K, S>(lim, target, vtree, right, computed, store)?;
-    if let Some(col) = computed[t.idx()].take() {
-        target.install::<K>(lim, vtree, level, col, computed, store)?;
+    let mut u = t;
+    'down: loop {
+        // Down to the first level whose children are both left alone.
+        loop {
+            let (left, right) = vtree.children(u);
+            if walked(target, left) {
+                u = left;
+            } else if walked(target, right) {
+                u = right;
+            } else {
+                break;
+            }
+        }
+        // Install it, and climb while each level climbed to has its subtrees
+        // done: from a left child, its sibling's subtree comes first.
+        loop {
+            if let Some(col) = computed[u.idx()].take() {
+                let level = InternalLevel::new(vtree, u).expect("a walked level is internal");
+                target.install::<K>(lim, vtree, level, col, computed, store)?;
+            }
+            if u == t {
+                return Ok(());
+            }
+            let parent = vtree.node(u).parent().expect("a level under `t` has a parent");
+            let (left, right) = vtree.children(parent);
+            if u == left && walked(target, right) {
+                u = right;
+                continue 'down;
+            }
+            u = parent;
+        }
     }
-    Ok(())
 }
 
 /// Free the per-node store of `parent`'s marginal children; call it at the
