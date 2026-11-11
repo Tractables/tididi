@@ -97,6 +97,7 @@ mod refine;
 
 use refine::Start;
 
+pub(super) use groups::SortCounts;
 pub(super) use listed::{find_listed_twin_groups, named_by, pair_mass};
 pub(super) use refine::list_members;
 

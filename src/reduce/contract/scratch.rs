@@ -326,6 +326,9 @@ pub(crate) struct ContractScratch {
     /// almost always already sorted, so the canonicalization pass sorts only
     /// the flagged minority.
     pub(super) slice_unsorted: Vec<bool>,
+    /// The counting sort's tables for the flagged slices
+    /// (`fingerprint::groups`).
+    pub(super) sort_counts: super::fingerprint::SortCounts,
 
     /// One bit per node of the level a list is gathered for
     /// (`fingerprint::named_by`).
@@ -454,6 +457,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
+        self.sort_counts.buffers(visit);
         visit(&mut self.reach_bits);
         visit(&mut self.unnamed);
         self.remap.buffers(visit);

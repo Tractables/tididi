@@ -76,8 +76,7 @@ fn materialize_candidate_signatures(
             scratch.cursors[idx] = c + 1; // ≤ candidate_mass < u32::MAX, checked above
         }
     });
-    canonicalize_signature_slices(child_width, scratch);
-    Ok(())
+    canonicalize_signature_slices(lim, child_width, scratch)
 }
 
 /// Replace each count in `counts` with the exclusive prefix sum of the
@@ -148,16 +147,181 @@ fn count_candidate_entries(
 /// scatter walks parent nodes in ascending index order and packs the parent
 /// index in the high 32 bits, so its slices arrive sorted except for
 /// inversions within one parent node's pair block; a content slice arrives in
-/// pair-list order. Only the flagged slices are sorted.
-fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScratch) {
-    let sig_offsets = &scratch.counts;
-    for i in 0..child_width {
-        if scratch.slice_unsorted[i] {
-            let lo = sig_offsets[i] as usize;
-            let hi = sig_offsets[i + 1] as usize;
-            scratch.entries[lo..hi].sort_unstable();
+/// pair-list order. Only the flagged slices are sorted
+/// ([`sort_signature_slice`]).
+fn canonicalize_signature_slices(
+    lim: &Limits,
+    child_width: usize,
+    scratch: &mut ContractScratch,
+) -> Result<(), OperationError> {
+    let ContractScratch { counts: sig_offsets, entries, slice_unsorted, sort_counts, .. } = scratch;
+    for (bounds, &unsorted) in sig_offsets[..=child_width].windows(2).zip(&slice_unsorted[..child_width]) {
+        if unsorted {
+            sort_signature_slice(lim, &mut entries[bounds[0] as usize..bounds[1] as usize], sort_counts)?;
         }
     }
+    Ok(())
+}
+
+/// Sort a signature slice whose entries are out of order only within runs
+/// of equal high halves, as a context scatter writes them: each run that
+/// holds an inversion is sorted alone ([`sort_piece`]), in one pass over the
+/// slice. A slice whose high half decreases somewhere is sorted whole, and
+/// so is a slice shorter than [`COUNT_MIN_LEN`], by the general sort.
+/// `tables` are the counting sort's, kept for the next slice.
+pub(super) fn sort_signature_slice(
+    lim: &Limits,
+    slice: &mut [u64],
+    tables: &mut SortCounts,
+) -> Result<(), OperationError> {
+    if slice.len() < COUNT_MIN_LEN {
+        slice.sort_unstable();
+        return Ok(());
+    }
+    let mut k = 1;
+    while k < slice.len() {
+        let x = slice[k];
+        if x >= slice[k - 1] {
+            k += 1;
+            continue;
+        }
+        let high = x >> 32;
+        if slice[k - 1] >> 32 != high {
+            return sort_piece(lim, slice, tables);
+        }
+        let start = slice[..k - 1].iter().rposition(|&e| e >> 32 != high).map_or(0, |p| p + 1);
+        let end = slice[k + 1..].iter().position(|&e| e >> 32 != high).map_or(slice.len(), |p| k + 1 + p);
+        sort_piece(lim, &mut slice[start..end], tables)?;
+        k = end;
+    }
+    Ok(())
+}
+
+/// Entries a piece needs to be sorted by counting: a shorter one takes the
+/// general sort, whose insertion sort costs less than the counting sort's
+/// passes over the piece and its grid.
+const COUNT_MIN_LEN: usize = 32;
+
+/// Entries of a piece, spread over it, whose grid [`sort_by_counting`]
+/// checks before its passes over the piece.
+const COUNT_PROBES: usize = 8;
+
+/// Cells per entry the grid of a piece sorted by counting may have.
+const COUNT_CELLS_PER_ENTRY: u64 = 64;
+
+/// Cells the grid of a piece sorted by counting may have in all: 4 MiB of
+/// counts.
+const COUNT_MAX_CELLS: u64 = 1 << 20;
+
+/// The counting sort's tables for signature pieces, all zero between sorts.
+#[derive(Default)]
+pub(crate) struct SortCounts {
+    /// Entries per cell of a piece's grid.
+    counts: Vec<u32>,
+    /// One bit per cell, set where `counts` is not zero, in bytes: entries
+    /// a few cells apart set bits of different bytes, so their updates do
+    /// not wait on each other.
+    occupied: Vec<u8>,
+}
+
+impl crate::execution::pool::Buffers for SortCounts {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        visit(&mut self.counts);
+        visit(&mut self.occupied);
+    }
+}
+
+/// Sort a piece of a signature slice: by counting where its high and low
+/// halves span a grid of at most [`COUNT_CELLS_PER_ENTRY`] cells per entry
+/// and [`COUNT_MAX_CELLS`] in all and it has at least [`COUNT_MIN_LEN`]
+/// entries, and by the general sort otherwise.
+fn sort_piece(lim: &Limits, piece: &mut [u64], tables: &mut SortCounts) -> Result<(), OperationError> {
+    if piece.len() < COUNT_MIN_LEN || !sort_by_counting(lim, piece, tables)? {
+        piece.sort_unstable();
+    }
+    Ok(())
+}
+
+/// The cells of the grid `entries` span: the range of their high halves
+/// times the range of their low halves, or the range of the entries
+/// themselves when they share one high half. Saturates at `u64::MAX`.
+fn grid_cells(entries: impl Iterator<Item = u64>) -> u64 {
+    const LOW: u64 = 0xFFFF_FFFF;
+    let (mut min, mut max, mut low_min, mut low_max) = (u64::MAX, 0, LOW, 0);
+    for e in entries {
+        (min, max) = (min.min(e), max.max(e));
+        (low_min, low_max) = (low_min.min(e & LOW), low_max.max(e & LOW));
+    }
+    if min > max {
+        return 0;
+    }
+    let rows = (max >> 32) - (min >> 32) + 1;
+    let cols = if rows == 1 { max - min + 1 } else { low_max - low_min + 1 };
+    rows.saturating_mul(cols)
+}
+
+/// Sort `piece` by counting its entries in the grid its high and low halves
+/// span, if that grid is small enough ([`sort_piece`]); whether it did.
+///
+/// Each entry adds one to its cell's count and sets the cell's bit; the
+/// walk over the set bits writes each cell's entries in order and clears
+/// its count and bit, so its time is the piece's length plus a bit per
+/// cell, and the tables are zero again for the next piece.
+fn sort_by_counting(lim: &Limits, piece: &mut [u64], tables: &mut SortCounts) -> Result<bool, OperationError> {
+    const LOW: u64 = 0xFFFF_FFFF;
+    let Some(&first) = piece.first() else {
+        return Ok(true);
+    };
+    let most = (piece.len() as u64).saturating_mul(COUNT_CELLS_PER_ENTRY).min(COUNT_MAX_CELLS);
+    // Entries spread over the piece span part of its grid: when that part
+    // is already too large, the passes below would find the whole one so.
+    let step = piece.len().div_ceil(COUNT_PROBES);
+    let probes = piece.iter().step_by(step).chain(piece.last()).copied();
+    if grid_cells(probes) > most {
+        return Ok(false);
+    }
+    let (min, max) = piece.iter().fold((first, first), |(min, max), &e| (min.min(e), max.max(e)));
+    let (high_min, rows) = (min >> 32, (max >> 32) - (min >> 32) + 1);
+    if rows > most {
+        return Ok(false);
+    }
+    // With one high half the entries order as their low halves do.
+    let (low_min, low_max) = if rows == 1 {
+        (min & LOW, max & LOW)
+    } else {
+        piece.iter().fold((LOW, 0), |(lo, hi), &e| (lo.min(e & LOW), hi.max(e & LOW)))
+    };
+    let cols = low_max - low_min + 1;
+    let cells = match rows.checked_mul(cols) {
+        Some(cells) if cells <= most => cells as usize,
+        _ => return Ok(false),
+    };
+    let SortCounts { counts, occupied } = tables;
+    lim.try_resize(counts, cells, 0)?;
+    lim.try_resize(occupied, 8 * cells.div_ceil(64), 0)?;
+    for &e in piece.iter() {
+        let cell = (((e >> 32) - high_min) * cols + (e & LOW) - low_min) as usize;
+        counts[cell] += 1;
+        occupied[cell / 8] |= 1 << (cell % 8);
+    }
+    let mut at = 0;
+    for (word, bytes) in occupied[..8 * cells.div_ceil(64)].chunks_exact_mut(8).enumerate() {
+        // Byte `i`, bit `j` of the word is cell `8 * i + j` of it.
+        let mut bits = u64::from_le_bytes(bytes.try_into().expect("8 bytes"));
+        if bits != 0 {
+            bytes.fill(0);
+        }
+        while bits != 0 {
+            let cell = word * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let n = std::mem::take(&mut counts[cell]) as usize;
+            let cell = cell as u64;
+            let e = if rows == 1 { min + cell } else { ((high_min + cell / cols) << 32) | (low_min + cell % cols) };
+            piece[at..at + n].fill(e);
+            at += n;
+        }
+    }
+    Ok(true)
 }
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
