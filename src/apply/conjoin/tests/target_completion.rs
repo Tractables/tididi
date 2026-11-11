@@ -140,9 +140,9 @@ fn closed_target_subtrees_match_the_two_step_result() {
     }
 }
 
-/// With every level over the sparse floor, the levels under the top of a
-/// closed target subtree leave the mask, and a subtree with a level that is
-/// neither a target nor marginal keeps its top.
+/// With every level over the sparse floor and every grid sparse enough, the
+/// levels under the top of a closed target subtree leave the mask, and a
+/// subtree with a level that is neither a target nor marginal keeps its top.
 #[test]
 fn collapse_clears_the_levels_under_a_closed_target() {
     use crate::limits::{LimitConfig, SparseRoute};
@@ -150,7 +150,7 @@ fn collapse_clears_the_levels_under_a_closed_target() {
     let (f, g, tree) = collapse_operands(&eng);
     let _scope = eng
         .limits()
-        .scope(LimitConfig::none().with_sparse_route(SparseRoute::new(2, 0)));
+        .scope(LimitConfig::none().with_sparse_route(SparseRoute::new(1, 0)));
     let (left, right) = tree.children(tree.root());
     let (ll, lr) = tree.children(left);
     let (rl, rr) = tree.children(right);
@@ -173,4 +173,28 @@ fn collapse_clears_the_levels_under_a_closed_target() {
 
     let open = mask_of(&[right, rl]);
     assert!(open[right.idx()], "a target over a level that is neither a target nor marginal left the mask");
+}
+
+/// A closed subtree whose narrower operand has fewer nodes than the sparse
+/// routes' factor stays in the mask, however big its levels: its grids
+/// cannot get sparse enough for the structure to pay.
+#[test]
+fn collapse_keeps_a_subtree_too_narrow_to_be_sparse() {
+    use crate::limits::{LimitConfig, SparseRoute};
+    let eng = Engine::new();
+    let (f, g, tree) = collapse_operands(&eng);
+    let (left, _) = tree.children(tree.root());
+    let (_, lr) = tree.children(left);
+    assert!(f.level(lr).slot_count().min(g.level(lr).slot_count()) < 64);
+    for sparsity in [1, 64] {
+        let _scope = eng
+            .limits()
+            .scope(LimitConfig::none().with_sparse_route(SparseRoute::new(sparsity, 0)));
+        let mut mask = vec![false; tree.num_nodes()];
+        mask[left.idx()] = true;
+        mask[lr.idx()] = true;
+        super::super::collapse_target_subtrees(&eng, &tree, &f, &g, &mut mask).unwrap();
+        assert_eq!(mask[lr.idx()], sparsity == 64, "sparsity {sparsity}");
+        assert_eq!(mask[left.idx()], sparsity == 64, "sparsity {sparsity}");
+    }
 }

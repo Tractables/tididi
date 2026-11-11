@@ -840,7 +840,7 @@ impl crate::Engine {
     /// On an unweighted conjunction, a subtree whose internal levels are all
     /// targets is built as structure and summed at its top, as it is when
     /// only the top is named, where its products are large enough for the
-    /// sparse route.
+    /// sparse route and its operands wide enough for its grids to be sparse.
     ///
     /// Under [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat)
     /// a target summed out during product construction holds its values in
@@ -1065,6 +1065,24 @@ fn sole_summed_level(vtree: &Vtree, mask: &mut [bool], targets: &[VtreeIdx]) -> 
     under.then_some(c)
 }
 
+/// Whether a subtree's product grids can be sparse by the sparse routes'
+/// factor `sparsity`, from its grid cells and those cells weighted by the
+/// narrower operand's node count, both summed over the subtree's structural
+/// levels.
+///
+/// Where each node of the wider operand meets some node of the other, as
+/// the operands of a conjunction mostly do, a product level holds at least
+/// as many nodes as the wider operand has there, and so at least `1/w` of
+/// its grid, `w` the narrower operand's node count. Folded, the subtree
+/// visits every cell of its grids and keeps one value per live product;
+/// built as structure, it visits the live products only, but stores each
+/// with its pairs, and the pass after the sweep reads them again. Only
+/// where the cell-weighted `w` reaches `sparsity` can the live products fall
+/// to the share of the grid at which the sparse routes pay.
+fn may_be_sparse((cells, weighted): (u128, u128), sparsity: u128) -> bool {
+    weighted >= cells.saturating_mul(sparsity)
+}
+
 /// Take out of `mask`, the levels an unweighted sweep sums out, the levels
 /// of each closed target subtree that are better built as structure and
 /// summed once the subtree's top is.
@@ -1076,8 +1094,9 @@ fn sole_summed_level(vtree: &Vtree, mask: &mut [bool], targets: &[VtreeIdx]) -> 
 /// operand. The levels under such a `c` leave `mask` where
 ///
 /// - some structural level of the subtree is over the sparse floor
-///   ([`price::over_floor`]), so the subtree's products are worth finding by
-///   the sparse routes before `c` sums them, or
+///   ([`price::over_floor`]) and the subtree's grids can be as sparse as
+///   the sparse routes need ([`may_be_sparse`]), so the subtree's products are worth finding by the
+///   sparse routes before `c` sums them, or
 /// - `c`'s parent can sum `c` as it is built (`ConjoinMode::Sum`): no level
 ///   under `c` is marginal in an operand, one operand has one node at every
 ///   level of the subtree, both have one node at the parent, and the parent
@@ -1093,7 +1112,7 @@ fn sole_summed_level(vtree: &Vtree, mask: &mut [bool], targets: &[VtreeIdx]) -> 
 ///
 /// Which levels `mask` names changes the work of the sweep and never the
 /// diagram or count the caller gets. The pass reads two levels' headers per
-/// vtree node and holds one byte per node.
+/// vtree node and holds one byte and two 128-bit sums per node.
 ///
 /// # Errors
 ///
@@ -1123,7 +1142,8 @@ fn collapse_target_subtrees(
     if f.is_zero() || g.is_zero() || !mask.contains(&true) {
         return Ok(());
     }
-    let min_grid = sparse::sparse_thresholds(eng.limits()).min_grid as u64;
+    let thresholds = sparse::sparse_thresholds(eng.limits());
+    let (min_grid, sparsity) = (thresholds.min_grid as u64, thresholds.sparsity_factor);
     let is_big = |u: VtreeIdx| {
         let (fl, gl) = (f.level(u), g.level(u));
         price::over_floor(fl.slot_count() as u64 * gl.slot_count() as u64, fl, gl, min_grid)
@@ -1136,6 +1156,10 @@ fn collapse_target_subtrees(
 
     let mut flags: Vec<u8> = Vec::new();
     eng.limits().try_resize(&mut flags, vtree.num_nodes(), 0)?;
+    // Per subtree, over its levels marginal in neither operand: the grid
+    // cells, and the cells weighted by the narrower operand's node count.
+    let mut grids: Vec<(u128, u128)> = Vec::new();
+    eng.limits().try_resize(&mut grids, vtree.num_nodes(), (0, 0))?;
     for u in vtree.bottomup() {
         let marginal = is_marginal(u);
         if vtree.node(u).is_leaf() {
@@ -1143,6 +1167,13 @@ fn collapse_target_subtrees(
             continue;
         }
         let (l, r) = vtree.children(u);
+        let (fw, gw) = (f.level(u).slot_count() as u128, g.level(u).slot_count() as u128);
+        let own = if marginal { (0, 0) } else { (fw * gw, fw * gw * fw.min(gw)) };
+        let (gl, gr) = (grids[l.idx()], grids[r.idx()]);
+        grids[u.idx()] = (
+            own.0.saturating_add(gl.0).saturating_add(gr.0),
+            own.1.saturating_add(gl.1).saturating_add(gr.1),
+        );
         let (both, either) = (flags[l.idx()] & flags[r.idx()], flags[l.idx()] | flags[r.idx()]);
         let big = is_big(u);
         let mut here = either & (BIG | ANY_BIG);
@@ -1194,7 +1225,8 @@ fn collapse_target_subtrees(
             && f.level(parent).slot_count() == 1
             && g.level(parent).slot_count() == 1
             && (is_big(parent) || flags[sibling.idx()] & ANY_BIG != 0);
-        if here & BIG == 0 && !parent_sums {
+        let sized = here & BIG != 0 && may_be_sparse(grids[c.idx()], sparsity);
+        if !sized && !parent_sums {
             continue;
         }
         let sibling_summed = is_marginal(sibling) || mask[sibling.idx()];
