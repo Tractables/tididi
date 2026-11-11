@@ -151,3 +151,70 @@ fn a_refused_widening_is_an_error() {
     assert!(refused.is_err());
     assert_eq!(bits(col.get(0)), bits(value(1, 0, false)));
 }
+
+/// The narrow column's room, or the wide one's.
+fn capacity(col: &FloatCol) -> usize {
+    match &col.repr {
+        Repr::Narrow { vals, .. } => vals.capacity(),
+        Repr::Wide(vals) => vals.capacity(),
+    }
+}
+
+#[test]
+fn offsets_pushed_together_are_those_pushed_one_at_a_time() {
+    let eng = Engine::new();
+    let normal = |e: u64, k: u64| f64::from_bits(e << 52 | k.wrapping_mul(0x1234_5678_9abc) & ((1 << 52) - 1));
+    let mut xs = [0.0f64; 64];
+    for (i, x) in (0u64..).zip(xs.iter_mut()) {
+        *x = match i % 9 {
+            0 => 0.0,
+            1 => normal(2 + i % 4, i),
+            2 => normal(1, i),
+            3 => normal(2046, i),
+            4 => normal(1 + i * 31 % 2046, i),
+            _ => normal(1000 + i, i),
+        };
+    }
+    let at = 100i64;
+    for d in [0i64, 7, -900, 1020, -1021, 2045, -2045, 5000] {
+        for live in [u64::MAX, 0x5555_5555_5555_5555, 0xf0f0_0000_0000_0f0f, 1 << 63, 0] {
+            for room in [1usize, 40, 70] {
+                let start = || {
+                    let mut col = FloatCol::with_capacity(&eng, room).unwrap();
+                    col.push(&eng, value(1, at, false)).unwrap();
+                    col
+                };
+                let (mut one, mut all) = (start(), start());
+                let (mut want, mut got) = ([u32::MAX; 64], [u32::MAX; 64]);
+                let mut left = live;
+                while left != 0 {
+                    let i = left.trailing_zeros() as usize;
+                    want[i] = one.push_offset(&eng, xs[i], at + d).unwrap();
+                    left &= left - 1;
+                }
+                all.push_offsets(&eng, (&xs, live), at + d, &mut got).unwrap();
+                let case = format!("offset {d}, live {live:x}, room {room}");
+                assert_eq!(got, want, "{case}");
+                assert_eq!((all.len(), is_wide(&all), capacity(&all)), (one.len(), is_wide(&one), capacity(&one)), "{case}");
+                for s in 0..one.len() {
+                    assert_eq!(bits(all.get(s)), bits(one.get(s)), "{case}, slot {s}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn offsets_pushed_together_past_the_slot_cap_are_refused() {
+    let eng = Engine::new();
+    let mut col = FloatCol::with_capacity(&eng, 64).unwrap();
+    col.push(&eng, value(1, 0, false)).unwrap();
+    let xs = [0.75f64; 64];
+    eng.limits().pin_slot_cap(Some(8));
+    let mut slots = [0u32; 64];
+    assert!(col.push_offsets(&eng, (&xs, 0x7f), 0, &mut slots).is_ok());
+    assert_eq!(col.len(), 8);
+    let refused = col.push_offsets(&eng, (&xs, 1), 0, &mut slots);
+    assert!(matches!(refused, Err(crate::limits::OperationError::IndexOverflow)));
+    eng.limits().pin_slot_cap(None);
+}

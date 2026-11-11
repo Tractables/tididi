@@ -171,6 +171,72 @@ impl FloatCol {
         Ok(slot)
     }
 
+    /// [`push_offset`](Self::push_offset) the float `xs[i]` of each bit
+    /// `i` set in `live`, in bit order, writing its slot to `slots[i]`. On
+    /// a narrow column under a set scale with room for them all, the floats
+    /// before the first one `push_offset` would not take as it stands go in
+    /// one pass, their slots checked once.
+    #[inline(always)]
+    pub(crate) fn push_offsets(
+        &mut self,
+        eng: &Engine,
+        (xs, mut live): (&[f64], u64),
+        scale: i64,
+        slots: &mut [u32],
+    ) -> Result<(), OperationError> {
+        if let Repr::Narrow { vals, scale: Some(at) } = &mut self.repr
+            && live.count_ones() as usize <= vals.capacity() - vals.len()
+        {
+            let d = scale.wrapping_sub(*at);
+            // The biased exponents `e` with `e` and `e + d` both within
+            // 1..=2046, as `push_offset` takes them.
+            let (lo, hi) = (1.max(1i64.saturating_sub(d)), 2046.min(2046i64.saturating_sub(d)));
+            let start = vals.len();
+            let room = vals.spare_capacity_mut();
+            let mut n = 0;
+            while live != 0 {
+                let i = live.trailing_zeros() as usize;
+                let bits = xs[i].to_bits();
+                let e = (bits >> 52) as i64;
+                if e < lo || e > hi {
+                    break;
+                }
+                room[n].write(f64::from_bits(bits.wrapping_add((d as u64) << 52)));
+                slots[i] = (start + n) as u32;
+                n += 1;
+                live &= live - 1;
+            }
+            if n > 0 {
+                // Safety: the `n` values past the length were written above.
+                unsafe { vals.set_len(start + n) };
+                // A value's slot is its position, so the last one bounds
+                // the others, and taking them could fail no other way.
+                eng.limits().next_slot(start + n - 1)?;
+            }
+        }
+        if live != 0 {
+            self.push_offsets_each(eng, (xs, live), scale, slots)?;
+        }
+        Ok(())
+    }
+
+    /// [`push_offsets`](Self::push_offsets) one float at a time.
+    #[inline(never)]
+    fn push_offsets_each(
+        &mut self,
+        eng: &Engine,
+        (xs, mut live): (&[f64], u64),
+        scale: i64,
+        slots: &mut [u32],
+    ) -> Result<(), OperationError> {
+        while live != 0 {
+            let i = live.trailing_zeros() as usize;
+            slots[i] = self.push_offset(eng, xs[i], scale)?;
+            live &= live - 1;
+        }
+        Ok(())
+    }
+
     /// Set slot `i`, which exists, to `v`.
     pub(crate) fn set(&mut self, eng: &Engine, i: usize, v: ScaledFloat) -> Result<(), OperationError> {
         if let Repr::Narrow { vals, scale } = &mut self.repr {
