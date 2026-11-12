@@ -80,6 +80,7 @@ pub(super) fn contract_twins(
         lim.try_resize(&mut scratch.rooms, scratch.group_starts.len(), 0u32)?;
     }
     let marked = scratch.marked.take().is_some();
+    let diagram_marginal = super::sweep::diagram_marginal(tdd, scratch);
     let ContractScratch {
         remap,
         merge: bufs,
@@ -88,7 +89,6 @@ pub(super) fn contract_twins(
         flat_groups,
         has_marginal_below,
         has_marginal_below_valid,
-        diagram_marginal,
         unnamed,
         listing,
         twin_class,
@@ -101,7 +101,6 @@ pub(super) fn contract_twins(
         lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
         bits::cleared(lim, &mut remap.absorbed, width)?;
     }
-    let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
     debug_assert!(
         !marked || !diagram_marginal,
         "a search marks the members only where every group merges whole"
