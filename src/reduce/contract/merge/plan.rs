@@ -112,8 +112,10 @@ pub(super) fn plan_groups(
     lim.reserve_exact(words, flat_groups.len())?;
     lim.reserve_exact(group_plans, group_starts.len())?;
     if !plain_level || t1_scalable {
-        // Every group concatenates whole, as the searches list it: `sel`
-        // is `flat_groups`.
+        // Every group concatenates whole, as the searches list it, and `sel`
+        // is `flat_groups`: at a marginal-flagged level duplicate pairs are
+        // legal multiset entries, and on the scalable plain path fork-down
+        // resolves them right after compaction (`duplicate_pair`).
         sel.extend_from_slice(flat_groups);
         group_plans.extend((0..group_starts.len()).map(|g| {
             let (start, end) = group_bounds(g);
@@ -124,49 +126,33 @@ pub(super) fn plan_groups(
         }
         return Ok(());
     }
-    if plain_level && !t1_scalable {
-        // The overlap filter below holds one group's members and pairs at a
-        // time: `filtered` and `duplicate_members` up to the widest group,
-        // `keep_pairs_sorted` and `member_pairs` up to the longest pair list,
-        // `seen_pairs` up to one group's pair mass.
-        let (mut max_members, mut max_pairs, mut max_mass) = (0usize, 0usize, 0usize);
-        for g in 0..group_starts.len() {
-            let (start, end) = group_bounds(g);
-            max_members = max_members.max(end - start);
-            let mut mass = 0usize;
-            for &idx in &flat_groups[start..end] {
-                let n = level.pair_count_at(idx as usize);
-                max_pairs = max_pairs.max(n);
-                mass += n;
-            }
-            max_mass = max_mass.max(mass);
+    // The overlap filter below holds one group's members and pairs at a
+    // time: `filtered` and `duplicate_members` up to the widest group,
+    // `keep_pairs_sorted` and `member_pairs` up to the longest pair list,
+    // `seen_pairs` up to one group's pair mass.
+    let (mut max_members, mut max_pairs, mut max_mass) = (0usize, 0usize, 0usize);
+    for g in 0..group_starts.len() {
+        let (start, end) = group_bounds(g);
+        max_members = max_members.max(end - start);
+        let mut mass = 0usize;
+        for &idx in &flat_groups[start..end] {
+            let n = level.pair_count_at(idx as usize);
+            max_pairs = max_pairs.max(n);
+            mass += n;
         }
-        lim.reserve_exact(filtered, max_members)?;
-        lim.reserve_exact(duplicate_members, max_members)?;
-        lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
-        lim.reserve_exact(member_pairs, max_pairs)?;
-        lim.reserve_set(seen_pairs, max_mass)?;
-        seen_pairs.clear();
+        max_mass = max_mass.max(mass);
     }
+    lim.reserve_exact(filtered, max_members)?;
+    lim.reserve_exact(duplicate_members, max_members)?;
+    lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
+    lim.reserve_exact(member_pairs, max_pairs)?;
+    lim.reserve_set(seen_pairs, max_mass)?;
+    seen_pairs.clear();
     // The per-group buffers are cleared before each group below.
     for g in 0..group_starts.len() {
         let (start, end) = group_bounds(g);
         let group = &flat_groups[start..end];
         let keep = group[0];
-        if !plain_level || t1_scalable {
-            // Concat every member, overlapping or not: at a marginal-flagged
-            // level duplicate pairs are legal multiset entries, and on the
-            // scalable plain path fork-down resolves them right after
-            // compaction (`duplicate_pair`).
-            let sel_start = sel.len();
-            sel.extend_from_slice(group);
-            group_plans.push(GroupPlan {
-                action: GroupAction::Concat,
-                start: sel_start as u32,
-                end: sel.len() as u32,
-            });
-            continue;
-        }
         filtered.clear();
         duplicate_members.clear();
         debug_assert!(seen_pairs.is_empty(), "the previous group emptied the overlap set");
