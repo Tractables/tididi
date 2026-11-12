@@ -367,20 +367,17 @@ fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), Op
 
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     scratch.drop_unnamed = drop_unnamed;
-    // On OOM here nothing is pending yet, so restore the intact taken worklist
-    // wholesale — dropping it would leak the whole dirty set.
-    if let Err(e) = scratch.pending.start(lim, num_nodes) {
-        tdd.dirty.restore(Pass::Contract, dirty_parents);
-        return Err(e);
-    }
     // Without a marginal level a parent the sweep reaches only through a
     // contraction above it has its children searched at the nodes that
     // contraction changed (`fingerprint::listed`); a parent on the worklist
     // has them searched whole. Whether the diagram has a marginal level is
     // read only once a contraction fired, which is what makes a parent
     // pending that was not on the worklist: a sweep that merges nothing
-    // never reads it.
-    if let Err(e) = start_listing(eng, &mut scratch, num_nodes, &dirty_parents) {
+    // never reads it. On OOM here nothing is pending yet, so restore the
+    // intact taken worklist wholesale — dropping it would leak the whole
+    // dirty set.
+    let started = scratch.pending.start(lim, num_nodes);
+    if let Err(e) = started.and_then(|()| start_listing(eng, &mut scratch, num_nodes, &dirty_parents)) {
         tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
     }
