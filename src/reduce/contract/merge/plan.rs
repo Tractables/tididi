@@ -179,21 +179,8 @@ pub(super) fn plan_groups(
                     }
                 }
             }
-            // Empty the overlap set for the next group. It holds the pairs of the
-            // members kept in `filtered` and has the capacity of the largest
-            // group's pairs, and `clear` costs that capacity: after one large
-            // group, every small one would pay for it. A set much larger than this
-            // group's pairs has them removed one by one instead.
-            let mass: usize = filtered.iter().map(|&i| level.pair_count_at(i as usize)).sum();
-            if seen_pairs.capacity() > 4 * mass.max(16) {
-                for &idx in filtered.iter() {
-                    for p in level.pairs_iter_of_idx(idx as usize) {
-                        seen_pairs.remove(&(p.left.0, p.right.0));
-                    }
-                }
-            } else {
-                seen_pairs.clear();
-            }
+            // Empty the overlap set for the next group.
+            seen_pairs.clear();
             // Dups are redirected only when no two members have disjoint
             // supports; a mixed group concatenates first, and the duplicate member
             // is then no longer content-equal to the grown survivor, so it
