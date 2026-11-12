@@ -877,3 +877,116 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
         assert_eq!(got, want, "{side:?}");
     }
 }
+
+/// Wide parent nodes whose pairs name many siblings, most of them only with
+/// nodes a parent node of one pair has left without a twin, and at most a
+/// few, or more, with nodes still in a class: planted classes given a set
+/// of those siblings whole, all but one member, one member, or split
+/// between two sets. Their pairs come in node order, in sibling order or
+/// shuffled, on levels where most nodes are alone and where few are. The
+/// nodes of a class some parent node splits off leave a last member that a
+/// later parent node names. The search finds the groups a listing of every
+/// node's contexts gives, on either side.
+#[test]
+fn wide_nodes_split_by_the_siblings_of_their_nodes_not_alone() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let mut rng = Lcg::new(83);
+    let mut shuffle = Lcg::new(84);
+    let mut scratch = ContractScratch::default();
+    let (mut seen_groups, mut few_live, mut many_live) = (0, 0, 0);
+    for round in 0..rounds(60, 3) {
+        let width = 200 + rng.below(500) as u32;
+        let siblings = 6 + rng.below(60) as u32;
+        // The siblings the nodes still in a class are paired with: at most
+        // four on most rounds, up to eight on the others.
+        let live_count = (1 + rng.below(if round % 3 == 2 { 8 } else { 4 }) as usize).min(siblings as usize);
+        let mut live_siblings: Vec<u32> = (0..siblings).collect();
+        for i in (1..live_siblings.len()).rev() {
+            live_siblings.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        live_siblings.truncate(live_count);
+        let classes = random_classes(&mut rng, width, 5);
+        // Three quarters of the classes alone on even rounds, a quarter on
+        // odd ones.
+        let split = if round % 2 == 0 { classes.len() * 3 / 4 } else { classes.len() / 4 };
+        let lone: Vec<u32> = classes[..split].iter().flat_map(|c| c.iter().copied()).collect();
+        let kept = &classes[split..];
+        if lone.is_empty() || kept.is_empty() {
+            continue;
+        }
+        for side in [ChildSide::Left, ChildSide::Right] {
+            let (target, other) = side.pick((v_left, v_right), (v_right, v_left));
+            let mut levels = empty_levels(&vtree, (target, width), (other, siblings));
+            for &t in &lone {
+                levels[root.idx()].push_internal_node(&[side_pair(side, t, rng.below(u64::from(siblings)) as u32)]);
+            }
+            let mut pairs: Vec<(u32, u32)> = Vec::new();
+            for p in 0..width as usize / 6 {
+                pairs.clear();
+                for _ in 0..refine::SMALL_PAIRS + 1 + rng.below(60) as usize {
+                    pairs.push((lone[rng.below(lone.len() as u64) as usize], rng.below(u64::from(siblings)) as u32));
+                }
+                for _ in 0..rng.below(6) {
+                    let class = &kept[rng.below(kept.len() as u64) as usize];
+                    let code = 1 + rng.below((1u64 << live_count) - 1);
+                    let set: Vec<u32> = (0..live_count).filter(|&j| code >> j & 1 == 1).map(|j| live_siblings[j]).collect();
+                    let other_set: Vec<u32> =
+                        (0..live_count).filter(|&j| (code ^ 1) >> j & 1 == 1).map(|j| live_siblings[j]).collect();
+                    let give = |pairs: &mut Vec<(u32, u32)>, t: u32, set: &[u32]| pairs.extend(set.iter().map(|&s| (t, s)));
+                    match rng.below(4) {
+                        0 => give(&mut pairs, class[rng.below(class.len() as u64) as usize], &set),
+                        1 if class.len() > 2 => {
+                            let skip = rng.below(class.len() as u64) as usize;
+                            for (j, &t) in class.iter().enumerate() {
+                                if j != skip {
+                                    give(&mut pairs, t, &set);
+                                }
+                            }
+                        }
+                        2 if class.len() > 1 && !other_set.is_empty() => {
+                            let half = class.len() / 2;
+                            for &t in &class[..half] {
+                                give(&mut pairs, t, &set);
+                            }
+                            for &t in &class[half..] {
+                                give(&mut pairs, t, &other_set);
+                            }
+                        }
+                        _ => {
+                            for &t in class {
+                                give(&mut pairs, t, &set);
+                            }
+                        }
+                    }
+                }
+                pairs.sort_unstable();
+                pairs.dedup();
+                reorder(&mut pairs, p, &mut shuffle);
+                let live: HashSet<u32> = pairs.iter().filter(|&&(t, _)| !lone.contains(&t)).map(|&(_, s)| s).collect();
+                if live.len() >= 2 && live.len() <= 4 {
+                    few_live += 1;
+                } else if live.len() > 4 {
+                    many_live += 1;
+                }
+                let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| side_pair(side, t, s)).collect();
+                levels[root.idx()].push_internal_node(&node[..]);
+            }
+            let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+            let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            scratch.prepare();
+            let found = twin_groups(&eng, &tdd, target, root, side, &mut scratch, false);
+            let got = scratch_groups(&scratch);
+            assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
+            assert_eq!(got, want, "round {round}, {side:?}");
+            seen_groups += want.len();
+        }
+    }
+    assert!(cfg!(miri) || seen_groups > 200, "the fixtures hold twins: {seen_groups}");
+    assert!(
+        cfg!(miri) || (few_live > 500 && many_live > 100),
+        "wide parent nodes of few and of more siblings of nodes not alone: {few_live}, {many_live}"
+    );
+}
