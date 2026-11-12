@@ -358,7 +358,8 @@ impl Engine {
     /// search has charged `config.max_work_units`. A descent that stops
     /// because a sweep kept nothing is followed by `config.restarts`
     /// ([`PoolRestarts`]), which keep a result only when it is smaller by
-    /// their minimum gain.
+    /// their minimum gain. A restart refused a buffer is put back and ends
+    /// the restarts, the search going on to its closing reduction.
     /// Every member is reduced before the search and after it.
     ///
     /// The members keep their functions and end up sharing one vtree
@@ -497,7 +498,15 @@ impl<'l> PoolDescent<'l> {
         let mut result = Ok(());
         while self.stats.restarts < restarts.count && lim.work_units() < self.until {
             self.stats.restarts += 1;
-            let mut undo = Undo::begin(members, self.tree, &self.known);
+            let mut undo = match Undo::begin(lim, members, self.tree, &self.known) {
+                Ok(undo) => undo,
+                // A restart is an improvement the search may go without.
+                Err(OperationError::OverBudget) => break,
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            };
             let accepts = self.stats.accepts;
             let outcome = self.restart(members, &internals, &mut rng, &mut undo);
             if outcome.is_ok()
@@ -510,9 +519,16 @@ impl<'l> PoolDescent<'l> {
                 undo.revert(lim, members, self.tree, &mut self.known);
                 self.stats.accepts = accepts;
             }
-            if let Err(e) = outcome {
-                result = Err(e);
-                break;
+            match outcome {
+                Ok(()) => {}
+                // A restart refused a buffer, the pool back where the descent
+                // left it: the search ends there, as it would have without
+                // restarts.
+                Err(OperationError::OverBudget) => break,
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
             }
         }
         self.stats.restart_work_units = lim.work_units() - begun;
@@ -659,15 +675,24 @@ struct Undo<'a> {
     members: Vec<DiagramHeader>,
     /// Whether a level of every member at each node is filed in `levels`.
     filed: Vec<bool>,
-    /// (member, node, the level as the restart found it).
-    levels: Vec<(usize, usize, Transient<'a, TddLevel>)>,
+    /// (member, node, the level as the restart found it), room for one
+    /// per member and node reserved through the limits up front, so filing
+    /// a kept move's levels never fails.
+    levels: Transient<'a, Vec<(usize, usize, Transient<'a, TddLevel>)>>,
     /// The members' live pairs when the restart began.
     pairs: usize,
 }
 
 impl<'a> Undo<'a> {
-    fn begin(members: &[&mut Tdd], tree: &Vtree, known: &Known) -> Undo<'a> {
-        Undo {
+    fn begin(
+        lim: &'a Limits,
+        members: &[&mut Tdd],
+        tree: &Vtree,
+        known: &Known,
+    ) -> Result<Undo<'a>, OperationError> {
+        let mut levels = Transient::new(lim, Vec::new());
+        lim.reserve_exact(&mut levels, members.len().saturating_mul(tree.num_nodes()))?;
+        Ok(Undo {
             tree: tree.clone(),
             known: known.clone(),
             members: members
@@ -675,9 +700,9 @@ impl<'a> Undo<'a> {
                 .map(|m| DiagramHeader::clone_from_tdd(m))
                 .collect(),
             filed: vec![false; tree.num_nodes()],
-            levels: Vec::new(),
+            levels,
             pairs: live_pairs(members),
-        }
+        })
     }
 
     /// File the levels a kept move replaced, `saved` holding member `i`'s
@@ -700,8 +725,8 @@ impl<'a> Undo<'a> {
 
     /// Put every member, the tree and what the descent knew back as the
     /// restart found them.
-    fn revert(self, lim: &Limits, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
-        for (i, t, level) in self.levels {
+    fn revert(mut self, lim: &Limits, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
+        for (i, t, level) in self.levels.drain(..) {
             let rebuilt = std::mem::replace(&mut members[i].levels[t], level.keep());
             lim.discard(rebuilt);
         }

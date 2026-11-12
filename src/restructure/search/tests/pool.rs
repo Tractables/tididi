@@ -570,15 +570,22 @@ fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
     let eng = crate::Engine::new();
     let original = pool();
     let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
-    for config in [PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() }, with_restarts()] {
-        let (mut refused, mut nth) = (0, 0);
+    for (config, restarts) in [(PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() }, false), (with_restarts(), true)] {
+        let (mut refused, mut absorbed, mut nth) = (0, 0, 0);
         loop {
             let mut members = original.clone();
             eng.limits().refuse_nth_reserve(nth);
             let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &config));
+            let pending = eng.limits().refusal_pending();
             eng.limits().grant_every_reserve();
             let done = match outcome {
-                Ok(_) => true,
+                Ok(_) if pending => true,
+                // A refusal inside a restart ends the restarts, the pool put
+                // back where the descent left it.
+                Ok(_) => {
+                    absorbed += 1;
+                    false
+                }
                 Err(crate::OperationError::OverBudget) => {
                     refused += 1;
                     false
@@ -592,7 +599,76 @@ fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
             nth += 1 + nth / 32;
         }
         assert!(refused > 0);
+        assert_eq!(absorbed > 0, restarts, "{absorbed} refusals ended the restarts");
     }
+}
+
+/// A buffer refused inside the first restart, at its undo reservation or
+/// later, ends the restarts with the pool the descent left: the same vtree,
+/// pairs and kept moves as a search without restarts, the work units those
+/// of that search plus the ones the refused restart charged.
+#[test]
+fn a_refused_restart_returns_the_descents_pool_and_charges() {
+    let eng = crate::Engine::new();
+    let original = pool();
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    let descent_only = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
+    let mut descended = original.clone();
+    let plain = with_members(&mut descended, |refs| eng.pool_search(refs, &descent_only)).unwrap();
+    assert_eq!(plain.restarts, 0, "{plain:?}");
+    let pairs: Vec<usize> = descended.iter().map(Tdd::pair_count).collect();
+    let vtree = descended[0].vtree().to_text();
+    let search = |nth: u32| {
+        let mut members = original.clone();
+        eng.limits().refuse_nth_reserve(nth);
+        let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &with_restarts()));
+        let pending = eng.limits().refusal_pending();
+        eng.limits().grant_every_reserve();
+        (outcome, pending, members)
+    };
+    // Every refusal in the descent fails the search; on this pool the
+    // doubling stops inside the restarts, so the first reservation whose
+    // refusal the search survives is the first restart's. Should the
+    // doubling skip the restarts, the loop below finds no refused restart
+    // and the assertions after it fail.
+    let (mut lo, mut hi) = (0, 1);
+    while search(hi).0.is_err() {
+        (lo, hi) = (hi + 1, hi * 2);
+    }
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if search(mid).0.is_ok() {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    let (mut first, mut charged, mut nth) = (0, 0, lo);
+    loop {
+        let (outcome, pending, mut members) = search(nth);
+        let stats = outcome.unwrap();
+        if pending || stats.restarts > 1 {
+            break;
+        }
+        let at = format!("reservation {nth}: {stats:?}");
+        assert_eq!(stats.restarts, 1, "{at}");
+        assert_eq!(stats.restarts_kept, 0, "{at}");
+        assert_eq!(stats.accepts, plain.accepts, "{at}");
+        assert_eq!(stats.pairs_before, plain.pairs_before, "{at}");
+        assert_eq!(stats.pairs_after, plain.pairs_after, "{at}");
+        assert_eq!(stats.work_units, plain.work_units + stats.restart_work_units, "{at}");
+        assert_eq!(members.iter().map(Tdd::pair_count).collect::<Vec<_>>(), pairs, "{at}");
+        assert_eq!(members[0].vtree().to_text(), vtree, "{at}");
+        assert_search_kept_every_function(&mut members, &tables, &at);
+        if stats.restart_work_units == 0 {
+            first += 1;
+        } else {
+            charged += 1;
+        }
+        nth += 1 + (nth - lo) / 16;
+    }
+    assert!(first > 0, "no refusal before the restart's work");
+    assert!(charged > 0, "no refusal inside a restart's work");
 }
 
 /// The descent without the refused moves skipped: every move of every
