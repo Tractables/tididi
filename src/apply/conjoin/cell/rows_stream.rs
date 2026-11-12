@@ -1978,21 +1978,38 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
-        sum_row(
-            self.isa,
-            &mut self.sum,
-            (self.ones, self.pairs),
-            self.values.as_mut(),
-            &mut self.peek,
-            eng,
-            row,
-        )
+        let (sum, isa, values) = (&mut self.sum, self.isa, self.values.as_mut());
+        let at = ((self.ones, self.pairs), values, &mut self.peek);
+        if S::WORDS {
+            return isa.word_row(sum, at, eng, row);
+        }
+        sum_row(isa, sum, at, eng, row)
     }
 }
 
+/// What [`sum_row`] reads besides the row: the level's one-pair columns
+/// and their count, its value rows, and the rows it peeks ahead at.
+type RowAt<'a, 'v, 'p> = (
+    (&'a [ChildPair], usize),
+    Option<&'a mut ValueRows<'v>>,
+    &'a mut Peek<'p>,
+);
+
 /// An instruction set the streamed float sums are compiled for; its
-/// methods run [`block_rows`] and [`ahead_row`] compiled for it.
+/// methods run [`block_rows`], [`ahead_row`] and [`sum_row`] compiled for
+/// it, out of line.
 trait Isa: Copy {
+    /// [`sum_row`] on a level of [`RowSum::WORDS`]: out of line, so that a
+    /// row's call costs little beside its word of cells and the cell loop
+    /// around it is compiled apart from the row code.
+    fn word_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        at: RowAt<'_, '_, '_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError>;
+
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
         sum: &mut S,
@@ -2018,6 +2035,17 @@ trait Isa: Copy {
 struct Base;
 
 impl Isa for Base {
+    #[inline(never)]
+    fn word_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        at: RowAt<'_, '_, '_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        sum_row(self, sum, at, eng, row)
+    }
+
     #[inline(never)]
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
@@ -2047,6 +2075,19 @@ impl Isa for Base {
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Isa for Avx2 {
     #[inline(always)]
+    fn word_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        self,
+        sum: &mut S,
+        at: RowAt<'_, '_, '_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        // Safety: an `Avx2` exists only where the processor has the
+        // features `avx2_word_row` enables.
+        unsafe { avx2_word_row(self, sum, at, eng, row) }
+    }
+
+    #[inline(always)]
     fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         self,
         sum: &mut S,
@@ -2072,6 +2113,20 @@ impl Isa for Avx2 {
     ) -> Result<usize, OperationError> {
         // Safety: as above.
         unsafe { avx2_ahead_row(sum, sums, flags, eng, row) }
+    }
+}
+
+avx2_fn! {
+    /// [`sum_row`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_word_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
+        isa: Avx2,
+        sum: &mut S,
+        at: RowAt<'_, '_, '_>,
+        eng: &Engine,
+        row: WholeRow<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        sum_row(isa, sum, at, eng, row)
     }
 }
 
@@ -2249,9 +2304,7 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
 fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
     isa: I,
     sum: &mut S,
-    (ones, pairs): (&[ChildPair], usize),
-    values: Option<&mut ValueRows<'_>>,
-    peek: &mut Peek<'_>,
+    ((ones, pairs), values, peek): RowAt<'_, '_, '_>,
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
