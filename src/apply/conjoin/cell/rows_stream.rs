@@ -2140,34 +2140,25 @@ fn finish_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
     refold(sum, eng, (node_idx, pos), (f_pairs, g), (left, right))
 }
 
-/// [`finish_cell`] with [`RowSum::WORDS`]: hold cell `x` of a run of
-/// columns from `base`, its sum `acc` at
-/// `sums[x]`, for [`RowSum::push_bits`]: set its bit of `held` where it is
-/// live, or with `each` (a row narrower than [`EACH_COLUMNS`]) append it
-/// now. A live cell whose checked sum overflowed or was inexact instead
-/// appends the cells `held` holds and refolds its pairs through the cell
-/// sink after them.
+/// [`finish_cell`] with [`RowSum::WORDS`] on a live cell: hold cell `x` of
+/// a run of columns from `base`, its sum `acc` at `sums[x]`, for
+/// [`RowSum::push_bits`] by setting its bit of `held`. A cell whose checked
+/// sum overflowed or was inexact instead appends the cells `held` holds and
+/// refolds its pairs through the cell sink after them. The callers skip a
+/// cell no pair reached before holding its sum, as `finish_cell` returns
+/// first on it: most cells of a sparse row are such cells.
 #[inline(always)]
 fn hold_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
     sum: &mut S,
     eng: &Engine,
     (node_idx, base, x): (&mut [u32], usize, usize),
-    (sums, held, each): (&[f64], &mut u64, bool),
-    (acc, live, exact): (f64, bool, bool),
+    (sums, held): (&[f64], &mut u64),
+    (acc, exact): (f64, bool),
     (f_pairs, g): (&[ChildPair], &[ChildPair]),
     (left, right): (&L, &R),
 ) -> Result<(), OperationError> {
     if !S::CHECKED || (exact && acc < f64::INFINITY) {
-        if each {
-            if live {
-                sum.push(eng, node_idx, base + x, acc)?;
-            }
-            return Ok(());
-        }
-        *held |= u64::from(live) << x;
-        return Ok(());
-    }
-    if !live {
+        *held |= 1 << x;
         return Ok(());
     }
     sum.push_bits(eng, node_idx, base, sums, std::mem::take(held))?;
@@ -2207,7 +2198,6 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
         }
         return Ok(());
     }
-    let each = block.len() < EACH_COLUMNS;
     // An index loop: a row is often a few columns wide, where zipping
     // chunk iterators costs a division and a call per row.
     let mut c0 = 0;
@@ -2224,12 +2214,15 @@ fn flush_ones_block<L: ChildLookup, R: ChildLookup, S: RowSum>(
             }
             charge(gate, due_at, due, k)?;
             let fl = flags[x];
+            if fl & LIVE == 0 {
+                continue;
+            }
             hold_cell(
                 sum,
                 eng,
                 (node_idx, base, x),
-                (sums, &mut live, each),
-                (sums[x], fl & LIVE != 0, fl & INEXACT == 0),
+                (sums, &mut live),
+                (sums[x], fl & INEXACT == 0),
                 (f_pairs, std::slice::from_ref(q)),
                 (left, right),
             )?;
@@ -2389,7 +2382,6 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         return Ok(width);
     }
     let mut held = [0.0f64; HELD_COLUMNS];
-    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2399,28 +2391,17 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
                 continue;
             }
             charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (mut acc, mut live, mut exact) = (0.0f64, false, true);
-            for q in g {
-                let lc = left.get_in_row(node_idx, lrow, q.left.0);
-                if left.kills() && lc == NO_PRODUCT {
-                    continue;
-                }
-                let rc = right.get_in_row(node_idx, rrow, q.right.0);
-                if right.kills() && rc == NO_PRODUCT {
-                    continue;
-                }
-                let (p, ok) = sum.product(lc, rc);
-                acc += p;
-                live = true;
-                exact &= ok;
+            let (acc, live, exact) = grid_sum(sum, node_idx, (left, right), (lrow, rrow), g);
+            if !live {
+                continue;
             }
             held[(j - c0) % HELD_COLUMNS] = acc;
             hold_cell(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live, each),
-                (acc, live, exact),
+                (&held, &mut held_live),
+                (acc, exact),
                 (f_pairs, g),
                 (left, right),
             )?;
@@ -2515,9 +2496,7 @@ fn one_pair_row_values<
         gate.add_short(due_at - due);
         return Ok(width);
     }
-    let (lv, ld, rv, rd) = (l.vals, l.dead, r.vals, r.dead);
     let mut held = [0.0f64; HELD_COLUMNS];
-    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2527,29 +2506,17 @@ fn one_pair_row_values<
                 continue;
             }
             charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (mut acc, mut flags) = (0.0f64, 0u8);
-            for q in g {
-                let (i, t) = (q.left.0 as usize, q.right.0 as usize);
-                // Safety: every pair field is below its side's row width
-                // (`row_width`), and a row holds a float and a mark for each.
-                let (a, b) = unsafe { (*lv.get_unchecked(i), *rv.get_unchecked(t)) };
-                let (p, ok) = S::times(a, b);
-                acc += p;
-                if TRACK {
-                    // Safety: as above.
-                    flags |= LIVE ^ unsafe { *ld.get_unchecked(i) | *rd.get_unchecked(t) };
-                }
-                if CHECK && !ok {
-                    flags |= INEXACT;
-                }
+            let (acc, flags) = value_sum::<TRACK, CHECK, S>(l, r, g);
+            if TRACK && flags & LIVE == 0 {
+                continue;
             }
             held[(j - c0) % HELD_COLUMNS] = acc;
             hold_cell(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live, each),
-                (acc, !TRACK || flags & LIVE != 0, flags & INEXACT == 0),
+                (&held, &mut held_live),
+                (acc, flags & INEXACT == 0),
                 (f_pairs, g),
                 (left, right),
             )?;
@@ -2834,7 +2801,6 @@ fn lane_values<
         return Ok(width);
     }
     let mut held = [0.0f64; HELD_COLUMNS];
-    let each = width < EACH_COLUMNS;
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
@@ -2866,13 +2832,16 @@ fn lane_values<
                 flags[(k - 1) * width + j] =
                     (((live >> k) & 1) * LIVE) | (((bad >> k) & 1) * INEXACT);
             }
+            if live & 1 == 0 {
+                continue;
+            }
             held[(j - c0) % HELD_COLUMNS] = acc[0];
             hold_cell(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live, each),
-                (acc[0], live & 1 != 0, bad & 1 == 0),
+                (&held, &mut held_live),
+                (acc[0], bad & 1 == 0),
                 (f_pairs, g),
                 (left, right),
             )?;
@@ -2973,12 +2942,15 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
             }
             charge(gate, &mut due_at, &mut due, g.len() as u64)?;
             let fl = flags[j];
+            if fl & LIVE == 0 {
+                continue;
+            }
             hold_cell(
                 sum,
                 eng,
                 (node_idx, row_base + c0, j - c0),
-                (&sums[c0..], &mut held_live, width < EACH_COLUMNS),
-                (sums[j], fl & LIVE != 0, fl & INEXACT == 0),
+                (&sums[c0..], &mut held_live),
+                (sums[j], fl & INEXACT == 0),
                 (f_pairs, g),
                 (left, right),
             )?;
