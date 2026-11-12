@@ -2,7 +2,7 @@
 //! weight rather than a set of emitted pairs.
 
 use super::super::marginal_plan::Carrier;
-use super::rows::{Emit, run_level_rows};
+use super::rows::{Emit, culls, run_level_rows};
 use super::word_cells::WordScratch;
 use super::*;
 use crate::diagram::{EncodedChildRef, ImplicitLevel, ScaledFloat, WeightStore};
@@ -97,8 +97,9 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
 /// [`FoldSink`] otherwise, compiled for the target and again with
 /// [`avx2_fn`]'s features where the processor has them ([`Isa`]). A level
 /// at least [`EACH_COLUMNS`] wide sums a word of cells at a time
-/// ([`RowSum::WORDS`]) in a copy of the code of its own; a narrower one
-/// runs code without the word setup.
+/// ([`RowSum::WORDS`]) in a copy of the code of its own; a narrower one,
+/// and one that [culls](super::rows::culls) on a side and so never sums a
+/// whole row, runs code without the word setup.
 fn stream_float_level<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -108,7 +109,9 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
     values: &mut FloatCol,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
-    let words = rows.ctx.right_width >= EACH_COLUMNS;
+    let words = rows.ctx.right_width >= EACH_COLUMNS
+        && !culls::<false, _>(rows.ctx, left)
+        && !culls::<false, _>(rows.ctx, right);
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     if let Some(avx2) = Avx2::detect() {
         let sides = (left, right);

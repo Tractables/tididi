@@ -273,6 +273,16 @@ pub(super) fn described_rows(
     Some(k)
 }
 
+/// Whether [`run_level_rows`] culls columns per row on side `k` of a
+/// level: the reach masks exist only on a masked level, a pass-through
+/// side has no grid to be dead in, and `DENSE` is the regime where the
+/// masks are not folded. A level that culls on either side never offers
+/// its action a [whole row](CellAction::whole_row).
+#[inline(always)]
+pub(super) fn culls<const DENSE: bool, K: ChildLookup>(ctx: &CellCtx<'_>, k: &K) -> bool {
+    !DENSE && ctx.masked && !k.passthrough() && k.kills()
+}
+
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
@@ -322,11 +332,8 @@ where
         "a one-column action runs on a level of one column"
     );
     let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
-    // Whether the per-column cull below can fire at all: the reach masks exist
-    // only on a masked level, a pass-through side has no grid to be dead in,
-    // and `DENSE` is the regime where the masks are not folded.
-    let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
-    let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
+    let cull_left = culls::<DENSE, _>(ctx, left);
+    let cull_right = culls::<DENSE, _>(ctx, right);
     // Whether a row may read its live columns off the reach columns: every
     // culling side built them.
     let (left_cols, right_cols) = (ctx.sides.left.reach_cols, ctx.sides.right.reach_cols);
