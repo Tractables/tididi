@@ -47,7 +47,7 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: a71303635c235b54d3cb8f242e13af1acb6b083e53d423cb8b0e6f3c7bcfb567 -->
+- [Rust README](../README.md) <!-- reviewed: 5036c4ed6313b69e64ef44f22ab946744f3651c601952c2af08a26e3e437aebd -->
 - [Rust crate introduction](../src/lib.rs) <!-- reviewed: 402ca1ce163ee32e662e7563baa60ee8260bd101ecade73eb0cccd1dc2013a2e -->
 - [Python README](../bindings/python/README.rst) <!-- reviewed: 657718e42d5960d398cd75714f721bc11155e8b13c8c767aecc68fdf96335fdd -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ddd5e7b2357bf35a2ede868b429fd409ef8541bc9da20883e14ab8b3f99e11a7 -->
