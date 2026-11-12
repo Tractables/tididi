@@ -1232,7 +1232,7 @@ impl Partition<'_> {
             // split by codes refuses only before it reads a pair.
             if siblings <= FEW_SIBLINGS
                 && wide.touched.len() >= 2
-                && self.split_by_codes(lim, pairs, side, wide)?
+                && self.split_by_codes(lim, pairs, side, wide, false)?
             {
                 return Ok(());
             }
@@ -1243,13 +1243,16 @@ impl Partition<'_> {
             }
             return Ok(());
         }
-        if self.split_by_codes(lim, pairs, side, wide)? {
+        // As in the split by buckets, the pairs of nodes already alone are
+        // left out where most of the level's nodes are alone.
+        let skip = self.twinable * 2 < self.class.len();
+        if self.split_by_codes(lim, pairs, side, wide, skip)? {
             return Ok(());
         }
         // Where most of the level's nodes are alone, the pairs of those
         // already alone are left out; elsewhere reading every pair's alone
         // bit costs more than the pairs it leaves out.
-        if self.twinable * 2 < self.class.len() {
+        if skip {
             self.split_scattered::<true>(lim, pairs, side, wide)
         } else {
             self.split_scattered::<false>(lim, pairs, side, wide)
@@ -1330,7 +1333,9 @@ impl Partition<'_> {
     /// not name, as one split per sibling leaves it, with each named node's
     /// class read once rather than once per sibling. Returns `false`, with
     /// nothing changed, where a fifth sibling shows up or the parent node
-    /// holds 2^27 pairs or more.
+    /// holds 2^27 pairs or more. With `skip_alone` the pairs of nodes
+    /// already alone are left out, so that only the siblings of the nodes
+    /// not alone count against the four.
     ///
     /// The first pass reads each pair's sibling against the siblings met so
     /// far, held in registers, ORs its bit into the node's code and lists
@@ -1347,6 +1352,7 @@ impl Partition<'_> {
         pairs: &[ChildPair],
         side: ChildSide,
         wide: &mut Wide<'_>,
+        skip_alone: bool,
     ) -> Result<bool, OperationError> {
         // Where every row starts is below `MIXED`.
         if pairs.len() >= 1 << 27 {
@@ -1357,6 +1363,9 @@ impl Partition<'_> {
         let mut listed = 0;
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
+            if skip_alone && (self.bits[(t / 64) as usize][1] >> (t % 64)) & 1 != 0 {
+                continue;
+            }
             let Some(bit) = sibling_bit(&mut sib, &mut d, s) else {
                 for &t in &wide.bucket[..listed] {
                     wide.code[t as usize] = 0;
