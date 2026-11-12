@@ -265,12 +265,13 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
 /// for that cell, in its order ([`ImplicitLevel::product`]). Both child
 /// grids are complete, every cell holding the slot its index names, so a
 /// pair's sides are its slots and no pair dies. Each cell is the sum of
-/// its products in pair order, as [`PlainSink`] sums the row loop's cells
-/// ([`described_rows`]), appended to `values` with the next slot, written
-/// at `grid_base + n` of the slab, which is extended over the level's grid
-/// as the row loop extends it: the same values, bit for bit, and the same
-/// grid. Returns `false`, having summed nothing, where the child columns
-/// do not keep every product a float or do not hold every slot a pair
+/// its products in pair order, as [`PlainSink`] and [`CheckedSum`] sum the
+/// row loop's cells ([`described_rows`]), appended to `values` with the
+/// next slot, written at `grid_base + n` of the slab, which is extended
+/// over the level's grid as the row loop extends it: the same values, and
+/// the same grid. Returns `false`, having summed nothing, where the child
+/// columns do not read as floats that keep every product a float
+/// ([`described_products`]) or do not hold every slot a pair
 /// names, where the description does not count its nodes in order, and
 /// where a test sums the level as the row loop does.
 pub(crate) fn run_level_described_stream(
@@ -286,7 +287,9 @@ pub(crate) fn run_level_described_stream(
         return Ok(false);
     }
     let st = attach_children::<FloatFold>(env, children, values);
-    let Some(products) = PlainProducts::of(&st.left, &st.right) else {
+    let pools = &eng.scratch.apply;
+    let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
+    let Some(products) = described_products(eng, (&st.left, &st.right), (&mut *lbuf, &mut *rbuf))? else {
         return Ok(false);
     };
     // A slot below 2^30 is the index of its float under either child view
@@ -317,6 +320,27 @@ pub(crate) fn run_level_described_stream(
     described_rows(product, &places, &products, out, grid);
     note_described_sums();
     Ok(true)
+}
+
+/// The products [`run_level_described_stream`] sums: two narrow child
+/// columns' ([`PlainProducts::of`]), and otherwise the floats a stored, a
+/// leaf or a wide column reads as under one scale ([`plain_floats`],
+/// written into `bufs`), which the row loop sums as [`CheckedSum`] does;
+/// where their offsets keep every product a normal float, that sum is the
+/// float sum in pair order. `None` where a column has a negative value or
+/// the offsets do not fit.
+fn described_products<'b>(
+    eng: &Engine,
+    (left, right): (&'b StreamChild<'_, FloatFold>, &'b StreamChild<'_, FloatFold>),
+    (lbuf, rbuf): (&'b mut Vec<f64>, &'b mut Vec<f64>),
+) -> Result<Option<PlainProducts<'b>>, OperationError> {
+    if let Some(products) = PlainProducts::of(left, right) {
+        return Ok(Some(products));
+    }
+    let (Some(l), Some(r)) = (plain_floats(eng, left, lbuf)?, plain_floats(eng, right, rbuf)?) else {
+        return Ok(None);
+    };
+    Ok(PlainProducts::of_floats(l, left.view, r, right.view))
 }
 
 /// The cells of a row [`described_rows`] sums at once, each in its own

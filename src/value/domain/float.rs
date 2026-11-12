@@ -275,7 +275,25 @@ impl<'a> PlainProducts<'a> {
     /// and nonnegative and their offsets fit the plain range as they are,
     /// or else centred ([`plain_fold_centred`]).
     pub(crate) fn of(left: &'a StreamChild<'_, FloatFold>, right: &'a StreamChild<'_, FloatFold>) -> Option<Self> {
-        let (l, r) = (left.col.plain()?, right.col.plain()?);
+        Self::of_plain((left.col.plain()?, left.view), (right.col.plain()?, right.view))
+    }
+
+    /// The products of the floats `left.0` under the scale `left.1`, read
+    /// through `lview`, and `right.0` under `right.1`, read through
+    /// `rview`, each a child column's [`plain_floats`], where their offsets
+    /// fit the plain range as they are or centred, as [`of`](Self::of)
+    /// takes a narrow column's.
+    pub(crate) fn of_floats(
+        left: (&'a [f64], i64),
+        lview: ChildDecoder,
+        right: (&'a [f64], i64),
+        rview: ChildDecoder,
+    ) -> Option<Self> {
+        Self::of_plain((Plain::new(left.0, left.1), lview), (Plain::new(right.0, right.1), rview))
+    }
+
+    /// The products of two plain columns read through their views.
+    fn of_plain((l, lview): (Plain<'a>, ChildDecoder), (r, rview): (Plain<'a>, ChildDecoder)) -> Option<Self> {
         if l.at.neg || r.at.neg {
             return None;
         }
@@ -287,7 +305,7 @@ impl<'a> PlainProducts<'a> {
         } else {
             return None;
         };
-        Some(PlainProducts { left: l.vals, lview: left.view, right: r.vals, rview: right.view, by, scale })
+        Some(PlainProducts { left: l.vals, lview, right: r.vals, rview, by, scale })
     }
 
     /// The product of the left value `lc` names and the right value `rc`
