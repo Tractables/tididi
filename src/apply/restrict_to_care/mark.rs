@@ -33,7 +33,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::Engine;
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{OperationError, PollGate, Transient};
 
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
@@ -831,9 +831,9 @@ impl<'a> Walk<'a> {
     /// miss a pair.
     fn join_spine(&mut self, u: VtreeIdx, lc: VtreeIdx, rc: VtreeIdx) -> Result<Found, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
-        let mut cbuf = Vec::new();
+        let mut cbuf = Transient::new(eng.limits(), Vec::new());
         let mut tests: Vec<[SideTest; 2]> = Vec::new();
-        for q in care.levels[u.idx()].pairs_read(0, &mut cbuf) {
+        for q in care.levels[u.idx()].try_pairs_read(eng.limits(), 0, &mut cbuf)? {
             let t = [
                 self.side_test(lc, decode(care, lc, q.left))?,
                 self.side_test(rc, decode(care, rc, q.right))?,
@@ -1223,9 +1223,10 @@ impl<'a> Walk<'a> {
         out: &mut Vec<(u32, u32)>,
     ) -> Result<(), Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
-        let (mut fbuf, mut cbuf) = (Vec::new(), Vec::new());
-        let fp = f.levels[v.idx()].pairs_read(a as usize, &mut fbuf);
-        let cp = care.levels[v.idx()].pairs_read(b as usize, &mut cbuf);
+        let lim = eng.limits();
+        let (mut fbuf, mut cbuf) = (Transient::new(lim, Vec::new()), Transient::new(lim, Vec::new()));
+        let fp = f.levels[v.idx()].try_pairs_read(lim, a as usize, &mut fbuf)?;
+        let cp = care.levels[v.idx()].try_pairs_read(lim, b as usize, &mut cbuf)?;
         let (lc, rc) = f.vtree.children(v);
         let kids = [lc, rc];
         let sides = [self.side(lc), self.side(rc)];
@@ -1255,7 +1256,10 @@ impl<'a> Walk<'a> {
             return Ok(());
         };
         let (cs, other) = (kids[s], kids[1 - s]);
-        let mut cands: Vec<u32> = Vec::new();
+        // A pair's candidates are distinct `care` pairs, so no more than
+        // `cp.len()` of them: reserved once, the buffer never grows.
+        let mut cands: Transient<'_, Vec<u32>> = Transient::new(lim, Vec::new());
+        lim.reserve_exact(&mut cands, cp.len())?;
         if sides[s] == Side::Leaf {
             let mut by_label: [Vec<u32>; LEAF_WIDTH] = Default::default();
             for (j, q) in cp.iter().enumerate() {
@@ -1724,13 +1728,14 @@ impl<'a> Walk<'a> {
         let vtree = &f.vtree;
         let mut stack = seeds;
         let mut out = Vec::new();
-        let (mut fbuf, mut cbuf) = (Vec::new(), Vec::new());
+        let lim = eng.limits();
+        let (mut fbuf, mut cbuf) = (Transient::new(lim, Vec::new()), Transient::new(lim, Vec::new()));
         while let Some((v, (fo, co))) = stack.pop() {
             let a = fo.expect("below the lower root f is rooted");
             let (lc, rc) = vtree.children(v);
-            let fp = f.levels[v.idx()].pairs_read(a.idx(), &mut fbuf);
+            let fp = f.levels[v.idx()].try_pairs_read(lim, a.idx(), &mut fbuf)?;
             let cp = match co {
-                Some(b) => care.levels[v.idx()].pairs_read(b.idx(), &mut cbuf),
+                Some(b) => care.levels[v.idx()].try_pairs_read(lim, b.idx(), &mut cbuf)?,
                 None => &[],
             };
             out.clear();
@@ -1989,7 +1994,7 @@ fn groups(
         total,
         (0u32, 0u32, EncodedChildRef::from_raw(0)),
     )?;
-    let mut cursor = offsets.clone();
+    let mut cursor = Transient::new(eng.limits(), eng.limits().try_to_vec(&offsets)?);
     for a in 0..level.nodes().len() {
         for (i, p) in level.pairs_iter_of_idx(a).enumerate() {
             let x = ChildDecoder::structural().node(side_of(p, s));
@@ -2132,7 +2137,7 @@ fn sort_found(eng: &Engine, nodes: usize, found: Found) -> Result<Found, Operati
     }
     let mut out = Vec::new();
     lim.try_resize(&mut out, found.len(), (0u32, 0u32, 0u32, 0u32))?;
-    let mut cursor = offsets.clone();
+    let mut cursor = Transient::new(lim, lim.try_to_vec(&offsets)?);
     for e in found {
         let at = &mut cursor[e.0 as usize];
         out[*at as usize] = e;

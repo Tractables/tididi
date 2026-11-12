@@ -112,3 +112,20 @@ fn a_reserve_as_pushed_is_a_run_of_pushes() {
         }
     }
 }
+
+/// `try_to_vec` copies a slice into a buffer of exactly its length, charged
+/// as `reserve_exact` charges it; a refused copy is `OverBudget` and charges
+/// nothing.
+#[test]
+fn try_to_vec_charges_its_copy_and_reports_a_refusal() {
+    let lim = Limits::new();
+    let _op = lim.begin_operation();
+    let src = [1u32, 2, 3, 5, 8];
+    lim.refuse_nth_reserve(0);
+    assert_eq!(lim.try_to_vec(&src), Err(crate::OperationError::OverBudget));
+    assert_eq!(in_flight(&lim), 0);
+    let copy = lim.try_to_vec(&src).unwrap();
+    assert_eq!(copy, src);
+    assert_eq!(copy.capacity(), src.len());
+    assert_eq!(in_flight(&lim), 20);
+}

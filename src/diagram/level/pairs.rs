@@ -342,6 +342,32 @@ impl TddLevel {
         }
     }
 
+    /// [`pairs_read`](Self::pairs_read) with the room an implicit level's
+    /// pairs take in `buf` reserved through `lim`, so that a buffer the
+    /// limits refuse comes back as their error instead of growing past them.
+    /// A stored node's pairs are read in place and reserve nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is not below [`nodes`](Self::nodes)`().len()`.
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn try_pairs_read<'a>(
+        &'a self,
+        lim: &crate::limits::Limits,
+        i: usize,
+        buf: &'a mut Vec<ChildPair>,
+    ) -> Result<&'a [ChildPair], crate::limits::OperationError> {
+        match self.nodes.stored().get(i).and_then(|node| self.stored_of(node)) {
+            Some(pairs) => Ok(pairs),
+            None => {
+                buf.clear();
+                lim.reserve_exact(buf, self.described().pairs_per_node())?;
+                Ok(self.described_read(i, buf))
+            }
+        }
+    }
+
     /// [`pairs_read`](Self::pairs_read) for nodes read in increasing
     /// order, as a pass over the level reads them: an implicit level's
     /// pairs generated into `buf`, each node's first pair stepped on by

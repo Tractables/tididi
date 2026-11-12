@@ -81,7 +81,9 @@ impl crate::Engine {
     /// `config.kick` are both nonzero and `config.search.max_inner_pairs`
     /// has no bound, before anything is searched: a kick keeps its rotation
     /// whatever the rebuild costs, and only the bound keeps it from asking
-    /// for more memory than the host has. Otherwise whatever
+    /// for more memory than the host has. [`OperationError::OverBudget`]
+    /// when the limits refuse a restart's copy of the diagram
+    /// ([`try_clone`](Self::try_clone)). Otherwise whatever
     /// [`rotation_search`](Self::rotation_search) returns, from the round
     /// that hit it. The diagram is then the best result of the rounds that
     /// finished, which is still the same function.
@@ -107,7 +109,7 @@ impl crate::Engine {
         stats.search += &first;
         let mut rng = Lcg::new(config.seed);
         for round in 1..=config.restarts {
-            let mut candidate = tdd.clone();
+            let mut candidate = self.try_clone(tdd)?;
             kick(self, &mut candidate, config.kick, config.search.max_inner_pairs, &mut rng)?;
             let run = self.rotation_search(&mut candidate, objective, &config.search)?;
             stats.search += &run;

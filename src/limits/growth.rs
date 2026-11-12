@@ -380,6 +380,17 @@ impl Limits {
         self.reserve(v, 1)
     }
 
+    /// Fallible analogue of `<[T]>::to_vec`: a copy of `s` in a buffer of
+    /// exactly its length, reserved and charged as
+    /// [`reserve_exact`](Self::reserve_exact) reserves and charges.
+    #[inline]
+    pub(crate) fn try_to_vec<T: Clone>(&self, s: &[T]) -> Result<Vec<T>, OperationError> {
+        let mut v = Vec::new();
+        self.reserve_exact(&mut v, s.len())?;
+        v.extend_from_slice(s);
+        Ok(v)
+    }
+
     /// Fallible analogue of `Vec::resize` for grow-only callers. No-op when
     /// `v.len() >= new_len`. Uses `try_reserve_exact` so address space is not
     /// over-reserved.

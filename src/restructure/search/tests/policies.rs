@@ -328,3 +328,34 @@ fn tabu_is_never_worse_than_the_descent_over_a_seeded_corpus() {
     }
     assert!(better > 0, "tabu matched the descent everywhere, so the corpus proves nothing");
 }
+
+/// Each reservation of a multistart refused in turn, a restart's copy of the
+/// diagram among them: a refusal reaches the caller as `OverBudget`, and the
+/// diagram left is canonical and the same function.
+#[test]
+fn refusals_in_a_multistart_keep_the_function() {
+    let eng = Engine::new();
+    let start = plateau();
+    let count = start.model_count().unwrap();
+    let config = MultistartConfig { restarts: 2, kick: 4, seed: 5, search: bounded() };
+    let (mut refused, mut nth) = (0, 0);
+    loop {
+        let mut tdd = start.clone();
+        eng.limits().refuse_nth_reserve(nth);
+        let outcome = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config);
+        let pending = eng.limits().refusal_pending();
+        eng.limits().grant_every_reserve();
+        assert_canonical(&tdd);
+        assert_eq!(tdd.model_count().unwrap(), count, "reservation {nth}");
+        match outcome {
+            Ok(_) if pending => break,
+            Ok(_) => {}
+            Err(e) => {
+                assert_eq!(e, OperationError::OverBudget, "reservation {nth}");
+                refused += 1;
+            }
+        }
+        nth += 1;
+    }
+    assert!(refused > 0, "the sweep must refuse something");
+}

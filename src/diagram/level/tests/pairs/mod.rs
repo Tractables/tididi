@@ -43,3 +43,32 @@ fn uneven_node_finds_the_first_node_of_another_count() {
     level.nodes.stored_mut()[90] = EncodedNode::multi_ranged(1);
     assert_eq!(level.uneven_node(3), Some(90));
 }
+
+/// `try_pairs_read` reserves the room an implicit node's pairs take through
+/// the limits, a refusal coming back as `OverBudget`, and reads a stored
+/// node's pairs in place without asking for a reserve.
+#[test]
+fn try_pairs_read_reserves_only_what_an_implicit_level_generates() {
+    use crate::test_helpers::{with_stored_copy, x_decision_diagram};
+    let (implicit, v, _) = x_decision_diagram(32);
+    let stored = with_stored_copy(&implicit, v);
+    let (level, kept) = (&implicit.levels[v.idx()], &stored.levels[v.idx()]);
+    let per_node = level.implicit().expect("the fixture's level is implicit").pairs_per_node();
+    let eng = crate::Engine::new();
+    let lim = eng.limits();
+    let mut buf = Vec::new();
+    lim.refuse_nth_reserve(0);
+    assert_eq!(level.try_pairs_read(lim, 0, &mut buf).err(), Some(crate::OperationError::OverBudget));
+    lim.refuse_nth_reserve(0);
+    assert_eq!(kept.try_pairs_read(lim, 0, &mut buf).unwrap(), kept.pairs_read(0, &mut Vec::new()));
+    assert!(lim.refusal_pending(), "a stored node reserves nothing");
+    lim.grant_every_reserve();
+    let _op = lim.begin_operation();
+    for i in 0..level.node_count() {
+        let read = level.try_pairs_read(lim, i, &mut buf).unwrap().to_vec();
+        assert_eq!(read, kept.pairs_read(i, &mut Vec::new()), "node {i}");
+    }
+    assert_eq!(buf.capacity(), per_node);
+    let bytes = (per_node * std::mem::size_of::<super::ChildPair>()) as u64;
+    assert_eq!(lim.meters().in_flight_bytes, bytes);
+}

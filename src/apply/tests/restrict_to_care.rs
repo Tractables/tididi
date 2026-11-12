@@ -847,3 +847,48 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
     assert!(keyed >= 100, "too few levels joined by one child's products: {keyed}");
 }
+
+/// Each reservation of a restriction refused in turn, on implicit levels,
+/// whose node pairs are generated into buffers the limits reserve, and on
+/// stored ones: every refusal reaches the caller as `OverBudget`, and a
+/// restriction that goes through is sound.
+#[test]
+fn refusals_in_a_restriction_reach_the_caller() {
+    let sweep = |levels: &str| {
+        let mut refused = 0u32;
+        let mut rng = Lcg::new(0x5eed_0f0c_a4e5);
+        for &nvars in &[3u32, 4, 5] {
+            let vtree = Arc::new(Vtree::balanced(nvars));
+            for case in 0..24 {
+                let f = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
+                let c = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
+                if count_is_zero(&c) {
+                    continue;
+                }
+                let eng = Engine::new();
+                for nth in 0.. {
+                    eng.limits().refuse_nth_reserve(nth);
+                    let outcome = eng.restrict_to_care(f.clone(), c.clone());
+                    let pending = eng.limits().refusal_pending();
+                    eng.limits().grant_every_reserve();
+                    match outcome {
+                        Ok(g) => {
+                            assert_sound_on_truth_table(&f, &c, &g.into_tdd(), nvars);
+                            if pending {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let at = format!("{levels} levels, {nvars} variables, case {case}, reservation {nth}");
+                            assert_eq!(e, crate::limits::OperationError::OverBudget, "{at}");
+                            refused += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(refused > 0, "the sweep on {levels} levels must refuse something");
+    };
+    with_floor(LOW_FLOOR, || sweep("implicit"));
+    stored_levels(|| sweep("stored"));
+}
