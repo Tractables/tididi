@@ -158,26 +158,6 @@ pub(crate) fn record_fused(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx) {
 /// cache.
 const CHUNK_PLANS: usize = 1 << 12;
 
-// A test pins the chunk size on its thread and counts the boundaries
-// applied in more than one chunk.
-#[cfg(test)]
-use tests::{note_chunked_boundary, pinned_chunk_plans};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn pinned_chunk_plans() -> Option<usize> {
-    None
-}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_chunked_boundary() {}
-
-/// The plans a chunk collects: [`CHUNK_PLANS`], or what a test pinned.
-fn chunk_plans() -> usize {
-    pinned_chunk_plans().unwrap_or(CHUNK_PLANS)
-}
-
 /// One marginal child `v` under `parent`, on `side` of its pairs.
 #[derive(Clone, Copy)]
 pub(super) struct Boundary {
@@ -232,9 +212,15 @@ fn fuse_chunks<D: SlotValues>(
 ) -> Result<(), OperationError> {
     let Boundary { v, parent, side } = boundary;
     let lim = eng.limits();
-    let chunk = chunk_plans();
+    // A test pins the chunk size on its thread and counts the boundaries
+    // applied in more than one chunk.
+    #[cfg(test)]
+    let chunk = tests::pinned_chunk_plans().unwrap_or(CHUNK_PLANS);
+    #[cfg(not(test))]
+    let chunk = CHUNK_PLANS;
     let mut plans: Transient<'_, Vec<PlanEntry<D::Value>>> = Transient::new(lim, Vec::new());
     let mut slots = FusionSlots::<D>::new(lim);
+    #[cfg(test)]
     let mut applied = 0;
     loop {
         // Phase 1: scan the chunk's nodes; collect per-(node, x_idx) groups
@@ -279,9 +265,12 @@ fn fuse_chunks<D: SlotValues>(
             // Phase 3: rewrite the parent pair lists of the chunk's nodes.
             if !plans.is_empty() {
                 rewrite.apply(eng, tdd, parent, side, any_inline, &plans)?;
-                applied += 1;
-                if applied == 2 {
-                    note_chunked_boundary();
+                #[cfg(test)]
+                {
+                    applied += 1;
+                    if applied == 2 {
+                        tests::note_chunked_boundary();
+                    }
                 }
             }
         }

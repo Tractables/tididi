@@ -50,19 +50,6 @@ enum Reach {
 /// weighed against the whole searches (`list_changed_children`).
 const LISTED_WHOLE_MIN_WIDTH: usize = 1 << 16;
 
-// A test counts the listed searches and fusions, to check the sweep takes
-// them.
-#[cfg(test)]
-use super::tests::{note_listed_fusion, note_listed_search};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_listed_search() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_listed_fusion() {}
-
 /// What [`contract_child`] did to a child level.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Contracted {
@@ -138,7 +125,8 @@ fn contract_child(
     scratch.unnamed.clear();
     let found = match reach {
         Reach::Listed => {
-            note_listed_search();
+            #[cfg(test)]
+            super::tests::note_listed_search();
             let listed = std::mem::take(&mut scratch.reach[side]);
             let found = find_listed_twin_groups(eng, tdd, t1, parent, t1_side, &listed, scratch);
             scratch.reach[side] = listed;
@@ -770,7 +758,8 @@ fn fuse_at(
     if !scratch.listing.fused_but(parent.idx()) {
         return Ok(fuse_pairs_inner(eng, tdd, Some(&[parent]), None, scratch)? > 0);
     }
-    note_listed_fusion();
+    #[cfg(test)]
+    super::tests::note_listed_fusion();
     let listed = scratch.listing.take(parent.idx());
     let fused = fuse_pairs_inner(eng, tdd, Some(&[parent]), Some(&listed), scratch);
     scratch.listing.put(parent.idx(), listed);
