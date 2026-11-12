@@ -76,6 +76,10 @@ enum Halt {
     Spent,
     /// An engine limit or cancellation.
     Error(OperationError),
+    /// A product [`DEPTH`] lazy levels below the one asked for was needed
+    /// before it was decided; [`Walk::pending`] names it and the products
+    /// waiting on it. Never leaves [`Walk::pair_live`].
+    Deeper,
 }
 
 impl From<OperationError> for Halt {
@@ -96,6 +100,9 @@ const LIST_FACTOR: u64 = 16;
 /// A level where `care` holds one node of at most this many pairs is joined
 /// by trying each `f` pair against each of them ([`Walk::join_spine`]).
 const SPINE_PAIRS: usize = 8;
+/// Lazy levels a product's decision descends on the native stack before it
+/// sets the product aside and decides the one it waits on first.
+const DEPTH: u32 = 64;
 
 /// The live products of one level below the lower root, where both operands
 /// store nodes.
@@ -322,6 +329,10 @@ struct Walk<'a> {
     /// [`Walk::spread_keep`] has nothing to carry down from them.
     whole_levels: Vec<bool>,
     pair_alive: PairMarks,
+    /// Lazy levels the decision in progress has descended ([`DEPTH`]).
+    depth: u32,
+    /// The products a decision past [`DEPTH`] set aside, deepest first.
+    pending: Vec<(VtreeIdx, u32, u32)>,
 }
 
 impl Marking {
@@ -362,6 +373,7 @@ impl Marking {
                 Ok(None)
             }
             Err(Halt::Error(e)) => Err(e),
+            Err(Halt::Deeper) => unreachable!("a deep decision resumes inside the walk"),
         }
     }
 
@@ -491,6 +503,8 @@ impl<'a> Walk<'a> {
             keep: mark_rows(eng, f, false)?,
             whole_levels: Vec::new(),
             pair_alive: PairMarks::new(eng, f)?,
+            depth: 0,
+            pending: Vec::new(),
         })
     }
 
@@ -1114,20 +1128,79 @@ impl<'a> Walk<'a> {
     }
 
     /// Whether `f` node `a` and `care` node `b` at `v` share a model.
+    ///
+    /// Deciding a lazy product asks for products of the levels below, which
+    /// may be lazy in turn. Past [`DEPTH`] such levels the decision sets
+    /// itself aside on a stack and decides the deepest product it waits on
+    /// first, so the native stack holds at most [`DEPTH`] levels of it. The
+    /// products set aside are decided again once what they wait on is known.
     fn pair_live(&mut self, v: VtreeIdx, a: u32, b: u32) -> Result<bool, Halt> {
-        match &self.products[v.idx()] {
-            Products::Listed(l) => return Ok(l.contains(a, b)),
-            Products::Lazy(memo) => {
-                if let Some(&x) = memo.get(&(a, b)) {
-                    return Ok(x);
-                }
+        if let Some(x) = self.known(v, a, b) {
+            return Ok(x);
+        }
+        let decided = self.decide_pair(v, a, b);
+        if self.depth > 0 || !matches!(decided, Err(Halt::Deeper)) {
+            return decided;
+        }
+        let eng = self.eng;
+        let lim = eng.limits();
+        let mut todo = Vec::new();
+        lim.try_push(&mut todo, (v, a, b))?;
+        while let Some(k) = self.pending.pop() {
+            lim.try_push(&mut todo, k)?;
+        }
+        while let Some(&(u, c, d)) = todo.last() {
+            if self.known(u, c, d).is_some() {
+                todo.pop();
+                continue;
             }
+            match self.decide_pair(u, c, d) {
+                Ok(_) => {
+                    todo.pop();
+                }
+                Err(Halt::Deeper) => {
+                    while let Some(k) = self.pending.pop() {
+                        lim.try_push(&mut todo, k)?;
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(self.known(v, a, b).expect("the product is decided"))
+    }
+
+    /// Product `(a, b)` at `v` if it is listed or already decided.
+    fn known(&self, v: VtreeIdx, a: u32, b: u32) -> Option<bool> {
+        match &self.products[v.idx()] {
+            Products::Listed(l) => Some(l.contains(a, b)),
+            Products::Lazy(memo) => memo.get(&(a, b)).copied(),
             Products::Absent => unreachable!("a pair of nodes at a level without products"),
         }
-        let mut one = Vec::new();
-        self.combos(v, a, b, true, true, &mut one)?;
-        let x = !one.is_empty();
+    }
+
+    /// Decide lazy product `(a, b)` at `v` by its pairs and remember it, or,
+    /// [`DEPTH`] levels into a decision, set it aside ([`Self::pair_live`]).
+    fn decide_pair(&mut self, v: VtreeIdx, a: u32, b: u32) -> Result<bool, Halt> {
         let eng = self.eng;
+        let lim = eng.limits();
+        if self.depth == DEPTH {
+            lim.try_push(&mut self.pending, (v, a, b))?;
+            return Err(Halt::Deeper);
+        }
+        let mut one = Vec::new();
+        self.depth += 1;
+        let decided = self.combos(v, a, b, true, true, &mut one);
+        self.depth -= 1;
+        match decided {
+            Ok(()) => {}
+            // The outermost product is on the caller's stack already.
+            Err(Halt::Deeper) if self.depth > 0 => {
+                lim.try_push(&mut self.pending, (v, a, b))?;
+                return Err(Halt::Deeper);
+            }
+            Err(e) => return Err(e),
+        }
+        let x = !one.is_empty();
         if let Products::Lazy(memo) = &mut self.products[v.idx()] {
             if memo.len() == memo.capacity() {
                 eng.limits().reserve_map(memo, 1)?;
@@ -1233,20 +1306,22 @@ impl<'a> Walk<'a> {
                 index
             }
         };
+        let mut probed = Ok(());
         for (i, p) in fp.iter().enumerate() {
             let x = ChildDecoder::structural().node(side_of(*p, s));
             if x == ZERO {
                 continue;
             }
             listed_candidates(below, &index, x.0, &mut cands);
-            if self.probe(
-                (other, s),
-                (i as u32, *p),
-                (cp, &cands),
-                (first, one_each),
-                out,
-            )? {
-                break;
+            match self.probe((other, s), (i as u32, *p), (cp, &cands), (first, one_each), out) {
+                Ok(false) => {}
+                Ok(true) => break,
+                // Put the listing back: a decision set aside resumes the walk.
+                Err(Halt::Deeper) => {
+                    probed = Err(Halt::Deeper);
+                    break;
+                }
+                Err(e) => return Err(e),
             }
         }
         self.products[cs.idx()] = held;
@@ -1254,7 +1329,7 @@ impl<'a> Walk<'a> {
             eng.limits().reserve_map(&mut self.care_index[v.idx()], 1)?;
         }
         self.care_index[v.idx()].insert((b, s as u8), index);
-        Ok(())
+        probed
     }
 
     /// Try `care` pairs `cands` against `f` pair `p` (index `i`) on the side
