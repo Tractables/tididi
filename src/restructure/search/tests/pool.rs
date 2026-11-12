@@ -19,11 +19,19 @@ thread_local! {
     static REPLAYED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The members a scored probe scored.
     static SCORED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The moves the pool search kept, in order, those of restarts put back
+    /// included.
+    static ACCEPTED: std::cell::RefCell<Vec<PoolMove>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Count a member a scored probe scores.
 pub(super) fn note_score() {
     SCORED.with(|n| n.set(n.get() + 1));
+}
+
+/// Log a move the pool search keeps.
+pub(super) fn note_accept(mv: PoolMove) {
+    ACCEPTED.with(|a| a.borrow_mut().push(mv));
 }
 
 /// Whether the pool search replays the cached refusal it holds, counting
@@ -892,4 +900,68 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
         }
     }
     assert!(replayed > 0);
+}
+
+/// The pool search's decisions, pinned: on seeded pools of every vtree shape
+/// of six to ten variables, four random functions with a literal, the
+/// constant and a two-literal clause beside them, under plain, bounded,
+/// budgeted and restarting searches, the moves kept in order, the
+/// statistics (work units included), the final vtree and every member's
+/// pairs hash to the value the search gave before its probes and kept moves
+/// were made cheaper. A change that moves this hash changes which moves the
+/// search makes or what it charges.
+#[test]
+fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
+    use crate::test_helpers::{compile_clauses_on, vtree_shapes, CnfShape, Lcg};
+    const PINNED: u64 = 0xf25c_4e86_87d2_01f6;
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x9001);
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut fold = |bytes: &[u8]| {
+        for &b in bytes {
+            hash = (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    let mut accepted = 0usize;
+    for n in 6..11u32 {
+        for (_, vtree) in vtree_shapes(n) {
+            let mut members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
+            for clauses in [vec![vec![2]], vec![], vec![vec![1, -(n as i32)]]] {
+                let mut f = compile_clauses_on(&eng, &vtree, &clauses);
+                f.minimize().expect("an unarmed engine refuses nothing");
+                members.push(f);
+            }
+            let configs = [
+                PoolSearchConfig::default(),
+                PoolSearchConfig { max_sweeps: usize::MAX, crossed: false, ..PoolSearchConfig::default() },
+                PoolSearchConfig { max_inner_pairs: 12, ..PoolSearchConfig::default() },
+                PoolSearchConfig { max_work_units: 2500, ..PoolSearchConfig::default() },
+                PoolSearchConfig {
+                    max_sweeps: usize::MAX,
+                    restarts: PoolRestarts { count: 3, kick: 3, slack_permille: 200, seed: u64::from(n), min_gain_permille: 0 },
+                    ..PoolSearchConfig::default()
+                },
+            ];
+            for config in &configs {
+                ACCEPTED.with(|a| a.borrow_mut().clear());
+                let mut searched = members.clone();
+                let stats = with_members(&mut searched, |refs| eng.pool_search(refs, config)).unwrap();
+                ACCEPTED.with(|a| {
+                    for mv in a.borrow().iter() {
+                        let kind = u8::from(mv.rotation.kind == RotationKind::Right);
+                        fold(&mv.rotation.pivot.0.to_le_bytes());
+                        fold(&[kind, u8::from(mv.crossed)]);
+                    }
+                    accepted += a.borrow().len();
+                });
+                fold(format!("{stats:?}").as_bytes());
+                fold(searched[0].vtree().to_text().as_bytes());
+                for m in &searched {
+                    fold(&m.pair_count().to_le_bytes());
+                }
+            }
+        }
+    }
+    assert!(accepted > 0);
+    assert_eq!(hash, PINNED, "hash {hash:#x} over {accepted} kept moves");
 }

@@ -561,6 +561,8 @@ impl<'l> PoolDescent<'l> {
             if self.probe_in_place(members, mv, TwinMode::Alone, slack, Some(undo))? {
                 kept += 1;
                 self.stats.accepts += 1;
+                #[cfg(test)]
+                tests::note_accept(mv);
                 self.known.kept(self.tree, mv, left, right, parent);
             }
         }
@@ -824,6 +826,8 @@ impl<'l> PoolDescent<'l> {
                     self.marginal
                 );
                 self.stats.accepts += 1;
+                #[cfg(test)]
+                tests::note_accept(mv);
                 self.known.kept(self.tree, mv, left, right, parent);
                 return Ok(Some(true));
             }
