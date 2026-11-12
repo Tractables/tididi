@@ -10,6 +10,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::ChildSide;
 
 use super::PlanEntry;
+use super::plan::explicit_ref;
 
 /// The fewest plans at which a node tests "fused away" on a bitmap over the
 /// explicit-side refs instead of in `fused_x`: below it the map fits the cache
@@ -183,10 +184,6 @@ impl<'a> ParentRewrite<'a> {
         let range = level.pair_range_at(n);
         let (start, old_len) = (range.start, range.len());
 
-        let x_of = |p: ChildPair| match side {
-            ChildSide::Right => p.left.0,
-            ChildSide::Left => p.right.0,
-        };
         // The bitmap's width in words, or `None` for the map: the largest planned
         // x-ref bounds it, and a pair whose x-ref is past it carries no plan.
         let words = match this_plans.len() >= bitmap_min_plans {
@@ -236,7 +233,7 @@ impl<'a> ParentRewrite<'a> {
             None => {
                 for read in start..start + old_len {
                     let p = arena[read];
-                    if !fused_x.contains_key(&x_of(p)) {
+                    if !fused_x.contains_key(&explicit_ref(p, side)) {
                         arena[write] = p;
                         write += 1;
                     }
@@ -246,7 +243,7 @@ impl<'a> ParentRewrite<'a> {
                 let planned = &bits[..words];
                 for read in start..start + old_len {
                     let p = arena[read];
-                    let x = x_of(p) as usize;
+                    let x = explicit_ref(p, side) as usize;
                     let fused = planned
                         .get(x >> 6)
                         .is_some_and(|w| (w >> (x & 63)) & 1 == 1);
@@ -271,16 +268,8 @@ impl<'a> ParentRewrite<'a> {
             // index (bit-30 clear), self-describing. Write it verbatim;
             // `x_idx` is the non-marginal side.
             let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
-            let fused = match side {
-                ChildSide::Right => ChildPair::new(
-                    EncodedChildRef::from_raw(x_idx),
-                    EncodedChildRef::from_raw(r_new),
-                ),
-                ChildSide::Left => ChildPair::new(
-                    EncodedChildRef::from_raw(r_new),
-                    EncodedChildRef::from_raw(x_idx),
-                ),
-            };
+            let (left, right) = side.pick((r_new, x_idx), (x_idx, r_new));
+            let fused = ChildPair::new(EncodedChildRef::from_raw(left), EncodedChildRef::from_raw(right));
             debug_assert!(write < start + old_len, "fusion must shrink the pair list");
             arena[write] = fused;
             write += 1;

@@ -87,11 +87,8 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
 
 /// The explicit-side ref of `pair`: the side opposite the marginal `side`.
 #[inline(always)]
-fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
-    match side {
-        ChildSide::Right => pair.left.0,
-        ChildSide::Left => pair.right.0,
-    }
+pub(super) fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
+    side.pick(pair.right.0, pair.left.0)
 }
 
 /// The fewest pairs a node sorts into runs rather than hashes: from here its
@@ -101,10 +98,7 @@ pub(super) const SORT_MIN: usize = 1 << 14;
 /// The marginal-side ref of `pair`: the side `side` names.
 #[inline(always)]
 fn marginal_ref(pair: ChildPair, side: ChildSide) -> u32 {
-    match side {
-        ChildSide::Right => pair.right.0,
-        ChildSide::Left => pair.left.0,
-    }
+    side.pick(pair.left.0, pair.right.0)
 }
 
 /// Sum the marginal-side refs yielded by `refs` (using `run` as scratch) and

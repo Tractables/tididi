@@ -44,11 +44,7 @@ fn for_each_target_sibling(
 /// marginal one, so the side toward it is a node index.
 #[inline]
 fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (u32, u32) {
-    if t1_side == ChildSide::Left {
-        (pair.left.0, pair.right.0)
-    } else {
-        (pair.right.0, pair.left.0)
-    }
+    t1_side.pick((pair.left.0, pair.right.0), (pair.right.0, pair.left.0))
 }
 
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
