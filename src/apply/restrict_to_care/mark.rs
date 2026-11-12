@@ -667,6 +667,9 @@ impl<'a> Walk<'a> {
         let sides = [self.side(lc), self.side(rc)];
         let width = (f.levels[u.idx()].live_pairs() + care.levels[u.idx()].live_pairs()) as u64;
         let cap = LIST_PROBES.max(LIST_FACTOR.saturating_mul(width));
+        // A test lowers the cap so that small diagrams give joins up.
+        #[cfg(test)]
+        let cap = crate::test_helpers::restrict_caps().map_or(cap, |caps| caps.0);
         let nodes = f.levels[u.idx()].nodes().len();
         if care.levels[u.idx()].nodes().len() == 1
             && care.levels[u.idx()].pair_count_at(0) <= SPINE_PAIRS
@@ -1230,7 +1233,12 @@ impl<'a> Walk<'a> {
         let (lc, rc) = f.vtree.children(v);
         let kids = [lc, rc];
         let sides = [self.side(lc), self.side(rc)];
-        let pick = if fp.len().saturating_mul(cp.len()) <= GRID_PROBES {
+        // A test lowers the grid's cap so that small nodes are indexed.
+        #[cfg(test)]
+        let grid = crate::test_helpers::restrict_caps().map_or(GRID_PROBES, |caps| caps.1);
+        #[cfg(not(test))]
+        let grid = GRID_PROBES;
+        let pick = if fp.len().saturating_mul(cp.len()) <= grid {
             None
         } else {
             self.index_side(kids, sides)

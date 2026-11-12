@@ -865,30 +865,143 @@ fn refusals_in_a_restriction_reach_the_caller() {
                 if count_is_zero(&c) {
                     continue;
                 }
-                let eng = Engine::new();
-                for nth in 0.. {
-                    eng.limits().refuse_nth_reserve(nth);
-                    let outcome = eng.restrict_to_care(f.clone(), c.clone());
-                    let pending = eng.limits().refusal_pending();
-                    eng.limits().grant_every_reserve();
-                    match outcome {
-                        Ok(g) => {
-                            assert_sound_on_truth_table(&f, &c, &g.into_tdd(), nvars);
-                            if pending {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            let at = format!("{levels} levels, {nvars} variables, case {case}, reservation {nth}");
-                            assert_eq!(e, crate::limits::OperationError::OverBudget, "{at}");
-                            refused += 1;
-                        }
-                    }
-                }
+                let at = format!("{levels} levels, {nvars} variables, case {case}");
+                refused += refuse_each_reservation(&f, &c, nvars, &at);
             }
         }
         assert!(refused > 0, "the sweep on {levels} levels must refuse something");
     };
     with_floor(LOW_FLOOR, || sweep("implicit"));
     stored_levels(|| sweep("stored"));
+}
+
+/// Refuse each reservation of `f` restricted to `c` in turn: every refusal
+/// reaches the caller as `OverBudget`, and a restriction that goes through
+/// is sound. Returns the number refused.
+fn refuse_each_reservation(f: &Tdd, c: &Tdd, nvars: u32, at: &str) -> u32 {
+    let eng = Engine::new();
+    let mut refused = 0;
+    for nth in 0.. {
+        eng.limits().refuse_nth_reserve(nth);
+        let outcome = eng.restrict_to_care(f.clone(), c.clone());
+        let pending = eng.limits().refusal_pending();
+        eng.limits().grant_every_reserve();
+        match outcome {
+            Ok(g) => {
+                assert_sound_on_truth_table(f, c, &g.into_tdd(), nvars);
+                if pending {
+                    break;
+                }
+            }
+            Err(e) => {
+                assert_eq!(e, crate::limits::OperationError::OverBudget, "{at}, reservation {nth}");
+                refused += 1;
+            }
+        }
+    }
+    refused
+}
+
+/// Hold every affine level of `t` of two pairs or more as the description
+/// of its pairs, whether or not the operation that built it did.
+fn describe_affine(t: &mut Tdd) {
+    for i in 0..t.vtree.num_nodes() {
+        let level = &mut t.levels[i];
+        if level.implicit().is_none()
+            && level.live_pairs() >= 2
+            && crate::diagram::ImplicitLevel::fit(level).is_some()
+        {
+            describe(level);
+        }
+    }
+    assert_canonical(t);
+}
+
+/// Whether some level of `t` below its root is held as a description and
+/// satisfies `p`.
+fn has_implicit(t: &Tdd, p: impl Fn(&crate::diagram::TddLevel) -> bool) -> bool {
+    let root = t.vtree.root().idx();
+    (0..t.vtree.num_nodes()).any(|i| i != root && t.levels[i].implicit().is_some() && p(&t.levels[i]))
+}
+
+/// `f = x1 ∨ (x3 ⇔ x5)` and `care = (all even) ∨ (no even)`, on the
+/// right-linear vtree of `2k` variables, `k` at least 3: one operand is
+/// marginal on each leaf, and the restriction joins a `care` level of one
+/// node as a spine.
+fn alternating_operands(k: u32) -> (Tdd, Tdd) {
+    let engine = Engine::new();
+    let vtree = Arc::new(Vtree::linear(2 * k));
+    let same = engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()).unwrap();
+    let f = engine.or(engine.cube(&vtree, [1]).unwrap(), same).unwrap();
+    let evens = (1..=k).map(|i| (2 * i) as i32);
+    let all = engine.cube(&vtree, evens.clone()).unwrap();
+    let none = engine.cube(&vtree, evens.map(|x| -x)).unwrap();
+    (f, engine.or(all, none).unwrap())
+}
+
+/// The spine join reads the pairs of a `care` level of one node and at most
+/// eight pairs; on an implicit level they are generated into a buffer the
+/// limits reserve. Every refusal of a restriction that joins such a level
+/// reaches the caller.
+#[test]
+fn refusals_in_a_spine_join_on_an_implicit_level_reach_the_caller() {
+    with_floor(LOW_FLOOR, || {
+        for k in 3..=4 {
+            let (mut f, mut c) = alternating_operands(k);
+            describe_affine(&mut f);
+            describe_affine(&mut c);
+            assert!(
+                has_implicit(&c, |l| l.nodes().len() == 1 && l.pair_count_at(0) <= 8),
+                "alternating {k}: no care level of one implicit node",
+            );
+            refuse_each_reservation(&f, &c, 2 * k, &format!("alternating {k}"));
+        }
+    });
+}
+
+/// A level decided on demand reads the pairs of an `f` node and a `care`
+/// node; on an implicit level they are generated into a buffer the limits
+/// reserve. Every refusal of a restriction down a run of such levels, the
+/// `care` levels implicit, reaches the caller.
+#[test]
+fn refusals_in_a_level_decided_on_demand_reach_the_caller() {
+    with_floor(LOW_FLOOR, || {
+        for m in 2..=5 {
+            let (mut f, mut c) = super::restrict_deep::spine_operands(m);
+            describe_affine(&mut f);
+            describe_affine(&mut c);
+            assert!(has_implicit(&c, |_| true), "spine {m}: no implicit care level");
+            refuse_each_reservation(&f, &c, m + 2, &format!("spine {m}"));
+        }
+    });
+}
+
+/// With the joins' probe cap at zero every join gives up and its level is
+/// decided on demand, and with the grid's at zero each pair of nodes there
+/// is indexed on a leaf or listed child: `f`'s and `care`'s pairs read from
+/// implicit levels, and the candidates of each `f` pair gathered into a
+/// list. Every refusal of those buffers, and of every other reservation,
+/// reaches the caller.
+#[test]
+fn refusals_beside_a_join_given_up_reach_the_caller() {
+    with_restrict_caps(0, 0, || {
+        with_floor(LOW_FLOOR, || {
+            let mut rng = Lcg::new(0xca9d_0f0c);
+            for &nvars in &[4u32, 5, 6] {
+                for (shape, vtree) in [("balanced", Vtree::balanced(nvars)), ("linear", Vtree::linear(nvars))] {
+                    let vtree = Arc::new(vtree);
+                    for case in 0..8 {
+                        let mut f = rand_conj(&vtree, nvars, 6, nvars as u64, true, &mut rng);
+                        let mut c = rand_conj(&vtree, nvars, 6, nvars as u64, true, &mut rng);
+                        if count_is_zero(&f) || count_is_zero(&c) {
+                            continue;
+                        }
+                        describe_affine(&mut f);
+                        describe_affine(&mut c);
+                        refuse_each_reservation(&f, &c, nvars, &format!("{shape} {nvars}, case {case}"));
+                    }
+                }
+            }
+        });
+    });
 }

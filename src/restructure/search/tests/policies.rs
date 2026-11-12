@@ -330,32 +330,53 @@ fn tabu_is_never_worse_than_the_descent_over_a_seeded_corpus() {
 }
 
 /// Each reservation of a multistart refused in turn, a restart's copy of the
-/// diagram among them: a refusal reaches the caller as `OverBudget`, and the
-/// diagram left is canonical and the same function.
+/// diagram among them. A refusal in the first search reaches the caller as
+/// `OverBudget`; one in a restart ends the restarts, and the call returns
+/// what a call with only the restarts before it returns. The diagram left
+/// is canonical and the same function either way.
 #[test]
 fn refusals_in_a_multistart_keep_the_function() {
     let eng = Engine::new();
     let start = plateau();
     let count = start.model_count().unwrap();
-    let config = MultistartConfig { restarts: 2, kick: 4, seed: 5, search: bounded() };
-    let (mut refused, mut nth) = (0, 0);
+    let config = |restarts| MultistartConfig { restarts, kick: 4, seed: 5, search: bounded() };
+    let restarts = 2;
+    let unrefused: Vec<(String, usize)> = (0..=restarts)
+        .map(|r| {
+            let mut tdd = start.clone();
+            let stats = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config(r)).unwrap();
+            assert_eq!(stats.rounds, r + 1);
+            (format!("{tdd:?}"), stats.best_round)
+        })
+        .collect();
+    assert_ne!(unrefused[1], unrefused[0], "a restart must change the result, or the test proves nothing");
+    let mut refused_at = vec![0; restarts + 1];
+    let mut nth = 0;
     loop {
         let mut tdd = start.clone();
         eng.limits().refuse_nth_reserve(nth);
-        let outcome = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config);
+        let outcome = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config(restarts));
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         assert_canonical(&tdd);
         assert_eq!(tdd.model_count().unwrap(), count, "reservation {nth}");
         match outcome {
             Ok(_) if pending => break,
-            Ok(_) => {}
+            Ok(stats) => {
+                // The refused round is the one after the last that finished.
+                assert!(stats.rounds <= restarts, "reservation {nth}: {stats:?}");
+                let (diagram, best_round) = &unrefused[stats.rounds - 1];
+                assert_eq!(stats.best_round, *best_round, "reservation {nth}");
+                assert_eq!(&format!("{tdd:?}"), diagram, "reservation {nth}");
+                refused_at[stats.rounds] += 1;
+            }
             Err(e) => {
                 assert_eq!(e, OperationError::OverBudget, "reservation {nth}");
-                refused += 1;
+                assert!(refused_at[1..].iter().all(|&n| n == 0), "reservation {nth}: refused in the first search after a restart");
+                refused_at[0] += 1;
             }
         }
         nth += 1;
     }
-    assert!(refused > 0, "the sweep must refuse something");
+    assert!(refused_at.iter().all(|&n| n > 0), "every round must be refused somewhere: {refused_at:?}");
 }

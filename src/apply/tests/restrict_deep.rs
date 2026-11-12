@@ -21,7 +21,7 @@ const STACK: usize = 2 << 20;
 
 /// `f = y1 ∨ y2` with `x1 … xm` summed out, and `care = (x1 ∧ … ∧ xm) ∨
 /// (¬x1 ∧ … ∧ ¬xm)`, on the right-linear vtree over `x1 … xm, y1, y2`.
-fn spine_operands(m: u32) -> (Tdd, Tdd) {
+pub(super) fn spine_operands(m: u32) -> (Tdd, Tdd) {
     let engine = Engine::new();
     let vtree = Arc::new(Vtree::linear(m + 2));
     let xs = 1..=m as i32;

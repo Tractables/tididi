@@ -81,12 +81,18 @@ impl crate::Engine {
     /// `config.kick` are both nonzero and `config.search.max_inner_pairs`
     /// has no bound, before anything is searched: a kick keeps its rotation
     /// whatever the rebuild costs, and only the bound keeps it from asking
-    /// for more memory than the host has. [`OperationError::OverBudget`]
-    /// when the limits refuse a restart's copy of the diagram
-    /// ([`try_clone`](Self::try_clone)). Otherwise whatever
+    /// for more memory than the host has. Otherwise whatever
     /// [`rotation_search`](Self::rotation_search) returns, from the round
     /// that hit it. The diagram is then the best result of the rounds that
     /// finished, which is still the same function.
+    ///
+    /// A restart the limits refuse memory ([`OperationError::OverBudget`]),
+    /// for its copy of the diagram ([`try_clone`](Self::try_clone)), its
+    /// rotations or its search, is not an error: it ends the restarts, and
+    /// the call returns the best diagram of the rounds that finished, with
+    /// `rounds` short of `1 + config.restarts`. What the refused restart
+    /// charged stays charged. A refusal during the first search is that
+    /// search's error.
     pub fn rotation_multistart<O: RotationObjective>(
         &self,
         tdd: &mut Tdd,
@@ -109,9 +115,13 @@ impl crate::Engine {
         stats.search += &first;
         let mut rng = Lcg::new(config.seed);
         for round in 1..=config.restarts {
-            let mut candidate = self.try_clone(tdd)?;
-            kick(self, &mut candidate, config.kick, config.search.max_inner_pairs, &mut rng)?;
-            let run = self.rotation_search(&mut candidate, objective, &config.search)?;
+            let (candidate, run) = match restart(self, tdd, objective, config, &mut rng) {
+                Ok(done) => done,
+                // A restart is an improvement the call may go without: the
+                // best diagram so far stays, and the restarts end.
+                Err(OperationError::OverBudget) => break,
+                Err(e) => return Err(e),
+            };
             stats.search += &run;
             stats.rounds += 1;
             if candidate.node_count() < tdd.node_count() {
@@ -121,6 +131,20 @@ impl crate::Engine {
         }
         Ok(stats)
     }
+}
+
+/// One restart: copy `tdd`, kick the copy and search it.
+fn restart<O: RotationObjective>(
+    eng: &crate::Engine,
+    tdd: &Tdd,
+    objective: &mut O,
+    config: &MultistartConfig,
+    rng: &mut Lcg,
+) -> Result<(Tdd, RotationSearchStats), OperationError> {
+    let mut candidate = eng.try_clone(tdd)?;
+    kick(eng, &mut candidate, config.kick, config.search.max_inner_pairs, rng)?;
+    let run = eng.rotation_search(&mut candidate, objective, &config.search)?;
+    Ok((candidate, run))
 }
 
 /// Apply up to `count` rotations at random pivots, keeping each one whatever

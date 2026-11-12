@@ -132,3 +132,29 @@ pub(crate) fn note_restrict_path(k: usize) {
 pub(crate) fn restrict_paths() -> [usize; 5] {
     RESTRICT_PATHS.with(std::cell::Cell::get)
 }
+
+thread_local! {
+    /// The care restriction's caps on this thread when a test sets them
+    /// ([`with_restrict_caps`]).
+    static RESTRICT_CAPS: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The caps [`with_restrict_caps`] set on this thread, if any.
+pub(crate) fn restrict_caps() -> Option<(u64, usize)> {
+    RESTRICT_CAPS.with(std::cell::Cell::get)
+}
+
+/// Run `f` with the care restriction's joins capped at `list` probes, past
+/// which a level is decided on demand, and its grids at `grid`, past which
+/// a pair of nodes is indexed on a child, so that small diagrams reach the
+/// paths large ones take.
+pub(crate) fn with_restrict_caps<R>(list: u64, grid: usize, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<(u64, usize)>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RESTRICT_CAPS.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(RESTRICT_CAPS.with(|c| c.replace(Some((list, grid)))));
+    f()
+}
