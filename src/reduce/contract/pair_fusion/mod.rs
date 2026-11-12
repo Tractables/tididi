@@ -18,17 +18,6 @@ use super::scratch::ContractScratch;
 use plan::{collect_fusion_plans, FusionSlots};
 use rewrite::{ParentRewrite, BITMAP_MIN_PLANS};
 
-/// Stats returned by the pair-fusion sweeps.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PairFusionStats {
-    /// Total number of (parent node, `x_idx`) groups fused (each removes
-    /// `group_size - 1` parent pair entries and references one `R_new` slot).
-    /// Counts applied rewrites only: a weighted leaf group whose value the pinned
-    /// column cannot represent is dropped before Phase 3 and not counted (the
-    /// contract fixpoint reads a nonzero count as "the diagram changed").
-    pub(crate) fusion_groups: usize,
-}
-
 /// Fuse pairs only at the named boundary parents; an empty slice does no work.
 /// Allocation refusals return [`OperationError::OverBudget`], a fired stop
 /// rule [`OperationError::Stopped`].
@@ -81,6 +70,12 @@ struct PlanEntry<V> {
 /// the caller knows no other node of the one parent `parent_filter` names
 /// holds a group.
 ///
+/// Returns the number of (parent node, `x_idx`) groups fused, each removing
+/// `group_size - 1` parent pair entries and referencing one `R_new` slot.
+/// It counts applied rewrites only: a weighted leaf group whose value the
+/// pinned column cannot represent is dropped before Phase 3 and not counted
+/// (the contract fixpoint reads a nonzero count as "the diagram changed").
+///
 /// # Errors
 ///
 /// `Err(OperationError::OverBudget)` when an allocation is refused. The node whose
@@ -95,17 +90,17 @@ pub(super) fn fuse_pairs_inner(
     parent_filter: Option<&[VtreeIdx]>,
     listed: Option<&[u32]>,
     scratch: &mut ContractScratch,
-) -> Result<PairFusionStats, OperationError> {
+) -> Result<usize, OperationError> {
     debug_assert!(listed.is_none() || parent_filter.is_some_and(|p| p.len() == 1), "a list is of one parent's nodes");
     // Weighted marginalization keeps its values in the `WeightStore` and
     // `marginal_counts` is `None`: the exact domain runs the weighted arm, a
     // bounded-precision domain is skipped (its addition is order-dependent).
     let weighted = match tdd.weights.as_ref() {
-        Some(ws) if ws.is_bounded() => return Ok(PairFusionStats::default()),
+        Some(ws) if ws.is_bounded() => return Ok(0),
         Some(_) => true,
         None => false,
     };
-    let mut stats = PairFusionStats::default();
+    let mut fused = 0;
     boundary_marginal_levels_into(tdd, parent_filter, &mut scratch.boundaries);
     // Indexed so the per-boundary work can borrow `scratch.pair_fusion` (a
     // disjoint field) while this list stays live. Snapshotting the set before
@@ -130,9 +125,9 @@ pub(super) fn fuse_pairs_inner(
         }
         let boundary = Boundary { v, parent, side };
         if weighted {
-            fuse_boundary::<WeightFold>(eng, tdd, boundary, listed, scratch, &mut stats)?;
+            fuse_boundary::<WeightFold>(eng, tdd, boundary, listed, scratch, &mut fused)?;
         } else {
-            fuse_boundary::<IntFold>(eng, tdd, boundary, listed, scratch, &mut stats)?;
+            fuse_boundary::<IntFold>(eng, tdd, boundary, listed, scratch, &mut fused)?;
         }
     }
     // A weighted group the pinned column cannot hold stays unfused, so only
@@ -142,7 +137,7 @@ pub(super) fn fuse_pairs_inner(
             record_fused(eng, tdd, scratch.boundaries[bi].1);
         }
     }
-    Ok(stats)
+    Ok(fused)
 }
 
 /// Record that `parent`'s pairs hold no group pair fusion would fuse, as a
@@ -199,18 +194,18 @@ fn fuse_boundary<D: SlotValues>(
     boundary: Boundary,
     listed: Option<&[u32]>,
     scratch: &mut ContractScratch,
-    stats: &mut PairFusionStats,
+    fused: &mut usize,
 ) -> Result<(), OperationError> {
     let mut rewrite = ParentRewrite::new(eng.limits(), BITMAP_MIN_PLANS);
     let fused = match listed {
         Some(nodes) => {
             debug_assert!(nodes.is_sorted(), "listed fusion nodes ascend");
             let nodes = nodes.iter().map(|&n| n as usize);
-            fuse_chunks::<D>(eng, tdd, boundary, nodes, &mut rewrite, scratch, stats)
+            fuse_chunks::<D>(eng, tdd, boundary, nodes, &mut rewrite, scratch, fused)
         }
         None => {
             let all = 0..tdd.levels[boundary.parent.idx()].nodes().len();
-            fuse_chunks::<D>(eng, tdd, boundary, all, &mut rewrite, scratch, stats)
+            fuse_chunks::<D>(eng, tdd, boundary, all, &mut rewrite, scratch, fused)
         }
     };
     // Every chunk rewritten before a stop is a valid level, so the sweep
@@ -233,7 +228,7 @@ fn fuse_chunks<D: SlotValues>(
     mut nodes: impl Iterator<Item = usize>,
     rewrite: &mut ParentRewrite<'_>,
     scratch: &mut ContractScratch,
-    stats: &mut PairFusionStats,
+    fused: &mut usize,
 ) -> Result<(), OperationError> {
     let Boundary { v, parent, side } = boundary;
     let lim = eng.limits();
@@ -277,10 +272,10 @@ fn fuse_chunks<D: SlotValues>(
             } else {
                 slots.allocate(eng, tdd, v, &mut plans)?
             };
-            // Counted after Phase 2, which may drop leaf plans: `fusion_groups`
+            // Counted after Phase 2, which may drop leaf plans: `fused`
             // counts applied rewrites only, and the contract fixpoint loops
             // while it is nonzero.
-            stats.fusion_groups += plans.len();
+            *fused += plans.len();
             // Phase 3: rewrite the parent pair lists of the chunk's nodes.
             if !plans.is_empty() {
                 rewrite.apply(eng, tdd, parent, side, any_inline, &plans)?;

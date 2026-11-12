@@ -253,14 +253,14 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
     let size_before = tdd.pair_count();
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
         let ps = tdd.levels[root.idx()].pairs_vec(0);
         (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
-    assert_eq!(stats.fusion_groups, 1, "the +a/−a pair pair is one fusion group");
+    assert_eq!(groups, 1, "the +a/−a pair pair is one fusion group");
     assert_eq!(size_before - tdd.pair_count(), 1);
     assert_eq!(pairs_len, 1, "fusion must collapse the two pairs to one");
     assert!(fused_val.is_zero(), "fused value must be exactly 0; got {fused_val}");
@@ -289,7 +289,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
     );
 
     let before_other = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 1));
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
         let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(1).to_vec();
@@ -302,7 +302,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
         (ps, values, node_value(&tdd, ws, root, marginal, 1), unwrap(0), unwrap(1))
     });
 
-    assert_eq!(stats.fusion_groups, 1, "only node 0 has a same-x group");
+    assert_eq!(groups, 1, "only node 0 has a same-x group");
     assert_eq!(other_pairs.len(), 2, "the non-fusable node keeps both pairs");
     assert_eq!(other_vals, vec![a.clone(), -a.clone()], "its refs keep their original values");
     assert_eq!(slot0, a, "slot 0 must not be rewritten by the fusion at node 0");
@@ -332,7 +332,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
     let size_before = tdd.pair_count();
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, values, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
         let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
@@ -341,7 +341,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
         (ps, values, node_value(&tdd, ws, root, marginal, 0))
     });
 
-    assert_eq!(stats.fusion_groups, 2, "x=Pos and x=Neg are two independent groups");
+    assert_eq!(groups, 2, "x=Pos and x=Neg are two independent groups");
     assert_eq!(size_before - tdd.pair_count(), 2, "each group of 2 removes one pair");
     assert_eq!(pairs.len(), 2, "both fused occurrences must be retained");
     let one = BigRational::from_integer(BigInt::from(1));
@@ -377,14 +377,14 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 0));
     let size_before = tdd.pair_count();
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
         let ps = tdd.levels[root.idx()].pairs_vec(0);
         (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
-    assert_eq!(stats.fusion_groups, 1);
+    assert_eq!(groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 3, "a group of 4 removes three pairs");
     assert_eq!(pairs_len, 1);
     let expect: BigRational = values.iter().cloned().sum();
@@ -395,7 +395,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 // ── T5: the Log domain is excluded ───────────────────────────────────────────
 
 /// The bounded-precision Log domain is excluded by the fusion gate,
-/// so the sweep must return default stats and leave the diagram byte-identical
+/// so the sweep must fuse no group and leave the diagram byte-identical
 /// to the fusion-off path — repeated signed `add_assign` on a signed-log value
 /// is order-dependent and cancellation-prone, so summing there is not sound.
 #[test]
@@ -423,10 +423,10 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
 
     let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let slots_before = store_len(&tdd, marginal);
-    let stats = fuse_pairs(&eng, &mut tdd).expect("the log-domain gate must not error");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("the log-domain gate must not error");
     let after: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
 
-    assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");
+    assert_eq!(groups, 0, "log domain must not fuse");
     assert_eq!(store_len(&tdd, marginal), slots_before, "log domain must mint nothing");
     assert_eq!(before, after, "log domain must leave the pair list untouched");
     crate::test_helpers::assert_canonical(&tdd);

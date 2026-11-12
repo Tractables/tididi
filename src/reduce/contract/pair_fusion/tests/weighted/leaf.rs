@@ -55,13 +55,13 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     );
     let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
     let (slots_before, size_before) = (store_len(&tdd, leaf), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, after) = inspect_leaf_fusion_state(&tdd, root, leaf);
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
     let fused = with_ws(&tdd, |ws| marginal_value(ws, leaf, pairs[0].right.0));
 
     assert_eq!(
-        stats.fusion_groups, 1,
+        groups, 1,
         "the Pos/Neg pair pair is one fusion group"
     );
     assert_eq!(size_before - tdd.pair_count(), 1);
@@ -92,7 +92,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
 /// `(x,One), (x,Pos)` sums to `2w⁺ + w⁻`, a value these weights do not put in the
 /// pinned column — and a leaf column can never grow to hold it. The plan is
 /// dropped: the node's pairs are left byte-identical (an un-fused fusion redex is a
-/// size residual, never a wrong value), nothing is minted, and the stats report
+/// size residual, never a wrong value), nothing is minted, and the sweep reports
 /// no fusion — which is what keeps the contract fixpoint from looping forever on
 /// a rewrite that never happened.
 #[test]
@@ -135,11 +135,11 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     });
 
     let slots_before = store_len(&tdd, leaf);
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (after, after_val) = inspect_leaf_fusion_state(&tdd, root, leaf);
 
     assert_eq!(
-        stats.fusion_groups, 0,
+        groups, 0,
         "a dropped leaf plan is not a fusion"
     );
     assert_eq!(

@@ -42,11 +42,11 @@ fn a_fusion_run_to_the_end_is_recorded_and_the_next_one_skipped() {
         !tdd.dirty.is_fused(root.0),
         "a diagram starts with no record"
     );
-    let stats = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
-    assert_eq!(stats.fusion_groups, 1);
+    let groups = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
+    assert_eq!(groups, 1);
     assert!(tdd.dirty.is_fused(root.0));
-    let stats = fuse_pairs(&stopping(), &mut tdd).expect("a recorded parent is not read");
-    assert_eq!(stats.fusion_groups, 0);
+    let groups = fuse_pairs(&stopping(), &mut tdd).expect("a recorded parent is not read");
+    assert_eq!(groups, 0);
     tdd.invalidate(root);
     assert!(
         !tdd.dirty.is_fused(root.0),
@@ -179,12 +179,7 @@ fn a_merge_at_a_recorded_parent_is_fused_at_its_survivors() {
         },
     );
     let eng = Engine::new();
-    assert_eq!(
-        fuse_pairs(&eng, &mut tdd)
-            .expect("no limits armed")
-            .fusion_groups,
-        0
-    );
+    assert_eq!(fuse_pairs(&eng, &mut tdd).expect("no limits armed"), 0);
     assert!(
         tdd.dirty.is_fused(boundary.0),
         "a fusion that found nothing records its parent"

@@ -74,8 +74,8 @@ fn narrow_nodes_after_a_wide_one_fuse_every_group() {
     let eng = Engine::new();
     let mut tdd = wide_then_narrow();
     let before = sums(&tdd);
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no limits armed");
-    assert!(stats.fusion_groups > 300, "most narrow nodes carry a group: {}", stats.fusion_groups);
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no limits armed");
+    assert!(groups > 300, "most narrow nodes carry a group: {}", groups);
     assert_eq!(sums(&tdd), before, "fusion keeps every explicit ref's summed count");
     for n in 0..before.len() {
         assert!(fused(&tdd, n), "node {n} still holds two pairs at one explicit ref");
@@ -137,8 +137,8 @@ fn an_ascending_node_is_grouped_by_runs_in_first_occurrence_order() {
     let node: &[(u32, u32)] = &[(0, 0), (0, 1), (2, 2), (5, 0), (5, 2), (5, 3), (9, 1), (9, 1)];
     let mut tdd = toy(counts.clone(), &[node]);
     let before = sums(&tdd);
-    let stats = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
-    assert_eq!(stats.fusion_groups, 3);
+    let groups = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
+    assert_eq!(groups, 3);
     assert_eq!(sums(&tdd), before);
     assert!(fused(&tdd, 0));
     let root = tdd.vtree.root();

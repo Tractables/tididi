@@ -46,9 +46,9 @@ fn p_fusion_succeeds_without_budget() {
     let eng = Engine::new();
     let mut tdd = fusable_tdd();
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     assert_eq!(marginal_slots(&tdd), slots_before, "small fused count must inline, not allocate a slot");
-    assert_eq!(stats.fusion_groups, 1);
+    assert_eq!(groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 1);
 }
 
@@ -100,9 +100,9 @@ fn fusion_sums_inline_inline_pairs() {
     let eng = Engine::new();
     let mut tdd = inline_fusable_tdd(5, 7);
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("inline+inline fusion must not over-budget");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("inline+inline fusion must not over-budget");
     // One fusion group eliminated one pair.
-    assert_eq!(stats.fusion_groups, 1);
+    assert_eq!(groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 1);
     // Sum 12 fits inline (12 ≤ `MARGINAL_INLINE_MAX` in default env) → no new slot.
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
@@ -147,8 +147,8 @@ fn fusion_groups_by_inline_explicit_refs() {
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("fusion must not over-budget");
-    assert_eq!(stats.fusion_groups, 1);
+    let groups = fuse_pairs(&eng, &mut tdd).expect("fusion must not over-budget");
+    assert_eq!(groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 1);
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
     let pairs = root_pairs(&tdd);
@@ -187,8 +187,8 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("inline+slot fusion must not over-budget");
-    assert_eq!(stats.fusion_groups, 1);
+    let groups = fuse_pairs(&eng, &mut tdd).expect("inline+slot fusion must not over-budget");
+    assert_eq!(groups, 1);
     assert_eq!(size_before - tdd.pair_count(), 1);
     // Sum BIG+5 doesn't fit inline → a new slot must be allocated.
     assert_eq!(marginal_slots(&tdd) - slots_before, 1, "sum (1<<40)+5 is too wide for a ref; must allocate a slot");
@@ -228,8 +228,8 @@ fn fusion_sums_identical_ref_occurrences() {
     let mut tdd = toy(vec![6], &[&[(0, 0), (0, 0)]]);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
-    assert_eq!(stats.fusion_groups, 1, "the two identical pairs form one fusion group");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
+    assert_eq!(groups, 1, "the two identical pairs form one fusion group");
     assert_eq!(size_before - tdd.pair_count(), 1, "a group of size 2 removes one pair");
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 inlines under the default threshold");
 
@@ -256,8 +256,8 @@ fn fusion_partitions_two_independent_x_groups() {
     let mut tdd = toy(vec![3, 5, 7, 11, 13], &[&[(0, 0), (1, 3), (0, 1), (1, 4), (0, 2)]]);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
-    let stats = fuse_pairs(&eng, &mut tdd).expect("two-group fusion must not over-budget");
-    assert_eq!(stats.fusion_groups, 2, "x=0 and x=1 are two independent fusion groups");
+    let groups = fuse_pairs(&eng, &mut tdd).expect("two-group fusion must not over-budget");
+    assert_eq!(groups, 2, "x=0 and x=1 are two independent fusion groups");
     // x=0 (3 pairs) removes 2; x=1 (2 pairs) removes 1.
     assert_eq!(size_before - tdd.pair_count(), 3);
     assert_eq!(marginal_slots(&tdd), slots_before, "sums 15 and 24 both inline under the default threshold");

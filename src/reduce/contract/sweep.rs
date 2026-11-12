@@ -768,22 +768,22 @@ fn fuse_at(
     // instead of re-borrowing the pool.
     use crate::reduce::contract::pair_fusion::fuse_pairs_inner;
     if !scratch.listing.fused_but(parent.idx()) {
-        return Ok(fuse_pairs_inner(eng, tdd, Some(&[parent]), None, scratch)?.fusion_groups > 0);
+        return Ok(fuse_pairs_inner(eng, tdd, Some(&[parent]), None, scratch)? > 0);
     }
     note_listed_fusion();
     let listed = scratch.listing.take(parent.idx());
-    let stats = fuse_pairs_inner(eng, tdd, Some(&[parent]), Some(&listed), scratch);
+    let fused = fuse_pairs_inner(eng, tdd, Some(&[parent]), Some(&listed), scratch);
     scratch.listing.put(parent.idx(), listed);
     // Run to the end, the fusion recorded the parent fused whole.
     scratch.listing.set_fused_but(parent.idx(), false);
-    let stats = stats?;
+    let fused = fused?;
     #[cfg(debug_assertions)]
     crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
         tdd,
         Some(&[parent]),
         "a listed fusion",
     );
-    Ok(stats.fusion_groups > 0)
+    Ok(fused > 0)
 }
 
 /// A child the joint fixpoint of a diagram without a marginal level is done
