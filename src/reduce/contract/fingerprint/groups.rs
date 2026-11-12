@@ -29,9 +29,6 @@ pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
     materialize_candidate_signatures(eng, entries, child_width, scratch)?;
 
     // ── Group nodes by signature ──────────────────────────────────────────────
-    if child_width == 2 {
-        return group_width_two(eng.limits(), scratch, E::EMPTY_TWINS);
-    }
     group_by_hashed_signature(eng, child_width, scratch, E::EMPTY_TWINS)
 }
 
@@ -319,39 +316,6 @@ fn sort_by_counting(lim: &Limits, piece: &mut [u64], tables: &mut SortCounts) ->
         }
     }
     Ok(true)
-}
-
-/// Width-2 fast path: the two signatures are compared directly, no hashing.
-/// Two empty ones are a group only with `empty_twins`.
-fn group_width_two(
-    lim: &Limits,
-    scratch: &mut ContractScratch,
-    empty_twins: bool,
-) -> Result<bool, OperationError> {
-    let same = same_signature(lim, &mut scratch.entries, &scratch.counts, &mut scratch.sort_counts, 0, 1)?;
-    let sig_offsets = &scratch.counts;
-    // Reaching here means `mark_candidates` found a fingerprint collision, and
-    // at width 2 the only collision possible marks both nodes — so both
-    // signatures are materialized and neither slice is an unmaterialized empty
-    // one that would compare equal to anything.
-    debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
-    let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
-    let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
-    let found = same && (empty_twins || !sig0.is_empty());
-    if !empty_twins {
-        for (node, sig) in [sig0, sig1].into_iter().enumerate() {
-            if sig.is_empty() {
-                lim.try_push(&mut scratch.unnamed, node as u32)?;
-            }
-        }
-    }
-    if found {
-        lim.try_push(&mut scratch.group_starts, 0)?;
-        lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
-        scratch.flat_groups[0] = 0;
-        scratch.flat_groups[1] = 1;
-    }
-    Ok(found)
 }
 
 /// General case: bucket the candidates by their additive fingerprint, verify
