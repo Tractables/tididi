@@ -68,6 +68,11 @@ impl Contracted {
     }
 }
 
+/// The side of `parent`'s pairs that names the nodes of its child `child`.
+fn side_of(tdd: &Tdd, parent: VtreeIdx, child: VtreeIdx) -> ChildSide {
+    if tdd.vtree.children(parent).0 == child { ChildSide::Left } else { ChildSide::Right }
+}
+
 /// Contract one child level `t1` (with parent `parent`) if it has twins,
 /// searching the nodes `reach` names. Says whether a productive contraction
 /// fired, and whether it merged every group whole; where one fired, adds
@@ -98,12 +103,7 @@ fn contract_child(
     if !tdd.levels[parent.idx()].has_multi_pair() {
         return Ok(Contracted::Nothing);
     }
-    let (parent_left, _parent_right) = tdd.vtree.children(parent);
-    let t1_side = if parent_left == t1 {
-        ChildSide::Left
-    } else {
-        ChildSide::Right
-    };
+    let t1_side = side_of(tdd, parent, t1);
     let side = t1_side as usize;
     let width = tdd.levels[t1.idx()].slot_count();
     // The search reads the nodes `reach` names. Charged before a parent's
@@ -790,11 +790,7 @@ fn debug_assert_no_twins(
     {
         return Ok(());
     }
-    let side = if tdd.vtree.children(parent).0 == child {
-        ChildSide::Left
-    } else {
-        ChildSide::Right
-    };
+    let side = side_of(tdd, parent, child);
     let found = find_twin_groups(eng, tdd, child, parent, side, scratch, false)?;
     assert!(
         !found,
