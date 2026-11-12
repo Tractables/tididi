@@ -1483,7 +1483,9 @@ impl Partition<'_> {
 
     /// The first `listed` nodes in `wide.bucket` of a wide parent node of `d`
     /// siblings at most [`FEW_SIBLINGS`], each listed once with its code in
-    /// `wide.touched`, split by their codes ([`Self::split_by_codes`]).
+    /// `wide.touched`, split by their codes ([`Self::split_by_codes`]). A
+    /// node read as the last of its class is marked alone, so that later
+    /// parent nodes skip it by its bit, and named.
     #[inline(always)]
     fn split_listed_codes(
         &mut self,
@@ -1509,7 +1511,15 @@ impl Partition<'_> {
         for ((&t, &e), seen) in nodes.iter().zip(node_codes).zip(seen.iter_mut()) {
             let c = self.of(t);
             *seen = ALONE;
-            if !self.can_twin(c) {
+            if c == ALONE {
+                continue;
+            }
+            if self.classes[c as usize].size < 2 {
+                // The last node of its class, marked alone, and named, as
+                // `split_sibling` marks it.
+                let word = &mut self.bits[(t / 64) as usize];
+                word[0] |= 1 << (t % 64);
+                word[1] |= 1 << (t % 64);
                 continue;
             }
             *seen = c;
