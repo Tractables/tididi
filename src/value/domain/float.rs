@@ -321,7 +321,19 @@ impl<'a> PlainProducts<'a> {
     /// columns, as [`product`](Self::product) forms it.
     #[inline(always)]
     pub(crate) fn times(&self, l: f64, r: f64) -> f64 {
-        (l * self.by.0) * (r * self.by.1)
+        self.scaled_left(l) * self.scaled_right(r)
+    }
+
+    /// A left float `l` as [`times`](Self::times) multiplies it.
+    #[inline(always)]
+    pub(crate) fn scaled_left(&self, l: f64) -> f64 {
+        l * self.by.0
+    }
+
+    /// A right float `r` as [`times`](Self::times) multiplies it.
+    #[inline(always)]
+    pub(crate) fn scaled_right(&self, r: f64) -> f64 {
+        r * self.by.1
     }
 
     /// The floats of the left and the right column, at the indices the

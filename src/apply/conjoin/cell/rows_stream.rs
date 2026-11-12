@@ -363,6 +363,9 @@ avx2_fn! {
 /// into a sum that starts at zero, as [`PlainSink`] sums a cell, and a
 /// one-pair cell is its product. `places` are what the places of a node
 /// add to its first pair's slots, every slot a pair names in its column.
+/// The block is summed in `out`, its first products written and the
+/// others added: a sum of nonnegative floats that starts at zero holds its
+/// first product as it is.
 #[inline(always)]
 fn described_rows(
     product: &ImplicitLevel,
@@ -371,39 +374,69 @@ fn described_rows(
     out: &mut Vec<f64>,
     grid: &mut [u32],
 ) {
-    let (left, right) = products.floats();
-    let one = places.len() == 1;
-    let mut acc = [0.0f64; DESCRIBED_BLOCK];
+    let Some((&head, rest)) = places.split_first() else {
+        return;
+    };
     let mut cell = 0usize;
     product.each_row(|first, step, len| {
         let mut j = 0;
         while j < len {
             let m = (len - j).min(DESCRIBED_BLOCK);
-            let acc = &mut acc[..m];
-            if !one {
-                acc.fill(0.0);
-            }
             let at = (first.0 + j as i64 * step.0, first.1 + j as i64 * step.1);
-            for &(pl, pr) in places {
-                let (mut l, mut r) = (at.0 + pl, at.1 + pr);
-                for a in acc.iter_mut() {
-                    // Safety: every slot a pair names lies in its column
-                    // (`slot_range`, checked by the caller).
-                    let v = products.times(unsafe { *left.get_unchecked(l as usize) }, unsafe {
-                        *right.get_unchecked(r as usize)
-                    });
-                    *a = if one { v } else { *a + v };
-                    (l, r) = (l + step.0, r + step.1);
-                }
+            let start = out.len();
+            out.resize(start + m, 0.0);
+            let acc = &mut out[start..];
+            place_products::<false>(acc, products, (at.0 + head.0, at.1 + head.1), step);
+            for &(pl, pr) in rest {
+                place_products::<true>(acc, products, (at.0 + pl, at.1 + pr), step);
             }
-            let slot = out.len() as u32;
-            out.extend_from_slice(acc);
+            let slot = start as u32;
             for (k, g) in grid[cell..cell + m].iter_mut().enumerate() {
                 *g = slot + k as u32;
             }
             (cell, j) = (cell + m, j + m);
         }
     });
+}
+
+/// Write (`ADD` false) or add (`ADD` true) into `acc` the products of one
+/// place of a block of [`described_rows`]: cell `k`'s pair names the left
+/// slot `at.0 + k * step.0` and the right slot `at.1 + k * step.1`, each
+/// in its column. A row along which one side's slot stays and the other's
+/// moves by one reads the moving side as a run of floats and multiplies it
+/// by the staying side's factor, each product formed as
+/// [`PlainProducts::times`] forms it.
+#[inline(always)]
+fn place_products<const ADD: bool>(acc: &mut [f64], products: &PlainProducts<'_>, at: (i64, i64), step: (i64, i64)) {
+    let (left, right) = products.floats();
+    let m = acc.len();
+    let put = |a: &mut f64, v: f64| *a = if ADD { *a + v } else { v };
+    match step {
+        (1, 0) => {
+            let r = products.scaled_right(right[at.1 as usize]);
+            let ls = &left[at.0 as usize..at.0 as usize + m];
+            for (a, &l) in acc.iter_mut().zip(ls) {
+                put(a, products.scaled_left(l) * r);
+            }
+        }
+        (0, 1) => {
+            let l = products.scaled_left(left[at.0 as usize]);
+            let rs = &right[at.1 as usize..at.1 as usize + m];
+            for (a, &r) in acc.iter_mut().zip(rs) {
+                put(a, l * products.scaled_right(r));
+            }
+        }
+        _ => {
+            let (mut l, mut r) = at;
+            for a in acc.iter_mut() {
+                // Safety: every slot a pair names lies in its column
+                // (`slot_range`, checked by the caller).
+                let (x, y) = unsafe { (*left.get_unchecked(l as usize), *right.get_unchecked(r as usize)) };
+                put(a, products.times(x, y));
+                (l, r) = (l + step.0, r + step.1);
+            }
+        }
+    }
 }
 
 /// Bind the child columns and collapse this level into its value column.
