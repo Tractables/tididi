@@ -129,8 +129,8 @@ declarations, regenerate the header with
 Citing
 ------
 
-Please cite `A Canonical Generalization of OBDD <https://arxiv.org/abs/2604.05537>`_,
-which introduced TDDs.
+Please cite `A Canonical Generalization of OBDD <https://doi.org/10.4230/LIPIcs.SAT.2026.10>`_,
+SAT 2026 (`arXiv <https://arxiv.org/abs/2604.05537>`__), which introduced TDDs.
 
 Acknowledgements
 ----------------

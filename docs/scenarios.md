@@ -49,12 +49,12 @@ and freeing without changing their ownership rules.
 
 - [Rust README](../README.md) <!-- reviewed: 5036c4ed6313b69e64ef44f22ab946744f3651c601952c2af08a26e3e437aebd -->
 - [Rust crate introduction](../src/lib.rs) <!-- reviewed: 402ca1ce163ee32e662e7563baa60ee8260bd101ecade73eb0cccd1dc2013a2e -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 657718e42d5960d398cd75714f721bc11155e8b13c8c767aecc68fdf96335fdd -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 3ea8cce1c65aac9e011830f0a1e51a780009f26d04c563b9ae32c4d4300a68e9 -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ddd5e7b2357bf35a2ede868b429fd409ef8541bc9da20883e14ab8b3f99e11a7 -->
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bb58b033976cfacb2ff6a6eb7b0d6c036b10eccd99b02ba5a7dc5f54bb40b4c9 -->
 - [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 26adca5729ad94236c7449ca71a7fd30fe2613413900c40242da81fec1b933a9 -->
 - [C example](../bindings/c/examples/example.h) <!-- reviewed: 81a1e707291fc8f1458b2de7b58215ba5627cbb509abe9e51720ff9f440e7c69 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: b4e28a3f6b783b62baab42caf5794597e5c82607cba229be0c94bad94de47b20 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: b9d964f4399ad081a57711b652070ad4d18cc7ea8d3ecd8bc51bf1304495f7e6 -->
 
 ## Reading order
 
