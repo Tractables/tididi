@@ -7,6 +7,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::{EncodedNode, NodeIdx, Tdd};
 use crate::limits::OperationError;
 
+use super::bits;
 use super::scratch::{ContractScratch, MergeBuffers, MergeRemap};
 
 mod data;
@@ -98,9 +99,7 @@ pub(super) fn contract_twins(
     } = scratch;
     if !marked {
         lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
-        let words = width.div_ceil(64);
-        lim.try_resize(&mut remap.absorbed, words, 0u64)?;
-        remap.absorbed[..words].fill(0);
+        bits::cleared(lim, &mut remap.absorbed, width)?;
     }
     let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
     debug_assert!(
@@ -143,10 +142,10 @@ pub(super) fn contract_twins(
     };
     for &u in unnamed.iter() {
         debug_assert!(
-            remap.absorbed[(u / 64) as usize] >> (u % 64) & 1 == 0,
+            !bits::has(&remap.absorbed, u),
             "an unnamed node is in no group"
         );
-        remap.absorbed[(u / 64) as usize] |= 1 << (u % 64);
+        bits::insert(&mut remap.absorbed, u);
         remap.final_remap[u as usize] = NodeIdx(DISCARDED);
     }
     if merged_members + unnamed.len() == 0 {
@@ -331,7 +330,7 @@ fn mark_group_members(
             DROPPED
         };
         for &idx in &members[1..] {
-            remap.absorbed[(idx / 64) as usize] |= 1 << (idx % 64);
+            bits::insert(&mut remap.absorbed, idx);
             remap.final_remap[idx as usize] = NodeIdx(keep | dropped);
         }
         merged_members += members.len() - 1;

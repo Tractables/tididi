@@ -3,6 +3,7 @@
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
 
+use super::super::bits;
 use super::super::scratch::ContractScratch;
 use super::{TwinEntries, probe_fingerprints};
 
@@ -527,14 +528,11 @@ pub(super) fn group_single_entries(
     // Each node's entry at its index. With as many entries as nodes, a node
     // named twice leaves another unnamed.
     lim.try_resize(records, width, 0u64)?;
-    let words = width.div_ceil(64);
-    lim.try_resize(twin_named, words, 0u64)?;
-    twin_named[..words].fill(0);
+    let twin_named = bits::cleared(lim, twin_named, width)?;
     let mut repeated = false;
     entries.for_each(|node, entry| {
-        let (word, bit) = ((node / 64) as usize, 1u64 << (node % 64));
-        repeated |= twin_named[word] & bit != 0;
-        twin_named[word] |= bit;
+        repeated |= bits::has(twin_named, node);
+        bits::insert(twin_named, node);
         records[node as usize] = entry;
     });
     if repeated {

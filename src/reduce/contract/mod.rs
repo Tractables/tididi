@@ -6,6 +6,7 @@
 //! node without changing the diagram's overall function.
 
 pub(crate) mod scratch;
+mod bits;
 mod fingerprint;
 mod sweep;
 mod merge;

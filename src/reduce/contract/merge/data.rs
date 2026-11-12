@@ -10,6 +10,7 @@ use crate::diagram::{
 use crate::isa::prefetch_line;
 use crate::limits::{Limits, OperationError};
 
+use super::super::bits;
 use super::super::scratch::{ClassInfo, DuplicateScratch, Marks, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
 use super::rewrite::{DISCARDED, DROPPED, survivor};
@@ -85,11 +86,6 @@ fn put(room: &mut [ChildPair], src: &[ChildPair]) -> usize {
     src.len()
 }
 
-/// Whether node `i` is merged away into a survivor.
-#[inline]
-fn absorbed(bits: &[u64], i: usize) -> bool {
-    (bits[i / 64] >> (i % 64)) & 1 != 0
-}
 
 /// Arena and live pair counts of a packed level after subtracting the pairs
 /// of nodes no parent pair names (`unnamed`).
@@ -228,7 +224,7 @@ fn rebuilt_pairs(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> R
     let mut plans = concat_plans(bufs);
     let (mut total, mut live) = (0usize, 0usize);
     for (i, (node, to)) in level.nodes().iter().zip(final_remap).enumerate() {
-        let unioned = if absorbed(bits, i) {
+        let unioned = if bits::has(bits, i as u32) {
             // A node no pair names, or a content-equal redirect: dropped
             // with its pairs.
             if to.0 == DISCARDED || to.0 & DROPPED == 0 {
@@ -266,7 +262,7 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
     let mut plans = concat_plans(bufs);
     let (mut start, mut ranged) = (0usize, 0usize);
     for i in 0..level.nodes().len() {
-        if absorbed(bits, i) {
+        if bits::has(bits, i as u32) {
             continue;
         }
         let len = match plans.next_if(|p| bufs.sel[p.start as usize] == i as u32) {
@@ -290,16 +286,6 @@ fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
     ranged
 }
 
-/// Mask of valid bit positions in the 64-bit word starting at `base` for a
-/// slice of length `len`.
-#[inline]
-fn valid_word_mask(len: usize, base: usize) -> u64 {
-    if len - base < 64 {
-        (1u64 << (len - base)) - 1
-    } else {
-        u64::MAX
-    }
-}
 
 /// Install the rebuilt `fresh` pair arena (and optional `fresh_ranges`) on
 /// `level`, truncating `level.nodes` to `write` and resetting dead-pair
@@ -419,7 +405,7 @@ pub(super) fn rebuild_level(
     let len = nodes.len();
     for (w, &word) in bits[..len.div_ceil(64)].iter().enumerate() {
         let base = w * 64;
-        let mut live = !word & valid_word_mask(len, base);
+        let mut live = !word & bits::word_mask(len, w);
         while live != 0 {
             let read = base + live.trailing_zeros() as usize;
             live &= live - 1;
@@ -578,7 +564,7 @@ pub(super) fn rebuild_in_order(
     let (slots, remapped) = (&mut nodes[..], &mut final_remap[..len]);
     for (w, &word) in bits[..len.div_ceil(64)].iter().enumerate() {
         let base = w * 64;
-        let valid = valid_word_mask(len, base);
+        let valid = bits::word_mask(len, w);
         let merged = word & valid;
         if next < base + 64 {
             prefetch_line(classes.as_ptr().wrapping_add(class[next] as usize));

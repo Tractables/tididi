@@ -4,6 +4,7 @@
 use crate::diagram::{ChildPair, ChildSide, EncodedNode, NodeIdx, NodeKind, StoredPairs, TddLevel};
 use crate::limits::{Limits, OperationError};
 
+use super::super::bits;
 use super::super::merge::DROPPED;
 use super::super::scratch::{ClassInfo, ContractScratch, Marks, MergeRemap};
 use super::{mix64, pack, split_pair};
@@ -181,9 +182,9 @@ pub(super) fn refine_context_groups(
         Start::Listed(listed) => {
             bits.fill([u64::MAX; 2]);
             for &t in listed {
-                let word = &mut bits[(t / 64) as usize];
-                word[0] &= !(1 << (t % 64));
-                word[1] &= !(1 << (t % 64));
+                let (w, b) = bits::at(t);
+                bits[w][0] &= !b;
+                bits[w][1] &= !b;
             }
             (false, false, listed.len())
         }
@@ -398,10 +399,7 @@ impl Listing<'_> {
             width: 0,
         };
         for (w, &[moved, alone]) in bits.iter().enumerate() {
-            let mut live = !alone;
-            if (w + 1) * 64 > width {
-                live &= (1u64 << (width % 64)) - 1;
-            }
+            let mut live = !alone & bits::word_mask(width, w);
             let mut merged = 0u64;
             while live != 0 {
                 let b = live.trailing_zeros() as usize;
@@ -621,7 +619,7 @@ impl Partition<'_> {
                 _ => break,
             };
             at += 1;
-            let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
+            let (w, b) = bits::at(t);
             let [moved, alone] = bits[w];
             if alone & b != 0 {
                 continue;
@@ -652,7 +650,8 @@ impl Partition<'_> {
     /// Node `t`'s class, or [`ALONE`].
     #[inline(always)]
     fn of(&self, t: u32) -> u32 {
-        let ([moved, alone], b) = (self.bits[(t / 64) as usize], 1u64 << (t % 64));
+        let (w, b) = bits::at(t);
+        let [moved, alone] = self.bits[w];
         if moved & b == 0 {
             0
         } else if alone & b != 0 {
@@ -672,7 +671,7 @@ impl Partition<'_> {
     /// node left in `c`.
     #[inline(always)]
     fn alone(&mut self, t: u32, c: u32) {
-        let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
+        let (w, b) = bits::at(t);
         let members = self.classes[c as usize].size;
         self.twinable -= match members {
             1 => 0,
@@ -698,7 +697,8 @@ impl Partition<'_> {
     #[inline(always)]
     fn put(&mut self, t: u32, id: u32) {
         self.class[t as usize] = id;
-        self.bits[(t / 64) as usize][0] |= 1 << (t % 64);
+        let (w, b) = bits::at(t);
+        self.bits[w][0] |= b;
     }
 
     /// A new class for `members` nodes taken out of class `c`, which the
@@ -812,10 +812,7 @@ impl Partition<'_> {
         let words = width.div_ceil(64);
         let mut unnamed = 0;
         for w in 0..words {
-            let mut clear = !self.bits[w][0];
-            if (w + 1) * 64 > width {
-                clear &= (1u64 << (width % 64)) - 1;
-            }
+            let clear = !self.bits[w][0] & bits::word_mask(width, w);
             unnamed += clear.count_ones() as usize;
         }
         if unnamed < 2 {
@@ -828,10 +825,7 @@ impl Partition<'_> {
         if let Some(out) = out {
             lim.reserve_exact(out, unnamed)?;
             for (w, word) in self.bits.iter().enumerate() {
-                let mut clear = !word[0];
-                if (w + 1) * 64 > width {
-                    clear &= (1u64 << (width % 64)) - 1;
-                }
+                let mut clear = !word[0] & bits::word_mask(width, w);
                 while clear != 0 {
                     out.push((w * 64) as u32 + clear.trailing_zeros());
                     clear &= clear - 1;

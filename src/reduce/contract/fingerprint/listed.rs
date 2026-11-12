@@ -23,23 +23,10 @@ use crate::Engine;
 use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
+use super::super::bits;
 use super::super::scratch::ContractScratch;
 use super::refine::{refine_context_groups, Start};
 use super::split_pair;
-
-/// A set of a level's nodes, one bit each, cleared over `width` nodes.
-fn node_set<'a>(lim: &Limits, bits: &'a mut Vec<u64>, width: usize) -> Result<&'a mut [u64], OperationError> {
-    let words = width.div_ceil(64);
-    lim.try_resize(bits, words, 0u64)?;
-    let bits = &mut bits[..words];
-    bits.fill(0);
-    Ok(bits)
-}
-
-#[inline]
-fn insert(bits: &mut [u64], n: u32) {
-    bits[(n / 64) as usize] |= 1 << (n % 64);
-}
 
 
 /// Replace `out` with the members of `bits`, ascending.
@@ -76,10 +63,10 @@ pub(in crate::reduce::contract) fn named_by(
 ) -> Result<(), OperationError> {
     let parent_level = &tdd.levels[parent.idx()];
     let level = &tdd.levels[t1.idx()];
-    let named = node_set(lim, bits, level.slot_count())?;
+    let named = bits::cleared(lim, bits, level.slot_count())?;
     for &n in nodes {
         for pair in parent_level.pairs_iter_of_idx(n as usize) {
-            insert(named, split_pair(&pair, t1_side).0);
+            bits::insert(named, split_pair(&pair, t1_side).0);
         }
     }
     members_into(lim, named, out)
