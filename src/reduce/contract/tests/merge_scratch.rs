@@ -231,7 +231,6 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.entries.resize_with(big, Default::default);
         s.counts.resize_with(big, Default::default);
         s.cursors.resize_with(big, Default::default);
-        s.slice_unsorted.resize_with(big, Default::default);
         assert!(s.remap.final_remap.is_empty() && s.remap.absorbed.is_empty());
         drop(s);
     }

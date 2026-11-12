@@ -34,8 +34,9 @@ pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
     group_by_hashed_signature(eng, child_width, scratch, E::EMPTY_TWINS)
 }
 
-/// Scatter each twin-candidate node's context signature into the flat entry
-/// arena and canonicalize the slices that arrived out of order.
+/// Scatter each twin-candidate node's signature into the flat entry arena,
+/// in the order the entries arrive ([`same_signature`] sorts a slice where
+/// that order matters).
 fn materialize_candidate_signatures(
     eng: &Engine,
     entries: &impl TwinEntries,
@@ -52,31 +53,17 @@ fn materialize_candidate_signatures(
     // `try_resize` turns a refused allocation into `Err(OverBudget)`.
     lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
     lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
-    lim.try_resize(&mut scratch.slice_unsorted, child_width, false)?;
-    let sig_offsets = &scratch.counts;
-    scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
-    scratch.slice_unsorted[..child_width].fill(false);
+    scratch.cursors[..child_width].copy_from_slice(&scratch.counts[..child_width]);
 
     entries.for_each(|node, e| {
         let idx = node as usize;
         if scratch.is_candidate[idx] {
             let c = scratch.cursors[idx];
-            let ci = c as usize;
-            // Fused sortedness detection (see canonicalization below): flag the
-            // slice if this entry compares below its predecessor. Branchless —
-            // `prev` reads index c-1 saturated to 0; that value is arbitrary
-            // when `c` is the slice's first position (or 0), but the `c > lo`
-            // mask discards it. Entries within a slice are written at
-            // consecutive cursor positions, so adjacent-at-write = adjacent-in-
-            // slice and the flag is exactly `!is_sorted(slice)` once filled.
-            let prev = scratch.entries[ci.saturating_sub(1)];
-            let unsorted = (c > sig_offsets[idx]) & (e < prev);
-            scratch.slice_unsorted[idx] |= unsorted;
-            scratch.entries[ci] = e;
+            scratch.entries[c as usize] = e;
             scratch.cursors[idx] = c + 1; // ≤ candidate_mass < u32::MAX, checked above
         }
     });
-    canonicalize_signature_slices(lim, child_width, scratch)
+    Ok(())
 }
 
 /// Replace each count in `counts` with the exclusive prefix sum of the
@@ -139,28 +126,37 @@ fn count_candidate_entries(
     Ok(candidate_mass)
 }
 
-/// Sort the signature slices the scatter flagged as out of order.
+/// Whether candidates `a` and `b` have equal signatures, as multisets.
 ///
-/// Two nodes are twins iff their entry multisets are equal, and pair lists are
-/// unordered, so slices are compared canonicalized; a missed sort could only
-/// give a spurious mismatch (a missed twin), never a wrong merge. A context
-/// scatter walks parent nodes in ascending index order and packs the parent
-/// index in the high 32 bits, so its slices arrive sorted except for
-/// inversions within one parent node's pair block; a content slice arrives in
-/// pair-list order. Only the flagged slices are sorted
-/// ([`sort_signature_slice`]).
-fn canonicalize_signature_slices(
+/// Two nodes are twins iff their entry multisets are equal, and pair lists
+/// are unordered, so slices of one length that differ as written are sorted
+/// in place ([`sort_signature_slice`]) and compared again; equal as written
+/// they are equal as multisets. Twins whose entries arrive in one order, and
+/// the candidates no comparison reaches, are never sorted, and the scatter
+/// tracks no order; a slice compared again after its sort costs a pass over
+/// it. A context scatter walks parent nodes in ascending index order and
+/// packs the parent index in the high 32 bits, so its slices are out of
+/// order only within one parent node's pair block, and each such block is
+/// sorted alone; a content slice arrives in pair-list order.
+fn same_signature(
     lim: &Limits,
-    child_width: usize,
-    scratch: &mut ContractScratch,
-) -> Result<(), OperationError> {
-    let ContractScratch { counts: sig_offsets, entries, slice_unsorted, sort_counts, .. } = scratch;
-    for (bounds, &unsorted) in sig_offsets[..=child_width].windows(2).zip(&slice_unsorted[..child_width]) {
-        if unsorted {
-            sort_signature_slice(lim, &mut entries[bounds[0] as usize..bounds[1] as usize], sort_counts)?;
-        }
+    entries: &mut [u64],
+    sig_offsets: &[u32],
+    tables: &mut SortCounts,
+    a: usize,
+    b: usize,
+) -> Result<bool, OperationError> {
+    let range = |n: usize| sig_offsets[n] as usize..sig_offsets[n + 1] as usize;
+    if entries[range(a)] == entries[range(b)] {
+        return Ok(true);
     }
-    Ok(())
+    if range(a).len() != range(b).len() {
+        return Ok(false);
+    }
+    for n in [a, b] {
+        sort_signature_slice(lim, &mut entries[range(n)], tables)?;
+    }
+    Ok(entries[range(a)] == entries[range(b)])
 }
 
 /// Sort a signature slice whose entries are out of order only within runs
@@ -331,6 +327,7 @@ fn group_width_two(
     scratch: &mut ContractScratch,
     empty_twins: bool,
 ) -> Result<bool, OperationError> {
+    let same = same_signature(lim, &mut scratch.entries, &scratch.counts, &mut scratch.sort_counts, 0, 1)?;
     let sig_offsets = &scratch.counts;
     // Reaching here means `mark_candidates` found a fingerprint collision, and
     // at width 2 the only collision possible marks both nodes — so both
@@ -339,7 +336,7 @@ fn group_width_two(
     debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
     let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
     let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
-    let found = sig0 == sig1 && (empty_twins || !sig0.is_empty());
+    let found = same && (empty_twins || !sig0.is_empty());
     if !empty_twins {
         for (node, sig) in [sig0, sig1].into_iter().enumerate() {
             if sig.is_empty() {
@@ -384,6 +381,7 @@ fn group_by_hashed_signature(
         cursors,
         is_candidate,
         candidates,
+        sort_counts,
         ..
     } = &mut *scratch;
     candidates.clear();
@@ -398,26 +396,39 @@ fn group_by_hashed_signature(
     // Pass 1: map each candidate to its representative via the hash table.
     // cursors[k] = the rank of candidate k's representative (k itself if it
     // is the first with its signature).
+    // A refused sort table ends each later probe at once and is returned
+    // after the loop.
     let sig_offsets: &[u32] = counts;
-    let signature =
-        |j: u32| &entries[sig_offsets[j as usize] as usize..sig_offsets[j as usize + 1] as usize];
+    let mut sorted = Ok(());
     probe_fingerprints(
         lim,
         twin_hash_table,
         &fingerprints[..n],
         None,
         |k, occupant| match occupant {
-            Some(j) if signature(candidates[k]) == signature(candidates[j]) => {
-                cursors[k] = j as u32;
-                true
+            _ if sorted.is_err() => true,
+            Some(j) => {
+                let (a, b) = (candidates[k] as usize, candidates[j] as usize);
+                match same_signature(lim, entries, sig_offsets, sort_counts, a, b) {
+                    Ok(same) => {
+                        if same {
+                            cursors[k] = j as u32;
+                        }
+                        same
+                    }
+                    Err(e) => {
+                        sorted = Err(e);
+                        true
+                    }
+                }
             }
-            Some(_) => false,
             None => {
                 cursors[k] = k as u32;
                 true
             }
         },
     )?;
+    sorted?;
 
     // Pass 2: build contiguous groups via counting sort. O(n).
     // Repurpose fingerprints[] as per-rep member count (additive fingerprints

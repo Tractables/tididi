@@ -320,14 +320,8 @@ pub(crate) struct ContractScratch {
     /// The candidates' node indices in ascending order, which the grouping
     /// pass hashes and groups alone.
     pub(super) candidates: Vec<u32>,
-    /// Per-node "signature slice needs sorting" flag, set during the Pass-2
-    /// entry scatter when a written entry compares below its slice predecessor.
-    /// Slices arrive from the scatter in parent-index-major order and are
-    /// almost always already sorted, so the canonicalization pass sorts only
-    /// the flagged minority.
-    pub(super) slice_unsorted: Vec<bool>,
-    /// The counting sort's tables for the flagged slices
-    /// (`fingerprint::groups`).
+    /// The counting sort's tables for the signature slices a comparison
+    /// sorts (`fingerprint::groups`).
     pub(super) sort_counts: super::fingerprint::SortCounts,
 
     /// One bit per node of the level a list is gathered for
@@ -456,7 +450,6 @@ impl Buffers for ContractScratch {
         visit(&mut self.rooms);
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
-        visit(&mut self.slice_unsorted);
         self.sort_counts.buffers(visit);
         visit(&mut self.reach_bits);
         visit(&mut self.unnamed);
