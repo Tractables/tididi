@@ -1,8 +1,9 @@
-//! One level of the bottom-up conjunction: routing a level to the sparse,
-//! dense or streaming build and running it.
-//!
-//! The driver in [`super`] decides the order levels are visited in and what
-//! happens at the boundaries; everything here is what a single level costs.
+//! One level of the bottom-up conjunction, built on the route the driver's
+//! `build_level` chose: the sparse level ([`run_sparse_level`]), the dense,
+//! marginal-child and streaming levels ([`build_level_dense`]), and the root
+//! a count folds instead of building ([`count_sparse_root`],
+//! [`count_streamed_root`]) or a sum builds with its child summed out
+//! ([`sum_sparse_root`]).
 
 use super::Sweep;
 use crate::Engine;
@@ -869,9 +870,9 @@ fn materialize_children_and_grid(
 /// budget even the capped reservation may not fit.
 ///
 /// A streaming route folds counts and writes neither arena, so it reserves
-/// nothing and arms no growth mode. Called exactly once per level on every
-/// route, so a previous level's near-cap decision cannot leak into this one.
-/// Inlined at both of [`build_level_dense`]'s sites, each a level's one call.
+/// nothing and arms no growth mode. Every level [`build_level_dense`] builds
+/// calls it before it emits, so a previous level's near-cap decision cannot
+/// leak into this one.
 #[inline(always)]
 pub(super) fn open_level_arenas(
     lim: &crate::limits::Limits,

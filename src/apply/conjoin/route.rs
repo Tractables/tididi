@@ -26,9 +26,11 @@ pub(super) const LEVEL_RESERVE_PAIRS_CAP: usize =
 
 /// How one level of the product is built.
 ///
-/// One decision, taken once by [`route_level`] before any of the level's
-/// storage is touched. The level loop and the row loop dispatch on it and on
-/// nothing else, so a route that is unreachable is unreachable in one place.
+/// Taken by [`route_level`] before any of the level's storage is touched.
+/// It is not the whole decision: `build_level` may still send a level to
+/// [`Route::MarginalChild`] (`describes_marginal_child`) and take a
+/// [`Route::Sparse`] root as a count or a sum, and the row loop also
+/// dispatches on the level's lookups and pair layout (`run_row_loop`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Route {
     /// Scatter-filter-dedup over the children's live products only, never

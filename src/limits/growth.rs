@@ -63,8 +63,11 @@ impl Limits {
     ///
     /// `None` is a level whose caller offers no bound: a streaming target that
     /// truncates pairs per cell, or a route that never emits into the arena at
-    /// all. Such levels use plain doubling. Every level calls this exactly once, so a
-    /// near-cap decision can never leak into the next one.
+    /// all. Such levels use plain doubling. Each level of the conjunction's
+    /// dense and quantified builds and of the clause conjunction calls this
+    /// before it emits, so no earlier level's near-cap decision reaches it.
+    /// The sparse build does not call it: its arena growth reads the mode
+    /// the level before it left (`sparse::scatter`).
     ///
     /// `pair_bound` must be an upper bound for the actual output: the dense walk passes
     /// `|f.pairs| × |g.pairs|` less the cells of two one-pair nodes, whose
