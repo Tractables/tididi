@@ -97,6 +97,26 @@ const GRID_PROBES: usize = 64;
 const LIST_PROBES: u64 = 1 << 24;
 /// See [`LIST_PROBES`].
 const LIST_FACTOR: u64 = 16;
+
+/// A level's join cap, `cap` unless a test lowered it.
+#[inline(always)]
+fn list_cap(cap: u64) -> u64 {
+    #[cfg(test)]
+    if let Some((list, _)) = crate::test_helpers::restrict_caps() {
+        return list;
+    }
+    cap
+}
+
+/// [`GRID_PROBES`], unless a test lowered it.
+#[inline(always)]
+fn grid_cap() -> usize {
+    #[cfg(test)]
+    if let Some((_, grid)) = crate::test_helpers::restrict_caps() {
+        return grid;
+    }
+    GRID_PROBES
+}
 /// A level where `care` holds one node of at most this many pairs is joined
 /// by trying each `f` pair against each of them ([`Walk::join_spine`]).
 const SPINE_PAIRS: usize = 8;
@@ -666,10 +686,7 @@ impl<'a> Walk<'a> {
         let kids = [lc, rc];
         let sides = [self.side(lc), self.side(rc)];
         let width = (f.levels[u.idx()].live_pairs() + care.levels[u.idx()].live_pairs()) as u64;
-        let cap = LIST_PROBES.max(LIST_FACTOR.saturating_mul(width));
-        // A test lowers the cap so that small diagrams give joins up.
-        #[cfg(test)]
-        let cap = crate::test_helpers::restrict_caps().map_or(cap, |caps| caps.0);
+        let cap = list_cap(LIST_PROBES.max(LIST_FACTOR.saturating_mul(width)));
         let nodes = f.levels[u.idx()].nodes().len();
         if care.levels[u.idx()].nodes().len() == 1
             && care.levels[u.idx()].pair_count_at(0) <= SPINE_PAIRS
@@ -1233,12 +1250,7 @@ impl<'a> Walk<'a> {
         let (lc, rc) = f.vtree.children(v);
         let kids = [lc, rc];
         let sides = [self.side(lc), self.side(rc)];
-        // A test lowers the grid's cap so that small nodes are indexed.
-        #[cfg(test)]
-        let grid = crate::test_helpers::restrict_caps().map_or(GRID_PROBES, |caps| caps.1);
-        #[cfg(not(test))]
-        let grid = GRID_PROBES;
-        let pick = if fp.len().saturating_mul(cp.len()) <= grid {
+        let pick = if fp.len().saturating_mul(cp.len()) <= grid_cap() {
             None
         } else {
             self.index_side(kids, sides)
