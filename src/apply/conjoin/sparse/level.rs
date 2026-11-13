@@ -273,9 +273,8 @@ pub(crate) fn apply_sparse_level(
     // holds the same pair twice produces the same product pair twice, which
     // is exactly the multiplicity the count recurrence needs. Only the
     // pure-Boolean case still guarantees set-ness, so that is where the
-    // emit's check stays armed.
+    // level's debug check stays armed.
     let multisets = marginal || levels[t_idx].is_marginal();
-    let duplicates_legal = cfg!(debug_assertions) && multisets;
 
     // ── Fused scatter-filter ──────────────────────────────────────
     //
@@ -304,10 +303,10 @@ pub(crate) fn apply_sparse_level(
         let held = ws.outer_held;
         // The one product's node holds every candidate.
         let candidates = level.pairs.len() - base;
-        finish_direct(eng, level, base, pl_output, duplicates_legal)?;
+        finish_direct(eng, level, base, pl_output)?;
         level.leave_live_pairs(candidates);
         #[cfg(debug_assertions)]
-        debug_check_flushed_level(pl_output, &levels[t_idx]);
+        debug_check_flushed_level(pl_output, &levels[t_idx], multisets);
         guard.scatter_clean();
         return Ok((Made::Written, held));
     }
@@ -330,7 +329,6 @@ pub(crate) fn apply_sparse_level(
         let emit = Emit {
             level: &mut levels[t_idx],
             out: &mut *pl_output,
-            duplicates_legal,
             thresholds,
             live: &mut live,
         };
@@ -342,7 +340,7 @@ pub(crate) fn apply_sparse_level(
                 &mut levels[t_idx],
                 t_idx,
                 made,
-                live,
+                (live, multisets),
                 pl_output,
                 &mut guard,
             );
@@ -354,7 +352,6 @@ pub(crate) fn apply_sparse_level(
     let emit = Emit {
         level: &mut levels[t_idx],
         out: pl_output,
-        duplicates_legal,
         thresholds,
         live: &mut live,
     };
@@ -372,7 +369,7 @@ pub(crate) fn apply_sparse_level(
         &mut levels[t_idx],
         t_idx,
         made,
-        live,
+        (live, multisets),
         pl_output,
         &mut guard,
     );
@@ -380,15 +377,18 @@ pub(crate) fn apply_sparse_level(
 }
 
 /// Complete a probe- or scatter-emitted level: install `f`'s level if `made == Made::F`,
-/// record any live-pair count, run the debug flush check, and mark the scatter
-/// workspace clean.
+/// record any live-pair count, run the debug flush check (`multisets` as
+/// there), and mark the scatter workspace clean.
 #[inline]
 fn finish_emitted_level(
     f: &mut Held<'_>,
     level: &mut TddLevel,
     t_idx: usize,
     made: Made,
-    live: Option<usize>,
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))] (live, multisets): (
+        Option<usize>,
+        bool,
+    ),
     #[cfg_attr(not(debug_assertions), allow(unused_variables))] pl_output: &[ProductEntry],
     guard: &mut WsGuard<'_>,
 ) -> Made {
@@ -397,7 +397,7 @@ fn finish_emitted_level(
         level.leave_live_pairs(n);
     }
     #[cfg(debug_assertions)]
-    debug_check_flushed_level(pl_output, level);
+    debug_check_flushed_level(pl_output, level, multisets);
     guard.scatter_clean();
     made
 }
@@ -585,9 +585,10 @@ fn assert_no_marginal_children(
 }
 
 /// Check the invariants a flushed level leaves behind: `pl_output` grew
-/// monotonically with `prod_idx[i] == i`, and it has one entry per node.
+/// monotonically with `prod_idx[i] == i`, it has one entry per node, and
+/// each node lists a pair once unless pair lists are `multisets`.
 #[cfg(debug_assertions)]
-fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
+fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel, multisets: bool) {
     for (i, e) in pl_output.iter().enumerate() {
         debug_assert_eq!(
             e.prod_idx.0 as usize, i,
@@ -600,5 +601,13 @@ fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
         "level.nodes().len() {} != pl_output.len() {}",
         level.nodes().len(),
         pl_output.len()
+    );
+    debug_assert!(
+        multisets
+            || (0..level.nodes().len()).all(|i| {
+                let mut seen = std::collections::HashSet::new();
+                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+            }),
+        "sparse apply: duplicate pair emitted — canonicity violated"
     );
 }

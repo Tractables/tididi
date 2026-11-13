@@ -249,7 +249,7 @@ impl ChildSum {
                 }
             }
         }
-        finish_direct(eng, root, base, pl_output, false)?;
+        finish_direct(eng, root, base, pl_output)?;
         // Every reference on the summed side is a value, as the two-step
         // path's end-of-pass tagger marks it.
         root.set_has_value_refs(self.side, true);

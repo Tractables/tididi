@@ -140,7 +140,7 @@ fn two_parents_emit_as_the_map_does() {
                 let mut out = Vec::new();
                 let mut emit = EmitScratch { p2_map: vec![NO_PRODUCT; 8], ..EmitScratch::default() };
                 let mut owners = owners.clone();
-                let node_out = NodeOut { level: &mut level, pl_output: &mut out, p1: 3, base: 0, duplicates_legal: false };
+                let node_out = NodeOut { level: &mut level, pl_output: &mut out, p1: 3, base: 0 };
                 let made = if two {
                     emit_two(&eng, &mut emit, node_out, &mut owners, b)
                 } else {

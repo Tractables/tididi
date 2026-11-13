@@ -41,14 +41,12 @@ pub(super) enum Collect<'a, 'c> {
     Sum(&'a mut ChildSum),
 }
 
-/// The level the emit writes: its nodes, its product list, whether its
-/// pair lists may repeat a pair (see [`emit_walked`]), the thresholds the
-/// routed walk reads ([`SparseThresholds::pipelined_bytes`]), and the live
+/// The level the emit writes: its nodes, its product list, the thresholds
+/// the routed walk reads ([`SparseThresholds::pipelined_bytes`]), and the live
 /// pairs of what the walk made, which it sets where it ends.
 pub(super) struct Emit<'a> {
     pub(super) level: &'a mut TddLevel,
     pub(super) out: &'a mut Vec<ProductEntry>,
-    pub(super) duplicates_legal: bool,
     pub(super) thresholds: SparseThresholds,
     pub(super) live: &'a mut Option<usize>,
 }
@@ -59,7 +57,6 @@ pub(super) struct NodeOut<'a> {
     pub(super) pl_output: &'a mut Vec<ProductEntry>,
     pub(super) p1: usize,
     pub(super) base: usize,
-    pub(super) duplicates_legal: bool,
 }
 
 /// What a walk into the level's nodes ([`Collect::Nodes`]) made of the level.
@@ -615,11 +612,7 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // its g parent beside it; `emit_walked` makes the node's products of
         // them, each candidate one pair of one of them.
         Collect::Nodes(Emit {
-            level,
-            out,
-            duplicates_legal,
-            live,
-            ..
+            level, out, live, ..
         }) => {
             let start = level.pairs.stored_len();
             let walked_nodes = nodes.end();
@@ -645,7 +638,6 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
                         pl_output: out,
                         p1,
                         base,
-                        duplicates_legal,
                     },
                     node_owners,
                 )
@@ -860,12 +852,7 @@ fn owner_walk_nodes<
     const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
     const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
     let lim = eng.limits();
-    let Emit {
-        level,
-        out,
-        duplicates_legal,
-        ..
-    } = to;
+    let Emit { level, out, .. } = to;
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let start = level.pairs.stored_len();
     let empty = start == 0 && level.nodes.stored().is_empty();
@@ -1181,7 +1168,6 @@ fn owner_walk_nodes<
                     pl_output: out,
                     p1,
                     base,
-                    duplicates_legal,
                 },
                 node_owners,
             )?;
@@ -1240,14 +1226,6 @@ fn owner_walk_nodes<
                         ));
                     }
                 }
-                // As in `emit_alternating`: canonical children make each
-                // node's pairs distinct unless pair lists are multisets.
-                #[cfg(debug_assertions)]
-                {
-                    settle!();
-                    let made = level.nodes().len();
-                    debug_assert_unique_pairs(level, made - 2..made, duplicates_legal);
-                }
             } else {
                 settle!();
                 let node_out = NodeOut {
@@ -1255,7 +1233,6 @@ fn owner_walk_nodes<
                     pl_output: out,
                     p1,
                     base,
-                    duplicates_legal,
                 };
                 if matches!(count, 2 | 4 | 6 | 8) {
                     emit_alternating(eng, node_out, owner, owner ^ turn, count)?;
@@ -1302,14 +1279,6 @@ fn owner_walk_nodes<
                 level
                     .try_push_multi_by_range(lim.level_width_cap(), base, count)?;
                 retake!();
-            }
-            // As in `emit_walked`: canonical children make a node's pairs
-            // distinct unless pair lists are multisets.
-            #[cfg(debug_assertions)]
-            {
-                settle!();
-                let made = level.nodes().len();
-                debug_assert_unique_pairs(level, made - 1..made, duplicates_legal);
             }
         }
     }
@@ -1371,14 +1340,12 @@ fn walk_owned<const SWAPPED: bool, const ONES: bool, const DENSE: bool, const BO
     let Emit {
         level,
         out,
-        duplicates_legal,
         thresholds,
         live,
     } = to;
     let to = Emit {
         level,
         out,
-        duplicates_legal,
         thresholds,
         live: &mut *live,
     };
@@ -3767,10 +3734,8 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 ///
 /// No sort and no dedup: pair lists are order-free, and canonical child
 /// levels make the lookups injective, so a duplicate in a purely Boolean
-/// diagram is an upstream canonicity violation. `out.duplicates_legal` says a
-/// node's pair list may repeat a pair: some level of an operand, or of the
-/// output so far, is marginal, so pair lists are multisets feeding a sum.
-/// Read only by the debug duplicate checks.
+/// diagram is an upstream canonicity violation, which the level's debug
+/// check reports.
 #[inline(always)]
 fn emit_walked(
     eng: &Engine,
@@ -3802,12 +3767,7 @@ fn emit_walked(
     {
         lim.try_push(out.pl_output, product)?;
         reserve_room(lim, out.level.nodes.stored_mut(), 1)?;
-        let node =
-            finish_node(eng, out.level, out.base)?.expect("the walk wrote the candidates' pairs");
-        // As in `emit_walked`: canonical children make a node's pairs
-        // distinct unless pair lists are multisets.
-        let idx = node.idx();
-        debug_assert_unique_pairs(out.level, idx..idx + 1, out.duplicates_legal);
+        finish_node(eng, out.level, out.base)?.expect("the walk wrote the candidates' pairs");
         return Ok(());
     }
     emit_mixed(eng, emit, out, owners)
@@ -3894,24 +3854,6 @@ fn push_product_entries(
     Ok(())
 }
 
-/// Assert in debug builds that every node in `nodes` has distinct pairs
-/// unless `duplicates_legal` holds.
-#[inline(always)]
-fn debug_assert_unique_pairs(
-    level: &TddLevel,
-    nodes: std::ops::Range<usize>,
-    duplicates_legal: bool,
-) {
-    debug_assert!(
-        duplicates_legal
-            || nodes.into_iter().all(|i| {
-                let mut seen = std::collections::HashSet::new();
-                level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
-            }),
-        "sparse apply: duplicate pair emitted — canonicity violated"
-    );
-}
-
 /// [`emit_owned`] on [`GATHERED_CANDIDATES`] candidates or more of two g
 /// parents, the first candidate's and `b`: each owner is keyed by comparing it with `b`, in the pass that
 /// counts the second product's pairs, without the map, and the pairs are
@@ -3928,7 +3870,6 @@ pub(super) fn emit_two(
         pl_output,
         p1,
         base,
-        duplicates_legal,
     } = out;
     let lim = eng.limits();
     let EmitScratch {
@@ -3965,11 +3906,7 @@ pub(super) fn emit_two(
     );
     arena[base..base + total].copy_from_slice(&moved_pairs[..total]);
     arena.truncate(base + total);
-    let first_node = level.nodes().len();
     push_ranged_nodes(eng, level, base, pair_counts, single_pairs)?;
-    // As in `emit_walked`: canonical children make a node's pairs distinct
-    // unless pair lists are multisets.
-    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -3992,7 +3929,6 @@ fn emit_alternating(
         pl_output,
         p1,
         base,
-        duplicates_legal,
     } = out;
     debug_assert!(
         a != b && matches!(n, 2 | 4 | 6 | 8),
@@ -4021,8 +3957,6 @@ fn emit_alternating(
         level
             .try_push_multi_by_range(lim.level_width_cap(), start, half)?;
     }
-    let nodes = level.nodes().len();
-    debug_assert_unique_pairs(level, nodes - 2..nodes, duplicates_legal);
     Ok(())
 }
 
@@ -4049,7 +3983,6 @@ pub(super) fn emit_owned(
         pl_output,
         p1,
         base,
-        duplicates_legal,
     } = out;
     let lim = eng.limits();
     let EmitScratch {
@@ -4083,7 +4016,6 @@ pub(super) fn emit_owned(
         };
         Ok(())
     });
-    let first_node = level.nodes().len();
     let built = keyed.and_then(|()| {
         let products = pl_output.len() - first;
         reserve_node_room(lim, level.nodes.stored_mut(), products)?;
@@ -4139,9 +4071,6 @@ pub(super) fn emit_owned(
         p2_map[e.g_idx.idx()] = NO_PRODUCT;
     }
     built?;
-    // As in `emit_walked`: canonical children make a node's pairs distinct
-    // unless pair lists are multisets.
-    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -4226,7 +4155,6 @@ fn emit_few(
         level,
         pl_output,
         p1,
-        duplicates_legal,
         ..
     } = out;
     let lim = eng.limits();
@@ -4264,7 +4192,6 @@ fn emit_few(
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
     reserve_room(lim, level.nodes.stored_mut(), products)?;
     reserve_pairs_for_emit(eng, level, ranged)?;
-    let first_node = level.nodes().len();
     // Each product's node in product order: one pair inline, more as the
     // next range of the arena, its candidates read off their bits in order.
     let mut built = Ok(());
@@ -4294,7 +4221,6 @@ fn emit_few(
             .saturating_sub(pre_pairs_cap),
     );
     built?;
-    debug_assert_unique_pairs(level, first_node..level.nodes().len(), duplicates_legal);
     Ok(())
 }
 
@@ -4339,7 +4265,6 @@ pub(super) fn finish_direct(
     level: &mut TddLevel,
     base: usize,
     pl_output: &mut Vec<ProductEntry>,
-    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     if level.pair_tail_len(base) == 0 {
@@ -4357,7 +4282,5 @@ pub(super) fn finish_direct(
             prod_idx: ProductNodeIdx(idx),
         },
     )?;
-    let node_idx = node.idx();
-    debug_assert_unique_pairs(level, node_idx..node_idx + 1, duplicates_legal);
     Ok(())
 }
