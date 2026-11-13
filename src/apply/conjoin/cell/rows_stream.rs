@@ -378,8 +378,15 @@ fn described_rows(
     let Some((&head, rest)) = places.split_first() else {
         return;
     };
-    let mut cell = 0usize;
+    let base = out.len() as u32;
+    for (n, g) in grid.iter_mut().enumerate() {
+        *g = base + n as u32;
+    }
     product.each_row(|first, step, len| {
+        if len <= SHORT_ROW {
+            short_row(first, step, len, (head, rest), products, out);
+            return;
+        }
         let mut j = 0;
         while j < len {
             let m = (len - j).min(DESCRIBED_BLOCK);
@@ -393,13 +400,42 @@ fn described_rows(
             for &(pl, pr) in rest {
                 place_products(acc, products, (at.0 + pl, at.1 + pr), step);
             }
-            let slot = start as u32;
-            for (k, g) in grid[cell..cell + m].iter_mut().enumerate() {
-                *g = slot + k as u32;
-            }
-            (cell, j) = (cell + m, j + m);
+            j += m;
         }
     });
+}
+
+/// The longest row [`described_rows`] sums a cell at a time
+/// ([`short_row`]).
+const SHORT_ROW: usize = 4;
+
+/// Sum the `len` cells of a row of [`described_rows`] one after another,
+/// each its products in place order, `places` split into the first and
+/// the rest: cell `j`'s first pair names the slots `first + j · step`.
+#[inline(always)]
+fn short_row(
+    first: (i64, i64),
+    step: (i64, i64),
+    len: usize,
+    (head, rest): ((i64, i64), &[(i64, i64)]),
+    products: &PlainProducts<'_>,
+    out: &mut Vec<f64>,
+) {
+    let (left, right) = products.floats();
+    let mut at = first;
+    for _ in 0..len {
+        // Safety: every slot a pair names lies in its column
+        // (`slot_range`, checked by the caller).
+        let pair = |(pl, pr): (i64, i64)| unsafe {
+            products.times(*left.get_unchecked((at.0 + pl) as usize), *right.get_unchecked((at.1 + pr) as usize))
+        };
+        let mut sum = pair(head);
+        for &p in rest {
+            sum += pair(p);
+        }
+        out.push(sum);
+        at = (at.0 + step.0, at.1 + step.1);
+    }
 }
 
 /// A cell of a block of [`described_rows`]: room for its first product
