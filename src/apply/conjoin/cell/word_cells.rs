@@ -1,6 +1,5 @@
 //! The cells of a level read by g-pair vectors.
 
-use super::rows::ListSink;
 use super::*;
 use crate::limits::Limits;
 

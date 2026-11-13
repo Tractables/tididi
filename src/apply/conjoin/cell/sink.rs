@@ -570,3 +570,85 @@ impl PairSink for ProjectedEmitSink<'_> {
         ArenaRow::open(self.sink.level, self.sink.inline, (room, pairs, nodes), width_cap)
     }
 }
+
+/// [`EmitSink`] on a level built a row at a time in one reused grid row
+/// starting at `base`: each cell that gets a node is recorded as a
+/// `ProductEntry` of the current [row](PairSink::row) instead of being left
+/// in a dense slab.
+pub(super) struct ListSink<'a> {
+    pub(super) emit: EmitSink<'a>,
+    pub(super) product_list: &'a mut Vec<ProductEntry>,
+    pub(super) base: usize,
+    pub(super) row: usize,
+}
+
+impl ListSink<'_> {
+    /// Record the cell at `grid_pos` if it got a node.
+    #[inline(always)]
+    fn record(
+        &mut self,
+        eng: &Engine,
+        node_idx: &[u32],
+        grid_pos: usize,
+    ) -> Result<(), OperationError> {
+        let nid = node_idx[grid_pos];
+        if nid == NO_PRODUCT {
+            return Ok(());
+        }
+        let entry = ProductEntry {
+            f_idx: FNodeIdx(self.row as u32),
+            g_idx: GNodeIdx((grid_pos - self.base) as u32),
+            prod_idx: ProductNodeIdx(nid),
+        };
+        eng.limits().try_push(self.product_list, entry)
+    }
+}
+
+impl PairSink for ListSink<'_> {
+    const SLAB: bool = false;
+
+    #[inline(always)]
+    fn single(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
+        self.emit.single(eng, node_idx, grid_pos, lc, rc)?;
+        self.record(eng, node_idx, grid_pos)
+    }
+
+    #[inline(always)]
+    fn begin(&mut self) -> usize {
+        self.emit.begin()
+    }
+
+    #[inline(always)]
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        self.emit.pair(eng, lc, rc)
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        self.emit.buf()
+    }
+
+    #[inline(always)]
+    fn end(
+        &mut self,
+        eng: &Engine,
+        node_idx: &mut [u32],
+        grid_pos: usize,
+        start: usize,
+    ) -> Result<(), OperationError> {
+        self.emit.end(eng, node_idx, grid_pos, start)?;
+        self.record(eng, node_idx, grid_pos)
+    }
+
+    #[inline(always)]
+    fn row(&mut self, i: usize) {
+        self.row = i;
+    }
+}

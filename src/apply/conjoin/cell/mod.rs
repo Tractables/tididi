@@ -18,6 +18,7 @@ use super::child_lookup::{ChildLookup, CompleteLookup, DenseLookup, MarginalLook
 use super::marginal_plan::SidePlan;
 use crate::diagram::Sides;
 use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
+use super::grid_arena::{DEAD_SLAB_FILL_MAX_CELLS, extend_slab, mark_dead, write_cells};
 
 /// Everything the cell walk needs about one child side of a level: how the
 /// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair
@@ -79,6 +80,10 @@ mod writer;
 pub(super) use writer::*;
 mod rows;
 pub(super) use rows::*;
+mod single_rows;
+pub(super) use single_rows::*;
+mod complete_rows;
+pub(super) use complete_rows::*;
 mod pair_rows;
 pub(super) use pair_rows::run_level_rows_pairs;
 mod word_cells;
