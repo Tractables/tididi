@@ -12,6 +12,8 @@ mod chunks;
 thread_local! {
     /// A chunk size a test pins on its thread ([`pin_chunk_plans`]).
     static CHUNK_PIN: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// A sort threshold a test pins on its thread ([`pin_sort_min`]).
+    static SORT_PIN: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     /// The boundaries applied in more than one chunk ([`chunked_boundaries`]).
     static CHUNKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -25,6 +27,21 @@ pub(crate) fn pin_chunk_plans(plans: Option<usize>) -> Option<usize> {
 /// The chunk size pinned on this thread, if any.
 pub(super) fn pinned_chunk_plans() -> Option<usize> {
     CHUNK_PIN.with(std::cell::Cell::get)
+}
+
+/// The sort threshold tests pin: a node of tens of thousands of pairs
+/// reaches it, where the default needs a million.
+pub(crate) const PINNED_SORT_MIN: usize = 1 << 14;
+
+/// Pin the fewest pairs a node sorts rather than hashes on this thread,
+/// `None` for the default; returns the pin before.
+pub(crate) fn pin_sort_min(pairs: Option<usize>) -> Option<usize> {
+    SORT_PIN.with(|pin| pin.replace(pairs))
+}
+
+/// The sort threshold pinned on this thread, if any.
+pub(super) fn pinned_sort_min() -> Option<usize> {
+    SORT_PIN.with(std::cell::Cell::get)
 }
 
 /// Count a boundary this thread's fusion applied in more than one chunk.

@@ -2,7 +2,7 @@
 //! x-refs instead of in the plan map: the level it leaves is the one the map
 //! leaves, pair for pair and in the same order.
 
-use super::super::plan::{FusionSlots, SORT_MIN, collect_fusion_plans};
+use super::super::plan::{FusionSlots, collect_fusion_plans};
 use super::super::rewrite::{BITMAP_BITS_PER_PLAN, BITMAP_MIN_PLANS, ParentRewrite};
 use super::*;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ValueRef};
@@ -23,7 +23,7 @@ fn draws(seed: u64) -> impl FnMut(u32) -> u32 {
 
 /// Three root nodes over 64 marginal slots:
 ///
-/// - a wide node, over the sorting threshold and not ascending, whose x's
+/// - a wide node, over the pinned sorting threshold and not ascending, whose x's
 ///   repeat over a dense range — thousands of plans, a bitmap well under the
 ///   width cap — with, past its planned range, x's that occur once (no plan
 ///   and no bit) and, inside it, x's that occur once too;
@@ -35,7 +35,7 @@ fn three_nodes(seed: u64) -> (Tdd, [usize; 3]) {
     let counts: Vec<u128> = (0..slots).map(|s| u128::from(s) * 5 + 2).collect();
     let mut next = draws(seed);
     let dense = 9_000u32;
-    let mut wide: Vec<(u32, u32)> = (0..(SORT_MIN as u32 + 30_000))
+    let mut wide: Vec<(u32, u32)> = (0..(PINNED_SORT_MIN as u32 + 30_000))
         .map(|_| (next(dense), next(slots)))
         .collect();
     wide.extend((0..500).map(|i| (dense + 1_000_000 + 7 * i, next(slots))));
@@ -103,6 +103,7 @@ fn fuse_with(tdd: &mut Tdd, bitmap_min_plans: usize) -> [usize; 3] {
 
 #[test]
 fn the_bitmap_leaves_the_level_the_map_leaves() {
+    let prior = pin_sort_min(Some(PINNED_SORT_MIN));
     for seed in [0x9E37_79B9_7F4A_7C15u64, 0x2545_F491_4F6C_DD1D, 42] {
         let (base, _) = three_nodes(seed);
         let before = sums(&base);
@@ -154,6 +155,7 @@ fn the_bitmap_leaves_the_level_the_map_leaves() {
             );
         }
     }
+    pin_sort_min(prior);
 }
 
 /// The bitmap is zero between nodes: two wide nodes over the same x's, one

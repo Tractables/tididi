@@ -41,6 +41,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     let lim = eng.limits();
     let stride = lim.reduce_poll_stride();
     let mut read = 0u64;
+    let sort_min = sort_min();
 
     // The grouping key is the raw explicit-side ref (opposite the marginal
     // `side`). Usually it is a dense index into the explicit child level — a
@@ -67,14 +68,14 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         let node = plevel.pairs_read(n, &mut buf);
         // A node whose pairs ascend by explicit ref holds each group as one
         // run. Two pairs that do not ascend name two refs: nothing to group.
-        // A wide node that does not ascend is sorted into runs: its table
-        // would be too wide for the cache, and a probe per pair would miss.
+        // A wide node that does not ascend is sorted into runs, which bounds
+        // the table's memory ([`SORT_MIN`]).
         if node
             .windows(2)
             .all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side))
         {
             group_by_runs::<D>(lim, tdd, (v, side), (n, node), out, &mut scratch.run)?;
-        } else if node.len() >= SORT_MIN {
+        } else if node.len() >= sort_min {
             group_by_sorting::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
         } else if pairs > 2 {
             group_by_scatter::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
@@ -92,11 +93,27 @@ pub(super) fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
     side.pick(pair.right.0, pair.left.0)
 }
 
-/// The fewest pairs a node sorts into runs rather than hashes: from here its
-/// table, two to four cells of 8 bytes per pair, outgrows a core's cache.
-/// The sort also bounds memory: a node of 10^8 pairs would grow the table,
-/// kept for the whole sweep, to 2 GiB.
-pub(super) const SORT_MIN: usize = 1 << 14;
+/// The fewest pairs a node sorts into runs rather than hashes. The sort
+/// bounds memory: a narrower node's table, two to four cells of 8 bytes per
+/// pair and kept for the whole sweep, is at most 16 MiB (2^21 cells), where a
+/// node of 10^8 pairs would grow it to 2 GiB.
+const SORT_MIN: usize = 1 << 20;
+
+// A test pins the threshold on its thread, so a node of thousands of pairs
+// takes the sort route.
+#[cfg(test)]
+use super::tests::pinned_sort_min;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn pinned_sort_min() -> Option<usize> {
+    None
+}
+
+/// The fewest pairs a node sorts: [`SORT_MIN`], or what a test pinned.
+pub(super) fn sort_min() -> usize {
+    pinned_sort_min().unwrap_or(SORT_MIN)
+}
 
 /// The marginal-side ref of `pair`: the side `side` names.
 #[inline(always)]

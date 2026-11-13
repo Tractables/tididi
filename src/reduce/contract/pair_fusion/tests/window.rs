@@ -224,7 +224,7 @@ fn both_marginal(pairs: &[(u32, u32)], slots: u32) -> Tdd {
 /// side and over explicit refs of any width.
 #[test]
 fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
-    use super::super::plan::{SORT_MIN, group_by_scatter, group_by_sorting};
+    use super::super::plan::{group_by_scatter, group_by_sorting};
     use crate::diagram::ChildSide;
     use crate::reduce::contract::scratch::PFusionScratch;
     use crate::value::IntFold;
@@ -237,14 +237,15 @@ fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
         (state % u64::from(m)) as u32
     };
     let slots = 1 << 12;
+    let wide = 1 << 14;
     // (pairs, distinct explicit refs, where they start): few and many
     // groups, and refs past 2^30 as an inline-tagged side carries.
     // Narrow nodes too: the table groups those in the end, and the sort
     // groups any width alike.
     for (width, refs, base) in [
-        (SORT_MIN, 40u32, 0u32),
-        (3 * SORT_MIN + 5, 20_000, 7),
-        (SORT_MIN + 1, 900, 1 << 30),
+        (wide, 40u32, 0u32),
+        (3 * wide + 5, 20_000, 7),
+        (wide + 1, 900, 1 << 30),
         (2, 1, 0),
         (3, 2, 5),
         (37, 30, 0),
