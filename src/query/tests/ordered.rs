@@ -177,6 +177,9 @@ fn constants_and_refusals() {
     assert_eq!(Tdd::one(&vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
     let f = Tdd::clause(&vtree, [1, 3]).unwrap();
     assert_eq!(f.ordered_models(&[key], &[false], 1, 5).unwrap_err(), OperationError::UnlistedLiteral(VarId(3)));
+    // No column: one empty model, as `ordered_keys` gives.
+    assert_eq!(Tdd::one(&vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(&vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
 }
 
 #[test]

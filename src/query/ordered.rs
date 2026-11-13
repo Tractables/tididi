@@ -210,6 +210,7 @@ impl Engine {
             descending,
             cur: vec![0u32; columns.len()],
             out: vec![Vec::new(); columns.len()],
+            rows: 0,
             limit,
             cells: Vec::new(),
             gate: lim.gate(),
@@ -762,6 +763,9 @@ struct Walk<'a> {
     /// The model's codes so far.
     cur: Vec<u32>,
     out: Vec<Vec<u32>>,
+    /// The models written to `out`, which holds no column to count them by
+    /// when there is no column.
+    rows: u64,
     limit: u64,
     /// The pending lists, as cells sharing tails; a branch's cells are
     /// dropped when it returns.
@@ -777,8 +781,9 @@ impl Walk<'_> {
         loop {
             if list == NIL {
                 push_row(&mut self.out, &self.cur);
+                self.rows += 1;
                 self.gate.poll(1)?;
-                return Ok(self.out[0].len() as u64 >= self.limit);
+                return Ok(self.rows >= self.limit);
             }
             let Cell { t, n, next } = self.cells[list as usize];
             match *vtree.node(t) {
