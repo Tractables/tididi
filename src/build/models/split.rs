@@ -153,7 +153,8 @@ struct Scratch {
     low: Vec<u64>,
     /// Each parent value's high part, `high_words` apiece.
     high: Vec<u64>,
-    /// The parent values ordered by their low part.
+    /// The parent values ordered by their low part; in `split_hashed`, the
+    /// occupied low slots.
     order: Vec<u32>,
     /// Sort keys: a low part beside the value's index, below it on the
     /// one-word path (see `KeyLayout`) and above it otherwise. The keys
@@ -163,20 +164,27 @@ struct Scratch {
     wide_keys: Vec<u128>,
     /// The low child's value index of each parent value.
     low_of: Vec<u32>,
-    /// The high child's value index of each parent value.
+    /// The high child's value index of each parent value; in
+    /// `hashed_split`, each low slot's atom.
     high_of: Vec<u32>,
-    /// Where each low value's run starts in `order`.
+    /// Where each low value's run starts in the low order. In
+    /// `confirm_lows`, where each low slot's list starts, and in
+    /// `by_parent_atom`, where each parent atom's pairs start.
     low_starts: Vec<u32>,
     /// Where each high value's run starts among the parent values.
     high_starts: Vec<u32>,
     /// Per high value, the next of its run's values the low order meets,
     /// or of its slots among the node's pairs.
     cursor: Vec<u32>,
-    /// Per parent value, its low value index above its atom: the keys of
-    /// the high child's runs. Once they are numbered, the packed triples.
+    /// Per parent value, its low value index above its atom (in
+    /// `split_words`, the low value itself): the keys of the high child's
+    /// runs. Once they are numbered, the packed triples. In `split_hashed`,
+    /// each occupied low slot's run hashed; in `pairs_from_low`, the node's
+    /// pairs.
     high_keys: Vec<u64>,
     /// Per parent value in low order, its high value index above its
-    /// atom: the keys of the low child's runs.
+    /// atom: the keys of the low child's runs. In `confirm_lows`, the
+    /// lists of the low slots whose hashes are shared.
     low_keys: Vec<u64>,
     /// The table that numbers runs of keys.
     runs: RunTable,
@@ -188,15 +196,15 @@ struct Scratch {
     wide_triples: Vec<u128>,
     /// Each high value's run hashed.
     high_hash: Vec<u64>,
-    /// Each low value's run hashed, by the low part where it addresses a
-    /// slot.
+    /// The hashes of the low runs `group_single` numbers by hash, in run
+    /// order (see `low_runs`).
     low_hash: Vec<u64>,
     /// The open-addressed table that numbers hashed runs.
     slots: Vec<u64>,
-    /// The open-addressed table that numbers runs by their packed content.
+    /// The open-addressed table that numbers runs by their packed content;
+    /// in `split_sparse`, the table of distinct low parts.
     exact: Vec<u128>,
-    /// How many values each low slot has. Each block's next free place in
-    /// `group_single`.
+    /// Each block's next free place in `group_single` (`place_by_block`).
     low_count: Vec<u32>,
     /// Each low slot's run hashed beside its value count, in
     /// `split_hashed`, where one pass updates both: side by side, a value
@@ -980,18 +988,19 @@ fn dedup_tail<T: Copy + PartialEq>(v: &mut Vec<T>, start: usize) {
 
 /// Whether `group_single` reads its pairs off the low side, once both
 /// sides are numbered, and then how many keys the low side's first runs
-/// hold. The high side reads every key twice, to lay the keys out and to
-/// gather them, and its first runs' keys once more; the low side reads its
-/// first runs' keys once, each with a lookup of its high atom that can miss
-/// the cache.
+/// hold. The high side lays out and gathers every key and reads its first
+/// runs' keys again; the low side reads only its first runs' keys, each
+/// with a lookup of its high atom that can miss the cache. The low side is
+/// taken when its first runs' keys, `LOW_SIDE_COST` apiece, are at most
+/// `n` plus the high side's first runs' keys.
 fn single_from_low(n: usize, s: &Scratch) -> Option<usize> {
     let low = held_keys(&s.low_starts, &s.low_first, n);
     (low.saturating_mul(LOW_SIDE_COST) <= n + held_keys(&s.high_starts, &s.high_first, n))
         .then_some(low)
 }
 
-/// How many times fewer keys the low side's first runs of `group_single`
-/// must hold than the high side reads for the pairs to be read off them.
+/// What `single_from_low` counts a key of the low side's first runs at,
+/// against one key for each of `n` and the high side's first runs' keys.
 const LOW_SIDE_COST: usize = 4;
 
 /// The passes of `group_single` over the keys sorted by low part: where
@@ -1169,9 +1178,9 @@ fn gather_by_block(
     }
 }
 
-/// High values one block of `group_single` spans at most, as a power of
-/// two: few enough blocks to write to at once, and a block's pairs few
-/// enough to stay in the cache.
+/// The most blocks `group_single` lays its keys out in, as a power of two:
+/// few enough to write to at once. A block spans more high values as the
+/// high values grow.
 const BLOCK_BITS: usize = 9;
 
 /// Where each group of `lows` ends, the groups listed one after another,
