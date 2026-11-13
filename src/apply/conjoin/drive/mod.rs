@@ -40,7 +40,7 @@ mod level;
 mod loose;
 mod region;
 use level::{
-    LevelBuild, build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back,
+    LevelBuild, build_level_dense, count_sparse_root, count_streamed_root, counts_root, defers,
     pick_streamed, run_sparse_level, sum_sparse_root, sums_root,
 };
 
@@ -88,8 +88,8 @@ pub(super) struct Sweep<'a, 'filter> {
 /// and streaming builds runs — and the children's grid regions are handed back
 /// to the arena as soon as the parent has read them.
 ///
-/// For a count, up to two children of a one-product root are held back
-/// unbuilt until the root: one of them may then be counted without being
+/// For a count, up to two children of a one-product root are deferred
+/// unbuilt to the root: one of them may then be counted without being
 /// built ([`stream`](super::sparse::stream)), and the others are built there.
 ///
 /// # Errors
@@ -119,9 +119,9 @@ fn sweep_levels(
     // their regions before the sweep, and their nodes are counted as if they
     // were built in their places bottom-up.
     let mut output_nodes = 0u64;
-    // Children of the root held back unbuilt, for a count that may stream
-    // one of them (see `level::holds_back`).
-    let mut held = std::mem::take(&mut run.lists.held);
+    // Children of the root deferred unbuilt, for a count that may stream
+    // one of them (see `level::defers`).
+    let mut deferred = std::mem::take(&mut run.lists.deferred);
     for (k, &t) in cone.built.iter().enumerate() {
         let (left, right) = vtree.children(t);
         if progress {
@@ -135,19 +135,19 @@ fn sweep_levels(
         // stands for the checks at the free levels before it.
         lim.level_done(output_nodes + cone.free_before(k))?;
 
-        if held.len() < 2 && holds_back(sweep, run, f, g, (t, left, right)) {
-            held.push((t, left, right));
+        if deferred.len() < 2 && defers(sweep, run, f, g, (t, left, right)) {
+            deferred.push((t, left, right));
             continue;
         }
-        if t == vtree.root() && !held.is_empty() {
-            let c = pick_streamed(eng, run, f, g, &held)?;
-            for (i, &(h, hl, hr)) in held.iter().enumerate() {
+        if t == vtree.root() && !deferred.is_empty() {
+            let c = pick_streamed(eng, run, f, g, &deferred)?;
+            for (i, &(h, hl, hr)) in deferred.iter().enumerate() {
                 if i != c {
                     build_level(eng, run, f, g, sweep, (h, hl, hr), None)?;
                     output_nodes += run.levels[h.idx()].slot_count() as u64;
                 }
             }
-            let (c_t, c_l, c_r) = held[c];
+            let (c_t, c_l, c_r) = deferred[c];
             if let Some(count) =
                 count_streamed_root(eng, run, f, g, sweep, (t, left, right), (c_t, c_l, c_r))?
             {
@@ -161,7 +161,7 @@ fn sweep_levels(
         build_level(eng, run, f, g, sweep, (t, left, right), Some(before))?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
-    run.lists.held = held;
+    run.lists.deferred = deferred;
     if progress {
         lim.conjunction_reached(internal.len() as u32);
     }
@@ -181,7 +181,7 @@ fn sweep_levels(
 /// `before`, where given, is the output nodes the cap check at the next
 /// level boundary counts besides this level's: a level of known size that
 /// would fail that check is refused before it is built
-/// ([`refuse_past_cap`]). A held-back child of the root, built out of its
+/// ([`refuse_past_cap`]). A deferred child of the root, built out of its
 /// place, is given none.
 fn build_level(
     eng: &Engine,
@@ -513,7 +513,7 @@ pub(crate) enum ConjoinMode<'a> {
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
 /// with each operand's free levels ([`ApplyRun::cone`]) in `free`.
-pub(crate) fn apply_and_kept(
+pub(crate) fn apply_and_restoring(
     eng: &Engine,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
@@ -653,7 +653,7 @@ fn apply_and_held(
         "a borrowed operand has no free level",
     );
     let count_root = matches!(mode, ConjoinMode::Count);
-    let keep = matches!(mode, ConjoinMode::Restore { .. });
+    let restoring = matches!(mode, ConjoinMode::Restore { .. });
     let sum_child = match mode {
         ConjoinMode::Sum(c) => Some(c),
         _ => None,
@@ -695,10 +695,10 @@ fn apply_and_held(
     // level quantified or filtered, and, as the setup finds, no marginal
     // level.
     let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
-    // A conjunction that sums, quantifies or filters no level and carries
-    // no weights, built or kept, takes the subtrees at which both operands
-    // are constant true whole from `f`, as the identity fast paths carry
-    // them: the setup finds them (`mark_constant_true`). Most levels of two
+    // A built conjunction, restoring or not, that sums, quantifies or
+    // filters no level and carries no weights takes the subtrees at which
+    // both operands are constant true whole from `f`, as the identity fast
+    // paths carry them: the setup finds them (`mark_constant_true`). Most levels of two
     // diagrams on a large vtree that each mention a few of its variables
     // are such levels.
     let find_free = unmarked && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore { .. });
@@ -732,7 +732,7 @@ fn apply_and_held(
     // are, the sweep builds into the workspace's side array, and the finish
     // moves the levels the conjunction visited into `f`'s array. No level
     // outside them is taken from the pool, moved or given back.
-    let adopted = found_free && !keep && !f.is_borrowed();
+    let adopted = found_free && !restoring && !f.is_borrowed();
     let levels = match adopted {
         true => {
             let mut side = std::mem::take(&mut scratch.side);
@@ -757,7 +757,7 @@ fn apply_and_held(
         levels,
         &mut scratch,
     )?;
-    run.restoring = keep;
+    run.restoring = restoring;
     run.adopted = adopted;
     let plain = unmarked && !run.entry_marginality.any();
     run.plain = plain;
@@ -865,7 +865,6 @@ fn apply_and_held(
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
-    let restoring = run.restoring;
     let output = TddNodeId {
         vtree: out_vtree,
         local: out_local,

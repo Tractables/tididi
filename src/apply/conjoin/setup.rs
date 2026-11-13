@@ -184,9 +184,9 @@ pub(super) struct SweepLists {
     /// each node of that child is named there wherever f's nodes of it are
     /// named in f, which the result's loose levels read (`loose_levels`).
     pub(super) outer_held: Vec<usize>,
-    /// The children of the root a count holds back unbuilt, as
-    /// `(level, left, right)` (`level::holds_back`).
-    pub(super) held: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
+    /// The children of the root a count defers unbuilt, as
+    /// `(level, left, right)` (`level::defers`).
+    pub(super) deferred: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
     /// The levels a plain conjunction built, and of those the levels it owes
     /// the twin contraction and the levels it does not.
     pub(super) built: Vec<VtreeIdx>,
@@ -248,7 +248,7 @@ impl SweepLists {
         self.lent.clear();
         self.as_operand.clear();
         self.outer_held.clear();
-        self.held.clear();
+        self.deferred.clear();
         self.built.clear();
         self.owed_twins.clear();
         self.twin_free.clear();
@@ -282,7 +282,7 @@ impl SweepLists {
         visit(&mut self.lent);
         visit(&mut self.as_operand);
         visit(&mut self.outer_held);
-        visit(&mut self.held);
+        visit(&mut self.deferred);
         visit(&mut self.built);
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);
@@ -571,7 +571,7 @@ struct Snapshot {
 /// A free level has width 1 in its operand, so its cells are the nodes of
 /// the level the result takes there: the other operand's, or one node where
 /// both are free. Only an operand with no marginal level is given free
-/// levels ([`apply_and_kept`](super::drive::apply_and_kept)), and a free
+/// levels ([`apply_and_restoring`](super::drive::apply_and_restoring)), and a free
 /// level is empty, so no leaf under a free level is read for marginality.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes

@@ -524,7 +524,7 @@ fn conjoin_kept<'a>(
         _ => None,
     };
     let (f_known, g_known) = (known(&f, free.f), known(&g, free.g));
-    match drive::apply_and_kept(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
+    match drive::apply_and_restoring(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
         Ok(out) => {
             recycle(eng, f);
             recycle(eng, g);

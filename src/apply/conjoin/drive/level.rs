@@ -574,8 +574,8 @@ fn install_summed(
     Ok(target.installed)
 }
 
-/// Whether the sweep holds back the level at `t` unbuilt, for the root count
-/// to stream: the sweep wants only the count of a root both operands output
+/// Whether the sweep defers the level at `t` unbuilt, for the root count to
+/// stream: the sweep wants only the count of a root both operands output
 /// at with one node, `t` is a child of that root, and neither operand is
 /// constant-true over it; `t`, its children and its sibling are internal,
 /// no weight, filter or quantified subtree touches any of them, and none of
@@ -585,13 +585,13 @@ fn install_summed(
 /// entry (an identity fast path moves a marginal level out of its operand),
 /// nor carry counts in its references from the root or `t`: the stream reads
 /// those references as node indices. Nor is a level the relabelling route
-/// takes held back (one operand one node with one pair there, `t` no target
+/// takes deferred (one operand one node with one pair there, `t` no target
 /// and not a one-product parent of one): it builds `t` in one pass over the
-/// other operand's
-/// pairs, with no more products than those pairs, which a stream over `t`'s
-/// candidates does not beat. Whether the root then streams `t` is priced
-/// there, once the levels it reads are built ([`count_streamed_root`]).
-pub(super) fn holds_back(
+/// other operand's pairs, with no more products than those pairs, which a
+/// stream over `t`'s candidates does not beat. Whether the root then streams
+/// `t` is priced there, once the levels it reads are built
+/// ([`count_streamed_root`]).
+pub(super) fn defers(
     sweep: &Sweep<'_, '_>,
     run: &ApplyRun,
     f: &Tdd,
@@ -672,20 +672,20 @@ fn stream_widths(
     }
 }
 
-/// Which of the held root children the root count would stream: the one
+/// Which of the deferred root children the root count would stream: the one
 /// whose build would find the more candidates, by [`candidate_bound`].
 pub(super) fn pick_streamed(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &Tdd,
     g: &Tdd,
-    held: &[(VtreeIdx, VtreeIdx, VtreeIdx)],
+    deferred: &[(VtreeIdx, VtreeIdx, VtreeIdx)],
 ) -> Result<usize, OperationError> {
-    if held.len() < 2 {
+    if deferred.len() < 2 {
         return Ok(0);
     }
     let mut best = (0, 0u128);
-    for (i, &(t, left, right)) in held.iter().enumerate() {
+    for (i, &(t, left, right)) in deferred.iter().enumerate() {
         for child in [left, right] {
             run.ensure_product_list_for_child(eng, child.idx())?;
         }
@@ -706,7 +706,7 @@ pub(super) fn pick_streamed(
     Ok(best.0)
 }
 
-/// Count the root without building its held child `c`, when pricing says
+/// Count the root without building its deferred child `c`, when pricing says
 /// the stream does not outweigh the build; `None` leaves `c` for the sweep
 /// to build.
 ///
