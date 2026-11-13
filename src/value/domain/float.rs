@@ -265,7 +265,9 @@ pub(crate) struct PlainProducts<'a> {
     right: &'a [f64],
     rview: ChildDecoder,
     /// The powers of two each side's floats are read times: 1 unless the
-    /// columns are read centred.
+    /// columns are read centred, or their sums are ([`of_floats`]).
+    ///
+    /// [`of_floats`]: Self::of_floats
     by: (f64, f64),
     pub(crate) scale: i64,
 }
@@ -275,37 +277,76 @@ impl<'a> PlainProducts<'a> {
     /// and nonnegative and their offsets fit the plain range as they are,
     /// or else centred ([`plain_fold_centred`]).
     pub(crate) fn of(left: &'a StreamChild<'_, FloatFold>, right: &'a StreamChild<'_, FloatFold>) -> Option<Self> {
-        Self::of_plain((left.col.plain()?, left.view), (right.col.plain()?, right.view))
+        Self::of_plain((left.col.plain()?, left.view), (right.col.plain()?, right.view)).map(|(p, _)| p)
     }
 
     /// The products of the floats `left.0` under the scale `left.1`, read
     /// through `lview`, and `right.0` under `right.1`, read through
     /// `rview`, each a child column's [`plain_floats`], where their offsets
     /// fit the plain range as they are or centred, as [`of`](Self::of)
-    /// takes a narrow column's.
+    /// takes a narrow column's, for cells of `places` products each, whose
+    /// sums are centred ([`centre_sums`](Self::centre_sums)).
     pub(crate) fn of_floats(
         left: (&'a [f64], i64),
         lview: ChildDecoder,
         right: (&'a [f64], i64),
         rview: ChildDecoder,
+        places: usize,
     ) -> Option<Self> {
-        Self::of_plain((Plain::new(left.0, left.1), lview), (Plain::new(right.0, right.1), rview))
+        let (mut products, at) = Self::of_plain((Plain::new(left.0, left.1), lview), (Plain::new(right.0, right.1), rview))?;
+        products.centre_sums(at, places);
+        Some(products)
     }
 
-    /// The products of two plain columns read through their views.
-    fn of_plain((l, lview): (Plain<'a>, ChildDecoder), (r, rview): (Plain<'a>, ChildDecoder)) -> Option<Self> {
+    /// The products of two plain columns read through their views, and the
+    /// offsets of each side's floats times its power of two.
+    fn of_plain(
+        (l, lview): (Plain<'a>, ChildDecoder),
+        (r, rview): (Plain<'a>, ChildDecoder),
+    ) -> Option<(Self, (Offsets, Offsets))> {
         if l.at.neg || r.at.neg {
             return None;
         }
         let fits = |a: Offsets, b: Offsets| a.lo + b.lo >= PLAIN_LO && a.hi + b.hi <= PLAIN_HI;
-        let (by, scale) = if fits(l.at, r.at) {
-            ((1.0, 1.0), l.at.scale + r.at.scale)
+        let (by, at) = if fits(l.at, r.at) {
+            ((1.0, 1.0), (l.at, r.at))
         } else if (l.centre != 0 || r.centre != 0) && fits(l.centred(), r.centred()) {
-            ((pow2(l.centre), pow2(r.centre)), l.centred().scale + r.centred().scale)
+            ((pow2(l.centre), pow2(r.centre)), (l.centred(), r.centred()))
         } else {
             return None;
         };
-        Some(PlainProducts { left: l.vals, lview, right: r.vals, rview, by, scale })
+        Some((PlainProducts { left: l.vals, lview, right: r.vals, rview, by, scale: at.0.scale + at.1.scale }, at))
+    }
+
+    /// Move the middle of the offsets a sum of `places` of these products
+    /// may take to zero, the sides' floats at the offsets `at`, read times
+    /// their powers of two: one side's floats are read times a further power
+    /// of two `2^k`, where they and every such sum stay normal, and the
+    /// sums stand under a scale `k` lower. Each product and each partial
+    /// sum is the one before times `2^k`, which no rounding sees: the same
+    /// values. Where neither side can take the power, nothing changes.
+    fn centre_sums(&mut self, (l, r): (Offsets, Offsets), places: usize) {
+        let grow = i64::from(usize::BITS - places.saturating_sub(1).leading_zeros());
+        let (lo, hi) = (l.lo + r.lo - 1, l.hi + r.hi + grow);
+        let k = -(lo + hi).div_euclid(2);
+        let normal = |a: i64, b: i64| a >= -1021 && b <= 1024;
+        if k == 0 || !normal(lo + k, hi + k) {
+            return;
+        }
+        // The exponent of a side's power of two, and whether it and the
+        // side's floats take `k` more.
+        let takes = |by: f64, at: Offsets| {
+            let c = ((by.to_bits() >> 52) as i64 - 1023) + k;
+            ((-1022..=1023).contains(&c) && normal(at.lo + k, at.hi + k)).then(|| pow2(c))
+        };
+        if let Some(by) = takes(self.by.0, l) {
+            self.by.0 = by;
+        } else if let Some(by) = takes(self.by.1, r) {
+            self.by.1 = by;
+        } else {
+            return;
+        }
+        self.scale -= k;
     }
 
     /// The product of the left value `lc` names and the right value `rc`

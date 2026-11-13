@@ -290,7 +290,9 @@ pub(crate) fn run_level_described_stream(
     let st = attach_children::<FloatFold>(env, children, values);
     let pools = &eng.scratch.apply;
     let (mut lbuf, mut rbuf) = (pools.left_floats.checkout(eng), pools.right_floats.checkout(eng));
-    let Some(products) = described_products(eng, (&st.left, &st.right), (&mut *lbuf, &mut *rbuf))? else {
+    let Some(products) =
+        described_products(eng, (&st.left, &st.right), (&mut *lbuf, &mut *rbuf), product.pairs_per_node())?
+    else {
         return Ok(false);
     };
     // A slot below 2^30 is the index of its float under either child view
@@ -328,12 +330,17 @@ pub(crate) fn run_level_described_stream(
 /// leaf or a wide column reads as under one scale ([`plain_floats`],
 /// written into `bufs`), which the row loop sums as [`CheckedSum`] does;
 /// where their offsets keep every product a normal float, that sum is the
-/// float sum in pair order. `None` where a column has a negative value or
-/// the offsets do not fit.
+/// float sum in pair order. The sums of `places` products of such floats
+/// are centred ([`PlainProducts::of_floats`]): the row loop reads a narrow
+/// column's floats as they are where it sums its products as [`CheckedSum`]
+/// does, and a column whose floats lie far from one leaves those products
+/// outside the normal floats, each cell then folded. `None` where a column
+/// has a negative value or the offsets do not fit.
 fn described_products<'b>(
     eng: &Engine,
     (left, right): (&'b StreamChild<'_, FloatFold>, &'b StreamChild<'_, FloatFold>),
     (lbuf, rbuf): (&'b mut Vec<f64>, &'b mut Vec<f64>),
+    places: usize,
 ) -> Result<Option<PlainProducts<'b>>, OperationError> {
     if let Some(products) = PlainProducts::of(left, right) {
         return Ok(Some(products));
@@ -341,7 +348,7 @@ fn described_products<'b>(
     let (Some(l), Some(r)) = (plain_floats(eng, left, lbuf)?, plain_floats(eng, right, rbuf)?) else {
         return Ok(None);
     };
-    Ok(PlainProducts::of_floats(l, left.view, r, right.view))
+    Ok(PlainProducts::of_floats(l, left.view, r, right.view, places))
 }
 
 /// The cells of a row [`described_rows`] sums at once, each in its own
