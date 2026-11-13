@@ -5,7 +5,7 @@ use super::super::marginal_plan::Carrier;
 use super::rows::{Emit, culls, run_level_rows};
 use super::word_cells::WordScratch;
 use super::*;
-use crate::diagram::{EncodedChildRef, ImplicitLevel, ScaledFloat, WeightStore};
+use crate::diagram::{EncodedChildRef, ImplicitLevel};
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use crate::isa::Avx2;
 use crate::isa::avx2_fn;
@@ -44,26 +44,6 @@ fn note_lanes() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_described_sums() {}
-
-impl<F: ValueDomain> StreamState<'_, F> {
-    /// Fold one cell into the output column and record its slot in the grid,
-    /// where the parent's pairs take it as a bare slot reference: a column
-    /// past the slots a reference can name is refused.
-    #[inline(always)]
-    fn fold_cell(
-        &mut self,
-        eng: &Engine,
-        pairs: &[ChildPair],
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), OperationError> {
-        let slot = eng.limits().next_slot(F::col_len(self.counts))?;
-        let v = F::fold_cell(pairs, &self.left, &self.right, self.store);
-        F::push_col(eng, self.counts, v)?;
-        node_idx[grid_pos] = slot;
-        Ok(())
-    }
-}
 
 /// Fold a streaming target's cells directly into an integer, weighted or
 /// scaled-float column.
@@ -223,12 +203,8 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
     }
     let mut st = st;
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
-    let StreamState {
-        left: lchild,
-        right: rchild,
-        counts,
-        store,
-    } = &mut st;
+    let fold = FoldSink::new(&mut st, &mut cell_pairs);
+    let (lchild, rchild) = (fold.left, fold.right);
     let pools = &eng.scratch.apply;
     let (mut lbuf, mut rbuf) = (
         pools.left_floats.checkout(eng),
@@ -239,24 +215,10 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
         && let Some(r) = plain_floats(eng, rchild, &mut rbuf)?
     {
         let products = CheckedProducts::new(l, lchild.view, r, rchild.view);
-        let sum: CheckedSum<'_, '_, WORDS> = CheckedSum {
-            products,
-            left: lchild,
-            right: rchild,
-            counts,
-            store,
-            cell: &mut cell_pairs,
-        };
+        let sum: CheckedSum<'_, '_, WORDS> = CheckedSum { products, fold };
         return run_sum_rows(isa, eng, rows, scratch, (left, right), sum);
     }
-    let mut action = Emit {
-        sink: FoldSink {
-            fold: &mut st,
-            cell: ScratchSink {
-                out: &mut cell_pairs,
-            },
-        },
-    };
+    let mut action = Emit { sink: fold };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
@@ -522,12 +484,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     let mut st = attach_children::<F>(env, rows.children, counts);
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
     let mut action = Emit {
-        sink: FoldSink {
-            fold: &mut st,
-            cell: ScratchSink {
-                out: &mut cell_pairs,
-            },
-        },
+        sink: FoldSink::new(&mut st, &mut cell_pairs),
     };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
@@ -652,10 +609,7 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     st: &mut StreamState<'_, F>,
     cell_pairs: &mut Vec<ChildPair>,
 ) -> Result<(), OperationError> {
-    let sink = FoldSink {
-        fold: st,
-        cell: ScratchSink { out: cell_pairs },
-    };
+    let sink = FoldSink::new(st, cell_pairs);
     super::word_cells::rows_by_words::<true, _, _, _>(
         eng,
         (rows, scratch),
@@ -668,7 +622,7 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 /// Collect surviving `(lc, rc)` pairs into a caller-owned scratch Vec — the
 /// streaming collapse-at-source walk (`run_level_rows_stream_count`). Touches
 /// neither `level` nor `node_idx[grid_pos]`; the caller folds the collected
-/// refs through its fold's `fold_cell`. Pushes are budget-tracked
+/// refs ([`FoldSink::fold_cell`]). Pushes are budget-tracked
 /// (`try_push`), matching the emit walk's `try_push_pair_into`: a wide
 /// streaming cell's scratch growth charges the apply soft budget and degrades
 /// to `Err(OverBudget)` instead of an allocator abort. The scratch is bounded
@@ -724,10 +678,40 @@ impl PairSink for ScratchSink<'_> {
 /// Collapse at the source: each live cell's pairs gathered into a reused
 /// scratch `Vec<ChildPair>` ([`ScratchSink`]) and folded into the column as
 /// the cell ends, never touching the output level.
+///
+/// The children are borrowed apart from the column, so that a caller may
+/// hold them while the sink writes the column ([`CheckedSum`]).
 struct FoldSink<'a, 'data, F: ValueDomain> {
-    fold: &'a mut StreamState<'data, F>,
+    left: &'a StreamChild<'data, F>,
+    right: &'a StreamChild<'data, F>,
+    counts: &'a mut F::Col,
+    store: &'a F::Store,
     /// Reused across all cells: bounds the transient peak to one cell's pairs.
     cell: ScratchSink<'a>,
+}
+
+impl<'a, 'data, F: ValueDomain> FoldSink<'a, 'data, F> {
+    fn new(st: &'a mut StreamState<'data, F>, cell: &'a mut Vec<ChildPair>) -> Self {
+        FoldSink {
+            left: &st.left,
+            right: &st.right,
+            counts: &mut *st.counts,
+            store: st.store,
+            cell: ScratchSink { out: cell },
+        }
+    }
+
+    /// Fold the collected cell into the output column and record its slot in
+    /// the grid, where the parent's pairs take it as a bare slot reference: a
+    /// column past the slots a reference can name is refused.
+    #[inline(always)]
+    fn fold_cell(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize) -> Result<(), OperationError> {
+        let slot = eng.limits().next_slot(F::col_len(self.counts))?;
+        let v = F::fold_cell(self.cell.out, self.left, self.right, self.store);
+        F::push_col(eng, self.counts, v)?;
+        node_idx[grid_pos] = slot;
+        Ok(())
+    }
 }
 
 impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
@@ -742,7 +726,7 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
     ) -> Result<(), OperationError> {
         self.cell.out.clear();
         self.cell.single(eng, node_idx, grid_pos, lc, rc)?;
-        self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
+        self.fold_cell(eng, node_idx, grid_pos)
     }
 
     #[inline(always)]
@@ -774,7 +758,7 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
         if self.cell.out.is_empty() {
             return Ok(());
         }
-        self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
+        self.fold_cell(eng, node_idx, grid_pos)
     }
 }
 
@@ -798,7 +782,7 @@ struct PlainSink<'a, const WORDS: bool = false> {
 
 impl<const WORDS: bool> PlainSink<'_, WORDS> {
     /// Append the cell's value `v` and record its slot, as
-    /// [`StreamState::fold_cell`] does.
+    /// [`FoldSink::fold_cell`] does.
     #[inline(always)]
     fn push(
         &mut self,
@@ -1813,101 +1797,17 @@ impl<'a, const W: bool> RowSum for PlainSink<'a, W> {
 /// summed.
 struct CheckedSum<'a, 'data, const WORDS: bool = false> {
     products: CheckedProducts<'a>,
-    left: &'a StreamChild<'data, FloatFold>,
-    right: &'a StreamChild<'data, FloatFold>,
-    counts: &'a mut FloatCol,
-    store: &'a WeightStore,
-    /// The open cell's pairs, reused across cells.
-    cell: &'a mut Vec<ChildPair>,
-}
-
-impl<const WORDS: bool> CheckedSum<'_, '_, WORDS> {
-    /// Append the value `v` at `grid_pos`, as [`StreamState::fold_cell`]
-    /// appends a cell's.
-    #[inline(always)]
-    fn append(
-        &mut self,
-        eng: &Engine,
-        v: ScaledFloat,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), OperationError> {
-        let slot = eng.limits().next_slot(self.counts.len())?;
-        self.counts.push(eng, v)?;
-        node_idx[grid_pos] = slot;
-        Ok(())
-    }
-
-    /// Fold the collected cell and append it, as [`StreamState::fold_cell`] does.
-    #[inline(always)]
-    fn fold(
-        &mut self,
-        eng: &Engine,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), OperationError> {
-        let v = FloatFold::fold_cell(self.cell, self.left, self.right, self.store);
-        self.append(eng, v, node_idx, grid_pos)
-    }
-}
-
-impl<const WORDS: bool> PairSink for CheckedSum<'_, '_, WORDS> {
-    #[inline(always)]
-    fn single(
-        &mut self,
-        eng: &Engine,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-        lc: u32,
-        rc: u32,
-    ) -> Result<(), OperationError> {
-        self.cell.clear();
-        self.pair(eng, lc, rc)?;
-        self.fold(eng, node_idx, grid_pos)
-    }
-
-    #[inline(always)]
-    fn begin(&mut self) -> usize {
-        self.cell.clear();
-        0
-    }
-
-    #[inline(always)]
-    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
-        eng.limits().try_push(
-            self.cell,
-            raw_pair(lc, rc),
-        )
-    }
-
-    #[inline(always)]
-    fn buf(&mut self) -> &mut Vec<ChildPair> {
-        self.cell
-    }
-
-    #[inline(always)]
-    fn end(
-        &mut self,
-        eng: &Engine,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-        _start: usize,
-    ) -> Result<(), OperationError> {
-        if self.cell.is_empty() {
-            return Ok(());
-        }
-        self.fold(eng, node_idx, grid_pos)
-    }
+    fold: FoldSink<'a, 'data, FloatFold>,
 }
 
 impl<'a, 'data, const W: bool> RowSum for CheckedSum<'a, 'data, W> {
     const CHECKED: bool = true;
     const WORDS: bool = W;
-    type Cells = Self;
+    type Cells = FoldSink<'a, 'data, FloatFold>;
 
     #[inline(always)]
-    fn cells(&mut self) -> &mut Self {
-        self
+    fn cells(&mut self) -> &mut FoldSink<'a, 'data, FloatFold> {
+        &mut self.fold
     }
 
     #[inline(always)]
@@ -1944,7 +1844,8 @@ impl<'a, 'data, const W: bool> RowSum for CheckedSum<'a, 'data, W> {
             return Ok(());
         }
         let scale = self.products.scale();
-        self.counts
+        self.fold
+            .counts
             .push_offsets(eng, (sums, live), scale, &mut node_idx[grid_pos..])
     }
 
@@ -1956,7 +1857,7 @@ impl<'a, 'data, const W: bool> RowSum for CheckedSum<'a, 'data, W> {
         grid_pos: usize,
         v: f64,
     ) -> Result<(), OperationError> {
-        node_idx[grid_pos] = self.counts.push_offset(eng, v, self.products.scale())?;
+        node_idx[grid_pos] = self.fold.counts.push_offset(eng, v, self.products.scale())?;
         Ok(())
     }
 }
