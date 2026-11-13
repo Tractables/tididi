@@ -1566,10 +1566,8 @@ fn lone_columns<'e>(
 }
 
 /// [`Emit`] on a level with a complete side whose every column holds one g
-/// pair, `lone[j]` column `j`'s: a cell walks its row's f pairs against that
-/// pair as [`cell_pairs`] walks a cell of one g pair, with no column read
-/// and no test of the cell's shape. A cell whose pairs fit the arena's room
-/// is written there ([`ArenaCell`]); the others go through the sink.
+/// pair, `lone[j]` column `j`'s: a cell is [`cell_pairs`] on its row's f
+/// pairs and that pair, with no column read.
 struct EmitLoneColumns<'a, 'l> {
     sink: ReservedEmitSink<'l>,
     lone: &'a [ChildPair],
@@ -1601,51 +1599,15 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        let CellArgs {
-            j,
-            row_base,
-            f_pairs,
-            node_idx,
-            left,
-            right,
-            gate,
-            ..
-        } = a;
-        let q = self.lone[j];
-        let (c, d) = (q.left.0, q.right.0);
-        let grid_pos = row_base + j;
-        let kills = left.kills() || right.kills();
-        gate.poll(f_pairs.len() as u64)?;
-        let grid = &*node_idx;
-        // An f pair against the column's pair: `NO_PRODUCT` on both sides
-        // where the left one dies.
-        let cand = |p: &ChildPair| {
-            let lc = left.get(grid, p.left.0, c);
-            if left.kills() && lc == NO_PRODUCT {
-                return (lc, lc);
-            }
-            (lc, right.get(grid, p.right.0, d))
-        };
-        if let [p] = f_pairs {
-            let (lc, rc) = cand(p);
-            if kills && rc == NO_PRODUCT {
-                return Ok(());
-            }
-            return self.sink.single(eng, node_idx, grid_pos, lc, rc);
-        }
-        if let Some(mut cell) = self.sink.open_cell(f_pairs.len()) {
-            for p in f_pairs {
-                let (lc, rc) = cand(p);
-                if !kills || rc != NO_PRODUCT {
-                    // Safety: the cell was opened for every f pair of the row.
-                    unsafe { cell.push(lc, rc) };
-                }
-            }
-            return cell.close(eng, node_idx, grid_pos);
-        }
-        let start = self.sink.begin();
-        push_kept(eng, &mut self.sink, f_pairs, kills, cand)?;
-        self.sink.end(eng, node_idx, grid_pos, start)
+        cell_pairs::<_, _, _>(
+            (eng, a.ctx),
+            (a.j, a.row_base + a.j),
+            a.f_pairs,
+            std::slice::from_ref(&self.lone[a.j]),
+            a.node_idx,
+            (a.left, a.right),
+            (&mut self.sink, a.gate),
+        )
     }
 }
 
