@@ -205,10 +205,8 @@ pub(super) fn counts_root(
 /// the count columns of the two children.
 ///
 /// The children's columns are folded first, over the levels built so far,
-/// as a model count of the finished diagram would fold them, from the
-/// operands' kept counts where a level was moved untouched
-/// ([`seed_kept_counts`]); the scatter then folds each candidate in where
-/// [`run_sparse_level`] would store it.
+/// as a model count of the finished diagram would fold them; the scatter
+/// then folds each candidate in where [`run_sparse_level`] would store it.
 pub(super) fn count_sparse_root(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -218,14 +216,14 @@ pub(super) fn count_sparse_root(
     sweep: &Sweep<'_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
     let vtree = sweep.vtree;
-    use crate::value::{IntFold, Retention, ValueDomain};
+    use crate::value::{IntFold, ValueDomain};
     let LevelShape { t, left, right, .. } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     run.ensure_product_list_for_child(eng, li)?;
     run.ensure_product_list_for_child(eng, ri)?;
 
     let lim = eng.limits();
-    let computed = fold_child_counts(eng, run, vtree, Some(sweep), &[left, right], Retention::Frontier)?;
+    let computed = fold_child_counts(eng, run, vtree, &[left, right])?;
     let levels: &[TddLevel] = run.levels;
     let mut fold = CandidateFold::new(
         lim,
@@ -248,25 +246,19 @@ pub(super) fn count_sparse_root(
     Ok(fold.finish())
 }
 
-/// Fold `roots`' integer count columns over `run.levels`, keeping what
-/// `retention` keeps, seeded from the operands' kept counts
-/// ([`seed_kept_counts`]) when `seed` is given.
+/// Fold `roots`' integer count columns over `run.levels`, keeping the
+/// frontier.
 fn fold_child_counts(
     eng: &Engine,
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
-    seed: Option<&Sweep<'_>>,
     roots: &[VtreeIdx],
-    retention: crate::value::Retention,
 ) -> Result<Vec<Option<crate::value::CountVec>>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, ValueDomain};
+    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
     let lim = eng.limits();
     let mut computed: Vec<Option<CountVec>> = Vec::new();
     lim.reserve_exact(&mut computed, vtree.num_nodes())?;
     computed.resize_with(vtree.num_nodes(), || None);
-    if let Some(sweep) = seed {
-        seed_kept_counts(eng, run, sweep, &mut computed, roots)?;
-    }
     let levels: &[TddLevel] = run.levels;
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput {
@@ -282,70 +274,12 @@ fn fold_child_counts(
             input,
             &mut computed,
             &marginal,
-            retention,
+            Retention::Frontier,
             |w| gate.poll(w),
         )?;
     }
     gate.flush()?;
     Ok(computed)
-}
-
-/// Seed `computed` with the operands' kept counts ([`Sweep::kept`]) for the
-/// levels under `roots` that an identity fast path moved into the output
-/// untouched, so the count's fold stops at them instead of walking their
-/// subtrees again.
-///
-/// Such a level brings its whole subtree along, the other operand being
-/// constant-true under it, so each of its nodes counts in the output what it
-/// counted in the operand. A level the relabelling route moved is not one: a
-/// subtree under it is a product. Only the topmost level of each moved
-/// subtree is seeded, and only where it and every level under it are
-/// structural and no target, so the output's levels there are the operand's
-/// as it counted them.
-fn seed_kept_counts(
-    eng: &Engine,
-    run: &ApplyRun,
-    sweep: &Sweep<'_>,
-    computed: &mut [Option<crate::value::CountVec>],
-    roots: &[VtreeIdx],
-) -> Result<(), OperationError> {
-    if sweep.kept.f.is_none() && sweep.kept.g.is_none() {
-        return Ok(());
-    }
-    let vtree = sweep.vtree;
-    // The operand each level was moved from untouched: 1 for `f`, 2 for `g`.
-    let moved = |t: usize| run.lists.identity_carrier(t);
-    let mut seeded = 0;
-    for &(ti, from_f) in &run.lists.carried {
-        let t = VtreeIdx(ti as u32);
-        let side = moved(ti);
-        let topmost = vtree
-            .node(t)
-            .parent()
-            .is_none_or(|p| moved(p.idx()) != side);
-        let kept = if from_f {
-            sweep.kept.f.as_ref()
-        } else {
-            sweep.kept.g.as_ref()
-        };
-        let Some(column) = kept.and_then(|counts| counts.column(t)) else {
-            continue;
-        };
-        if side == 0 || !topmost || computed[ti].is_some() {
-            continue;
-        }
-        let under_a_root =
-            std::iter::successors(Some(t), |&x| vtree.node(x).parent()).any(|x| roots.contains(&x));
-        let as_counted = vtree
-            .subtree(t)
-            .all(|x| !run.levels[x.idx()].is_marginal() && !sweep.targets.contains(x.idx()));
-        if under_a_root && as_counted && column.len() == run.levels[ti].slot_count() {
-            computed[ti] = Some(column.try_clone_on(eng)?);
-            seeded += 1;
-        }
-    }
-    super::super::note_kept_counts(seeded);
-    Ok(())
 }
 
 /// Give both children a dense grid and bump-allocate this level's own,

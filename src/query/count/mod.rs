@@ -212,7 +212,6 @@ impl Engine {
             {
                 cols[t.idx()] = column.try_clone_on(self)?;
                 held[t.idx()] = true;
-                crate::apply::conjoin::note_kept_counts_read(1);
             }
             let covered = above[t.idx()] || held[t.idx()];
             above[left.idx()] = covered;

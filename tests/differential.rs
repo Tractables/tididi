@@ -1174,10 +1174,10 @@ fn level_counts_match_enumeration(case: &Case) {
     step("keeping level counts");
     f.attach_level_counts().unwrap();
     assert_eq!(f.model_count().unwrap(), head_count, "a kept count");
-    assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "a conjunction counted over kept counts");
+    assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "a conjunction counted from an operand keeping counts");
     let both = eng.and(f.clone(), g.clone()).unwrap();
     assert_canonical_after_minimize(&both);
-    assert_eq!(both.model_count().unwrap(), count, "a conjunction carrying kept counts");
+    assert_eq!(both.model_count().unwrap(), count, "a conjunction of an operand keeping counts");
 
     step("kept counts through the binary format");
     let mut bytes = Vec::new();

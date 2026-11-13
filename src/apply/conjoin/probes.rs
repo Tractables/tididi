@@ -29,13 +29,6 @@ pub(super) enum WordNote {
     SparseMarginal,
 }
 
-/// Note for the tests' census that a count outside the conjunction read
-/// `levels` kept columns; nothing outside the tests.
-#[inline(always)]
-pub(crate) fn note_kept_counts_read(levels: usize) {
-    super::note_kept_counts(levels);
-}
-
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn taken_levels_settled_forced() -> bool {
@@ -255,10 +248,6 @@ pub(super) fn complete_sides_listed() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_complete_side(_side: crate::diagram::ChildSide) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-pub(super) fn note_kept_counts(_levels: usize) {}
 
 #[cfg(not(test))]
 #[inline(always)]

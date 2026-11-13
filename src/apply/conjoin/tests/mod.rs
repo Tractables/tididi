@@ -850,22 +850,6 @@ pub(super) fn repeated_pair_census() -> u64 {
 }
 
 thread_local! {
-    /// The levels on this thread a count read from an operand's kept counts
-    /// ([`kept_counts_census`]).
-    static KEPT_COUNTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-pub(super) fn note_kept_counts(levels: usize) {
-    KEPT_COUNTS.with(|c| c.set(c.get() + levels as u64));
-}
-
-/// The levels on this thread so far a count read from an operand's kept
-/// counts instead of folding them.
-pub(super) fn kept_counts_census() -> u64 {
-    KEPT_COUNTS.with(std::cell::Cell::get)
-}
-
-thread_local! {
     /// Whether every sparse level on this thread lists each child it joins
     /// ([`list_complete_sides`]).
     static LIST_COMPLETE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

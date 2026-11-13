@@ -61,10 +61,6 @@ pub(super) struct Sweep<'a> {
     /// `counted`, and left empty.
     pub(super) count_root: bool,
     pub(super) counted: Option<num_bigint::BigUint>,
-    /// The level counts each operand kept when the sweep began
-    /// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
-    /// a level an identity fast path moves untouched keeps its column.
-    pub(super) kept: Operands<Option<LevelCounts>>,
 }
 
 /// Walk the vtree bottom-up, building one level at a time.
@@ -304,61 +300,6 @@ fn describes_marginal_child(
         bases,
     )
     .is_some()
-}
-
-/// Keep with `out` the operands' kept counts ([`Sweep::kept`]) of the levels
-/// an identity fast path moved into it untouched, and of the levels of its
-/// free regions ([`Cone`](super::setup::Cone)): such a level brings its
-/// whole subtree along, so its nodes count in `out` what they counted in
-/// their operand. A level the relabelling route moved keeps none, a subtree
-/// under it being a product.
-///
-/// Infallible: this runs once `out` holds the levels the sweep moved out of
-/// the operands, where a refusal could no longer give a restoring caller
-/// its operands back whole. The counts are a cache, so where the budget
-/// refuses their table `out` keeps none and a count folds its levels.
-fn carry_kept_counts(
-    eng: &Engine,
-    out: &mut Tdd,
-    (lists, cone): (&super::setup::SweepLists, super::setup::Cone<'_>),
-    kept: &Operands<Option<LevelCounts>>,
-) {
-    if kept.f.is_none() && kept.g.is_none() {
-        return;
-    }
-    let Ok(mut counts) = LevelCounts::none(eng, out.vtree.num_nodes()) else {
-        return;
-    };
-    // The levels of the free regions are their carrier's as they were,
-    // save where both operands were free and the level was built.
-    let identity = lists
-        .carried
-        .iter()
-        .filter(|&&(ti, _)| lists.identity_carrier(ti) != 0)
-        .copied();
-    let free = cone
-        .free
-        .iter()
-        .filter(|t| !(cone.free_in_f(t.idx()) && cone.free_in_g(t.idx())))
-        .map(|t| (t.idx(), region::carried_from_f(cone, t.idx())));
-    for (ti, from_f) in identity.chain(free) {
-        let t = VtreeIdx(ti as u32);
-        let side = if from_f {
-            kept.f.as_ref()
-        } else {
-            kept.g.as_ref()
-        };
-        let Some(column) = side.and_then(|counts| counts.column(t)) else {
-            continue;
-        };
-        let level = &out.levels[ti];
-        if !level.is_marginal() && column.len() == level.slot_count() {
-            counts.set(t, Arc::clone(column));
-        }
-    }
-    if counts.any() {
-        out.levels.keep_counts(counts);
-    }
 }
 
 /// How the sweep delivers its result and handles refused operands.
@@ -647,10 +588,6 @@ fn apply_and_held(
     // Taken here, after the setup and before the regions or the sweep move
     // or drop any operand level: an access that changed a level would have
     // dropped them.
-    let kept = Operands {
-        f: f.levels.counts().cloned(),
-        g: g.levels.counts().cloned(),
-    };
     let closed = Operands {
         f: f.levels.is_closed(),
         g: g.levels.is_closed(),
@@ -663,7 +600,6 @@ fn apply_and_held(
         ws: ws.as_mut(),
         count_root,
         counted: None,
-        kept,
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
@@ -674,10 +610,6 @@ fn apply_and_held(
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }
-    let kept = Operands {
-        f: sweep.kept.f.take(),
-        g: sweep.kept.g.take(),
-    };
     let fused = if sweep.ws.is_none() {
         owed::fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
     } else {
@@ -781,7 +713,6 @@ fn apply_and_held(
                 }
                 #[cfg(debug_assertions)]
                 crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &lists.twin_free);
-                carry_kept_counts(eng, &mut out, (lists, cone), &kept);
                 out
             })
     } else {

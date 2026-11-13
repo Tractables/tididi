@@ -105,7 +105,8 @@ with [`write_tdd`](crate::io::write_tdd), restores them with
 [`read_tdd_binary`](crate::io::read_tdd_binary) are the compact binary
 counterparts. [`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)
 keeps every level's model counts with a diagram for later counts and the binary
-format to reuse.
+format to reuse, until an operation changes its levels; a conjunction's result
+keeps none but `f ∧ f`, which is `f` as it was.
 
 [`tdd_to_dot`](crate::io::tdd_to_dot) and [`vtree_to_dot`](crate::io::vtree_to_dot)
 render Graphviz text; [`Tdd::level_sizes_to_dot`](crate::Tdd::level_sizes_to_dot)

@@ -655,15 +655,9 @@ impl Tdd {
     /// Level `t`'s counts are those [`model_count`](Self::model_count) folds
     /// on its way to the output: node `i`'s model count over the variables
     /// under `t`. Once kept, [`model_count`](Self::model_count) reads the
-    /// output's count, and a conjunction carries the counts of every level
-    /// it moves from this diagram untouched, a level under which the other
-    /// operand is constant-true:
-    /// [`Engine::and_model_count`](crate::Engine::and_model_count) then
-    /// folds only the levels it builds, and a conjunction keeps the moved
-    /// levels' counts with its result, whose
-    /// [`model_count`](Self::model_count) folds only the levels above them.
-    /// The counts describe the levels as they are, so any operation that
-    /// changes the diagram's levels drops them;
+    /// output's count. The counts describe the levels as they are, so any
+    /// operation that changes the diagram's levels drops them, and a
+    /// conjunction's result keeps none but `f ∧ f`, which is `f` as it was;
     /// [`has_level_counts`](Self::has_level_counts) says whether they are
     /// kept. [`save_tdd_binary`](crate::io::save_tdd_binary) writes each
     /// level's that fit 128 bits, and the binary reader keeps them.

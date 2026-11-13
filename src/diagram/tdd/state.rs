@@ -326,10 +326,8 @@ pub(crate) struct Known {
 /// Metadata beside the levels, computed by one fold
 /// ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)),
 /// so that a count can read a level's column instead of folding the subtree
-/// under it again. A conjunction moves an operand's level into its result
-/// untouched where the other operand is constant-true under it, and that
-/// level's column moves with it. Columns are shared, so the copies of a
-/// diagram and the results that carried its levels hold one column each.
+/// under it again. Columns are shared, so the copies of a diagram hold one
+/// column each.
 #[derive(Clone, Default)]
 pub(crate) struct LevelCounts {
     columns: Vec<Option<Arc<CountVec>>>,
