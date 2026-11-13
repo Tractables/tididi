@@ -1,17 +1,10 @@
 //! `and_in_place` and `and_cube` against the conjunction they stand for.
 
 use super::*;
-use crate::apply::conjoin_in_place::{and_in_place_on, and_in_place_way};
+use crate::apply::conjoin_in_place::and_in_place_on;
 use crate::diagram::Literal;
 use crate::test_helpers::check::{check_all_fast, check_determinism, check_no_false_nodes};
 use crate::vtree::VtreeIdx;
-
-/// `and_in_place` with the products found top-down, one memoized product
-/// per pair of nodes, `grid` the threshold for finding `g`'s pairs by their
-/// sides (`0` always, `usize::MAX` never).
-fn and_in_place_grid(eng: &Engine, f: Tdd, g: &Tdd, prune: bool, grid: usize) -> Result<Tdd, crate::OperationError> {
-    and_in_place_way(eng, f, g, prune, Some(grid))
-}
 
 /// The variables under vtree node `t`.
 fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
@@ -198,40 +191,6 @@ fn random_model_tdd(vtree: &Arc<Vtree>, vars: &[VarId], nvars: u32, count: usize
     Tdd::from_models(vtree, vars, &rows).unwrap()
 }
 
-/// Wide nodes in both operands: a product of two nodes of many pairs finds
-/// `g`'s pairs by their sides, where a side of `f`'s pair lies inside one
-/// node of `g`, instead of trying each pair against each; the result is
-/// still the conjunction, with `g` a set of codes over every variable and
-/// over the variables under the root's left child.
-#[test]
-fn wide_products_find_the_pairs_they_meet_by_their_sides() {
-    let eng = Engine::new();
-    let mut rng = Lcg::new(0x51de_5eed_2026_1009);
-    let nvars = 12u32;
-    let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
-    for (shape, vtree) in vtree_shapes(nvars) {
-        let (left, _) = vtree.children(vtree.root());
-        let low = vars_under(&vtree, left);
-        for round in 0..3 {
-            let f = random_model_tdd(&vtree, &vars, nvars, 700, &mut rng);
-            let all = random_model_tdd(&vtree, &vars, nvars, 400, &mut rng);
-            let codes: Vec<u64> = (0..1 + (1u64 << low.len()) / 3).map(|_| rng.below(1 << low.len())).collect();
-            let on_left = or_of_cubes(&vtree, &low, |m| codes.contains(&(m as u64)));
-            for (name, g) in [("all", &all), ("left", &on_left)] {
-                // Each pair against each, by the sides always, and the default.
-                for grid in [usize::MAX, 0, 64] {
-                    for prune in [true, false] {
-                        let label = format!("{shape} round {round} {name} grid {grid} prune {prune}");
-                        let got = and_in_place_grid(&eng, f.clone(), g, prune, grid).unwrap();
-                        agrees_wide(&f, g, &got, nvars, &label);
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 /// A random set of codes over every variable under a random internal vtree
 /// node: each code kept with probability `1 / every`, as the disjunction of
 /// one cube per code.
@@ -243,15 +202,12 @@ fn block_set(vtree: &Arc<Vtree>, every: u64, rng: &mut Lcg) -> Tdd {
     or_of_cubes(vtree, &vars, |m| keep[m])
 }
 
-/// The products under each branching level found bottom-up, one pass over
-/// the levels with a table of `g`'s pairs (`and_in_place`), and found
-/// top-down, a memoized product per pair of nodes (`and_in_place_grid`),
-/// are the conjunction, and the same diagram once minimized: on random
+/// The products under each branching level are the conjunction: on random
 /// diagrams of ten variables, per vtree shape, with sets of codes over
 /// the variables under a vtree node (dense and sparse), two such sets at
 /// once, cubes and arbitrary functions, pruned and loose.
 #[test]
-fn bottom_up_products_are_the_top_down_products() {
+fn block_products_are_the_conjunction() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0xb10c_c0de_2026_1010);
     let nvars = 10u32;
@@ -267,15 +223,9 @@ fn bottom_up_products_are_the_top_down_products() {
             for (name, g) in [("dense", &dense), ("sparse", &sparse), ("two", &two), ("cube", &cube), ("any", &any)] {
                 for prune in [true, false] {
                     let label = format!("{shape} round {round} {name} prune {prune}");
-                    let up = and_in_place_on(&eng, f.clone(), g, prune).unwrap();
-                    let down = and_in_place_grid(&eng, f.clone(), g, prune, 64).unwrap();
-                    agrees_wide(&f, g, &up, nvars, &format!("{label}, bottom-up"));
-                    crate::test_helpers::check::validate_vtree_structure(&up).unwrap_or_else(|e| panic!("{label}: {e}"));
-                    let (mut up, mut down) = (up, down);
-                    up.minimize().unwrap();
-                    down.minimize().unwrap();
-                    assert_eq!(up.pair_count(), down.pair_count(), "{label}: the minimized sizes differ");
-                    assert!(eng.equivalent(&up, &down).unwrap(), "{label}: the two ways differ");
+                    let got = and_in_place_on(&eng, f.clone(), g, prune).unwrap();
+                    agrees_wide(&f, g, &got, nvars, &label);
+                    crate::test_helpers::check::validate_vtree_structure(&got).unwrap_or_else(|e| panic!("{label}: {e}"));
                 }
             }
         }

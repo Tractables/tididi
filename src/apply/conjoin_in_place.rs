@@ -58,14 +58,7 @@
 //! each and one per probe of `g`'s table, with nothing memoized per pair of
 //! nodes; the products no node at the branching level reaches are made too,
 //! and the prune removes them.
-//!
-//! The tests compare the same products found top-down, one memoized
-//! product per pair of nodes reached from the branching level
-//! (`Products`), which decides a node of `f` lying inside one node of `g`
-//! without its product (`Products::inside`) and finds the pairs of a wide
-//! node of `g` that a product can meet by their sides (`GSides`).
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -154,362 +147,6 @@ fn leaf_product(a: u32, b: u32) -> u32 {
         b
     } else {
         DEAD
-    }
-}
-
-/// The top-down products below the levels where `g` branches.
-struct Products<'a> {
-    lim: &'a Limits,
-    vtree: &'a Vtree,
-    f: &'a mut Tdd,
-    g: &'a Tdd,
-    top: &'a [Option<u32>],
-    /// Per level, the product of `(a, b)` keyed `a << 32 | b`.
-    memo: Vec<FxHashMap<u64, u32>>,
-    /// Per level, `g`'s node holding each pair, by the pair's key; built
-    /// on the level's first read.
-    g_pairs: Vec<Option<FxHashMap<u64, u32>>>,
-    /// Per level, where each original node of `f` lies among `g`'s nodes
-    /// there ([`Products::inside`]); sized on the level's first read.
-    inside: Vec<Vec<u32>>,
-    /// The levels a product was appended to.
-    grown: Vec<bool>,
-    /// The pairs read, for the stop and the work clock.
-    work: u64,
-    /// Past this many pairs of pairs a product finds `g`'s pairs by their
-    /// sides ([`GRID_PAIRS`]).
-    grid: usize,
-    /// `g`'s nodes so indexed, by level and node.
-    sides: FxHashMap<(u32, u32), Rc<GSides>>,
-}
-
-impl Products<'_> {
-    /// `f`'s node `a` conjoined with `g`'s node `b` at level `t`: `a` where
-    /// the product is `a`, a node appended to `f`'s level `t` otherwise, and
-    /// [`DEAD`] where it is false.
-    fn product(&mut self, t: VtreeIdx, a: u32, b: u32) -> Result<u32, OperationError> {
-        if self.top[t.idx()] == Some(b) {
-            return Ok(a);
-        }
-        if self.vtree.node(t).is_leaf() {
-            return Ok(leaf_product(a, b));
-        }
-        let key = (u64::from(a) << 32) | u64::from(b);
-        if let Some(&done) = self.memo[t.idx()].get(&key) {
-            return Ok(done);
-        }
-        // Where `f`'s node lies inside one node of `g`, the product is `f`'s
-        // node there and false at every other; where it meets none, false.
-        match self.inside(t, a)? {
-            x if x == b => return Ok(a),
-            UNKNOWN => {}
-            _ => return Ok(DEAD),
-        }
-        let (l, r) = self.vtree.children(t);
-        let fa: smallvec::SmallVec<[ChildPair; 8]> = self.f.levels[t.idx()]
-            .pairs_iter_of_idx(a as usize)
-            .collect();
-        // Past a few pairs of pairs, `b`'s pairs are found by their sides:
-        // a side of `a`'s pair that lies inside one node of `g` meets no
-        // other node there, so only `b`'s pairs on that node can give a
-        // product, and every other would come back false. The index is
-        // built once per node of `g`, which meets many of `f`'s.
-        let wide = fa.len() * self.g.level(t).pair_count_at(b as usize) > self.grid;
-        let sides = match wide {
-            true => Some(self.sides_of(t, b)?),
-            false => None,
-        };
-        let few: smallvec::SmallVec<[ChildPair; 8]> = match wide {
-            true => smallvec::SmallVec::new(),
-            false => self.g.level(t).pairs_iter_of_idx(b as usize).collect(),
-        };
-        let gb: &[ChildPair] = match &sides {
-            Some(by) => &by.pairs,
-            None => &few,
-        };
-        let mut out: smallvec::SmallVec<[ChildPair; 8]> = smallvec::SmallVec::new();
-        let mut same = true;
-        for pa in &fa {
-            let mut hits = 0;
-            let cands: smallvec::SmallVec<[u32; 8]> = match &sides {
-                Some(by) => match self.meeting(l, r, pa, by)? {
-                    Some(js) => js.iter().copied().collect(),
-                    None => (0..gb.len() as u32).collect(),
-                },
-                None => (0..gb.len() as u32).collect(),
-            };
-            self.work += cands.len() as u64;
-            for &j in &cands {
-                let pb = &gb[j as usize];
-                let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
-                if cl == DEAD {
-                    continue;
-                }
-                let cr = self.product(r, pa.right.raw(), pb.right.raw())?;
-                if cr == DEAD {
-                    continue;
-                }
-                hits += 1;
-                same &= cl == pa.left.raw() && cr == pa.right.raw();
-                out.push(ChildPair::new(NodeIdx(cl), NodeIdx(cr)));
-            }
-            same &= hits == 1;
-        }
-        let done = if out.is_empty() {
-            DEAD
-        } else if same {
-            a
-        } else {
-            crate::diagram::sort_pairs(&mut out);
-            self.grown[t.idx()] = true;
-            self.f.levels[t.idx()].push_node(self.lim, &out)?.0
-        };
-        self.memo[t.idx()].insert(key, done);
-        Ok(done)
-    }
-
-    /// `g`'s node `b` at level `t` indexed by its pairs' sides, built on its
-    /// first wide product.
-    fn sides_of(&mut self, t: VtreeIdx, b: u32) -> Result<Rc<GSides>, OperationError> {
-        if let Some(by) = self.sides.get(&(t.0, b)) {
-            return Ok(Rc::clone(by));
-        }
-        let g = self.g;
-        let by = Rc::new(GSides::new(
-            self.lim,
-            g.level(t).pairs_iter_of_idx(b as usize),
-        )?);
-        self.lim.reserve_map(&mut self.sides, 1)?;
-        self.sides.insert((t.0, b), Rc::clone(&by));
-        Ok(by)
-    }
-
-    /// The pairs of `g`'s node, indexed by their sides in `by`, that `f`'s
-    /// pair `pa` (at a level with children `l`, `r`) can meet. A side of
-    /// `pa` at an internal child that lies inside one node of `g` there
-    /// meets no other node of that level, and one that lies outside every
-    /// node meets none: so the pair on both sides' nodes where both lie
-    /// inside one (at most one pair, as a node's pairs differ), those on
-    /// the one side's node where one does, none where one lies outside, and
-    /// `None`, every pair, where neither side says.
-    fn meeting<'b>(
-        &mut self,
-        l: VtreeIdx,
-        r: VtreeIdx,
-        pa: &ChildPair,
-        by: &'b GSides,
-    ) -> Result<Option<&'b [u32]>, OperationError> {
-        let mut at = [UNKNOWN; 2];
-        for (s, child, x) in [(0, l, pa.left.raw()), (1, r, pa.right.raw())] {
-            if self.vtree.node(child).is_leaf() {
-                continue;
-            }
-            match self.inside(child, x)? {
-                OUTSIDE => return Ok(Some(&[])),
-                y => at[s] = y,
-            }
-        }
-        Ok(match at {
-            [UNKNOWN, UNKNOWN] => None,
-            [y, UNKNOWN] => Some(by.on(0, y)),
-            [UNKNOWN, z] => Some(by.on(1, z)),
-            [y, z] => Some(by.both(y, z)),
-        })
-    }
-
-    /// Where original node `a` of `f` at internal level `t` lies among
-    /// `g`'s nodes there: the one holding it whole, [`OUTSIDE`] where it
-    /// meets none, [`UNKNOWN`] where it meets some but no one holds it. One
-    /// pass over `f`'s nodes below, memoized: a pair of `a` lies in `g`'s
-    /// node holding the pair of the nodes its sides lie in, since `g`'s
-    /// nodes at a level are disjoint; a leaf side is its label, which the
-    /// label itself and `⊤` hold.
-    fn inside(&mut self, t: VtreeIdx, a: u32) -> Result<u32, OperationError> {
-        if let Some(x) = self.top[t.idx()] {
-            return Ok(x);
-        }
-        let width = self.f.levels[t.idx()].node_count();
-        if self.inside[t.idx()].is_empty() {
-            self.lim
-                .try_resize(&mut self.inside[t.idx()], width, UNSET)?;
-        }
-        match self.inside[t.idx()].get(a as usize) {
-            Some(&x) if x != UNSET => return Ok(x),
-            Some(_) => {}
-            None => return Ok(UNKNOWN),
-        }
-        if self.g_pairs[t.idx()].is_none() {
-            let level = self.g.level(t);
-            let mut map = FxHashMap::default();
-            for i in 0..level.node_count() {
-                for p in level.pairs_iter_of_idx(i) {
-                    map.insert(p.key(), i as u32);
-                }
-            }
-            self.g_pairs[t.idx()] = Some(map);
-        }
-        let (l, r) = self.vtree.children(t);
-        let pairs: smallvec::SmallVec<[ChildPair; 8]> = self.f.levels[t.idx()]
-            .pairs_iter_of_idx(a as usize)
-            .collect();
-        self.work += pairs.len() as u64;
-        let mut verdict = UNSET;
-        for p in &pairs {
-            let (sl, sr) = (self.side(l, p.left.raw())?, self.side(r, p.right.raw())?);
-            let here = self.pair_inside(t, sl, sr);
-            verdict = match verdict {
-                UNSET => here,
-                x if x == here => x,
-                _ => UNKNOWN,
-            };
-            if verdict == UNKNOWN {
-                break;
-            }
-        }
-        self.inside[t.idx()][a as usize] = verdict;
-        Ok(verdict)
-    }
-
-    /// The side `x` of a pair whose child is level `s`, as
-    /// [`pair_inside`](Self::pair_inside) reads it.
-    fn side(&mut self, s: VtreeIdx, x: u32) -> Result<Side, OperationError> {
-        Ok(match self.vtree.node(s).is_leaf() {
-            true => Side::Label(x),
-            false => Side::Node(self.inside(s, x)?),
-        })
-    }
-
-    /// Where the pair of sides `sl`, `sr` at level `t` lies among `g`'s
-    /// nodes there, as [`inside`](Self::inside) says of a node.
-    fn pair_inside(&self, t: VtreeIdx, sl: Side, sr: Side) -> u32 {
-        let (Some(wl), Some(wr)) = (sl.within(), sr.within()) else {
-            return OUTSIDE;
-        };
-        let (Some(pl), Some(pr)) = (sl.partly(), sr.partly()) else {
-            return UNKNOWN;
-        };
-        let map = self.g_pairs[t.idx()].as_ref().expect("built by inside");
-        let at = |x: u32, y: u32| {
-            map.get(&ChildPair::new(NodeIdx(x), NodeIdx(y)).key())
-                .copied()
-        };
-        for &x in wl.iter().flatten() {
-            for &y in wr.iter().flatten() {
-                if let Some(node) = at(x, y) {
-                    return node;
-                }
-            }
-        }
-        let meets = wl
-            .iter()
-            .chain(&pl)
-            .flatten()
-            .any(|&x| wr.iter().chain(&pr).flatten().any(|&y| at(x, y).is_some()));
-        match meets {
-            true => UNKNOWN,
-            false => OUTSIDE,
-        }
-    }
-}
-
-/// A product of two nodes with more pairs of pairs than this finds `g`'s
-/// pairs by their sides ([`GSides`], [`Products::meeting`]) instead of
-/// trying each against each.
-const GRID_PAIRS: usize = 64;
-
-/// A node of `g`: its pairs, and their indices by their left side, by
-/// their right side and by both, each in ascending order of its key.
-struct GSides {
-    pairs: Vec<ChildPair>,
-    keys: [Vec<u32>; 2],
-    by_side: [Vec<u32>; 2],
-    both: Vec<u64>,
-    by_both: Vec<u32>,
-}
-
-impl GSides {
-    fn new(lim: &Limits, gb: impl Iterator<Item = ChildPair>) -> Result<GSides, OperationError> {
-        let mut pairs = Vec::new();
-        for p in gb {
-            lim.try_push(&mut pairs, p)?;
-        }
-        let n = pairs.len();
-        let order =
-            |key: &dyn Fn(&ChildPair) -> u64| -> Result<(Vec<u64>, Vec<u32>), OperationError> {
-                let mut by: Vec<(u64, u32)> = Vec::new();
-                lim.reserve_exact(&mut by, n)?;
-                by.extend(pairs.iter().enumerate().map(|(j, p)| (key(p), j as u32)));
-                by.sort_unstable();
-                Ok(by.into_iter().unzip())
-            };
-        let (kl, pl) = order(&|p| u64::from(p.left.raw()))?;
-        let (kr, pr) = order(&|p| u64::from(p.right.raw()))?;
-        let (both, by_both) = order(&|p| p.key())?;
-        let narrow = |k: Vec<u64>| k.into_iter().map(|x| x as u32).collect();
-        Ok(GSides {
-            keys: [narrow(kl), narrow(kr)],
-            by_side: [pl, pr],
-            both,
-            by_both,
-            pairs,
-        })
-    }
-
-    /// The pair whose sides are `g`'s nodes `y` (left) and `z` (right), if
-    /// there is one.
-    fn both(&self, y: u32, z: u32) -> &[u32] {
-        let key = (u64::from(y) << 32) | u64::from(z);
-        match self.both.binary_search(&key) {
-            Ok(i) => &self.by_both[i..i + 1],
-            Err(_) => &[],
-        }
-    }
-
-    /// The pairs whose side `s` (`0` left, `1` right) is `g`'s node `y`.
-    fn on(&self, s: usize, y: u32) -> &[u32] {
-        let keys = &self.keys[s];
-        let lo = keys.partition_point(|&k| k < y);
-        let hi = lo + keys[lo..].partition_point(|&k| k == y);
-        &self.by_side[s][lo..hi]
-    }
-}
-
-/// [`Products::inside`]'s answers beside `g`'s node indices.
-const UNSET: u32 = u32::MAX;
-const OUTSIDE: u32 = u32::MAX - 1;
-const UNKNOWN: u32 = u32::MAX - 2;
-
-/// A side of `f`'s pair, as [`Products::pair_inside`] matches it with
-/// `g`'s pairs: a leaf label, or where an internal node lies.
-#[derive(Clone, Copy)]
-enum Side {
-    Label(u32),
-    Node(u32),
-}
-
-impl Side {
-    /// `g`'s sides that hold this side whole; `None` where it lies outside
-    /// every node of `g`'s level.
-    fn within(self) -> Option<[Option<u32>; 2]> {
-        match self {
-            Side::Label(x) if x == ONE_LEAF_IDX.0 => Some([Some(ONE_LEAF_IDX.0), None]),
-            Side::Label(x) => Some([Some(x), Some(ONE_LEAF_IDX.0)]),
-            Side::Node(OUTSIDE) => None,
-            Side::Node(x) => Some([(x != UNKNOWN).then_some(x), None]),
-        }
-    }
-
-    /// `g`'s sides that meet this side without holding it; `None` where
-    /// that is not known (an internal node that no one node holds).
-    fn partly(self) -> Option<[Option<u32>; 2]> {
-        match self {
-            Side::Label(x) if x == ONE_LEAF_IDX.0 => {
-                Some([Some(POS_LEAF_IDX.0), Some(NEG_LEAF_IDX.0)])
-            }
-            Side::Label(_) => Some([None, None]),
-            Side::Node(UNKNOWN) => None,
-            Side::Node(_) => Some([None, None]),
-        }
     }
 }
 
@@ -625,8 +262,8 @@ impl Settle {
     }
 }
 
-/// [`Products::product`] of every node of `f` at branching level `t` with
-/// `g`'s node `b` there, as `to` maps them, found bottom-up: one pass over
+/// The products of every node of `f` at branching level `t` with `g`'s
+/// node `b` there, as `to` maps them, found bottom-up: one pass over
 /// the levels under `t`, children before parents, reads each pair of `f`
 /// once against its children's products and finds the pairs of `g` they
 /// meet in a table of `g`'s pairs at the level, so that each node of `f`
@@ -635,8 +272,8 @@ impl Settle {
 /// into one node of `g` is its own product there, and no node is added for
 /// it; a level where `g` has only its true node is not read, its nodes
 /// their own products. The work is a unit per pair of `f` under `t` and
-/// one per probe of `g`'s table, a probe per pair of its sides' products,
-/// against a memoized product per pair of nodes. Each product made is
+/// one per probe of `g`'s table, a probe per pair of its sides' products.
+/// Each product made is
 /// appended to `f`'s level, and `grown` marks the level.
 fn block_products(
     lim: &Limits,
@@ -909,24 +546,9 @@ fn prune_under(
 /// each branching level found bottom-up ([`block_products`]).
 pub(crate) fn and_in_place_on(
     eng: &Engine,
-    f: Tdd,
-    g: &Tdd,
-    prune: bool,
-) -> Result<Tdd, OperationError> {
-    and_in_place_way(eng, f, g, prune, None)
-}
-
-/// [`and_in_place_on`], the products below each branching level found
-/// bottom-up ([`block_products`]) without `grid`; with it, top-down
-/// instead, one memoized product per pair of nodes ([`Products`]), `grid`
-/// their threshold for finding `g`'s pairs by their sides: `0` always,
-/// `usize::MAX` never (each pair against each). The tests compare the two.
-pub(crate) fn and_in_place_way(
-    eng: &Engine,
     mut f: Tdd,
     g: &Tdd,
     prune: bool,
-    grid: Option<usize>,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
@@ -975,62 +597,31 @@ pub(crate) fn and_in_place_way(
 
     // The products where `g` branches: every original node of `f` there.
     let mut moved: Vec<Moved> = charged(lim, n, || Moved::Same)?;
-    let mut gate = lim.gate();
+    let mut grown = charged(lim, n, || false)?;
     let mut branched: Vec<VtreeIdx> = Vec::new();
-    let grown = {
-        let mut products = Products {
-            lim,
-            vtree: &vtree,
-            f: &mut f,
-            g,
-            top: &top,
-            memo: charged(lim, n, FxHashMap::default)?,
-            g_pairs: charged(lim, n, || None)?,
-            inside: charged(lim, n, Vec::new)?,
-            grown: charged(lim, n, || false)?,
-            work: 0,
-            grid: grid.unwrap_or(GRID_PAIRS),
-            sides: FxHashMap::default(),
+    for t in vtree.bottomup() {
+        let Role::Branch(b) = role[t.idx()] else {
+            continue;
         };
-        for t in vtree.bottomup() {
-            let Role::Branch(b) = role[t.idx()] else {
-                continue;
-            };
-            if vtree.node(t).is_leaf() {
-                let mut to = Vec::new();
-                lim.reserve_exact(&mut to, 3)?;
-                to.extend(
-                    [ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]
-                        .iter()
-                        .map(|a| leaf_product(a.0, b)),
-                );
-                moved[t.idx()] = Moved::To(to);
-                continue;
-            }
-            let to = match grid {
-                None => block_products(lim, products.f, g, &top, t, b, &mut products.grown)?,
-                Some(_) => {
-                    let width = products.f.levels[t.idx()].node_count() as u32;
-                    let mut to = Vec::new();
-                    lim.reserve_exact(&mut to, width as usize)?;
-                    for x in 0..width {
-                        to.push(products.product(t, x, b)?);
-                        gate.poll(std::mem::take(&mut products.work))?;
-                    }
-                    to
-                }
-            };
+        if vtree.node(t).is_leaf() {
+            let mut to = Vec::new();
+            lim.reserve_exact(&mut to, 3)?;
+            to.extend(
+                [ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]
+                    .iter()
+                    .map(|a| leaf_product(a.0, b)),
+            );
             moved[t.idx()] = Moved::To(to);
-            if let Some(loose) = loose.as_mut() {
-                lim.try_push(loose, t.0)?;
-            }
-            if !prune {
-                lim.try_push(&mut branched, t)?;
-            }
+            continue;
         }
-        products.grown
-    };
-    gate.flush()?;
+        moved[t.idx()] = Moved::To(block_products(lim, &mut f, g, &top, t, b, &mut grown)?);
+        if let Some(loose) = loose.as_mut() {
+            lim.try_push(loose, t.0)?;
+        }
+        if !prune {
+            lim.try_push(&mut branched, t)?;
+        }
+    }
     for (t, grew) in grown.iter().enumerate() {
         if *grew {
             let t = VtreeIdx(t as u32);
@@ -1051,6 +642,7 @@ pub(crate) fn and_in_place_way(
     // with none dropped and the level renumbered. A level held as a
     // description is stored first, as `prune_under` stores one, and the
     // close describes it again where it fits.
+    let mut gate = lim.gate();
     for (t, _, _) in vtree.internal_bottomup() {
         if matches!(role[t.idx()], Role::Spine(_)) {
             rewrite_spine_level(lim, &mut f, &vtree, t, &mut moved, &mut loose, &mut gate)?;
