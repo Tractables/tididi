@@ -1,4 +1,6 @@
-//! The row loop every build route shares, and the four routes themselves.
+//! The dense product build's row loop and the level entries that run it
+//! (marginal, sparse-marginal, plain, complete side), and the one-pair
+//! level's loop of its own.
 
 use super::super::liveness::ROW_LIVE;
 use super::*;
@@ -43,16 +45,6 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, f_pairs: &[ChildPair]) -> Optio
 }
 
 // ============================= Row-loop driver =============================
-//
-// The four build routes — marginal-child emit (`run_level_rows_marginal`),
-// sparse-marginal emit (`run_level_rows_marginal_sparse`), streaming collapse
-// (`run_level_rows_stream_count`) and plain emit (`run_level_rows_plain`) — differ
-// only in what they do per row and per cell. Everything around that (the
-// per-row `NO_PRODUCT` reset, the f pair decode, the empty/dead-row skips, the alive
-// masks, the right_width column sweep, the between-cell poll) is one loop body, living
-// once in `run_level_rows` and parameterized by a [`CellAction`] — the same
-// shape as `process_cell`, which is one product walk parameterized by a
-// [`PairSink`].
 
 /// The per-level references every build route reads, bundled and passed by
 /// value.
@@ -127,8 +119,8 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether this action owns a dense `left_width × right_width` slab — one grid row per f row,
     /// so the per-row `NO_PRODUCT` resets tile the level's whole slab exactly once and
     /// can be replaced by a single fill (see [`run_level_rows`]). `false` for
-    /// [`SparseMargEmit`], which reuses grid row 0 for every structural row and
-    /// therefore must re-fill that one row between rows.
+    /// an action that writes every row into grid row 0 ([`SparseMargEmit`],
+    /// `rows_by_words` without `SLAB`), which must re-fill that row between rows.
     const DENSE_SLAB: bool;
 
     /// Whether the level has one column, which the action was built for: the
@@ -326,7 +318,7 @@ pub(super) fn culls<const DENSE: bool, K: ChildLookup>(ctx: &CellCtx<'_>, k: &K)
 /// cannot skip anything: `rows.ctx.masked` false and neither side a pass-through, where
 /// `row_alive_masks` always returns `(0, u128::MAX)`, or neither side able to
 /// [kill](ChildLookup::kills) a candidate, where no mask can clear. Only the
-/// plain routes reach those regimes; the other three always fold.
+/// plain routes reach those regimes; every other entry folds.
 ///
 /// `rows.ctx.right_width` and `rows.ctx.output_grid_base` are read from `rows.ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
@@ -926,10 +918,6 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
         base: rows.ctx.sides.right.base,
         stride: rows.ctx.sides.right.stride,
     };
-    // When `DENSE`, the alive masks are constants (no masks, no pass-through):
-    //   left_alive_mask  = 0u128      (the !masked branch of `row_alive_masks`)
-    //   right_alive_mask = `u128::MAX`  (the `|| !masked` branch of `row_alive_masks`)
-    // The driver passes those directly to the kernel, skipping the fold.
     let mut inline = 0;
     let mut action = Emit {
         sink: EmitSink {
