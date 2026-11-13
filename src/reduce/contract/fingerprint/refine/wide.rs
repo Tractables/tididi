@@ -1,5 +1,4 @@
-//! The splits of a parent node of more than [`SMALL_PAIRS`](super::SMALL_PAIRS)
-//! pairs.
+//! The splits of one wide parent node.
 
 use crate::diagram::{ChildPair, ChildSide};
 use crate::limits::{Limits, OperationError};
