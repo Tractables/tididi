@@ -21,7 +21,7 @@ pub(crate) enum PlainLookups {
     /// Both sides are complete, so no candidate dies and the level's pairs
     /// are known before its row loop. `charged` is the pair capacity the
     /// meters have been charged for when the arena was reserved to hold every
-    /// pair, `usize::MAX` when it was not (see [`ReservedEmitSink`]).
+    /// pair, `usize::MAX` when it was not (see [`EmitSink`]).
     Complete { charged: usize },
 }
 
@@ -31,7 +31,7 @@ pub(crate) enum PlainLookups {
 ///
 /// With both sides complete no candidate dies and no dead-pair mask can cull,
 /// so the loop runs without the per-row mask fold (`DENSE`), with no
-/// `NO_PRODUCT` test, and writes through a [`ReservedEmitSink`]; where the g
+/// `NO_PRODUCT` test, and writes through a [`EmitSink`]; where the g
 /// side is one node of one pair, every cell reads that pair
 /// ([`EmitBesideOne`]) and no column is read, and where every g node has
 /// one pair, a cell reads its column's ([`EmitLoneColumns`]). With one
@@ -39,7 +39,7 @@ pub(crate) enum PlainLookups {
 /// with that side's lookup replaced: the fold and the culls on the grid side
 /// stay; on a level that built no masks they find nothing, as on
 /// `Route::PlainDense` they would not be run. It writes through a
-/// [`ReservedEmitSink`] too, its arena reserved for every pair the level
+/// [`EmitSink`] too, its arena reserved for every pair the level
 /// would write if none died.
 pub(crate) fn run_level_rows_complete(
     eng: &Engine,
@@ -60,7 +60,7 @@ pub(crate) fn run_level_rows_complete(
                 &complete(&sides.left),
                 &complete(&sides.right),
                 &mut EmitBesideOne {
-                    sink: ReservedEmitSink {
+                    sink: EmitSink {
                         level,
                         charged,
                         inline: &mut inline,
@@ -73,7 +73,7 @@ pub(crate) fn run_level_rows_complete(
                 rows,
                 scratch,
                 (&complete(&sides.left), &complete(&sides.right)),
-                ReservedEmitSink {
+                EmitSink {
                     level,
                     charged,
                     inline: &mut inline,
@@ -85,7 +85,7 @@ pub(crate) fn run_level_rows_complete(
             rows,
             scratch,
             (&complete(&sides.left), &grid(&sides.right)),
-            ReservedEmitSink {
+            EmitSink {
                 level,
                 charged,
                 inline: &mut inline,
@@ -96,7 +96,7 @@ pub(crate) fn run_level_rows_complete(
             rows,
             scratch,
             (&grid(&sides.left), &complete(&sides.right)),
-            ReservedEmitSink {
+            EmitSink {
                 level,
                 charged,
                 inline: &mut inline,
@@ -116,7 +116,7 @@ fn run_complete_or_lone<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     (left, right): (&L, &R),
-    sink: ReservedEmitSink<'_>,
+    sink: EmitSink<'_>,
 ) -> Result<(), OperationError> {
     match lone_columns(eng, rows, &mut *scratch.g_pairs)? {
         Some(lone) => run_level_rows::<DENSE, _, _, _>(
@@ -160,7 +160,7 @@ fn lone_columns<'e>(
 /// pair, `lone[j]` column `j`'s: a cell is [`cell_pairs`] on its row's f
 /// pairs and that pair, with no column read.
 struct EmitLoneColumns<'a, 'l> {
-    sink: ReservedEmitSink<'l>,
+    sink: EmitSink<'l>,
     lone: &'a [ChildPair],
 }
 
@@ -205,7 +205,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
 /// cell would charge it, and counted down at once for the cells between.
 #[inline(always)]
 fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
-    sink: &mut ReservedEmitSink<'_>,
+    sink: &mut EmitSink<'_>,
     lone: &[ChildPair],
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {

@@ -61,6 +61,7 @@ pub(crate) fn run_level_rows_single(
     let mut inline = 0;
     let mut sink = EmitSink {
         level: &mut *level,
+        charged: usize::MAX,
         inline: &mut inline,
     };
     // A level of a few columns keeps them in registers, and writes each

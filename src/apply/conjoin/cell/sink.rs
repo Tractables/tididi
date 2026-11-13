@@ -91,8 +91,20 @@ pub(crate) trait PairSink {
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
+///
+/// The output-pair meter is charged from the pair arena's capacity as it
+/// grows. Where the arena holds room ahead of the pairs written, reserved
+/// before the row loop or sized ahead by [`ProjectedEmitSink`], the sink
+/// keeps the meter, and every stop rule that reads it, where an arena grown
+/// by pushes would have it: `charged` is the capacity that arena would have
+/// now, and when the arena's length reaches it the meter is charged for the
+/// next doubling ([`doubled_pairs_capacity`]) before the pair is pushed.
+/// With `charged` at `usize::MAX` the room is the arena's spare capacity and
+/// a full arena grows through [`try_push_pair_into`].
 pub(crate) struct EmitSink<'a> {
     pub(crate) level: &'a mut TddLevel,
+    /// The pair capacity the meters have been charged for, or `usize::MAX`.
+    pub(crate) charged: usize,
     /// The nodes of one pair written, which the level stores inline: its
     /// live pairs are its arena's and these
     /// ([`TddLevel::leave_written_pairs`]).
@@ -114,88 +126,6 @@ impl PairSink for EmitSink<'_> {
         node_idx[grid_pos] = nid;
         *self.inline += 1;
         emit_single_pair(eng, self.level, pair)
-    }
-
-    #[inline(always)]
-    fn begin(&mut self) -> usize {
-        self.buf().len()
-    }
-
-    #[inline(always)]
-    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
-        try_push_pair_into(
-            eng,
-            self.level,
-            raw_pair(lc, rc),
-        )
-    }
-
-    #[inline(always)]
-    fn buf(&mut self) -> &mut Vec<ChildPair> {
-        self.level.pairs.stored_mut()
-    }
-
-    #[inline(always)]
-    fn end(
-        &mut self,
-        eng: &Engine,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-        start: usize,
-    ) -> Result<(), OperationError> {
-        emit_product_node(eng, self.level, node_idx, grid_pos, start, self.inline)
-    }
-
-    #[inline(always)]
-    fn open_cell(&mut self, bound: usize) -> Option<ArenaCell<'_>> {
-        let room = self.room();
-        ArenaCell::open(self.level, self.inline, room, bound)
-    }
-
-    #[inline(always)]
-    fn open_row(&mut self, pairs: usize, nodes: usize, width_cap: usize) -> Option<ArenaRow<'_>> {
-        let room = self.room();
-        ArenaRow::open(self.level, self.inline, (room, pairs, nodes), width_cap)
-    }
-}
-
-/// [`EmitSink`] for a level whose pair arena may hold room ahead of the pairs
-/// written: reserved before its row loop, or sized ahead by
-/// [`ProjectedEmitSink`].
-///
-/// The output-pair meter is charged from the arena's capacity as it grows.
-/// To keep the meter, and every stop rule that reads it, where the
-/// [`EmitSink`] walk would have it, this sink charges it on the schedule that
-/// walk's arena grows on: `charged` is the capacity that arena would have
-/// now, and when the arena's length reaches it the meter is charged for the
-/// next doubling ([`doubled_pairs_capacity`]) before the pair is pushed.
-///
-/// With `charged` at `usize::MAX` there is no schedule of its own, and the
-/// sink is exactly an [`EmitSink`]: the room is the arena's spare capacity
-/// and a full arena grows through [`try_push_pair_into`].
-pub(crate) struct ReservedEmitSink<'a> {
-    pub(crate) level: &'a mut TddLevel,
-    /// The pair capacity the meters have been charged for, or `usize::MAX`.
-    pub(crate) charged: usize,
-    /// As [`EmitSink::inline`].
-    pub(crate) inline: &'a mut usize,
-}
-
-impl PairSink for ReservedEmitSink<'_> {
-    #[inline(always)]
-    fn single(
-        &mut self,
-        eng: &Engine,
-        node_idx: &mut [u32],
-        grid_pos: usize,
-        lc: u32,
-        rc: u32,
-    ) -> Result<(), OperationError> {
-        EmitSink {
-            level: &mut *self.level,
-            inline: &mut *self.inline,
-        }
-        .single(eng, node_idx, grid_pos, lc, rc)
     }
 
     #[inline(always)]
@@ -227,7 +157,7 @@ impl PairSink for ReservedEmitSink<'_> {
         self.level.pairs.stored_mut()
     }
 
-    /// None where the length is past the charged capacity.
+    /// Zero where the length is past the charged capacity.
     #[inline(always)]
     fn room(&mut self) -> usize {
         let charged = self.charged;
@@ -272,7 +202,7 @@ const AHEAD_AFTER: usize = 64;
 /// of the larger operand level's nodes.
 const AHEAD_OPERAND_FACTOR: usize = 8;
 
-/// A [`ReservedEmitSink`] that sizes its level's arenas by projection: at
+/// An [`EmitSink`] that sizes its level's arenas by projection: at
 /// the first row past one in [`AHEAD_AFTER`] of the row loop's rows that
 /// they have no room for, it moves them to fresh ones of what the rows
 /// before it project the loop writes, an eighth more, copying only what
@@ -283,14 +213,15 @@ const AHEAD_OPERAND_FACTOR: usize = 8;
 /// follow them took a twentieth of the cycles of a program whose levels
 /// are wide.
 ///
-/// The output-pair meter stays on the doubling schedule an
-/// [`EmitSink`]'s arena grows on, so no stop rule reading it moves; the
+/// The output-pair meter stays on the doubling schedule an arena grown by
+/// pushes grows on, so no stop rule reading it moves; the
 /// arenas are charged to the budget as they grow. A projection is bounded
 /// by what the level can write, by [`AHEAD_OPERAND_FACTOR`] times the
 /// larger operand level, and by half the memory left; an arena it leaves
-/// short doubles. Under bounded growth the sink is an [`EmitSink`].
+/// short doubles. Under bounded growth the sink is an [`EmitSink`] with
+/// `charged` at `usize::MAX`.
 pub(crate) struct ProjectedEmitSink<'a> {
-    sink: ReservedEmitSink<'a>,
+    sink: EmitSink<'a>,
     /// The most pairs and nodes a projection sizes the arenas for, past
     /// the lengths `start` they had when the row loop began.
     most: (usize, usize),
@@ -336,7 +267,7 @@ impl<'a> ProjectedEmitSink<'a> {
             total / after
         };
         ProjectedEmitSink {
-            sink: ReservedEmitSink {
+            sink: EmitSink {
                 level,
                 charged,
                 inline,
@@ -392,7 +323,7 @@ impl<'a> ProjectedEmitSink<'a> {
         self.limit = self.sink.charged.min(self.sink.level.pairs.capacity());
     }
 
-    /// A pair at the limit, pushed as [`ReservedEmitSink`] pushes it, a full
+    /// A pair at the limit, pushed as [`EmitSink`] pushes it, a full
     /// arena grown first ([`grow_projected`]).
     #[cold]
     #[inline(never)]
@@ -459,7 +390,7 @@ fn projected_len(len: usize, start: usize, done: usize, total: usize, most: usiz
 }
 
 /// A full pair arena of a [`ProjectedEmitSink`] grown, charged to the
-/// budget and not to the output-pair meter, which [`ReservedEmitSink`]
+/// budget and not to the output-pair meter, which [`EmitSink`]
 /// charges on its own schedule: to the projection of the `row` rows of
 /// `rows` written, past the arena's start `start` and within `most` past
 /// it, where the row loop has passed the row it projects at and the
@@ -505,9 +436,8 @@ impl PairSink for ProjectedEmitSink<'_> {
         self.sink.begin()
     }
 
-    /// A pair stored below the limit with one test, as an [`EmitSink`]
-    /// stores it below the capacity; at the limit, pushed as
-    /// [`ReservedEmitSink`] pushes it ([`pair_past_limit`](Self::pair_past_limit)).
+    /// A pair stored below the limit with one test; at the limit, pushed as
+    /// [`EmitSink`] pushes it ([`pair_past_limit`](Self::pair_past_limit)).
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         let limit = self.limit;

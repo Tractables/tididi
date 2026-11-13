@@ -571,6 +571,7 @@ pub(crate) fn run_level_rows_words(
                 (&grid(&sides.left), &grid(&sides.right)),
                 EmitSink {
                     level,
+                    charged: usize::MAX,
                     inline: &mut inline,
                 },
             )
@@ -582,7 +583,7 @@ pub(crate) fn run_level_rows_words(
                 (rows, scratch),
                 (words, f_rows),
                 (&complete(&sides.left), &grid(&sides.right)),
-                ReservedEmitSink {
+                EmitSink {
                     level,
                     charged,
                     inline: &mut inline,
@@ -596,7 +597,7 @@ pub(crate) fn run_level_rows_words(
                 (rows, scratch),
                 (words, f_rows),
                 (&grid(&sides.left), &complete(&sides.right)),
-                ReservedEmitSink {
+                EmitSink {
                     level,
                     charged,
                     inline: &mut inline,
@@ -632,6 +633,7 @@ pub(crate) fn run_level_rows_marginal_sparse_words(
     let sink = ListSink {
         emit: EmitSink {
             level,
+            charged: usize::MAX,
             inline: &mut inline,
         },
         product_list,

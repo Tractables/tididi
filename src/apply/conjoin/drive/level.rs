@@ -754,7 +754,7 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
 /// Reserve the arenas of a level with a complete child side to what its
 /// row loop writes where no candidate dies ([`complete_level_size`]), and
 /// return the pair capacity the output-pair meter has been charged for (see
-/// [`ReservedEmitSink`](crate::apply::conjoin::cell::ReservedEmitSink)).
+/// [`EmitSink`](crate::apply::conjoin::cell::EmitSink)).
 ///
 /// With both sides complete that is exactly what the level writes. With one
 /// side complete a pair dies only on the other side, and the count bounds

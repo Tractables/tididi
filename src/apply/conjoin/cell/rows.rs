@@ -606,6 +606,7 @@ pub(crate) fn run_level_rows_marginal(
         &mut Emit {
             sink: EmitSink {
                 level,
+                charged: usize::MAX,
                 inline: &mut inline,
             },
         },
@@ -652,6 +653,7 @@ pub(crate) fn run_level_rows_marginal_sparse(
             sink: ListSink {
                 emit: EmitSink {
                     level,
+                    charged: usize::MAX,
                     inline: &mut inline,
                 },
                 product_list,
@@ -689,6 +691,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     let mut action = Emit {
         sink: EmitSink {
             level,
+            charged: usize::MAX,
             inline: &mut inline,
         },
     };

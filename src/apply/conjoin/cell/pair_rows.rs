@@ -76,7 +76,7 @@ pub(crate) fn run_level_rows_pairs(
             scratch,
             &complete(&sides.left),
             &grid(&sides.right),
-            &mut ReservedEmitSink {
+            &mut EmitSink {
                 level,
                 charged,
                 inline: &mut inline,
@@ -88,7 +88,7 @@ pub(crate) fn run_level_rows_pairs(
             scratch,
             &grid(&sides.left),
             &complete(&sides.right),
-            &mut ReservedEmitSink {
+            &mut EmitSink {
                 level,
                 charged,
                 inline: &mut inline,
