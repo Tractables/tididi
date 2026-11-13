@@ -381,7 +381,7 @@ fn conjoin_recycling_as(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, mode, Operands::default());
+    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, mode);
     return_levels_of(eng, &mut f);
     return_levels_of(eng, &mut g);
     result
@@ -1016,7 +1016,6 @@ impl crate::Engine {
         }
         let result = apply_and_core(
             self, &mut f, &mut g, (summed, VtreeMask::default()), None, ConjoinMode::Count,
-            Operands::default(),
         );
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
         diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());

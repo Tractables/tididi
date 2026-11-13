@@ -497,10 +497,13 @@ fn carry_kept_counts(
 }
 
 /// How the sweep delivers its result and handles refused operands.
-pub(crate) enum ConjoinMode {
+pub(crate) enum ConjoinMode<'a> {
     Build,
     Count,
-    Restore,
+    /// Build, and give the operands back intact on refusal. `free` names
+    /// each operand's free levels ([`ApplyRun::cone`]), which only a plain
+    /// conjunction may have.
+    Restore { free: Operands<VtreeMask<'a>> },
     /// Build, and where the target given has a parent the sparse route
     /// builds as one product, sum the target out as the parent's pairs are
     /// found, instead of building the pairs the marginalization pass would
@@ -528,33 +531,34 @@ pub(crate) fn apply_and_kept(
         g,
         (VtreeMask::default(), VtreeMask::default()),
         None,
-        ConjoinMode::Restore,
-        free,
+        ConjoinMode::Restore { free },
     )
     .map(Conjoined::diagram)
 }
 
-/// Move identity levels back to their owned operands, latest first, and
-/// the nodes and arenas of the levels `lent` names back to f, which lends
-/// only where it is owned.
+/// Give a refused conjunction's operands back what it took: identity levels
+/// to their owned operands, latest first, the nodes and arenas of the levels
+/// `lists.lent` names to f, which lends only where it is owned, and the free
+/// regions ([`region::give_back_regions`]).
 fn give_back(
     levels: &mut [TddLevel],
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-    kept: &[(usize, bool)],
-    lent: &[usize],
+    lists: &super::setup::SweepLists,
+    cone: super::setup::Cone<'_>,
 ) {
-    for &(t, from_f) in kept.iter().rev() {
+    for &(t, from_f) in lists.carried.iter().rev() {
         match from_f {
             true => f.uncarry(t, &mut levels[t]),
             false => g.uncarry(t, &mut levels[t]),
         }
     }
     if let Some(f) = f.owned() {
-        for &t in lent {
+        for &t in &lists.lent {
             f.levels.swap_arenas(t, &mut levels[t]);
         }
     }
+    region::give_back_regions(levels, cone, f, g);
 }
 
 /// What [`apply_and_core`] returns: the conjunction, or only its model count
@@ -591,9 +595,7 @@ impl Conjoined {
 ///
 /// Count mode may return the model count instead of building the root, when
 /// it is one product on the sparse route with no weights and no filter.
-/// Otherwise the diagram is built and the caller counts it. `free` names
-/// each operand's free levels ([`ApplyRun::cone`]), which only a plain
-/// conjunction may have.
+/// Otherwise the diagram is built and the caller counts it.
 pub(crate) fn apply_and_core(
     eng: &Engine,
     f: &mut Tdd,
@@ -601,7 +603,6 @@ pub(crate) fn apply_and_core(
     (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
-    free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
     apply_and_held(
         eng,
@@ -610,14 +611,13 @@ pub(crate) fn apply_and_core(
         (targets, quantified),
         filter,
         mode,
-        free,
     )
 }
 
-/// [`apply_and_core`] of operands each owned or borrowed, without a filter
-/// or free levels: a borrowed operand is read in place, weights and marginal
-/// levels included, and an owned operand's levels are dropped as the sweep
-/// reads them ([`apply_and_held`]).
+/// [`apply_and_core`] of operands each owned or borrowed, without a filter:
+/// a borrowed operand is read in place, weights and marginal levels
+/// included, and an owned operand's levels are dropped as the sweep reads
+/// them ([`apply_and_held`]).
 pub(crate) fn apply_and_either(
     eng: &Engine,
     f: &mut Held<'_>,
@@ -626,15 +626,7 @@ pub(crate) fn apply_and_either(
     quantified: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(
-        eng,
-        f,
-        g,
-        (targets, quantified),
-        None,
-        mode,
-        Operands::default(),
-    )
+    apply_and_held(eng, f, g, (targets, quantified), None, mode)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
@@ -649,8 +641,11 @@ fn apply_and_held(
     (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
-    free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
+    let free = match mode {
+        ConjoinMode::Restore { free } => free,
+        _ => Operands::default(),
+    };
     debug_assert!(
         [(&*f, free.f), (&*g, free.g)]
             .into_iter()
@@ -658,7 +653,7 @@ fn apply_and_held(
         "a borrowed operand has no free level",
     );
     let count_root = matches!(mode, ConjoinMode::Count);
-    let keep = matches!(mode, ConjoinMode::Restore);
+    let keep = matches!(mode, ConjoinMode::Restore { .. });
     let sum_child = match mode {
         ConjoinMode::Sum(c) => Some(c),
         _ => None,
@@ -706,11 +701,7 @@ fn apply_and_held(
     // them: the setup finds them (`mark_constant_true`). Most levels of two
     // diagrams on a large vtree that each mention a few of its variables
     // are such levels.
-    let find_free = ws.is_none()
-        && targets.is_empty()
-        && quantified.is_empty()
-        && filter.is_none()
-        && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore);
+    let find_free = unmarked && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore { .. });
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
@@ -839,8 +830,7 @@ fn apply_and_held(
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
-            give_back(run.levels, f, g, &run.lists.carried, &run.lists.lent);
-            region::give_back_regions(run.levels, cone, f, g);
+            give_back(run.levels, f, g, run.lists, cone);
         }
         return Err(e);
     }
@@ -868,8 +858,7 @@ fn apply_and_held(
         ws.as_ref(),
     ) {
         if run.restoring {
-            give_back(run.levels, f, g, &run.lists.carried, &run.lists.lent);
-            region::give_back_regions(run.levels, cone, f, g);
+            give_back(run.levels, f, g, run.lists, cone);
         }
         return Err(e);
     }
@@ -994,8 +983,7 @@ fn apply_and_held(
                 for &t in &lists.relabel_moved {
                     assembly.parts_mut().0[t].settle_held_pairs();
                 }
-                give_back(assembly.parts_mut().0, f, g, &lists.carried, &lists.lent);
-                region::give_back_regions(assembly.parts_mut().0, cone, f, g);
+                give_back(assembly.parts_mut().0, f, g, lists, cone);
             }
             return Err(e);
         }

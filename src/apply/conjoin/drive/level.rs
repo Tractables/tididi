@@ -48,8 +48,8 @@ pub(super) fn run_sparse_level(
         t,
         left,
         right,
-        f: fw,
         g: gw,
+        ..
     } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let passthrough = Passthrough::of(plan.sides);
@@ -58,10 +58,10 @@ pub(super) fn run_sparse_level(
     let unlisted = |side| carried(side) || complete.is_some_and(|c| c.side == side);
     // Ensure the joined children have product lists for the scatter pipeline.
     if !unlisted(ChildSide::Left) {
-        run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+        run.ensure_product_list_for_child(eng, li)?;
     }
     if !unlisted(ChildSide::Right) {
-        run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+        run.ensure_product_list_for_child(eng, ri)?;
     }
 
     // Priced with its children's lists in hand, before the scatter claims
@@ -230,20 +230,14 @@ pub(super) fn count_sparse_root(
     sweep: &Sweep<'_, '_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
     let vtree = sweep.vtree;
-    use crate::value::{IntFold, ValueDomain};
-    let LevelShape {
-        t,
-        left,
-        right,
-        f: fw,
-        g: gw,
-    } = shape;
+    use crate::value::{IntFold, Retention, ValueDomain};
+    let LevelShape { t, left, right, .. } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
-    run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+    run.ensure_product_list_for_child(eng, li)?;
+    run.ensure_product_list_for_child(eng, ri)?;
 
     let lim = eng.limits();
-    let computed = fold_child_counts(eng, run, sweep, &[left, right])?;
+    let computed = fold_child_counts(eng, run, vtree, Some(sweep), &[left, right], Retention::Frontier)?;
     let levels: &[TddLevel] = run.levels;
     let mut fold = CandidateFold::new(
         lim,
@@ -266,21 +260,25 @@ pub(super) fn count_sparse_root(
     Ok(fold.finish())
 }
 
-/// Fold `roots`' integer count columns over `run.levels`, seeded from any
-/// kept operand counts ([`seed_kept_counts`]).
+/// Fold `roots`' integer count columns over `run.levels`, keeping what
+/// `retention` keeps, seeded from the operands' kept counts
+/// ([`seed_kept_counts`]) when `seed` is given.
 fn fold_child_counts(
     eng: &Engine,
     run: &ApplyRun,
-    sweep: &Sweep<'_, '_>,
+    vtree: &crate::vtree::Vtree,
+    seed: Option<&Sweep<'_, '_>>,
     roots: &[VtreeIdx],
+    retention: crate::value::Retention,
 ) -> Result<Vec<Option<crate::value::CountVec>>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
-    let vtree = sweep.vtree;
+    use crate::value::{CountVec, FoldInput, IntFold, ValueDomain};
     let lim = eng.limits();
     let mut computed: Vec<Option<CountVec>> = Vec::new();
     lim.reserve_exact(&mut computed, vtree.num_nodes())?;
     computed.resize_with(vtree.num_nodes(), || None);
-    seed_kept_counts(eng, run, sweep, &mut computed, roots)?;
+    if let Some(sweep) = seed {
+        seed_kept_counts(eng, run, sweep, &mut computed, roots)?;
+    }
     let levels: &[TddLevel] = run.levels;
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput {
@@ -296,7 +294,7 @@ fn fold_child_counts(
             input,
             &mut computed,
             &marginal,
-            Retention::Frontier,
+            retention,
             |w| gate.poll(w),
         )?;
     }
@@ -430,14 +428,8 @@ pub(super) fn sum_sparse_root(
     vtree: &crate::vtree::Vtree,
     side: ChildSide,
 ) -> Result<Option<Vec<VtreeIdx>>, OperationError> {
-    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
-    let LevelShape {
-        t,
-        left,
-        right,
-        f: fw,
-        g: gw,
-    } = shape;
+    use crate::value::Retention;
+    let LevelShape { t, left, right, .. } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let (c, kept) = match side {
         ChildSide::Right => (right, left),
@@ -447,41 +439,19 @@ pub(super) fn sum_sparse_root(
     // level reads it, so the candidates come in the order its pairs have.
     let complete = complete_side(run, vtree, shape, None, false);
     if complete.is_none_or(|c| c.side != ChildSide::Left) {
-        run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+        run.ensure_product_list_for_child(eng, li)?;
     }
     if complete.is_none_or(|c| c.side != ChildSide::Right) {
-        run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+        run.ensure_product_list_for_child(eng, ri)?;
     }
     if complete.is_some() {
         note_summed_complete_root();
     }
 
     let lim = eng.limits();
-    let mut computed: Vec<Option<CountVec>> = Vec::new();
-    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
-    computed.resize_with(vtree.num_nodes(), || None);
-    {
-        let levels: &[TddLevel] = run.levels;
-        let marginal = |i: usize| levels[i].is_marginal();
-        let input = FoldInput {
-            vtree,
-            levels,
-            store: &(),
-        };
-        let mut gate = lim.gate();
-        // `Retention::All`: the install takes every walked level's column,
-        // as the two-step pass does.
-        IntFold::ensure(
-            eng,
-            c,
-            input,
-            &mut computed,
-            &marginal,
-            Retention::All,
-            |w| gate.poll(w),
-        )?;
-        gate.flush()?;
-    }
+    // `Retention::All`: the install takes every walked level's column,
+    // as the two-step pass does.
+    let mut computed = fold_child_counts(eng, run, vtree, None, &[c], Retention::All)?;
     let col = computed[c.idx()]
         .take()
         .expect("the fold leaves the summed child's column");
@@ -717,12 +687,7 @@ pub(super) fn pick_streamed(
     let mut best = (0, 0u128);
     for (i, &(t, left, right)) in held.iter().enumerate() {
         for child in [left, right] {
-            run.ensure_product_list_for_child(
-                eng,
-                child.idx(),
-                run.f_widths[child.idx()],
-                run.g_widths[child.idx()],
-            )?;
+            run.ensure_product_list_for_child(eng, child.idx())?;
         }
         // `o` is not read by the bound; `t` stands in for it.
         let bound = candidate_bound(
@@ -760,7 +725,7 @@ pub(super) fn count_streamed_root(
     root: (VtreeIdx, VtreeIdx, VtreeIdx),
     c: (VtreeIdx, VtreeIdx, VtreeIdx),
 ) -> Result<Option<num_bigint::BigUint>, OperationError> {
-    use crate::value::{IntFold, ValueDomain};
+    use crate::value::{IntFold, Retention, ValueDomain};
     let vtree = sweep.vtree;
     let (t, root_left, root_right) = root;
     let (c_t, cl, cr) = c;
@@ -773,12 +738,7 @@ pub(super) fn count_streamed_root(
         return Ok(None);
     }
     for x in [o, cl, cr] {
-        run.ensure_product_list_for_child(
-            eng,
-            x.idx(),
-            run.f_widths[x.idx()],
-            run.g_widths[x.idx()],
-        )?;
+        run.ensure_product_list_for_child(eng, x.idx())?;
     }
     let lim = eng.limits();
     // Priced on the index sizes alone, before any count is folded: a root
@@ -792,7 +752,7 @@ pub(super) fn count_streamed_root(
         return Ok(None);
     };
 
-    let computed = fold_child_counts(eng, run, sweep, &[o, cl, cr])?;
+    let computed = fold_child_counts(eng, run, vtree, Some(sweep), &[o, cl, cr], Retention::Frontier)?;
     let levels: &[TddLevel] = run.levels;
     let column = |x: VtreeIdx| {
         let side = IntFold::child_view(x.idx(), vtree, &levels[x.idx()], &computed, &());
@@ -873,10 +833,10 @@ fn materialize_children_and_grid(
     // build its product list.
     if run.products.arena.is_bump() {
         if run.products.arena.is_sparse(li) {
-            run.materialize_dense_child(eng, li, fw.left, gw.left)?;
+            run.materialize_dense_child(eng, li)?;
         }
         if run.products.arena.is_sparse(ri) {
-            run.materialize_dense_child(eng, ri, fw.right, gw.right)?;
+            run.materialize_dense_child(eng, ri)?;
         }
     }
 

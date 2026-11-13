@@ -522,14 +522,12 @@ impl ApplyRun<'_, '_> {
         &mut self,
         eng: &Engine,
         child: usize,
-        f_width: usize,
-        g_width: usize,
     ) -> Result<(), OperationError> {
         self.products.ensure_product_list_for_child(
             eng,
             child,
-            f_width,
-            g_width,
+            self.f_widths[child],
+            self.g_widths[child],
             self.g_identity[child],
             self.f_identity[child],
         )
@@ -539,14 +537,12 @@ impl ApplyRun<'_, '_> {
         &mut self,
         eng: &Engine,
         child: usize,
-        f_width: usize,
-        g_width: usize,
     ) -> Result<(), OperationError> {
         self.products.materialize_dense_child(
             eng,
             child,
-            f_width,
-            g_width,
+            self.f_widths[child],
+            self.g_widths[child],
             self.g_identity[child],
             self.f_identity[child],
         )
