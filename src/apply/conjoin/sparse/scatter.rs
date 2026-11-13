@@ -22,6 +22,17 @@ fn orient<const SWAPPED: bool>(inner: u32, outer: u32) -> (u32, u32) {
     }
 }
 
+/// A join's `(inner, outer)` sides of the `left` and `right` ones: the inner
+/// side is the left child normally and the right one when swapped.
+#[inline(always)]
+pub(super) fn inner_outer<const SWAPPED: bool, T>(left: T, right: T) -> (T, T) {
+    if !SWAPPED {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
 /// Where the scatter puts the candidates it finds.
 pub(super) enum Collect<'a, 'c> {
     /// The level's nodes, each f parent's candidates turned into its
@@ -130,22 +141,22 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     collect: Collect<'_, '_>,
     inner: Option<Inner>,
 ) -> Result<Made, OperationError> {
-    let (f_outer, g_outer, pl_outer) = if !SWAPPED {
-        (shape.f.right, shape.g.right, pl.right)
-    } else {
-        (shape.f.left, shape.g.left, pl.left)
-    };
+    let (_, f_outer) = inner_outer::<SWAPPED, _>(shape.f.left, shape.f.right);
+    let (_, g_outer) = inner_outer::<SWAPPED, _>(shape.g.left, shape.g.right);
+    let (_, pl_outer) = inner_outer::<SWAPPED, _>(pl.left, pl.right);
     let lim = eng.limits();
     // Under a vtree leaf, g's pairs by outer child and label make a table of
     // their owners, one slot per label, where no pair repeats
     // ([`build_owner_table`]): an f pair reads the slots of the labels its
     // own meets, under each product.
     if inner.is_none() {
-        let built = if !SWAPPED {
-            build_owner_table::<true>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
-        } else {
-            build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
-        };
+        let built = build_owner_table::<SWAPPED>(
+            lim,
+            g_level,
+            g_outer,
+            &mut ws.owners,
+            &mut ws.owners_clean,
+        )?;
         if let Some(ones) = built {
             // Into the level's nodes from f's nodes, stored or implied at one
             // pair a node ([`walkable`]), where each f index
@@ -160,7 +171,8 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                         &ws.owners[..OWNER_SLOTS * g_outer],
                         &mut ws.owned,
                     );
-                    clear_owners::<SWAPPED>(g_level, g_outer, ws);
+                    let clean = &mut ws.owners_clean;
+                    clear_owner_table::<SWAPPED>(g_level, g_outer, &mut ws.owners, clean);
                     let (plain, held) = gathered?;
                     ws.outer_held = held;
                     let plain = plain && !ones;
@@ -213,7 +225,8 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                 &mut ws.outer_offsets,
                 &mut ws.owned,
             );
-            clear_owners::<SWAPPED>(g_level, g_outer, ws);
+            let clean = &mut ws.owners_clean;
+            clear_owner_table::<SWAPPED>(g_level, g_outer, &mut ws.owners, clean);
             let held;
             (ws.owned_len, held) = gathered?;
             ws.outer_held = held && ws.owned_len == pl_outer.len();
@@ -288,16 +301,10 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`. Under a
     // vtree leaf the entries of one outer child are grouped by their leaf
     // label as well, so that an f pair reads only the labels its own meets.
-    let labelled = inner.is_none();
-    match (labelled, SWAPPED) {
-        (false, false) => {
-            build_reverse_index::<true>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?
-        }
-        (false, true) => {
-            build_reverse_index::<false>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?
-        }
-        (true, false) => build_labelled_index::<true>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
-        (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
+    if inner.is_none() {
+        build_labelled_index::<SWAPPED>(eng, g_level, g_outer, &mut ws.g_by_outer)?;
+    } else {
+        build_reverse_index::<SWAPPED, true>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?;
     }
     bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
     // This level gathers no owned products.
@@ -1291,16 +1298,6 @@ fn owner_walk_nodes<
         trim_walk(level, out, seeds, charged);
     }
     Ok((Made::Written, made_pairs))
-}
-
-/// Clear [`build_owner_table`]'s slots for `g_level`.
-#[inline(always)]
-fn clear_owners<const SWAPPED: bool>(g_level: &TddLevel, g_outer: usize, ws: &mut SparseWorkspace) {
-    if !SWAPPED {
-        clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-    } else {
-        clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
-    }
 }
 
 /// The `N` pairs in `pairs`, which take turns between two g parents from
@@ -2326,11 +2323,7 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     build_g_index::<SWAPPED>(eng, ws, g_level, shape)?;
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     let lim = eng.limits();
-    let (pl_inner, pl_outer) = if !SWAPPED {
-        (pl.left, pl.right)
-    } else {
-        (pl.right, pl.left)
-    };
+    let (pl_inner, pl_outer) = inner_outer::<SWAPPED, _>(pl.left, pl.right);
     let f_pairs = f_under::<SWAPPED>(&ws.est_counts, shape)
         .iter()
         .map(|&n| n as usize)
@@ -2449,7 +2442,7 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape)?;
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     // Decided once per level, so that no walk tests it per pair.
-    let pl_inner = if !SWAPPED { pl.left } else { pl.right };
+    let (pl_inner, _) = inner_outer::<SWAPPED, _>(pl.left, pl.right);
     if prefetching(std::mem::size_of_val(pl_inner)) {
         scatter_general_arm::<SWAPPED, true>(eng, ws, shape, pl, collect)
     } else {
@@ -2478,19 +2471,9 @@ fn build_scatter_indexes<const SWAPPED: bool>(
         ..
     } = ws;
     let counts = EstCounts::of(est_counts, shape);
-    // Keyed by the outer dimension: the right sibling normally, the left child
-    // when swapped.
-    if !SWAPPED {
-        build_reverse_index::<true>(
-            eng,
-            f_level,
-            shape.f.right,
-            Some(counts.f_right),
-            f_by_outer,
-        )?;
-    } else {
-        build_reverse_index::<false>(eng, f_level, shape.f.left, Some(counts.f_left), f_by_outer)?;
-    }
+    let (_, (f_outer, f_counts)) =
+        inner_outer::<SWAPPED, _>((shape.f.left, counts.f_left), (shape.f.right, counts.f_right));
+    build_reverse_index::<SWAPPED, true>(eng, f_level, f_outer, Some(f_counts), f_by_outer)?;
     build_g_index::<SWAPPED>(eng, ws, g_level, shape)
 }
 
@@ -2509,28 +2492,16 @@ fn build_g_index<const SWAPPED: bool>(
         ..
     } = ws;
     let counts = EstCounts::of(est_counts, shape);
-    if !SWAPPED {
-        build_reverse_index::<true>(
-            eng,
-            g_level,
-            shape.g.right,
-            Some(counts.g_right),
-            g_by_outer,
-        )
-    } else {
-        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_outer)
-    }
+    let (_, (g_outer, g_counts)) =
+        inner_outer::<SWAPPED, _>((shape.g.left, counts.g_left), (shape.g.right, counts.g_right));
+    build_reverse_index::<SWAPPED, true>(eng, g_level, g_outer, Some(g_counts), g_by_outer)
 }
 
 /// f's pairs under each outer key, from the direction estimate's counts:
 /// the bucket sizes of f's full index by outer key.
 fn f_under<const SWAPPED: bool>(est_counts: &[u32], shape: LevelShape) -> &[u32] {
     let counts = EstCounts::of(est_counts, shape);
-    if !SWAPPED {
-        counts.f_right
-    } else {
-        counts.f_left
-    }
+    inner_outer::<SWAPPED, _>(counts.f_left, counts.f_right).1
 }
 
 /// Build f's index by outer key for [`scatter_routed`], over only the pairs
@@ -2659,17 +2630,9 @@ fn build_inner_index<const SWAPPED: bool>(
         ..
     } = ws;
     let counts = EstCounts::of(est_counts, shape);
-    if !SWAPPED {
-        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_inner)
-    } else {
-        build_reverse_index::<true>(
-            eng,
-            g_level,
-            shape.g.right,
-            Some(counts.g_right),
-            g_by_inner,
-        )
-    }
+    let ((g_inner, g_counts), _) =
+        inner_outer::<SWAPPED, _>((shape.g.left, counts.g_left), (shape.g.right, counts.g_right));
+    build_reverse_index::<SWAPPED, false>(eng, g_level, g_inner, Some(g_counts), g_by_inner)
 }
 
 /// Fill `offsets` with the bucket bounds of `list` over `width` f indices:
@@ -2909,11 +2872,8 @@ fn sides<'w, const SWAPPED: bool>(
     kept: bool,
 ) -> Result<ScatterSides<'w>, OperationError> {
     let LevelShape { f, g, .. } = shape;
-    let (inner_k, outer_k, filtered_dim, outer_g_dim) = if !SWAPPED {
-        (f.left, f.right, g.left, g.right)
-    } else {
-        (f.right, f.left, g.right, g.left)
-    };
+    let (inner_k, outer_k) = inner_outer::<SWAPPED, _>(f.left, f.right);
+    let (filtered_dim, outer_g_dim) = inner_outer::<SWAPPED, _>(g.left, g.right);
     let SparseWorkspace {
         f_by_outer,
         g_by_outer,
@@ -3499,11 +3459,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
         return count_arm::<SWAPPED>(eng, ws, shape, pl, fold);
     }
     let lim = eng.limits();
-    let (pl_inner, pl_outer) = if !SWAPPED {
-        (pl.left, pl.right)
-    } else {
-        (pl.right, pl.left)
-    };
+    let (pl_inner, pl_outer) = inner_outer::<SWAPPED, _>(pl.left, pl.right);
     let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, false)?;
 
     // Amortized cancellation/deadline poll. The sparse join has no other
@@ -3604,11 +3560,7 @@ fn count_general_arm<const SWAPPED: bool, const FILTER: bool>(
     fold: &mut CandidateFold<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let (pl_inner, pl_outer) = if !SWAPPED {
-        (pl.left, pl.right)
-    } else {
-        (pl.right, pl.left)
-    };
+    let (pl_inner, pl_outer) = inner_outer::<SWAPPED, _>(pl.left, pl.right);
     let s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, false)?;
     let ScatterSides {
         f_by_outer,

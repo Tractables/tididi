@@ -440,7 +440,7 @@ fn walk_one_side<const SWAPPED: bool>(
     } else {
         (pl.right, &pb.right_offsets, &pb.g_by_right, shape.g.right)
     };
-    build_reverse_index::<SWAPPED>(
+    build_reverse_index::<SWAPPED, false>(
         eng,
         g_level,
         key_width,

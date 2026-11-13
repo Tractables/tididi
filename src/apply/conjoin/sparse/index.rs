@@ -627,15 +627,13 @@ pub(super) fn prefix_offsets(counts: &mut [u32], inline_singles: bool) -> Result
     Ok(total)
 }
 
-/// Build a reverse index from a level's pairs, keyed by one child side:
-///   `BY_RIGHT = false`: left_child_idx  → [(parent_idx, right_sibling_idx)]
-///   `BY_RIGHT = true` : right_sibling_idx → [(parent_idx, left_child_idx)]
-/// grouped by the key-side child index.
+/// Build a reverse index from a level's pairs, keyed by the join's outer
+/// child (`OUTER`) or its inner one ([`inner_outer`]): key child index →
+/// [(parent_idx, other child index)], grouped by the key.
 ///
-/// `BY_RIGHT` is a const generic so the `if BY_RIGHT` branches fold away.
 /// `counts` is the histogram by this child when the direction estimate has
 /// already counted this level's pairs.
-pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
+pub(super) fn build_reverse_index<const SWAPPED: bool, const OUTER: bool>(
     eng: &Engine,
     level: &TddLevel,
     key_width: usize,
@@ -645,7 +643,8 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     counting_sort(
         eng.limits(), key_width, NodePairs(level),
         |(parent, pair)| {
-            let (key, other) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            let (inner, outer) = inner_outer::<SWAPPED, _>(pair.left.0, pair.right.0);
+            let (key, other) = if OUTER { (outer, inner) } else { (inner, outer) };
             (key as usize, RevEntry { parent, other })
         },
         counts, RevEntry { parent: 0, other: 0 }, index,
@@ -655,12 +654,12 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
 /// The runs [`build_labelled_index`] cuts each outer child's entries into.
 pub(super) const LABEL_RUNS: usize = 3;
 
-/// Build a reverse index of a level whose other child is a vtree leaf, keyed
-/// by the keyed child and then by the leaf label, Pos, One, Neg: the keyed
+/// Build a reverse index of a level whose inner child is a vtree leaf, keyed
+/// by the outer child and then by the leaf label, Pos, One, Neg: the outer
 /// child `k`'s entries with label run `r` are bucket `LABEL_RUNS * k + r`,
 /// in the order [`build_reverse_index`] would give them. A literal meets the
 /// One run and its own, which are next to each other.
-pub(super) fn build_labelled_index<const BY_RIGHT: bool>(
+pub(super) fn build_labelled_index<const SWAPPED: bool>(
     eng: &Engine,
     level: &TddLevel,
     key_width: usize,
@@ -671,7 +670,7 @@ pub(super) fn build_labelled_index<const BY_RIGHT: bool>(
     counting_sort(
         eng.limits(), LABEL_RUNS * key_width, NodePairs(level),
         |(parent, pair)| {
-            let (key, other) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            let (other, key) = inner_outer::<SWAPPED, _>(pair.left.0, pair.right.0);
             (LABEL_RUNS * key as usize + RUN[other as usize], RevEntry { parent, other })
         },
         None, RevEntry { parent: 0, other: 0 }, index,
@@ -686,9 +685,9 @@ pub(super) const OWNER_SLOTS: usize = 3;
 /// child's run of [`OWNER_SLOTS`].
 const OWNER_SLOT: [usize; 3] = [1, 0, 2];
 
-/// Fill `owners` with the owners of a level's pairs whose other child is a
+/// Fill `owners` with the owners of a level's pairs whose inner child is a
 /// vtree leaf: slot `OWNER_SLOTS * k + s` names the node holding the pair of
-/// keyed child `k` and the label of slot `s`, `NO_PRODUCT` where no node
+/// outer child `k` and the label of slot `s`, `NO_PRODUCT` where no node
 /// does. A deterministic level holds each such pair once; where a pair
 /// repeats, in two nodes or twice in one as a marginal diagram's pair lists
 /// may, the table cannot hold it and `None` is returned. Otherwise
@@ -696,7 +695,7 @@ const OWNER_SLOT: [usize; 3] = [1, 0, 2];
 ///
 /// `owners` is all `NO_PRODUCT` whenever `clean`: a table left behind by a
 /// level that did not clear it ([`clear_owner_table`]) is filled first.
-pub(super) fn build_owner_table<const BY_RIGHT: bool>(
+pub(super) fn build_owner_table<const SWAPPED: bool>(
     lim: &Limits,
     level: &TddLevel,
     key_width: usize,
@@ -711,7 +710,7 @@ pub(super) fn build_owner_table<const BY_RIGHT: bool>(
     *clean = false;
     let (mut repeated, mut ones) = (false, false);
     level.for_each_node_pair(|parent, pair| {
-        let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+        let (label, key) = inner_outer::<SWAPPED, _>(pair.left.0, pair.right.0);
         let slot = &mut owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]];
         repeated |= *slot != NO_PRODUCT;
         *slot = parent as u32;
@@ -826,10 +825,10 @@ pub(super) fn gather_listed_products(
 const FILL_SLOTS_PER_NODE: usize = 16;
 
 /// Empty the slots [`build_owner_table`] filled from `level` over
-/// `key_width` keyed children: the table's first `OWNER_SLOTS * key_width`
+/// `key_width` outer children: the table's first `OWNER_SLOTS * key_width`
 /// slots written in order where they are few against the level's nodes,
 /// otherwise each slot a pair filled.
-pub(super) fn clear_owner_table<const BY_RIGHT: bool>(
+pub(super) fn clear_owner_table<const SWAPPED: bool>(
     level: &TddLevel,
     key_width: usize,
     owners: &mut [u32],
@@ -840,7 +839,7 @@ pub(super) fn clear_owner_table<const BY_RIGHT: bool>(
         owners[..slots].fill(NO_PRODUCT);
     } else {
         level.for_each_node_pair(|_, pair| {
-            let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            let (label, key) = inner_outer::<SWAPPED, _>(pair.left.0, pair.right.0);
             owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]] = NO_PRODUCT;
         });
     }
