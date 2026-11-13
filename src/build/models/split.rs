@@ -48,6 +48,17 @@ impl Values<'_> {
     }
 }
 
+impl Values<'static> {
+    fn owned(words: usize, data: Vec<u64>, (atom, atoms): (Vec<u32>, u32)) -> Self {
+        Values {
+            words,
+            data: data.into(),
+            atom,
+            atoms,
+        }
+    }
+}
+
 impl Charged for Values<'_> {
     fn charged_bytes(&self) -> u64 {
         let data = match &self.data {
@@ -646,35 +657,24 @@ fn split_words(
         atoms: parent.atoms as usize,
         triples,
     };
-    let low = Values {
-        words: 1,
-        data: low_data.into(),
-        atom: low_atom,
-        atoms: low_atoms,
-    };
-    let high = Values {
-        words: 1,
-        data: high_data.into(),
-        atom: high_atom,
-        atoms: high_atoms,
-    };
+    let low = Values::owned(1, low_data, (low_atom, low_atoms));
+    let high = Values::owned(1, high_data, (high_atom, high_atoms));
     Ok((split, low, high))
 }
 
-/// Emit and sort the triples of `split_words` when values are not all distinct.
+/// The triples of `split_words` when values are not all distinct. Emitting
+/// by high value first names each value's low value.
 fn split_word_triples(
     lim: &Limits,
     s: &mut Scratch,
     parent: &Values,
     key: KeyLayout,
-    (low_atom, low_atoms): (&[u32], u32),
-    (high_atom, high_atoms): (&[u32], u32),
+    low: (&[u32], u32),
+    high: (&[u32], u32),
 ) -> Result<Vec<[u32; 3]>, OperationError> {
     let n = parent.len();
     let high_count = s.high_starts.len();
-    let from_low = from_low(n, s);
-    if !from_low {
-        // Emitting by high value names each value's low value.
+    if !from_low(n, s) {
         if s.low_of.len() < n {
             lim.try_resize(&mut s.low_of, n, 0u32)?;
         }
@@ -700,34 +700,7 @@ fn split_word_triples(
             }
         }
     }
-    let (sort_keys, low_of) = (&s.sort_keys, &s.low_of);
-    let (low_starts, high_starts) = (&s.low_starts, &s.high_starts);
-    let (low_first, high_first) = (&s.low_first, &s.high_first);
-    let each = |emit: &mut dyn FnMut([u32; 3])| {
-        if from_low {
-            for (l, &k) in low_first.iter().enumerate() {
-                for &sorted in &sort_keys[run(low_starts, k, n)] {
-                    emit([key.atom(sorted), high_atom[key.run(sorted)], l as u32]);
-                }
-            }
-        } else {
-            for (r, &k) in high_first.iter().enumerate() {
-                for e in run(high_starts, k, n) {
-                    emit([parent.atom[e], r as u32, low_atom[low_of[e] as usize]]);
-                }
-            }
-        }
-    };
-    let atoms = (parent.atoms, high_atoms, low_atoms);
-    sorted_triples(
-        lim,
-        &mut s.radix,
-        &mut s.high_keys,
-        &mut s.wide_triples,
-        atoms,
-        !from_low,
-        each,
-    )
+    triples(lim, s, parent, low, high)
 }
 
 /// Split one-word values that all lie in one parent atom, as the values of
@@ -828,18 +801,8 @@ fn split_single(
     let low_data = low_parts(lim, parent.data.to_mut(), &s.low_starts, mask)?;
     // The high runs' parts are the high child's values, so their buffer is
     // handed over rather than copied.
-    let low = Values {
-        words: 1,
-        data: low_data.into(),
-        atom: low_atom,
-        atoms: low_atoms,
-    };
-    let high = Values {
-        words: 1,
-        data: std::mem::take(&mut s.high).into(),
-        atom: high_atom,
-        atoms: high_atoms,
-    };
+    let low = Values::owned(1, low_data, (low_atom, low_atoms));
+    let high = Values::owned(1, std::mem::take(&mut s.high), (high_atom, high_atoms));
     Ok(Some((split, low, high)))
 }
 
@@ -1440,18 +1403,8 @@ fn split_hashed(
     let mut high_data = Vec::new();
     lim.reserve_exact(&mut high_data, high_count)?;
     high_data.extend_from_slice(&s.high);
-    let low = Values {
-        words: 1,
-        data: low_data.into(),
-        atom: low_atom,
-        atoms: low_atoms,
-    };
-    let high = Values {
-        words: 1,
-        data: high_data.into(),
-        atom: high_atom,
-        atoms: high_atoms,
-    };
+    let low = Values::owned(1, low_data, (low_atom, low_atoms));
+    let high = Values::owned(1, high_data, (high_atom, high_atoms));
     Ok(Some((split, low, high)))
 }
 
@@ -1830,18 +1783,8 @@ impl Decomposition {
                         * u128::from(low_size[pair as u32 as usize]);
                 }
             }
-            Decomposition::Triples { triples, .. } => {
-                gate.poll(triples.len() as u64)?;
-                for &[_, h, l] in triples {
-                    models += u128::from(high_size[h as usize]) * u128::from(low_size[l as usize]);
-                }
-            }
-            Decomposition::Pairs { pairs } => {
-                gate.poll(pairs.len() as u64)?;
-                for pair in pairs {
-                    models += u128::from(high_size[pair.left.0 as usize])
-                        * u128::from(low_size[pair.right.0 as usize]);
-                }
+            Decomposition::Triples { .. } | Decomposition::Pairs { .. } => {
+                unreachable!("a hashed split's count is unknown only while it is grouped or by atom")
             }
         }
         gate.flush()?;
@@ -2450,18 +2393,8 @@ fn split_parts(
         atoms: parent.atoms as usize,
         triples,
     };
-    let low = Values {
-        words: lw,
-        data: low_data.into(),
-        atom: low_atom,
-        atoms: low_atoms,
-    };
-    let high = Values {
-        words: rw,
-        data: high_data.into(),
-        atom: high_atom,
-        atoms: high_atoms,
-    };
+    let low = Values::owned(lw, low_data, (low_atom, low_atoms));
+    let high = Values::owned(rw, high_data, (high_atom, high_atoms));
     Ok((split, low, high))
 }
 
@@ -2743,7 +2676,9 @@ fn number_runs(
 const DIRECT_MIN_SPAN: usize = 1 << 12;
 
 /// The distinct `[atom, high atom, low atom]` triples of the parent values,
-/// in ascending order.
+/// in ascending order. Unless every value is its own atom, reads the low
+/// runs' values from `s.low_keys`, each value's high run above its atom in
+/// low order, or else each value's low run from `s.low_of`.
 fn triples(
     lim: &Limits,
     s: &mut Scratch,
@@ -2767,18 +2702,14 @@ fn triples(
         return Ok(out);
     }
     let from_low = from_low(n, s);
-    let (order, low_of, high_of) = (&s.order, &s.low_of, &s.high_of);
+    let (low_keys, low_of) = (&s.low_keys, &s.low_of);
     let (low_starts, high_starts) = (&s.low_starts, &s.high_starts);
     let (low_first, high_first) = (&s.low_first, &s.high_first);
     let each = |emit: &mut dyn FnMut([u32; 3])| {
         if from_low {
             for (l, &k) in low_first.iter().enumerate() {
-                for &e in &order[run(low_starts, k, n)] {
-                    emit([
-                        parent.atom[e as usize],
-                        high_atom[high_of[e as usize] as usize],
-                        l as u32,
-                    ]);
+                for &key in &low_keys[run(low_starts, k, n)] {
+                    emit([key as u32, high_atom[(key >> 32) as usize], l as u32]);
                 }
             }
         } else {
