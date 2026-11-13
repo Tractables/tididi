@@ -72,3 +72,24 @@ fn try_pairs_read_reserves_only_what_an_implicit_level_generates() {
     let bytes = (per_node * std::mem::size_of::<super::ChildPair>()) as u64;
     assert_eq!(lim.meters().in_flight_bytes, bytes);
 }
+
+/// Reading a node past a stored level's end names the node.
+#[test]
+#[should_panic(expected = "node 999 of a level of")]
+fn pairs_read_past_a_stored_level_names_the_node() {
+    use crate::test_helpers::{with_stored_copy, x_decision_diagram};
+    let (implicit, v, _) = x_decision_diagram(32);
+    let stored = with_stored_copy(&implicit, v);
+    stored.levels[v.idx()].pairs_read(999, &mut Vec::new());
+}
+
+/// As [`pairs_read_past_a_stored_level_names_the_node`], through the limits.
+#[test]
+#[should_panic(expected = "node 999 of a level of")]
+fn try_pairs_read_past_a_stored_level_names_the_node() {
+    use crate::test_helpers::{with_stored_copy, x_decision_diagram};
+    let (implicit, v, _) = x_decision_diagram(32);
+    let stored = with_stored_copy(&implicit, v);
+    let eng = crate::Engine::new();
+    let _ = stored.levels[v.idx()].try_pairs_read(eng.limits(), 999, &mut Vec::new());
+}

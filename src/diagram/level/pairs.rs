@@ -362,7 +362,7 @@ impl TddLevel {
             Some(pairs) => Ok(pairs),
             None => {
                 buf.clear();
-                lim.reserve_exact(buf, self.described().pairs_per_node())?;
+                lim.reserve_exact(buf, self.described_for(i).pairs_per_node())?;
                 Ok(self.described_read(i, buf))
             }
         }
@@ -393,7 +393,7 @@ impl TddLevel {
     #[inline(never)]
     #[track_caller]
     fn described_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        let d = self.described();
+        let d = self.described_for(i);
         assert!(i < d.nodes(), "node {i} of a level of {} nodes", d.nodes());
         buf.clear();
         d.places(i).write_into(buf);
@@ -564,6 +564,16 @@ impl TddLevel {
     /// This implicit level's description.
     fn described(&self) -> &ImplicitLevel {
         self.pairs.implicit().expect("an arena is stored or described")
+    }
+
+    /// [`described`](Self::described), reached for node `i`: a stored
+    /// level falls through to it only for a node past its end.
+    #[track_caller]
+    fn described_for(&self, i: usize) -> &ImplicitLevel {
+        match self.pairs.implicit() {
+            Some(d) => d,
+            None => panic!("node {i} of a level of {} nodes", self.node_count()),
+        }
     }
 
     /// Where the pairs of the node of this implicit level whose pairs the
