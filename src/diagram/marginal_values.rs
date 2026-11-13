@@ -191,7 +191,7 @@ impl<'a> MarginalStorage<'a> {
     pub(crate) fn push_weight(&mut self, eng: &crate::Engine, value: WeightValue) -> Result<u32, crate::OperationError> {
         let values = self.weights.as_mut().expect("weighted append requires its store")
             .level_vals_mut(self.index).expect("weighted level has a column");
-        let slot = crate::value::slots::next_slot_index(values.len())?;
+        let slot = eng.limits().next_slot(values.len())?;
         eng.limits().try_push(values, value)?;
         self.level.set_weight_width(slot + 1);
         Ok(slot)

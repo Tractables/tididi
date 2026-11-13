@@ -234,7 +234,7 @@ pub(crate) fn seed_count_slots(
 /// append `value` to `level`'s count store and return its slot.
 pub(crate) fn push_count_slot(eng: &Engine, level: &mut TddLevel, value: Count) -> Result<u32, OperationError> {
     let (counts, big) = level.marginal_store_mut().expect("push_slot: level is not marginal");
-    let slot = next_slot_index(counts.len())?;
+    let slot = eng.limits().next_slot(counts.len())?;
     super::append_count(eng, counts, big, value)?;
     Ok(slot)
 }
@@ -289,13 +289,6 @@ pub(crate) trait SlotValues {
     /// `None` when its column does not hold it. Asked only where
     /// [`Self::LEAF_PINNED`].
     fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &Self::Value) -> Option<u32>;
-}
-
-/// Check the next slot against the reference encoding before growing a store.
-pub(crate) fn next_slot_index(len: usize) -> Result<u32, OperationError> {
-    let slot = u32::try_from(len).map_err(|_| OperationError::IndexOverflow)?;
-    ValueRef::Slot(slot).side().map_err(|_| OperationError::IndexOverflow)?;
-    Ok(slot)
 }
 
 /// `value` as a marginal-side reference into level `v`: inline where the

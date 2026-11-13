@@ -39,7 +39,7 @@ use crate::diagram::{
     Assembly, ChildDecoder, ChildPair, ChildSide, CountOverflow, EncodedChildRef, LEAF_COUNTS,
     NodeIdx, Tdd, TddLevel, TddNodeId, ValueRef,
 };
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{Limits, OperationError, PollGate};
 use crate::reduce::ReductionPlan;
 use crate::value::{COUNT_OVERFLOW, Count, CountRead, CountVec};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -191,6 +191,7 @@ fn side_of<'a>(summed: bool, shift: u32, own: &'a Option<Pieces>, leaf: &'a Piec
 /// `pieces` when they are nodes, else the one value reference written into
 /// `one`.
 fn side_refs<'s>(
+    lim: &Limits,
     side: &'s Side,
     raw: EncodedChildRef,
     of_g: bool,
@@ -201,11 +202,9 @@ fn side_refs<'s>(
         Side::Pieces(p) => Ok(p.of_f(raw.0)),
         Side::Values { shift } => {
             one[0] = match ChildDecoder::marginal().value(raw) {
-                ValueRef::Slot(slot) if of_g && *shift != 0 => slot
-                    .checked_add(*shift)
-                    .and_then(|s| ValueRef::Slot(s).side().ok())
-                    .ok_or(OperationError::IndexOverflow)?
-                    .raw(),
+                ValueRef::Slot(slot) if of_g && *shift != 0 => {
+                    ValueRef::slot_raw(lim.next_slot(slot as usize + *shift as usize)?)
+                }
                 _ => raw.raw(),
             };
             Ok(&one[..])
@@ -228,8 +227,8 @@ fn rewrite_node(
     let lim = eng.limits();
     let (mut one_l, mut one_r) = ([0u32], [0u32]);
     for p in level.pairs_iter_of_idx(a) {
-        let xs = side_refs(left, p.left, of_g, &mut one_l)?;
-        let ys = side_refs(right, p.right, of_g, &mut one_r)?;
+        let xs = side_refs(lim, left, p.left, of_g, &mut one_l)?;
+        let ys = side_refs(lim, right, p.right, of_g, &mut one_r)?;
         for &x in xs {
             for &y in ys {
                 lim.try_push(
@@ -279,10 +278,8 @@ fn joined_store(
         gl.marginal_counts().unwrap_or(&[]),
     );
     let width = fc.len() + gc.len();
-    if u32::try_from(width).is_err()
-        || (width > 0 && ValueRef::Slot((width - 1) as u32).side().is_err())
-    {
-        return Err(OperationError::IndexOverflow);
+    if width > 0 {
+        eng.limits().next_slot(width - 1)?;
     }
     let mut counts: Vec<u128> = Vec::new();
     eng.limits().reserve_exact(&mut counts, width)?;

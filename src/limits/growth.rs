@@ -124,7 +124,12 @@ impl Limits {
         if self.slot_cap_pin.get().is_some_and(|cap| len >= cap) {
             return Err(OperationError::IndexOverflow);
         }
-        crate::value::slots::next_slot_index(len)
+        // Kept in this form: one compare of `len` against 2^30 refuses the
+        // same lengths but moves the code generated for the inlined float
+        // level sums by up to 4% of their instructions.
+        let slot = u32::try_from(len).map_err(|_| OperationError::IndexOverflow)?;
+        crate::diagram::ValueRef::Slot(slot).side().map_err(|_| OperationError::IndexOverflow)?;
+        Ok(slot)
     }
 
     /// The 32-bit offset or index of position `len` in a list an operation

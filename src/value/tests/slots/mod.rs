@@ -47,11 +47,12 @@ fn refused_weight_slot_preserves_values_and_width() {
 
 #[test]
 fn slot_growth_checks_the_reference_payload_limit() {
-    let limit = 1usize << 30;
-    assert_eq!(next_slot_index(0), Ok(0));
-    assert_eq!(next_slot_index(limit - 1), Ok((limit - 1) as u32));
+    let (eng, limit) = (Engine::new(), 1usize << 30);
+    let lim = eng.limits();
+    assert_eq!(lim.next_slot(0), Ok(0));
+    assert_eq!(lim.next_slot(limit - 1), Ok((limit - 1) as u32));
     for len in [limit, u32::MAX as usize, usize::MAX] {
-        assert_eq!(next_slot_index(len), Err(OperationError::IndexOverflow));
+        assert_eq!(lim.next_slot(len), Err(OperationError::IndexOverflow));
     }
 }
 
