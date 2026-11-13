@@ -124,10 +124,9 @@ thread_local! {
     /// The levels on this thread that read a complete child side by
     /// arithmetic: both sides, the left alone, the right alone; the times a
     /// reserved arena charged the meter for a growth it did not make; the
-    /// levels of two complete sides that read a lone g pair in every cell;
-    /// the levels of one complete side whose every column holds one g pair;
-    /// and the rows of those written whole ([`complete_census`]).
-    static COMPLETE: std::cell::Cell<[u64; 7]> = const { std::cell::Cell::new([0; 7]) };
+    /// levels with a complete side whose every column holds one g pair; and
+    /// the rows of those written whole ([`complete_census`]).
+    static COMPLETE: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
     /// Whether every cell on this thread reads its column's pairs
     /// ([`column_reads`]).
     static COLUMN_READS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -161,16 +160,12 @@ pub(super) fn note_scheduled_charge() {
     count_complete(3);
 }
 
-pub(super) fn note_lone_pair() {
+pub(super) fn note_lone_columns() {
     count_complete(4);
 }
 
-pub(super) fn note_lone_columns() {
-    count_complete(5);
-}
-
 pub(super) fn note_whole_row() {
-    count_complete(6);
+    count_complete(5);
 }
 
 fn count_complete(kind: usize) {
@@ -686,10 +681,9 @@ pub(super) fn taken_levels_settled<R>(f: impl FnOnce() -> R) -> R {
 /// The levels on this thread so far that read a complete child side by
 /// arithmetic: with both sides complete, the left alone, the right alone;
 /// the times a reserved arena charged the meter for a growth it did not
-/// make; the levels of two complete sides that read a lone g pair in every
-/// cell; and the levels of one complete side whose every column holds one g
-/// pair.
-pub(super) fn complete_census() -> [u64; 7] {
+/// make; the levels with a complete side whose every column holds one g
+/// pair; and the rows of those written whole.
+pub(super) fn complete_census() -> [u64; 6] {
     COMPLETE.with(std::cell::Cell::get)
 }
 

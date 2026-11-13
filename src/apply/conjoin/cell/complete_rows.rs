@@ -1,5 +1,5 @@
 //! A plain level with a complete child side: its lookups, its entry, and
-//! the actions that read a lone g pair or one pair a column.
+//! the action that reads one pair a column.
 
 use super::*;
 use crate::limits::Transient;
@@ -31,14 +31,12 @@ pub(crate) enum PlainLookups {
 ///
 /// With both sides complete no candidate dies and no dead-pair mask can cull,
 /// so the loop runs without the per-row mask fold (`DENSE`), with no
-/// `NO_PRODUCT` test, and writes through a [`EmitSink`]; where the g
-/// side is one node of one pair, every cell reads that pair
-/// ([`EmitBesideOne`]) and no column is read, and where every g node has
-/// one pair, a cell reads its column's ([`EmitLoneColumns`]). With one
+/// `NO_PRODUCT` test, and writes through an [`EmitSink`]; where every g
+/// node has one pair, a cell reads its column's ([`EmitLoneColumns`]). With one
 /// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
 /// with that side's lookup replaced: the fold and the culls on the grid side
 /// stay; on a level that built no masks they find nothing, as on
-/// `Route::PlainDense` they would not be run. It writes through a
+/// `Route::PlainDense` they would not be run. It writes through an
 /// [`EmitSink`] too, its arena reserved for every pair the level
 /// would write if none died.
 pub(crate) fn run_level_rows_complete(
@@ -52,34 +50,17 @@ pub(crate) fn run_level_rows_complete(
     let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
     match lookups {
-        PlainLookups::Complete { charged } => match lone_pair(rows, &mut *scratch.g_pairs) {
-            Some(g) => run_level_rows::<true, _, _, _>(
-                eng,
-                rows,
-                scratch,
-                &complete(&sides.left),
-                &complete(&sides.right),
-                &mut EmitBesideOne {
-                    sink: EmitSink {
-                        level,
-                        charged,
-                        inline: &mut inline,
-                    },
-                    g: [g],
-                },
-            ),
-            None => run_complete_or_lone::<true, _, _>(
-                eng,
-                rows,
-                scratch,
-                (&complete(&sides.left), &complete(&sides.right)),
-                EmitSink {
-                    level,
-                    charged,
-                    inline: &mut inline,
-                },
-            ),
-        },
+        PlainLookups::Complete { charged } => run_complete_or_lone::<true, _, _>(
+            eng,
+            rows,
+            scratch,
+            (&complete(&sides.left), &complete(&sides.right)),
+            EmitSink {
+                level,
+                charged,
+                inline: &mut inline,
+            },
+        ),
         PlainLookups::CompleteLeft { charged } => run_complete_or_lone::<false, _, _>(
             eng,
             rows,
@@ -285,45 +266,4 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
     out.set_cursor(cursor);
     gate.add_short(due_at - due);
     Ok(width)
-}
-
-/// [`Emit`] on a level whose g side is one node of one pair, `g`: every cell
-/// is that column's, and its pairs are known before the row loop, which
-/// then reads no column.
-struct EmitBesideOne<S> {
-    sink: S,
-    g: [ChildPair; 1],
-}
-
-impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesideOne<S> {
-    const DENSE_SLAB: bool = true;
-    const ONE_COLUMN: bool = true;
-
-    #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        cell_pairs::<_, _, _>(
-            (eng, a.ctx),
-            (a.j, a.row_base + a.j),
-            a.f_pairs,
-            &self.g,
-            a.node_idx,
-            (a.left, a.right),
-            (&mut self.sink, a.gate),
-        )
-    }
-}
-
-/// The one pair of a level's g side, where it has one node and that node
-/// one pair: the pair every cell of the level reads as its column's.
-fn lone_pair(rows: RowLoop<'_>, scratch: &mut Vec<ChildPair>) -> Option<ChildPair> {
-    if rows.ctx.g_width != 1 {
-        return None;
-    }
-    match column_pairs(rows.ctx, rows.g_level, 0, scratch) {
-        &[pair] => {
-            super::super::note_lone_pair();
-            Some(pair)
-        }
-        _ => None,
-    }
 }

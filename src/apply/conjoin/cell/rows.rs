@@ -120,10 +120,6 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// [`ListSink`], `rows_by_words` without `SLAB`), which must re-fill that row between rows.
     const DENSE_SLAB: bool;
 
-    /// Whether the level has one column, which the action was built for: the
-    /// row loop then knows its width without reading it.
-    const ONE_COLUMN: bool = false;
-
     /// One cell of the row.
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError>;
 
@@ -285,11 +281,7 @@ where
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
-    debug_assert!(
-        !A::ONE_COLUMN || ctx.g_width == 1,
-        "a one-column action runs on a level of one column"
-    );
-    let g_width = if A::ONE_COLUMN { 1 } else { ctx.g_width };
+    let g_width = ctx.g_width;
     let cull_left = culls::<DENSE, _>(ctx, left);
     let cull_right = culls::<DENSE, _>(ctx, right);
     // Whether a row may read its live columns off the reach columns: every
