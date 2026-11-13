@@ -679,8 +679,9 @@ impl PairSink for EmitSink<'_> {
     }
 }
 
-/// [`EmitSink`] for a level whose pair arena was reserved before its row
-/// loop to hold every pair the loop writes, so the arena never grows.
+/// [`EmitSink`] for a level whose pair arena may hold room ahead of the pairs
+/// written: reserved before its row loop, or sized ahead by
+/// [`ProjectedEmitSink`].
 ///
 /// The output-pair meter is charged from the arena's capacity as it grows.
 /// To keep the meter, and every stop rule that reads it, where the
@@ -1449,11 +1450,6 @@ where
 }
 
 /// Merged per-cell product walk — one kernel for every dense cell action.
-///
-/// The lookups (`L`, `R`) resolve child refs per representation — a
-/// `DenseLookup` grid read or a `MarginalLookup` pass-through, see
-/// `child_lookup.rs`; the sink (`S`) is the per-pair action, `EmitSink` or
-/// `CollectSink`.
 ///
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
 /// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask

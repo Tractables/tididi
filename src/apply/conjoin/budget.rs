@@ -155,8 +155,7 @@ pub(super) fn trim_to<T>(v: &mut Vec<T>, cap: usize) {
 /// say which node it is; `None` when nothing was pushed, so the product is
 /// `⊥`. A single pair is popped back off the arena and stored inline
 /// ([`emit_single_pair`]); two or more stay in the arena as the node's
-/// range. The one node finalizer of the dense, sparse and clause emitters,
-/// so every route meters its node the same way.
+/// range.
 #[inline(always)]
 pub(crate) fn finish_node(
     eng: &Engine,
