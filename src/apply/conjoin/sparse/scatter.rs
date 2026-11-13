@@ -1883,14 +1883,13 @@ enum Copied {
 }
 
 /// The nodes [`copy_nodes`] takes while nothing is written, from the first,
-/// the level's arena holding `n` of f's pairs and the capacities of its
-/// arena and nodes `room`: each node one pair or a range at the next of f's
+/// the level's arena and nodes empty with capacities `room`: each node one pair or a range at the next of f's
 /// arena pairs, within both capacities, copied and of a size the node words
 /// hold. Each node's product is listed and the clock charged as the walk
 /// lists and charges them. It stops, having done nothing for it, at the
 /// first node that is not so, which [`copy_nodes`] takes from the start.
-/// Returns how many it took, the arena pairs they hold with `n`'s, and
-/// the pairs they hold.
+/// Returns how many it took, the arena pairs they hold, and the pairs they
+/// hold.
 ///
 /// With `PLAIN` the entries are [`Listed::plain`]: a node's units are two a
 /// pair, and a pair of either literal is copied by the slot of its label.
@@ -1899,7 +1898,6 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     lim: &crate::limits::Limits,
     (stored, f_nodes): (crate::diagram::StoredPairs<'_>, usize),
     entries: Listed<'_>,
-    mut n: usize,
     room: (usize, usize),
     out: &mut Vec<ProductEntry>,
     ticker: &mut crate::limits::PollGate<'_>,
@@ -1932,7 +1930,7 @@ fn take_lent<const SWAPPED: bool, const ONES: bool, const PLAIN: bool>(
     let pair_room = arena_room.min((1 << 31) - 1);
     let range_room = pair_room.min(f_arena.len());
     let mut prods = Tail::of(out);
-    let (mut taken, mut pairs) = (0, 0);
+    let (mut taken, mut n, mut pairs) = (0, 0, 0);
     for node in &stored.nodes()[..f_nodes.min(node_room)] {
         // The node's code, its pairs, and its pairs in the arena.
         let (code, count, end) = match node.kind() {
@@ -2017,38 +2015,21 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
     (level, start, out): (&mut TddLevel, usize, &mut Vec<ProductEntry>),
     ticker: &mut crate::limits::PollGate<'_>,
 ) -> Result<Copied, OperationError> {
-    use crate::diagram::NodeKind;
     let lim = eng.limits();
     let (arena, nodes) = (level.pairs.stored_mut(), level.nodes.stored_mut());
-    // While each node made so far is f's node as f stores it, its pairs at
-    // f's arena's start and in order, and the walk's pushes of them would
-    // grow neither the level's nodes nor its arena, nothing is written:
-    // `unwritten` counts the pairs those nodes hold. They are written from
-    // f's at the first node that is not so; where none is, the level is f's.
-    // f's nodes are lent only where it stores them.
-    let lendable = f_level.stored();
-    let mut unwritten = (lendable.is_some()
-        && start == 0
-        && nodes.is_empty()
-        && !crate::apply::conjoin::lend_forced_off())
-    .then_some(0usize);
-    let write = |arena: &mut Vec<ChildPair>,
-                 nodes: &mut Vec<crate::diagram::EncodedNode>,
-                 made: usize,
-                 pairs: usize| {
-        // Within both capacities, as the nodes were taken: nothing grows.
-        let stored = lendable.expect("nodes are unwritten only where f stores them");
-        arena.extend_from_slice(&stored.arena()[..pairs]);
-        nodes.extend_from_slice(&stored.nodes()[..made]);
-    };
+    // f's nodes are lent only where it stores them: the nodes
+    // [`take_lent`] takes are written from f's after it, or not at all
+    // where they are all of f's.
+    let lendable = f_level.stored().filter(|_| {
+        start == 0 && nodes.is_empty() && !crate::apply::conjoin::lend_forced_off()
+    });
     let (mut taken, mut made_pairs) = (0, 0);
-    if let (Some(n), Some(stored)) = (unwritten, lendable) {
+    if let Some(stored) = lendable {
         let lent = if entries.plain {
             take_lent::<SWAPPED, ONES, true>(
                 lim,
                 (stored, f_nodes),
                 entries,
-                n,
                 (arena.capacity(), nodes.capacity()),
                 out,
                 ticker,
@@ -2058,22 +2039,25 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
                 lim,
                 (stored, f_nodes),
                 entries,
-                n,
                 (arena.capacity(), nodes.capacity()),
                 out,
                 ticker,
             )
         };
         let (lent, n, pairs) = lent?;
-        (taken, unwritten, made_pairs) = (lent, Some(n), pairs);
+        (taken, made_pairs) = (lent, pairs);
+        if taken == f_nodes && n == stored.arena().len() && f_nodes == stored.nodes().len() {
+            crate::apply::conjoin::note_lent();
+            return Ok(Copied::Level(made_pairs));
+        }
+        // Within both capacities, as the nodes were taken: nothing grows.
+        arena.extend_from_slice(&stored.arena()[..n]);
+        nodes.extend_from_slice(&stored.nodes()[..taken]);
     }
     for (p1, word) in (taken..f_nodes).zip(f_level.words(taken, f_nodes)) {
         let node = &word;
         let pairs = f_level.of(node);
         let Some((first, rest)) = pairs.split_first() else {
-            if let Some(n) = unwritten {
-                write(arena, nodes, p1, n);
-            }
             return Ok(Copied::Nodes(p1, made_pairs));
         };
         let code = copy_code::<SWAPPED, ONES>(*first, entries);
@@ -2084,13 +2068,10 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
             copies &= code as u32 == owner;
             held += code >> 32;
         }
-        let (base, count) = (unwritten.unwrap_or(arena.len()), pairs.len());
+        let (base, count) = (arena.len(), pairs.len());
         // A node too far into the arena for its words is the walk's to make;
         // their sum bounds both.
         if !copies || base + count >= 1 << 31 {
-            if let Some(n) = unwritten {
-                write(arena, nodes, p1, n);
-            }
             return Ok(Copied::Nodes(p1, made_pairs));
         }
         ticker.poll(held)?;
@@ -2105,24 +2086,6 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
             lim.try_push(out, product)?;
         }
         made_pairs += count;
-        if let Some(n) = unwritten {
-            // A node of one pair is made only where the arena has room for
-            // the push the walk takes back, and one of more where it has
-            // room for all of them.
-            let own = match node.kind() {
-                NodeKind::Inline(_) => n < arena.capacity(),
-                NodeKind::Multi { start, .. } => {
-                    start as usize == n && n + count <= arena.capacity()
-                }
-                NodeKind::MultiRanged(_) => false,
-            };
-            if own && p1 < nodes.capacity() {
-                unwritten = Some(if count == 1 { n } else { n + count });
-                continue;
-            }
-            write(arena, nodes, p1, n);
-            unwritten = None;
-        }
         // The walk's pushes of the candidates: a node of one pair takes its
         // pair back out of the arena, its push having grown it if full, and
         // left it as it was if not.
@@ -2145,17 +2108,7 @@ fn copy_nodes<'f, const SWAPPED: bool, const ONES: bool, N: FNodes<'f>>(
         reserve_node_room(lim, nodes, 1)?;
         nodes.push(node);
     }
-    match (unwritten, lendable) {
-        (Some(n), Some(stored)) if n == stored.arena().len() && f_nodes == stored.nodes().len() => {
-            crate::apply::conjoin::note_lent();
-            Ok(Copied::Level(made_pairs))
-        }
-        (Some(n), _) => {
-            write(arena, nodes, f_nodes, n);
-            Ok(Copied::Nodes(f_nodes, made_pairs))
-        }
-        (None, _) => Ok(Copied::Nodes(f_nodes, made_pairs)),
-    }
+    Ok(Copied::Nodes(f_nodes, made_pairs))
 }
 
 /// [`emit_mixed`] out of line, for [`owner_walk_nodes`], whose loop keeps
