@@ -255,6 +255,32 @@ fn one_pair_columns_read_as_their_columns() {
     }
 }
 
+/// A level whose every column holds one g pair gives its table of those
+/// pairs back to the in-flight byte meter: after the conjunction the meter
+/// reads the same as with every cell reading its column.
+#[test]
+fn one_pair_columns_give_back_their_table() {
+    let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
+    let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
+    let meter = |f: &Tdd, g: &Tdd| {
+        let eng = Engine::new();
+        eng.and(f.clone(), g.clone()).unwrap();
+        eng.limits().meters().in_flight_bytes
+    };
+    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+        let mut rng = Lcg::new(0x5eed_a908);
+        let before = complete_census();
+        for round in 0..4 {
+            let f = function_of(&vtree, &fv, &mut rng);
+            let g = function_of(&vtree, &gv, &mut rng);
+            let lone = meter(&f, &g);
+            let read = column_reads(|| meter(&f, &g));
+            assert_eq!(lone, read, "{shape}, round {round}: the meter after the conjunction moved with the column reads");
+        }
+        assert!(complete_census()[5] > before[5], "{shape}: no level read one g pair a column");
+    }
+}
+
 /// The grid route stands in for the arithmetic one only in tests: the
 /// census counts no level while it is forced.
 #[test]

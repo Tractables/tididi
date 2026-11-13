@@ -3,6 +3,7 @@
 use super::super::liveness::ROW_LIVE;
 use super::*;
 use crate::diagram::{EncodedChildRef, NodeKind};
+use crate::limits::Transient;
 use std::mem::MaybeUninit;
 
 /// Fold the per-row alive-column masks for one decoded f row.
@@ -1538,14 +1539,14 @@ fn run_complete_or_lone<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
     (left, right): (&L, &R),
     sink: ReservedEmitSink<'_>,
 ) -> Result<(), OperationError> {
-    match &lone_columns(eng, rows, &mut *scratch.g_pairs)? {
+    match lone_columns(eng, rows, &mut *scratch.g_pairs)? {
         Some(lone) => run_level_rows::<DENSE, _, _, _>(
             eng,
             rows,
             scratch,
             left,
             right,
-            &mut EmitLoneColumns { sink, lone },
+            &mut EmitLoneColumns { sink, lone: &lone },
         ),
         None => {
             run_level_rows::<DENSE, _, _, _>(eng, rows, scratch, left, right, &mut Emit { sink })
@@ -1555,17 +1556,17 @@ fn run_complete_or_lone<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
 
 /// Each column's g pair, where every column of the level holds one: the
 /// pair [`EmitLoneColumns`] reads a cell of the column against.
-fn lone_columns(
-    eng: &Engine,
+fn lone_columns<'e>(
+    eng: &'e Engine,
     rows: RowLoop<'_>,
     scratch: &mut Vec<ChildPair>,
-) -> Result<Option<Vec<ChildPair>>, OperationError> {
+) -> Result<Option<Transient<'e, Vec<ChildPair>>>, OperationError> {
     if super::super::lone_columns_forced_off() {
         return Ok(None);
     }
     let width = rows.ctx.right_width;
-    let mut lone = Vec::new();
-    eng.limits().reserve_exact(&mut lone, width)?;
+    let mut lone = Transient::new(eng.limits(), Vec::new());
+    eng.limits().reserve_exact(&mut *lone, width)?;
     for j in 0..width {
         match column_pairs(rows.ctx, rows.g_level, j, scratch) {
             &[pair] => lone.push(pair),
