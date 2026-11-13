@@ -402,3 +402,55 @@ pub(super) fn split_support_cases(
     }
     out
 }
+
+/// A level read by pairs gives its buffer of a row's intersections back to
+/// the in-flight byte meter: after the conjunction the meter reads the same
+/// whether the rows of more than `FEW_PAIRS` f pairs or all rows keep their
+/// intersections in it. Formulas of a few clauses over 18 variables, and
+/// dense random functions over 10 against a few models, on every vtree
+/// shape.
+#[test]
+fn a_level_read_by_pairs_gives_back_its_row_buffer() {
+    let mut rng = Lcg::new(0x6b1f_0e55);
+    let meter = |f: &Tdd, g: &Tdd| {
+        let eng = Engine::new();
+        let _dense = eng
+            .limits()
+            .scope(LimitConfig::none().with_sparse_route(SparseRoute {
+                sparsity: 64,
+                min_grid: usize::MAX,
+            }));
+        eng.and(f.clone(), g.clone()).unwrap();
+        eng.limits().meters().in_flight_bytes
+    };
+    let mut cases = Vec::new();
+    for (name, vtree) in vtree_shapes(18) {
+        for case in 0..4 {
+            let eng = Engine::new();
+            let mut operand = |clauses| {
+                compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 18, CnfShape { clauses, width: 3 }))
+            };
+            let (f, g) = (operand(12), operand(12));
+            cases.push((format!("{name}, 12 clauses, case {case}"), f, g));
+        }
+    }
+    let vars: Vec<VarId> = (1..=10).map(VarId).collect();
+    for (name, vtree) in vtree_shapes(10) {
+        for models in [3, 6] {
+            let f = Tdd::from_models(&vtree, &vars, &(0..1u64 << 10).filter(|_| rng.coin()).collect::<Vec<_>>())
+                .unwrap();
+            let g = Tdd::from_models(&vtree, &vars, &(0..models).map(|_| rng.below(1 << 10)).collect::<Vec<_>>())
+                .unwrap();
+            cases.push((format!("{name}, a dense random function against {models} models"), f, g));
+        }
+    }
+    let mut read = 0;
+    for (what, f, g) in &cases {
+        let before = pair_rows_levels()[0];
+        let long = meter(f, g);
+        read += pair_rows_levels()[0] - before;
+        let all = ands_buffered(|| meter(f, g));
+        assert_eq!(long, all, "{what}: the meter after the conjunction moved with the rows whose intersections were buffered");
+    }
+    assert!(read > 0, "expected levels read by pairs, got none over {} cases", cases.len());
+}

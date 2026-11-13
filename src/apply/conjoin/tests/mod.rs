@@ -335,6 +335,9 @@ thread_local! {
     /// Whether no level on this thread is read by pairs
     /// ([`pair_rows_off`]).
     static PAIR_ROWS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether a level read by pairs keeps every row's intersections in
+    /// its buffer ([`ands_buffered`]).
+    static ANDS_BUFFERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The levels on this thread read by pairs, those of them with a
     /// complete side, and those of one pair a column
     /// ([`pair_rows_levels`]).
@@ -412,6 +415,16 @@ pub(super) fn note_pair_rows(complete: bool, one_pair: bool) {
         let [all, whole, one] = n.get();
         n.set([all + 1, whole + u64::from(complete), one + u64::from(one_pair)]);
     });
+}
+
+pub(super) fn ands_buffered_forced() -> bool {
+    ANDS_BUFFERED.with(std::cell::Cell::get)
+}
+
+/// Run `f` with every level read by pairs keeping each row's
+/// intersections in its buffer, not only those of a long row.
+pub(super) fn ands_buffered<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&ANDS_BUFFERED, f)
 }
 
 /// Run `f` with every masked level on the row loop of any level: the

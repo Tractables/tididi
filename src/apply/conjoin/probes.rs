@@ -174,6 +174,12 @@ pub(super) fn pair_rows_forced_off() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
+pub(super) fn ands_buffered_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
 pub(super) fn note_pair_rows(_complete: bool, _one_pair: bool) {}
 
 #[cfg(not(test))]

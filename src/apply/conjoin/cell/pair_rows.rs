@@ -3,7 +3,7 @@
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use super::*;
 use crate::diagram::{NodeKind, StoredPairs};
-use crate::limits::PollGate;
+use crate::limits::{PollGate, Transient};
 
 /// The f pairs a row's intersections are kept for on the stack; a longer row keeps
 /// them in a buffer of the level's.
@@ -410,7 +410,8 @@ where
     // The intersections of a row's f pairs: of `FEW_PAIRS` pairs or fewer on the
     // stack, of more in a buffer.
     let mut few_ands = [0u64; FEW_PAIRS];
-    let mut many: Vec<u64> = Vec::new();
+    let mut many = Transient::new(lim, Vec::<u64>::new());
+    let many: &mut Vec<u64> = &mut many;
 
     // The resets of `run_level_rows`: one fill of a small grid, a row at a
     // time on a larger one.
@@ -523,10 +524,10 @@ where
             }
             // Each side's fold, the g pairs some candidate of the row survives
             // against, and each f pair's intersection.
-            let few = f_pairs.len() <= FEW_PAIRS;
+            let few = f_pairs.len() <= FEW_PAIRS && !super::super::ands_buffered_forced();
             if !few {
                 many.clear();
-                lim.reserve(&mut many, f_pairs.len())?;
+                lim.reserve(many, f_pairs.len())?;
             }
             let (mut l, mut r, mut live) = (0, 0, 0);
             for (k, p) in f_pairs.iter().enumerate() {
