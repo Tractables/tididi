@@ -680,7 +680,9 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     }
 }
 
-/// How [`leaf_walk`] finds the candidates of one f node.
+/// How [`walk_nodes`] finds the candidates of one f node: the leaf arm's
+/// walks ([`leaf_walk`]), the routed walk ([`RoutedWalk`]) and the probe's
+/// implement it.
 pub(super) trait NodeWalk {
     /// Hand every candidate of the f node holding `pairs` to `push`, in the
     /// order of its pairs, the products they meet and the g pairs under each.
@@ -1383,7 +1385,7 @@ trait FNodes<'a> {
     fn len(&self) -> usize;
     /// The words of nodes `from..to`, below [`len`](Self::len), in order.
     fn words(&self, from: usize, to: usize) -> Self::Words;
-    /// The pairs of `node`, a word [`word`](Self::word) gave.
+    /// The pairs of `node`, a word [`words`](Self::words) gave.
     fn of<'n>(&self, node: &'n EncodedNode) -> &'n [ChildPair]
     where
         'a: 'n;
@@ -1613,13 +1615,13 @@ fn charge_walk_growth(
 /// more, copying only what they hold. Grown by doubling or projection from
 /// their operand-sized seeds where they fill instead, each was copied
 /// whole at its growth, and those copies took a twentieth of the cycles of
-/// the programs whose sparse levels are large. Each is at most
-/// [`WALK_AHEAD_FACTOR`] times its capacity `seeds` as the walk began, and
-/// the three together at most half the memory left; one that fills after
-/// doubles. Returns the capacity the output-pair meter is charged for
-/// where the pair arena moved past it, which the walk then charges as the
-/// arena would have grown ([`charge_walk_growth`]), and `usize::MAX` where
-/// it did not.
+/// the programs whose sparse levels are large. Each grows past its length
+/// at `from` by at most [`WALK_AHEAD_FACTOR`] times its capacity `seeds` as
+/// the walk began, and the three add at most half the memory left to their
+/// capacities; one that fills after doubles. Returns the capacity the
+/// output-pair meter is charged for where the pair arena moved past it,
+/// which the walk then charges as the arena would have grown
+/// ([`charge_walk_growth`]), and `usize::MAX` where it did not.
 #[cold]
 #[inline(never)]
 fn reserve_walk_ahead(
@@ -1668,8 +1670,8 @@ fn reserve_walk_ahead(
     Ok(if to[0] > caps[0] { caps[0] } else { usize::MAX })
 }
 
-/// The most [`reserve_walk_ahead`] reserves a vector for, as a multiple of
-/// its capacity as the walk began.
+/// The most [`reserve_walk_ahead`] grows a vector by past its length where
+/// the walk began, as a multiple of its capacity then.
 const WALK_AHEAD_FACTOR: usize = 8;
 
 /// A level's pair and node arenas and its products, once an owner walk
