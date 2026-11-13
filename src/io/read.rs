@@ -342,8 +342,7 @@ fn build_diagram(
         if seen.iter().any(|seen| !seen) {
             return Err(malformed(h.line, "vtree declarations do not form one complete vtree"));
         }
-    } else if h.out_vtree != vtree.root()
-        && h.out_vtree.0 != vtree.topo_pos(vtree.root()) {
+    } else if h.out_vtree.0 != vtree.topo_pos(vtree.root()) {
         return Err(malformed(h.line, "ZERO output must name the vtree root"));
     }
     let output = TddNodeId {

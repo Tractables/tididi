@@ -210,6 +210,21 @@ fn rotated_version_one_file_with_original_indices_still_loads() {
     refused(text, &Arc::new(Vtree::balanced(4)));
 }
 
+/// A ZERO output names the root by its position, which a rotation leaves
+/// equal to the root's index, as older writers named it; no other node.
+#[test]
+fn a_zero_output_names_the_root_on_a_rotated_vtree() {
+    let mut vtree = Vtree::linear(3);
+    let root = vtree.root();
+    crate::test_helpers::rotate_left(&mut vtree, root).unwrap();
+    let vtree = Arc::new(vtree);
+    assert_eq!((vtree.root().0, vtree.topo_pos(vtree.root())), (4, 4));
+    assert!(read_tdd(&mut "p tdd 1 3 5 4 ZERO\n".as_bytes(), &vtree).unwrap().is_zero());
+    for other in 0..4 {
+        refused(&format!("p tdd 1 3 5 {other} ZERO\n"), &vtree);
+    }
+}
+
 /// Unknown layouts must be rejected before parsing their version-specific fields.
 #[test]
 fn header_errors_check_version_before_interpreting_fields() {
