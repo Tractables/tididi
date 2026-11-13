@@ -274,16 +274,6 @@ fn single_rows<const W: usize>(
         _ => None,
     };
     let g: [ChildPair; W] = std::array::from_fn(|j| g_cols[j]);
-
-    // The resets of `run_level_rows`, where the rows' cells are not written
-    // once: one fill of a small grid, a row at a time on a larger one.
-    let slab_fill = f_width.saturating_mul(g_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if W == 0 && slab_fill {
-        let end = ctx.output_grid_base + f_width * g_width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            mark_dead(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
     // With `W` columns and the f nodes stored, the grid extended over the
     // level's rows ahead of them, each row's cells written in place.
     let extended = W > 0 && f_nodes.is_some() && {
@@ -381,11 +371,8 @@ fn single_rows<const W: usize>(
                     <= 1,
                 "an f node of one pair at most"
             );
-            if W == 0 {
-                let fresh = extend_slab(slab, row_base, row_base + width);
-                if !slab_fill && !fresh {
-                    mark_dead(&mut slab[row_base..row_base + width]);
-                }
+            if W == 0 && !extend_slab(slab, row_base, row_base + width) {
+                slab[row_base..row_base + width].fill(NO_PRODUCT);
             }
             // A dead f node's row stays dead.
             let Some(p) = p else {

@@ -689,22 +689,12 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let width = ctx.g_width;
     let gp = a.w.g_flat.len() as u64;
-    // The row loop's resets: a fill of a small grid, a row at a time on a
-    // large one.
-    let slab_fill = SLAB && f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if slab_fill {
-        let end = ctx.output_grid_base + f_width * width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            mark_dead(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
     let (lv, rv) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let described = described_rows(lim, f_level, f_width, lv, rv, f_scratch);
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if SLAB { i * width } else { 0 };
-        let fresh = extend_slab(slab, row_base, row_base + width);
-        if !slab_fill && !fresh {
-            mark_dead(&mut slab[row_base..row_base + width]);
+        if !extend_slab(slab, row_base, row_base + width) {
+            slab[row_base..row_base + width].fill(NO_PRODUCT);
         }
         let f_pairs = match described {
             Some(k) => &f_scratch[i * k..(i + 1) * k],

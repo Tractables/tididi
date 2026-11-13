@@ -409,15 +409,6 @@ where
     let mut many = Transient::new(lim, Vec::<u64>::new());
     let many: &mut Vec<u64> = &mut many;
 
-    // The resets of `run_level_rows`: one fill of a small grid, a row at a
-    // time on a larger one.
-    let slab_fill = f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if W == 0 && slab_fill {
-        let end = ctx.output_grid_base + f_width * width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            mark_dead(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
     // A level of two one-pair columns: f's rows where they need no decoding,
@@ -476,11 +467,8 @@ where
             let i = next;
             next += 1;
             let row_base = ctx.output_grid_base + i * width;
-            if W == 0 {
-                let fresh = extend_slab(slab, row_base, row_base + width);
-                if !slab_fill && !fresh {
-                    mark_dead(&mut slab[row_base..row_base + width]);
-                }
+            if W == 0 && !extend_slab(slab, row_base, row_base + width) {
+                slab[row_base..row_base + width].fill(NO_PRODUCT);
             }
             let f_pairs = match f_described {
                 Some(k) => &f_scratch[i * k..(i + 1) * k],

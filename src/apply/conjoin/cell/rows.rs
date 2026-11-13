@@ -113,11 +113,10 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
 /// All hooks are `#[inline(always)]` in impls, so each instantiation
 /// monomorphizes to a loop specialized to its route.
 pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
-    /// Whether this action owns a dense `f_width × g_width` slab — one grid row per f row,
-    /// so the per-row `NO_PRODUCT` resets tile the level's whole slab exactly once and
-    /// can be replaced by a single fill (see [`run_level_rows`]). `false` for
-    /// an action that writes every row into grid row 0 ([`Emit`] over a
-    /// [`ListSink`], `rows_by_words` without `SLAB`), which must re-fill that row between rows.
+    /// Whether this action owns a dense `f_width × g_width` slab, one grid
+    /// row per f row. `false` for an action that writes every row into grid
+    /// row 0 ([`Emit`] over a [`ListSink`], `rows_by_words` without `SLAB`),
+    /// which must re-fill that row between rows.
     const DENSE_SLAB: bool;
 
     /// One cell of the row.
@@ -185,15 +184,6 @@ fn reach_word(mask: u128, columns: &[u64], words: usize, w: usize) -> u64 {
         live |= columns[b * words + w];
     }
     live
-}
-
-/// [`mark_dead`] behind a call, for the row loop over a level with a
-/// complete side. Inlined there, the reset left that loop short of registers
-/// and its work counter went to the stack at every poll; the loop over two
-/// grids keeps it inlined, where a call would cost more than the stores.
-#[inline(never)]
-fn mark_dead_out_of_line(cells: &mut [u32]) {
-    mark_dead(cells);
 }
 
 /// The rows of an implicit level of `width` nodes, as a row loop reads
@@ -304,37 +294,11 @@ where
         0
     };
 
-    // One slab fill instead of `f_width` row fills. On a dense-slab action the
-    // per-row resets below tile `output_grid_base .. output_grid_base + f_width*g_width` exactly once each
-    // (grid row `i` for f row `i`), so hoisting them into a single `fill` writes the same
-    // cells with the same byte pattern; only the order changes, and nothing reads
-    // this level's slab between rows (the child lookups read the child levels'
-    // disjoint slabs). Above the size gate the per-row form stays: interleaving
-    // the reset with the row's cell work is what keeps the active row L1-resident
-    // on a large grid.
-    //
     // Where neither side can kill a candidate, a dense-slab action writes a
     // node at every cell of a live row and a live column, so only a dead row
     // is reset, and a dead column's cell is reset by the cell
     // ([`process_cell`]): no cell is written twice.
     let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
-    let slab_fill = A::DENSE_SLAB
-        && !every_cell
-        && f_width.saturating_mul(g_width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    // A side that cannot kill is a complete one ([`mark_dead_out_of_line`]).
-    let reset = |cells: &mut [u32]| {
-        if left.kills() && right.kills() {
-            mark_dead(cells)
-        } else {
-            mark_dead_out_of_line(cells)
-        }
-    };
-    if slab_fill {
-        let end = ctx.output_grid_base + f_width * g_width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            reset(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
 
     // An implicit f level's rows generated before the loop reads them; a
     // stored level's rows are slices of its arena.
@@ -352,8 +316,8 @@ where
         // A row the slab is extended over is `NO_PRODUCT` already.
         let fresh = extend_slab(slab, row_base, row_base + g_width);
         let node_idx = &mut slab[..];
-        if !slab_fill && !every_cell && !fresh {
-            reset(&mut node_idx[row_base..row_base + g_width]);
+        if !every_cell && !fresh {
+            node_idx[row_base..row_base + g_width].fill(NO_PRODUCT);
         }
 
         let f_pairs = match f_described {
@@ -363,7 +327,7 @@ where
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell && !fresh {
-                reset(&mut node_idx[row_base..row_base + g_width]);
+                node_idx[row_base..row_base + g_width].fill(NO_PRODUCT);
             }
             continue;
         }

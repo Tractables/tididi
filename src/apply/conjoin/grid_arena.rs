@@ -32,7 +32,6 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
-use std::mem::MaybeUninit;
 use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
 
 /// Bytes per slab cell.
@@ -343,10 +342,6 @@ impl GridArena {
     }
 }
 
-/// Fill small product grids once before traversal; reset larger grids row by
-/// row to keep the current row cache-local. Both paths write the same values.
-pub(super) const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
-
 /// Extend `slab` to `end` cells, `NO_PRODUCT`-filled, and say whether all
 /// of `start..end` was new: the cells of a grid claimed past the slab's end
 /// are first written here, a row as the row loop reaches it, into capacity
@@ -359,49 +354,8 @@ pub(super) fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool
         return false;
     }
     debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
-    // A row of up to eight cells is written as `mark_dead` writes one, into
-    // the spare capacity; a longer one is a `resize`.
-    let n = end - len;
-    if n <= 8 {
-        const DEAD: [MaybeUninit<u32>; 4] = [MaybeUninit::new(NO_PRODUCT); 4];
-        let cells = &mut slab.spare_capacity_mut()[..n];
-        if n < 4 {
-            (cells[0], cells[n / 2], cells[n - 1]) = (DEAD[0], DEAD[0], DEAD[0]);
-        } else {
-            cells[..4].copy_from_slice(&DEAD);
-            cells[n - 4..].copy_from_slice(&DEAD);
-        }
-        // Safety: the `n` slots past the length were written above.
-        unsafe { slab.set_len(end) };
-    } else {
-        slab.resize(end, NO_PRODUCT);
-    }
+    slab.resize(end, NO_PRODUCT);
     len <= start
-}
-
-/// Reset `cells` to `NO_PRODUCT`.
-///
-/// Most product grids have a few cells, and a `fill` of a length the compiler
-/// cannot see is a call to `memset`. Up to eight cells are written here as
-/// two four-cell stores that overlap, or three single stores below four
-/// cells; a longer run is a `fill`.
-#[inline]
-pub(super) fn mark_dead(cells: &mut [u32]) {
-    const DEAD: [u32; 4] = [NO_PRODUCT; 4];
-    let n = cells.len();
-    match n {
-        0 => {}
-        1..=3 => {
-            cells[0] = NO_PRODUCT;
-            cells[n / 2] = NO_PRODUCT;
-            cells[n - 1] = NO_PRODUCT;
-        }
-        4..=8 => {
-            cells[..4].copy_from_slice(&DEAD);
-            cells[n - 4..].copy_from_slice(&DEAD);
-        }
-        _ => cells.fill(NO_PRODUCT),
-    }
 }
 
 /// Write `cells` at `start` of `slab`, extending it into the capacity a
