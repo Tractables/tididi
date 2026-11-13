@@ -348,9 +348,6 @@ where
     S: PairSink,
 {
     let g_pairs = column_pairs(ctx, right_level, j, g_pairs_scratch);
-    // A dead column's cell holds no product. Its row was reset to that
-    // already, except where every live cell is written and no row is reset
-    // ([`run_level_rows`](super::rows::run_level_rows)).
     if g_pairs.is_empty() {
         node_idx[row_base + j] = NO_PRODUCT;
         return Ok(());

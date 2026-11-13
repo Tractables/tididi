@@ -153,19 +153,6 @@ pub(super) struct WholeRow<'a, 'c, L, R> {
     pub(super) gate: &'a mut crate::limits::PollGate<'c>,
 }
 
-/// The columns of `reach` (at most 64) whose reach meets `mask`, as the
-/// bits of a word from the first.
-#[inline(always)]
-fn reaching(mask: u128, reach: &[u128]) -> u64 {
-    debug_assert!(reach.len() <= 64);
-    // From the last column down, a shift by one in place of a shift by the
-    // column's index.
-    reach
-        .iter()
-        .rev()
-        .fold(0, |live, &r| live << 1 | u64::from(mask & r != 0))
-}
-
 /// Word `w` of the g nodes whose reach meets `mask`, read off the reach
 /// columns `columns` of `words` words a bit (`liveness::build_reach_columns`):
 /// the union of that word of each of the mask's bits that some reach mask has.
@@ -294,12 +281,6 @@ where
         0
     };
 
-    // Where neither side can kill a candidate, a dense-slab action writes a
-    // node at every cell of a live row and a live column, so only a dead row
-    // is reset, and a dead column's cell is reset by the cell
-    // ([`process_cell`]): no cell is written twice.
-    let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
-
     // An implicit f level's rows generated before the loop reads them; a
     // stored level's rows are slices of its arena.
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
@@ -313,12 +294,10 @@ where
     );
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
-        // A row the slab is extended over is `NO_PRODUCT` already.
-        let fresh = extend_slab(slab, row_base, row_base + g_width);
-        let node_idx = &mut slab[..];
-        if !every_cell && !fresh {
-            node_idx[row_base..row_base + g_width].fill(NO_PRODUCT);
+        if !extend_slab(slab, row_base, row_base + g_width) {
+            slab[row_base..row_base + g_width].fill(NO_PRODUCT);
         }
+        let node_idx = &mut slab[..];
 
         let f_pairs = match f_described {
             Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
@@ -326,9 +305,6 @@ where
         };
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
-            if every_cell && !fresh {
-                node_idx[row_base..row_base + g_width].fill(NO_PRODUCT);
-            }
             continue;
         }
 
@@ -428,13 +404,6 @@ where
             // the row's mask, which is the union over the row's references, so
             // a clear intersection proves every cell of the column dead.
             //
-            // The tests run 64 columns at a time into a word of live columns,
-            // and the cells are entered in column order from its bits. Tested
-            // ahead of each cell, most of a row's columns failing them, the
-            // loop reloaded the context's reach slices at every column, the
-            // cell's stores being able to change them as far as the compiler
-            // knew, and branched on every test.
-            //
             // A row whose masks have few bits reads its live columns off the
             // reach columns instead, a word a mask bit for 64 columns, where
             // the scan tests every column: about two thirds the instructions
@@ -468,22 +437,12 @@ where
                 poll.poll(g_width as u64)?;
                 continue;
             }
-            let mut j0 = 0;
-            while j0 < g_width {
-                let n = (g_width - j0).min(64);
-                let mut live = u64::MAX >> (64 - n);
-                if cull_left {
-                    live &= reaching(left_alive_mask, &ctx.sides.left.reach[j0..j0 + n]);
-                }
-                if cull_right && live != 0 {
-                    live &= reaching(right_alive_mask, &ctx.sides.right.reach[j0..j0 + n]);
-                }
-                while live != 0 {
-                    let j = j0 + live.trailing_zeros() as usize;
-                    live &= live - 1;
+            for j in 0..g_width {
+                if (!cull_left || left_alive_mask & ctx.sides.left.reach[j] != 0)
+                    && (!cull_right || right_alive_mask & ctx.sides.right.reach[j] != 0)
+                {
                     cell(j)?;
                 }
-                j0 += n;
             }
         } else {
             for j in first..g_width {
