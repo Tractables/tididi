@@ -25,12 +25,9 @@
 //!
 //! `route::route_level` makes the choice.
 //!
-//! Two uses of the sweep change what the root does when the sparse route
-//! builds it as one product: a count ([`ConjoinMode::Count`]) folds the
-//! root's pairs into the count instead of storing them, and a
-//! marginalizing conjunction with one target ([`ConjoinMode::Sum`]) has the
-//! target's parent, where each operand has one node, add each pair's count
-//! into its fused pair instead (`sparse::ChildSum`).
+//! A count ([`ConjoinMode::Count`]) changes what the root does when the
+//! sparse route builds it as one product: it folds the root's pairs into the
+//! count instead of storing them.
 //!
 //! A self-conjunction `f ∧ f` returns `f` from `conjoin_on` before the
 //! driver runs.
@@ -41,7 +38,6 @@ mod owed;
 mod region;
 use level::{
     LevelBuild, build_level_dense, count_sparse_root, counts_root, run_sparse_level,
-    sum_sparse_root, sums_root,
 };
 
 use super::*;
@@ -66,13 +62,6 @@ pub(super) struct Sweep<'a, 'filter> {
     /// `counted`, and left empty.
     pub(super) count_root: bool,
     pub(super) counted: Option<num_bigint::BigUint>,
-    /// The one target, whose counts its parent sums as its pairs are found
-    /// where the sparse route builds the parent as one product
-    /// ([`ConjoinMode::Sum`]).
-    pub(super) sum_child: Option<VtreeIdx>,
-    /// Where the parent summed `sum_child` out: the levels it made marginal,
-    /// children before parents.
-    pub(super) summed: Option<Vec<VtreeIdx>>,
     /// The level counts each operand kept when the sweep began
     /// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
     /// a level an identity fast path moves untouched keeps its column.
@@ -218,14 +207,11 @@ fn build_level(
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
                 sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, sweep)?);
             }
-            Route::Sparse => match sums_root(sweep, run, shape, &plan) {
-                Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
-                None => {
-                    run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
-                    run.products
-                        .note_sparse_built(t.idx(), shape.f.here, shape.g.here);
-                }
-            },
+            Route::Sparse => {
+                run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
+                run.products
+                    .note_sparse_built(t.idx(), shape.f.here, shape.g.here);
+            }
             // Claims no grid of its own: the parent that densifies its
             // product list prices that grid.
             Route::SparseMarg => {
@@ -400,11 +386,6 @@ pub(crate) enum ConjoinMode<'a> {
     /// each operand's free levels ([`ApplyRun::cone`]), which only a plain
     /// conjunction may have.
     Restore { free: Operands<VtreeMask<'a>> },
-    /// Build, and where the target given has a parent the sparse route
-    /// builds as one product, sum the target out as the parent's pairs are
-    /// found, instead of building the pairs the marginalization pass would
-    /// fuse. The caller's targets must be that level alone.
-    Sum(VtreeIdx),
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
@@ -459,20 +440,18 @@ fn give_back(
 
 /// What [`apply_and_core`] returns: the conjunction, or only its model count
 /// when the root was counted instead of built.
+// Returned once per conjunction and unpacked at once: boxing the diagram
+// would add an allocation to every conjunction.
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum Conjoined {
     Built(Tdd),
     Counted(num_bigint::BigUint),
-    /// Built, with the root's summed child ([`ConjoinMode::Sum`]) already
-    /// marginal and the root's pairs fused: what the marginalization pass
-    /// and pair fusion leave of the conjunction [`Self::Built`] carries,
-    /// short of the slot prune.
-    Summed(Tdd),
 }
 
 impl Conjoined {
     pub(super) fn diagram(self) -> Tdd {
         match self {
-            Self::Built(out) | Self::Summed(out) => out,
+            Self::Built(out) => out,
             Self::Counted(_) => unreachable!("only a count request returns a count"),
         }
     }
@@ -520,9 +499,8 @@ pub(crate) fn apply_and_either(
     g: &mut Held<'_>,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
-    mode: ConjoinMode,
-) -> Result<Conjoined, OperationError> {
-    apply_and_held(eng, f, g, (targets, quantified), None, mode)
+) -> Result<Tdd, OperationError> {
+    apply_and_held(eng, f, g, (targets, quantified), None, ConjoinMode::Build).map(Conjoined::diagram)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
@@ -550,10 +528,6 @@ fn apply_and_held(
     );
     let count_root = matches!(mode, ConjoinMode::Count);
     let restoring = matches!(mode, ConjoinMode::Restore { .. });
-    let sum_child = match mode {
-        ConjoinMode::Sum(c) => Some(c),
-        _ => None,
-    };
     let lim = eng.limits();
     lim.eager_reclaim();
 
@@ -720,8 +694,6 @@ fn apply_and_held(
         filter,
         count_root,
         counted: None,
-        sum_child,
-        summed: None,
         kept,
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
@@ -733,7 +705,6 @@ fn apply_and_held(
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }
-    let summed = sweep.summed.take();
     let kept = Operands {
         f: sweep.kept.f.take(),
         g: sweep.kept.g.take(),
@@ -907,16 +878,5 @@ fn apply_and_held(
     if let Some(side) = side {
         scratch.side = side;
     }
-    match summed {
-        // The marks the marginalization pass leaves, which installs each
-        // level on the finished diagram and marks its parent then.
-        Some(installed) => {
-            for d in installed {
-                let parent = vtree.node(d).parent().expect("a summed level has a parent");
-                out.invalidate(parent);
-            }
-            Ok(Conjoined::Summed(out))
-        }
-        None => Ok(Conjoined::Built(out)),
-    }
+    Ok(Conjoined::Built(out))
 }

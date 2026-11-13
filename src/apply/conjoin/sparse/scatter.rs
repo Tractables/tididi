@@ -46,10 +46,6 @@ pub(super) enum Collect<'a, 'c> {
     /// A count, on a level with one product as for [`Collect::Direct`]:
     /// each candidate is folded into it and not stored.
     Fold(&'a mut CandidateFold<'c>),
-    /// Sums, on a root with one product as for [`Collect::Direct`] and one
-    /// child summed out: each candidate adds its summed-side node's count to
-    /// its kept product's sum and is not stored. See [`ChildSum`].
-    Sum(&'a mut ChildSum),
 }
 
 /// The level the emit writes: its nodes, its product list, the thresholds
@@ -670,11 +666,6 @@ pub(super) fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
             walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
                 fold.push(candidate_pair(&entry));
                 Ok(())
-            })
-        }),
-        Collect::Sum(sum) => try_for_each_walked(f_level, nodes, |_, pairs| {
-            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
-                sum.push(lim, candidate_pair(&entry))
             })
         }),
     }
@@ -3379,18 +3370,6 @@ impl ScatterSides<'_> {
             try_push_pair_into(eng, level, pair)
         })
     }
-
-    /// [`ScatterSides::emit_fold_for_outer`] on a root whose candidates are
-    /// added into sums ([`Collect::Sum`]).
-    fn emit_sum_for_outer<const SWAPPED: bool, const FAR: bool>(
-        &self,
-        lim: &crate::limits::Limits,
-        sum: &mut ChildSum,
-        outer: usize,
-        ticker: &mut crate::limits::PollGate,
-    ) -> Result<(), OperationError> {
-        self.emit_for_outer::<SWAPPED, FAR>(outer, 1, ticker, |pair| sum.push(lim, pair))
-    }
 }
 
 /// Push a candidate for each `(g_parent, attached)` in `under` paired with
@@ -3494,9 +3473,6 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
             }
             Collect::Fold(fold) => {
                 s.emit_fold_for_outer::<SWAPPED, FAR>(fold, outer, &mut ticker)?
-            }
-            Collect::Sum(sum) => {
-                s.emit_sum_for_outer::<SWAPPED, FAR>(lim, sum, outer, &mut ticker)?
             }
             Collect::Nodes(_) => unreachable!("a walk of f's nodes builds a level's nodes"),
         }

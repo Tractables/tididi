@@ -64,9 +64,8 @@ pub(crate) struct Complete {
 /// its walk ends, the general arm through every outer key's filtered index
 /// ([`scatter_routed`]). On a level with one product the candidates go
 /// where `collect` says instead, from the general arm's walk by outer key
-/// ([`scatter_join`]): the level's pair arena ([`finish_direct`]), a count
-/// ([`count_sparse_level`]) or the sums of a child summed out
-/// ([`sum_sparse_level`]).
+/// ([`scatter_join`]): the level's pair arena ([`finish_direct`]) or a count
+/// ([`count_sparse_level`]).
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -510,40 +509,6 @@ pub(crate) fn count_sparse_level(
         (shape, pl),
         Collect::Fold(fold),
         (passthrough, None),
-    )?;
-    guard.scatter_clean();
-    Ok(())
-}
-
-/// Sum one child of a one-product root out as the scatter emits its
-/// candidates: each candidate adds its summed-side node's count to its kept
-/// product in `sum`, and no pair is written ([`ChildSum`]). The joined
-/// children are still structural here — the summed child is made marginal
-/// only once its counts are read — so the marginal-child refusal holds. A
-/// `complete` side is read by arithmetic, as [`apply_sparse_level`] reads
-/// it, so the candidates come in the order the two-step path's level has.
-pub(crate) fn sum_sparse_level(
-    eng: &Engine,
-    shape: LevelShape,
-    (f, g): (&Tdd, &Tdd),
-    levels: &[TddLevel],
-    pl: Sides<&[ProductEntry]>,
-    complete: Option<Complete>,
-    sum: &mut ChildSum,
-) -> Result<(), OperationError> {
-    debug_assert!(
-        shape.f.here == 1 && shape.g.here == 1,
-        "a summed level has one product"
-    );
-    assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
-    let mut guard = WsGuard::new(eng);
-    scatter_level(
-        eng,
-        &mut guard,
-        (f, g),
-        (shape, pl),
-        Collect::Sum(sum),
-        (None, complete),
     )?;
     guard.scatter_clean();
     Ok(())

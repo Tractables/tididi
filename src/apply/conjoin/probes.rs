@@ -38,19 +38,9 @@ pub(crate) fn note_kept_counts_read(levels: usize) {
 
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn two_step_forced() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
 pub(super) fn taken_levels_settled_forced() -> bool {
     false
 }
-
-#[cfg(not(test))]
-#[inline(always)]
-pub(super) fn note_summed() {}
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -265,10 +255,6 @@ pub(super) fn complete_sides_listed() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_complete_side(_side: crate::diagram::ChildSide) {}
-
-#[cfg(not(test))]
-#[inline(always)]
-pub(super) fn note_summed_complete_root() {}
 
 #[cfg(not(test))]
 #[inline(always)]

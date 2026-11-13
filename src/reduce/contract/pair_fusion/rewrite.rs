@@ -148,9 +148,7 @@ impl<'a> ParentRewrite<'a> {
     ///
     /// The kept pairs stay in their order and the fused pairs follow them in
     /// plan order, the order in which the node's pairs first name each fused
-    /// x-ref: a function of the node's old list alone, so a builder that sums
-    /// a marginal child as it emits the node can write the same list
-    /// (`sparse::sum`).
+    /// x-ref.
     ///
     /// A node with at least `self.bitmap_min_plans` ([`BITMAP_MIN_PLANS`])
     /// plans whose largest planned x-ref is under [`BITMAP_BITS_PER_PLAN`]

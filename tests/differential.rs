@@ -36,11 +36,10 @@
 //! - [`streaming_marginalization_matches_enumeration`] — the marginalizing
 //!   conjunction answers what conjoining and then summing the levels out
 //!   answers, in both arithmetics.
-//! - [`a_summed_root_is_the_two_step_diagram`] — the marginalizing
-//!   conjunction with one child of the root as its target, which may sum it
-//!   out as the root's pairs are found, minimizes to the diagram conjoining
-//!   and then summing the child out minimizes to, on the default sparse
-//!   route and on one every level takes.
+//! - [`a_marginalized_child_is_the_two_step_diagram`] — the marginalizing
+//!   conjunction with one child of a one-product level as its target
+//!   minimizes to the diagram conjoining and then summing the child out
+//!   minimizes to, on the default sparse route and on one every level takes.
 //! - [`weighted_composition_matches_enumeration`] — restriction retains the input
 //!   weights and grafting preserves weighted values through renaming and marginalization.
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
@@ -289,7 +288,7 @@ fn check_case(case: &Case) {
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
         ("marginal products against enumeration", marginal_products_match_enumeration),
-        ("a summed root against the two-step diagram", a_summed_root_is_the_two_step_diagram),
+        ("a marginalized child against the two-step diagram", a_marginalized_child_is_the_two_step_diagram),
         ("projections against enumeration", projections_match_enumeration),
         ("marginal evaluations against enumeration", marginal_evaluations_match_enumeration),
         ("level counts against enumeration", level_counts_match_enumeration),
@@ -1449,16 +1448,14 @@ fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
     (output, levels)
 }
 
-/// The marginalizing conjunction whose one target's parent is one product,
-/// each operand one node there, may sum the target out as the sparse route
-/// finds the parent's pairs, where the conjunction built in full holds every
-/// pair until the target is summed out and its pairs fused. Either way the
-/// count is the enumerated one, and the two diagrams minimize to the same
-/// canonical diagram up to numbering, on the default route and on one that
-/// sends every level down the sparse one; a false conjunction is false
-/// either way. The targets are the internal children of the vtree's root and
-/// of the last level below it, bottom-up, at which each operand has one node.
-fn a_summed_root_is_the_two_step_diagram(case: &Case) {
+/// The marginalizing conjunction with one target, and the conjunction built
+/// in full with the target summed out after: either way the count is the
+/// enumerated one, and the two diagrams minimize to the same canonical
+/// diagram up to numbering, on the default route and on one that sends
+/// every level down the sparse one; a false conjunction is false either
+/// way. The targets are the internal children of the vtree's root and of
+/// the last level below it, bottom-up, at which each operand has one node.
+fn a_marginalized_child_is_the_two_step_diagram(case: &Case) {
     let vtree = &case.vtree;
     let split = case.clauses.len() / 2;
     let (f, g) = compile_split(case, split);
@@ -1481,7 +1478,7 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
                 }
                 (summed, two)
             });
-            assert_eq!(summed.model_count().unwrap(), count, "the summed root's count");
+            assert_eq!(summed.model_count().unwrap(), count, "the marginalizing count");
             assert_eq!(two.model_count().unwrap(), count, "the two-step count");
             assert_eq!(summed.is_zero(), two.is_zero(), "one of the two is false");
             summed.minimize().unwrap();
@@ -1489,7 +1486,7 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
             assert_canonical(&summed);
             assert_canonical(&two);
             if !summed.is_zero() {
-                assert_eq!(named_levels(&summed), named_levels(&two), "the summed root minimized to another diagram");
+                assert_eq!(named_levels(&summed), named_levels(&two), "the marginalizing conjunction minimized to another diagram");
             }
         }
     }

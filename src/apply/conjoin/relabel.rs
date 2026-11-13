@@ -91,8 +91,7 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 /// Declines, leaving everything as it was, on any level the general routes
 /// must see: a marginal level on either operand, a marginal child other
 /// than one the output carries from the carrier, a target, a weighted
-/// sweep, a one-product level with a target child ([`fuses_target_child`]),
-/// and a root the count mode counts instead of building. So in a sweep that
+/// sweep, and a root the count mode counts instead of building. So in a sweep that
 /// sums levels out (`and_marginalizing`) it takes the levels beside and
 /// above the targets: each is structure whose children's products are one
 /// node per live cell, as in a plain conjunction. And on an operand an
@@ -130,7 +129,6 @@ pub(super) fn take_relabel_level(
     if relabel_forced_off()
         || sweep.ws.is_some()
         || sweep.targets.contains(ti)
-        || fuses_target_child(sweep, t, shape.f.here, shape.g.here)
         || (sweep.count_root && t == sweep.vtree.root())
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
@@ -236,25 +234,6 @@ pub(super) fn take_relabel_level(
         .publish_relabelled(eng, ti, carrier_f, &map, nodes)?;
     note_relabelled(false);
     Ok(true)
-}
-
-/// Whether `t` is a level of one node in each operand (`f_here`, `g_here`)
-/// with a target child: the one product a [`ConjoinMode::Sum`] sweep may sum
-/// that child out of as it finds the pairs (`sums_root`), and whose pairs
-/// the two-step path fuses once the child is marginal. The relabelling route
-/// leaves it to the general routes in every mode, so the two paths build it
-/// alike, pair for pair; one node in each operand, it has nothing to save.
-pub(super) fn fuses_target_child(
-    sweep: &Sweep<'_, '_>,
-    t: VtreeIdx,
-    f_here: usize,
-    g_here: usize,
-) -> bool {
-    if f_here != 1 || g_here != 1 || sweep.targets.is_empty() {
-        return false;
-    }
-    let (left, right) = sweep.vtree.children(t);
-    sweep.targets.contains(left.idx()) || sweep.targets.contains(right.idx())
 }
 
 /// Write the carrier level's nodes into `level`, each pair carried through

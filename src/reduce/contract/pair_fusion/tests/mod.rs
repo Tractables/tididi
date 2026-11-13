@@ -36,11 +36,3 @@ pub(super) fn note_chunked_boundary() {
 pub(crate) fn chunked_boundaries() -> usize {
     CHUNKED.with(std::cell::Cell::get)
 }
-
-/// The widths at which pair fusion changes how it works on one node: the
-/// fewest pairs whose grouping sorts rather than hashes them, and the fewest
-/// plans at which the rewrite tests membership on a bitmap. For a caller's
-/// test that means to reach both.
-pub(crate) fn fusion_widths() -> (usize, usize) {
-    (plan::SORT_MIN, rewrite::BITMAP_MIN_PLANS)
-}

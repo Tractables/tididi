@@ -23,8 +23,8 @@
 //!   ([`liveness`]), arithmetic lookups on complete children, or implicit
 //!   affine product descriptions (`drive::compose`).
 //!
-//! Root-level streaming ([`ConjoinMode::Count`] and [`ConjoinMode::Sum`]) folds
-//! or sums a one-product sparse root without materializing its pairs.
+//! A count ([`ConjoinMode::Count`]) folds a one-product sparse root without
+//! materializing its pairs.
 
 use std::borrow::{Borrow, Cow};
 use std::sync::Arc;
@@ -53,7 +53,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Complete, Made, Passthrough};
+use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Complete, Made, Passthrough};
 
 // An operand as the sweep holds it, owned or borrowed.
 mod held;
@@ -233,11 +233,11 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 }
 
 /// [`Engine::and`] after its entry, for operands each owned or borrowed
-/// ([`conjoin_cow_as`]).
+/// ([`conjoin_cow`]).
 fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     crate::apply::check_vtree(&f, &g)?;
     prepare_owned_weights(&mut f, &mut g)?;
-    conjoin_cow_as(eng, f, g, VtreeMask::default(), VtreeMask::default(), ConjoinMode::Build).map(|(out, _)| out.diagram())
+    conjoin_cow(eng, f, g, VtreeMask::default(), VtreeMask::default()).map(|(out, _)| out)
 }
 
 /// Check that the operands share one weight interpretation, and give an
@@ -286,26 +286,11 @@ fn narrower_right<T: Borrow<Tdd>>(f: &mut T, g: &mut T, free: &mut Operands<Vtre
 /// operands.
 pub(crate) fn conjoin_checked(
     eng: &Engine,
-    f: Tdd,
-    g: Tdd,
-    targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
-) -> Result<(Tdd, bool), OperationError> {
-    conjoin_checked_as(eng, f, g, targets, quantified, ConjoinMode::Build)
-        .map(|(out, nonzero)| (out.diagram(), nonzero))
-}
-
-/// [`conjoin_checked`] with the sweep run in `mode`, [`ConjoinMode::Build`]
-/// or [`ConjoinMode::Sum`]; the self-conjunction shortcut returns
-/// [`Conjoined::Built`].
-fn conjoin_checked_as(
-    eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
-    mode: ConjoinMode,
-) -> Result<(Conjoined, bool), OperationError> {
+) -> Result<(Tdd, bool), OperationError> {
     let widths = Operands { f: f.max_width(), g: g.max_width() };
     narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
@@ -315,26 +300,25 @@ fn conjoin_checked_as(
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().enter()?;
         diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
-        return Ok((Conjoined::Built(f), false));
+        return Ok((f, false));
     }
     let zero = f.is_zero() || g.is_zero();
-    let result = conjoin_recycling_as(eng, f, g, targets, quantified, None, mode);
+    let result = conjoin_recycling(eng, f, g, targets, quantified, None);
     result.map(|out| (out, !zero))
 }
 
-/// [`conjoin_checked_as`] of operands each owned or borrowed: two owned ones
+/// [`conjoin_checked`] of operands each owned or borrowed: two owned ones
 /// take it; a borrowed one is read in place, weights and marginal levels
 /// included, and left as it was, for the result and work of the owned call.
-fn conjoin_cow_as<'a>(
+fn conjoin_cow<'a>(
     eng: &Engine,
     f: Cow<'a, Tdd>,
     g: Cow<'a, Tdd>,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
-    mode: ConjoinMode,
-) -> Result<(Conjoined, bool), OperationError> {
+) -> Result<(Tdd, bool), OperationError> {
     let (mut f, mut g) = match (f, g) {
-        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_checked_as(eng, f, g, targets, quantified, mode),
+        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_checked(eng, f, g, targets, quantified),
         operands => operands,
     };
     let widths = Operands { f: f.max_width(), g: g.max_width() };
@@ -348,10 +332,10 @@ fn conjoin_cow_as<'a>(
             Cow::Borrowed(f) => f.try_clone_on(eng)?,
         };
         recycle(eng, g);
-        return Ok((Conjoined::Built(out), false));
+        return Ok((out, false));
     }
     let zero = f.is_zero() || g.is_zero();
-    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets, quantified, mode);
+    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets, quantified);
     recycle(eng, f);
     recycle(eng, g);
     result.map(|out| (out, !zero))
@@ -361,30 +345,16 @@ fn conjoin_cow_as<'a>(
 /// to the pool whatever the outcome.
 fn conjoin_recycling(
     eng: &Engine,
-    f: Tdd,
-    g: Tdd,
-    targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
-) -> Result<Tdd, OperationError> {
-    conjoin_recycling_as(eng, f, g, targets, quantified, filter, ConjoinMode::Build)
-        .map(Conjoined::diagram)
-}
-
-/// [`conjoin_recycling`] with the sweep run in `mode`.
-fn conjoin_recycling_as(
-    eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
-    mode: ConjoinMode,
-) -> Result<Conjoined, OperationError> {
-    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, mode);
+) -> Result<Tdd, OperationError> {
+    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, ConjoinMode::Build);
     return_levels_of(eng, &mut f);
     return_levels_of(eng, &mut g);
-    result
+    result.map(Conjoined::diagram)
 }
 
 /// Return the conjunction of two diagrams sharing the same vtree allocation.
@@ -829,13 +799,7 @@ impl crate::Engine {
     ///
     /// A target built as structure is summed out once the conjunction is
     /// built, and the pairs above it that then name the same node on their
-    /// other side are fused into one. With a single internal target on an
-    /// unweighted conjunction, named alone or with levels under it, where
-    /// each operand has one node at the target's parent
-    /// and the sparse route builds that one product, the parent instead adds
-    /// each pair's count into its fused pair as the pair is found, so the
-    /// pairs the fusion would remove are never stored; the diagram is the
-    /// one the other order leaves.
+    /// other side are fused into one.
     ///
     /// On an unweighted conjunction, a subtree whose internal levels are all
     /// targets is built as structure and summed at its top, as it is when
@@ -892,56 +856,13 @@ impl crate::Engine {
         if unweighted {
             collapse_target_subtrees(self, &vtree, &f, &g, &mut mask)?;
         }
-        // One internal level left to sum, on an unweighted conjunction, with
-        // every other target under it: where each operand has one node at
-        // that level's parent, the parent may sum it out as it is built
-        // (`ConjoinMode::Sum`).
-        let summable = match unweighted && !two_step_forced() {
-            true => sole_summed_level(&vtree, &mut mask, targets),
-            false => None,
-        };
-        let mode = match summable {
-            Some(c) => ConjoinMode::Sum(c),
-            None => ConjoinMode::Build,
-        };
         // An unweighted sweep left no level to sum is given none, as
         // `and_model_count` gives it none: the pass below sums the targets.
         let summed = match unweighted && !mask.contains(&true) {
             true => VtreeMask::default(),
             false => VtreeMask::new(Some(&mask)),
         };
-        let (out, _) = conjoin_cow_as(self, f, g, summed, VtreeMask::default(), mode)?;
-        let mut out = match out {
-            // The root summed the target out as it found its pairs, leaving
-            // what the pass below and its pair fusion leave but for the
-            // value slots no reference names any more (see
-            // `sparse::ChildSum::write_root`).
-            Conjoined::Summed(mut out) => {
-                note_summed();
-                // The sum made every internal level under the summed one
-                // marginal; a leaf target there, whose parent holds no
-                // reference to it any more, only changes its mark.
-                for &t in targets {
-                    if vtree.node(t).is_leaf() {
-                        crate::marginal::marginalize_leaf_inline(self.limits(), &mut out, t, &vtree)?;
-                    }
-                }
-                debug_assert!(
-                    out.is_zero() || targets.iter().all(|&t| out.level(t).is_marginal()),
-                    "a root that sums its child leaves every target under it marginal"
-                );
-                if let Some(parent) = summable.and_then(|c| vtree.node(c).parent()) {
-                    #[cfg(debug_assertions)]
-                    crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
-                        &out, Some(&[parent]), "and_marginalizing",
-                    );
-                    crate::reduce::contract::pair_fusion::record_fused(self, &mut out, parent);
-                }
-                crate::reduce::slot_prune::prune_value_slots(self, &mut out)?;
-                return Ok(out);
-            }
-            other => other.diagram(),
-        };
+        let (mut out, _) = conjoin_cow(self, f, g, summed, VtreeMask::default())?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
@@ -1017,7 +938,7 @@ impl crate::Engine {
         diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
         match result? {
             Conjoined::Counted(count) => Ok(count),
-            Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),
+            Conjoined::Built(out) => self.model_count(&out),
         }
     }
 }
@@ -1036,28 +957,6 @@ fn target_mask(
         mask[t.idx()] = !vtree.node(t).is_leaf() && (include_root || t != vtree.root());
     }
     Ok(mask)
-}
-
-/// The one level `mask` names, when it names exactly one, that level has a
-/// parent, and every level of `targets` is that level or under it.
-///
-/// `mask` is written while the test runs and is returned as it was given.
-fn sole_summed_level(vtree: &Vtree, mask: &mut [bool], targets: &[VtreeIdx]) -> Option<VtreeIdx> {
-    let mut named = mask.iter().enumerate().filter_map(|(i, &m)| m.then_some(VtreeIdx(i as u32)));
-    let (Some(c), None) = (named.next(), named.next()) else {
-        return None;
-    };
-    vtree.node(c).parent()?;
-    // Membership in `c`'s subtree, read off `mask` in one pass over the
-    // subtree instead of one walk to the root per target.
-    for x in vtree.subtree(c) {
-        mask[x.idx()] = true;
-    }
-    let under = targets.iter().all(|&t| mask[t.idx()]);
-    for x in vtree.subtree(c) {
-        mask[x.idx()] = x == c;
-    }
-    under.then_some(c)
 }
 
 /// Whether a subtree's product grids can be sparse by the sparse routes'
@@ -1092,10 +991,12 @@ fn may_be_sparse((cells, weighted): (u128, u128), sparsity: u128) -> bool {
 ///   ([`price::over_floor`]) and the subtree's grids can be as sparse as
 ///   the sparse routes need ([`may_be_sparse`]), so the subtree's products are worth finding by the
 ///   sparse routes before `c` sums them, or
-/// - `c`'s parent can sum `c` as it is built (`ConjoinMode::Sum`): no level
+/// - `c`'s parent is one product over a structural subtree: no level
 ///   under `c` is marginal in an operand, one operand has one node at every
 ///   level of the subtree, both have one node at the parent, and the parent
-///   or a level under `c`'s sibling is over the floor.
+///   or a level under `c`'s sibling is over the floor. This case was written
+///   for a parent that summed `c` as it was built, which is gone; the
+///   two-step path it now takes was measured equal with the case kept.
 ///
 /// Summing `c` makes the levels under it marginal, as it does for a caller
 /// that names `c` alone. `c` itself leaves `mask` as well in the first case
@@ -1246,11 +1147,11 @@ use tests::{
     note_implied_walk, note_kept_counts, note_lent, note_lone_columns, note_lone_pair, note_lookups,
     note_one_sided_masks, note_pair_row_unrolled, note_pair_rows, note_pairs_grown,
     note_reach_columns_row, note_reach_tables, note_read_through, note_relabelled, note_relayed,
-    note_route, note_row_columns_row, note_scheduled_charge, note_single_rows, note_summed,
-    note_summed_complete_root, note_whole_row, note_word_cells, note_written_pairs,
+    note_route, note_row_columns_row, note_scheduled_charge, note_single_rows,
+    note_whole_row, note_word_cells, note_written_pairs,
     one_sided_masks_forced_off, pair_rows_forced_off, reach_columns_forced_off, reach_tables_forced,
     relabel_forced_off, relay_forced_off, row_columns_forced_off, seed_pairs_forced,
-    single_rows_forced_off, taken_levels_settled_forced, two_step_forced, word_cells_forced,
+    single_rows_forced_off, taken_levels_settled_forced, word_cells_forced,
     word_rows_sorted_forced,
     builds_past_cap_forced, note_refused_past_cap,
 };

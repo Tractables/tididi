@@ -389,18 +389,14 @@ fn root_cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
     out
 }
 
-/// The cross as a child of the root: the root that sums one child out as it
-/// finds its pairs reads the complete child by arithmetic, as the two-step
-/// path's conjunction does, so the two stay one diagram
-/// (`sparse::tests::summed` checks that identity). Summing either child, the
-/// count is the listed conjunction's on the fused path, the listed one and
-/// the two-step one, each canonical once minimized; and the count that
-/// never builds the root is the listed one too.
+/// The cross as a child of the root. Summing either child, the count is the
+/// listed conjunction's with the complete child read by arithmetic and
+/// listed, each canonical once minimized; and the count that never builds
+/// the root is the listed one too.
 #[test]
-fn a_summed_root_reads_a_complete_child_by_arithmetic() {
+fn summing_a_child_of_a_cross_root_keeps_the_count() {
     let floor = SparseRoute { sparsity: 1, min_grid: 0 };
     let mut rng = Lcg::new(0x5eed_a906);
-    let before = summed_complete_roots();
     for (shape, vtree) in root_cross_vtrees() {
         let (left, right) = vtree.children(vtree.root());
         for case in 0..3 {
@@ -416,7 +412,7 @@ fn a_summed_root_reads_a_complete_child_by_arithmetic() {
                     for target in [left, right] {
                         let what = format!("{what}, summing {target:?}");
                         let sum = || eng.and_marginalizing(a.clone(), b.clone(), &[target]).unwrap();
-                        for (path, out) in [("summed", sum()), ("listed", list_complete_sides(sum)), ("two-step", two_step(sum))] {
+                        for (path, out) in [("arithmetic", sum()), ("listed", list_complete_sides(sum))] {
                             let what = format!("{what}, {path}");
                             assert_eq!(eng.model_count(&out).unwrap(), count, "{what}: count");
                             let mut out = out;
@@ -429,5 +425,4 @@ fn a_summed_root_reads_a_complete_child_by_arithmetic() {
             }
         }
     }
-    assert!(summed_complete_roots() > before, "no summed root read a child by arithmetic");
 }

@@ -61,15 +61,6 @@ pub(super) fn refused_past_cap() -> u64 {
     REFUSED_PAST_CAP.with(std::cell::Cell::get)
 }
 
-thread_local! {
-    /// Whether `and_marginalizing` takes the two-step path on this thread
-    /// ([`two_step`]).
-    static TWO_STEP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The `and_marginalizing` calls on this thread whose root summed its
-    /// target out ([`summed_roots`]).
-    static SUMMED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
 /// How a test thread sums its streamed float levels ([`FLOAT_ROWS`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum FloatRows {
@@ -124,26 +115,6 @@ pub(crate) fn cells_only() -> bool {
 /// it can.
 pub(crate) fn eager() -> bool {
     FLOAT_ROWS.with(|m| m.get() == FloatRows::Eager)
-}
-
-pub(super) fn two_step_forced() -> bool {
-    TWO_STEP.with(std::cell::Cell::get)
-}
-
-pub(super) fn note_summed() {
-    SUMMED.with(|n| n.set(n.get() + 1));
-}
-
-/// Run `f` with `and_marginalizing` on the two-step path: the conjunction
-/// built in full, then the target marginalized and the root's pairs fused.
-pub(super) fn two_step<R>(f: impl FnOnce() -> R) -> R {
-    with_flag(&TWO_STEP, f)
-}
-
-/// How many `and_marginalizing` calls on this thread summed their target
-/// out at the root so far.
-pub(super) fn summed_roots() -> u64 {
-    SUMMED.with(std::cell::Cell::get)
 }
 
 thread_local! {
@@ -902,9 +873,6 @@ thread_local! {
     /// The sparse levels on this thread that joined their left child, and
     /// their right one, by arithmetic ([`complete_side_census`]).
     static COMPLETE_SIDES: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
-    /// The one-product roots on this thread that a sum took with a child
-    /// read by arithmetic ([`summed_complete_roots`]).
-    static SUMMED_COMPLETE_ROOTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn complete_sides_listed() -> bool {
@@ -919,10 +887,6 @@ pub(super) fn note_complete_side(side: crate::diagram::ChildSide) {
     });
 }
 
-pub(super) fn note_summed_complete_root() {
-    SUMMED_COMPLETE_ROOTS.with(|c| c.set(c.get() + 1));
-}
-
 /// Run `f` with every sparse level listing each child it joins, a complete
 /// one too: the oracle the arithmetic reads are checked against.
 pub(super) fn list_complete_sides<R>(f: impl FnOnce() -> R) -> R {
@@ -933,12 +897,6 @@ pub(super) fn list_complete_sides<R>(f: impl FnOnce() -> R) -> R {
 /// and their right one, by arithmetic.
 pub(super) fn complete_side_census() -> [u64; 2] {
     COMPLETE_SIDES.with(std::cell::Cell::get)
-}
-
-/// The one-product roots on this thread so far that a sum took with a
-/// child read by arithmetic.
-pub(super) fn summed_complete_roots() -> u64 {
-    SUMMED_COMPLETE_ROOTS.with(std::cell::Cell::get)
 }
 
 thread_local! {
