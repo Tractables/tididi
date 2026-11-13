@@ -2141,11 +2141,6 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
     const WHOLE_ROWS: bool = true;
 
     #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
-    }
-
-    #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         process_cell::<_, _, _>(
             (eng, a.ctx),

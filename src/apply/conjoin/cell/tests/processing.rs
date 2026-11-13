@@ -269,8 +269,6 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Collect<'_> {
         const DENSE_SLAB: bool = true;
         #[inline(always)]
-        fn grid_row(&self, i: usize) -> usize { i }
-        #[inline(always)]
         fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
                 (eng, a.ctx),

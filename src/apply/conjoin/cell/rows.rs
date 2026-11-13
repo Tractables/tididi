@@ -92,7 +92,8 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// `f_idx`.
     pub(super) i: usize,
     /// Flat slab offset of the grid row this cell writes into —
-    /// `ctx.output_grid_base + CellAction::grid_row(i) * ctx.right_width`, computed once per row by
+    /// `ctx.output_grid_base + i * ctx.right_width` on a dense slab, `ctx.output_grid_base`
+    /// otherwise, computed once per row by
     /// the driver for its `NO_PRODUCT` reset, so `grid_pos == row_base + j` and the reset
     /// and the kernel cannot drift.
     pub(super) row_base: usize,
@@ -126,11 +127,6 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether the level has one column, which the action was built for: the
     /// row loop then knows its width without reading it.
     const ONE_COLUMN: bool = false;
-
-    /// Output grid row for f row `i`. Drives both the per-row `NO_PRODUCT` reset and
-    /// the kernel's `grid_pos` (through `CellArgs::row_base`), so the two can
-    /// never drift.
-    fn grid_row(&self, i: usize) -> usize;
 
     /// One cell of the row.
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError>;
@@ -385,7 +381,7 @@ where
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
-    // (`grid_row(i) == i`), so hoisting them into a single `fill` writes the same
+    // (grid row `i` for f row `i`), so hoisting them into a single `fill` writes the same
     // cells with the same byte pattern; only the order changes, and nothing reads
     // this level's slab between rows (the child lookups read the child levels'
     // disjoint slabs). Above the size gate the per-row form stays: interleaving
@@ -427,7 +423,7 @@ where
         f_pairs_scratch,
     );
     for i in 0..left_width {
-        let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
+        let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * right_width } else { 0 };
         // A row the slab is extended over is `NO_PRODUCT` already.
         let fresh = extend_slab(slab, row_base, row_base + right_width);
         let node_idx = &mut slab[..];
@@ -640,12 +636,6 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
         emit_row(&mut self.sink, row)
     }
 
-    /// Dense slab: one grid row per f row.
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
-    }
-
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         process_cell::<_, _, _>(
@@ -671,11 +661,6 @@ struct EmitBesideOne<S> {
 impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesideOne<S> {
     const DENSE_SLAB: bool = true;
     const ONE_COLUMN: bool = true;
-
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
-    }
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
@@ -816,15 +801,6 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     /// scratch row, so its `NO_PRODUCT` reset must fire between rows and cannot be
     /// hoisted into a one-shot slab fill.
     const DENSE_SLAB: bool = false;
-
-    /// One reused `right_width`-wide row scratch instead of a dense slab: every
-    /// structural row builds at grid row 0, so `row_base == ctx.output_grid_base`.
-    /// The true row index survives only in `CellArgs::i`, which the product
-    /// entry's `f_idx` reads below.
-    #[inline(always)]
-    fn grid_row(&self, _i: usize) -> usize {
-        0
-    }
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
@@ -1590,11 +1566,6 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
             2 => lone_row::<2, L, R>(&mut self.sink, self.lone, row),
             _ => Ok(0),
         }
-    }
-
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
     }
 
     #[inline(always)]

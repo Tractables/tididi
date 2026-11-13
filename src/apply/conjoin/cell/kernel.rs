@@ -355,9 +355,6 @@ where
         node_idx[row_base + j] = NO_PRODUCT;
         return Ok(());
     }
-    // `row_base` is the row's flat slab offset, already computed by the row loop
-    // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
-    // re-deriving the same product per cell.
     cell_pairs(
         (eng, ctx),
         (j, row_base + j),

@@ -1674,11 +1674,6 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
 {
     const DENSE_SLAB: bool = SLAB;
 
-    #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        if SLAB { i } else { 0 }
-    }
-
     /// A cell the masks leave: on a row read by vectors, after the charge
     /// of the cell's walk, a unit a candidate, the cell off its f-pair bits
     /// or its sorted live candidates where it is live; on any other row,

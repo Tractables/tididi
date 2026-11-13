@@ -598,8 +598,8 @@ struct SparseMargScratch<'a> {
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
 /// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
-/// `cell_ctx.output_grid_base` serves directly as the row base and the action's
-/// `grid_row` is 0, so a grid position is just `row_base + j` — and records each surviving cell in
+/// every row is built at grid row 0, so a grid position is
+/// `cell_ctx.output_grid_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
 /// immediately: the level is tagged sparse, its product list is the
 /// authoritative representation, and the grandparent densifies it lazily.
