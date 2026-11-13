@@ -366,7 +366,10 @@ avx2_fn! {
 /// add to its first pair's slots, every slot a pair names in its column.
 /// The block is summed in `out`, its first products written into the room
 /// past its floats and the others added: a sum of nonnegative floats that
-/// starts at zero holds its first product as it is.
+/// starts at zero holds its first product as it is. A row of at most
+/// [`SHORT_ROW`] cells is summed a cell at a time ([`short_row`]), each
+/// cell's products in the same order: on so short a row a block costs more
+/// to set up than its products.
 #[inline(always)]
 fn described_rows(
     product: &ImplicitLevel,
@@ -407,7 +410,7 @@ fn described_rows(
 
 /// The longest row [`described_rows`] sums a cell at a time
 /// ([`short_row`]).
-const SHORT_ROW: usize = 4;
+const SHORT_ROW: usize = 8;
 
 /// Sum the `len` cells of a row of [`described_rows`] one after another,
 /// each its products in place order, `places` split into the first and
