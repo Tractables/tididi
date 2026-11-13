@@ -50,6 +50,11 @@ pub(crate) trait PairSink {
         start: usize,
     ) -> Result<(), OperationError>;
 
+    /// Whether f row `i`'s cells sit in grid row `i`; `false` for a sink
+    /// that builds every row in grid row 0 and records where each cell
+    /// sits ([`row`](Self::row)).
+    const SLAB: bool = true;
+
     /// The f row the cells that follow are of, for a sink that records
     /// where each cell it finishes sits.
     #[inline(always)]

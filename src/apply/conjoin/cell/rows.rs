@@ -120,8 +120,8 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether this action owns a dense `left_width × right_width` slab — one grid row per f row,
     /// so the per-row `NO_PRODUCT` resets tile the level's whole slab exactly once and
     /// can be replaced by a single fill (see [`run_level_rows`]). `false` for
-    /// an action that writes every row into grid row 0 ([`SparseMargEmit`],
-    /// `rows_by_words` without `SLAB`), which must re-fill that row between rows.
+    /// an action that writes every row into grid row 0 ([`Emit`] over a
+    /// [`ListSink`], `rows_by_words` without `SLAB`), which must re-fill that row between rows.
     const DENSE_SLAB: bool;
 
     /// Whether the level has one column, which the action was built for: the
@@ -617,15 +617,17 @@ where
 
 /// Materializing action: each surviving cell becomes a product node in the
 /// dense `left_width × right_width` output slab, written through the sink
-/// `S`. Both dense routes are this action, and the streaming route's with
-/// a sink that folds each cell into the level's value column.
+/// `S`, or in grid row 0 where `S` records the cells ([`ListSink`]). Both
+/// dense routes are this action, and the streaming route's with a sink
+/// that folds each cell into the level's value column.
 pub(super) struct Emit<S> {
     pub(super) sink: S,
 }
 
 impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
-    const DENSE_SLAB: bool = true;
-    const WHOLE_ROWS: bool = true;
+    const DENSE_SLAB: bool = S::SLAB;
+    /// A sink of grid row 0 opens no row.
+    const WHOLE_ROWS: bool = S::SLAB;
 
     #[inline(always)]
     fn whole_row(
@@ -638,6 +640,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
 
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
+        self.sink.row(a.i);
         process_cell::<_, _, _>(
             (eng, a.ctx),
             (a.j, a.row_base),
@@ -744,6 +747,8 @@ impl ListSink<'_> {
 }
 
 impl PairSink for ListSink<'_> {
+    const SLAB: bool = false;
+
     #[inline(always)]
     fn single(
         &mut self,
@@ -790,33 +795,6 @@ impl PairSink for ListSink<'_> {
     }
 }
 
-/// Sparse-output action: emit into the reused row scratch through a
-/// [`ListSink`], which records each surviving cell as a `ProductEntry`.
-struct SparseMargEmit<'a> {
-    sink: ListSink<'a>,
-}
-
-impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
-    /// Not a dense slab — every structural row is rebuilt in the same `right_width`-wide
-    /// scratch row, so its `NO_PRODUCT` reset must fire between rows and cannot be
-    /// hoisted into a one-shot slab fill.
-    const DENSE_SLAB: bool = false;
-
-    #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        self.sink.row(a.i);
-        process_cell::<_, _, _>(
-            (eng, a.ctx),
-            (a.j, a.row_base),
-            a.f_pairs,
-            (a.right_level_t, a.g_pairs_scratch),
-            a.node_idx,
-            (a.left, a.right),
-            (&mut self.sink, a.gate),
-        )
-    }
-}
-
 /// The `Route::SparseMarg` row loop: an *exactly-one*-marginal-child level
 /// whose output is structural (never a marginalization target).
 ///
@@ -851,7 +829,7 @@ pub(crate) fn run_level_rows_marginal_sparse(
         scratch,
         &left,
         &right,
-        &mut SparseMargEmit {
+        &mut Emit {
             sink: ListSink {
                 emit: EmitSink {
                     level,
