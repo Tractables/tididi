@@ -50,54 +50,26 @@ pub(crate) fn run_level_rows_pairs(
     level: &mut TddLevel,
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
-    let sides = rows.ctx.sides;
-    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
-    match lookups {
-        PlainLookups::Grid => {
-            let cells = rows.f_width.saturating_mul(rows.ctx.g_width);
-            let most = ahead_most(rows.f_level, rows.g_level, cells);
-            let mut sink =
-                ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
-            pair_rows(
-                eng,
-                rows,
-                scratch,
-                &grid(&sides.left),
-                &grid(&sides.right),
-                &mut sink,
-            )?;
-            sink.trim();
-            Ok(())
-        }
-        PlainLookups::CompleteLeft { charged } => pair_rows(
-            eng,
-            rows,
-            scratch,
-            &complete(&sides.left),
-            &grid(&sides.right),
-            &mut EmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::CompleteRight { charged } => pair_rows(
-            eng,
-            rows,
-            scratch,
-            &grid(&sides.left),
-            &complete(&sides.right),
-            &mut EmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::Complete { .. } => {
-            unreachable!("a level of two complete sides builds no masks")
-        }
-    }?;
+    if lookups == PlainLookups::Grid {
+        let cells = rows.f_width.saturating_mul(rows.ctx.g_width);
+        let most = ahead_most(rows.f_level, rows.g_level, cells);
+        let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
+        with_lookups!(lookups, rows.ctx.sides, [Grid], |l, r| {
+            pair_rows(eng, rows, scratch, l, r, &mut sink)
+        })?;
+        sink.trim();
+    } else {
+        let mut sink = EmitSink {
+            level,
+            charged: lookups.charged(),
+            inline: &mut inline,
+        };
+        // A level of two complete sides builds no masks.
+        with_lookups!(lookups, rows.ctx.sides, [CompleteLeft, CompleteRight], |l, r| {
+            pair_rows(eng, rows, scratch, l, r, &mut sink)
+        })?;
+    }
     level.leave_written_pairs(inline);
     Ok(())
 }

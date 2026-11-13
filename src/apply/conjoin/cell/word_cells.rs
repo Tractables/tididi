@@ -558,56 +558,20 @@ pub(crate) fn run_level_rows_words(
     lookups: PlainLookups,
     f_rows: Sides<usize>,
 ) -> Result<(), OperationError> {
-    let sides = rows.ctx.sides;
-    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
+    super::super::note_word_cells(match lookups {
+        PlainLookups::Grid => super::super::WordNote::Grids,
+        _ => super::super::WordNote::Complete,
+    });
     let mut inline = 0;
-    match lookups {
-        PlainLookups::Grid => {
-            super::super::note_word_cells(super::super::WordNote::Grids);
-            rows_by_words::<true, _, _, _>(
-                eng,
-                (rows, scratch),
-                (words, f_rows),
-                (&grid(&sides.left), &grid(&sides.right)),
-                EmitSink {
-                    level,
-                    charged: usize::MAX,
-                    inline: &mut inline,
-                },
-            )
-        }
-        PlainLookups::CompleteLeft { charged } => {
-            super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(
-                eng,
-                (rows, scratch),
-                (words, f_rows),
-                (&complete(&sides.left), &grid(&sides.right)),
-                EmitSink {
-                    level,
-                    charged,
-                    inline: &mut inline,
-                },
-            )
-        }
-        PlainLookups::CompleteRight { charged } => {
-            super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words::<true, _, _, _>(
-                eng,
-                (rows, scratch),
-                (words, f_rows),
-                (&grid(&sides.left), &complete(&sides.right)),
-                EmitSink {
-                    level,
-                    charged,
-                    inline: &mut inline,
-                },
-            )
-        }
-        PlainLookups::Complete { .. } => {
-            unreachable!("a level of two complete sides kills no candidate")
-        }
-    }?;
+    let sink = EmitSink {
+        level,
+        charged: lookups.charged(),
+        inline: &mut inline,
+    };
+    // A level of two complete sides kills no candidate.
+    with_lookups!(lookups, rows.ctx.sides, [Grid, CompleteLeft, CompleteRight], |l, r| {
+        rows_by_words::<true, _, _, _>(eng, (rows, scratch), (words, f_rows), (l, r), sink)
+    })?;
     level.leave_written_pairs(inline);
     Ok(())
 }

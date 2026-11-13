@@ -25,6 +25,58 @@ pub(crate) enum PlainLookups {
     Complete { charged: usize },
 }
 
+impl PlainLookups {
+    /// The pair capacity the meters have been charged for, `usize::MAX`
+    /// where no arena was reserved.
+    pub(crate) fn charged(self) -> usize {
+        match self {
+            PlainLookups::Grid => usize::MAX,
+            PlainLookups::CompleteLeft { charged }
+            | PlainLookups::CompleteRight { charged }
+            | PlainLookups::Complete { charged } => charged,
+        }
+    }
+}
+
+/// `body` with `l` and `r` the lookups `lookups` names for `sides`, and the
+/// optional `const` true where both sides are complete; compiled once for
+/// each variant listed, any other unreachable.
+macro_rules! with_lookups {
+    (@sides Grid, $s:expr) => {
+        (&DenseLookup::new(&$s.left), &DenseLookup::new(&$s.right))
+    };
+    (@sides CompleteLeft, $s:expr) => {
+        (&CompleteLookup::new(&$s.left), &DenseLookup::new(&$s.right))
+    };
+    (@sides CompleteRight, $s:expr) => {
+        (&DenseLookup::new(&$s.left), &CompleteLookup::new(&$s.right))
+    };
+    (@sides Complete, $s:expr) => {
+        (&CompleteLookup::new(&$s.left), &CompleteLookup::new(&$s.right))
+    };
+    (@both Complete) => {
+        true
+    };
+    (@both $arm:ident) => {
+        false
+    };
+    ($lookups:expr, $sides:expr, [$($arm:ident),+], |$l:ident, $r:ident| $body:expr) => {
+        with_lookups!($lookups, $sides, [$($arm),+], |$l, $r, const _BOTH| $body)
+    };
+    ($lookups:expr, $sides:expr, [$($arm:ident),+], |$l:ident, $r:ident, const $both:ident| $body:expr) => {
+        match $lookups {
+            $(PlainLookups::$arm { .. } => {
+                const $both: bool = with_lookups!(@both $arm);
+                let ($l, $r) = with_lookups!(@sides $arm, $sides);
+                $body
+            })+
+            #[allow(unreachable_patterns)]
+            other => unreachable!("{other:?} has no row loop here"),
+        }
+    };
+}
+pub(super) use with_lookups;
+
 /// The row loop of `Route::PlainDense` and `Route::Dense` on a level with at
 /// least one [complete](super::super::products::Products::is_complete) child
 /// side: [`CompleteLookup`] on each complete side, the grid on the other.
@@ -46,45 +98,19 @@ pub(crate) fn run_level_rows_complete(
     level: &mut TddLevel,
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
-    let sides = rows.ctx.sides;
-    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
-    match lookups {
-        PlainLookups::Complete { charged } => run_complete_or_lone::<true, _, _>(
-            eng,
-            rows,
-            scratch,
-            (&complete(&sides.left), &complete(&sides.right)),
-            EmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::CompleteLeft { charged } => run_complete_or_lone::<false, _, _>(
-            eng,
-            rows,
-            scratch,
-            (&complete(&sides.left), &grid(&sides.right)),
-            EmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::CompleteRight { charged } => run_complete_or_lone::<false, _, _>(
-            eng,
-            rows,
-            scratch,
-            (&grid(&sides.left), &complete(&sides.right)),
-            EmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
-    }?;
+    let sink = EmitSink {
+        level,
+        charged: lookups.charged(),
+        inline: &mut inline,
+    };
+    // A level with no complete side takes the grid row loop.
+    with_lookups!(
+        lookups,
+        rows.ctx.sides,
+        [Complete, CompleteLeft, CompleteRight],
+        |l, r, const BOTH| run_complete_or_lone::<BOTH, _, _>(eng, rows, scratch, (l, r), sink)
+    )?;
     level.leave_written_pairs(inline);
     Ok(())
 }
