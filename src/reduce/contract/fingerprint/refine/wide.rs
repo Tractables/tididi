@@ -33,7 +33,7 @@ pub(super) struct Wide<'a> {
 }
 
 impl Partition<'_> {
-    /// A parent node of more than [`SMALL_PAIRS`](super::SMALL_PAIRS) pairs. One whose pairs
+    /// A parent node of more than [`super::SMALL_PAIRS`] pairs. One whose pairs
     /// come in node order is split by its runs' codes where it names at
     /// most [`FEW_SIBLINGS`] siblings ([`Self::split_by_run_codes`]), and
     /// else first split by degree ([`Self::split_by_degree`]), which settles
