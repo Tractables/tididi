@@ -562,14 +562,8 @@ pub(crate) fn run_level_rows_stream_words(
             env,
         )
     } else {
-        let left = DenseLookup {
-            base: sides.left.base,
-            stride: sides.left.stride,
-        };
-        let right = DenseLookup {
-            base: sides.right.base,
-            stride: sides.right.stride,
-        };
+        let left = DenseLookup::new(&sides.left);
+        let right = DenseLookup::new(&sides.right);
         stream_words(
             eng,
             rows,

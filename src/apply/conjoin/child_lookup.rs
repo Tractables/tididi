@@ -92,6 +92,12 @@ pub(super) struct CompleteLookup {
     pub(super) stride: u32,
 }
 
+impl CompleteLookup {
+    pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
+        Self { stride: p.stride }
+    }
+}
+
 impl ChildLookup for CompleteLookup {
     /// The row's first node.
     type Row = u32;
@@ -116,6 +122,12 @@ impl ChildLookup for CompleteLookup {
 pub(super) struct DenseLookup {
     pub(super) base: usize,
     pub(super) stride: u32,
+}
+
+impl DenseLookup {
+    pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
+        Self { base: p.base, stride: p.stride }
+    }
 }
 
 impl ChildLookup for DenseLookup {

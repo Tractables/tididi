@@ -864,14 +864,8 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
 ) -> Result<(), OperationError> {
-    let left = DenseLookup {
-        base: rows.ctx.sides.left.base,
-        stride: rows.ctx.sides.left.stride,
-    };
-    let right = DenseLookup {
-        base: rows.ctx.sides.right.base,
-        stride: rows.ctx.sides.right.stride,
-    };
+    let left = DenseLookup::new(&rows.ctx.sides.left);
+    let right = DenseLookup::new(&rows.ctx.sides.right);
     let mut inline = 0;
     let mut action = Emit {
         sink: EmitSink {
@@ -1138,14 +1132,8 @@ fn single_rows<const W: usize>(
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     // A row's charge: a unit a live cell and the row's width.
     let row_units = live_cols + width as u64;
-    let left = DenseLookup {
-        base: ctx.sides.left.base,
-        stride: ctx.sides.left.stride,
-    };
-    let right = DenseLookup {
-        base: ctx.sides.right.base,
-        stride: ctx.sides.right.stride,
-    };
+    let left = DenseLookup::new(&ctx.sides.left);
+    let right = DenseLookup::new(&ctx.sides.right);
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
@@ -1408,11 +1396,7 @@ pub(crate) fn run_level_rows_complete(
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
     let sides = rows.ctx.sides;
-    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup {
-        base: p.base,
-        stride: p.stride,
-    };
+    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
     match lookups {
         PlainLookups::Complete { charged } => match lone_pair(rows, &mut *scratch.g_pairs) {

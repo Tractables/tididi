@@ -51,11 +51,7 @@ pub(crate) fn run_level_rows_pairs(
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
     let sides = rows.ctx.sides;
-    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup {
-        base: p.base,
-        stride: p.stride,
-    };
+    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {

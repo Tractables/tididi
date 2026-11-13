@@ -494,14 +494,8 @@ fn run_row_loop(
         Route::Stream {
             marginal_children: false,
         } => {
-            let left = child_lookup::DenseLookup {
-                base: cell_ctx.sides.left.base,
-                stride: cell_ctx.sides.left.stride,
-            };
-            let right = child_lookup::DenseLookup {
-                base: cell_ctx.sides.right.base,
-                stride: cell_ctx.sides.right.stride,
-            };
+            let left = child_lookup::DenseLookup::new(&cell_ctx.sides.left);
+            let right = child_lookup::DenseLookup::new(&cell_ctx.sides.right);
             stream_rows!(&left, &right)
         }
         // A materializing level with at least one marginal child or

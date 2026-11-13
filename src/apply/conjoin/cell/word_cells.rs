@@ -194,11 +194,7 @@ pub(crate) fn words_pay(
     node_idx: &[u32],
 ) -> bool {
     let sides = rows.ctx.sides;
-    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup {
-        base: p.base,
-        stride: p.stride,
-    };
+    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     match lookups {
         PlainLookups::Grid => pays(
             eng,
@@ -253,14 +249,8 @@ pub(crate) fn words_pay_marginal(
         );
         pays(eng, rows, w, &left, &right, f_rows, node_idx)
     } else {
-        let left = DenseLookup {
-            base: sides.left.base,
-            stride: sides.left.stride,
-        };
-        let right = DenseLookup {
-            base: sides.right.base,
-            stride: sides.right.stride,
-        };
+        let left = DenseLookup::new(&sides.left);
+        let right = DenseLookup::new(&sides.right);
         pays(eng, rows, w, &left, &right, f_rows, node_idx)
     }
 }
@@ -570,11 +560,7 @@ pub(crate) fn run_level_rows_words(
     f_rows: Sides<usize>,
 ) -> Result<(), OperationError> {
     let sides = rows.ctx.sides;
-    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup {
-        base: p.base,
-        stride: p.stride,
-    };
+    let (complete, grid) = (CompleteLookup::new, DenseLookup::new);
     let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {
