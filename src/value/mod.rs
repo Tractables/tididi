@@ -136,7 +136,7 @@ impl CountVec {
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
-    /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
+    /// streaming output column pre-reserves `f_width.max(g_width)` and then grows
     /// fallibly via [`Self::push`]).
     ///
     /// Forced inline: sharing the constructor across the width and capacity

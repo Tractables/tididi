@@ -320,11 +320,11 @@ fn pays<L: ChildLookup, R: ChildLookup>(
         + f_rows.left
         + f_rows.right) as u128;
     let reads = fp as u128 * words as u128;
-    let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.right_width.min(SAMPLE_NODES);
+    let sampled = rows.f_width.min(SAMPLE_NODES) * rows.ctx.g_width.min(SAMPLE_NODES);
     let budget = (candidates / SAMPLE_SHARE / sampled.max(1)).clamp(1, SAMPLE_CELL);
     let (candidates, cells) = (
         candidates as u128,
-        rows.f_width as u128 * rows.ctx.right_width as u128,
+        rows.f_width as u128 * rows.ctx.g_width as u128,
     );
     // The costs no sample changes: a masked level's vectors against its
     // candidates; a level's without, against the most its walk costs, with
@@ -451,7 +451,7 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
     w.sample_cols.clear();
     lim.reserve(&mut w.sample, SAMPLE_NODES * SAMPLE_CELL)?;
     lim.reserve(&mut w.sample_cols, SAMPLE_NODES)?;
-    for j in spread(ctx.right_width, SAMPLE_NODES) {
+    for j in spread(ctx.g_width, SAMPLE_NODES) {
         let pairs = column_pairs(ctx, g_level, j, &mut w.g_flat);
         let grouped = ctx.right_cols.is_some_and(|c| c.runs(j).is_some());
         w.sample_cols.push(SampledColumn {
@@ -686,7 +686,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
     } = scratch;
     let lim = eng.limits();
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let gp = a.w.g_flat.len() as u64;
     // The row loop's resets: a fill of a small grid, a row at a time on a
     // large one.
@@ -980,7 +980,7 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     ) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let RowLoop { g_level, ctx, .. } = rows;
-        let width = ctx.right_width;
+        let width = ctx.g_width;
         w.g_flat.clear();
         w.col_of.clear();
         w.col_start.clear();
@@ -1679,7 +1679,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
                 (eng, a.ctx),
                 (a.j, a.row_base),
                 a.f_pairs,
-                (a.right_level_t, a.g_pairs_scratch),
+                (a.g_level, a.g_pairs_scratch),
                 a.node_idx,
                 (a.left, a.right),
                 (&mut self.sink, a.gate),

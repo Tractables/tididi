@@ -285,8 +285,8 @@ fn fold_child_counts(
 /// Give both children a dense grid and bump-allocate this level's own,
 /// returning the base the cell build writes into.
 ///
-/// The sparse-marginal route allocates only a reused `right_width`-row scratch instead of
-/// the dense `left_width * right_width` slab: the row driver processes one structural row at a
+/// The sparse-marginal route allocates only a reused `g_width`-row scratch instead of
+/// the dense `f_width * g_width` slab: the row driver processes one structural row at a
 /// time into it and records the surviving cells in the output product list, so
 /// the slab is never materialized and the grandparent densifies the level
 /// lazily. That route's base is the scratch, not a slab base, which is why it
@@ -373,13 +373,13 @@ pub(super) fn open_level_arenas(
         lim.begin_level(None);
         return Ok(());
     }
-    let (t, left_width, right_width) = (shape.t, shape.f.here, shape.g.here);
+    let (t, f_width, g_width) = (shape.t, shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
-    // `left_width * right_width` is an exact bound.
-    let nodes_reserve = left_width
-        .saturating_mul(right_width)
+    // `f_width * g_width` is an exact bound.
+    let nodes_reserve = f_width
+        .saturating_mul(g_width)
         .min(LEVEL_RESERVE_NODES_CAP)
-        .max(left_width.max(right_width));
+        .max(f_width.max(g_width));
     lim.reserve(level.nodes.stored_mut(), nodes_reserve)?;
 
     // The one per-level emit-pair bound ([`emit_pair_bound`]). A bound of
@@ -591,7 +591,7 @@ struct SparseMargScratch<'a> {
 
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
-/// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
+/// Runs the shared emit kernel, but writes into the reused `g_width`-row scratch —
 /// every row is built at grid row 0, so a grid position is
 /// `cell_ctx.output_grid_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
@@ -683,7 +683,7 @@ fn build_cell_ctx<'a>(
     };
     CellCtx {
         output_grid_base,
-        right_width: shape.g.here,
+        g_width: shape.g.here,
         masked: masks.is_some(),
         sides: Sides {
             left: side(

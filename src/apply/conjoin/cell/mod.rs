@@ -51,7 +51,7 @@ pub(super) struct CellCtx<'a> {
     /// Flat base offset of the output level's grid in `node_idx`.
     pub(crate) output_grid_base: usize,
     /// Number of g nodes at this level (column count of the product grid).
-    pub(crate) right_width: usize,
+    pub(crate) g_width: usize,
     /// Whether the level built its dead-pair masks, each side's `live_cols`
     /// and `reach`: both operand levels multi-pair, a side read from a grid,
     /// and a grid of `liveness::MASK_MIN_CELLS` cells or more; or one

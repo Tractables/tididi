@@ -113,7 +113,7 @@ fn exists_var_soundness_brute_force() {
 /// When an internal vtree level has 0 pair nodes, the cascade computes empty
 /// counts and calls `become_marginal(vec![], None)` → 0-width marginal. A conjunction
 /// whose operands both inherit that level then reaches `apply_and` with
-/// left_width=right_width=0 and both levels marginal, which neither
+/// f_width=g_width=0 and both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
 /// `pairs_vec(0)` on an empty nodes Vec.
 ///
@@ -142,7 +142,7 @@ fn exists_var_soundness_brute_force() {
 /// C being marginal is what makes A a true orphan (marginal levels carry
 /// counts, not pair references), matching the production dump where the
 /// 0-width level had no live parents. `apply_and` then hits A with
-/// left_width=right_width=0, both marginal: without the fix the debug assert (debug builds)
+/// f_width=g_width=0, both marginal: without the fix the debug assert (debug builds)
 /// or `pairs_vec(0)` (release) panics; with it the level passes
 /// through empty and the conjunction's count is unchanged.
 fn leaf_parent(vtree: &Vtree, x: u32, y: u32) -> crate::vtree::VtreeIdx {

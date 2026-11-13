@@ -281,12 +281,12 @@ pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 
 /// Whether a masked level is read by pairs: each child row's word over g's
 /// pairs, [`build_row_columns`] of the [pair reach](build_pair_reach), in
-/// place of its word over g's nodes. That takes g's first `right_width`
+/// place of its word over g's nodes. That takes g's first `g_width`
 /// nodes holding at most [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child
 /// grids whose masks are bit-exact, which the words reproduce, and a
 /// `complete` side's child having columns, which the loop reads whole.
-pub(super) fn pairs_fit(level: &TddLevel, right_width: usize, child_g_widths: Sides<usize>, complete: Sides<bool>) -> bool {
-    if right_width > ROW_COLUMNS_MAX_WIDTH
+pub(super) fn pairs_fit(level: &TddLevel, g_width: usize, child_g_widths: Sides<usize>, complete: Sides<bool>) -> bool {
+    if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
         || bucket_shift(child_g_widths.right) != 0
         || (complete.left && child_g_widths.left == 0)
@@ -295,7 +295,7 @@ pub(super) fn pairs_fit(level: &TddLevel, right_width: usize, child_g_widths: Si
         return false;
     }
     let mut n = 0;
-    level.try_for_each_node(0..right_width, |_, pairs| {
+    level.try_for_each_node(0..g_width, |_, pairs| {
         n += pairs.len();
         if n > ROW_COLUMNS_MAX_WIDTH { Err(()) } else { Ok(()) }
     }).is_ok()

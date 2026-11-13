@@ -55,7 +55,7 @@ pub(crate) fn run_level_rows_pairs(
     let mut inline = 0;
     match lookups {
         PlainLookups::Grid => {
-            let cells = rows.f_width.saturating_mul(rows.ctx.right_width);
+            let cells = rows.f_width.saturating_mul(rows.ctx.g_width);
             let most = ahead_most(rows.f_level, rows.g_level, cells);
             let mut sink =
                 ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
@@ -129,8 +129,8 @@ where
         node_idx: slab,
     } = scratch;
     let lim = eng.limits();
-    let right_width = ctx.right_width;
-    debug_assert!(right_width <= ROW_COLUMNS_MAX_WIDTH);
+    let g_width = ctx.g_width;
+    debug_assert!(g_width <= ROW_COLUMNS_MAX_WIDTH);
 
     // g's pairs in column order; each column's as a mask of their bits, and
     // each pair's column. The f rows' buffer decodes a column the table
@@ -138,7 +138,7 @@ where
     g_flat.clear();
     lim.reserve_exact(
         g_flat,
-        (0..right_width).map(|j| g_level.pair_count_at(j)).sum(),
+        (0..g_width).map(|j| g_level.pair_count_at(j)).sum(),
     )?;
     let mut columns = Columns {
         g_flat: &[],
@@ -148,7 +148,7 @@ where
         charge_of: [0; 1 << CHARGE_TABLE_COLUMNS],
         tabled: false,
     };
-    for (j, col) in columns.cols.iter_mut().enumerate().take(right_width) {
+    for (j, col) in columns.cols.iter_mut().enumerate().take(g_width) {
         let start = g_flat.len();
         g_flat.extend_from_slice(column_pairs(ctx, g_level, j, f_scratch));
         debug_assert!(
@@ -161,8 +161,8 @@ where
     columns.g_flat = &g_flat[..];
     // Where every column holds one pair, pair `q` is column `q`'s, and a
     // word of pairs is a word of their columns.
-    let one_pair = g_flat.len() == right_width
-        && columns.cols[..right_width]
+    let one_pair = g_flat.len() == g_width
+        && columns.cols[..g_width]
             .iter()
             .all(|c| c.count_ones() == 1);
     // The number of g pairs of a set of columns, which a row's charge
@@ -171,14 +171,14 @@ where
     for (n, col) in columns
         .col_pairs
         .iter_mut()
-        .zip(&columns.cols[..right_width])
+        .zip(&columns.cols[..g_width])
     {
         *n = col.count_ones() as u8;
     }
-    columns.tabled = right_width <= CHARGE_TABLE_COLUMNS
-        && (1 << right_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
+    columns.tabled = g_width <= CHARGE_TABLE_COLUMNS
+        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
     if columns.tabled {
-        for set in 1..1usize << right_width {
+        for set in 1..1usize << g_width {
             columns.charge_of[set] = columns.charge_of[set & (set - 1)]
                 + columns.col_pairs[set.trailing_zeros() as usize];
         }
@@ -192,7 +192,7 @@ where
     };
     // A level of two one-pair columns keeps them in registers and writes
     // each row's cells once.
-    match (one_pair, right_width) {
+    match (one_pair, g_width) {
         (true, 2) => {
             pair_rows_of::<true, 2, _, _, _>(eng, rows, f_scratch, slab, left, right, sink)
         }
@@ -297,9 +297,9 @@ where
     } = columns;
     let (g_flat, tabled) = (*g_flat, *tabled);
     let lim = eng.limits();
-    let right_width = ctx.right_width;
-    debug_assert!(W == 0 || (ONE && W == right_width));
-    let width = if W == 0 { right_width } else { W };
+    let g_width = ctx.g_width;
+    debug_assert!(W == 0 || (ONE && W == g_width));
+    let width = if W == 0 { g_width } else { W };
     let pairs_in = |s: u64| -> u64 {
         if W > 0 {
             return (0..W).map(|j| s >> j & 1).sum();

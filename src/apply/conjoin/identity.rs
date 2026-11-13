@@ -385,7 +385,7 @@ pub(super) fn take_level_fast_path(
     shape: LevelShape,
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
-    let (left_width, right_width) = (shape.f.here, shape.g.here);
+    let (f_width, g_width) = (shape.f.here, shape.g.here);
     let cone = run.cone;
     let ApplyRun {
         levels,
@@ -412,8 +412,8 @@ pub(super) fn take_level_fast_path(
     // reaching the both-marginal state is unsound (a summed-out scope
     // re-constrained); the debug assertion below requires the two counts to
     // be equal.
-    let both_marginal_w1 = left_width == 1
-        && right_width == 1
+    let both_marginal_w1 = f_width == 1
+        && g_width == 1
         && f.levels[t_idx].is_marginal()
         && g.levels[t_idx].is_marginal()
         && f_identity[left_idx]
@@ -430,7 +430,7 @@ pub(super) fn take_level_fast_path(
              masses — absorbing one side would be unsound"
         );
     }
-    if right_width == 1
+    if g_width == 1
         && g_identity[left_idx]
         && g_identity[right_idx]
         && (!g.levels[t_idx].is_marginal() || both_marginal_w1)
@@ -453,7 +453,7 @@ pub(super) fn take_level_fast_path(
     // Mirror of the fast-path-1 guard — a marginal f carries count mass
     // that this path would drop (it carries g). Defer to fast-path-1 above
     // (which carries f) when f is marginal.
-    if left_width == 1
+    if f_width == 1
         && f_identity[left_idx]
         && f_identity[right_idx]
         && !f.levels[t_idx].is_marginal()

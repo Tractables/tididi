@@ -110,7 +110,7 @@ fn stream_float_level<L: ChildLookup, R: ChildLookup>(
     values: &mut FloatCol,
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
-    let words = rows.ctx.right_width >= EACH_COLUMNS
+    let words = rows.ctx.g_width >= EACH_COLUMNS
         && !culls::<false, _>(rows.ctx, left)
         && !culls::<false, _>(rows.ctx, right);
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -910,7 +910,7 @@ fn read_columns<'a>(
     scratch: &mut Vec<ChildPair>,
 ) -> Result<(&'a [ChildPair], usize, Sides<usize>), OperationError> {
     ones.clear();
-    let width = rows.ctx.right_width;
+    let width = rows.ctx.g_width;
     let mut one = width >= 2;
     if one {
         eng.limits().reserve(ones, width)?;
@@ -1329,7 +1329,7 @@ impl Gather<'_> {
         scratch: &mut Vec<ChildPair>,
     ) {
         let mut w = 0;
-        for j in 0..ctx.right_width {
+        for j in 0..ctx.g_width {
             for q in column_pairs(ctx, level, j, scratch) {
                 let i = if right { q.right.0 } else { q.left.0 } as usize;
                 (self.vals[w], self.dead[w]) = (row.vals[i], row.dead[i]);
@@ -1440,7 +1440,7 @@ fn value_rows<'b, const LANE_PAIRS: usize, L: ChildLookup, R: ChildLookup>(
     )?;
     let grid = rows
         .f_width
-        .saturating_mul(rows.ctx.right_width)
+        .saturating_mul(rows.ctx.g_width)
         .saturating_mul(4);
     let mut room = KEEP_MIN_BYTES
         .max(grid.saturating_mul(KEEP_GRID_SHARE))
@@ -1473,7 +1473,7 @@ fn value_rows<'b, const LANE_PAIRS: usize, L: ChildLookup, R: ChildLookup>(
     // rows side by side, the narrower side first, and the level holds the
     // sums of the block's rows after the first, all within
     // [`LANE_MAX_BYTES`].
-    let width = rows.ctx.right_width;
+    let width = rows.ctx.g_width;
     let spares = if pairs >= BLOCK_MIN_PAIRS || eager() {
         BLOCK
     } else {
@@ -2140,7 +2140,7 @@ impl<L: ChildLookup, R: ChildLookup, S: RowSum, I: Isa> CellAction<L, R> for Sum
             (eng, a.ctx),
             (a.j, a.row_base),
             a.f_pairs,
-            (a.right_level_t, a.g_pairs_scratch),
+            (a.g_level, a.g_pairs_scratch),
             a.node_idx,
             (a.left, a.right),
             (self.sum.cells(), a.gate),
@@ -2487,7 +2487,7 @@ fn sum_row<I: Isa, L: ChildLookup, R: ChildLookup, S: RowSum>(
         let p1 = row.f_pairs[0];
         if let Some(vr) = values {
             if !vr.ahead.sums.is_empty() {
-                let width = row.ctx.right_width;
+                let width = row.ctx.g_width;
                 let i = (row.row_base - row.ctx.output_grid_base) / width;
                 if let Some(k) = vr.ahead.take(i, p1) {
                     let at = k * width..(k + 1) * width;
@@ -2577,20 +2577,20 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         row_base,
         f_pairs,
         ctx,
-        right_level_t,
+        g_level,
         g_pairs_scratch,
         node_idx,
         left,
         right,
         gate,
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let p1 = f_pairs[0];
     let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
     if !S::WORDS {
         for j in 0..width {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -2613,7 +2613,7 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -2693,18 +2693,18 @@ fn one_pair_row_values<
         row_base,
         f_pairs,
         ctx,
-        right_level_t,
+        g_level,
         g_pairs_scratch,
         node_idx,
         left,
         right,
         gate,
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     if !S::WORDS {
         for j in 0..width {
-            let g = pairs_at::<ONES>(ones, ctx, right_level_t, j, g_pairs_scratch);
+            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -2728,7 +2728,7 @@ fn one_pair_row_values<
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = pairs_at::<ONES>(ones, ctx, right_level_t, j, g_pairs_scratch);
+            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -2849,7 +2849,7 @@ fn block_rows<L: ChildLookup, R: ChildLookup, S: RowSum>(
         },
     );
     let out = (m, sums, flags);
-    let (ctx, level) = (row.ctx, row.right_level_t);
+    let (ctx, level) = (row.ctx, row.g_level);
     match lay {
         Lay::Left => match gather.rows(
             true,
@@ -2991,19 +2991,19 @@ fn lane_values<
         row_base,
         f_pairs,
         ctx,
-        right_level_t,
+        g_level,
         g_pairs_scratch,
         node_idx,
         left,
         right,
         gate,
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut w = 0;
     if !S::WORDS {
         for j in 0..width {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -3032,7 +3032,7 @@ fn lane_values<
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -3130,18 +3130,18 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         row_base,
         f_pairs,
         ctx,
-        right_level_t,
+        g_level,
         g_pairs_scratch,
         node_idx,
         left,
         right,
         gate,
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     if !S::WORDS {
         for j in 0..width {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -3163,7 +3163,7 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     for c0 in (0..width).step_by(HELD_COLUMNS) {
         let mut held_live = 0u64;
         for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
             if g.is_empty() {
                 node_idx[row_base + j] = NO_PRODUCT;
                 continue;
@@ -3208,7 +3208,7 @@ fn ones_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
         gate,
         ..
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     debug_assert_eq!(ones.len(), width);
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut sums = [0.0f64; SUM_COLUMNS];
@@ -3267,7 +3267,7 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
         gate,
         ..
     } = row;
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let k = f_pairs.len();
     debug_assert_eq!(ones.len(), width);
     let ValueRows {

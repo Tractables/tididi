@@ -92,7 +92,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// `f_idx`.
     pub(super) i: usize,
     /// Flat slab offset of the grid row this cell writes into —
-    /// `ctx.output_grid_base + i * ctx.right_width` on a dense slab, `ctx.output_grid_base`
+    /// `ctx.output_grid_base + i * ctx.g_width` on a dense slab, `ctx.output_grid_base`
     /// otherwise, computed once per row by
     /// the driver for its `NO_PRODUCT` reset, so `grid_pos == row_base + j` and the reset
     /// and the kernel cannot drift.
@@ -100,7 +100,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// Decoded pairs of f row `i` (never empty — empty rows are skipped).
     pub(super) f_pairs: &'a [ChildPair],
     pub(super) ctx: &'a CellCtx<'c>,
-    pub(super) right_level_t: &'a TddLevel,
+    pub(super) g_level: &'a TddLevel,
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
@@ -117,7 +117,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
 /// All hooks are `#[inline(always)]` in impls, so each instantiation
 /// monomorphizes to a loop specialized to its route.
 pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
-    /// Whether this action owns a dense `left_width × right_width` slab — one grid row per f row,
+    /// Whether this action owns a dense `f_width × g_width` slab — one grid row per f row,
     /// so the per-row `NO_PRODUCT` resets tile the level's whole slab exactly once and
     /// can be replaced by a single fill (see [`run_level_rows`]). `false` for
     /// an action that writes every row into grid row 0 ([`Emit`] over a
@@ -154,7 +154,7 @@ pub(super) struct WholeRow<'a, 'c, L, R> {
     pub(super) row_base: usize,
     pub(super) f_pairs: &'a [ChildPair],
     pub(super) ctx: &'a CellCtx<'c>,
-    pub(super) right_level_t: &'a TddLevel,
+    pub(super) g_level: &'a TddLevel,
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
@@ -316,7 +316,7 @@ pub(super) fn culls<const DENSE: bool, K: ChildLookup>(ctx: &CellCtx<'_>, k: &K)
 /// [kill](ChildLookup::kills) a candidate, where no mask can clear. Only the
 /// plain routes reach those regimes; every other entry folds.
 ///
-/// `rows.ctx.right_width` and `rows.ctx.output_grid_base` are read from `rows.ctx` rather than passed alongside it, so
+/// `rows.ctx.g_width` and `rows.ctx.output_grid_base` are read from `rows.ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
 /// construction.
 #[inline(always)]
@@ -334,10 +334,10 @@ where
     A: CellAction<L, R>,
 {
     let RowLoop {
-        f_level: left_level_t,
-        g_level: right_level_t,
+        f_level,
+        g_level,
         ctx,
-        f_width: left_width,
+        f_width,
         ..
     } = rows;
     let RowScratch {
@@ -351,10 +351,10 @@ where
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = lim.gate_with(super::super::budget::dense_cell_poll_stride());
     debug_assert!(
-        !A::ONE_COLUMN || ctx.right_width == 1,
+        !A::ONE_COLUMN || ctx.g_width == 1,
         "a one-column action runs on a level of one column"
     );
-    let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
+    let g_width = if A::ONE_COLUMN { 1 } else { ctx.g_width };
     let cull_left = culls::<DENSE, _>(ctx, left);
     let cull_right = culls::<DENSE, _>(ctx, right);
     // Whether a row may read its live columns off the reach columns: every
@@ -363,22 +363,22 @@ where
     let by_columns = (cull_left || cull_right)
         && (!cull_left || !left_cols.is_empty())
         && (!cull_right || !right_cols.is_empty());
-    let words = right_width.div_ceil(64);
+    let words = g_width.div_ceil(64);
     let culls = usize::from(cull_left) + usize::from(cull_right);
     // Whether a row reads its live columns off the row columns: every
     // culling side built them, and a side that culls nothing is read whole.
     let (left_rows, right_rows) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
     let by_rows = (cull_left || cull_right) && ctx.sides.left.rows && ctx.sides.right.rows;
-    debug_assert!(!by_rows || right_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
+    debug_assert!(!by_rows || g_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
     // A side read whole: every g node, and a live cell in the row.
     let whole = if by_rows {
-        ROW_LIVE | ((1u64 << right_width) - 1)
+        ROW_LIVE | ((1u64 << g_width) - 1)
     } else {
         0
     };
 
-    // One slab fill instead of `left_width` row fills. On a dense-slab action the
-    // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
+    // One slab fill instead of `f_width` row fills. On a dense-slab action the
+    // per-row resets below tile `output_grid_base .. output_grid_base + f_width*g_width` exactly once each
     // (grid row `i` for f row `i`), so hoisting them into a single `fill` writes the same
     // cells with the same byte pattern; only the order changes, and nothing reads
     // this level's slab between rows (the child lookups read the child levels'
@@ -393,7 +393,7 @@ where
     let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
     let slab_fill = A::DENSE_SLAB
         && !every_cell
-        && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+        && f_width.saturating_mul(g_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     // A side that cannot kill is a complete one ([`mark_dead_out_of_line`]).
     let reset = |cells: &mut [u32]| {
         if left.kills() && right.kills() {
@@ -403,7 +403,7 @@ where
         }
     };
     if slab_fill {
-        let end = ctx.output_grid_base + left_width * right_width;
+        let end = ctx.output_grid_base + f_width * g_width;
         if !extend_slab(slab, ctx.output_grid_base, end) {
             reset(&mut slab[ctx.output_grid_base..end]);
         }
@@ -414,29 +414,29 @@ where
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(
         lim,
-        left_level_t,
-        left_width,
+        f_level,
+        f_width,
         left_view,
         right_view,
         f_pairs_scratch,
     );
-    for i in 0..left_width {
-        let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * right_width } else { 0 };
+    for i in 0..f_width {
+        let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
         // A row the slab is extended over is `NO_PRODUCT` already.
-        let fresh = extend_slab(slab, row_base, row_base + right_width);
+        let fresh = extend_slab(slab, row_base, row_base + g_width);
         let node_idx = &mut slab[..];
         if !slab_fill && !every_cell && !fresh {
-            reset(&mut node_idx[row_base..row_base + right_width]);
+            reset(&mut node_idx[row_base..row_base + g_width]);
         }
 
         let f_pairs = match f_described {
             Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
-            None => left_level_t.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
+            None => f_level.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
         };
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell && !fresh {
-                reset(&mut node_idx[row_base..row_base + right_width]);
+                reset(&mut node_idx[row_base..row_base + g_width]);
             }
             continue;
         }
@@ -453,7 +453,7 @@ where
                 row_base,
                 f_pairs,
                 ctx,
-                right_level_t,
+                g_level,
                 g_pairs_scratch: &mut *g_pairs_scratch,
                 node_idx: &mut *node_idx,
                 left,
@@ -461,8 +461,8 @@ where
                 gate: &mut poll,
             };
             first = action.whole_row(eng, row)?;
-            if first == right_width {
-                poll.poll(right_width as u64)?;
+            if first == g_width {
+                poll.poll(g_width as u64)?;
                 continue;
             }
         }
@@ -475,7 +475,7 @@ where
                     row_base,
                     f_pairs,
                     ctx,
-                    right_level_t,
+                    g_level,
                     left,
                     right,
                     g_pairs_scratch: &mut *g_pairs_scratch,
@@ -515,7 +515,7 @@ where
                 live &= live - 1;
                 cell(j)?;
             }
-            poll.poll(right_width as u64)?;
+            poll.poll(g_width as u64)?;
             continue;
         }
         let (left_alive_mask, right_alive_mask) = if DENSE {
@@ -557,10 +557,10 @@ where
             } else {
                 0
             };
-            if by_columns && 2 * bits as usize * words < 3 * culls * right_width {
+            if by_columns && 2 * bits as usize * words < 3 * culls * g_width {
                 super::super::note_reach_columns_row();
                 for w in 0..words {
-                    let n = (right_width - w * 64).min(64);
+                    let n = (g_width - w * 64).min(64);
                     let mut live = u64::MAX >> (64 - n);
                     if cull_left {
                         live &= reach_word(left_alive_mask, left_cols, words, w);
@@ -574,12 +574,12 @@ where
                         cell(j)?;
                     }
                 }
-                poll.poll(right_width as u64)?;
+                poll.poll(g_width as u64)?;
                 continue;
             }
             let mut j0 = 0;
-            while j0 < right_width {
-                let n = (right_width - j0).min(64);
+            while j0 < g_width {
+                let n = (g_width - j0).min(64);
                 let mut live = u64::MAX >> (64 - n);
                 if cull_left {
                     live &= reaching(left_alive_mask, &ctx.sides.left.reach[j0..j0 + n]);
@@ -595,11 +595,11 @@ where
                 j0 += n;
             }
         } else {
-            for j in first..right_width {
+            for j in first..g_width {
                 cell(j)?;
             }
         }
-        poll.poll(right_width as u64)?;
+        poll.poll(g_width as u64)?;
     }
     // The level's residual: what the gate holds is under one stride by
     // construction, and on a level narrower than a stride it is everything.
@@ -608,7 +608,7 @@ where
 }
 
 /// Materializing action: each surviving cell becomes a product node in the
-/// dense `left_width × right_width` output slab, written through the sink
+/// dense `f_width × g_width` output slab, written through the sink
 /// `S`, or in grid row 0 where `S` records the cells ([`ListSink`]). Both
 /// dense routes are this action, and the streaming route's with a sink
 /// that folds each cell into the level's value column.
@@ -637,7 +637,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
             (eng, a.ctx),
             (a.j, a.row_base),
             a.f_pairs,
-            (a.right_level_t, a.g_pairs_scratch),
+            (a.g_level, a.g_pairs_scratch),
             a.node_idx,
             (a.left, a.right),
             (&mut self.sink, a.gate),
@@ -791,7 +791,7 @@ impl PairSink for ListSink<'_> {
 /// whose output is structural (never a marginalization target).
 ///
 /// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
-/// `rows.f_width*rows.ctx.right_width` slab it reuses one `rows.ctx.right_width`-wide row scratch
+/// `rows.f_width*rows.ctx.g_width` slab it reuses one `rows.ctx.g_width`-wide row scratch
 /// at `rows.ctx.output_grid_base` and records each surviving cell in
 /// `product_list`. The marginal child is a pass-through carrier that kills no
 /// pair, so the structural sibling alone decides which cells are alive and a
@@ -900,16 +900,16 @@ pub(crate) fn run_level_rows_single(
     } = scratch;
     let lim = eng.limits();
     super::super::note_single_rows();
-    let right_width = ctx.right_width;
+    let g_width = ctx.g_width;
     // Column `j`'s pair, a dead column's `NO_PRODUCT` on both sides; the f
     // rows' buffer decodes a column the table does not hold.
     g_cols.clear();
-    lim.reserve_exact(g_cols, right_width)?;
+    lim.reserve_exact(g_cols, g_width)?;
     let dead = ChildPair::new(
         EncodedChildRef::from_raw(NO_PRODUCT),
         EncodedChildRef::from_raw(NO_PRODUCT),
     );
-    for j in 0..right_width {
+    for j in 0..g_width {
         let pairs = column_pairs(ctx, g_level, j, f_scratch);
         debug_assert!(pairs.len() <= 1, "a g node of one pair at most");
         g_cols.push(pairs.first().copied().unwrap_or(dead));
@@ -931,7 +931,7 @@ pub(crate) fn run_level_rows_single(
     };
     // A level of a few columns keeps them in registers, and writes each
     // row's cells once.
-    match right_width {
+    match g_width {
         1 => single_rows::<1>(eng, rows, f_scratch, slab, &mut sink),
         2 => single_rows::<2>(eng, rows, f_scratch, slab, &mut sink),
         3 => single_rows::<3>(eng, rows, f_scratch, slab, &mut sink),
@@ -983,7 +983,7 @@ fn relay_rows(
         g_cols,
     } = rows;
     let lim = eng.limits();
-    let width = ctx.right_width;
+    let width = ctx.g_width;
     let (left, right) = (&ctx.sides.left, &ctx.sides.right);
     if !lim.memory_unbounded()
         || crate::diagram::stored_levels_forced()
@@ -1118,9 +1118,9 @@ fn single_rows<const W: usize>(
         g_cols,
     } = rows;
     let lim = eng.limits();
-    let right_width = ctx.right_width;
-    debug_assert!(W == 0 || W == right_width);
-    let width = if W == 0 { right_width } else { W };
+    let g_width = ctx.g_width;
+    debug_assert!(W == 0 || W == g_width);
+    let width = if W == 0 { g_width } else { W };
     let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
     // A row's charge: a unit a live cell and the row's width.
     let row_units = live_cols + width as u64;
@@ -1142,9 +1142,9 @@ fn single_rows<const W: usize>(
 
     // The resets of `run_level_rows`, where the rows' cells are not written
     // once: one fill of a small grid, a row at a time on a larger one.
-    let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    let slab_fill = f_width.saturating_mul(g_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if W == 0 && slab_fill {
-        let end = ctx.output_grid_base + f_width * right_width;
+        let end = ctx.output_grid_base + f_width * g_width;
         if !extend_slab(slab, ctx.output_grid_base, end) {
             mark_dead(&mut slab[ctx.output_grid_base..end]);
         }
@@ -1474,7 +1474,7 @@ fn lone_columns<'e>(
     if super::super::lone_columns_forced_off() {
         return Ok(None);
     }
-    let width = rows.ctx.right_width;
+    let width = rows.ctx.g_width;
     let mut lone = Transient::new(eng.limits(), Vec::new());
     eng.limits().reserve_exact(&mut *lone, width)?;
     for j in 0..width {
@@ -1638,14 +1638,14 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
         row_base,
         f_pairs,
         ctx,
-        right_level_t,
+        g_level,
         g_pairs_scratch,
         node_idx,
         left,
         right,
         gate,
     } = row;
-    let (k, width) = (f_pairs.len(), ctx.right_width);
+    let (k, width) = (f_pairs.len(), ctx.g_width);
     if k > ROW_PAIRS {
         return Ok(0);
     }
@@ -1661,7 +1661,7 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     let mut j = 0;
     while j < width {
-        let g_pairs = column_pairs(ctx, right_level_t, j, g_pairs_scratch);
+        let g_pairs = column_pairs(ctx, g_level, j, g_pairs_scratch);
         let m = g_pairs.len();
         if m == 0 {
             // A dead column's cell, as `process_cell` leaves it.
@@ -1741,7 +1741,7 @@ unsafe fn push_candidate<L: ChildLookup, R: ChildLookup>(
 /// The one pair of a level's g side, where it has one node and that node
 /// one pair: the pair every cell of the level reads as its column's.
 fn lone_pair(rows: RowLoop<'_>, scratch: &mut Vec<ChildPair>) -> Option<ChildPair> {
-    if rows.ctx.right_width != 1 {
+    if rows.ctx.g_width != 1 {
         return None;
     }
     match column_pairs(rows.ctx, rows.g_level, 0, scratch) {

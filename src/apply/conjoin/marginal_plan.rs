@@ -287,7 +287,7 @@ pub(super) struct ChildGrid {
 /// 64 columns (`build_pair_row_columns`); a complete side builds none.
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
-    (right_level, right_width): (&TddLevel, usize),
+    (right_level, g_width): (&TddLevel, usize),
     child: ChildGrid,
     (complete, pairs): (bool, bool),
     node_idx: &[u32],
@@ -297,7 +297,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     out.reach_cols.clear();
     out.row_cols.clear();
     out.rows = !(pairs
-        || right_width > ROW_COLUMNS_MAX_WIDTH
+        || g_width > ROW_COLUMNS_MAX_WIDTH
         || (complete && g_child_width == 0)
         || super::reach_columns_forced_off()
         || super::row_columns_forced_off());
@@ -314,7 +314,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     let side = |p: &crate::diagram::ChildPair| view.coord(if RIGHT { p.right } else { p.left }) as usize;
     if pairs {
         debug_assert_eq!(shift, 0, "a level read by pairs has bit-exact masks");
-        build_pair_reach(eng, right_level, right_width, &mut out.reach, side)?;
+        build_pair_reach(eng, right_level, g_width, &mut out.reach, side)?;
         if g_child_width <= 64 {
             return build_pair_row_columns(eng, f_child_width, g_child_width, base, node_idx, out);
         }
@@ -322,7 +322,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }
     build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
-    build_reach_masks(eng, right_level, right_width, &mut out.reach, side, shift)?;
+    build_reach_masks(eng, right_level, g_width, &mut out.reach, side, shift)?;
     if out.rows {
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }

@@ -238,8 +238,8 @@ fn prepare_owned_weights(f: &mut Cow<'_, Tdd>, g: &mut Cow<'_, Tdd>) -> Result<(
 /// free levels in `free` ([`ApplyRun::cone`]) follow their operands and are
 /// one node wide.
 ///
-/// The identity fast path tests `right_width == 1` first, so the narrower side
-/// on the right takes it at more levels, and grid rows (width `right_width`)
+/// The identity fast path tests `g_width == 1` first, so the narrower side
+/// on the right takes it at more levels, and grid rows (width `g_width`)
 /// get shorter. Only the owned entries swap; borrowed callers
 /// track operands by side.
 ///

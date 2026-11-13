@@ -5,7 +5,7 @@ use super::*;
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and
 /// `level.pairs`, both sized from that level's exact upper bound).
 ///
-/// The bounds — `left_width × right_width` live cells, `|f.pairs| × |g.pairs|` emitted pairs —
+/// The bounds — `f_width × g_width` live cells, `|f.pairs| × |g.pairs|` emitted pairs —
 /// are exact but loose: most levels have low survival, so an uncapped reserve
 /// would routinely grab orders of magnitude more than the level ends up using
 /// (and charge every byte of it to the soft budget). Capping bounds the
@@ -34,13 +34,13 @@ pub(super) const LEVEL_RESERVE_PAIRS_CAP: usize =
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Route {
     /// Scatter-filter-dedup over the children's live products only, never
-    /// materializing the `left_width × right_width` grid. A marginal
+    /// materializing the `f_width × g_width` grid. A marginal
     /// pass-through side is carried across rather than joined.
     Sparse,
     /// Exactly one marginal child that is not a pass-through — a child this
     /// apply summed out, read through its grid — and a structural output:
     /// drive the build from the structural sibling into a reused
-    /// `right_width`-row scratch and record the survivors in a product list,
+    /// `g_width`-row scratch and record the survivors in a product list,
     /// leaving the level tagged sparse for the grandparent to densify.
     SparseMarg,
     /// A streaming marginalization target: fold `Σ left × right` per cell straight

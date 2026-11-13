@@ -67,7 +67,7 @@ pub(crate) struct RightColumns<'a> {
     /// that block and its byte charge, and it is never read through.
     #[expect(dead_code)]
     flat: Transient<'a, Vec<ChildPair>>,
-    /// One descriptor per column `j ∈ 0..right_width`.
+    /// One descriptor per column `j ∈ 0..g_width`.
     cols: Vec<ColumnSlice>,
     /// The grouped columns' run ends, column after column: each is the
     /// offset within its column one past a run of pairs sharing `.left`.
@@ -116,7 +116,7 @@ impl<'a> RightColumns<'a> {
     pub(crate) fn build(
         eng: &'a Engine,
         right_level: &'a TddLevel,
-        right_width: usize,
+        g_width: usize,
         left_view: ChildDecoder,
         right_view: ChildDecoder,
         grouped: bool,
@@ -125,10 +125,10 @@ impl<'a> RightColumns<'a> {
         if right_level.is_marginal() {
             return None;
         }
-        // `right_width` is the width cached before the sweep; resolving every
-        // column reads `nodes[j]` for all of `0..right_width`, so decline if
+        // `g_width` is the width cached before the sweep; resolving every
+        // column reads `nodes[j]` for all of `0..g_width`, so decline if
         // the level holds fewer nodes than that.
-        if right_width > right_level.nodes().len() {
+        if g_width > right_level.nodes().len() {
             return None;
         }
         // Identity masks on a stored level borrow g's storage directly (the
@@ -141,8 +141,8 @@ impl<'a> RightColumns<'a> {
         if borrowed.is_none() {
             // An implicit level's nodes hold the description's pairs each.
             let total: usize = match right_level.implicit() {
-                Some(d) => right_width * d.pairs_per_node(),
-                None => (0..right_width).map(|j| right_level.pair_count_at(j)).sum(),
+                Some(d) => g_width * d.pairs_per_node(),
+                None => (0..g_width).map(|j| right_level.pair_count_at(j)).sum(),
             };
             if total > u32::MAX as usize {
                 return None;
@@ -155,13 +155,13 @@ impl<'a> RightColumns<'a> {
 
         let mut cols: Vec<ColumnSlice> = eng.scratch.apply.right_cols.take(eng);
         cols.clear();
-        if cols.try_reserve(right_width).is_err() {
+        if cols.try_reserve(g_width).is_err() {
             eng.scratch.apply.right_cols.put(eng, cols);
             return None;
         }
 
         if let Some(stored) = borrowed {
-            for j in 0..right_width {
+            for j in 0..g_width {
                 // The one per-column resolution — the same accessor the per-cell
                 // identity fast path (`pairs_view_decoded` → `pairs_read`)
                 // calls, hoisted out of the row loop.
@@ -176,12 +176,12 @@ impl<'a> RightColumns<'a> {
             // decoded in place under a marginal view.
             match right_level.pair_view() {
                 Pairs::Implicit(d) => {
-                    d.pairs_of_first(right_width, &mut flat);
+                    d.pairs_of_first(g_width, &mut flat);
                     let column = ColumnSlice { ptr: std::ptr::null(), len: d.pairs_per_node(), run_range: (0, 0) };
-                    cols.extend(std::iter::repeat_n(column, right_width));
+                    cols.extend(std::iter::repeat_n(column, g_width));
                 }
                 Pairs::Stored(stored) => {
-                    for j in 0..right_width {
+                    for j in 0..g_width {
                         let pairs = stored.of_idx(j);
                         flat.extend_from_slice(pairs);
                         cols.push(ColumnSlice { ptr: std::ptr::null(), len: pairs.len(), run_range: (0, 0) });
