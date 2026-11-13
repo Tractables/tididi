@@ -152,6 +152,25 @@ fn an_ascending_node_is_grouped_by_runs_in_first_occurrence_order() {
     assert_eq!(slot_of, vec![(0, 4), (5, 5), (9, 6)], "slots minted in ascending x");
 }
 
+/// A node of two pairs fuses only if both name one explicit ref: two
+/// descending refs, which skip both the runs and the table, stay as they are.
+#[test]
+fn a_two_pair_node_fuses_only_at_one_explicit_ref() {
+    let nodes: &[&[(u32, u32)]] = &[&[(7, 0), (3, 1)], &[(5, 0), (5, 1)], &[(3, 0), (7, 1)]];
+    let mut tdd = toy(vec![2, 3], nodes);
+    let before = sums(&tdd);
+    let groups = fuse_pairs(&Engine::new(), &mut tdd).expect("no limits armed");
+    assert_eq!(groups, 1, "only the node at one explicit ref fuses");
+    assert_eq!(sums(&tdd), before);
+    let root = tdd.vtree.root();
+    let pairs: Vec<Vec<(u32, u32)>> = (0..nodes.len())
+        .map(|n| tdd.levels[root.idx()].pairs_vec(n).iter().map(|p| (p.left.0, p.right.0)).collect())
+        .collect();
+    assert_eq!(pairs[0], nodes[0], "a descending node is untouched");
+    assert_eq!(pairs[1].len(), 1);
+    assert_eq!(pairs[2], nodes[2], "an ascending node of two refs is untouched");
+}
+
 /// Wide ascending nodes, runs of every length, next to shuffled ones that go
 /// through the table: both keep every sum and leave one pair per ref.
 #[test]

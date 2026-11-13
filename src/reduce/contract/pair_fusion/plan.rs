@@ -66,7 +66,8 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         }
         let node = plevel.pairs_read(n, &mut buf);
         // A node whose pairs ascend by explicit ref holds each group as one
-        // run. A wide node that does not is sorted into runs: its table
+        // run. Two pairs that do not ascend name two refs: nothing to group.
+        // A wide node that does not ascend is sorted into runs: its table
         // would be too wide for the cache, and a probe per pair would miss.
         if node
             .windows(2)
@@ -75,7 +76,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
             group_by_runs::<D>(lim, tdd, (v, side), (n, node), out, &mut scratch.run)?;
         } else if node.len() >= SORT_MIN {
             group_by_sorting::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
-        } else {
+        } else if pairs > 2 {
             group_by_scatter::<D>(lim, tdd, (v, side), (n, node), out, scratch)?;
         }
         if out.len() >= chunk_plans {
