@@ -1,9 +1,12 @@
-//! Which levels of a plain conjunction's result may hold a node that no pair
-//! of its parent level names: the loose levels a prune after the conjunction
-//! has to walk down to ([`Dirty::loose`](crate::diagram::Dirty::loose)).
+//! What a plain conjunction's result owes the reductions after it, as lists
+//! of levels each reduction reads: the loose levels a prune has to walk down
+//! to ([`loose_levels`], [`Dirty::loose`](crate::diagram::Dirty::loose)),
+//! the built levels owed the twin contraction ([`split_built`]), and the
+//! built levels pair fusion would find nothing at ([`fused_built_levels`]).
 
-use super::super::setup::{ApplyRun, Operands};
+use super::super::setup::{ApplyRun, Operands, VtreeMask};
 use super::region::carried_from_f;
+use crate::diagram::{Tdd, TddLevel};
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The internal levels below the root of a plain conjunction's result that
@@ -196,4 +199,181 @@ pub(super) fn loose_levels(
         });
     }
     loose
+}
+
+/// Note in [`SweepLists::as_operand`](super::super::setup::SweepLists::as_operand)
+/// the level `t` just built when it holds an operand's level at `t`, node
+/// for node and pair for pair: each node of its children then has there the
+/// contexts the operand's node of its index has. Not compared where the
+/// level adds no twins anyway or the leaf arm noted it already. The
+/// operands' levels at `t` are dropped only when its parent is built.
+pub(super) fn note_operand_level(
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    vtree: &Vtree,
+    t: VtreeIdx,
+) {
+    let ti = t.idx();
+    if run.lists.as_operand.last().is_some_and(|e| e.0 == ti)
+        || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t)
+    {
+        return;
+    }
+    let level = &run.levels[ti];
+    let of_f = same_pairs(level, f.level(t));
+    if of_f || same_pairs(level, g.level(t)) {
+        run.lists.as_operand.push((ti, if of_f { 1 } else { 2 }));
+        super::super::note_as_operand(ti, of_f);
+    }
+}
+
+/// Whether `a` holds `b`'s nodes and pairs, node for node and each node's
+/// pairs in order: stored as `b` stores them (the same node words, ranges
+/// and pair arena, or the same description), laid out otherwise in its
+/// arena, or one of them stored and the other described. Never on a
+/// marginal level or one without nodes. The lengths and the last node and
+/// pair are compared first, then the rest as memory, so that a level that
+/// differs costs a read of its first difference; where the memory differs,
+/// or one level is described, the first and last nodes' pairs, then each
+/// node's. A level that holds a node's pairs in another order is not found.
+fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
+    let n = a.node_count();
+    if n == 0 || n != b.node_count() || a.is_marginal() || b.is_marginal() {
+        return false;
+    }
+    match (a.stored(), b.stored()) {
+        (Some(x), Some(y)) => {
+            let (xa, ya) = (x.arena(), y.arena());
+            let (xn, yn) = (x.nodes(), y.nodes());
+            if xa.len() == ya.len()
+                && xa.last() == ya.last()
+                && xn.last() == yn.last()
+                && a.ranges == b.ranges
+                && xn == yn
+                && xa == ya
+            {
+                return true;
+            }
+            let same = |k: usize| x.of(&xn[k]) == y.of(&yn[k]);
+            same(0) && same(n - 1) && (1..n - 1).all(same)
+        }
+        (None, None) => a.pairs == b.pairs && a.nodes == b.nodes,
+        _ => {
+            let (mut xs, mut ys) = (Vec::new(), Vec::new());
+            let (mut xc, mut yc) = (None, None);
+            let mut same = |k: usize| {
+                a.pairs_read_next(&mut xc, k, &mut xs) == b.pairs_read_next(&mut yc, k, &mut ys)
+            };
+            same(0) && same(n - 1) && (1..n - 1).all(same)
+        }
+    }
+}
+
+/// The levels the sweep built that hold no node with two pairs sharing a
+/// ref into their structural child, since their carrier's level holds none
+/// (`Dirty::is_fused`): a pair fusion there would find nothing.
+///
+/// Such a level's one marginal child is a pass-through side: the carrier
+/// operand was marginal there, and the other operand is the identity over
+/// it, so a node of the other holds one pair per structural ref. A node of
+/// the level is the product of a carrier node, no two of whose pairs share
+/// a structural ref, and a node of the other operand; its pairs are the
+/// live products of their pairs, on the structural side the product nodes
+/// of their refs. On an internal structural child, whose products are one
+/// node per pair of operand nodes, distinct pairs of pairs meet in distinct
+/// nodes. Not on a leaf child, where two label products can be one label;
+/// nor on a child quantified, summed or marginal in an operand.
+pub(super) fn fused_built_levels(
+    vtree: &Vtree,
+    run: &ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+) -> Vec<VtreeIdx> {
+    use super::super::marginal_plan::Carrier;
+    if !run.entry_marginality.any() {
+        return Vec::new();
+    }
+    let marginal = |x: VtreeIdx| run.levels[x.idx()].is_marginal();
+    let entry = &run.entry_marginality;
+    run.cone
+        .built
+        .iter()
+        .copied()
+        .filter(|&t| {
+            if marginal(t) || quantified.contains(t.idx()) {
+                return false;
+            }
+            let (left, right) = vtree.children(t);
+            let (m, c) = match (marginal(left), marginal(right)) {
+                (true, false) => (left, right),
+                (false, true) => (right, left),
+                _ => return false,
+            };
+            let (carrier, identity) = match entry.only(m.idx()) {
+                Some(Carrier::F) => (f, &run.g_identity[..]),
+                Some(Carrier::G) => (g, &run.f_identity[..]),
+                None => return false,
+            };
+            identity[m.idx()]
+                && carrier.dirty.is_fused(t.0)
+                && !vtree.node(c).is_leaf()
+                && !quantified.contains(c.idx())
+                && !targets.contains(c.idx())
+                && !entry.either(c.idx())
+        })
+        .collect()
+}
+
+/// Whether a plain conjunction gave no two nodes of an inner child of the
+/// level `t` it built equal contexts, where its operands' nodes there had
+/// none. Where one operand is constant true over a child, every pair of
+/// the other operand's nodes meets it there in a live product, so a node of
+/// the product on the other side, the product of an `f` node and a `g` node,
+/// has for its contexts every pair of a context of its `f` node with a
+/// context of its `g` node, each of the product node of their parents and
+/// the product of their siblings. Two product nodes with equal contexts are
+/// then products of operand nodes with equal contexts, which an operand
+/// that does not owe the contraction the level has only for one node. A
+/// leaf child has no inner twins.
+fn adds_no_twins(
+    vtree: &Vtree,
+    f_identity: &[bool],
+    g_identity: &[bool],
+    t: VtreeIdx,
+) -> bool {
+    let (left, right) = vtree.children(t);
+    let side = |child: VtreeIdx, sibling: VtreeIdx| {
+        vtree.node(child).is_leaf() || f_identity[sibling.idx()] || g_identity[sibling.idx()]
+    };
+    side(left, right) && side(right, left)
+}
+
+/// List the levels a plain conjunction built ([`SweepLists::collect_built`])
+/// and split them into those it owes the twin contraction and those it does
+/// not. It is owed the built levels under which the conjunction can have
+/// given two nodes equal contexts ([`adds_no_twins`]); the leaf contraction
+/// every built level. A level built as an operand holds it gives the nodes
+/// of its children the operand's contexts there, which the operand, not
+/// owing the contraction the level, holds once each; where it owes it, so
+/// does the result.
+///
+/// [`SweepLists::collect_built`]: super::super::setup::SweepLists::collect_built
+pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun) {
+    run.lists.collect_built(run.cone.built);
+    let lists = &mut *run.lists;
+    for &t in &lists.built {
+        let twin_free = lists
+            .as_operand
+            .binary_search_by_key(&t.idx(), |e| e.0)
+            .is_ok()
+            || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t);
+        if twin_free {
+            lists.twin_free.push(t);
+        } else {
+            lists.owed_twins.push(t);
+        }
+    }
 }
