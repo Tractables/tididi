@@ -324,6 +324,29 @@ fn a_single_atom_split_reads_its_pairs_off_either_side() {
     assert!(sides.iter().all(|&count| count > 50), "both sides are read: {sides:?}");
 }
 
+/// A single-atom split of borrowed values charges the copy it writes, so
+/// discarding what the split leaves returns the meter to what is still held.
+#[test]
+fn a_single_atom_split_charges_its_copy_of_borrowed_values() {
+    let lim = Limits::new();
+    let mut held: Vec<u64> = Vec::new();
+    lim.reserve_exact(&mut held, 1 << 16).unwrap();
+    let before = lim.meters().in_flight_bytes;
+    let mut rng = Lcg::new(0x10_b0aa);
+    let rows = few_highs(&mut rng, 40, 4, true).data.into_owned();
+    let mut atom = Vec::new();
+    lim.try_resize(&mut atom, rows.len(), 0u32).unwrap();
+    let mut parent = Values { words: 1, data: Cow::Borrowed(&rows), atom, atoms: 1 };
+    let mut s = Scratch::default();
+    let (split, low, high) = split_single(&lim, &mut s, &mut parent, (40, 4)).unwrap().expect("one parent atom");
+    split.discard(&lim);
+    for values in [parent, low, high] {
+        lim.discard(values);
+    }
+    s.discard(&lim);
+    assert_eq!(lim.meters().in_flight_bytes, before, "{} rows", rows.len());
+}
+
 #[test]
 fn a_key_too_wide_for_a_word_leaves_the_single_atom_split() {
     // Fifty low bits leave the high value's index thirteen: more high runs

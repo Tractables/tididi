@@ -764,6 +764,12 @@ fn split_single(
     s.high_starts.clear();
     s.high_hash.clear();
     s.high.clear();
+    if let Cow::Borrowed(rows) = parent.data {
+        let mut owned = Vec::new();
+        lim.reserve_exact(&mut owned, n)?;
+        owned.extend_from_slice(rows);
+        parent.data = Cow::Owned(owned);
+    }
     let data = parent.data.to_mut();
     let mut last = data[0] >> low_width;
     lim.try_push(&mut s.high_starts, 0)?;
