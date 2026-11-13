@@ -10,6 +10,7 @@ use crate::diagram::{EncodedChildRef, ImplicitLevel, ScaledFloat, WeightStore};
 use crate::isa::Avx2;
 use crate::isa::avx2_fn;
 use crate::value::{CheckedProducts, FloatCol, PlainProducts, StreamChild, plain_floats};
+use std::mem::MaybeUninit;
 
 // A test sums its streamed float levels a cell at a time, as the oracle
 // for the row sums and for the sums off a description, or reads and keeps
@@ -363,9 +364,9 @@ avx2_fn! {
 /// into a sum that starts at zero, as [`PlainSink`] sums a cell, and a
 /// one-pair cell is its product. `places` are what the places of a node
 /// add to its first pair's slots, every slot a pair names in its column.
-/// The block is summed in `out`, its first products written and the
-/// others added: a sum of nonnegative floats that starts at zero holds its
-/// first product as it is.
+/// The block is summed in `out`, its first products written into the room
+/// past its floats and the others added: a sum of nonnegative floats that
+/// starts at zero holds its first product as it is.
 #[inline(always)]
 fn described_rows(
     product: &ImplicitLevel,
@@ -384,11 +385,13 @@ fn described_rows(
             let m = (len - j).min(DESCRIBED_BLOCK);
             let at = (first.0 + j as i64 * step.0, first.1 + j as i64 * step.1);
             let start = out.len();
-            out.resize(start + m, 0.0);
+            place_products(&mut out.spare_capacity_mut()[..m], products, (at.0 + head.0, at.1 + head.1), step);
+            // Safety: the caller reserved room for every cell, and the
+            // `m` floats past `start` are written.
+            unsafe { out.set_len(start + m) };
             let acc = &mut out[start..];
-            place_products::<false>(acc, products, (at.0 + head.0, at.1 + head.1), step);
             for &(pl, pr) in rest {
-                place_products::<true>(acc, products, (at.0 + pl, at.1 + pr), step);
+                place_products(acc, products, (at.0 + pl, at.1 + pr), step);
             }
             let slot = start as u32;
             for (k, g) in grid[cell..cell + m].iter_mut().enumerate() {
@@ -399,18 +402,39 @@ fn described_rows(
     });
 }
 
-/// Write (`ADD` false) or add (`ADD` true) into `acc` the products of one
-/// place of a block of [`described_rows`]: cell `k`'s pair names the left
-/// slot `at.0 + k * step.0` and the right slot `at.1 + k * step.1`, each
-/// in its column. A row along which one side's slot stays and the other's
-/// moves by one reads the moving side as a run of floats and multiplies it
-/// by the staying side's factor, each product formed as
-/// [`PlainProducts::times`] forms it.
+/// A cell of a block of [`described_rows`]: room for its first product
+/// ([`MaybeUninit`]), or its sum so far (`f64`).
+trait PlaceSum {
+    /// Take the product `v` into the cell.
+    fn put(&mut self, v: f64);
+}
+
+impl PlaceSum for MaybeUninit<f64> {
+    #[inline(always)]
+    fn put(&mut self, v: f64) {
+        self.write(v);
+    }
+}
+
+impl PlaceSum for f64 {
+    #[inline(always)]
+    fn put(&mut self, v: f64) {
+        *self += v;
+    }
+}
+
+/// Write into the room `acc` or add into the sums `acc` ([`PlaceSum`]) the
+/// products of one place of a block of [`described_rows`]: cell `k`'s pair
+/// names the left slot `at.0 + k * step.0` and the right slot
+/// `at.1 + k * step.1`, each in its column. A row along which one side's
+/// slot stays and the other's moves by one reads the moving side as a run
+/// of floats and multiplies it by the staying side's factor, each product
+/// formed as [`PlainProducts::times`] forms it.
 #[inline(always)]
-fn place_products<const ADD: bool>(acc: &mut [f64], products: &PlainProducts<'_>, at: (i64, i64), step: (i64, i64)) {
+fn place_products<A: PlaceSum>(acc: &mut [A], products: &PlainProducts<'_>, at: (i64, i64), step: (i64, i64)) {
     let (left, right) = products.floats();
     let m = acc.len();
-    let put = |a: &mut f64, v: f64| *a = if ADD { *a + v } else { v };
+    let put = |a: &mut A, v: f64| a.put(v);
     match step {
         (1, 0) => {
             let r = products.scaled_right(right[at.1 as usize]);
