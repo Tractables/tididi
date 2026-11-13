@@ -340,8 +340,6 @@ where
         f_width: left_width,
         ..
     } = rows;
-    // Named once, ahead of the row loop, so the loop body indexes locals rather
-    // than reaching back through the bundle at every cell.
     let RowScratch {
         f_pairs: f_pairs_scratch,
         g_pairs: g_pairs_scratch,
@@ -601,12 +599,6 @@ where
                 cell(j)?;
             }
         }
-        // One `poll(right_width)` per row instead of one per cell: the gate only
-        // meters accumulated work, so the same total is booked either way. A row
-        // wider than the stride now polls once rather than once per stride's worth
-        // of cells — the poll is an idempotent deadline read, so firing once per
-        // crossing is equivalent, and a row that skipped the `j` loop (empty or
-        // dead) books nothing, exactly as before (`right_width == 0` books nothing either).
         poll.poll(right_width as u64)?;
     }
     // The level's residual: what the gate holds is under one stride by
