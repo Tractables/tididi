@@ -10,7 +10,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::ChildSide;
 use crate::value::slots::SlotValues;
 
-use super::super::scratch::{GroupCell, PFusionScratch};
+use super::super::scratch::{GroupCell, PFusionScratch, EMPTY_CELL};
 use super::{Boundary, PlanEntry};
 
 /// Phase 1: scan the parent nodes `nodes` yields, ascending, and collect
@@ -92,7 +92,9 @@ pub(super) fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
 }
 
 /// The fewest pairs a node sorts into runs rather than hashes: from here its
-/// table, two cells of 12 bytes per pair, outgrows a core's cache.
+/// table, two to four cells of 8 bytes per pair, outgrows a core's cache.
+/// The sort also bounds memory: a node of 10^8 pairs would grow the table,
+/// kept for the whole sweep, to 2 GiB.
 pub(super) const SORT_MIN: usize = 1 << 14;
 
 /// The marginal-side ref of `pair`: the side `side` names.
@@ -241,7 +243,7 @@ pub(super) fn group_by_runs<D: SlotValues>(
 }
 
 /// Group one parent node's pairs by their explicit-side ref through the
-/// generation-stamped table in `sc`, and emit a plan for every group holding
+/// table in `sc`, and emit a plan for every group holding
 /// more than one marginal-side ref. A first pass counts each group and notes
 /// each pair's; a node that repeats no ref stops there. A second lays the
 /// groups of two or more out one after another in `sc.grouped`.
@@ -260,27 +262,13 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
-    // Bump the generation instead of clearing the cells (O(1) per-node
-    // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
-    // "never stamped" sentinel and must never equal a live `gen`).
-    sc.generation = match sc.generation.checked_add(1) {
-        Some(g) => g,
-        None => {
-            for c in sc.cells.iter_mut() {
-                c.stamp = 0;
-            }
-            1
-        }
-    };
-    let generation = sc.generation;
     let pairs = node.len();
-    // At least two cells per pair, so the table is never more than half full
-    // and a probe always ends at an unstamped cell. Grown on demand and
-    // fallibly — an OOM here becomes OverBudget, not a process abort. New
-    // cells are stamped 0 ≠ generation (which is ≥ 1) and read as empty.
+    // At least two cells per pair, so the window is never more than half full
+    // and a probe always ends at a cell no group of the node holds. Grown
+    // fallibly — an OOM here becomes OverBudget, not a process abort.
     let want = (2 * pairs).next_power_of_two();
     if sc.cells.len() < want {
-        lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
+        lim.try_resize(&mut sc.cells, want, EMPTY_CELL)?;
     }
     // The per-pair and per-group buffers hold at least the widest node's
     // pair count and are written by index, a node's entries over the last
@@ -292,12 +280,10 @@ pub(super) fn group_by_scatter<D: SlotValues>(
             lim.try_resize(buf, pairs, 0)?;
         }
     }
-    // The node probes only the first `want` cells, a window of its own size,
-    // not the whole table: after one wide node the table is as wide as it,
-    // and a narrow node hashed across all of it would miss the cache on
-    // nearly every pair. Cells past the window keep older stamps unread.
     let mask = want - 1;
     let hash_shift = 32 - want.trailing_zeros();
+    // The node probes only the first `want` cells, a window of its own size:
+    // a narrow node after a wide one stays in cache.
     let cells = &mut sc.cells[..want];
     let touched = &mut sc.touched[..pairs];
     let group_ends = &mut sc.group_ends[..pairs];
@@ -311,15 +297,18 @@ pub(super) fn group_by_scatter<D: SlotValues>(
         let mut h = (x_idx.wrapping_mul(0x9E37_79B1) >> hash_shift) as usize;
         let slot = loop {
             let cell = cells[h];
-            if cell.stamp != generation {
+            // A cell holds a group of this node only if the slot it names
+            // was opened at this cell: no cell is emptied between nodes, and
+            // those of earlier nodes read as empty.
+            let s = cell.slot as usize;
+            if s >= groups || touched[s] != h as u32 {
                 // First occurrence of this x for this node: open a group.
                 let slot = groups;
                 cells[h] = GroupCell {
-                    stamp: generation,
                     key: x_idx,
                     slot: slot as u32,
                 };
-                touched[slot] = x_idx;
+                touched[slot] = h as u32;
                 group_ends[slot] = 1;
                 groups += 1;
                 break slot;
@@ -360,15 +349,17 @@ pub(super) fn group_by_scatter<D: SlotValues>(
             *at += 1;
         }
     }
-    // Emit in first-occurrence (touched) order. slot i ↔ touched[i]; each
-    // group starts where the one before it in slot order ended.
+    // Emit in first-occurrence (touched) order. slot i ↔ the cell touched[i],
+    // which holds its x; each group starts where the one before it in slot
+    // order ended.
     let mut begin = 0usize;
-    for (&x_idx, &end) in touched.iter().zip(group_ends.iter()) {
+    for (&h, &end) in touched.iter().zip(group_ends.iter()) {
         if end == u32::MAX {
             // A single pair at this x cannot fuse.
             continue;
         }
         let end = end as usize;
+        let x_idx = cells[h as usize].key;
         lim.try_push(
             out,
             PlanEntry {

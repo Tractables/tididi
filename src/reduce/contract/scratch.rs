@@ -25,35 +25,35 @@ pub(super) struct TwinSlot {
 pub(super) const EMPTY_SLOT: TwinSlot = TwinSlot { fp: 0, idx: u64::MAX };
 
 /// One cell of the grouping table in [`PFusionScratch`].
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(super) struct GroupCell {
-    /// The generation that last wrote this cell. `stamp == generation` ⟺ the
-    /// cell holds a group of the node currently being processed.
-    pub(super) stamp: u32,
-    /// The explicit-side ref the group is keyed on. Valid only when stamped
-    /// with the current generation; otherwise stale and ignored.
+    /// The explicit-side ref the group is keyed on.
     pub(super) key: u32,
-    /// The group slot (index into `touched`/`group_ends`). Same validity as
-    /// `key`.
+    /// The group slot (index into `touched`/`group_ends`). The cell holds
+    /// that group of the node being grouped only if `touched` at the slot
+    /// names this cell; otherwise it is empty, whatever it holds.
     pub(super) slot: u32,
 }
 
-/// Reusable generation-stamped grouping table for
-/// `pair_fusion::collect_fusion_plans`' per-node same-explicit-side grouping.
-/// The key is the raw explicit-side ref (a node or slot index, or an inline
-/// count on a both-marginal parent), hashed into an open-addressing table
-/// sized by the node's pair count. Per node the generation is bumped instead
-/// of clearing the cells, zeroing only on u32 wrap. `touched` records the
-/// first-occurrence x order, slot `i` ↔ `touched[i]`; the groups themselves
-/// are counted per slot, then laid out in one flat buffer.
+/// The value new cells start with: a slot no node opens.
+pub(super) const EMPTY_CELL: GroupCell = GroupCell { key: 0, slot: u32::MAX };
+
+/// Reusable grouping table for `pair_fusion::collect_fusion_plans`' per-node
+/// same-explicit-side grouping. The key is the raw explicit-side ref (a node
+/// or slot index, or an inline count on a both-marginal parent), hashed into
+/// the first cells of an open-addressing table, a window sized by the node's
+/// pair count. Cells are never emptied: a cell holds a group of the node only
+/// if `touched` at its slot names it. `touched` records the cells in
+/// first-occurrence x order, slot `i` ↔ the cell `touched[i]`; the groups
+/// themselves are counted per slot, then laid out in one flat buffer.
 #[derive(Default)]
 pub(super) struct PFusionScratch {
-    /// The grouping table. Its length is a power of two, at least twice the
-    /// pair count of the widest node grouped so far. A node probes only a
-    /// window of it: its first cells, a power of two at least twice the
-    /// node's own pair count, so a probe always finds an unstamped cell.
+    /// The grouping table, as long as the widest node's window: a node probes
+    /// its first cells, a power of two at least twice its pair count, so a
+    /// probe always finds an empty cell.
     pub(super) cells: Vec<GroupCell>,
-    /// This node's x's in first-occurrence order, in its first entries.
+    /// The cells of this node's x's in first-occurrence order, in its first
+    /// entries.
     /// These three are at least as long as the widest node grouped so far,
     /// and each node writes over the entries of the one before.
     pub(super) touched: Vec<u32>,
@@ -74,10 +74,6 @@ pub(super) struct PFusionScratch {
     /// (`pair_fusion::plan::group_by_sorting`), and the sort's other buffer.
     pub(super) keyed: Vec<(u32, u32)>,
     pub(super) keyed_other: Vec<(u32, u32)>,
-    /// Current node's generation stamp. Bumped once per node; on u32 wrap the
-    /// stamps are zeroed and it restarts at 1 (0 is the "never stamped"
-    /// sentinel, so it must never equal a live generation).
-    pub(super) generation: u32,
 }
 
 impl Buffers for PFusionScratch {
@@ -390,8 +386,7 @@ pub(crate) struct ContractScratch {
     pub(super) reach: [Vec<u32>; 2],
 
     // ── Same-left pair fusion buffers ──
-    /// Generation-stamped grouping table reused by
-    /// `pair_fusion::collect_fusion_plans`.
+    /// Grouping table reused by `pair_fusion::collect_fusion_plans`.
     pub(super) pair_fusion: PFusionScratch,
     /// Boundary-marginal levels for the current `fuse_pairs_inner` sweep
     /// (`diagram::boundary_marginal_levels_into`). A separate field from
@@ -412,9 +407,9 @@ pub(crate) struct ContractScratch {
 // on it would let the width-sized buffers grow unchecked over a run of wide
 // twin-free levels. Releasing has no behavioural consequence: every buffer is
 // filled or resized over the range it is read on, so a dropped one costs the
-// next call a reallocation; `pair_fusion.cells` and `twin_local` regrow
-// zeroed, which their generation stamps (always at least 1) read as never
-// stamped, and the refinement's counts regrow zeroed as they are kept.
+// next call a reallocation; `twin_local` regrows zeroed, which its
+// generation stamps (always at least 1) read as never stamped, and the
+// refinement's counts regrow zeroed as they are kept.
 impl Buffers for ContractScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.counts);

@@ -1,5 +1,5 @@
-//! A narrow node probes a window of the grouping table, not the whole of it,
-//! and a stop fires between nodes.
+//! Narrow nodes after a wide one group in a window of their own size, and a
+//! stop fires between nodes.
 
 use super::*;
 use crate::diagram::{ChildDecoder, EncodedChildRef, ValueRef};
@@ -42,9 +42,7 @@ fn fused(tdd: &Tdd, n: usize) -> bool {
 }
 
 /// One wide node, then many narrow ones: the table grows to the wide node's
-/// width, and each narrow node groups within its own window of it. Seeded
-/// pseudo-random x's collide inside a window as they would in a table of
-/// the node's own size.
+/// width, and each narrow node groups in a window of its own size.
 fn wide_then_narrow() -> Tdd {
     let slots = 64u32;
     let counts: Vec<u128> = (0..slots).map(|s| u128::from(s) * 3 + 1).collect();
@@ -60,8 +58,7 @@ fn wide_then_narrow() -> Tdd {
     lists.push((0..4096).map(|_| (next(700), next(slots))).collect());
     for i in 0..300 {
         let width = 2 + (i % 7) as usize;
-        // Wide x's, so a whole-table hash and a windowed one place them
-        // differently; few distinct, so most narrow nodes have a group.
+        // Wide x's, few distinct, so most narrow nodes have a group.
         let base = next(1 << 20);
         lists.push((0..width).map(|_| (base + next(3) * 4099, next(slots))).collect());
     }
