@@ -184,9 +184,6 @@ pub(super) struct SweepLists {
     /// each node of that child is named there wherever f's nodes of it are
     /// named in f, which the result's loose levels read (`loose_levels`).
     pub(super) outer_held: Vec<usize>,
-    /// The children of the root a count defers unbuilt, as
-    /// `(level, left, right)` (`level::defers`).
-    pub(super) deferred: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)>,
     /// The levels a plain conjunction built, and of those the levels it owes
     /// the twin contraction and the levels it does not.
     pub(super) built: Vec<VtreeIdx>,
@@ -248,7 +245,6 @@ impl SweepLists {
         self.lent.clear();
         self.as_operand.clear();
         self.outer_held.clear();
-        self.deferred.clear();
         self.built.clear();
         self.owed_twins.clear();
         self.twin_free.clear();
@@ -282,7 +278,6 @@ impl SweepLists {
         visit(&mut self.lent);
         visit(&mut self.as_operand);
         visit(&mut self.outer_held);
-        visit(&mut self.deferred);
         visit(&mut self.built);
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);

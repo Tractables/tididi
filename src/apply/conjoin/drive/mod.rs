@@ -40,8 +40,8 @@ mod level;
 mod owed;
 mod region;
 use level::{
-    LevelBuild, build_level_dense, count_sparse_root, count_streamed_root, counts_root, defers,
-    pick_streamed, run_sparse_level, sum_sparse_root, sums_root,
+    LevelBuild, build_level_dense, count_sparse_root, counts_root, run_sparse_level,
+    sum_sparse_root, sums_root,
 };
 
 use super::*;
@@ -88,10 +88,6 @@ pub(super) struct Sweep<'a, 'filter> {
 /// and streaming builds runs — and the children's grid regions are handed back
 /// to the arena as soon as the parent has read them.
 ///
-/// For a count, up to two children of a one-product root are deferred
-/// unbuilt to the root: one of them may then be counted without being
-/// built ([`stream`](super::sparse::stream)), and the others are built there.
-///
 /// # Errors
 ///
 /// Propagates the first refusal: a budget or cap the level build hit, or the
@@ -119,9 +115,6 @@ fn sweep_levels(
     // their regions before the sweep, and their nodes are counted as if they
     // were built in their places bottom-up.
     let mut output_nodes = 0u64;
-    // Children of the root deferred unbuilt, for a count that may stream
-    // one of them (see `level::defers`).
-    let mut deferred = std::mem::take(&mut run.lists.deferred);
     for (k, &t) in cone.built.iter().enumerate() {
         let (left, right) = vtree.children(t);
         if progress {
@@ -133,35 +126,11 @@ fn sweep_levels(
         // cap, tracked across every route independently of sparse-grid density.
         // A free level has no work, so the check at the next level built
         // stands for the checks at the free levels before it.
-        lim.level_done(output_nodes + cone.free_before(k))?;
-
-        if deferred.len() < 2 && defers(sweep, run, f, g, (t, left, right)) {
-            deferred.push((t, left, right));
-            continue;
-        }
-        if t == vtree.root() && !deferred.is_empty() {
-            let c = pick_streamed(eng, run, f, g, &deferred)?;
-            for (i, &(h, hl, hr)) in deferred.iter().enumerate() {
-                if i != c {
-                    build_level(eng, run, f, g, sweep, (h, hl, hr), None)?;
-                    output_nodes += run.levels[h.idx()].slot_count() as u64;
-                }
-            }
-            let (c_t, c_l, c_r) = deferred[c];
-            if let Some(count) =
-                count_streamed_root(eng, run, f, g, sweep, (t, left, right), (c_t, c_l, c_r))?
-            {
-                sweep.counted = Some(count);
-                continue;
-            }
-            build_level(eng, run, f, g, sweep, (c_t, c_l, c_r), None)?;
-            output_nodes += run.levels[c_t.idx()].slot_count() as u64;
-        }
         let before = output_nodes + cone.free_before(k);
-        build_level(eng, run, f, g, sweep, (t, left, right), Some(before))?;
+        lim.level_done(before)?;
+        build_level(eng, run, f, g, sweep, (t, left, right), before)?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
-    run.lists.deferred = deferred;
     if progress {
         lim.conjunction_reached(internal.len() as u32);
     }
@@ -178,11 +147,9 @@ fn sweep_levels(
 /// Build the level at `t` from its children's, by the route it is given, and
 /// release the children's grids.
 ///
-/// `before`, where given, is the output nodes the cap check at the next
-/// level boundary counts besides this level's: a level of known size that
-/// would fail that check is refused before it is built
-/// ([`refuse_past_cap`]). A deferred child of the root, built out of its
-/// place, is given none.
+/// `before` is the output nodes the cap check at the next level boundary
+/// counts besides this level's: a level of known size that would fail that
+/// check is refused before it is built ([`refuse_past_cap`]).
 fn build_level(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -190,7 +157,7 @@ fn build_level(
     g: &mut Held<'_>,
     sweep: &mut Sweep<'_, '_>,
     (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
-    before: Option<u64>,
+    before: u64,
 ) -> Result<(), OperationError> {
     let vtree = sweep.vtree;
     let shape = run.shape(t, left, right);
@@ -277,9 +244,7 @@ fn build_level(
                     sweep.filter.is_some(),
                 )?;
                 let filtered = sweep.filter.is_some();
-                if let Some(before) = before {
-                    refuse_past_cap(eng.limits(), run, (f, g), shape, (route, filtered), before)?;
-                }
+                refuse_past_cap(eng.limits(), run, (f, g), shape, (route, filtered), before)?;
                 #[cfg(debug_assertions)]
                 let predicted = super::price::complete_level(run, (f, g), shape, route, filtered)
                     .map(|level| (level, eng.limits().mark()));

@@ -30,7 +30,6 @@ mod fold;
 pub(crate) use fold::CandidateFold;
 mod sum;
 pub(crate) use sum::ChildSum;
-pub(crate) mod stream;
 pub(crate) mod probe;
 use probe::probe_level;
 pub(crate) use probe::CellLookup;

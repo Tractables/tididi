@@ -957,11 +957,7 @@ impl crate::Engine {
     /// of the conjunction is one product built by the sparse route, its
     /// pairs are folded into the count as they are found instead of being
     /// stored, so the largest level of a join that ends in a count is never
-    /// held. Where both operands are one node at the root, the count may
-    /// also skip one child of the root: it is summed from that child's own
-    /// children, pair by pair against the other child's counts, when that
-    /// walk is priced below building the child. Otherwise the conjunction is
-    /// built and counted.
+    /// held. Otherwise the conjunction is built and counted.
     ///
     /// Integer counts only: with weights attached, the result is the count
     /// of the conjunction built with them, as [`Engine::model_count`] gives it.
