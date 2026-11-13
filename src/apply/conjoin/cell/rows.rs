@@ -1166,6 +1166,18 @@ fn single_rows<const W: usize>(
         }
         slab.len() >= end
     };
+    // A cell's product: `None` where a side has none.
+    let product = |node_idx: &[u32], (lrow, rrow): (usize, usize), q: &ChildPair| {
+        if q.left.0 == NO_PRODUCT {
+            return None;
+        }
+        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+        if lc == NO_PRODUCT {
+            return None;
+        }
+        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+        (rc != NO_PRODUCT).then_some((lc, rc))
+    };
     let mut next = 0;
     'rows: while next < f_width {
         // The rows' nodes are written straight into the node arena, open
@@ -1191,17 +1203,9 @@ fn single_rows<const W: usize>(
                 };
                 let mut cells = [NO_PRODUCT; W];
                 if let Some(p) = p {
-                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                    let at = (left.row(p.left.0), right.row(p.right.0));
                     for (cell, q) in cells.iter_mut().zip(&g) {
-                        if q.left.0 == NO_PRODUCT {
-                            continue;
-                        }
-                        let lc = left.get_in_row(slab, lrow, q.left.0);
-                        if lc == NO_PRODUCT {
-                            continue;
-                        }
-                        let rc = right.get_in_row(slab, rrow, q.right.0);
-                        if rc != NO_PRODUCT {
+                        if let Some((lc, rc)) = product(slab, at, q) {
                             // Safety: the arena has room for a node a column
                             // of the rows up to `end`.
                             *cell = unsafe { o.single_node(lc, rc) };
@@ -1263,24 +1267,12 @@ fn single_rows<const W: usize>(
                 }
                 continue;
             };
-            let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
-            // A cell's product: `NO_PRODUCT` where a side has none.
-            let product = |node_idx: &[u32], q: &ChildPair| {
-                if q.left.0 == NO_PRODUCT {
-                    return None;
-                }
-                let lc = left.get_in_row(node_idx, lrow, q.left.0);
-                if lc == NO_PRODUCT {
-                    return None;
-                }
-                let rc = right.get_in_row(node_idx, rrow, q.right.0);
-                (rc != NO_PRODUCT).then_some((lc, rc))
-            };
+            let at = (left.row(p.left.0), right.row(p.right.0));
             if let Some(o) = out.as_mut().filter(|o| o.has_room(0, width)) {
                 if W > 0 {
                     let mut cells = [NO_PRODUCT; W];
                     for (cell, q) in cells.iter_mut().zip(&g) {
-                        if let Some((lc, rc)) = product(slab, q) {
+                        if let Some((lc, rc)) = product(slab, at, q) {
                             // Safety: the arena has room for a node a column.
                             *cell = unsafe { o.single_node(lc, rc) };
                         }
@@ -1288,7 +1280,7 @@ fn single_rows<const W: usize>(
                     write_cells(slab, row_base, cells);
                 } else {
                     for (j, q) in g_cols.iter().enumerate() {
-                        if let Some((lc, rc)) = product(slab, q) {
+                        if let Some((lc, rc)) = product(slab, at, q) {
                             // Safety: as above.
                             unsafe { o.single(slab, row_base + j, lc, rc) };
                         }
@@ -1308,7 +1300,7 @@ fn single_rows<const W: usize>(
                 write_cells(slab, row_base, [NO_PRODUCT; W]);
             }
             for (j, q) in g_cols.iter().enumerate() {
-                if let Some((lc, rc)) = product(slab, q) {
+                if let Some((lc, rc)) = product(slab, at, q) {
                     sink.single(eng, slab, row_base + j, lc, rc)?;
                 }
             }
