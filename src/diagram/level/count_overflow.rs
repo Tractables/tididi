@@ -18,8 +18,9 @@ use crate::limits::OperationError;
 /// means the value fits the fast `u128` lane.
 ///
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
-/// no duplicate slots. Every write path appends at a slot larger than any
-/// stored, so insertion is an amortized O(1) push and reads binary-search.
+/// no duplicate slots. A write at a slot larger than any stored is an
+/// amortized O(1) push; a write below one shifts the tail. Reads
+/// binary-search.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CountOverflow {
     /// Sorted by slot, strictly ascending, slots unique. Every method below

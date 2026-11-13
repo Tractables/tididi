@@ -35,7 +35,8 @@ impl<T> Default for Pool<T> {
 }
 
 impl<T> Pool<T> {
-    /// Whether this slot contains a parked value.
+    /// Whether this slot parks a value that retains storage. A value parked
+    /// at 0 bytes reads as vacant: it holds nothing a checkout would reuse.
     pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
 
     /// Read the parked value, if any, leaving it parked.

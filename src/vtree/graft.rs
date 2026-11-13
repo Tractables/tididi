@@ -67,8 +67,10 @@ impl GraftLayout {
     }
 }
 
-/// The id space a graft of `subtrees` and `spine_vars` needs when the pieces
-/// keep their own variable ids: the largest id any of them carries.
+/// The id space a graft of `subtrees` and `spine_vars` gets when the pieces
+/// keep their own variable ids: the largest of the subtrees' id spaces
+/// ([`Vtree::num_vars`], which can exceed the largest id a subtree carries)
+/// and the spine ids.
 pub(crate) fn graft_id_space<'a>(subtrees: impl IntoIterator<Item = &'a Vtree>, spine_vars: &[VarId]) -> u32 {
     subtrees
         .into_iter()

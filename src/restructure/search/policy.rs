@@ -78,15 +78,15 @@ impl AcceptancePolicy for Greedy {
 /// step back into it. A sequence that would beat the best cost seen is kept
 /// whether or not it is forbidden.
 ///
-/// The search stops after `patience` sweeps that do not improve on the best
-/// cost, and rewinds to the diagram that had it.
+/// The search stops once more than `patience` sweeps in a row have not
+/// improved on the best cost, and rewinds to the diagram that had it.
 #[derive(Debug)]
 pub struct Tabu {
     /// How many later accepted moves a kept move's inverse stays forbidden
     /// for. The default is 8.
     pub tenure: usize,
-    /// How many sweeps without a new best cost the search runs before it
-    /// stops. The default is 2.
+    /// How many sweeps in a row without a new best cost the search
+    /// tolerates: it stops at the one after them. The default is 2.
     pub patience: usize,
     /// Accepted moves so far: the clock the tenures are measured on.
     step: usize,

@@ -1,9 +1,10 @@
 //! Build marginal output columns during conjunction.
 //!
 //! Each live cell is folded into a value before its temporary pairs are
-//! discarded, bounding pair storage by the largest cell. Integer and weighted
-//! routes share the same driver through [`ValueDomain`]. The output is still
-//! a slice of levels, so column installation does not require a finished `Tdd`.
+//! discarded, bounding pair storage by the largest cell. The integer,
+//! weighted and scaled-float routes share the same driver through
+//! [`ValueDomain`]. The output is still a slice of levels, so column
+//! installation does not require a finished `Tdd`.
 
 use crate::diagram::{Arithmetic, WeightStore, WeightValue};
 use crate::Engine;
