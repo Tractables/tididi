@@ -95,7 +95,6 @@ mod quantify;
 mod drive;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
 use drive::Sweep;
-mod filter;
 
 mod liveness;
 
@@ -303,7 +302,7 @@ pub(crate) fn conjoin_checked(
         return Ok((f, false));
     }
     let zero = f.is_zero() || g.is_zero();
-    let result = conjoin_recycling(eng, f, g, targets, quantified, None);
+    let result = conjoin_recycling(eng, f, g, targets, quantified);
     result.map(|out| (out, !zero))
 }
 
@@ -349,9 +348,8 @@ fn conjoin_recycling(
     mut g: Tdd,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
-    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), filter, ConjoinMode::Build);
+    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), ConjoinMode::Build);
     return_levels_of(eng, &mut f);
     return_levels_of(eng, &mut g);
     result.map(Conjoined::diagram)
@@ -931,9 +929,7 @@ impl crate::Engine {
             diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
             return count;
         }
-        let result = apply_and_core(
-            self, &mut f, &mut g, (summed, VtreeMask::default()), None, ConjoinMode::Count,
-        );
+        let result = apply_and_core(self, &mut f, &mut g, (summed, VtreeMask::default()), ConjoinMode::Count);
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
         diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
         match result? {

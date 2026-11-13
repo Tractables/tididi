@@ -38,7 +38,6 @@ pub(super) fn run_sparse_level(
     g: &Tdd,
     shape: LevelShape,
     plan: &MarginalPlan,
-    filtered: bool,
 ) -> Result<(), OperationError> {
     let LevelShape {
         t,
@@ -50,7 +49,7 @@ pub(super) fn run_sparse_level(
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let passthrough = Passthrough::of(plan.sides);
     let carried = |side| passthrough.is_some_and(|p| p.side == side);
-    let complete = complete_side(run, &f.vtree, shape, passthrough, filtered);
+    let complete = complete_side(run, &f.vtree, shape, passthrough);
     let unlisted = |side| carried(side) || complete.is_some_and(|c| c.side == side);
     // Ensure the joined children have product lists for the scatter pipeline.
     if !unlisted(ChildSide::Left) {
@@ -68,7 +67,6 @@ pub(super) fn run_sparse_level(
         (f, g),
         shape,
         (passthrough, complete),
-        filtered,
     )?;
 
     let identity = Sides {
@@ -90,7 +88,6 @@ pub(super) fn run_sparse_level(
             right: gw.right,
         },
         identity,
-        filtered,
     );
     let marginal = run.entry_marginality.any() || run.built_marginal;
     let (made, held) = apply_sparse_level(
@@ -133,8 +130,7 @@ pub(super) fn run_sparse_level(
 /// The child a sparse level joins by arithmetic rather than through its
 /// product list ([`Complete`]): an internal child that is complete and has no
 /// list yet, whose list would name every cell of its grid where the level
-/// meets only the cells its operands' pairs name. None under a filter, which
-/// may have dropped a cell the arithmetic names; beside a pass-through side
+/// meets only the cells its operands' pairs name. None beside a pass-through side
 /// or a leaf child, which take the leaf arm's inner side themselves; or where
 /// an operand is constant-true over the child, whose list is no wider than
 /// the other operand's level there. Of two such children, the one with the
@@ -144,7 +140,6 @@ pub(super) fn complete_side(
     vtree: &crate::vtree::Vtree,
     shape: LevelShape,
     passthrough: Option<Passthrough>,
-    filtered: bool,
 ) -> Option<Complete> {
     let LevelShape {
         left,
@@ -153,8 +148,7 @@ pub(super) fn complete_side(
         g: gw,
         ..
     } = shape;
-    if filtered
-        || passthrough.is_some()
+    if passthrough.is_some()
         || vtree.node(left).is_leaf()
         || vtree.node(right).is_leaf()
         || complete_sides_listed()
@@ -186,9 +180,9 @@ pub(super) fn complete_side(
 /// Whether [`count_sparse_root`] may take a level the sparse route was chosen
 /// for: the sweep wants only the count, the level is the root both operands
 /// output at, f and g have one node there, neither child is carried, and no
-/// weight, filter or target changes what the one product's count is.
+/// weight or target changes what the one product's count is.
 pub(super) fn counts_root(
-    sweep: &Sweep<'_, '_>,
+    sweep: &Sweep<'_>,
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
@@ -203,7 +197,6 @@ pub(super) fn counts_root(
         && shape.g.here == 1
         && Passthrough::of(plan.sides).is_none()
         && sweep.ws.is_none()
-        && sweep.filter.is_none()
         && !sweep.targets.contains(t.idx())
 }
 
@@ -222,7 +215,7 @@ pub(super) fn count_sparse_root(
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
-    sweep: &Sweep<'_, '_>,
+    sweep: &Sweep<'_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
     let vtree = sweep.vtree;
     use crate::value::{IntFold, Retention, ValueDomain};
@@ -262,7 +255,7 @@ fn fold_child_counts(
     eng: &Engine,
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
-    seed: Option<&Sweep<'_, '_>>,
+    seed: Option<&Sweep<'_>>,
     roots: &[VtreeIdx],
     retention: crate::value::Retention,
 ) -> Result<Vec<Option<crate::value::CountVec>>, OperationError> {
@@ -312,7 +305,7 @@ fn fold_child_counts(
 fn seed_kept_counts(
     eng: &Engine,
     run: &ApplyRun,
-    sweep: &Sweep<'_, '_>,
+    sweep: &Sweep<'_>,
     computed: &mut [Option<crate::value::CountVec>],
     roots: &[VtreeIdx],
 ) -> Result<(), OperationError> {
@@ -896,7 +889,7 @@ pub(super) fn build_level_dense(
     f: &Tdd,
     g: &Tdd,
     level: LevelBuild,
-    sweep: &mut Sweep<'_, '_>,
+    sweep: &mut Sweep<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let LevelBuild { shape, route, plan, settles } = level;
@@ -985,7 +978,6 @@ pub(super) fn build_level_dense(
     // so a word it reads has bit 30 clear and is the slot the row loop reads
     // under either child view.
     if let Some(StreamLevelState::Float(values)) = &mut stream_state
-        && sweep.filter.is_none()
         && !crate::diagram::stored_levels_forced()
         && let Some((product, work)) = super::compose::plan_sums(
             lim,
@@ -1058,7 +1050,6 @@ pub(super) fn build_level_dense(
     let plain = matches!(route, Route::PlainDense | Route::Dense);
     let composed = if use_sparse_marginal
         || stream_state.is_some()
-        || sweep.filter.is_some()
         || crate::diagram::stored_levels_forced()
     {
         None
@@ -1257,8 +1248,8 @@ pub(super) fn build_level_dense(
                     _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
                 }
             });
-        // Nothing filters the level's nodes or folds them into counts.
-        let relay = sweep.filter.is_none() && stream_state.is_none();
+        // Nothing folds the level's nodes into counts.
+        let relay = stream_state.is_none();
         run_row_loop(
             eng,
             (route, lookups, single_pair, pairs, relay),
@@ -1286,7 +1277,7 @@ pub(super) fn build_level_dense(
     // Per-level tail: stream commit, live_counts, grid tag, shrink,
     // pass-through flags, and the close of a level of the plain routes. See
     // `finalize_level`.
-    let close = plain && sweep.filter.is_none() && lim.memory_unbounded();
+    let close = plain && lim.memory_unbounded();
     finalize_level(
         eng,
         stream_state,

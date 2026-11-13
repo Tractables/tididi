@@ -88,7 +88,7 @@ pub(super) fn finalize_level(
     close: bool,
     settle: bool,
     run: &mut ApplyRun,
-    sweep: &mut Sweep<'_, '_>,
+    sweep: &mut Sweep<'_>,
 ) {
     let lim = eng.limits();
     let (t, t_idx) = (shape.t, shape.t.idx());

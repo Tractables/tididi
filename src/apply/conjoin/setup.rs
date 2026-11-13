@@ -326,7 +326,7 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
     /// Whether nothing but pairs changes hands: no weights, no summed-out,
-    /// quantified, filtered or marginal level. Only such a conjunction
+    /// quantified or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
     pub(super) plain: bool,
     /// Whether a level the sweep has built or carried so far is marginal.

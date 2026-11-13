@@ -28,7 +28,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
     shape: LevelShape,
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
-    sweep: &mut Sweep<'_, '_>,
+    sweep: &mut Sweep<'_>,
 ) -> Result<Option<StreamLevelState>, OperationError> {
     if !sweep.targets.contains(shape.t.idx()) {
         return Ok(None);

@@ -171,35 +171,6 @@ impl Products {
         self.arena.reset(eng, sparse, n, f_widths, g_widths, cone)
     }
 
-    pub(super) fn filter_level(
-        &mut self, eng: &Engine, shape: super::LevelShape,
-        keep: &mut dyn FnMut(crate::vtree::VtreeIdx, super::NodeIdx, super::NodeIdx) -> bool,
-    ) -> Result<(), OperationError> {
-        let t = shape.t.idx();
-        self.ensure_product_list_for_child(eng, t, shape.f.here, shape.g.here, false, false)?;
-        let base = self.arena.materialized(t);
-        let grid = self.arena.slab_mut();
-        let list = &mut self.product_lists[t];
-        let mut write = 0;
-        let mut poll = eng.limits().gate();
-        for read in 0..list.len() {
-            poll.poll(1)?;
-            let entry = list[read];
-            if keep(shape.t, super::NodeIdx(entry.f_idx.0), super::NodeIdx(entry.g_idx.0)) {
-                list[write] = entry; write += 1;
-            } else if let Some(base) = base {
-                grid[base.idx() + entry.f_idx.0 as usize * shape.g.here + entry.g_idx.0 as usize] = super::NO_PRODUCT;
-            }
-        }
-        poll.flush()?;
-        if write < list.len() {
-            self.complete[t] = false;
-        }
-        list.truncate(write);
-        self.live_counts[t] = write;
-        Ok(())
-    }
-
     /// Whether level `t` is complete: every product `f[i] ∧ g[j]` of its
     /// `f_width × g_width` cells is a node, numbered in cell order from 0, so
     /// its grid, materialized or not, holds `i * g_width + j` at cell
@@ -272,23 +243,15 @@ impl Products {
     /// [`Self::lists`], with each child's cells read one at a time where
     /// the child allows it ([`CellLookup`]): by arithmetic where an operand
     /// is constant-true over it or it is complete, from its grid, and
-    /// otherwise only through its list. A sweep under a filter reads no
-    /// identity: the filter may have dropped products the identity names,
-    /// and its lists and grids are what is left.
+    /// otherwise only through its list.
     pub(super) fn lists_with_cells(
         &mut self,
         left: usize, right: usize, out: usize,
         g_widths: Sides<usize>,
         identity: Sides<Operands<bool>>,
-        filtered: bool,
     ) -> (ProductLists<'_>, Sides<CellLookup<'_>>) {
         let cells = |c: usize, g_width: usize, id: Operands<bool>| {
-            if filtered {
-                match self.arena.materialized(c) {
-                    Some(base) => CellLookup::Grid { cells: &self.arena.slab()[base.idx()..], g_width },
-                    None => CellLookup::List,
-                }
-            } else if id.g {
+            if id.g {
                 CellLookup::GIdentity
             } else if id.f {
                 CellLookup::FIdentity

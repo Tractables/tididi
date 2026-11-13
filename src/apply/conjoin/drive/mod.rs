@@ -49,14 +49,13 @@ use crate::reduce::prune::settle_loose;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.
-pub(super) struct Sweep<'a, 'filter> {
+pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     /// The levels summed out as they are built.
     pub(super) targets: VtreeMask<'a>,
     /// The subtrees collapsed instead of built. See [`quantify`](super::quantify).
     pub(super) quantified: VtreeMask<'a>,
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
-    pub(super) filter: Option<&'a mut (dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool + 'filter)>,
     /// Whether the output is wanted only for its count: then a root level
     /// the sparse route builds as one product is counted instead, into
     /// `counted`, and left empty.
@@ -86,7 +85,7 @@ fn sweep_levels(
     run: &mut ApplyRun,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-    sweep: &mut Sweep<'_, '_>,
+    sweep: &mut Sweep<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = sweep.vtree;
@@ -144,7 +143,7 @@ fn build_level(
     run: &mut ApplyRun,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-    sweep: &mut Sweep<'_, '_>,
+    sweep: &mut Sweep<'_>,
     (t, left, right): (VtreeIdx, VtreeIdx, VtreeIdx),
     before: u64,
 ) -> Result<(), OperationError> {
@@ -168,11 +167,8 @@ fn build_level(
         return Ok(());
     }
 
-    // A filtered child product cannot be bypassed by an identity copy, nor
-    // by a relabelling, which reads no filter.
-    let taken = sweep.filter.is_none()
-        && (take_level_fast_path(eng, run, f, g, shape)?
-            || take_relabel_level(eng, run, f, g, shape, sweep)?);
+    let taken = take_level_fast_path(eng, run, f, g, shape)?
+        || take_relabel_level(eng, run, f, g, shape, sweep)?;
     debug_assert!(
         taken || !run.cone.free_at(t.idx()),
         "a free level at {} takes the other operand's level",
@@ -208,7 +204,7 @@ fn build_level(
                 sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, sweep)?);
             }
             Route::Sparse => {
-                run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
+                run_sparse_level(eng, run, f, g, shape, &plan)?;
                 run.products
                     .note_sparse_built(t.idx(), shape.f.here, shape.g.here);
             }
@@ -220,19 +216,10 @@ fn build_level(
             _ => {
                 // Priced before its grid is claimed: a level that cannot fit
                 // is refused here, named, rather than grown into the budget.
-                let priced = price_dense_level(
-                    eng.limits(),
-                    run,
-                    f,
-                    g,
-                    shape,
-                    route,
-                    sweep.filter.is_some(),
-                )?;
-                let filtered = sweep.filter.is_some();
-                refuse_past_cap(eng.limits(), run, (f, g), shape, (route, filtered), before)?;
+                let priced = price_dense_level(eng.limits(), run, f, g, shape, route)?;
+                refuse_past_cap(eng.limits(), run, (f, g), shape, route, before)?;
                 #[cfg(debug_assertions)]
-                let predicted = super::price::complete_level(run, (f, g), shape, route, filtered)
+                let predicted = super::price::complete_level(run, (f, g), shape, route)
                     .map(|level| (level, eng.limits().mark()));
                 build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan, settles }, sweep)?;
                 #[cfg(debug_assertions)]
@@ -256,9 +243,6 @@ fn build_level(
     }
 
     run.built_marginal |= run.levels[t.idx()].is_marginal();
-    if let Some(filter) = sweep.filter.as_deref_mut() {
-        run.products.filter_level(eng, shape, filter)?;
-    }
     if run.plain && !taken {
         owed::note_operand_level(run, f, g, vtree, t);
     } else if !taken {
@@ -282,7 +266,7 @@ fn describes_marginal_child(
     eng: &Engine,
     run: &ApplyRun,
     (f, g): (&Tdd, &Tdd),
-    sweep: &Sweep<'_, '_>,
+    sweep: &Sweep<'_>,
     shape: LevelShape,
     (plan, marginal): (&MarginalPlan, &LevelMarg),
     route: Route,
@@ -292,7 +276,6 @@ fn describes_marginal_child(
         || !(marginal.left_any || marginal.right_any)
         || marginal.is_target
         || !sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
-        || sweep.filter.is_some()
         || crate::diagram::stored_levels_forced()
         || grid_lookups_forced()
     {
@@ -407,7 +390,6 @@ pub(crate) fn apply_and_restoring(
         f,
         g,
         (VtreeMask::default(), VtreeMask::default()),
-        None,
         ConjoinMode::Restore { free },
     )
     .map(Conjoined::diagram)
@@ -458,8 +440,7 @@ impl Conjoined {
 }
 
 /// Build a conjunction, emitting the levels in `targets` as marginal values,
-/// collapsing every subtree `quantified` names instead of building it, and
-/// dropping the intermediate products `filter` rejects.
+/// and collapsing every subtree `quantified` names instead of building it.
 ///
 /// The sweep consumes operand levels as it proceeds. An error leaves both
 /// operands partially drained; retrying requires copies taken before the call.
@@ -469,28 +450,19 @@ impl Conjoined {
 /// output-cap failures return [`OperationError`].
 ///
 /// Count mode may return the model count instead of building the root, when
-/// it is one product on the sparse route with no weights and no filter.
+/// it is one product on the sparse route with no weights.
 /// Otherwise the diagram is built and the caller counts it.
 pub(crate) fn apply_and_core(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(
-        eng,
-        &mut Held::Owned(f),
-        &mut Held::Owned(g),
-        (targets, quantified),
-        filter,
-        mode,
-    )
+    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), (targets, quantified), mode)
 }
 
-/// [`apply_and_core`] of operands each owned or borrowed, without a filter:
-/// a borrowed operand is read in place, weights and marginal levels
+/// [`apply_and_core`] of operands each owned or borrowed: a borrowed operand is read in place, weights and marginal levels
 /// included, and an owned operand's levels are dropped as the sweep reads
 /// them ([`apply_and_held`]).
 pub(crate) fn apply_and_either(
@@ -500,7 +472,7 @@ pub(crate) fn apply_and_either(
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
 ) -> Result<Tdd, OperationError> {
-    apply_and_held(eng, f, g, (targets, quantified), None, ConjoinMode::Build).map(Conjoined::diagram)
+    apply_and_held(eng, f, g, (targets, quantified), ConjoinMode::Build).map(Conjoined::diagram)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
@@ -513,7 +485,6 @@ fn apply_and_held(
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
     let free = match mode {
@@ -562,11 +533,10 @@ fn apply_and_held(
         "an operand has weight-marginal levels but neither carries a weight store"
     );
     // Nothing but pairs changes hands: no weights, no summed-out level, no
-    // level quantified or filtered, and, as the setup finds, no marginal
-    // level.
-    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
-    // A built conjunction, restoring or not, that sums, quantifies or
-    // filters no level and carries no weights takes the subtrees at which
+    // level quantified, and, as the setup finds, no marginal level.
+    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty();
+    // A built conjunction, restoring or not, that sums or quantifies no
+    // level and carries no weights takes the subtrees at which
     // both operands are constant true whole from `f`, as the identity fast
     // paths carry them: the setup finds them (`mark_constant_true`). Most levels of two
     // diagrams on a large vtree that each mention a few of its variables
@@ -691,7 +661,6 @@ fn apply_and_held(
         targets,
         quantified,
         ws: ws.as_mut(),
-        filter,
         count_root,
         counted: None,
         kept,
@@ -709,7 +678,7 @@ fn apply_and_held(
         f: sweep.kept.f.take(),
         g: sweep.kept.g.take(),
     };
-    let fused = if sweep.filter.is_none() && sweep.ws.is_none() {
+    let fused = if sweep.ws.is_none() {
         owed::fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
     } else {
         Vec::new()

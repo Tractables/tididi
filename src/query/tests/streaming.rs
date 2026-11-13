@@ -45,7 +45,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let run = |mask: VtreeMask<'_>| {
                 let (mut a_c, mut b_c) = (a.clone(), b.clone());
-                apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default(), None)
+                apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default())
                     .unwrap()
                     .model_count()
                     .unwrap()
@@ -90,7 +90,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 ))
                 .unwrap();
                 let res =
-                    apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default(), None)
+                    apply_and_fallible(&eng, &mut a_c, &mut b_c, mask, VtreeMask::default())
                         .unwrap();
                 exact_weight(
                     &res.weighted_value()

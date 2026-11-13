@@ -97,8 +97,7 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 /// node per live cell, as in a plain conjunction. And on an operand an
 /// earlier sum left marginal levels in, it reads through each one the other
 /// operand is constant-true over, whose counts the output keeps as they
-/// are. The caller has already excluded a filtered sweep, and only that: a
-/// sweep that quantifies ([`Quantification::FusedSubtrees`]) reaches the
+/// are. A sweep that quantifies ([`Quantification::FusedSubtrees`]) reaches the
 /// route on every level outside the subtrees it collapses. At the parent of
 /// one, the collapsed child's products are one `⊤` for every satisfiable
 /// cell, so two carrier pairs can meet in one and the level holds that pair
@@ -118,7 +117,7 @@ pub(super) fn take_relabel_level(
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     shape: LevelShape,
-    sweep: &Sweep<'_, '_>,
+    sweep: &Sweep<'_>,
 ) -> Result<bool, OperationError> {
     let (t, left, right) = (shape.t, shape.left, shape.right);
     let ti = t.idx();

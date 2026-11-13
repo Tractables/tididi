@@ -110,12 +110,11 @@ pub(super) struct Side<'a> {
 /// holds them in a form a count reads: every one live when the child is
 /// complete or an operand is constant-true over it, so that each node of the
 /// other is its own product; else the child's grid, else its list. `None`
-/// for a child with neither. Under a filter, which may have dropped products
-/// either rule names, only the grid and the list are read.
-pub(super) fn side_of<'a>(run: &'a ApplyRun, child: VtreeIdx, f_width: usize, g_width: usize, filtered: bool) -> Option<Side<'a>> {
+/// for a child with neither.
+pub(super) fn side_of<'a>(run: &'a ApplyRun, child: VtreeIdx, f_width: usize, g_width: usize) -> Option<Side<'a>> {
     let (c, products) = (child.idx(), &*run.products);
     let every = products.is_complete(c) || run.f_identity[c] || run.g_identity[c];
-    let live = if !filtered && every {
+    let live = if every {
         Live::All
     } else if let Some(base) = products.arena.materialized(c) {
         Live::Grid { cells: &products.arena.slab()[base.idx()..], f_width, g_width }
@@ -507,7 +506,6 @@ pub(super) fn price_dense_level(
     g: &Tdd,
     shape: LevelShape,
     route: Route,
-    filtered: bool,
 ) -> Result<Option<Pairs>, OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let products = &*run.products;
@@ -525,7 +523,7 @@ pub(super) fn price_dense_level(
     let due = room.is_some();
     let structural = matches!(route, Route::PlainDense | Route::Dense);
     let pairs = match structural && (due || cfg!(debug_assertions)) {
-        true => match (side_of(run, left, fw.left, gw.left, filtered), side_of(run, right, fw.right, gw.right, filtered)) {
+        true => match (side_of(run, left, fw.left, gw.left), side_of(run, right, fw.right, gw.right)) {
             (Some(l), Some(r)) => {
                 counted(level_pairs(due.then_some(lim), f_level, g_level, l, r, ceiling_room(due, room, grid)))?
             }
@@ -552,7 +550,6 @@ pub(super) fn price_sparse_level(
     (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
-    filtered: bool,
 ) -> Result<Option<Pairs>, OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (f_level, g_level) = (f.level(t), g.level(t));
@@ -564,7 +561,7 @@ pub(super) fn price_sparse_level(
     let every = |side| passthrough.is_some_and(|p| p.side == side) || complete.is_some_and(|c| c.side == side);
     let side = |child: VtreeIdx, which, f_width, g_width| match every(which) {
         true => Some(Side { live: Live::All, f_width, g_width }),
-        false => side_of(run, child, f_width, g_width, filtered),
+        false => side_of(run, child, f_width, g_width),
     };
     let pairs = match (side(left, ChildSide::Left, fw.left, gw.left), side(right, ChildSide::Right, fw.right, gw.right)) {
         (Some(l), Some(r)) => counted(level_pairs(due.then_some(lim), f_level, g_level, l, r, ceiling_room(due, room, 0)))?,
@@ -629,18 +626,16 @@ pub(super) struct CompleteLevel {
 }
 
 /// The [`CompleteLevel`] of the level `shape` names, where it is one: a
-/// level the plain dense routes build, unfiltered, whose two child sides
+/// level the plain dense routes build, whose two child sides
 /// are complete and read by arithmetic.
 pub(super) fn complete_level(
     run: &ApplyRun,
     (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
     route: Route,
-    filtered: bool,
 ) -> Option<CompleteLevel> {
     let products = &*run.products;
-    if filtered
-        || !matches!(route, Route::PlainDense | Route::Dense)
+    if !matches!(route, Route::PlainDense | Route::Dense)
         || super::grid_lookups_forced()
         || !products.is_complete(shape.left.idx())
         || !products.is_complete(shape.right.idx())
@@ -675,7 +670,7 @@ pub(super) fn refuse_past_cap(
     run: &ApplyRun,
     (f, g): (&Tdd, &Tdd),
     shape: LevelShape,
-    (route, filtered): (Route, bool),
+    route: Route,
     before: u64,
 ) -> Result<(), OperationError> {
     let Some(cap) = lim.output_node_cap() else { return Ok(()) };
@@ -687,7 +682,7 @@ pub(super) fn refuse_past_cap(
     {
         return Ok(());
     }
-    let Some(level) = complete_level(run, (f, g), shape, route, filtered) else { return Ok(()) };
+    let Some(level) = complete_level(run, (f, g), shape, route) else { return Ok(()) };
     let total = u128::from(before) + level.nodes;
     let emit = emit_pair_bound(f.level(shape.t), g.level(shape.t));
     // The meter rises by the arena's seed, the capacity the output level

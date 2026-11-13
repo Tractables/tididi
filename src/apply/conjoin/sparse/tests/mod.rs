@@ -199,7 +199,6 @@ mod projection;
 mod regression;
 mod reset_ws;
 mod scatter_direction_pool;
-mod product_filter;
 mod prefetch_gate;
 mod walk_filter;
 mod walks;

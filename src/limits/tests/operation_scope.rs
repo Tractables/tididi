@@ -83,7 +83,6 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.implies(&f, &other).err(), Some(Stopped));
     assert_eq!(eng.and(f.clone(), g()).err(), Some(Stopped));
     assert_eq!(eng.and_marginalizing(f.clone(), g(), &[]).err(), Some(Stopped));
-    assert_eq!(eng.and_filter_products(f.clone(), g(), |_, _, _| true).err(), Some(Stopped));
     assert_eq!(eng.and_exists(f.clone(), g(), &absent).err(), Some(Stopped));
     assert_eq!(eng.or(f.clone(), g()).err(), Some(Stopped));
     assert_eq!(eng.or_many(vec![f.clone(), g()]).err(), Some(Stopped));
