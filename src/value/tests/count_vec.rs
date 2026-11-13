@@ -92,7 +92,7 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
     );
 }
 
-/// Mirrors `conjoin::cell::tests::collect_sink_pushes_charge_the_soft_budget`'s
+/// Mirrors `conjoin::cell::tests::scratch_sink_pushes_charge_the_soft_budget`'s
 /// install/reset hygiene: a tiny soft budget must trip the engine's
 /// `Err(OperationError::OverBudget)` well before an unbudgeted push loop would
 /// exhaust real memory.

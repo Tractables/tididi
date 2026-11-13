@@ -3,7 +3,7 @@ use crate::diagram::ChildDecoder;
 use crate::Engine;
 use crate::test_helpers::pair;
 
-/// `CollectSink` pushes must charge the apply soft budget (`try_push`), like
+/// `ScratchSink` pushes must charge the apply soft budget (`try_push`), like
 /// the emit walk's `try_push_pair_into`: an uncharged push lets a wide
 /// streaming cell's scratch grow invisibly to the budget, so an allocator
 /// failure aborts the process instead of degrading to `Err(OverBudget)`.
@@ -12,13 +12,13 @@ use crate::test_helpers::pair;
 /// sink until the scratch's capacity growth must exceed it. On the
 /// unbudgeted sink every push returns `Ok` and the assert fails.
 #[test]
-fn collect_sink_pushes_charge_the_soft_budget() {
+fn scratch_sink_pushes_charge_the_soft_budget() {
     // 64 bytes ≈ 8 `ChildPair`s of capacity; 1024 pushes must trip it.
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
     let mut out: Vec<ChildPair> = Vec::new();
-    let mut sink = CollectSink { out: &mut out };
+    let mut sink = ScratchSink { out: &mut out };
     let mut result = Ok(());
     for _ in 0..1024 {
         result = sink.pair(&eng, 1, 2);
@@ -26,7 +26,7 @@ fn collect_sink_pushes_charge_the_soft_budget() {
     }
     assert!(
         matches!(result, Err(OperationError::OverBudget)),
-        "CollectSink pushes bypass the apply soft budget"
+        "ScratchSink pushes bypass the apply soft budget"
     );
 }
 
@@ -156,7 +156,7 @@ fn columns_charge_and_release_the_soft_budget() {
 }
 
 /// The pair-collecting sink must honor the soft memory
-/// budget — `process_cell` with a `CollectSink` returns `Err(OverBudget)`
+/// budget — `process_cell` with a `ScratchSink` returns `Err(OverBudget)`
 /// when its per-cell pair collection would exceed the installed budget,
 /// rather than pushing unbudgeted: an infallible `out.push` would grow
 /// `cell_pairs` with zero accounting and abort the process under a memory
@@ -186,11 +186,11 @@ fn unmasked_single_right_ctx() -> super::CellCtx<'static> {
 }
 
 #[test]
-fn collect_sink_respects_soft_budget() {
+fn scratch_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::diagram::{ChildPair, NodeIdx, TddLevel, EncodedNode};
-    use super::{process_cell, CollectSink, OperationError};
+    use super::{process_cell, ScratchSink, OperationError};
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair f_pairs into the N×1 arm.
@@ -212,7 +212,7 @@ fn collect_sink_respects_soft_budget() {
         process_cell::<_, _, _>(
             (&eng, &ctx),
             (0, 0), &small, (&g, &mut scratch), &mut node_idx,
-            (&AliveLookup, &AliveLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
+            (&AliveLookup, &AliveLookup), (&mut ScratchSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         )
     };
     assert!(ok.is_ok(), "no budget: collector should complete, got {:?}", ok.err());
@@ -231,7 +231,7 @@ fn collect_sink_respects_soft_budget() {
         process_cell::<_, _, _>(
             (&eng, &ctx),
             (0, 0), &big, (&g, &mut scratch), &mut node_idx,
-            (&AliveLookup, &AliveLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
+            (&AliveLookup, &AliveLookup), (&mut ScratchSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         )
     };
     lim.reset_meters();
@@ -256,7 +256,7 @@ fn collect_sink_respects_soft_budget() {
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     use crate::apply::conjoin::child_lookup::ChildLookup;
     use crate::diagram::{ChildPair, NodeIdx, TddLevel};
-    use super::{CellAction, CellArgs, CollectSink, process_cell, run_level_rows};
+    use super::{CellAction, CellArgs, ScratchSink, process_cell, run_level_rows};
 
     const K1: usize = 256;
     const PAIRS_PER_ROW: usize = 1024;
@@ -275,7 +275,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
                 (eng, a.ctx),
                 (a.j, a.row_base), a.f_pairs,
                 (a.right_level_t, a.g_pairs_scratch), a.node_idx, (a.left, a.right),
-                (&mut CollectSink { out: &mut *self.out }, a.gate),
+                (&mut ScratchSink { out: &mut *self.out }, a.gate),
             )
         }
     }
@@ -324,7 +324,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 /// scratch).
 #[test]
 fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
-    use super::{process_cell, CellCtx, CollectSink};
+    use super::{process_cell, CellCtx, ScratchSink};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     // A child resolution that depends on both refs, so an emitted pair carries
@@ -368,7 +368,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
             process_cell(
                 (&eng, &ctx), (j, 0), &f_pairs,
                 (&lvl, &mut scratch), &mut node_idx,
-                (&RefLookup, &RefLookup), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
+                (&RefLookup, &RefLookup), (&mut ScratchSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
             ).expect("an unbudgeted walk completes");
         }
         out
@@ -472,7 +472,7 @@ fn column_runs_charge_the_soft_budget_and_degrade_when_refused() {
 /// test and the per-pair right test skip entries.
 #[test]
 fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
-    use super::{process_cell, CellCtx, CollectSink};
+    use super::{process_cell, CellCtx, ScratchSink};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     struct SomeDead;
@@ -507,7 +507,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
         process_cell(
             (&eng, &ctx), (0, 0), &f_pairs,
             (&level, &mut Vec::new()), &mut Vec::<u32>::new(),
-            (&SomeDead, &SomeDead), (&mut CollectSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
+            (&SomeDead, &SomeDead), (&mut ScratchSink { out: &mut out }, &mut eng.limits().gate_with(u64::MAX)),
         ).expect("an unbudgeted walk completes");
         out.sort_by_key(|p| (p.left.raw(), p.right.raw()));
         out
@@ -526,7 +526,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
 /// dead candidates on either side at the boundary.
 #[test]
 fn push_kept_grows_where_pushing_each_survivor_would() {
-    use super::{push_kept, CollectSink, PairSink};
+    use super::{push_kept, ScratchSink, PairSink};
     let eng = Engine::new();
     let cands: Vec<(u32, u32)> = (0..40u32)
         .map(|k| match k % 5 {
@@ -545,14 +545,14 @@ fn push_kept_grows_where_pushing_each_survivor_would() {
             if filled > cap { continue; }
             for n in 0..=cands.len() {
                 let mut kept = start(cap, filled);
-                push_kept(&eng, &mut CollectSink { out: &mut kept }, &cands[..n], true, |&(l, r)| {
+                push_kept(&eng, &mut ScratchSink { out: &mut kept }, &cands[..n], true, |&(l, r)| {
                     (l, if l == NO_PRODUCT { NO_PRODUCT } else { r })
                 })
                 .expect("an unbudgeted push succeeds");
                 let mut each = start(cap, filled);
                 for &(l, r) in &cands[..n] {
                     if l != NO_PRODUCT && r != NO_PRODUCT {
-                        CollectSink { out: &mut each }.pair(&eng, l, r).expect("an unbudgeted push succeeds");
+                        ScratchSink { out: &mut each }.pair(&eng, l, r).expect("an unbudgeted push succeeds");
                     }
                 }
                 assert_eq!(kept, each, "cap {cap}, filled {filled}, {n} candidates");

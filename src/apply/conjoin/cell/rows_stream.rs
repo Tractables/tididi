@@ -252,7 +252,7 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
     let mut action = Emit {
         sink: FoldSink {
             fold: &mut st,
-            cell: CollectSink {
+            cell: ScratchSink {
                 out: &mut cell_pairs,
             },
         },
@@ -524,7 +524,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     let mut action = Emit {
         sink: FoldSink {
             fold: &mut st,
-            cell: CollectSink {
+            cell: ScratchSink {
                 out: &mut cell_pairs,
             },
         },
@@ -660,7 +660,7 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 ) -> Result<(), OperationError> {
     let sink = FoldSink {
         fold: st,
-        cell: CollectSink { out: cell_pairs },
+        cell: ScratchSink { out: cell_pairs },
     };
     super::word_cells::rows_by_words::<true, _, _, _>(
         eng,
@@ -672,12 +672,12 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 }
 
 /// Collapse at the source: each live cell's pairs gathered into a reused
-/// scratch `Vec<ChildPair>` ([`CollectSink`]) and folded into the column as
+/// scratch `Vec<ChildPair>` ([`ScratchSink`]) and folded into the column as
 /// the cell ends, never touching the output level.
 struct FoldSink<'a, 'data, F: ValueDomain> {
     fold: &'a mut StreamState<'data, F>,
     /// Reused across all cells: bounds the transient peak to one cell's pairs.
-    cell: CollectSink<'a>,
+    cell: ScratchSink<'a>,
 }
 
 impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {

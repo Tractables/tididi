@@ -1107,11 +1107,11 @@ impl PairSink for ProjectedEmitSink<'_> {
 /// streaming cell's scratch growth charges the apply soft budget and degrades
 /// to `Err(OverBudget)` instead of an allocator abort. The scratch is bounded
 /// to one cell's pairs and reused across cells.
-pub(crate) struct CollectSink<'a> {
+pub(crate) struct ScratchSink<'a> {
     pub(crate) out: &'a mut Vec<ChildPair>,
 }
 
-impl PairSink for CollectSink<'_> {
+impl PairSink for ScratchSink<'_> {
     #[inline(always)]
     fn single(
         &mut self,
@@ -1336,7 +1336,7 @@ where
 /// f row of at least [`GROUPED_MIN_PAIRS`] pairs, the walk takes both sides a
 /// run of shared `.left` at a time.
 #[inline(always)]
-fn cell_prefilter<L, R, S>(
+fn cell_two_sided<L, R, S>(
     (eng, ctx): (&Engine, &CellCtx<'_>),
     (j, grid_pos): (usize, usize),
     f_pairs: &[ChildPair],
@@ -1468,7 +1468,7 @@ where
 /// `g_pairs_scratch` as the decode buffer — neither aliases the output slab.
 ///
 /// Sink allocation can return [`OperationError::OverBudget`]; every arm polls
-/// for [`OperationError::Stopped`], the collect sink included.
+/// for [`OperationError::Stopped`], the scratch sink included.
 ///
 /// Keep input slices and lookup geometry as direct parameters so the optimizer
 /// retains their aliasing information within the pair loops.
@@ -1712,7 +1712,7 @@ where
             (sink, gate),
         )?;
     } else {
-        cell_prefilter(
+        cell_two_sided(
             (eng, ctx),
             (j, grid_pos),
             f_pairs,
