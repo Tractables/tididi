@@ -91,7 +91,6 @@ mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 use output::*;
-mod quantify;
 mod drive;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
 use drive::Sweep;
@@ -107,28 +106,6 @@ use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     and(f, g)
         .expect("apply_and: operation refused; use tididi::and to handle errors")
-}
-
-/// Conjoin owned operands, recycling their levels as the bottom-up walk
-/// proceeds, and collapsing every subtree in `quantified` to the constant-true
-/// node instead of building it — see [`quantify`].
-///
-/// The flag says whether the sweep ran, which is what decides whether the
-/// caller's quantification has collapsed levels to account for: the shortcuts
-/// for a false operand and for `f ∧ f` return without collapsing anything.
-/// Operand validation and allocation, cancellation and output-cap errors follow
-/// [`Engine::and`]. Both inputs are consumed on every outcome.
-pub(crate) fn conjoin_on(
-    eng: &Engine,
-    mut f: Tdd,
-    mut g: Tdd,
-    quantified: VtreeMask<'_>,
-) -> Result<(Tdd, bool), OperationError> {
-    // Checked before the swap and the self-conjunction shortcut, both of which
-    // can return without ever reaching the conjunction sweep.
-    crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
-    conjoin_checked(eng, f, g, VtreeMask::default(), quantified)
 }
 
 /// True when `f` and `g` represent the same Boolean function, in which case
@@ -236,7 +213,7 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     crate::apply::check_vtree(&f, &g)?;
     prepare_owned_weights(&mut f, &mut g)?;
-    conjoin_cow(eng, f, g, VtreeMask::default(), VtreeMask::default()).map(|(out, _)| out)
+    conjoin_cow(eng, f, g, VtreeMask::default())
 }
 
 /// Check that the operands share one weight interpretation, and give an
@@ -280,16 +257,14 @@ fn narrower_right<T: Borrow<Tdd>>(f: &mut T, g: &mut T, free: &mut Operands<Vtre
     swap
 }
 
-/// [`conjoin_on`] after its operand checks, summing out the levels in
-/// `targets`: for a caller that has already validated and weight-aligned the
-/// operands.
+/// Conjoin validated, weight-aligned operands, summing out the levels in
+/// `targets`.
 pub(crate) fn conjoin_checked(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
-) -> Result<(Tdd, bool), OperationError> {
+) -> Result<Tdd, OperationError> {
     let widths = Operands { f: f.max_width(), g: g.max_width() };
     narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
@@ -299,11 +274,9 @@ pub(crate) fn conjoin_checked(
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().enter()?;
         diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
-        return Ok((f, false));
+        return Ok(f);
     }
-    let zero = f.is_zero() || g.is_zero();
-    let result = conjoin_recycling(eng, f, g, targets, quantified);
-    result.map(|out| (out, !zero))
+    conjoin_recycling(eng, f, g, targets)
 }
 
 /// [`conjoin_checked`] of operands each owned or borrowed: two owned ones
@@ -314,10 +287,9 @@ fn conjoin_cow<'a>(
     f: Cow<'a, Tdd>,
     g: Cow<'a, Tdd>,
     targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
-) -> Result<(Tdd, bool), OperationError> {
+) -> Result<Tdd, OperationError> {
     let (mut f, mut g) = match (f, g) {
-        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_checked(eng, f, g, targets, quantified),
+        (Cow::Owned(f), Cow::Owned(g)) => return conjoin_checked(eng, f, g, targets),
         operands => operands,
     };
     let widths = Operands { f: f.max_width(), g: g.max_width() };
@@ -331,13 +303,12 @@ fn conjoin_cow<'a>(
             Cow::Borrowed(f) => f.try_clone_on(eng)?,
         };
         recycle(eng, g);
-        return Ok((out, false));
+        return Ok(out);
     }
-    let zero = f.is_zero() || g.is_zero();
-    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets, quantified);
+    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets);
     recycle(eng, f);
     recycle(eng, g);
-    result.map(|out| (out, !zero))
+    result
 }
 
 /// Run the sweep over `f` and `g`, then hand both operands' level arrays back
@@ -347,9 +318,8 @@ fn conjoin_recycling(
     mut f: Tdd,
     mut g: Tdd,
     targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
 ) -> Result<Tdd, OperationError> {
-    let result = apply_and_core(eng, &mut f, &mut g, (targets, quantified), ConjoinMode::Build);
+    let result = apply_and_core(eng, &mut f, &mut g, targets, ConjoinMode::Build);
     return_levels_of(eng, &mut f);
     return_levels_of(eng, &mut g);
     result.map(Conjoined::diagram)
@@ -860,7 +830,7 @@ impl crate::Engine {
             true => VtreeMask::default(),
             false => VtreeMask::new(Some(&mask)),
         };
-        let (mut out, _) = conjoin_cow(self, f, g, summed, VtreeMask::default())?;
+        let mut out = conjoin_cow(self, f, g, summed)?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
@@ -929,7 +899,7 @@ impl crate::Engine {
             diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
             return count;
         }
-        let result = apply_and_core(self, &mut f, &mut g, (summed, VtreeMask::default()), ConjoinMode::Count);
+        let result = apply_and_core(self, &mut f, &mut g, summed, ConjoinMode::Count);
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
         diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
         match result? {
@@ -1144,7 +1114,7 @@ use tests::{
     note_one_sided_masks, note_pair_row_unrolled, note_pair_rows, note_pairs_grown,
     note_reach_columns_row, note_reach_tables, note_read_through, note_relabelled, note_relayed,
     note_route, note_row_columns_row, note_scheduled_charge, note_single_rows,
-    note_whole_row, note_word_cells, note_written_pairs,
+    note_whole_row, note_word_cells,
     one_sided_masks_forced_off, pair_rows_forced_off, reach_columns_forced_off, reach_tables_forced,
     relabel_forced_off, relay_forced_off, row_columns_forced_off, seed_pairs_forced,
     single_rows_forced_off, taken_levels_settled_forced, word_cells_forced,

@@ -2,12 +2,10 @@
 //!
 //! [`Quantification::Fused`](crate::Quantification::Fused) quantifies what one
 //! operand leaves free out of the other before the product;
-//! [`Quantification::FusedSubtrees`](crate::Quantification::FusedSubtrees) also
-//! declines to build a subtree every leaf of which is quantified;
 //! [`Quantification::Product`](crate::Quantification::Product) builds the whole
-//! conjunction and quantifies that. All three must agree on the diagram, not
+//! conjunction and quantifies that. The two must agree on the diagram, not
 //! merely on the function, so every comparison here is `assert_same_shape` over
-//! minimized results, and every differential test runs both fused settings.
+//! minimized results.
 
 use super::*;
 
@@ -15,10 +13,6 @@ use crate::Quantification;
 use crate::limits::LimitConfig;
 use crate::OperationError;
 use crate::vtree::VtreeIdx;
-
-/// The two settings that rewrite the operation, each of which must land on
-/// what [`Quantification::Product`] lands on.
-const FUSED: [Quantification; 2] = [Quantification::Fused, Quantification::FusedSubtrees];
 
 /// The variable subsets a formula over `n` variables is quantified by: none,
 /// all, each one alone, the odd ones, the even ones, and the first half.
@@ -32,8 +26,8 @@ fn quantified_subsets(n: u32) -> Vec<Vec<VarId>> {
     out
 }
 
-/// Run both `FUSED` settings and `Quantification::Product` on `(f, g, vars)`
-/// and assert that all three produce canonical diagrams of identical shape.
+/// Run `Quantification::Fused` and `Quantification::Product` on `(f, g, vars)`
+/// and assert that both produce canonical diagrams of identical shape.
 fn assert_routes_agree_on(
     eng: &Engine,
     f: &Tdd,
@@ -45,15 +39,10 @@ fn assert_routes_agree_on(
         .and_exists_with(f.clone(), g.clone(), vars, Quantification::Product)
         .unwrap();
     assert_canonical(&product);
-    let mut out = Vec::with_capacity(3);
-    for how in FUSED {
-        let fused = eng.and_exists_with(f.clone(), g.clone(), vars, how).unwrap();
-        assert_canonical(&fused);
-        assert_same_shape(&fused, &product, &format!("{what}, quantifying {vars:?} [{how:?}]"));
-        out.push(fused);
-    }
-    out.push(product);
-    out
+    let fused = eng.and_exists_with(f.clone(), g.clone(), vars, Quantification::Fused).unwrap();
+    assert_canonical(&fused);
+    assert_same_shape(&fused, &product, &format!("{what}, quantifying {vars:?}"));
+    vec![fused, product]
 }
 
 /// Split a formula's clauses in two, compile each half, and demand the two
@@ -175,18 +164,16 @@ fn a_target_local_to_one_operand_never_reaches_the_product() {
     std::sync::Arc::clone(vtree.context()).with_limits(cap, |eng| {
         let f = compile_clauses_on(eng, &vtree, &odd);
         let g = compile_clauses_on(eng, &vtree, &even);
-        for how in FUSED {
-            let fused = eng.and_exists_with(f.clone(), g.clone(), &all, how);
-            assert!(fused.is_ok(), "{how:?} built the product: {fused:?}");
-        }
+        let fused = eng.and_exists_with(f.clone(), g.clone(), &all, Quantification::Fused);
+        assert!(fused.is_ok(), "the fused route built the product: {fused:?}");
         let product = eng.and_exists_with(f, g, &all, Quantification::Product);
         assert_eq!(product.unwrap_err(), OperationError::OutputCap);
     });
 }
 
-/// The whole-subtree collapse's own shape: the quantified variables are one
-/// contiguous block of the vtree that both operands constrain, so nothing can
-/// be pushed into an operand and the fusion has to happen inside the sweep.
+/// The quantified variables are one contiguous block of the vtree that both
+/// operands constrain, so nothing can be pushed into an operand and the
+/// quantification runs on the product.
 #[test]
 fn the_two_routes_agree_when_a_quantified_block_straddles_both_operands() {
     let eng = Engine::new();
@@ -263,51 +250,6 @@ fn is_below(vtree: &Vtree, root: VtreeIdx, leaf: VtreeIdx) -> bool {
     false
 }
 
-/// A subtree every leaf of which is quantified is never built. The pin is the
-/// emitted-node cap again: both operands constrain the whole block, so nothing
-/// can be pushed into an operand and the collapse inside the sweep is the only
-/// thing that can keep the count down. The reference route emits the block's
-/// product — about a thousand nodes — where the collapse emits one per level of
-/// it.
-///
-/// This is also where the two fused settings separate, which is the point of
-/// having both: plain [`Quantification::Fused`] has no rewrite to apply here
-/// and trips the same cap the reference route does.
-#[test]
-fn a_quantified_subtree_is_never_built() {
-    // A right-linear stick, so everything but the first variable is one
-    // subtree, and that subtree is what gets quantified.
-    let vtree = Arc::new(Vtree::linear(18));
-    // `f` pairs 2..9 with 10..17 bit by bit; `g` pairs them rotated by three,
-    // so each has 2^8 cofactor classes over the block and neither operand is
-    // constant anywhere in it.
-    let mut f_clauses: Vec<Vec<i32>> = Vec::new();
-    let mut g_clauses: Vec<Vec<i32>> = Vec::new();
-    for i in 0..8i32 {
-        let (bit, same, rotated) = (2 + i, 10 + i, 10 + (i + 3) % 8);
-        f_clauses.push(vec![-bit, same]);
-        f_clauses.push(vec![bit, -same]);
-        g_clauses.push(vec![-bit, rotated]);
-        g_clauses.push(vec![bit, -rotated]);
-    }
-    let f = compile_clauses(&vtree, &f_clauses);
-    let g = compile_clauses(&vtree, &g_clauses);
-    let vars: Vec<VarId> = (2..=18).map(VarId).collect();
-    let capped = |how, cap| {
-        let cfg = LimitConfig::none().with_output_node_cap(Some(cap));
-        std::sync::Arc::clone(vtree.context())
-            .with_limits(cfg, |eng| eng.and_exists_with(f.clone(), g.clone(), &vars, how))
-    };
-    assert!(capped(Quantification::FusedSubtrees, 64).is_ok(), "the collapse built the block");
-    assert_eq!(capped(Quantification::Fused, 64).unwrap_err(), OperationError::OutputCap);
-    assert_eq!(capped(Quantification::Product, 64).unwrap_err(), OperationError::OutputCap);
-    assert_same_shape(
-        &capped(Quantification::FusedSubtrees, u64::MAX).unwrap(),
-        &capped(Quantification::Product, u64::MAX).unwrap(),
-        "a quantified block both operands constrain",
-    );
-}
-
 #[test]
 fn weighted_operands_admit_only_the_product_setting() {
     use crate::diagram::Arithmetic;
@@ -317,15 +259,10 @@ fn weighted_operands_admit_only_the_product_setting() {
     let f = weighted(compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]), 2, Arithmetic::ExactRational);
     let g = weighted(compile_clauses(&vtree, &[vec![3, 4]]), 2, Arithmetic::ExactRational);
     let vars = [VarId(2)];
-    for (how, name) in [
-        (Quantification::Fused, "Quantification::Fused"),
-        (Quantification::FusedSubtrees, "Quantification::FusedSubtrees"),
-    ] {
-        assert_eq!(
-            eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap_err(),
-            OperationError::InertOption { option: name, needs: "unweighted operands" },
-        );
-    }
+    assert_eq!(
+        eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Fused).unwrap_err(),
+        OperationError::InertOption { option: "Quantification::Fused", needs: "unweighted operands" },
+    );
     let product = eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap();
     assert_canonical(&product);
     let chosen = eng.and_exists(f, g, &vars).unwrap();

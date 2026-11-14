@@ -116,18 +116,6 @@ pub enum Quantification {
     /// would sweep all of it. The smaller operand is still quantified first.
     #[default]
     Fused,
-    /// [`Fused`](Quantification::Fused), and additionally do not build a vtree
-    /// subtree every leaf of which is quantified: decide each of its product
-    /// cells by one satisfiability test and write the `⊤` that quantifying it
-    /// would have left.
-    ///
-    /// This is the deeper rewrite and it is *not* the default, because it wins
-    /// only where the collapsed subtree would otherwise have been materialized
-    /// in full. Where the conjunction would have reached that subtree by a
-    /// route cheaper than a walk of its product grid — the sparse route, or an
-    /// identity level — the collapse bypasses that route and pays more than the
-    /// build it replaces.
-    FusedSubtrees,
     /// Build the whole conjunction, then quantify it. Useful when neither
     /// operand offers variables that can be eliminated before conjunction.
     Product,
@@ -137,20 +125,13 @@ impl Quantification {
     /// Whether this setting rewrites the operands before the product.
     #[inline]
     fn pushes_through(self) -> bool {
-        matches!(self, Quantification::Fused | Quantification::FusedSubtrees)
-    }
-
-    /// Whether this setting collapses a fully quantified subtree.
-    #[inline]
-    fn collapses_subtrees(self) -> bool {
-        matches!(self, Quantification::FusedSubtrees)
+        matches!(self, Quantification::Fused)
     }
 
     /// The setting's name, for an error that names it.
     fn name(self) -> &'static str {
         match self {
             Quantification::Fused => "Quantification::Fused",
-            Quantification::FusedSubtrees => "Quantification::FusedSubtrees",
             Quantification::Product => "Quantification::Product",
         }
     }
@@ -312,55 +293,18 @@ impl Engine {
             });
         }
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
-        let (product, collapsed) = if how.pushes_through() {
+        if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;
-            if how.collapses_subtrees() {
-                let vtree = std::sync::Arc::clone(f.vtree());
-                let whole =
-                    Transient::new(self.limits(), quantified_subtrees(self, &vtree, &targets)?);
-                super::conjoin::conjoin_on(
-                    self,
-                    f,
-                    g,
-                    super::conjoin::VtreeMask::new(Some(&whole[..])),
-                )?
-            } else {
-                (self.and(f, g)?, false)
-            }
-        } else {
-            (self.and(f, g)?, false)
-        };
+        }
+        let product = self.and(f, g)?;
         if targets.is_empty() || product.is_zero() {
             // No sweep runs to reduce the product, so it is reduced here.
             let mut product = product;
             self.reduce(&mut product, plan)?;
             return Ok(product);
         }
-        super::project::exists_targets_on(self, product, &targets, collapsed, plan)
+        super::project::exists_targets_on(self, product, &targets, plan)
     }
-}
-
-/// Label every vtree node all of whose leaves are quantified, bottom-up: what
-/// the conjunction collapses instead of building.
-///
-/// # Errors
-///
-/// A refused reservation for the label array.
-fn quantified_subtrees(
-    eng: &Engine,
-    vtree: &crate::vtree::Vtree,
-    targets: &[VtreeIdx],
-) -> Result<Vec<bool>, OperationError> {
-    let mut whole = Vec::new();
-    eng.limits()
-        .try_resize(&mut whole, vtree.num_nodes(), false)?;
-    for &leaf in targets {
-        whole[leaf.idx()] = true;
-    }
-    for (t, left, right) in vtree.internal_bottomup() {
-        whole[t.idx()] = whole[left.idx()] && whole[right.idx()];
-    }
-    Ok(whole)
 }
 
 /// Quantify out of each operand the targets the other one does not constrain,
@@ -402,7 +346,8 @@ fn quantified_subtrees(
 /// Every target stays a target. A leaf removed here leaves both operands
 /// constant over it, so quantifying it again is the identity; keeping it is
 /// what holds each subtree's target set down-closed, and a subtree that is not
-/// down-closed is one the conjunction cannot collapse.
+/// down-closed is one the quantification after the product regroups instead
+/// of freeing whole.
 ///
 /// # Errors
 ///
@@ -491,10 +436,10 @@ pub(super) fn push_local_targets(
         }
     }
     if !into_f.is_empty() {
-        f = super::project::exists_targets_on(eng, f, &into_f, false, ReductionPlan::default())?;
+        f = super::project::exists_targets_on(eng, f, &into_f, ReductionPlan::default())?;
     }
     if !into_g.is_empty() {
-        g = super::project::exists_targets_on(eng, g, &into_g, false, ReductionPlan::default())?;
+        g = super::project::exists_targets_on(eng, g, &into_g, ReductionPlan::default())?;
     }
     Ok((f, g))
 }

@@ -224,7 +224,6 @@ pub(super) fn exists_leaves_structural(
     eng: &Engine,
     mut tdd: Tdd,
     targets: &[VtreeIdx],
-    collapsed: bool,
     reduction: ReductionPlan<'_>,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
@@ -271,7 +270,7 @@ pub(super) fn exists_leaves_structural(
             Role::Whole => {
                 let above = vtree.node(level).parent();
                 let wanted = above.is_some_and(|p| role[p.idx()] == Role::Split);
-                free_subtree_level(&mut work, &mut tdd, &vtree, level, wanted, collapsed)?
+                free_subtree_level(&mut work, &mut tdd, &vtree, level, wanted)?
             }
             Role::Split => {
                 let (left, right) = vtree.children(level);
@@ -416,19 +415,12 @@ fn check_levels_are_rewritable(
 /// `wanted` is whether the level above reads the map. `None` comes back when it
 /// does not, and when the map is the identity because the level held one node —
 /// the level above then keeps its own references and is left alone.
-///
-/// `collapsed` suspends that second shortcut. A level a fused conjunction
-/// already reduced to `⊤` holds one node *now* but stood for many when the
-/// level above was built, so its references no longer separate what they
-/// separated: the level above still owes the regroup, and only a map it is
-/// handed makes it run.
 fn free_subtree_level(
     work: &mut Rewrite<'_>,
     tdd: &mut Tdd,
     vtree: &Vtree,
     level: VtreeIdx,
     wanted: bool,
-    collapsed: bool,
 ) -> Result<Option<Remap>, OperationError> {
     let lim = work.eng.limits();
     if vtree.node(level).is_leaf() {
@@ -445,7 +437,7 @@ fn free_subtree_level(
     work.emitted += 1;
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, level)?;
-    if !wanted || (n_nodes == 1 && !collapsed) {
+    if !wanted || n_nodes == 1 {
         return Ok(None);
     }
     Runs::all_to_first(lim, n_nodes, 0u32).map(Some)

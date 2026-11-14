@@ -15,8 +15,8 @@ use crate::diagram::*;
 use crate::value::StreamCache;
 use crate::vtree::{Vtree, VtreeIdx};
 
-/// A set of vtree nodes handed to the sweep: the levels it sums out, or the
-/// subtrees it collapses. A membership array, or nothing.
+/// A set of vtree nodes handed to the sweep: the levels it sums out. A
+/// membership array, or nothing.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct VtreeMask<'a>(Option<&'a [bool]>);
 
@@ -325,8 +325,8 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// only each region's top from `f`, and the finish moves the levels it
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
-    /// Whether nothing but pairs changes hands: no weights, no summed-out,
-    /// quantified or marginal level. Only such a conjunction
+    /// Whether nothing but pairs changes hands: no weights, no summed-out
+    /// or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
     pub(super) plain: bool,
     /// Whether a level the sweep has built or carried so far is marginal.

@@ -29,7 +29,7 @@ pub(crate) fn exists_vars_on(
     // Caller input, so it is answered before any work and before the ⊥
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
-    exists_targets_on(eng, f, &targets, false, reduction)
+    exists_targets_on(eng, f, &targets, reduction)
 }
 
 /// Universally quantify every variable in `vars` out of `f` as `¬∃X.¬f`.
@@ -42,7 +42,7 @@ pub(crate) fn forall_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd
     }
     // Minimizing the projection keeps the second make-full pass small.
     let complement = negate_on(eng, f)?;
-    let projected = exists_targets_on(eng, complement, &targets, false, ReductionPlan::default())?;
+    let projected = exists_targets_on(eng, complement, &targets, ReductionPlan::default())?;
     eng.negate(projected)
 }
 
@@ -64,21 +64,16 @@ pub(super) fn quantification_targets(eng: &Engine, vtree: &Vtree, vars: &[VarId]
 
 /// Quantify prepared leaves without repeating validation, ending with
 /// `reduction`; with no target, `f` is returned as it is, unreduced.
-///
-/// `collapsed` says a fused conjunction already reduced every quantified
-/// subtree of the operand to its single `⊤` node; false for an operand
-/// nothing has quantified yet.
 pub(super) fn exists_targets_on(
     eng: &Engine,
     f: Tdd,
     targets: &[VtreeIdx],
-    collapsed: bool,
     reduction: ReductionPlan<'_>,
 ) -> Result<Tdd, OperationError> {
     if targets.is_empty() {
         return Ok(f);
     }
-    structural::exists_leaves_structural(eng, f, targets, collapsed, reduction)
+    structural::exists_leaves_structural(eng, f, targets, reduction)
 }
 
 impl crate::Engine {

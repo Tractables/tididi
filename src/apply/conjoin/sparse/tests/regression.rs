@@ -59,8 +59,8 @@ impl Sparse {
     /// `targets`.
     fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
         let _forced = ForcedThresholds::install(self.thresholds);
-        conjoin_checked(&self.eng, f, g, VtreeMask::new(targets), VtreeMask::default())
-            .expect("an unarmed engine refuses nothing").0
+        conjoin_checked(&self.eng, f, g, VtreeMask::new(targets))
+            .expect("an unarmed engine refuses nothing")
     }
 
     /// Clause-by-clause fold with a minimize after each clause, as

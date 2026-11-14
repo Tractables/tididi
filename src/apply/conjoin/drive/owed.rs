@@ -283,14 +283,13 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
 /// of their refs. On an internal structural child, whose products are one
 /// node per pair of operand nodes, distinct pairs of pairs meet in distinct
 /// nodes. Not on a leaf child, where two label products can be one label;
-/// nor on a child quantified, summed or marginal in an operand.
+/// nor on a child summed or marginal in an operand.
 pub(super) fn fused_built_levels(
     vtree: &Vtree,
     run: &ApplyRun,
     f: &Tdd,
     g: &Tdd,
     targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
 ) -> Vec<VtreeIdx> {
     use super::super::marginal_plan::Carrier;
     if !run.entry_marginality.any() {
@@ -303,7 +302,7 @@ pub(super) fn fused_built_levels(
         .iter()
         .copied()
         .filter(|&t| {
-            if marginal(t) || quantified.contains(t.idx()) {
+            if marginal(t) {
                 return false;
             }
             let (left, right) = vtree.children(t);
@@ -320,7 +319,6 @@ pub(super) fn fused_built_levels(
             identity[m.idx()]
                 && carrier.dirty.is_fused(t.0)
                 && !vtree.node(c).is_leaf()
-                && !quantified.contains(c.idx())
                 && !targets.contains(c.idx())
                 && !entry.either(c.idx())
         })

@@ -71,15 +71,6 @@ Follow one conjunction, [`and(f, g)`]:
    unreachable nodes and then contracts inner and leaf twins, as described in
    the next section.
 
-[`and_exists`] can go further when a whole subtree is quantified away: that
-subtree contributes only whether it is satisfiable, so the level can be decided
-by an early-exiting test per product cell and written as the single `true`
-node. This is what the quantification sweep would have reached there, and the
-sweep's regroup by owner set restores the level-wide disjointness that the
-collapse breaks. It is `Quantification::FusedSubtrees` rather than the
-default, because it walks the whole product grid at that level and so gives up
-any cheaper route the level had.
-
 Edits that change levels after construction go through `diagram/tdd/edit.rs`,
 which keeps a level rewrite or a renumbering of slots together with the
 updates of the references into it and with the reduction work it creates.
@@ -241,7 +232,7 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
-| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | [`and_exists`]'s subtree collapse, until that regroup runs | `test_helpers::check::check_determinism` |
+| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | — | `test_helpers::check::check_determinism` |
 | 2 | Every live node in a structural diagram is satisfiable; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
 | 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
 | 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | none |
@@ -322,7 +313,6 @@ release build, as described under [Testing](#testing).
 | **limit** | A bound an operation runs under, installed on the engine. |
 
 [`and(f, g)`]: crate::and
-[`and_exists`]: crate::and_exists
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
 [`ColumnAlgebra`]: crate::diagram::ColumnAlgebra

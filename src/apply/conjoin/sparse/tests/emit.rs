@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use super::inner_index::{block, pack};
 use super::{random_rows, vtrees, ForcedThresholds, SparseThresholds};
-use crate::apply::conjoin::{conjoin_on, VtreeMask};
 use crate::diagram::Tdd;
 use crate::reduce::ReductionPlan;
 use crate::test_helpers::{assert_canonical, normalized_levels};
@@ -20,7 +19,7 @@ fn conjoin(eng: &Engine, vtree: &Arc<Vtree>, f: (&[VarId], &[u64]), g: (&[VarId]
     let f = eng.from_models(vtree, f.0, f.1).unwrap();
     let g = eng.from_models(vtree, g.0, g.1).unwrap();
     let _forced = ForcedThresholds::install(thresholds);
-    conjoin_on(eng, f, g, VtreeMask::default()).expect("an unarmed engine refuses nothing").0
+    eng.and(f, g).expect("an unarmed engine refuses nothing")
 }
 
 #[test]

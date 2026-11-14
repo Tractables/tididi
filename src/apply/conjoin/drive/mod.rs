@@ -29,8 +29,8 @@
 //! sparse route builds it as one product: it folds the root's pairs into the
 //! count instead of storing them.
 //!
-//! A self-conjunction `f ∧ f` returns `f` from `conjoin_on` before the
-//! driver runs.
+//! A self-conjunction `f ∧ f` returns `f` from `conjoin_checked` before
+//! the driver runs.
 
 mod compose;
 mod level;
@@ -53,8 +53,6 @@ pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     /// The levels summed out as they are built.
     pub(super) targets: VtreeMask<'a>,
-    /// The subtrees collapsed instead of built. See [`quantify`](super::quantify).
-    pub(super) quantified: VtreeMask<'a>,
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
     /// Whether the output is wanted only for its count: then a root level
     /// the sparse route builds as one product is counted instead, into
@@ -150,17 +148,6 @@ fn build_level(
     // reuse the children's slabs for it.
     if !run.restoring {
         drop_dead_children(f, g, shape);
-    }
-
-    if sweep.quantified.contains(t.idx()) {
-        // Every leaf below this level is quantified, so the level is one
-        // satisfiability test per cell and no structure at all. The
-        // identity fast paths are skipped: what they would build is the
-        // structure this route exists not to build.
-        super::quantify::build_level_quantified(eng, run, f, g, shape)?;
-        run.built_marginal |= run.levels[t.idx()].is_marginal();
-        run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
-        return Ok(());
     }
 
     let taken = take_level_fast_path(eng, run, f, g, shape)?
@@ -330,7 +317,7 @@ pub(crate) fn apply_and_restoring(
         eng,
         f,
         g,
-        (VtreeMask::default(), VtreeMask::default()),
+        VtreeMask::default(),
         ConjoinMode::Restore { free },
     )
     .map(Conjoined::diagram)
@@ -380,13 +367,12 @@ impl Conjoined {
     }
 }
 
-/// Build a conjunction, emitting the levels in `targets` as marginal values,
-/// and collapsing every subtree `quantified` names instead of building it.
+/// Build a conjunction, emitting the levels in `targets` as marginal values.
 ///
 /// The sweep consumes operand levels as it proceeds. An error leaves both
 /// operands partially drained; retrying requires copies taken before the call.
 /// No swap to the narrower operand here: callers of this borrowed path keep
-/// per-operand bookkeeping by side, and `conjoin_on` swaps. The result's
+/// per-operand bookkeeping by side, and `conjoin_checked` swaps. The result's
 /// marginal references are tagged before return. Allocation, cancellation and
 /// output-cap failures return [`OperationError`].
 ///
@@ -397,10 +383,10 @@ pub(crate) fn apply_and_core(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
-    (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
+    targets: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), (targets, quantified), mode)
+    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), targets, mode)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed: a borrowed operand is read in place, weights and marginal levels
@@ -411,9 +397,8 @@ pub(crate) fn apply_and_either(
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
 ) -> Result<Tdd, OperationError> {
-    apply_and_held(eng, f, g, (targets, quantified), ConjoinMode::Build).map(Conjoined::diagram)
+    apply_and_held(eng, f, g, targets, ConjoinMode::Build).map(Conjoined::diagram)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed ([`Held`]). A
@@ -425,7 +410,7 @@ fn apply_and_held(
     eng: &Engine,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-    (targets, quantified): (VtreeMask<'_>, VtreeMask<'_>),
+    targets: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
     let free = match mode {
@@ -473,11 +458,11 @@ fn apply_and_held(
                 .any(|l| l.is_weight_marginal()),
         "an operand has weight-marginal levels but neither carries a weight store"
     );
-    // Nothing but pairs changes hands: no weights, no summed-out level, no
-    // level quantified, and, as the setup finds, no marginal level.
-    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty();
-    // A built conjunction, restoring or not, that sums or quantifies no
-    // level and carries no weights takes the subtrees at which
+    // Nothing but pairs changes hands: no weights, no summed-out level,
+    // and, as the setup finds, no marginal level.
+    let unmarked = ws.is_none() && targets.is_empty();
+    // A built conjunction, restoring or not, that sums no level and
+    // carries no weights takes the subtrees at which
     // both operands are constant true whole from `f`, as the identity fast
     // paths carry them: the setup finds them (`mark_constant_true`). Most levels of two
     // diagrams on a large vtree that each mention a few of its variables
@@ -596,7 +581,6 @@ fn apply_and_held(
     let mut sweep = Sweep {
         vtree: &vtree,
         targets,
-        quantified,
         ws: ws.as_mut(),
         count_root,
         counted: None,
@@ -611,7 +595,7 @@ fn apply_and_held(
         return Ok(Conjoined::Counted(count));
     }
     let fused = if sweep.ws.is_none() {
-        owed::fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
+        owed::fused_built_levels(&vtree, &run, f, g, sweep.targets)
     } else {
         Vec::new()
     };

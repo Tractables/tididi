@@ -6,6 +6,8 @@ Breaking changes:
 
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
+- `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
+  `Quantification::Fused` (the default) or `Quantification::Product`.
 
 ## 0.2.0
 

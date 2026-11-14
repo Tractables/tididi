@@ -25,8 +25,8 @@ const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..Spars
 
 fn and_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> Tdd {
     let _forced = ForcedThresholds::install(thresholds);
-    conjoin_checked(eng, f.clone(), g.clone(), VtreeMask::new(None), VtreeMask::default())
-        .expect("an unarmed engine refuses nothing").0
+    conjoin_checked(eng, f.clone(), g.clone(), VtreeMask::new(None))
+        .expect("an unarmed engine refuses nothing")
 }
 
 fn count_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> num_bigint::BigUint {

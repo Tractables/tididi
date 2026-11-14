@@ -4,7 +4,7 @@
 //! [`super::tests`]; in non-test builds, the no-op stubs here inline away.
 
 #[cfg(not(test))]
-use super::{ChildPair, PlainLookups, Route, VtreeIdx};
+use super::{PlainLookups, Route, VtreeIdx};
 
 /// What a test counts of the levels read by g-pair vectors.
 #[derive(Clone, Copy)]
@@ -234,10 +234,6 @@ pub(super) fn note_relabelled(_moved: bool) {}
 #[cfg(not(test))]
 #[inline(always)]
 pub(super) fn note_read_through() {}
-
-#[cfg(not(test))]
-#[inline(always)]
-pub(super) fn note_written_pairs(_pairs: &[ChildPair]) {}
 
 #[cfg(not(test))]
 #[inline(always)]
