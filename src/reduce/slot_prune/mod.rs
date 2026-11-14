@@ -26,7 +26,7 @@
 //! never an allocation failure partway through a store.
 
 use crate::Engine;
-use crate::limits::{Limits, OperationError};
+use crate::limits::{Limits, OperationError, Transient};
 
 use crate::diagram::{bounded_key, Tdd, MarginalValues, WeightValue};
 
@@ -83,7 +83,8 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // the column, is left as it is: merging two of its slots or dropping
         // one would store the parent. A parent of one pair a node holds its
         // pairs in its node words, which the close describes again.
-        if tdd.weights.as_ref().is_some_and(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal())
+        let bounded = tdd.weights.as_ref().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal());
+        if bounded.is_some()
             && tdd.levels[v.idx()].slot_count() == store_len
             && let Some(d) = tdd.levels[parent.idx()].implicit()
             && d.pairs_per_node() >= 2
@@ -103,16 +104,18 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         lim.try_resize(&mut remap, store_len, u32::MAX)?;
         let referenced =
             referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut slots);
-        if referenced.last().is_some_and(|&s| (s as usize) >= store_len) {
-            continue; // OOB ref: broken upstream (the marginal-canonicality checker's domain)
-        }
+        debug_assert!(
+            referenced.last().is_none_or(|&s| (s as usize) < store_len),
+            "a reference past the value store of level {}",
+            v.0
+        );
 
         // On a large bounded-precision level the merge map is most of the
         // prune's cost, and floats from different sums seldom agree to the
         // bit: the level merges where a sample of its referenced values
         // repeats one, and otherwise keeps its values apart, left as it is
         // when every slot is referenced.
-        let merge = match tdd.weights.as_ref().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal()) {
+        let merge = match bounded {
             Some(weights) if referenced.len() >= SAMPLE_FROM => {
                 sample_repeats(lim, weights.level(v.idx()).expect("a nonempty weighted store has a column"), referenced)?
             }
@@ -164,7 +167,7 @@ fn sample_repeats(lim: &Limits, values: &[WeightValue], referenced: &[u32]) -> R
         return Ok(true);
     }
     let below = u64::MAX / (referenced.len() / SAMPLE) as u64;
-    let mut hashed = Vec::new();
+    let mut hashed = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut hashed, 4 * SAMPLE)?;
     for &slot in referenced {
         let k = key(slot);
@@ -173,10 +176,7 @@ fn sample_repeats(lim: &Limits, values: &[WeightValue], referenced: &[u32]) -> R
             if hashed.len() == hashed.capacity() { break; }
         }
     }
-    let found = repeats(&mut hashed);
-    // The buffer is freed here, inside the operation: give its charge back.
-    lim.release_bytes((hashed.capacity() * std::mem::size_of::<(u64, i64)>()) as u64);
-    Ok(found)
+    Ok(repeats(&mut hashed))
 }
 
 /// Whether `keys` holds two equal keys; sorts them.
