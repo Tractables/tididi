@@ -422,10 +422,10 @@ const CLEAN: u8 = 2;
 /// marks what one from the output would below them, and leaves alone the
 /// clean levels, which lose no node and whose references into a clean
 /// child need no rewrite.
-pub(crate) struct Seeds<'l> {
+pub(super) struct Seeds<'l> {
     /// Per level, [`FORCED`], and [`CLEAN`] on the clean levels that are
     /// forced or a seed's children: the walk reads it on a seed's children.
-    pub(crate) state: Transient<'l, Vec<u8>>,
+    pub(super) state: Transient<'l, Vec<u8>>,
     /// The structural internal clean levels with a structural internal
     /// child that is not clean, top-down.
     seeds: Transient<'l, Vec<VtreeIdx>>,
@@ -441,7 +441,7 @@ impl<'l> Seeds<'l> {
     /// The seeds of `tdd`, whose loose levels are `loose`, as [`settle_loose`]
     /// leaves them. The output is the root, as the walk below the root
     /// needs ([`below_root_walk_applies`]).
-    pub(crate) fn of(
+    pub(super) fn of(
         eng: &'l Engine,
         tdd: &Tdd,
         loose: &[u32],
@@ -1987,7 +1987,7 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
 /// One level the seeded walk marked: where its marks live, and what it reads
 /// its children's marks from.
 #[derive(Clone, Copy)]
-pub(crate) struct Visit {
+pub(super) struct Visit {
     level: VtreeIdx,
     /// The word this level's block of marks starts at.
     base: usize,
@@ -2009,7 +2009,7 @@ impl Visit {
 
 /// Where [`prune_below_root`] starts.
 #[derive(Clone, Copy)]
-pub(crate) enum Start<'a> {
+pub(super) enum Start<'a> {
     /// At the root, the output node its only slot reached: whatever else
     /// the root level holds is what a change at the root dropped.
     Output,
@@ -2023,7 +2023,7 @@ pub(crate) enum Start<'a> {
 /// `start`, stopping at every level that loses no node. With `forced`, also
 /// entering every level it marks whose entry has [`FORCED`] set, whether or
 /// not it lost one.
-pub(crate) fn prune_below_root(
+pub(super) fn prune_below_root(
     eng: &Engine,
     tdd: &mut Tdd,
     forced: Option<&[u8]>,
@@ -2287,7 +2287,7 @@ fn compact_visited(
 /// # Errors
 ///
 /// As [`prune_unreachable`]: a refused reservation leaves `tdd` untouched.
-pub(crate) fn prune_complement(
+pub(super) fn prune_complement(
     eng: &Engine,
     tdd: &mut Tdd,
     old: NodeIdx,
