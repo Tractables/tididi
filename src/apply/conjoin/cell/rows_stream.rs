@@ -2294,6 +2294,93 @@ fn hold_cell<L: ChildLookup, R: ChildLookup, S: RowSum>(
     refold(sum, eng, (node_idx, base + x), (f_pairs, g), (left, right))
 }
 
+/// How [`row_cells`] sums a cell. A trait and not a closure: a closure is
+/// a function of its own that the compiler need not inline into the row
+/// loop, and these methods are `#[inline(always)]`.
+trait CellSum<S> {
+    /// Column `j`'s cell, its pairs `g`: its sum, whether a pair of it is
+    /// live and whether each product is its float.
+    fn sum(&mut self, sum: &S, node_idx: &[u32], j: usize, g: &[ChildPair]) -> (f64, bool, bool);
+}
+
+/// The cells of `row` in column order: column `j`'s pairs `g` read as
+/// [`pairs_at`] reads them, a column without pairs marked, each cell
+/// charged its pairs, summed by `cell` ([`CellSum`]) and appended:
+/// [`HELD_COLUMNS`] at a time ([`hold_cell`]) on a level of
+/// [`RowSum::WORDS`], each alone ([`finish_cell`]) on any other.
+#[inline(always)]
+fn row_cells<const ONES: bool, L: ChildLookup, R: ChildLookup, S: RowSum>(
+    sum: &mut S,
+    eng: &Engine,
+    ones: &[ChildPair],
+    row: WholeRow<'_, '_, L, R>,
+    mut cell: impl CellSum<S>,
+) -> Result<usize, OperationError> {
+    let WholeRow {
+        row_base,
+        f_pairs,
+        ctx,
+        g_level,
+        g_pairs_scratch,
+        node_idx,
+        left,
+        right,
+        gate,
+    } = row;
+    let width = ctx.g_width;
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    if !S::WORDS {
+        for j in 0..width {
+            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
+            if g.is_empty() {
+                node_idx[row_base + j] = NO_PRODUCT;
+                continue;
+            }
+            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+            let summed = cell.sum(sum, node_idx, j, g);
+            finish_cell(
+                sum,
+                eng,
+                (node_idx, row_base + j),
+                summed,
+                (f_pairs, g),
+                (left, right),
+            )?;
+        }
+        gate.add_short(due_at - due);
+        return Ok(width);
+    }
+    let mut held = [0.0f64; HELD_COLUMNS];
+    for c0 in (0..width).step_by(HELD_COLUMNS) {
+        let mut held_live = 0u64;
+        for j in c0..width.min(c0 + HELD_COLUMNS) {
+            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
+            if g.is_empty() {
+                node_idx[row_base + j] = NO_PRODUCT;
+                continue;
+            }
+            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
+            let (acc, live, exact) = cell.sum(sum, node_idx, j, g);
+            if !live {
+                continue;
+            }
+            held[(j - c0) % HELD_COLUMNS] = acc;
+            hold_cell(
+                sum,
+                eng,
+                (node_idx, row_base + c0, j - c0),
+                (&held, &mut held_live),
+                (acc, exact),
+                (f_pairs, g),
+                (left, right),
+            )?;
+        }
+        sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
+    }
+    gate.add_short(due_at - due);
+    Ok(width)
+}
+
 /// Append the cell sums `(sums, flags)` for columns starting at `row_base`
 /// against one-pair columns `block`: [`HELD_COLUMNS`] columns at a time
 /// ([`hold_cell`]) on a level of [`RowSum::WORDS`], each cell alone
@@ -2450,71 +2537,20 @@ fn one_pair_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        g_level,
-        g_pairs_scratch,
-        node_idx,
-        left,
-        right,
-        gate,
-    } = row;
-    let width = ctx.g_width;
-    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    let p1 = f_pairs[0];
+    let (left, right) = (row.left, row.right);
+    let p1 = row.f_pairs[0];
     let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
-    if !S::WORDS {
-        for j in 0..width {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let cell = grid_sum(sum, node_idx, (left, right), (lrow, rrow), g);
-            finish_cell(
-                sum,
-                eng,
-                (node_idx, row_base + j),
-                cell,
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        gate.add_short(due_at - due);
-        return Ok(width);
+    row_cells::<false, _, _, _>(sum, eng, &[], row, GridCell((left, right), (lrow, rrow)))
+}
+
+/// [`grid_sum`] as a [`CellSum`].
+struct GridCell<'a, L: ChildLookup, R: ChildLookup>((&'a L, &'a R), (L::Row, R::Row));
+
+impl<L: ChildLookup, R: ChildLookup, S: RowSum> CellSum<S> for GridCell<'_, L, R> {
+    #[inline(always)]
+    fn sum(&mut self, sum: &S, node_idx: &[u32], _: usize, g: &[ChildPair]) -> (f64, bool, bool) {
+        grid_sum(sum, node_idx, self.0, self.1, g)
     }
-    let mut held = [0.0f64; HELD_COLUMNS];
-    for c0 in (0..width).step_by(HELD_COLUMNS) {
-        let mut held_live = 0u64;
-        for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (acc, live, exact) = grid_sum(sum, node_idx, (left, right), (lrow, rrow), g);
-            if !live {
-                continue;
-            }
-            held[(j - c0) % HELD_COLUMNS] = acc;
-            hold_cell(
-                sum,
-                eng,
-                (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
-                (acc, exact),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
-    }
-    gate.add_short(due_at - due);
-    Ok(width)
 }
 
 /// The sum of a cell's pairs `g` of a row of one f pair whose child rows
@@ -2566,70 +2602,18 @@ fn one_pair_row_values<
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        g_level,
-        g_pairs_scratch,
-        node_idx,
-        left,
-        right,
-        gate,
-    } = row;
-    let width = ctx.g_width;
-    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    if !S::WORDS {
-        for j in 0..width {
-            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (acc, flags) = value_sum::<TRACK, CHECK, S>(l, r, g);
-            let live = !TRACK || flags & LIVE != 0;
-            finish_cell(
-                sum,
-                eng,
-                (node_idx, row_base + j),
-                (acc, live, flags & INEXACT == 0),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        gate.add_short(due_at - due);
-        return Ok(width);
+    row_cells::<ONES, _, _, _>(sum, eng, ones, row, ValueCell::<TRACK, CHECK>(l, r))
+}
+
+/// [`value_sum`] as a [`CellSum`].
+struct ValueCell<'r, const TRACK: bool, const CHECK: bool>(RowFloats<'r>, RowFloats<'r>);
+
+impl<const TRACK: bool, const CHECK: bool, S: RowSum> CellSum<S> for ValueCell<'_, TRACK, CHECK> {
+    #[inline(always)]
+    fn sum(&mut self, _: &S, _: &[u32], _: usize, g: &[ChildPair]) -> (f64, bool, bool) {
+        let (acc, flags) = value_sum::<TRACK, CHECK, S>(self.0, self.1, g);
+        (acc, !TRACK || flags & LIVE != 0, flags & INEXACT == 0)
     }
-    let mut held = [0.0f64; HELD_COLUMNS];
-    for c0 in (0..width).step_by(HELD_COLUMNS) {
-        let mut held_live = 0u64;
-        for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = pairs_at::<ONES>(ones, ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (acc, flags) = value_sum::<TRACK, CHECK, S>(l, r, g);
-            if TRACK && flags & LIVE == 0 {
-                continue;
-            }
-            held[(j - c0) % HELD_COLUMNS] = acc;
-            hold_cell(
-                sum,
-                eng,
-                (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
-                (acc, flags & INEXACT == 0),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
-    }
-    gate.add_short(due_at - due);
-    Ok(width)
 }
 
 /// The sum of a cell's pairs `g` of a row of one f pair whose child rows
@@ -2861,82 +2845,32 @@ fn lane_values<
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        g_level,
-        g_pairs_scratch,
-        node_idx,
-        left,
-        right,
-        gate,
-    } = row;
-    let width = ctx.g_width;
-    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    let mut w = 0;
-    if !S::WORDS {
-        for j in 0..width {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let cell = lane_sum::<TRACK, CHECK, _, _, S>(
-                (l, r),
-                &mut w,
-                g,
-                (m, &mut *sums, &mut *flags),
-                (width, j),
-            );
-            finish_cell(
-                sum,
-                eng,
-                (node_idx, row_base + j),
-                cell,
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        gate.add_short(due_at - due);
-        return Ok(width);
+    let cell = LaneCell::<TRACK, CHECK, A, B> {
+        lanes: (l, r),
+        w: 0,
+        rows: (m, sums, flags),
+        width: row.ctx.g_width,
+    };
+    row_cells::<false, _, _, _>(sum, eng, &[], row, cell)
+}
+
+/// [`lane_sum`] as a [`CellSum`], `w` the pairs of the block summed so far.
+struct LaneCell<'s, const TRACK: bool, const CHECK: bool, A, B> {
+    lanes: (A, B),
+    w: usize,
+    rows: (usize, &'s mut [f64], &'s mut [u8]),
+    width: usize,
+}
+
+impl<const TRACK: bool, const CHECK: bool, A: Lanes, B: Lanes, S: RowSum> CellSum<S>
+    for LaneCell<'_, TRACK, CHECK, A, B>
+{
+    #[inline(always)]
+    fn sum(&mut self, _: &S, _: &[u32], j: usize, g: &[ChildPair]) -> (f64, bool, bool) {
+        let (m, sums, flags) = &mut self.rows;
+        let rows = (*m, &mut **sums, &mut **flags);
+        lane_sum::<TRACK, CHECK, _, _, S>(self.lanes, &mut self.w, g, rows, (self.width, j))
     }
-    let mut held = [0.0f64; HELD_COLUMNS];
-    for c0 in (0..width).step_by(HELD_COLUMNS) {
-        let mut held_live = 0u64;
-        for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (first, live, exact) = lane_sum::<TRACK, CHECK, _, _, S>(
-                (l, r),
-                &mut w,
-                g,
-                (m, &mut *sums, &mut *flags),
-                (width, j),
-            );
-            if !live {
-                continue;
-            }
-            held[(j - c0) % HELD_COLUMNS] = first;
-            hold_cell(
-                sum,
-                eng,
-                (node_idx, row_base + c0, j - c0),
-                (&held, &mut held_live),
-                (first, exact),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        sum.push_bits(eng, node_idx, row_base + c0, &held, held_live)?;
-    }
-    gate.add_short(due_at - due);
-    Ok(width)
 }
 
 /// The sums of column `j`'s pairs `g` in the `m` rows of [`lane_values`],
@@ -2985,67 +2919,17 @@ fn ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(
     eng: &Engine,
     row: WholeRow<'_, '_, L, R>,
 ) -> Result<usize, OperationError> {
-    let WholeRow {
-        row_base,
-        f_pairs,
-        ctx,
-        g_level,
-        g_pairs_scratch,
-        node_idx,
-        left,
-        right,
-        gate,
-    } = row;
-    let width = ctx.g_width;
-    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
-    if !S::WORDS {
-        for j in 0..width {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let (acc, fl) = (sums[j], flags[j]);
-            finish_cell(
-                sum,
-                eng,
-                (node_idx, row_base + j),
-                (acc, fl & LIVE != 0, fl & INEXACT == 0),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        gate.add_short(due_at - due);
-        return Ok(width);
+    row_cells::<false, _, _, _>(sum, eng, &[], row, AheadCell(sums, flags))
+}
+
+/// A row's cell sums and flags summed ahead, as a [`CellSum`].
+struct AheadCell<'s>(&'s [f64], &'s [u8]);
+
+impl<S: RowSum> CellSum<S> for AheadCell<'_> {
+    #[inline(always)]
+    fn sum(&mut self, _: &S, _: &[u32], j: usize, _: &[ChildPair]) -> (f64, bool, bool) {
+        (self.0[j], self.1[j] & LIVE != 0, self.1[j] & INEXACT == 0)
     }
-    for c0 in (0..width).step_by(HELD_COLUMNS) {
-        let mut held_live = 0u64;
-        for j in c0..width.min(c0 + HELD_COLUMNS) {
-            let g = column_pairs(ctx, g_level, j, g_pairs_scratch);
-            if g.is_empty() {
-                node_idx[row_base + j] = NO_PRODUCT;
-                continue;
-            }
-            charge(gate, &mut due_at, &mut due, g.len() as u64)?;
-            let fl = flags[j];
-            if fl & LIVE == 0 {
-                continue;
-            }
-            hold_cell(
-                sum,
-                eng,
-                (node_idx, row_base + c0, j - c0),
-                (&sums[c0..], &mut held_live),
-                (sums[j], fl & INEXACT == 0),
-                (f_pairs, g),
-                (left, right),
-            )?;
-        }
-        sum.push_bits(eng, node_idx, row_base + c0, &sums[c0..], held_live)?;
-    }
-    gate.add_short(due_at - due);
-    Ok(width)
 }
 
 /// [`sum_row`] on a row of f pairs against one-pair columns, its products
