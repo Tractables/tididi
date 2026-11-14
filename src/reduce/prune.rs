@@ -271,7 +271,7 @@ pub(crate) struct PruneScratch {
     settle_flags: Vec<[bool; 2]>,
     settle_parents: Vec<VtreeIdx>,
     /// [`settle_loose`]'s count of the pairs that name each slot of the
-    /// children it reads ([`mark_named`]).
+    /// children it reads ([`count_named`]).
     settle_counts: Vec<u32>,
     /// Marks a byte per slot, those a walk sets in a level's children
     /// before it packs them into bits ([`mark_sides`]).
@@ -382,17 +382,17 @@ pub(crate) fn prune_unreachable(
         _ => None,
     };
     if below_root {
-        prune_below_root(eng, tdd, None, Start::Output)?;
+        prune_walk(eng, tdd, None, Start::Output)?;
     } else if let Some(seeds) = &seeded {
         let start = match seeds.root_clean {
             true => Start::Seeds(&seeds.seeds[..], &seeds.state[..], &seeds.top[..]),
             false => Start::Output,
         };
-        prune_below_root(eng, tdd, Some(&seeds.state[..]), start)?;
+        prune_walk(eng, tdd, Some(&seeds.state[..]), start)?;
         #[cfg(debug_assertions)]
         debug_assert_all_reached(tdd);
     } else {
-        prune_below_root(eng, tdd, None, Start::Root)?;
+        prune_walk(eng, tdd, None, Start::Root)?;
     }
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
@@ -666,7 +666,7 @@ pub(crate) fn settle_loose(
 /// Which of the children of level `p` that `sides` asks for, left and right,
 /// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
 /// they have named every node of each, one unit of work through `gate` a
-/// pair ([`mark_named`]). A level with no node holds none, and a level that
+/// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
 fn unnamed_children(
@@ -683,7 +683,7 @@ fn unnamed_children(
     let (left, right) = tdd.vtree.children(p);
     let children = [left, right];
     // Each side's block of counts, the left one's first: one a slot and one
-    // past them ([`mark_named`]), nothing for a side not read.
+    // past them ([`count_named`]), nothing for a side not read.
     let (mut width, mut unread) = ([0usize; 2], [false; 2]);
     for k in 0..2 {
         if !sides[k] {
@@ -704,9 +704,9 @@ fn unnamed_children(
     let level = &tdd.levels[p.idx()];
     let (l, r) = counts[..used].split_at_mut(width[0]);
     let named = match width.map(|n| n > 0) {
-        [true, true] => mark_named::<true, true>(level, [l, r], gate)?,
-        [true, false] => mark_named::<true, false>(level, [l, r], gate)?,
-        [false, true] => mark_named::<false, true>(level, [l, r], gate)?,
+        [true, true] => count_named::<true, true>(level, [l, r], gate)?,
+        [true, false] => count_named::<true, false>(level, [l, r], gate)?,
+        [false, true] => count_named::<false, true>(level, [l, r], gate)?,
         [false, false] => [true; 2],
     };
     Ok([unread[0] || !named[0], unread[1] || !named[1]])
@@ -744,7 +744,7 @@ fn unnamed_children(
 ///
 /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
 #[inline(always)]
-fn mark_named<const LEFT: bool, const RIGHT: bool>(
+fn count_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
     blocks: [&mut [u32]; 2],
     gate: &mut PollGate<'_>,
@@ -771,7 +771,7 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
             EncodedChildRef::from_raw(past[0] as u32),
             EncodedChildRef::from_raw(past[1] as u32),
         );
-        if mark_whole::<LEFT, RIGHT>(stored, none, left, right) {
+        if count_whole::<LEFT, RIGHT>(stored, none, left, right) {
             note_settle_read(0);
             let named = [
                 !LEFT || !left[..past[0]].contains(&0),
@@ -846,18 +846,18 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
     ])
 }
 
-/// The pairs a node read for below which [`mark_named`] reads a stored
+/// The pairs a node read for below which [`count_named`] reads a stored
 /// level whole: past them a read node by node stops early.
 const WHOLE_READ_PAIRS_A_SLOT: usize = 16;
 
-/// [`mark_named`]'s read of a stored level whole
+/// [`count_named`]'s read of a stored level whole
 /// ([`StoredPairs::for_each_pair_whole`]), `none` naming the counts past
 /// each side's nodes. Out of line, so that its loops keep the level and
 /// both blocks in registers.
 ///
 /// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
 #[inline(never)]
-fn mark_whole<const LEFT: bool, const RIGHT: bool>(
+fn count_whole<const LEFT: bool, const RIGHT: bool>(
     stored: crate::diagram::StoredPairs<'_>,
     none: ChildPair,
     left: &mut [u32],
@@ -934,6 +934,19 @@ impl Child {
         span: 0,
         dirty: false,
     };
+
+    /// What a walked level's parent reads for a child of `width` slots
+    /// whose block starts at `base`: one with no block or that kept every
+    /// slot needs no new indices, and one that lost a slot is walked in
+    /// turn.
+    fn read(marks: &[u64], base: Option<usize>, width: usize) -> Child {
+        match base {
+            Some(base) if !all_marked(&marks[base..base + words(width)], width) => {
+                Child::at(base, width, true)
+            }
+            _ => Child::KEPT,
+        }
+    }
 }
 
 /// Compact one structural level: rewrite its references into a child that
@@ -965,7 +978,7 @@ fn compact_one_level(
     v: Visit,
     marks: &[u64],
     remap: &mut [u32],
-    plan: Option<Kept>,
+    plan: Option<Plan>,
     counted: bool,
 ) -> bool {
     let Visit {
@@ -998,11 +1011,11 @@ fn compact_one_level(
     tdd.levels.mark_changed(t);
 
     let redescribed = match plan {
-        Some(Kept::Described(d, dead)) => {
+        Some(Plan::Described(d, dead)) => {
             tdd.levels[t_idx].pairs.redescribe(d);
             Some(dead)
         }
-        Some(Kept::Stored(room)) => {
+        Some(Plan::Stored(room)) => {
             let (lm, rm) = child_remaps(marks, remap, left, right);
             store_kept(tdd, t, room, own, lm, rm);
             None
@@ -1102,7 +1115,7 @@ fn child_remaps<'r>(
 
 /// What the compaction does with a level held as the description of its
 /// pairs that it changes, decided before it changes any level.
-enum Kept {
+enum Plan {
     /// What is left is affine: held as this description, with the pairs of
     /// the nodes dropped.
     Described(ImplicitLevel, usize),
@@ -1110,15 +1123,15 @@ enum Kept {
     Stored(StoreRoom),
 }
 
-/// The [`Kept`] of the levels a compaction changes that are held as
+/// The [`Plan`] of the levels a compaction changes that are held as
 /// descriptions, the first the compaction reaches last.
-struct Plans<'l>(Transient<'l, Vec<(VtreeIdx, Kept)>>);
+struct Plans<'l>(Transient<'l, Vec<(VtreeIdx, Plan)>>);
 
 impl Plans<'_> {
     /// The plan of level `t`, the next level the compaction reaches, if it
     /// has one.
-    fn take(&mut self, t: VtreeIdx) -> Option<Kept> {
-        self.0.pop_if(|(v, _)| *v == t).map(|(_, kept)| kept)
+    fn take(&mut self, t: VtreeIdx) -> Option<Plan> {
+        self.0.pop_if(|(v, _)| *v == t).map(|(_, plan)| plan)
     }
 }
 
@@ -1162,7 +1175,7 @@ fn plan_level(
     v: Visit,
     marks: &[u64],
     remap: &mut [u32],
-) -> Result<Option<Kept>, OperationError> {
+) -> Result<Option<Plan>, OperationError> {
     let Visit {
         level: t,
         base,
@@ -1183,8 +1196,8 @@ fn plan_level(
     let kept_of = |c: Child| c.dirty.then(|| count(&marks[c.base..c.base + words(c.span)]));
     Ok(Some(
         match kept_described(lim, tdd, t, own, (lm, kept_of(left)), (rm, kept_of(right)))? {
-            Some((d, dead)) => Kept::Described(d, dead),
-            None => Kept::Stored(level.store_room(lim)?),
+            Some((d, dead)) => Plan::Described(d, dead),
+            None => Plan::Stored(level.store_room(lim)?),
         },
     ))
 }
@@ -1757,7 +1770,7 @@ impl Visit {
     }
 }
 
-/// Where [`prune_below_root`] starts.
+/// Where [`prune_walk`] starts.
 #[derive(Clone, Copy)]
 pub(super) enum Start<'a> {
     /// At the root, the output node its only slot reached: whatever else
@@ -1777,7 +1790,7 @@ pub(super) enum Start<'a> {
 /// that loses no node, unless the start is [`Start::Root`]. With `forced`,
 /// also entering every level it marks whose entry has [`FORCED`] set,
 /// whether or not it lost one.
-pub(super) fn prune_below_root(
+pub(super) fn prune_walk(
     eng: &Engine,
     tdd: &mut Tdd,
     forced: Option<&[u8]>,
@@ -1832,7 +1845,7 @@ struct Walked {
     output: Option<usize>,
 }
 
-/// The marking half of [`prune_below_root`]: `visits` the levels it
+/// The marking half of [`prune_walk`]: `visits` the levels it
 /// entered, top-down, each with its block of `marks` and its children.
 fn mark_walk(
     lim: &Limits,
@@ -1925,7 +1938,7 @@ fn mark_walk(
 
         mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
 
-        let (lc, rc) = (settle_child(marks, lb, lw), settle_child(marks, rb, rw));
+        let (lc, rc) = (Child::read(marks, lb, lw), Child::read(marks, rb, rw));
         visits[i].left = lc;
         visits[i].right = rc;
         remap_need = remap_need.max(lc.span + rc.span);
@@ -2089,7 +2102,7 @@ fn compact_visited(
 /// when every rectangle of `u` with a sibling class lies in the true class
 /// of `t`. A level has it only under a parent that has one, so the levels
 /// read are a subtree of the vtree from the root down, and on each only the
-/// dying node's pairs, where [`prune_below_root`] reads every pair of every
+/// dying node's pairs, where [`prune_walk`] reads every pair of every
 /// level that loses a node.
 ///
 /// The dying nodes are dropped as that walk's compaction drops them. A
@@ -2135,7 +2148,7 @@ pub(super) fn prune_complement(
     // The slots the walk below the root is charged for: the root's, and on
     // each level of the chain, the levels it walks in the order it walks
     // them, the slots of its structural children and of another child wider
-    // than every one met before it ([`prune_below_root`]).
+    // than every one met before it ([`prune_walk`]).
     let mut slots = tdd.levels[root.idx()].slot_count();
     let mut unmarked = 0usize;
     row.clear();
@@ -2436,18 +2449,6 @@ fn true_children(
         }
     }
     Ok(found)
-}
-
-/// What a walked level's parent reads for a child: one with no block or that
-/// kept every slot needs no new indices, and one that lost a slot is walked
-/// in turn.
-fn settle_child(marks: &[u64], base: Option<usize>, width: usize) -> Child {
-    match base {
-        Some(base) if !all_marked(&marks[base..base + words(width)], width) => {
-            Child::at(base, width, true)
-        }
-        _ => Child::KEPT,
-    }
 }
 
 /// Reserve a clear block of marks for `width` fresh slots at the end of
