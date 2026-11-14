@@ -534,7 +534,7 @@ const NONE: u32 = u32::MAX;
 /// atoms), [`regroup_single_rows`] row by row, or [`regroup_single`] without
 /// the owner bookkeeping when neither applies; and a
 /// level each of whose pairs expands to one atom reads its owner sets off the
-/// atoms alone ([`regroup_atom_per_pair`]).
+/// atoms alone ([`regroup_atom_per_pair`]) where [`one_atom_pays`].
 ///
 /// `None` comes back when the partition did not change — cell `i` holds
 /// exactly what node `i` expanded to — because the level above would then
@@ -580,7 +580,9 @@ fn regroup(
             return Ok(None);
         }
     }
-    if let OneAtom::Done(remap) = regroup_atom_per_pair(work, tdd, parent, left_remap, right_remap)?
+    if one_atom_pays(tdd, parent, left_remap, right_remap)
+        && let OneAtom::Done(remap) =
+            regroup_atom_per_pair(work, tdd, parent, left_remap, right_remap)?
     {
         return Ok(remap);
     }
@@ -794,6 +796,35 @@ enum OneAtom {
 /// pair of the level, beyond a fixed allowance: the stamp is an array over
 /// them.
 const ONE_ATOM_STAMP_PER_PAIR: usize = 4;
+
+/// Whether a level of several nodes goes to [`regroup_atom_per_pair`]. A
+/// level of over twice as many pairs as its sides' cells and references allow
+/// distinct atoms makes an average atom from more than two pairs; with more
+/// pairs than nodes the route then sorts the pairs and hashes the owner sets
+/// as [`regroup`] does, and graph queries ran 1 to 7% fewer instructions
+/// without it. With one pair per node the owner sets are disjoint and the
+/// route skips the hashing.
+fn one_atom_pays(
+    tdd: &Tdd,
+    parent: VtreeIdx,
+    left_remap: Option<&Remap>,
+    right_remap: Option<&Remap>,
+) -> bool {
+    let level = &tdd.levels[parent.idx()];
+    let (n_nodes, n_pairs) = (level.nodes().len(), level.live_pairs());
+    if n_nodes < 2 {
+        return false;
+    }
+    if n_pairs == n_nodes {
+        return true;
+    }
+    let (left, right) = tdd.vtree.children(parent);
+    let keys = |remap: Option<&Remap>, child: VtreeIdx| match remap {
+        Some(map) => cell_count(map),
+        None => tdd.reference_slot_count(child),
+    };
+    n_pairs / 2 <= keys(left_remap, left).saturating_mul(keys(right_remap, right))
+}
 
 /// [`regroup`] for a level each of whose pairs expands to one atom, every
 /// rewritten side mapping the pair's reference to one cell: the shape of
