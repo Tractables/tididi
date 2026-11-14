@@ -1060,11 +1060,6 @@ impl PairSink for ProjectedEmitSink<'_> {
         self.sink.end(eng, node_idx, grid_pos, start)
     }
 
-    #[inline(always)]
-    fn row(&mut self, i: usize) {
-        self.row = i;
-    }
-
     /// The row recorded; at the first row past [`AHEAD_AFTER`]'s share
     /// of them, the arenas sized ([`reserve_ahead`](Self::reserve_ahead)).
     #[inline(always)]
