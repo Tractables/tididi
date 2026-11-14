@@ -310,20 +310,9 @@ impl Buffers for PruneScratch {
 }
 
 impl PooledScratch for PruneScratch {
-    fn prepare(&mut self) {
-        self.level_base.clear();
-        self.marks.clear();
-        self.remap.clear();
-        self.visits.clear();
-        self.entered.clear();
-        self.from_output.clear();
-        self.settle_flags.clear();
-        self.settle_parents.clear();
-        self.settle_counts.clear();
-        self.bytes.clear();
-        self.chain.clear();
-        self.row.clear();
-    }
+    /// Never called: every checkout of the prune's pool is
+    /// `checkout_preserving`.
+    fn prepare(&mut self) {}
 }
 
 /// How much of the diagram a prune has to walk.
