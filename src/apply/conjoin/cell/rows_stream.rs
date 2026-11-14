@@ -3181,7 +3181,7 @@ fn ones_row_values<L: ChildLookup, R: ChildLookup, S: RowSum>(
         let (l, r) = (lside.row(ls), rside.row(rs));
         let (track, check) = (l.any_dead || r.any_dead, !rows_exact::<S>(l, r));
         by_flag!(track, |TRACK| by_flag!(check, |CHECK| {
-            add_block::<TRACK, CHECK, 1, S>(sums, flags, ones, [l], [r])
+            add_values::<TRACK, CHECK, S>(sums, flags, ones, l, r)
         }));
     }
     let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
@@ -3229,6 +3229,38 @@ fn add_grid<L: ChildLookup, R: ChildLookup, S: RowSum>(
         } else {
             LIVE
         };
+    }
+}
+
+/// Add an f pair's product to each one-pair column's sum, read off its
+/// child rows `l` and `r`: a dead cell's zero adds nothing, and a column
+/// without pairs reads the rows' last floats. `TRACK` where a cell of the
+/// rows is dead, and `CHECK` where a product of them may not be its float.
+/// Not [`add_block`] of one pair, which runs up to 0.8% more instructions
+/// on float networks.
+#[inline(always)]
+fn add_values<const TRACK: bool, const CHECK: bool, S: RowSum>(
+    sums: &mut [f64],
+    flags: &mut [u8],
+    ones: &[ChildPair],
+    l: RowFloats<'_>,
+    r: RowFloats<'_>,
+) {
+    let (sl, sr) = (l.vals.len() - 1, r.vals.len() - 1);
+    for ((s, f), q) in sums.iter_mut().zip(flags.iter_mut()).zip(ones) {
+        let (i, t) = ((q.left.0 as usize).min(sl), (q.right.0 as usize).min(sr));
+        // Safety: `i <= sl` and `t <= sr`, and each row holds a float and a
+        // mark for its child row's cells and one past them.
+        let (a, b) = unsafe { (*l.vals.get_unchecked(i), *r.vals.get_unchecked(t)) };
+        let (p, ok) = S::times(a, b);
+        *s += p;
+        let live = if TRACK {
+            // Safety: as above.
+            LIVE ^ unsafe { *l.dead.get_unchecked(i) | *r.dead.get_unchecked(t) }
+        } else {
+            LIVE
+        };
+        *f |= if CHECK && !ok { live | INEXACT } else { live };
     }
 }
 
