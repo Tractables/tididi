@@ -488,7 +488,7 @@ impl<'l> Seeds<'l> {
             // under it, so the clean levels with a child that is not are
             // forced, and the walk reads whether a level is clean only on a
             // seed's children, below.
-            let mut path = Vec::new();
+            let mut path: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
             for &f in forced.iter() {
                 path.clear();
                 let mut t = f;

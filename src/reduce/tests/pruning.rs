@@ -452,6 +452,41 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     );
 }
 
+/// The seeds of a prune that knows its loose levels give back every byte
+/// they charged: the meter reads the same before they are found and after
+/// they are dropped, on conjunctions whose root is clean and which have a
+/// loose level below the root, so that the levels above it are settled.
+#[test]
+fn the_seeds_give_back_their_charge() {
+    use crate::test_helpers::{Lcg, vtree_shapes};
+
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x5eed_51d5);
+    let mut settled = 0usize;
+    for (name, wide) in vtree_shapes(14) {
+        for case in 0..20 {
+            let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
+            if f.is_zero() || g.is_zero() {
+                continue;
+            }
+            let conj = eng.and(f, g).unwrap();
+            if conj.is_zero() || !below_root_walk_applies(&conj) || conj.has_marginal_level() {
+                continue;
+            }
+            let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+            listed.sort_unstable();
+            listed.dedup();
+            let loose = settle_loose(eng, &conj, &listed).unwrap();
+            let root = conj.vtree.root();
+            settled += usize::from(conj.levels[root.idx()].slot_count() == 1 && loose.iter().any(|&t| t != root.0));
+            let before = eng.limits().meters().in_flight_bytes;
+            drop(Seeds::of(eng, &conj, &loose).unwrap());
+            assert_eq!(eng.limits().meters().in_flight_bytes, before, "{name}, case {case}: the seeds kept a charge");
+        }
+    }
+    assert!(settled > 20, "expected seeds found under a clean root, got {settled}");
+}
+
 /// The complement of a canonical diagram, completed and complemented at
 /// the root, loses the old output and, below it, only the nodes whose
 /// residual was true: the prune that drops just those leaves the diagram the
