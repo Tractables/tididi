@@ -120,12 +120,6 @@ fn all_marked(block: &[u64], width: usize) -> bool {
     block[..full].iter().all(|&w| w == u64::MAX) && (tail == 0 || block[full] == tail_mask(tail))
 }
 
-/// Call `f` with the index of every marked slot of `block`, ascending.
-#[inline(always)]
-fn for_each_marked(block: &[u64], f: impl FnMut(usize)) {
-    marked(block).for_each(f);
-}
-
 /// The index of every marked slot of `block`, ascending.
 fn marked(block: &[u64]) -> Marked<'_> {
     Marked {
@@ -1555,7 +1549,7 @@ fn move_sides(
     left: impl Fn(u32) -> u32,
     right: impl Fn(u32) -> u32,
 ) {
-    for_each_marked(own, |i| {
+    marked(own).for_each(|i| {
         let kind = level.nodes.stored()[i].kind();
         match kind {
             NodeKind::Inline(_) => {
@@ -1871,8 +1865,8 @@ fn pack_bytes(bytes: &[u8], block: &mut [u64]) {
     }
 }
 
-/// [`for_each_marked`] on the block of `width` slots at word `base` of
-/// `marks`, with `marks` passed on to `f`: each word is read before `f` runs
+/// Call `f` with the index of every marked slot of the block of `width`
+/// slots at word `base` of `marks`, ascending, and `marks`: each word is read before `f` runs
 /// on its slots, so that `f` may mark other blocks, a level's children's
 /// beside its own.
 #[inline(always)]
