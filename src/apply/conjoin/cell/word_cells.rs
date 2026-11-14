@@ -38,8 +38,9 @@ const SAMPLE_NODES: usize = 32;
 
 /// The candidates of a sampled cell read at most, and the fewest of its
 /// f pairs and of its g pairs they take where it holds more
-/// ([`sample_cells`]); a level's sample reads at most one in
-/// `SAMPLE_SHARE` of its candidates.
+/// ([`sample_cells`]); a level's sample reads about one in
+/// `SAMPLE_SHARE` of its candidates but at least one a sampled cell, which
+/// is up to a quarter of them on a level near [`WORDS_MIN_CANDIDATES`].
 const SAMPLE_CELL: usize = 64;
 const SAMPLE_SIDE: usize = 8;
 const SAMPLE_SHARE: usize = 8;
@@ -227,8 +228,9 @@ impl SideVectors {
 /// pairs name on each side that kills, `f_rows` rows a side at most, fit
 /// [`WORDS_MAX_VECTOR_WORDS`]. Then a sample of its cells
 /// ([`sample_cells`]) estimates its live candidates and live cells, unless
-/// the costs that do not depend on it decide the level already. A
-/// level whose sampled candidates are mostly in grouped cells is walked:
+/// the costs that do not depend on it decide the level already. A level
+/// without masks whose sampled candidates are mostly in grouped cells is
+/// walked:
 /// the grouped walk reads a left cell once a run of f pairs against a run
 /// of g pairs. A level with masks is read by vectors where g's nodes are
 /// not all one pair (the masks cull most of the f pairs of a column of
