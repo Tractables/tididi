@@ -113,7 +113,9 @@ impl crate::Engine {
     /// Every plan returns the same function. [`ReductionPlan::Prune`] leaves
     /// every node reachable without establishing canonical form: it skips the
     /// twin contraction, so the result can be larger than the minimized one,
-    /// and a later [`minimize`](Self::minimize) finishes the job. An empty
+    /// and a later [`minimize`](Self::minimize) finishes the job.
+    /// [`ReductionPlan::Contract`] runs no prune and leaves the result owing
+    /// the other passes, which a later `minimize` runs. An empty
     /// `vars`, a false `f`, and a request that quantifies every variable return
     /// without running the plan.
     ///

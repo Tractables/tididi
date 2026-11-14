@@ -189,6 +189,64 @@ fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
     }
 }
 
+/// The sweep prunes an operand that owes passes, which leaves the root level
+/// holding the output alone. One node is one cell, written in place, so a
+/// plan with no prune, such as `Contract`, leaves no node unreached.
+#[test]
+fn a_quantification_under_contract_leaves_every_node_reached() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x0001_0c0e_7ac7);
+    for nvars in [6u32, 9] {
+        for (name, tree) in vtree_shapes(nvars) {
+            for _ in 0..6 {
+                let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
+                let f = compile_clauses(&tree, &clauses);
+                let vars: Vec<VarId> = (1..=nvars).filter(|_| rng.below(3) == 0).map(VarId).collect();
+                if vars.is_empty() || vars.len() == nvars as usize {
+                    continue;
+                }
+                let canonical = eng.exists_vars(f.clone(), &vars).unwrap();
+                let mut contracted = eng.exists_vars_with(f, &vars, ReductionPlan::Contract).unwrap();
+                let reach = contracted.reachable_nodes();
+                let unreached = (0..reach.len())
+                    .filter(|&i| !tree.node(VtreeIdx(i as u32)).is_leaf())
+                    .any(|i| reach[i].contains(&false));
+                assert!(!unreached, "{name}: {clauses:?} without {vars:?}");
+                contracted.minimize().unwrap();
+                assert_canonical(&contracted);
+                assert_eq!(contracted.node_count(), canonical.node_count(), "{name}: {clauses:?} without {vars:?}");
+            }
+        }
+    }
+}
+
+/// Where the root level holds more than the output, the output becomes the
+/// union of its cells and the other cells stay for a prune. Under a plan
+/// with none the result says it owes one.
+#[test]
+fn a_root_union_under_contract_owes_the_prune() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(6));
+    let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap()
+        & Tdd::clause(&tree, [-1, 4, 5]).unwrap()
+        & Tdd::clause(&tree, [2, -4, 6]).unwrap();
+    f.minimize().unwrap();
+    let vars = [VarId(1), VarId(4)];
+    let canonical = eng.exists_vars(f.clone(), &vars).unwrap();
+    let root = tree.root();
+    let pairs: Vec<ChildPair> = f.levels[root.idx()].pairs_iter_of_idx(f.output.local.idx()).collect();
+    f.levels[root.idx()].push_node(eng.limits(), &pairs).unwrap();
+    f.dirty.set_loose(None);
+    assert!(f.dirty.is_empty(), "no pass is owed, so the sweep does not prune first");
+    let mut out = eng.exists_vars_with(f, &vars, ReductionPlan::Contract).unwrap();
+    assert!(out.reachable_nodes()[root.idx()].contains(&false), "a root cell outside the union stays");
+    assert!(!out.dirty.is_empty(), "the result owes the prune");
+    out.minimize().unwrap();
+    assert_canonical(&out);
+    assert_eq!(out.node_count(), canonical.node_count());
+    assert!(out.equivalent(&canonical).unwrap());
+}
+
 /// A fan-out for each of `keys` child nodes: a nonempty ascending set of the
 /// cells below `cells`, drawn at random.
 fn random_remap(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Remap {

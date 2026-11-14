@@ -303,7 +303,10 @@ pub(super) fn exists_leaves_structural(
                 root_cells.get(tdd.output.local.idx()),
             )?,
         );
-        // Append the union node and point the output at it (prune drops the rest).
+        // Reached only where the root level held more than the output, which an
+        // operand with every node reachable never does. Append the union node
+        // and point the output at it; the other cells stay until a prune, which
+        // the invalidation leaves owed.
         let new_out = tdd.levels[root_vi.idx()].push_node(eng.limits(), &out_pairs)?;
         tdd.output.local = new_out;
         tdd.try_invalidate(eng, root_vi)?;
@@ -320,7 +323,7 @@ pub(super) fn exists_leaves_structural(
     // quantified level's one node is in the map of every old node, or is the
     // one node the level held, or, under another quantified level, is the
     // node that level's `⊤` pair names (index 0 of an internal child). The
-    // root's other nodes are dropped by the walk from the output.
+    // root's other nodes are dropped by a plan that prunes.
     tdd.dirty.set_loose(loose);
     eng.reduce(&mut tdd, reduction)?;
     Ok(tdd)
@@ -453,8 +456,8 @@ fn free_subtree_level(
 ///
 /// The cells are mutex among themselves and each is a valid
 /// deterministic/decomposable pair list, so their union is a sound single root
-/// node with no repeated pair. The other (unreferenced) root cells are dropped
-/// by `minimize`'s prune.
+/// node with no repeated pair. The other root cells stay in the level until a
+/// plan that prunes drops them.
 fn union_of_root_cells(
     work: &mut Rewrite<'_>,
     tdd: &Tdd,
