@@ -52,12 +52,6 @@ impl Radix {
         lim.discard(self.counts);
     }
 
-    /// The buffer a sort moves keys through, which holds nothing between
-    /// sorts and may be lent out, as long as it comes back.
-    pub(crate) fn spare(&mut self) -> &mut Vec<u64> {
-        &mut self.other
-    }
-
     /// Sort keys ascending in their low `lo + bits` bits, then in the bits
     /// above, given that the input already lists them in ascending order of
     /// their low `lo` bits, and keys equal in their low `lo + bits` bits in

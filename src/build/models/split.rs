@@ -718,11 +718,6 @@ fn split_single(
     }
     lim.try_push(&mut s.high_hash, hash)?;
     gate.flush()?;
-    // The radix sort's buffer holds nothing until the sort below, and the
-    // rows' sort has mapped it wherever the rows were many enough to need
-    // it, so the table that numbers the high runs borrows it rather than
-    // mapping fresh memory.
-    std::mem::swap(&mut s.slots, s.radix.spare());
     let (high_starts, keys) = (&s.high_starts, &parent.data);
     let same_lows = |a: u32, b: u32| {
         let (x, y) = (run(high_starts, a, n), run(high_starts, b, n));
@@ -732,21 +727,14 @@ fn split_single(
                 .zip(&keys[y])
                 .all(|(&p, &q)| (p ^ q) & mask == 0)
     };
-    let numbered = number_hashed(
-        lim,
-        &mut s.slots,
-        &s.high_hash,
-        &mut s.high_first,
-        same_lows,
-    );
-    std::mem::swap(&mut s.slots, s.radix.spare());
-    let (high_atom, high_atoms) = numbered?;
+    let (high_atom, high_atoms) =
+        number_hashed(lim, &mut s.slots, &s.high_hash, &mut s.high_first, same_lows)?;
 
     // Keys of one low part ascend by high value, as the values did.
     s.radix.sort(lim, parent.data.to_mut(), 0, low_width)?;
     lim.check_stop()?;
     let (split, low_atom, low_atoms) = group_single(lim, s, &parent.data, low_width, &high_atom)?;
-    let low_data = low_parts(lim, parent.data.to_mut(), &s.low_starts, mask)?;
+    let low_data = low_parts(lim, &parent.data, &s.low_starts, mask)?;
     // The high runs' parts are the high child's values, so their buffer is
     // handed over rather than copied.
     let low = Values::owned(1, low_data, (low_atom, low_atoms));
@@ -755,24 +743,14 @@ fn split_single(
 }
 
 /// The low part of each run of `keys` that starts at `starts`, in order:
-/// the low child's values. Once the keys are read for the last time, a
-/// run's part moves down to its index, which is never past the run's
-/// first key, so where the runs are many their values take the keys'
-/// buffer rather than fresh memory.
+/// the low child's values.
 fn low_parts(
     lim: &Limits,
-    keys: &mut Vec<u64>,
+    keys: &[u64],
     starts: &[u32],
     mask: u64,
 ) -> Result<Vec<u64>, OperationError> {
     lim.gate().poll(starts.len() as u64)?;
-    if 2 * starts.len() >= keys.len() {
-        for (j, &start) in starts.iter().enumerate() {
-            keys[j] = keys[start as usize] & mask;
-        }
-        keys.truncate(starts.len());
-        return Ok(std::mem::take(keys));
-    }
     let mut out = Vec::new();
     lim.reserve_exact(&mut out, starts.len())?;
     out.extend(starts.iter().map(|&start| keys[start as usize] & mask));
@@ -1358,15 +1336,7 @@ fn by_parent_atom(
     s.low_starts.clear();
     lim.reserve_exact(&mut s.low_starts, atoms + 1)?;
     s.low_starts.extend_from_slice(&s.cursor);
-    // The scatter below writes every place, so the radix sort's buffer,
-    // which holds nothing between sorts and is mapped wherever a sort
-    // needed it, takes the pairs when it is about as long.
-    let mut pairs = if 2 * held >= s.radix.spare().len() {
-        std::mem::take(s.radix.spare())
-    } else {
-        Vec::new()
-    };
-    pairs.truncate(held);
+    let mut pairs = Vec::new();
     lim.try_resize(&mut pairs, held, 0u64)?;
     for (high, range) in runs(&s.high_starts, n).enumerate() {
         if first(high) {
@@ -1384,7 +1354,7 @@ fn by_parent_atom(
     for atom in 0..atoms {
         let (start, end) = (s.low_starts[atom] as usize, s.low_starts[atom + 1] as usize);
         if end - start > 1 {
-            sort_small_by(&mut pairs[start..end], !0);
+            pairs[start..end].sort_unstable();
         }
         kept = dedup_range(&mut pairs, start, end, kept);
         ends.push(kept as u32);
@@ -1452,27 +1422,10 @@ fn number_hashed(
     let mut gate = lim.gate();
     gate.poll(runs as u64)?;
     for (k, &hash) in hashes.iter().enumerate() {
-        if let Some(&ahead) = hashes.get(k + PROBE_AHEAD) {
-            prefetch_slot(slots, bits, ahead);
-        }
         ids.push(probe(lim, slots, bits, hash, k as u32, firsts, &same)?);
     }
     gate.flush()?;
     Ok((ids, firsts.len() as u32))
-}
-
-/// Runs ahead of the probe whose slot [`number_hashed`] asks the cache
-/// for: the slots are random, so a table past the cache misses on nearly
-/// every probe, and the misses of runs this far apart are in flight at
-/// once.
-const PROBE_AHEAD: usize = 16;
-
-/// Ask the cache for the slot of [`number_hashed`]'s table, `bits` bits,
-/// that a run of `hash` probes first. A hint only; no-op off `x86_64` and
-/// under Miri, which lacks the intrinsic.
-#[inline(always)]
-fn prefetch_slot<T>(slots: &[T], bits: u32, hash: u64) {
-    crate::isa::prefetch_at(slots, (finish(hash) >> (64 - bits)) as usize);
 }
 
 /// The number of run `k`, of `hash`, in the table `slots` of
@@ -1997,7 +1950,7 @@ fn sorted_triples(
                 while end < keys.len() && (keys[end] >> low) & group_mask == group {
                     end += 1;
                 }
-                sort_small_by(&mut keys[start..end], low_mask);
+                keys[start..end].sort_unstable_by_key(|&key| key & low_mask);
                 start = end;
             }
             mid
@@ -2046,25 +1999,6 @@ fn sorted_triples(
     }
     lim.check_stop()?;
     Ok(out)
-}
-
-/// Sort `keys` by their bits under `mask`. A group of one child atom's
-/// triples is short, and the other child's atoms often ascend already,
-/// which an insertion sort passes over in one comparison apiece.
-fn sort_small_by(keys: &mut [u64], mask: u64) {
-    if keys.len() > 16 {
-        keys.sort_unstable_by_key(|&key| key & mask);
-        return;
-    }
-    for i in 1..keys.len() {
-        let key = keys[i];
-        let mut j = i;
-        while j > 0 && keys[j - 1] & mask > key & mask {
-            keys[j] = keys[j - 1];
-            j -= 1;
-        }
-        keys[j] = key;
-    }
 }
 
 #[cfg(test)]
