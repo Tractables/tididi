@@ -1213,8 +1213,9 @@ fn write_cell(
 }
 
 /// The most pairs a run of [`regroup_single_by_left`] may average when its
-/// right side was rewritten: a run's atoms are then sorted on their own, and a
-/// node of longer runs is written as rows.
+/// right side was rewritten: a run's atoms are then sorted on their own. A
+/// node of longer runs is written as rows where [`RowPlan::pays`], and
+/// through buckets ([`regroup_single`]) where it does not.
 const BY_LEFT_PAIRS_PER_RUN: usize = 64;
 
 /// [`regroup`] for a level of one node whose pairs are stored in order of
