@@ -187,6 +187,9 @@ where
 /// On a column the column table grouped (see [`RightColumns::runs`]) and an
 /// f row of at least [`GROUPED_MIN_PAIRS`] pairs, the walk takes both sides a
 /// run of shared `.left` at a time.
+///
+/// A cell the gate does not come due inside is charged before the walk, and
+/// the walk polls nothing, so no call crosses the walk's loops.
 #[inline(always)]
 fn cell_two_sided<L, R, S>(
     (eng, ctx): (&Engine, &CellCtx<'_>),
@@ -202,13 +205,79 @@ where
     R: ChildLookup,
     S: PairSink,
 {
+    let cell_start = sink.begin();
+    let units = (f_pairs.len() * g_pairs.len()) as u64;
+    if units < gate.due_in() {
+        gate.add_short(units);
+        walk_two_sided::<false, L, R, S>(
+            (eng, ctx),
+            j,
+            (f_pairs, g_pairs),
+            node_idx,
+            (left, right),
+            (sink, gate),
+        )?;
+    } else {
+        walk_two_sided_polled(
+            (eng, ctx),
+            j,
+            (f_pairs, g_pairs),
+            node_idx,
+            (left, right),
+            (sink, gate),
+        )?;
+    }
+    sink.end(eng, node_idx, grid_pos, cell_start)
+}
+
+/// [`walk_two_sided`] for a cell the gate comes due inside, polling as it
+/// walks.
+#[cold]
+#[inline(never)]
+fn walk_two_sided_polled<L, R, S>(
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    j: usize,
+    (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
+    node_idx: &mut [u32],
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
+    walk_two_sided::<true, L, R, S>(
+        (eng, ctx),
+        j,
+        (f_pairs, g_pairs),
+        node_idx,
+        (left, right),
+        (sink, gate),
+    )
+}
+
+/// The pairs of an N×M cell, polling `gate` as they are walked where `POLL`.
+#[inline(always)]
+fn walk_two_sided<const POLL: bool, L, R, S>(
+    (eng, ctx): (&Engine, &CellCtx<'_>),
+    j: usize,
+    (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
+    node_idx: &mut [u32],
+    (left, right): (&L, &R),
+    (sink, gate): (&mut S, &mut PollGate),
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
     // ── N×M (both levels multi-pair; masks built for every side that can
     // kill where `ctx.masked`, the level's grid big enough to pay for them)
     // ──────
     // The whole-cell dead test belongs to the row loop, which applies it to
     // every arm before the cell is entered; what is left here is the per-`p1`
     // form of it, which only this arm can use.
-    let cell_start = sink.begin();
     if f_pairs.len() >= GROUPED_MIN_PAIRS
         && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
     {
@@ -241,7 +310,9 @@ where
                 p1_idx += 1;
             }
             let g1 = &f_pairs[g1_start..p1_idx];
-            gate.poll((g1.len() * n2) as u64)?;
+            if POLL {
+                gate.poll((g1.len() * n2) as u64)?;
+            }
 
             if ctx.masked
                 && left.kills()
@@ -279,7 +350,9 @@ where
         // ── General N×M ───────────────────────────────────────────────
         let kills = left.kills() || right.kills();
         for p1 in f_pairs {
-            gate.poll(g_pairs.len() as u64)?;
+            if POLL {
+                gate.poll(g_pairs.len() as u64)?;
+            }
             if ctx.masked
                 && !left.passthrough()
                 && left.kills()
@@ -307,7 +380,6 @@ where
             })?;
         }
     }
-    sink.end(eng, node_idx, grid_pos, cell_start)?;
     Ok(())
 }
 
