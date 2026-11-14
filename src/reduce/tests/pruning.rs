@@ -782,9 +782,10 @@ fn a_prune_that_stores_an_implicit_level_moves_no_pair_of_a_dropped_node() {
 /// The room a prune stores an implicit level in is reserved before the
 /// prune changes any level, by the walk over the whole diagram and by the
 /// walk below the root: every reservation the prune makes, refused in turn,
-/// is an error that leaves the diagram as it was. Three are those the same
+/// is an error that leaves the diagram as it was. Four are those the same
 /// prune of the stored diagram does not make: the offsets the marks read on
-/// the right of the implicit level, and the room's two arenas.
+/// the right of the implicit level, the room's two arenas, and the list
+/// that holds the room until the compaction takes it.
 #[test]
 fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
     use crate::test_helpers::{same_levels, with_floor};
@@ -812,7 +813,7 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
             }
         };
         for below in [false, true] {
-            assert_eq!(refusals(below, true), refusals(below, false) + 3, "below the root: {below}");
+            assert_eq!(refusals(below, true), refusals(below, false) + 4, "below the root: {below}");
         }
         // With the left child of `v` marginalized, `mark_sides` still marks
         // the structural right child `w` off `v`'s description.
@@ -832,7 +833,7 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
                 refused += 1;
             }
         };
-        assert_eq!(marginal_refusals(true), marginal_refusals(false) + 3);
+        assert_eq!(marginal_refusals(true), marginal_refusals(false) + 4);
     });
 }
 

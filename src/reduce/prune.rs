@@ -1075,7 +1075,7 @@ fn compact_levels(
     level_dirty: &[bool],
     marks: &[u64],
     remap: &mut [u32],
-    mut plans: Plans,
+    mut plans: Plans<'_>,
 ) {
     let counted = tdd.levels.is_closed();
     // Bottom-up topological order, so a level's children are compacted
@@ -1306,14 +1306,14 @@ enum Kept {
 }
 
 /// The [`Kept`] of the levels a compaction changes that are held as
-/// descriptions, in the compaction's order.
-struct Plans(std::iter::Peekable<std::vec::IntoIter<(VtreeIdx, Kept)>>);
+/// descriptions, the first the compaction reaches last.
+struct Plans<'l>(Transient<'l, Vec<(VtreeIdx, Kept)>>);
 
-impl Plans {
+impl Plans<'_> {
     /// The plan of level `t`, the next level the compaction reaches, if it
     /// has one.
     fn take(&mut self, t: VtreeIdx) -> Option<Kept> {
-        self.0.next_if(|(v, _)| *v == t).map(|(_, kept)| kept)
+        self.0.pop_if(|(v, _)| *v == t).map(|(_, kept)| kept)
     }
 }
 
@@ -1332,20 +1332,21 @@ impl Plans {
 ///
 /// `Err(OperationError::OverBudget)` when the reading of a description or
 /// a room is refused.
-fn plan_levels(
-    lim: &Limits,
+fn plan_levels<'l>(
+    lim: &'l Limits,
     tdd: &Tdd,
     order: impl Iterator<Item = Visit>,
     marks: &[u64],
     remap: &mut [u32],
-) -> Result<Plans, OperationError> {
-    let mut plans = Vec::new();
+) -> Result<Plans<'l>, OperationError> {
+    let mut plans = Transient::new(lim, Vec::new());
     for v in order {
         if let Some(kept) = plan_level(lim, tdd, v, marks, remap)? {
-            plans.push((v.level, kept));
+            lim.try_push(&mut plans, (v.level, kept))?;
         }
     }
-    Ok(Plans(plans.into_iter().peekable()))
+    plans.reverse();
+    Ok(Plans(plans))
 }
 
 /// [`plan_levels`] for `v.level`: `None` when it is stored, or the
@@ -2461,14 +2462,14 @@ pub(crate) fn prune_complement(
 
 /// Build the synthetic marks and visits for `chain` and plan compaction for
 /// any described levels in [`prune_complement`].
-fn plan_complement_described(
-    eng: &Engine,
+fn plan_complement_described<'e>(
+    eng: &'e Engine,
     tdd: &Tdd,
     chain: &[[u32; 3]],
     marks: &mut Vec<u64>,
     remap: &mut Vec<u32>,
     visits: &mut Vec<Visit>,
-) -> Result<Plans, OperationError> {
+) -> Result<Plans<'e>, OperationError> {
     let lim = eng.limits();
     visits.clear();
     lim.reserve(visits, chain.len())?;
