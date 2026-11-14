@@ -1575,10 +1575,7 @@ fn poll_cell_in_pieces(
         }
         return Ok(());
     }
-    for _ in 0..n1 {
-        gate.poll(n2 as u64)?;
-    }
-    Ok(())
+    gate.poll_times(n2 as u64, n1 as u64)
 }
 
 /// Poll `gate` for a row of the row loop over a level without masks or
