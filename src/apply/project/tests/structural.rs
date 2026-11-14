@@ -5,25 +5,6 @@ use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, compile_clauses, or_of_cubes, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
 
-thread_local! {
-    /// The cells on this thread [`regroup_single_by_left`] wrote with a
-    /// rewritten left side and the right side as the level stored it, whose
-    /// order only the sort of a run's right sides made canonical
-    /// ([`unsorted_right_runs`]).
-    static UNSORTED_RIGHT_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-pub(super) fn note_unsorted_right_run() {
-    UNSORTED_RIGHT_RUNS.with(|n| n.set(n.get() + 1));
-}
-
-/// How many cells of one node on this thread a quantification wrote in
-/// canonical order from a run of right sides the level stored out of order,
-/// with no other step that would have sorted them.
-fn unsorted_right_runs() -> u64 {
-    UNSORTED_RIGHT_RUNS.with(std::cell::Cell::get)
-}
-
 /// The map a quantified leaf hands its parent: every label becomes ⊤.
 fn freed_leaf(eng: &Engine) -> Remap {
     Runs::all_to_first(eng.limits(), crate::diagram::LEAF_WIDTH, 0u32).unwrap()
@@ -534,13 +515,12 @@ fn rising_remap(eng: &Engine, rng: &mut Lcg, keys: usize, pairs: &[ChildPair]) -
 /// the right one as it is: the owner-set rule's one cell, in canonical
 /// order. Under a map that merges or reorders the left cells the pass sorts
 /// them anyway; under one whose cells rise along the runs only the sort of
-/// each run's right sides puts the cell in order, which
-/// `unsorted_right_runs` counts.
+/// each run's right sides puts the cell in order.
 #[test]
 fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
     let mut rng = Lcg::new(0x0f2_5011);
     let eng = Engine::new();
-    let (mut levels, mut in_order_by_runs) = (0usize, 0u64);
+    let mut levels = 0usize;
     for round in 0..48u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
@@ -580,23 +560,22 @@ fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
                     let expected = regroup_by_definition(level, Some(left), None);
                     let mut rewritten = stored.clone();
                     let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
-                    let before = unsorted_right_runs();
                     assert!(regroup_single_by_left(&mut work, &mut rewritten, parent, Some(left), None).unwrap(),
                         "{shape}, level {parent:?}, {what}: declined");
                     let got = written(&rewritten, level, parent, None);
                     assert_eq!(got, expected, "{shape}, level {parent:?}, {what} map");
-                    let by_runs = unsorted_right_runs() - before;
                     if *what == "rising" {
-                        assert_eq!(by_runs, 1, "{shape}, level {parent:?}: a rising map leaves the order to the runs");
+                        let cells: Vec<&[u32]> =
+                            pairs.chunk_by(|a, b| a.left == b.left).map(|run| left.cells_of(run[0].left)).collect();
+                        assert!(cells.iter().all(|c| c.len() == 1) && cells.windows(2).all(|w| w[0][0] < w[1][0]),
+                            "{shape}, level {parent:?}: the rising map leaves the order to the runs");
                     }
-                    in_order_by_runs += by_runs;
                 }
                 levels += 1;
             }
         }
     }
-    assert!(levels > 80 && in_order_by_runs >= levels as u64,
-        "levels {levels}, put in order by the runs alone {in_order_by_runs}");
+    assert!(levels > 80, "levels {levels}");
 }
 
 /// [`random_remap`] with about one key in six mapped to no cell.
@@ -688,7 +667,7 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
                         (None, None, _) => "several rows, left stored",
                         (None, Some(map), _) => {
                             let filed = |pair: &ChildPair| (ChildDecoder::structural().node(pair.left).0, pair.right.0);
-                            let groups = Runs::pack_by(eng.limits(), plan.left_keys as usize, pairs, filed, 0u32).unwrap();
+                            let groups = Runs::pack_by(eng.limits(), plan.left_keys as usize, pairs.len(), pairs.iter().map(filed), 0u32).unwrap();
                             let dense = dense_groups(&mut work, &groups, map, right.as_ref(), plan.words).unwrap();
                             let marked_once = (0..groups.len()).filter(|&g| !dense.get(g).is_empty()).count();
                             let visited = (0..groups.len()).filter(|&g| !groups.get(g).is_empty()).count();

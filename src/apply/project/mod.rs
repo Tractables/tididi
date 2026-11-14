@@ -19,7 +19,7 @@ mod structural;
 
 /// Existentially quantify every variable in `vars` out of `f` in one sweep,
 /// ending with `reduction`.
-pub(crate) fn exists_vars_on(
+fn exists_vars_on(
     eng: &Engine,
     f: Tdd,
     vars: &[VarId],
@@ -30,20 +30,6 @@ pub(crate) fn exists_vars_on(
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
     exists_targets_on(eng, f, &targets, reduction)
-}
-
-/// Universally quantify every variable in `vars` out of `f` as `¬∃X.¬f`.
-/// The complement needs every level structural.
-pub(crate) fn forall_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-    let _op = eng.limits().enter()?;
-    let targets = quantification_targets(eng, f.vtree(), vars)?;
-    if targets.is_empty() {
-        return Ok(f);
-    }
-    // Minimizing the projection keeps the second make-full pass small.
-    let complement = negate_on(eng, f)?;
-    let projected = exists_targets_on(eng, complement, &targets, ReductionPlan::default())?;
-    eng.negate(projected)
 }
 
 /// Validate the entire request and retain each leaf once.
@@ -129,6 +115,15 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        forall_vars_on(self, f, vars)
+        let _op = self.limits().enter()?;
+        let targets = quantification_targets(self, f.vtree(), vars)?;
+        if targets.is_empty() {
+            return Ok(f);
+        }
+        // `¬∃X.¬f`; the complement needs every level structural. Minimizing
+        // the projection keeps the second make-full pass small.
+        let complement = negate_on(self, f)?;
+        let projected = exists_targets_on(self, complement, &targets, ReductionPlan::default())?;
+        self.negate(projected)
     }
 }

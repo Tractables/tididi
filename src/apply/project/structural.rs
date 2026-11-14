@@ -68,34 +68,33 @@ impl<T: Copy> Runs<T> {
         entries: &[(u32, T)],
         zero: T,
     ) -> Result<Runs<T>, OperationError> {
-        Runs::pack_by(lim, keys, entries, |&entry| entry, zero)
+        Runs::pack_by(lim, keys, entries.len(), entries.iter().copied(), zero)
     }
 
-    /// [`pack`](Self::pack) over records that `entry` splits into a key below
-    /// `keys` and an item.
-    fn pack_by<S>(
+    /// [`pack`](Self::pack) of the `len` entries `entries` yields, each a key
+    /// below `keys` and an item; it is read twice.
+    fn pack_by(
         lim: &crate::limits::Limits,
         keys: usize,
-        records: &[S],
-        entry: impl Fn(&S) -> (u32, T),
+        len: usize,
+        entries: impl Iterator<Item = (u32, T)> + Clone,
         zero: T,
     ) -> Result<Runs<T>, OperationError> {
-        u32::try_from(records.len()).map_err(|_| OperationError::IndexOverflow)?;
+        u32::try_from(len).map_err(|_| OperationError::IndexOverflow)?;
         let mut starts = Vec::new();
         lim.try_resize(&mut starts, keys + 1, 0u32)?;
-        for record in records {
-            starts[entry(record).0 as usize + 1] += 1;
+        for (key, _) in entries.clone() {
+            starts[key as usize + 1] += 1;
         }
         for k in 0..keys {
             starts[k + 1] += starts[k];
         }
         let mut items = Vec::new();
-        lim.try_resize(&mut items, records.len(), zero)?;
+        lim.try_resize(&mut items, len, zero)?;
         let mut cursor = Vec::new();
         lim.reserve_exact(&mut cursor, keys)?;
         cursor.extend_from_slice(&starts[..keys]);
-        for record in records {
-            let (key, item) = entry(record);
+        for (key, item) in entries {
             let slot = &mut cursor[key as usize];
             items[*slot as usize] = item;
             *slot += 1;
@@ -149,30 +148,15 @@ impl Runs<u32> {
         lim: &crate::limits::Limits,
         keys: usize,
     ) -> Result<Runs<u32>, OperationError> {
-        let mut starts = Vec::new();
-        lim.try_resize(&mut starts, keys + 1, 0u32)?;
-        for &item in &self.items {
-            starts[item as usize + 1] += 1;
-        }
-        for k in 0..keys {
-            starts[k + 1] += starts[k];
-        }
-        let mut items = Vec::new();
-        lim.try_resize(&mut items, self.items.len(), 0u32)?;
-        let mut cursor = Vec::new();
-        lim.reserve_exact(&mut cursor, keys)?;
-        cursor.extend_from_slice(&starts[..keys]);
-        for key in 0..self.len() {
-            // A run's key fits the `u32` its items are stored as.
-            let key32 = key as u32;
-            for &item in self.get(key) {
-                let slot = &mut cursor[item as usize];
-                items[*slot as usize] = key32;
-                *slot += 1;
-            }
-        }
-        lim.discard(cursor);
-        Ok(Runs { starts, items })
+        // A run's key fits the `u32` its items are stored as.
+        let entries = (0..self.len()).flat_map(|key| self.get(key).iter().map(move |&item| (item, key as u32)));
+        Runs::pack_by(lim, keys, self.items.len(), entries, 0u32)
+    }
+
+    /// The cells this map lists for the stored reference `side`.
+    #[inline]
+    fn cells_of(&self, side: EncodedChildRef) -> &[u32] {
+        self.get(ChildDecoder::structural().node(side).idx())
     }
 }
 
@@ -276,17 +260,7 @@ pub(super) fn exists_leaves_structural(
                 let (left, right) = vtree.children(level);
                 let below_left = remap[left.idx()].take().map(|v| Transient::new(lim, v));
                 let below_right = remap[right.idx()].take().map(|v| Transient::new(lim, v));
-                if below_left.is_none() && below_right.is_none() {
-                    None
-                } else {
-                    regroup(
-                        &mut work,
-                        &mut tdd,
-                        level,
-                        below_left.as_deref(),
-                        below_right.as_deref(),
-                    )?
-                }
+                regroup(&mut work, &mut tdd, level, below_left.as_deref(), below_right.as_deref())?
             }
         };
     }
@@ -306,11 +280,9 @@ pub(super) fn exists_leaves_structural(
         // operand with every node reachable never does. Append the union node
         // and point the output at it; the other cells stay until a prune, which
         // the invalidation leaves owed.
-        let new_out = tdd.levels[root_vi.idx()].push_node(eng.limits(), &out_pairs)?;
-        tdd.output.local = new_out;
-        tdd.try_invalidate(eng, root_vi)?;
+        tdd.output.local = tdd.levels[root_vi.idx()].push_node(lim, &out_pairs)?;
         work.emitted += 1;
-        lim.level_done(work.emitted)?;
+        work.level_written(&mut tdd, root_vi)?;
     }
     work.gate.flush()?;
     // No level holds a node its parent level does not name that did not
@@ -431,12 +403,7 @@ fn free_subtree_level(
         };
     }
     let n_nodes = tdd.levels[level.idx()].nodes().len();
-    let store = &mut tdd.levels[level.idx()];
-    store.clear();
-    store.push_node(work.eng.limits(), &[TRUE_PAIR])?;
-    work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, level)?;
+    work.write_one_node(tdd, level, &[TRUE_PAIR])?;
     if !wanted || n_nodes == 1 {
         return Ok(None);
     }
@@ -478,7 +445,7 @@ fn union_of_root_cells(
 #[inline]
 fn expand<'a>(remap: Option<&'a Remap>, kept: &'a mut u32, side: EncodedChildRef) -> &'a [u32] {
     match remap {
-        Some(map) => map.get(ChildDecoder::structural().node(side).idx()),
+        Some(map) => map.cells_of(side),
         None => {
             *kept = side.0;
             std::slice::from_ref(kept)
@@ -937,8 +904,7 @@ fn regroup_atom_per_pair(
         for node in starts.windows(2) {
             write_cell(work, level, &mut atoms[node[0] as usize..node[1] as usize])?;
         }
-        lim.level_done(work.emitted)?;
-        tdd.try_invalidate(work.eng, parent)?;
+        work.level_written(tdd, parent)?;
         return Ok(OneAtom::Done(None));
     }
 
@@ -1077,8 +1043,7 @@ fn regroup_atom_per_pair(
     drop(shared_of);
     drop(atoms);
     drop(starts);
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
+    work.level_written(tdd, parent)?;
     Ok(OneAtom::Done(Some(remap)))
 }
 
@@ -1306,12 +1271,7 @@ fn regroup_single_by_left(
         }
         (None, Some(right)) => expand_by_untouched_left(work, &mut out, pairs, right)?,
         (Some(left), right) => {
-            let (cell_reordered, cell_merged, stored_unsorted) =
-                expand_by_rewritten_left(work, &mut out, pairs, left, right)?;
-            (reordered, merged) = (cell_reordered, cell_merged);
-            if stored_unsorted && !reordered && !merged {
-                note_unsorted_right_run();
-            }
+            (reordered, merged) = expand_by_rewritten_left(work, &mut out, pairs, left, right)?;
         }
         (None, None) => return Ok(false),
     }
@@ -1350,13 +1310,7 @@ fn regroup_single_by_left(
         out.is_sorted() && out.windows(2).all(|w| w[0] != w[1]),
         "a single cell's atoms are distinct and in canonical order"
     );
-    let level = &mut tdd.levels[parent.idx()];
-    level.clear();
-    level.push_node(lim, &out)?;
-    drop(out);
-    work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
+    work.write_one_node(tdd, parent, &out)?;
     Ok(true)
 }
 
@@ -1382,7 +1336,7 @@ fn expand_by_untouched_left(
             }));
         } else {
             for pair in same {
-                for &cell in right.get(ChildDecoder::structural().node(pair.right).idx()) {
+                for &cell in right.cells_of(pair.right) {
                     lim.try_push(
                         out,
                         ChildPair::new(pair.left, EncodedChildRef::from_raw(cell)),
@@ -1393,12 +1347,7 @@ fn expand_by_untouched_left(
         let added = out.len() - start;
         work.gate.poll(added as u64 + 1)?;
         if added > 1 {
-            let run = &mut out[start..];
-            if !run.is_sorted() {
-                run.sort_unstable();
-            }
-            let kept = dedup_sorted(run);
-            out.truncate(start + kept);
+            sort_unique_from(out, start);
         }
     }
     Ok(())
@@ -1410,22 +1359,21 @@ fn expand_by_untouched_left(
 /// in whatever order the run stores them), each segment sorted and without
 /// repeats. Returns whether a cell came before one already written, and
 /// whether one came again after another reference's: the segments then need
-/// putting together in order; and whether a segment of right sides as the
-/// level stored them was out of order, which only this pass then sorts.
+/// putting together in order.
 fn expand_by_rewritten_left(
     work: &mut Rewrite<'_>,
     out: &mut Vec<ChildPair>,
     pairs: &[ChildPair],
     left_remap: &Remap,
     right_remap: Option<&Remap>,
-) -> Result<(bool, bool, bool), OperationError> {
+) -> Result<(bool, bool), OperationError> {
     let lim = work.eng.limits();
     // A map of one cell per node is read at its item alone.
     let (left_each, right_each) = (
         left_remap.one_each(),
         right_remap.is_some_and(Remap::one_each),
     );
-    let (mut reordered, mut merged, mut stored_unsorted) = (false, false, false);
+    let (mut reordered, mut merged) = (false, false);
     let mut last: Option<u32> = None;
     for same in pairs.chunk_by(|a, b| a.left == b.left) {
         let idx = ChildDecoder::structural().node(same[0].left).idx();
@@ -1453,7 +1401,7 @@ fn expand_by_rewritten_left(
                 })),
                 Some(map) => {
                     for pair in same {
-                        for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
+                        for &right in map.cells_of(pair.right) {
                             lim.try_push(
                                 out,
                                 ChildPair::new(left, EncodedChildRef::from_raw(right)),
@@ -1474,13 +1422,7 @@ fn expand_by_rewritten_left(
             // map that can reorder and repeat them: sorted and without
             // repeats unless it is so already, which one pass tells.
             if added > 1 {
-                let run = &mut out[start..];
-                if !run.windows(2).all(|w| w[0] < w[1]) {
-                    stored_unsorted |= right_remap.is_none();
-                    run.sort_unstable();
-                    let kept = dedup_sorted(run);
-                    out.truncate(start + kept);
-                }
+                sort_unique_from(out, start);
             }
             match last {
                 Some(before) if cell < before => reordered = true,
@@ -1490,7 +1432,18 @@ fn expand_by_rewritten_left(
             last = Some(cell);
         }
     }
-    Ok((reordered, merged, stored_unsorted))
+    Ok((reordered, merged))
+}
+
+/// Sort `out[start..]` and drop its repeats, unless it ascends strictly.
+fn sort_unique_from(out: &mut Vec<ChildPair>, start: usize) {
+    let run = &mut out[start..];
+    if run.windows(2).all(|w| w[0] < w[1]) {
+        return;
+    }
+    run.sort_unstable();
+    let kept = dedup_sorted(run);
+    out.truncate(start + kept);
 }
 
 /// Keep the first of each run of equal items in the sorted `items`, moved to
@@ -1557,13 +1510,8 @@ fn regroup_single(
         pairs.is_sorted() && pairs.windows(2).all(|w| w[0] != w[1]),
         "a single cell's atoms are distinct and in canonical order"
     );
-    let level = &mut tdd.levels[parent.idx()];
-    level.clear();
-    level.push_node(lim, &pairs)?;
+    work.write_one_node(tdd, parent, &pairs)?;
     lim.discard(pairs);
-    work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
     Ok(())
 }
 
@@ -1624,7 +1572,7 @@ impl RowPlan {
         }
         work.gate.poll(n_pairs)?;
         let width = |remap: Option<&Remap>, side: EncodedChildRef| match remap {
-            Some(map) => map.get(ChildDecoder::structural().node(side).idx()).len() as u64,
+            Some(map) => map.cells_of(side).len() as u64,
             None => 1,
         };
         let (mut atoms, mut left_min, mut left_max, mut right_max) = (0u64, u32::MAX, 0u32, 0u32);
@@ -1712,10 +1660,7 @@ fn regroup_single_rows(
             }
         } else {
             for pair in pairs {
-                let expands = left_remap.is_none_or(|map| {
-                    !map.get(ChildDecoder::structural().node(pair.left).idx())
-                        .is_empty()
-                });
+                let expands = left_remap.is_none_or(|map| !map.cells_of(pair.left).is_empty());
                 let marked = if expands {
                     row.mark(std::slice::from_ref(&pair.right.0), right_remap)
                 } else {
@@ -1735,7 +1680,7 @@ fn regroup_single_rows(
         };
         let groups = Transient::new(
             lim,
-            Runs::pack_by(lim, plan.left_keys as usize, pairs, filed, 0u32)?,
+            Runs::pack_by(lim, plan.left_keys as usize, pairs.len(), pairs.iter().map(filed), 0u32)?,
         );
         let (inverse, dense) = match left_remap {
             Some(map) => (
@@ -1809,9 +1754,7 @@ fn regroup_single_rows(
         lim.charge_bytes(level.arena_capacity_bytes().saturating_sub(before))?;
     }
     work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
-    Ok(())
+    work.level_written(tdd, parent)
 }
 
 /// The groups of [`regroup_single_rows`] worth marking once: run `g` holds a
@@ -1839,7 +1782,7 @@ fn dense_groups(
         let columns: u64 = match right_remap {
             Some(map) => rights
                 .iter()
-                .map(|&right| right_cells(map, right).len() as u64)
+                .map(|&right| map.cells_of(EncodedChildRef::from_raw(right)).len() as u64)
                 .sum(),
             None => rights.len() as u64,
         };
@@ -1857,42 +1800,32 @@ fn dense_groups(
     for g in 0..keys {
         let bits = dense.get_mut(g);
         if !bits.is_empty() {
-            let marked = mark(bits, groups.get(g), right_remap);
+            let marked = mark(groups.get(g), right_remap, |c| bits[(c >> 6) as usize] |= 1u64 << (c & 63));
             work.gate.poll(marked + 1)?;
         }
     }
     Ok(dense)
 }
 
-/// The cells `remap` lists for the stored right reference `right`.
-#[inline]
-fn right_cells(remap: &Remap, right: u32) -> &[u32] {
-    remap.get(
-        ChildDecoder::structural()
-            .node(EncodedChildRef::from_raw(right))
-            .idx(),
-    )
-}
-
-/// Set in `row` the columns that the stored right references `rights` stand
+/// Call `set` on the columns that the stored right references `rights` stand
 /// for: the cells `remap` lists for them, or the references themselves.
 /// Returns how many columns were set, counting a repeat.
 #[inline]
-fn mark(row: &mut [u64], rights: &[u32], remap: Option<&Remap>) -> u64 {
+fn mark(rights: &[u32], remap: Option<&Remap>, mut set: impl FnMut(u32)) -> u64 {
     match remap {
         None => {
             for &right in rights {
-                row[(right >> 6) as usize] |= 1u64 << (right & 63);
+                set(right);
             }
             rights.len() as u64
         }
         Some(map) => {
             let mut marked = 0u64;
             for &right in rights {
-                let cells = right_cells(map, right);
+                let cells = map.cells_of(EncodedChildRef::from_raw(right));
                 marked += cells.len() as u64;
                 for &cell in cells {
-                    row[(cell >> 6) as usize] |= 1u64 << (cell & 63);
+                    set(cell);
                 }
             }
             marked
@@ -1947,30 +1880,10 @@ impl Row {
         self.tops[c >> 18] |= 1u64 << ((c >> 12) & 63);
     }
 
-    /// Set the columns that the stored right references `rights` stand for:
-    /// the cells `remap` lists for them, or the references themselves.
-    /// Returns how many columns were set, counting a repeat.
+    /// [`mark`] into this row.
     #[inline]
     fn mark(&mut self, rights: &[u32], remap: Option<&Remap>) -> u64 {
-        match remap {
-            None => {
-                for &right in rights {
-                    self.set(right);
-                }
-                rights.len() as u64
-            }
-            Some(map) => {
-                let mut marked = 0u64;
-                for &right in rights {
-                    let cells = right_cells(map, right);
-                    marked += cells.len() as u64;
-                    for &cell in cells {
-                        self.set(cell);
-                    }
-                }
-                marked
-            }
-        }
+        mark(rights, remap, |c| self.set(c))
     }
 
     /// OR a row's worth of words in.
@@ -2123,11 +2036,7 @@ fn scan_level(work: &mut Rewrite<'_>, level: &TddLevel) -> Result<Vec<Owned>, Op
 fn fan_out(remap: &Remap, owned: &[Owned], side: Side) -> usize {
     owned
         .iter()
-        .map(|o| {
-            remap
-                .get(ChildDecoder::structural().node(side.of(o.pair)).idx())
-                .len()
-        })
+        .map(|o| remap.cells_of(side.of(o.pair)).len())
         .sum()
 }
 
@@ -2283,9 +2192,7 @@ fn write_level(
         work.emitted += 1;
         lim.check_output_cap(work.emitted)?;
     }
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
-    Ok(())
+    work.level_written(tdd, parent)
 }
 
 /// Hash one atom's owner run, so runs are compared only against those that
@@ -2309,16 +2216,23 @@ impl Rewrite<'_> {
     fn poll(&mut self) -> Result<(), OperationError> {
         self.gate.poll(1)
     }
+
+    /// Hold the nodes emitted so far to the limits once `level` is written,
+    /// and record that it changed.
+    fn level_written(&self, tdd: &mut Tdd, level: VtreeIdx) -> Result<(), OperationError> {
+        self.eng.limits().level_done(self.emitted)?;
+        tdd.try_invalidate(self.eng, level)
+    }
+
+    /// Replace `level` by one node of `pairs`.
+    fn write_one_node(&mut self, tdd: &mut Tdd, level: VtreeIdx, pairs: &[ChildPair]) -> Result<(), OperationError> {
+        let store = &mut tdd.levels[level.idx()];
+        store.clear();
+        store.push_node(self.eng.limits(), pairs)?;
+        self.emitted += 1;
+        self.level_written(tdd, level)
+    }
 }
-
-// A test counts the cells [`regroup_single_by_left`] put in order only by
-// sorting a run of right sides as the level stored them.
-#[cfg(test)]
-use tests::note_unsorted_right_run;
-
-#[cfg(not(test))]
-#[inline(always)]
-fn note_unsorted_right_run() {}
 
 #[cfg(test)]
 #[path = "tests/structural.rs"]
