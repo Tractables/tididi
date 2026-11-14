@@ -86,19 +86,27 @@ impl<'a> Reduction<'a> {
             structural &= !level.is_marginal();
             level.shrink_arrays();
         }
+        // The passes above are the fixpoint of everything a worklist can ask
+        // for. What the lists still hold is what the passes' own rewrites
+        // pushed after the sweep had taken its list, plus content-twin
+        // entries that only the scan reads.
+        self.finish(closed, structural, whole);
+        Ok(())
+    }
+
+    /// Close the levels the passes marked (`closed` saying they were closed
+    /// before), and on a `structural` diagram list no level loose: the prune
+    /// left every node reachable, and a contraction only merges twins, whose
+    /// children are the same. At the `fixpoint` of every pass, clear the
+    /// worklists and certify a structural diagram.
+    fn finish(&mut self, closed: bool, structural: bool, fixpoint: bool) {
         self.tdd.close_marked_levels(closed);
         if structural {
-            // The prune left every node reachable, and a contraction only
-            // merges twins, whose children are the same.
             #[cfg(debug_assertions)]
             super::prune::debug_assert_all_reached(self.tdd);
             self.tdd.dirty.set_loose(Some(Vec::new()));
         }
-        if whole {
-            // The passes above are the fixpoint of everything a worklist can
-            // ask for. What the lists still hold is what the passes' own
-            // rewrites pushed after the sweep had taken its list, plus
-            // content-twin entries that only the scan reads.
+        if fixpoint {
             for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
                 self.tdd.dirty.clear(pass);
             }
@@ -106,7 +114,6 @@ impl<'a> Reduction<'a> {
                 self.tdd.levels.certify(self.tdd.output);
             }
         }
-        Ok(())
     }
 
     /// Prune a negation of a canonical diagram and certify the result, with no
@@ -131,19 +138,12 @@ impl<'a> Reduction<'a> {
             }
             _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
         }
-        #[cfg(debug_assertions)]
-        super::prune::debug_assert_all_reached(self.tdd);
         if shrink {
             for level in &mut self.tdd.levels {
                 level.shrink_arrays();
             }
         }
-        self.tdd.close_marked_levels(closed);
-        self.tdd.dirty.set_loose(Some(Vec::new()));
-        for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
-            self.tdd.dirty.clear(pass);
-        }
-        self.tdd.levels.certify(self.tdd.output);
+        self.finish(closed, true, true);
         Ok(())
     }
 
@@ -171,14 +171,6 @@ impl<'a> Reduction<'a> {
         Ok(false)
     }
 
-    /// Slot compaction reports value merges at marginal levels. They may
-    /// make their parents' nodes equal, so include those boundaries in a rescan.
-    fn compact_for_rescan(&mut self) -> Result<(), OperationError> {
-        let merged = prune_value_slots(self.eng, self.tdd)?;
-        self.tdd.dirty.requeue(Pass::ContentTwin, merged);
-        Ok(())
-    }
-
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
     /// what the slot prune before it reports is not kept.
@@ -193,28 +185,13 @@ impl<'a> Reduction<'a> {
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
-            self.compact_for_rescan()?;
+            // A value merge at a marginal level may make its parents' nodes
+            // equal: those boundaries are scanned again.
+            let merged = prune_value_slots(self.eng, self.tdd)?;
+            self.tdd.dirty.requeue(Pass::ContentTwin, merged);
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);
-        Ok(())
-    }
-
-    /// Marginalization creates pair-fusion work at the affected parents and
-    /// orphans slots. Bounded-precision arithmetic skips fusion because it
-    /// cannot sum exactly.
-    fn after_marginalize(&mut self, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-        let closed = self.tdd.levels.is_closed();
-        if !self.tdd.weights().is_some_and(WeightStore::is_bounded) {
-            let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
-            parents.sort_unstable();
-            parents.dedup();
-            fuse_pairs_at_parents(self.eng, self.tdd, &parents)?;
-            #[cfg(debug_assertions)]
-            crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(self.tdd, Some(&parents), "marginalize_levels");
-        }
-        prune_value_slots(self.eng, self.tdd)?;
-        self.tdd.close_marked_levels(closed);
         Ok(())
     }
 
@@ -227,7 +204,21 @@ impl<'a> Reduction<'a> {
     }
 }
 
-/// Restore marginal boundary invariants after a completed batch of level folds.
+/// Restore marginal boundary invariants after a completed batch of level
+/// folds. Marginalization creates pair-fusion work at the affected parents
+/// and orphans slots. Bounded-precision arithmetic skips fusion because it
+/// cannot sum exactly.
 pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    Reduction::new(eng, tdd).after_marginalize(levels, vtree)
+    let closed = tdd.levels.is_closed();
+    if !tdd.weights().is_some_and(WeightStore::is_bounded) {
+        let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
+        parents.sort_unstable();
+        parents.dedup();
+        fuse_pairs_at_parents(eng, tdd, &parents)?;
+        #[cfg(debug_assertions)]
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&parents), "marginalize_levels");
+    }
+    prune_value_slots(eng, tdd)?;
+    tdd.close_marked_levels(closed);
+    Ok(())
 }
