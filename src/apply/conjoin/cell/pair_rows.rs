@@ -439,8 +439,8 @@ where
             let i = next;
             next += 1;
             let row_base = ctx.output_grid_base + i * width;
-            if W == 0 && !extend_slab(slab, row_base, row_base + width) {
-                slab[row_base..row_base + width].fill(NO_PRODUCT);
+            if W == 0 {
+                open_row(slab, row_base, row_base + width);
             }
             let f_pairs = match f_described {
                 Some(k) => &f_scratch[i * k..(i + 1) * k],

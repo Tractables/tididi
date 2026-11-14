@@ -371,8 +371,8 @@ fn single_rows<const W: usize>(
                     <= 1,
                 "an f node of one pair at most"
             );
-            if W == 0 && !extend_slab(slab, row_base, row_base + width) {
-                slab[row_base..row_base + width].fill(NO_PRODUCT);
+            if W == 0 {
+                open_row(slab, row_base, row_base + width);
             }
             // A dead f node's row stays dead.
             let Some(p) = p else {

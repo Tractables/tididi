@@ -294,9 +294,7 @@ where
     );
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
-        if !extend_slab(slab, row_base, row_base + g_width) {
-            slab[row_base..row_base + g_width].fill(NO_PRODUCT);
-        }
+        open_row(slab, row_base, row_base + g_width);
         let node_idx = &mut slab[..];
 
         let f_pairs = match f_described {

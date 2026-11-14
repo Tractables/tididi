@@ -711,9 +711,7 @@ pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S:
     let described = described_rows(lim, f_level, f_width, lv, rv, f_scratch);
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if SLAB { i * width } else { 0 };
-        if !extend_slab(slab, row_base, row_base + width) {
-            slab[row_base..row_base + width].fill(NO_PRODUCT);
-        }
+        open_row(slab, row_base, row_base + width);
         let f_pairs = match described {
             Some(k) => &f_scratch[i * k..(i + 1) * k],
             None => f_level.pairs_view_decoded(i, f_scratch, lv, rv),
