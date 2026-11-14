@@ -2101,7 +2101,7 @@ pub(crate) fn prune_below_root(
             if tdd.is_structural_internal(c) {
                 return alloc_block(eng, marks, &mut used, &mut slots, width).map(Some);
             }
-            charge_unmarked_child(&mut slots, &mut unmarked, width);
+            charge_child(&mut slots, &mut unmarked, false, width);
             Ok(None)
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
@@ -2143,11 +2143,14 @@ pub(crate) fn prune_below_root(
     Ok(())
 }
 
-/// Charge `slots` for an unmarked (leaf or marginal) child when `width` is
-/// wider than every unmarked child met before it.
+/// Charge `slots` for a child of `width` slots: a structural child's
+/// always, and an unmarked (leaf or marginal) one's when it is wider than
+/// every unmarked child met before it, `unmarked` the widest.
 #[inline(always)]
-fn charge_unmarked_child(slots: &mut usize, unmarked: &mut usize, width: usize) {
-    if *unmarked < width {
+fn charge_child(slots: &mut usize, unmarked: &mut usize, structural: bool, width: usize) {
+    if structural {
+        *slots += width;
+    } else if *unmarked < width {
         *slots += width;
         *unmarked = width;
     }
@@ -2199,13 +2202,9 @@ fn slots_from_output(
     while i < from_output.len() {
         let (left, right) = vtree.children(from_output[i]);
         for c in [left, right] {
-            let width = tdd.reference_slot_count(c);
-            if !tdd.is_structural_internal(c) {
-                charge_unmarked_child(&mut slots, &mut unmarked, width);
-                continue;
-            }
-            slots += width;
-            if entered[c.idx()] {
+            let structural = tdd.is_structural_internal(c);
+            charge_child(&mut slots, &mut unmarked, structural, tdd.reference_slot_count(c));
+            if structural && entered[c.idx()] {
                 from_output.push(c);
             }
         }
@@ -2336,12 +2335,7 @@ pub(crate) fn prune_complement(
             tdd.is_structural_internal(right),
         ];
         for (c, structural) in [left, right].into_iter().zip(sides) {
-            let width = tdd.reference_slot_count(c);
-            if structural {
-                slots += width;
-            } else {
-                charge_unmarked_child(&mut slots, &mut unmarked, width);
-            }
+            charge_child(&mut slots, &mut unmarked, structural, tdd.reference_slot_count(c));
         }
         let found = true_children(lim, tdd, VtreeIdx(t), r as usize, sides, row, i as u32 + 1)?;
         for (c, u) in [left, right].into_iter().zip(found) {
