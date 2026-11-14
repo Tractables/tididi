@@ -188,8 +188,13 @@ where
 /// f row of at least [`GROUPED_MIN_PAIRS`] pairs, the walk takes both sides a
 /// run of shared `.left` at a time.
 ///
-/// A cell the gate does not come due inside is charged before the walk, and
-/// the walk polls nothing, so no call crosses the walk's loops.
+/// The walk takes the cell in blocks the gate does not come due inside,
+/// each charged in one [`PollGate::add_short`] and walked without a poll,
+/// and polls between blocks the f pair or group that brings the gate due,
+/// so that it charges the clock the same amounts at the same points as a
+/// poll per f pair or group would. The trap: a poll inside a block, even
+/// one never taken, is a call site in the loop nest, and the register
+/// allocator then keeps the walk's state in stack slots across it.
 #[inline(always)]
 fn cell_two_sided<L, R, S>(
     (eng, ctx): (&Engine, &CellCtx<'_>),
@@ -205,80 +210,16 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let cell_start = sink.begin();
-    let units = (f_pairs.len() * g_pairs.len()) as u64;
-    if units < gate.due_in() {
-        gate.add_short(units);
-        walk_two_sided::<false, L, R, S>(
-            (eng, ctx),
-            j,
-            (f_pairs, g_pairs),
-            node_idx,
-            (left, right),
-            (sink, gate),
-        )?;
-    } else {
-        walk_two_sided_polled(
-            (eng, ctx),
-            j,
-            (f_pairs, g_pairs),
-            node_idx,
-            (left, right),
-            (sink, gate),
-        )?;
-    }
-    sink.end(eng, node_idx, grid_pos, cell_start)
-}
-
-/// [`walk_two_sided`] for a cell the gate comes due inside, polling as it
-/// walks.
-#[cold]
-#[inline(never)]
-fn walk_two_sided_polled<L, R, S>(
-    (eng, ctx): (&Engine, &CellCtx<'_>),
-    j: usize,
-    (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
-    node_idx: &mut [u32],
-    (left, right): (&L, &R),
-    (sink, gate): (&mut S, &mut PollGate),
-) -> Result<(), OperationError>
-where
-    L: ChildLookup,
-    R: ChildLookup,
-    S: PairSink,
-{
-    walk_two_sided::<true, L, R, S>(
-        (eng, ctx),
-        j,
-        (f_pairs, g_pairs),
-        node_idx,
-        (left, right),
-        (sink, gate),
-    )
-}
-
-/// The pairs of an N×M cell, polling `gate` as they are walked where `POLL`.
-#[inline(always)]
-fn walk_two_sided<const POLL: bool, L, R, S>(
-    (eng, ctx): (&Engine, &CellCtx<'_>),
-    j: usize,
-    (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
-    node_idx: &mut [u32],
-    (left, right): (&L, &R),
-    (sink, gate): (&mut S, &mut PollGate),
-) -> Result<(), OperationError>
-where
-    L: ChildLookup,
-    R: ChildLookup,
-    S: PairSink,
-{
     // ── N×M (both levels multi-pair; masks built for every side that can
     // kill where `ctx.masked`, the level's grid big enough to pay for them)
     // ──────
     // The whole-cell dead test belongs to the row loop, which applies it to
     // every arm before the cell is entered; what is left here is the per-`p1`
     // form of it, which only this arm can use.
-    if f_pairs.len() >= GROUPED_MIN_PAIRS
+    let cell_start = sink.begin();
+    let n1 = f_pairs.len();
+    let n2 = g_pairs.len();
+    if n1 >= GROUPED_MIN_PAIRS
         && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
     {
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
@@ -290,8 +231,6 @@ where
         // change to this walk's order must be made there too. The column
         // table groups only levels with no pass-through side.
         debug_assert!(!left.passthrough() && !right.passthrough());
-        let n2 = g_pairs.len();
-        let n1 = f_pairs.len();
         // Read once per cell: indexed in the per-`p1` test, `reach[j]` was
         // bounds checked and loaded again at every f pair. A side that
         // cannot kill has no masks, and its test never reads the 0.
@@ -302,85 +241,117 @@ where
             0
         };
         let mut p1_idx = 0;
+        // The units of the block's first group, charged by the poll that
+        // came due before it.
+        let mut paid = 0u64;
         while p1_idx < n1 {
-            let p1_left = f_pairs[p1_idx].left;
-            let g1_start = p1_idx;
-            p1_idx += 1;
-            while p1_idx < n1 && f_pairs[p1_idx].left == p1_left {
-                p1_idx += 1;
-            }
-            let g1 = &f_pairs[g1_start..p1_idx];
-            if POLL {
-                gate.poll((g1.len() * n2) as u64)?;
-            }
+            let limit = gate.due_in().saturating_sub(1).saturating_add(paid);
+            let mut taken = 0u64;
+            let mut due = 0u64;
+            while p1_idx < n1 {
+                let p1_left = f_pairs[p1_idx].left;
+                let mut g1_end = p1_idx + 1;
+                while g1_end < n1 && f_pairs[g1_end].left == p1_left {
+                    g1_end += 1;
+                }
+                let units = ((g1_end - p1_idx) * n2) as u64;
+                if taken + units > limit {
+                    due = units;
+                    break;
+                }
+                taken += units;
+                let g1 = &f_pairs[p1_idx..g1_end];
+                p1_idx = g1_end;
 
-            if ctx.masked
-                && left.kills()
-                && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0
-            {
-                continue;
-            }
-
-            let mut g2_start = 0;
-            for &g2_end in g_runs {
-                let g2 = &g_pairs[g2_start..g2_end as usize];
-                g2_start = g2_end as usize;
-                let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
-                if left.kills() && lc == NO_PRODUCT {
+                if ctx.masked
+                    && left.kills()
+                    && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j]
+                        == 0
+                {
                     continue;
                 }
 
-                for p1 in g1 {
-                    if ctx.masked
-                        && right.kills()
-                        && rcols[p1.right.raw() as usize] & rreach == 0
-                    {
+                let mut g2_start = 0;
+                for &g2_end in g_runs {
+                    let g2 = &g_pairs[g2_start..g2_end as usize];
+                    g2_start = g2_end as usize;
+                    let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+                    if left.kills() && lc == NO_PRODUCT {
                         continue;
                     }
-                    let rrow = right.row(p1.right.0);
-                    let node_idx = &*node_idx;
-                    // `lc` is live here, so only the right side can kill.
-                    push_kept(eng, sink, g2, right.kills(), |p2| {
-                        (lc, right.get_in_row(node_idx, rrow, p2.right.0))
-                    })?;
+
+                    for p1 in g1 {
+                        if ctx.masked
+                            && right.kills()
+                            && rcols[p1.right.raw() as usize] & rreach == 0
+                        {
+                            continue;
+                        }
+                        let rrow = right.row(p1.right.0);
+                        let node_idx = &*node_idx;
+                        // `lc` is live here, so only the right side can kill.
+                        push_kept(eng, sink, g2, right.kills(), |p2| {
+                            (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                        })?;
+                    }
                 }
+            }
+            gate.add_short(taken - paid);
+            paid = 0;
+            if due != 0 {
+                gate.poll(due)?;
+                paid = due;
             }
         }
     } else {
         // ── General N×M ───────────────────────────────────────────────
         let kills = left.kills() || right.kills();
-        for p1 in f_pairs {
-            if POLL {
-                gate.poll(g_pairs.len() as u64)?;
-            }
-            if ctx.masked
-                && !left.passthrough()
-                && left.kills()
-                && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0
-            {
-                continue;
-            }
-            if ctx.masked
-                && !right.passthrough()
-                && right.kills()
-                && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j]
-                    == 0
-            {
-                continue;
-            }
-            let lrow = left.row(p1.left.0);
-            let rrow = right.row(p1.right.0);
-            let node_idx = &*node_idx;
-            push_kept(eng, sink, g_pairs, kills, |p2| {
-                let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-                if left.kills() && lc == NO_PRODUCT {
-                    return (lc, lc);
+        let mut start = 0;
+        // The f pairs at the block's head, charged by the poll that came
+        // due before them.
+        let mut paid = 0;
+        while start < n1 {
+            let fit = (gate.due_in().saturating_sub(1) / n2 as u64).min(n1 as u64) as usize;
+            let end = n1.min(start + paid + fit);
+            gate.add_short(((end - start - paid) * n2) as u64);
+            for p1 in &f_pairs[start..end] {
+                if ctx.masked
+                    && !left.passthrough()
+                    && left.kills()
+                    && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j]
+                        == 0
+                {
+                    continue;
                 }
-                (lc, right.get_in_row(node_idx, rrow, p2.right.0))
-            })?;
+                if ctx.masked
+                    && !right.passthrough()
+                    && right.kills()
+                    && ctx.sides.right.live_cols[p1.right.raw() as usize]
+                        & ctx.sides.right.reach[j]
+                        == 0
+                {
+                    continue;
+                }
+                let lrow = left.row(p1.left.0);
+                let rrow = right.row(p1.right.0);
+                let node_idx = &*node_idx;
+                push_kept(eng, sink, g_pairs, kills, |p2| {
+                    let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+                    if left.kills() && lc == NO_PRODUCT {
+                        return (lc, lc);
+                    }
+                    (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                })?;
+            }
+            start = end;
+            paid = 0;
+            if start < n1 {
+                gate.poll(n2 as u64)?;
+                paid = 1;
+            }
         }
     }
-    Ok(())
+    sink.end(eng, node_idx, grid_pos, cell_start)
 }
 
 /// Merged per-cell product walk — one kernel for every dense cell action.
