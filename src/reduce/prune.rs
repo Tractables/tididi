@@ -1449,7 +1449,6 @@ fn kept_described(
     left: (Option<&[u32]>, Option<usize>),
     right: (Option<&[u32]>, Option<usize>),
 ) -> Result<Option<(ImplicitLevel, usize)>, OperationError> {
-    let (lc, rc) = tdd.vtree.children(t);
     let level = &tdd.levels[t.idx()];
     let d = level
         .pairs
@@ -1466,25 +1465,12 @@ fn kept_described(
     // Below 2^31 pairs the description implies the nodes, node `i` of the
     // description being node `i` of the level.
     debug_assert!(level.implied_by().is_some());
-    // A child's slots are its node indices unless it is marginal, whose
-    // renumbering moves value slots; the derivation reads node indices.
-    let kept = |c: VtreeIdx, n: Option<usize>| match n {
-        None => Some(ChildKept::Whole),
-        Some(n) => {
-            (!tdd.levels[c.idx()].child_decoder().is_marginal()).then_some(ChildKept::Renumbered(n))
-        }
-    };
-    let derived = match (kept(lc, left.1), kept(rc, right.1)) {
-        (Some(l), Some(r)) => d
-            .kept_any(nodes, l, r)
-            .or_else(|| d.kept_box(own, nodes, l, r)),
-        _ => None,
-    };
+    let kept = |n: Option<usize>| n.map_or(ChildKept::Whole, ChildKept::Renumbered);
+    let (l, r) = (kept(left.1), kept(right.1));
+    let derived = d.kept_any(nodes, l, r).or_else(|| d.kept_box(own, nodes, l, r));
     let fitted = || {
-        let left = moved(tdd.levels[lc.idx()].child_decoder(), left.0);
-        let right = moved(tdd.levels[rc.idx()].child_decoder(), right.0);
         let mut select = Select::new(own);
-        d.pruned(lim, nodes, |j| select.nth(j), || marked(own), left, right)
+        d.pruned(lim, nodes, |j| select.nth(j), || marked(own), moved(left.0), moved(right.0))
     };
     #[cfg(debug_assertions)]
     if derived.is_some()
@@ -1523,11 +1509,8 @@ fn store_kept(
     left: Option<&[u32]>,
     right: Option<&[u32]>,
 ) {
-    let (lc, rc) = tdd.vtree.children(t);
-    let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
-    let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
     let marked = |i: usize| own[i >> 6] >> (i & 63) & 1 != 0;
-    tdd.levels[t.idx()].store_moved(room, marked, left, right);
+    tdd.levels[t.idx()].store_moved(room, marked, moved(left), moved(right));
 }
 
 /// Rewrite level `t`'s references into the children that lost a slot
@@ -1602,12 +1585,13 @@ fn move_sides(
     });
 }
 
-/// Where a child slot, as a raw word, moves when the child level read
-/// through `view` is renumbered by `remap`: nowhere without one.
-fn moved(view: ChildDecoder, remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
+/// Where a slot of a structural child, as a raw word, moves when the child
+/// is renumbered by `remap`: nowhere without one.
+fn moved(remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
     move |x| {
         remap.map_or(x, |m| {
-            i64::from(view.remap(EncodedChildRef::from_raw(x as u32), m).raw())
+            let side = EncodedChildRef::from_raw(x as u32);
+            i64::from(ChildDecoder::structural().remap(side, m).raw())
         })
     }
 }
@@ -1729,101 +1713,77 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
 ) -> Result<(), OperationError> {
     let [left_base, right_base] = child_base;
     let (left, right) = tdd.vtree.children(t);
-    let left_view = tdd.levels[left.idx()].child_decoder();
-    let right_view = tdd.levels[right.idx()].child_decoder();
+    debug_assert!(
+        (!LEFT || tdd.is_structural_internal(left)) && (!RIGHT || tdd.is_structural_internal(right)),
+        "only a structural child has a block of marks"
+    );
     let level = &tdd.levels[t.idx()];
-    let described = level.implicit();
-    if let Some(d) = described
-        && (!LEFT || !left_view.is_marginal())
-        && (!RIGHT || !right_view.is_marginal())
-    {
+    let width = level.slot_count();
+    if let Some(d) = level.implicit() {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.
-        return mark_described::<LEFT, RIGHT>(
-            lim,
-            d,
-            level.slot_count(),
-            base,
-            left_base,
-            right_base,
-            marks,
-        );
+        return mark_described::<LEFT, RIGHT>(lim, d, width, base, left_base, right_base, marks);
     }
-    let width = level.slot_count();
-    if described.is_none() {
-        // The sides staged as bytes: their slots, rounded up to whole words.
-        let marked: usize = marks[base..base + words(width)]
-            .iter()
-            .map(|w| w.count_ones() as usize)
-            .sum();
-        let staged = |on: bool, c: VtreeIdx| {
-            let slots = tdd.reference_slot_count(c);
-            (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
-                .then_some(words(slots) * 64)
-        };
-        let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
-        note_sides_marked(
-            u64::from(ls.is_some()) + u64::from(rs.is_some()),
-            u64::from(LEFT && ls.is_none()) + u64::from(RIGHT && rs.is_none()),
-        );
-        if ls.is_some() || rs.is_some() {
-            let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
-            return match (ls, rs) {
-                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
-                    lim,
-                    tdd,
-                    t,
-                    (base, child_base),
-                    [ln, rn],
-                    marks,
-                    bytes,
-                ),
-                (None, None) => unreachable!(),
-            };
-        }
-    }
-    let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
-    let mut mark = |marks: &mut [u64], pair: ChildPair| {
-        if LEFT && let Some(s) = left_view.child(pair.left).index() {
-            left_marks.mark(marks, left_base, s);
-        }
-        if RIGHT && let Some(s) = right_view.child(pair.right).index() {
-            right_marks.mark(marks, right_base, s);
-        }
+    // The sides staged as bytes: their slots, rounded up to whole words.
+    let marked: usize = marks[base..base + words(width)]
+        .iter()
+        .map(|w| w.count_ones() as usize)
+        .sum();
+    let staged = |on: bool, c: VtreeIdx| {
+        let slots = tdd.reference_slot_count(c);
+        (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
+            .then_some(words(slots) * 64)
     };
-    // A stored level's marked nodes are read as slices of its arena, in a
-    // loop apart from an implicit level's generated pairs.
-    match (described, level.stored()) {
-        (Some(d), _) => {
-            let mut cursor = d.cursor();
-            for_each_marked_beside(width, base, marks, |marks, i| {
-                d.places_from(cursor.first_of(i))
-                    .for_each(|pair| mark(marks, pair));
-            });
-        }
-        (None, Some(stored)) => for_each_marked_beside(width, base, marks, |marks, i| {
-            stored.of_idx(i).iter().for_each(|&pair| mark(marks, pair));
-        }),
-        (None, None) => unreachable!("a level is stored or implicit"),
+    let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
+    note_sides_marked(
+        u64::from(ls.is_some()) + u64::from(rs.is_some()),
+        u64::from(LEFT && ls.is_none()) + u64::from(RIGHT && rs.is_none()),
+    );
+    if ls.is_some() || rs.is_some() {
+        let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
+        return match (ls, rs) {
+            (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            ),
+            (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            ),
+            (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
+                lim,
+                tdd,
+                t,
+                (base, child_base),
+                [ln, rn],
+                marks,
+                bytes,
+            ),
+            (None, None) => unreachable!(),
+        };
     }
+    let stored = level.stored().expect("a level is stored or implicit");
+    let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
+    for_each_marked_beside(width, base, marks, |marks, i| {
+        for &pair in stored.of_idx(i) {
+            if LEFT {
+                left_marks.mark(marks, left_base, pair.left.raw() as usize);
+            }
+            if RIGHT {
+                right_marks.mark(marks, right_base, pair.right.raw() as usize);
+            }
+        }
+    });
     left_marks.finish(marks);
     right_marks.finish(marks);
     Ok(())
@@ -1868,9 +1828,6 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
 ) -> Result<(), OperationError> {
-    let (left, right) = tdd.vtree.children(t);
-    let left_view = tdd.levels[left.idx()].child_decoder();
-    let right_view = tdd.levels[right.idx()].child_decoder();
     let level = &tdd.levels[t.idx()];
     let stored = level.stored().expect("a staged level is stored");
     let width = level.slot_count();
@@ -1884,18 +1841,19 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
         (Marker::new(child_base[0]), Marker::new(child_base[1]));
     for_each_marked_beside(width, base, marks, |marks, i| {
         for &pair in stored.of_idx(i) {
-            if LEFT && let Some(s) = left_view.child(pair.left).index() {
+            let (l, r) = (pair.left.raw() as usize, pair.right.raw() as usize);
+            if LEFT {
                 if LB {
-                    lb[s] = 1;
+                    lb[l] = 1;
                 } else {
-                    left_marks.mark(marks, child_base[0], s);
+                    left_marks.mark(marks, child_base[0], l);
                 }
             }
-            if RIGHT && let Some(s) = right_view.child(pair.right).index() {
+            if RIGHT {
                 if RB {
-                    rb[s] = 1;
+                    rb[r] = 1;
                 } else {
-                    right_marks.mark(marks, child_base[1], s);
+                    right_marks.mark(marks, child_base[1], r);
                 }
             }
         }
