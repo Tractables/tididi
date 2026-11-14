@@ -310,9 +310,13 @@ where
         // The f pairs at the block's head, charged by the poll that came
         // due before them.
         let mut paid = 0;
-        while start < n1 {
-            let fit = (gate.due_in().saturating_sub(1) / n2 as u64).min(n1 as u64) as usize;
-            let end = n1.min(start + paid + fit);
+        loop {
+            let due = gate.due_in();
+            let end = if (((n1 - start - paid) * n2) as u64) < due {
+                n1
+            } else {
+                start + paid + (due.saturating_sub(1) / n2 as u64) as usize
+            };
             gate.add_short(((end - start - paid) * n2) as u64);
             for p1 in &f_pairs[start..end] {
                 if ctx.masked
@@ -343,12 +347,12 @@ where
                     (lc, right.get_in_row(node_idx, rrow, p2.right.0))
                 })?;
             }
-            start = end;
-            paid = 0;
-            if start < n1 {
-                gate.poll(n2 as u64)?;
-                paid = 1;
+            if end == n1 {
+                break;
             }
+            start = end;
+            gate.poll(n2 as u64)?;
+            paid = 1;
         }
     }
     sink.end(eng, node_idx, grid_pos, cell_start)
