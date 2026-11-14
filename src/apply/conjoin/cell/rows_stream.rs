@@ -1826,7 +1826,7 @@ impl<const WORDS: bool> PairSink for CheckedSum<'_, '_, WORDS> {
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
         eng.limits().try_push(
             self.cell,
-            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+            raw_pair(lc, rc),
         )
     }
 

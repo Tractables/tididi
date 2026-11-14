@@ -68,6 +68,11 @@ pub(crate) fn emit_product_node(
     Ok(())
 }
 
+#[inline(always)]
+pub(crate) fn raw_pair(lc: u32, rc: u32) -> ChildPair {
+    ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))
+}
+
 /// Emit a node holding exactly `pair`, stored inline. The push is
 /// budget-charged, and refused past the level's width cap
 /// ([`reserve_node_room`]).
@@ -147,10 +152,7 @@ impl<'a> ArenaCell<'a> {
         // Safety: `open` found the arena's spare capacity to hold `end -
         // start` pairs past `start`, and the caller writes no more.
         unsafe {
-            self.out.add(self.len).write(ChildPair::new(
-                EncodedChildRef::from_raw(lc),
-                EncodedChildRef::from_raw(rc),
-            ))
+            self.out.add(self.len).write(raw_pair(lc, rc))
         };
         self.len += 1;
     }
@@ -295,7 +297,7 @@ impl<'a> ArenaRow<'a> {
         );
         // Safety: the arena's spare capacity holds `pair_end` past its
         // length, and the caller writes no further.
-        let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
+        let pair = raw_pair(lc, rc);
         unsafe { self.out.add(self.len + self.cell).write(pair) };
         self.cell += 1;
     }
@@ -381,10 +383,7 @@ impl<'a> ArenaRow<'a> {
             self.node_len < self.node_cap,
             "a row closed more cells than its node arena holds"
         );
-        let node = EncodedNode::inline(ChildPair::new(
-            EncodedChildRef::from_raw(lc),
-            EncodedChildRef::from_raw(rc),
-        ));
+        let node = EncodedNode::inline(raw_pair(lc, rc));
         self.ones += 1;
         // Safety: as in `close`.
         unsafe { self.node_out.add(self.node_len).write(node) };
@@ -457,10 +456,7 @@ impl RowCursor {
     pub(crate) unsafe fn single_node(&mut self, lc: u32, rc: u32) -> u32 {
         // Safety: as the caller's.
         unsafe {
-            self.emit(EncodedNode::inline(ChildPair::new(
-                EncodedChildRef::from_raw(lc),
-                EncodedChildRef::from_raw(rc),
-            )))
+            self.emit(EncodedNode::inline(raw_pair(lc, rc)))
         }
     }
 
@@ -475,13 +471,11 @@ impl RowCursor {
     #[inline(always)]
     pub(crate) unsafe fn pair_node(&mut self, l0: u32, r0: u32, l1: u32, r1: u32) -> u32 {
         debug_assert!(self.len + 2 <= self.pair_end, "a row wrote past its room");
-        let pair =
-            |l, r| ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));
         // Safety: the arena's spare capacity holds `pair_end` past its
         // length, and the caller writes no further.
         unsafe {
-            self.out.add(self.len).write(pair(l0, r0));
-            self.out.add(self.len + 1).write(pair(l1, r1));
+            self.out.add(self.len).write(raw_pair(l0, r0));
+            self.out.add(self.len + 1).write(raw_pair(l1, r1));
         }
         let node = EncodedNode::multi_pair(self.len as u32, 2);
         self.len += 2;
@@ -629,7 +623,7 @@ impl PairSink for EmitSink<'_> {
         lc: u32,
         rc: u32,
     ) -> Result<(), OperationError> {
-        let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
+        let pair = raw_pair(lc, rc);
         let nid = self.level.nodes.stored().len() as u32;
         node_idx[grid_pos] = nid;
         *self.inline += 1;
@@ -646,7 +640,7 @@ impl PairSink for EmitSink<'_> {
         try_push_pair_into(
             eng,
             self.level,
-            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+            raw_pair(lc, rc),
         )
     }
 
@@ -738,7 +732,7 @@ impl PairSink for ReservedEmitSink<'_> {
         try_push_pair_into(
             eng,
             self.level,
-            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+            raw_pair(lc, rc),
         )
     }
 
@@ -1036,10 +1030,7 @@ impl PairSink for ProjectedEmitSink<'_> {
         if len < limit {
             // Safety: the limit is within the capacity.
             unsafe {
-                v.as_mut_ptr().add(len).write(ChildPair::new(
-                    EncodedChildRef::from_raw(lc),
-                    EncodedChildRef::from_raw(rc),
-                ));
+                v.as_mut_ptr().add(len).write(raw_pair(lc, rc));
                 v.set_len(len + 1);
             }
             return Ok(());
@@ -1134,7 +1125,7 @@ impl PairSink for ScratchSink<'_> {
         let lim = eng.limits();
         lim.try_push(
             self.out,
-            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+            raw_pair(lc, rc),
         )
     }
 
@@ -1227,10 +1218,7 @@ pub(super) fn push_kept<T, S: PairSink>(
                 // the sink's room, itself within the spare capacity, so the
                 // write stays inside the allocation.
                 unsafe {
-                    out.add(len).write(ChildPair::new(
-                        EncodedChildRef::from_raw(lc),
-                        EncodedChildRef::from_raw(rc),
-                    ))
+                    out.add(len).write(raw_pair(lc, rc))
                 };
                 len += 1;
             }
