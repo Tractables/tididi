@@ -178,8 +178,6 @@ struct Scratch {
     low_hash: Vec<u64>,
     /// The open-addressed table that numbers hashed runs.
     slots: Vec<u64>,
-    /// The open-addressed table that numbers runs by their packed content.
-    exact: Vec<u128>,
     /// Each block's next free place in `group_single` (`place_by_block`).
     low_count: Vec<u32>,
     /// Each low slot's run hashed beside its value count, in
@@ -217,7 +215,6 @@ impl Scratch {
             high_hash,
             low_hash,
             slots,
-            exact,
             low_count,
             low_tally,
             rank,
@@ -245,7 +242,6 @@ impl Scratch {
         lim.discard(low_tally);
         lim.discard(wide_keys);
         lim.discard(wide_triples);
-        lim.discard(exact);
         let RunTable {
             hashes,
             slots: run_slots,
@@ -1295,25 +1291,8 @@ fn split_hashed(
                 .all(|(&p, &q)| (p ^ q) & mask == 0)
             && (single || atoms[x] == atoms[y])
     };
-    let (high_atom, high_atoms) = if single {
-        let runs = (high_starts.as_slice(), &data[..], low_width);
-        number_exact(
-            lim,
-            (&mut s.exact, &mut s.slots),
-            &s.high_hash,
-            &mut s.high_first,
-            runs,
-            same_pairs,
-        )?
-    } else {
-        number_hashed(
-            lim,
-            &mut s.slots,
-            &s.high_hash,
-            &mut s.high_first,
-            same_pairs,
-        )?
-    };
+    let (high_atom, high_atoms) =
+        number_hashed(lim, &mut s.slots, &s.high_hash, &mut s.high_first, same_pairs)?;
 
     // The low values in ascending order, each slot's rank among them, and
     // the hashes in that order.
@@ -1752,91 +1731,6 @@ fn number_hashed(
     gate.flush()?;
     Ok((ids, firsts.len() as u32))
 }
-
-/// [`number_hashed`] for the high runs of `split_hashed` under one parent
-/// atom, which start at `runs.0` among the values `runs.1`, their low parts
-/// `runs.2` bits wide. A run of at most `EXACT_BITS / (runs.2 + 1)` values
-/// is numbered by its content itself, each low part plus one in `runs.2 +
-/// 1` bits, held in a slot of `exact` beside the run's number: equal runs,
-/// and only they, pack alike, so a match is read off the slot rather than
-/// confirmed against the first run of its number, which lies anywhere and
-/// misses the cache. A longer run is numbered through `slots` and `same`.
-/// Both tables are addressed by the runs' hashes and share the numbers.
-fn number_exact(
-    lim: &Limits,
-    (exact, slots): (&mut Vec<u128>, &mut Vec<u64>),
-    hashes: &[u64],
-    firsts: &mut Vec<u32>,
-    (starts, data, low_width): (&[u32], &[u64], usize),
-    same: impl Fn(u32, u32) -> bool,
-) -> Result<(Vec<u32>, u32), OperationError> {
-    let (n, count) = (data.len(), hashes.len());
-    let (mask, field) = ((1u64 << low_width) - 1, low_width + 1);
-    let fits = EXACT_BITS / field;
-    let short = runs(starts, n).filter(|range| range.len() <= fits).count();
-    let (exact_bits, hashed_bits) = (
-        index_bits(2 * short).max(4),
-        index_bits(2 * (count - short)).max(4),
-    );
-    exact.clear();
-    lim.try_resize(exact, 1 << exact_bits, 0u128)?;
-    slots.clear();
-    lim.try_resize(slots, 1 << hashed_bits, 0u64)?;
-    let mut ids = Vec::new();
-    lim.reserve_exact(&mut ids, count)?;
-    firsts.clear();
-    let mut gate = lim.gate();
-    gate.poll(n as u64)?;
-    for (k, &hash) in hashes.iter().enumerate() {
-        if let Some(&ahead) = hashes.get(k + PROBE_AHEAD) {
-            if run(starts, (k + PROBE_AHEAD) as u32, n).len() <= fits {
-                prefetch_slot(exact, exact_bits, ahead);
-            } else {
-                prefetch_slot(slots, hashed_bits, ahead);
-            }
-        }
-        let range = run(starts, k as u32, n);
-        if range.len() > fits {
-            ids.push(probe(
-                lim,
-                slots,
-                hashed_bits,
-                hash,
-                k as u32,
-                firsts,
-                &same,
-            )?);
-            continue;
-        }
-        let key = data[range].iter().rev().fold(0u128, |key, &value| {
-            key << field | ((value & mask) + 1) as u128
-        });
-        let mut at = (finish(hash) >> (64 - exact_bits)) as usize;
-        let id = loop {
-            let slot = exact[at];
-            if slot == 0 {
-                let id = firsts.len() as u32;
-                exact[at] = key | (id as u128 + 1) << EXACT_BITS;
-                lim.try_push(firsts, k as u32)?;
-                break id;
-            }
-            if slot & EXACT_MASK == key {
-                break (slot >> EXACT_BITS) as u32 - 1;
-            }
-            at = (at + 1) & (exact.len() - 1);
-        };
-        ids.push(id);
-    }
-    gate.flush()?;
-    Ok((ids, firsts.len() as u32))
-}
-
-/// Bits of an exact slot of [`number_exact`] that hold a run's content;
-/// the run's number, plus one, lies above them.
-const EXACT_BITS: usize = 96;
-
-/// The content of an exact slot of [`number_exact`].
-const EXACT_MASK: u128 = (1 << EXACT_BITS) - 1;
 
 /// Runs ahead of the probe whose slot [`number_hashed`] asks the cache
 /// for: the slots are random, so a table past the cache misses on nearly
