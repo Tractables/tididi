@@ -95,10 +95,6 @@ fn a_node_past_the_width_cap_is_refused() {
     assert_eq!(level.push_node(lim, &[b]), Err(IndexOverflow));
     assert_eq!(level.push_node(lim, &[a, b]), Err(IndexOverflow));
     assert_eq!(level.push_node_from(lim, 2, [a, b].into_iter()), Err(IndexOverflow));
-    let mut owned = Vec::new();
-    lim.reserve(&mut owned, 2).unwrap();
-    owned.extend([a, b]);
-    assert_eq!(level.push_node_owned(lim, owned), Err(IndexOverflow));
     assert_eq!(level.try_push_multi_by_range(lim.level_width_cap(), 0, 2), Err(IndexOverflow));
     assert_eq!(crate::diagram::reserve_node_room(lim, level.nodes.stored_mut(), 1), Err(IndexOverflow));
     assert_eq!((level.node_count(), level.pairs.len()), (nodes, pairs));

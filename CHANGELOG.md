@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Breaking changes:
+
+- `Engine::from_models_direct` is removed. `Engine::from_models` builds the
+  same diagram.
+
 ## 0.2.0
 
 Breaking changes:

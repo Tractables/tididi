@@ -249,28 +249,6 @@ impl Emit<'_> {
         };
         let (atoms, triples) = match split {
             Decomposition::Triples { atoms, triples } => (atoms, triples),
-            Decomposition::Pairs { mut pairs } => {
-                // Neither child is a leaf, and the pairs name their atoms: where
-                // each child stored its atoms in atom order, their nodes.
-                lim.gate().poll(pairs.len() as u64)?;
-                let in_atom_order =
-                    |nodes: &[NodeIdx]| nodes.iter().enumerate().all(|(i, node)| node.idx() == i);
-                if !(in_atom_order(l) && in_atom_order(r)) {
-                    for pair in pairs.iter_mut() {
-                        *pair = ChildPair::new(l[pair.left.0 as usize], r[pair.right.0 as usize]);
-                    }
-                    pairs.sort_unstable();
-                }
-                let local = match pairs.len() {
-                    1 => {
-                        let local = assembly.push(eng, t, &pairs);
-                        lim.discard(pairs);
-                        local?
-                    }
-                    _ => assembly.push_owned(eng, t, pairs)?,
-                };
-                return one(local);
-            }
             Decomposition::ByAtom { ends, pairs } => {
                 // The atoms' pairs run in child-atom order.
                 let ordered = ascending(l) && ascending(r);

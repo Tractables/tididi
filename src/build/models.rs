@@ -29,7 +29,6 @@ pub(crate) mod layout;
 pub use columns::RowSelection;
 use layout::Layout;
 use rows::{words_per_row, distinct_rows};
-use split::Direct;
 
 impl Tdd {
     /// The canonical diagram whose models are exactly `rows`, read as
@@ -104,38 +103,6 @@ impl Engine {
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {
-        self.models_built(vtree, vars, rows, Direct::Off)
-    }
-
-    /// [`from_models`](Self::from_models) with buffer reuse and hashing for
-    /// wide values that repeat often. Produces the same diagram, including
-    /// node numbering and pair order.
-    ///
-    /// This route can avoid sorting a wide field with few distinct values
-    /// and copying pairs at a level with one node and two internal children.
-    /// The benefit depends on the rows and vtree; compare both constructors
-    /// on representative inputs before selecting it for repeated builds.
-    ///
-    /// # Errors
-    ///
-    /// As [`Tdd::from_models`].
-    pub fn from_models_direct(
-        &self,
-        vtree: &Arc<Vtree>,
-        vars: &[VarId],
-        rows: &[u64],
-    ) -> Result<Tdd, OperationError> {
-        self.models_built(vtree, vars, rows, Direct::On)
-    }
-
-    /// The build behind both entry points.
-    fn models_built(
-        &self,
-        vtree: &Arc<Vtree>,
-        vars: &[VarId],
-        rows: &[u64],
-        direct: Direct,
-    ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         let w = words_per_row(vars.len());
@@ -157,13 +124,12 @@ impl Engine {
         // The split sorts through the same buffers the rows did.
         let mut radix = crate::sort::Radix::default();
         let sorted = distinct_rows(lim, &mut radix, vars.len(), &layout, rows, w)?;
-        build_sorted(self, vtree, &layout, sorted, w, radix, direct)
+        build_sorted(self, vtree, &layout, sorted, w, radix)
     }
 }
 
 /// The diagram of `sorted`, distinct rows in `layout`'s order, `w` words
-/// each, built with the radix sort's buffers `radix`, the split writing
-/// pairs as `direct` says.
+/// each, built with the radix sort's buffers `radix`.
 ///
 /// After the row sort, construction walks the vtree from the root down,
 /// splitting each node's distinct values into its children's, and finally
@@ -185,9 +151,8 @@ fn build_sorted(
     sorted: std::borrow::Cow<'_, [u64]>,
     w: usize,
     radix: crate::sort::Radix,
-    direct: Direct,
 ) -> Result<Tdd, OperationError> {
-    let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix, direct)?;
+    let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix)?;
     emit::fill(eng, vtree, layout, &mut plans)
 }
 

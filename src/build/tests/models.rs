@@ -589,96 +589,6 @@ fn merging_table(rng: &mut Lcg, width: u32, form: usize) -> Vec<Vec<bool>> {
     }
 }
 
-#[test]
-fn the_direct_build_builds_the_existing_diagram_node_for_node() {
-    // The build that writes the top node's pairs as the split finds them,
-    // and hands the buffer to the level, must leave the levels the build
-    // through child atoms leaves: with low values that merge, with free
-    // variables around the constrained ones, under every vtree shape, and
-    // whether the level's arena is fresh (a fresh engine) or recycled and
-    // dropped for the buffer (an engine that built before).
-    let mut rng = Lcg::new(0xd1_2026);
-    let mut internal = 0;
-    for round in 0..400usize {
-        let width = 2 + rng.below(13) as u32;
-        let free = rng.below(3) as u32;
-        let shapes = vtree_shapes(width + free);
-        let (name, vtree) = &shapes[round % shapes.len()];
-        let ids = shuffled_vars(&mut rng, width + free);
-        let constrained = &ids[..width as usize];
-        let table = merging_table(&mut rng, width, round % 4);
-        let rows = packed_rows(width as usize, &table);
-        let what = format!("round {round}, {name}, {width} constrained, {free} free");
-        let want = Tdd::from_models(vtree, constrained, &rows).unwrap();
-        let eng = Engine::new();
-        for pass in ["fresh", "pooled"] {
-            let got = eng.from_models_direct(vtree, constrained, &rows).unwrap();
-            assert_canonical(&got);
-            assert_same_levels(&got, &want, &format!("{what}, {pass}"));
-        }
-        let top = want.output().vtree;
-        if !vtree.node(top).is_leaf() {
-            let (left, right) = vtree.children(top);
-            internal += usize::from(!vtree.node(left).is_leaf() && !vtree.node(right).is_leaf());
-        }
-    }
-    assert!(internal > 100, "the top node's children are internal often enough: {internal}");
-}
-
-#[test]
-fn a_wide_block_of_few_values_builds_the_existing_diagram_node_for_node() {
-    // A near-unique key over a wide block of a few combinations, as a rank
-    // relation's price over its flags: where a node's low part is that
-    // block, the direct build ranks its values rather than sorting them,
-    // and must still leave the levels the build through child atoms does.
-    let mut rng = Lcg::new(0x5b_2026);
-    for round in 0..24usize {
-        let (key, wide) = (10 + rng.below(8) as u32, 20 + rng.below(12) as u32);
-        let width = key + wide;
-        let palette: Vec<u64> = (0..1 + rng.below(6)).map(|_| rng.next_u64()).collect();
-        let rows = 1500 + rng.below(3000) as usize;
-        let table: Vec<Vec<bool>> = (0..rows)
-            .map(|_| {
-                let mut bits = code_bits(rng.below(1 << key) as u32, key);
-                let combo = palette[rng.below(palette.len() as u64) as usize];
-                bits.extend((0..wide).map(|i| (combo >> i) & 1 == 1));
-                bits
-            })
-            .collect();
-        let packed = packed_rows(width as usize, &table);
-        for (name, vtree) in vtree_shapes(width) {
-            let what = format!("round {round}, {name}, {key} key bits, {wide} wide");
-            let want = Tdd::from_models(&vtree, &vars(width), &packed).unwrap();
-            let got = Engine::new().from_models_direct(&vtree, &vars(width), &packed).unwrap();
-            assert_canonical(&got);
-            assert_same_levels(&got, &want, &what);
-        }
-    }
-}
-
-#[test]
-fn every_refusal_point_of_the_direct_build_returns_the_buffers() {
-    // As the build through child atoms: a refusal anywhere, including where
-    // the level takes the split's buffer, answers over budget and leaves
-    // the pool as it found it.
-    let vtree = Arc::new(Vtree::balanced(8));
-    let table: Vec<Vec<bool>> = (0..60u32)
-        .map(|code| {
-            let mut bits = code_bits(code % 16, 4);
-            bits.extend(code_bits(code * 7 % 5, 4));
-            bits
-        })
-        .collect();
-    let rows = packed_rows(8, &table);
-    let want = Tdd::from_models(&vtree, &vars(8), &rows).unwrap();
-    assert_refusal_sweep_returns_buffers(
-        &vtree,
-        60,
-        |eng| eng.from_models_direct(&vtree, &vars(8), &rows),
-        |f, cut| assert_same_levels(f, &want, &format!("cut {cut}")),
-    );
-}
-
 /// Each internal level's nodes ascend by their least pair, the right
 /// child's node compared first.
 fn assert_numbered_by_least_pairs(f: &Tdd, what: &str) {
@@ -710,8 +620,6 @@ fn a_level_numbers_its_nodes_as_a_build_level_by_level_meets_them() {
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), BigUint::from(16u32), "{name}");
         assert_numbered_by_least_pairs(&f, name);
-        let direct = Engine::new().from_models_direct(&vtree, &vars(12), &rows).unwrap();
-        assert_same_levels(&direct, &f, name);
     }
     // Tables of every form, with free variables around them.
     let mut rng = Lcg::new(0x1e_2026);

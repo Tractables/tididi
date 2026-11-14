@@ -589,35 +589,6 @@ impl TddLevel {
         Ok(idx)
     }
 
-    /// [`push_node`](Self::push_node) for a node whose pairs, at least two,
-    /// come in a buffer of their own: where the level holds no pairs yet,
-    /// the buffer becomes its pair arena, so a node with a pair per row is
-    /// not copied, and an empty arena the level held, recycled and never
-    /// charged, is dropped. Otherwise the pairs are copied and the buffer is
-    /// handed back to `lim`. The buffer's growth was charged to `lim`.
-    pub(crate) fn push_node_owned(
-        &mut self, lim: &crate::limits::Limits, pairs: Vec<ChildPair>,
-    ) -> Result<NodeIdx, OperationError> {
-        debug_assert!(pairs.len() >= 2, "an owned node has more than one pair");
-        if !self.pairs.is_empty() {
-            let pushed = self.push_node(lim, &pairs);
-            lim.discard(pairs);
-            return pushed;
-        }
-        let idx = self.ensure_node_slot(lim)?;
-        let len = pairs.len();
-        drop(std::mem::replace(self.pairs.stored_mut(), pairs));
-        let node = match self.try_encode_multi(lim, 0, len) {
-            Ok(node) => node,
-            Err(refused) => {
-                lim.discard(std::mem::take(self.pairs.stored_mut()));
-                return Err(refused);
-            }
-        };
-        self.nodes.stored_mut().push(node);
-        Ok(idx)
-    }
-
     /// Add one pair to the node at `idx`, in place.
     ///
     /// The node's pairs stay contiguous: a range already at the arena's tail
