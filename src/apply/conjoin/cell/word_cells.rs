@@ -32,10 +32,6 @@ const CELL_SHARE: u64 = 8;
 const BITS_SHARE: u64 = 2;
 const CELL_BITS_MAX_WORDS: usize = 1 << 22;
 
-/// The candidates a level's rows count before the level stops reading
-/// rows by vectors, if more than one of [`LIVE_SHARE`] of them was live.
-const PROBATION: u64 = 1 << 16;
-
 /// The f nodes, and the g nodes, a level's sample takes at most, spread
 /// over the level ([`sample_cells`]).
 const SAMPLE_NODES: usize = 32;
@@ -604,9 +600,7 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
 /// one's live g pairs in the cell read off its vectors again (a column of
 /// one pair needs no reading). A row whose bits would take many words
 /// against its live candidates ([`BITS_SHARE`]) sorts them by column
-/// instead and writes its live cells off the sorted list. A level whose
-/// rows hold mostly live candidates walks the rest of them
-/// ([`PROBATION`]).
+/// instead and writes its live cells off the sorted list.
 pub(crate) fn run_level_rows_words(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -839,11 +833,6 @@ struct ByWords<'w, S, const SLAB: bool> {
     /// Words a vector, and words a vector's summary.
     words: usize,
     sum_words: usize,
-    /// The candidates of the rows counted so far, and the live ones;
-    /// whether the level still counts its rows.
-    seen: u64,
-    live: u64,
-    on: bool,
     /// The current row, and how it is read.
     row: usize,
     mode: RowMode,
@@ -1084,9 +1073,6 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
             lim,
             words,
             sum_words,
-            seen: 0,
-            live: 0,
-            on: true,
             row: usize::MAX,
             mode: RowMode::Walk,
             cell_words: 0,
@@ -1132,16 +1118,8 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         self.sink.row(i);
         self.row = i;
         self.mode = RowMode::Walk;
-        if !self.on {
-            return Ok(RowMode::Walk);
-        }
         let candidates = f_pairs.len() as u64 * self.w.g_flat.len() as u64;
         let live = self.count_row(f_pairs, node_idx, left, right)?;
-        self.seen += candidates;
-        self.live += live;
-        if self.seen >= PROBATION && self.live * LIVE_SHARE > self.seen {
-            self.on = false;
-        }
         if live * LIVE_SHARE > candidates {
             return Ok(RowMode::Walk);
         }
@@ -1640,8 +1618,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L
 /// `width`: the children named, ascending, into `named`; where each one's
 /// pairs start, and one past the last, into `named_start`; the pairs, by
 /// child and then in order, into `by_child`. A counting sort, `counts` a
-/// child, where the children are not many more than the pairs; a
-/// comparison sort otherwise.
+/// child.
 fn by_child(
     lim: &Limits,
     g_flat: &[ChildPair],
@@ -1660,40 +1637,27 @@ fn by_child(
     named_start.clear();
     by_child.clear();
     lim.reserve_exact(by_child, g_flat.len())?;
-    if width <= 4 * g_flat.len() + 4096 {
-        counts.clear();
-        lim.try_resize(counts, width, 0)?;
-        for q in g_flat {
-            counts[field(q) as usize] += 1;
+    counts.clear();
+    lim.try_resize(counts, width, 0)?;
+    for q in g_flat {
+        counts[field(q) as usize] += 1;
+    }
+    let mut at = 0u32;
+    for (c, n) in counts.iter_mut().enumerate() {
+        if *n > 0 {
+            lim.try_push(named, c as u32)?;
+            lim.try_push(named_start, at)?;
+            let k = *n;
+            *n = at;
+            at += k;
         }
-        let mut at = 0u32;
-        for (c, n) in counts.iter_mut().enumerate() {
-            if *n > 0 {
-                lim.try_push(named, c as u32)?;
-                lim.try_push(named_start, at)?;
-                let k = *n;
-                *n = at;
-                at += k;
-            }
-        }
-        lim.try_push(named_start, at)?;
-        by_child.resize(g_flat.len(), 0);
-        for (q, p) in g_flat.iter().enumerate() {
-            let n = &mut counts[field(p) as usize];
-            by_child[*n as usize] = q as u32;
-            *n += 1;
-        }
-    } else {
-        by_child.extend(0..g_flat.len() as u32);
-        by_child.sort_by_key(|&q| field(&g_flat[q as usize]));
-        for (k, &q) in by_child.iter().enumerate() {
-            let c = field(&g_flat[q as usize]);
-            if named.last() != Some(&c) {
-                lim.try_push(named, c)?;
-                lim.try_push(named_start, k as u32)?;
-            }
-        }
-        lim.try_push(named_start, g_flat.len() as u32)?;
+    }
+    lim.try_push(named_start, at)?;
+    by_child.resize(g_flat.len(), 0);
+    for (q, p) in g_flat.iter().enumerate() {
+        let n = &mut counts[field(p) as usize];
+        by_child[*n as usize] = q as u32;
+        *n += 1;
     }
     Ok(())
 }
