@@ -667,13 +667,16 @@ pub(super) fn find_twin_groups(
     // of the groups it lists as the merge would.
     let child = level.stored().map(|stored| stored.nodes());
     let mut by_fingerprints = screen && width < NARROW_SCREENED_WIDTH;
-    // A level the diagram does not list loose has every node named.
-    let loose = tdd.dirty.loose().is_none_or(|loose| loose.contains(&t1.0));
     let refines = !by_fingerprints
         && (!screen
             || match screen_twins(parent_level, t1_side, lim, scratch)? {
                 Screen::Alike => true,
                 Screen::Named => {
+                    // A level the diagram does not list loose has every node
+                    // named. The list is scanned, which costs a search that
+                    // reads few pairs more than the search itself: read it
+                    // here only.
+                    let loose = tdd.dirty.loose().is_none_or(|loose| loose.contains(&t1.0));
                     match (loose, parent_level.stored()) {
                         (true, Some(stored)) => {
                             mark_named(stored, t1_side, width, lim, &mut scratch.twin_named)?;
