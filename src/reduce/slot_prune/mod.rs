@@ -134,8 +134,9 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         }
     }
 
-    // It rewrites stores in place and so cannot stop partway, for the reason
-    // `prune_unreachable` gives; charging keeps the walk on the work clock.
+    // It rewrites stores in place and polls for no stop: it stops only where
+    // a level's buffers are refused, at a level boundary. Charging keeps the
+    // walk on the work clock.
     lim.charge_work(tdd.vtree.num_nodes() as u64);
 
     Ok(merged_levels)

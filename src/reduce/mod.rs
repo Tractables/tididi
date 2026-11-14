@@ -68,7 +68,8 @@ pub enum ContentTwinPolicy<'a> {
     #[default]
     Fresh,
     /// Carry the scan schedule across successive diagrams. A weighted diagram
-    /// is scanned on every call regardless of the scheduled size.
+    /// with a marginal level is scanned on every call regardless of the
+    /// scheduled size; a diagram with no marginal level is never scanned.
     Adaptive(&'a mut ContentTwinSchedule),
 }
 

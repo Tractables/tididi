@@ -16,7 +16,8 @@
 //! bits and rewrites its references through. Only a structural internal
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks. The read that settles a loose level
-//! ([`settle_loose`]) marks a byte per slot instead, one level at a time.
+//! ([`settle_loose`]) counts instead, in a `u32` a slot, the pairs that name
+//! each node of the children it reads, one level at a time.
 
 use crate::diagram::{
     ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel,
@@ -333,7 +334,7 @@ pub(crate) enum PruneScope {
 ///
 /// Marks reachability top-down, then compacts each level bottom-up, remapping
 /// child references in the same pass. Every level that lost a node is pushed
-/// onto the contract worklists (`seed_dirty_levels`), so the caller needs no
+/// onto the contract worklists (`invalidate_shrunk`), so the caller needs no
 /// reseed.
 ///
 /// `scope` says how much of the diagram has to be walked; see [`PruneScope`].
@@ -353,8 +354,9 @@ pub(crate) enum PruneScope {
 ///
 /// Returns `Err(OperationError::OverBudget)` if a reservation of the marks,
 /// or of the new indices the compaction rewrites references through, is
-/// refused. Every one is taken before any mutation of `tdd`, so the diagram
-/// is then untouched.
+/// refused, and the stop the settle of the loose levels polls for
+/// ([`settle_loose`]). Every one comes before any mutation of `tdd`, so
+/// the diagram is then untouched.
 pub(crate) fn prune_unreachable(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -1648,9 +1650,8 @@ fn classic_mark(
 /// and right children's, `None` for a child whose marks nobody reads: a leaf
 /// or marginal level, which the compaction never drops a node from.
 ///
-/// A side of a marginal child may be an inline count rather than a slot; such a
-/// side names no child slot, so the decoder answers `None` for it and only real
-/// slots are marked. A structural side is its own slot.
+/// Only a structural child has a block, and a side into one is its slot: no
+/// side into a marginal child is read.
 ///
 /// `bytes` is the scratch a side marked a byte a slot takes ([`mark_sides`]).
 ///
@@ -1984,8 +1985,9 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
 
 // ── The seeded walk ──────────────────────────────────────────────────────────
 
-/// One level the seeded walk marked: where its marks live, and what it reads
-/// its children's marks from.
+/// One level a walk marked, below the root or over the whole diagram
+/// ([`visit_at`]): where its marks live, and what it reads its children's
+/// marks from.
 #[derive(Clone, Copy)]
 pub(super) struct Visit {
     level: VtreeIdx,
@@ -2019,8 +2021,9 @@ pub(super) enum Start<'a> {
     Seeds(&'a [VtreeIdx], &'a [u8], &'a [VtreeIdx]),
 }
 
-/// [`prune_unreachable`] under [`PruneScope::BelowRoot`]: walk down from
-/// `start`, stopping at every level that loses no node. With `forced`, also
+/// [`prune_unreachable`] under [`PruneScope::BelowRoot`], and under
+/// [`PruneScope::Whole`] on a diagram that knows its loose levels: walk down
+/// from `start`, stopping at every level that loses no node. With `forced`, also
 /// entering every level it marks whose entry has [`FORCED`] set, whether or
 /// not it lost one.
 pub(super) fn prune_below_root(
