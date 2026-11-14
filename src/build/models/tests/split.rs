@@ -284,14 +284,12 @@ fn few_highs(rng: &mut Lcg, low_width: usize, high_width: usize, many: bool) -> 
 }
 
 #[test]
-fn a_single_atom_split_reads_its_pairs_off_either_side() {
-    // Few high values over many low values of one key each: the low side's
-    // first runs hold a key or two apiece, and the pairs are read off them.
-    // Either side must give the pairs the general split gives, and both are
-    // taken.
+fn a_single_atom_split_of_few_high_values_splits_as_the_general_split_does() {
+    // Few high values over many low values of one key each, beside random
+    // parents.
     let lim = Limits::new();
     let mut rng = Lcg::new(0x10_51de);
-    let mut sides = [0usize; 2];
+    let mut taken = 0;
     for round in 0..600 {
         let (low_width, high_width) = (20 + rng.below(30) as usize, 1 + rng.below(6) as usize);
         let (parent, widths) = match round % 3 {
@@ -305,10 +303,10 @@ fn a_single_atom_split_reads_its_pairs_off_either_side() {
         let want = split_parts(&lim, &mut s, &parent, widths, false).unwrap();
         let mut copy = Values { words: 1, data: parent.data.clone(), atom: parent.atom.clone(), atoms: 1 };
         let Some(got) = split_single(&lim, &mut s, &mut copy, widths).unwrap() else { continue };
-        sides[usize::from(single_from_low(parent.len(), &s).is_some())] += 1;
+        taken += 1;
         assert_same_split(&got, &want, &format!("round {round}"));
     }
-    assert!(sides.iter().all(|&count| count > 50), "both sides are read: {sides:?}");
+    assert!(taken > 100, "the single-atom split is taken: {taken}");
 }
 
 /// A single-atom split of borrowed values charges the copy it writes, so

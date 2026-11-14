@@ -134,8 +134,7 @@ struct Scratch {
     /// occupied low slots.
     order: Vec<u32>,
     /// Sort keys: a low part beside the value's index, below it on the
-    /// one-word path (see `KeyLayout`) and above it otherwise. The keys
-    /// `group_single` places by block.
+    /// one-word path (see `KeyLayout`) and above it otherwise.
     sort_keys: Vec<u64>,
     /// Sort keys too wide for one word.
     wide_keys: Vec<u128>,
@@ -156,8 +155,7 @@ struct Scratch {
     /// Per parent value, its low value index above its atom (in
     /// `split_words`, the low value itself): the keys of the high child's
     /// runs. Once they are numbered, the packed triples. In `split_hashed`,
-    /// each occupied low slot's run hashed; in `pairs_from_low`, the node's
-    /// pairs.
+    /// each occupied low slot's run hashed.
     high_keys: Vec<u64>,
     /// Per parent value in low order, its high value index above its
     /// atom: the keys of the low child's runs. In `confirm_lows`, the
@@ -173,20 +171,17 @@ struct Scratch {
     wide_triples: Vec<u128>,
     /// Each high value's run hashed.
     high_hash: Vec<u64>,
-    /// The hashes of the low runs `group_single` numbers by hash, in run
-    /// order (see `low_runs`).
+    /// The hashes of the low runs of `group_single`, in run order (see
+    /// `low_runs`).
     low_hash: Vec<u64>,
     /// The open-addressed table that numbers hashed runs.
     slots: Vec<u64>,
-    /// Each block's next free place in `group_single` (`place_by_block`).
-    low_count: Vec<u32>,
     /// Each low slot's run hashed beside its value count, in
     /// `split_hashed`, where one pass updates both: side by side, a value
     /// reaches both in one cache line. Once the lists are laid out, the
     /// count is where the slot's next pair goes.
     low_tally: Vec<(u64, u32)>,
-    /// Each low slot's rank among the low values. Per high value, the atom
-    /// of the low value whose one key it is, in `group_single`.
+    /// Each low slot's rank among the low values.
     rank: Vec<u32>,
     /// The radix sort's buffers.
     radix: Radix,
@@ -215,7 +210,6 @@ impl Scratch {
             high_hash,
             low_hash,
             slots,
-            low_count,
             low_tally,
             rank,
             radix,
@@ -234,7 +228,6 @@ impl Scratch {
             cursor,
             low_first,
             high_first,
-            low_count,
             rank,
         ] {
             lim.discard(buf);
@@ -752,16 +745,7 @@ fn split_single(
     // Keys of one low part ascend by high value, as the values did.
     s.radix.sort(lim, parent.data.to_mut(), 0, low_width)?;
     lim.check_stop()?;
-    // One parent atom leaves the parent's atoms unread, so their buffer
-    // takes the low values' atoms.
-    let (split, low_atom, low_atoms) = group_single(
-        lim,
-        s,
-        &parent.data,
-        low_width,
-        &high_atom,
-        &mut parent.atom,
-    )?;
+    let (split, low_atom, low_atoms) = group_single(lim, s, &parent.data, low_width, &high_atom)?;
     let low_data = low_parts(lim, parent.data.to_mut(), &s.low_starts, mask)?;
     // The high runs' parts are the high child's values, so their buffer is
     // handed over rather than copied.
@@ -796,33 +780,22 @@ fn low_parts(
 }
 
 /// The low side of `split_single` and the node's pairs, from the keys
-/// sorted by low part. Each low value's run and hash go into `s`, and
-/// the low values' atoms into `spare` where it holds as many. Returns the
-/// pairs, each low value's atom, and how many low atoms there are.
+/// sorted by low part. Each low value's run and hash go into `s`. Returns
+/// the pairs, each low value's atom, and how many low atoms there are.
 ///
-/// Runs of one atom list the same keys, so the first run of each atom on
-/// either side lists all the node's pairs, and the pairs are read off the
-/// side whose first runs hold fewer keys (see `single_from_low`): the low
-/// side where most low values have one key and share a few atoms, as under
-/// a high part of few values.
-///
-/// On the high side the keys come by low value, and each key's place among
-/// its high value's is a jump. Taken one key at a time over every high
-/// value, those jumps miss the cache. The keys are laid out by blocks of
-/// high values instead, each block where its values lie in the parent's
-/// order, which writes to few places at once, and each block then places
-/// its keys among its own values' pairs, which are close by.
+/// Runs of one atom list the same keys, so the first run of each high atom
+/// lists all the node's pairs. The keys come by low value, and each one is
+/// written at its high value's next slot among those runs' pairs.
 fn group_single(
     lim: &Limits,
     s: &mut Scratch,
     keys: &[u64],
     low_width: usize,
     high_atom: &[u32],
-    spare: &mut Vec<u32>,
 ) -> Result<(Decomposition, Vec<u32>, u32), OperationError> {
     let n = keys.len();
-    let high_count = s.high_starts.len();
-    let lone = low_runs(lim, s, keys, low_width)?;
+    let mask = (1u64 << low_width) - 1;
+    low_runs(lim, s, keys, low_width)?;
     let low_count = s.low_starts.len();
     let low_starts = &s.low_starts;
     let same_highs = |a: u32, b: u32| {
@@ -833,47 +806,13 @@ fn group_single(
                 .zip(&keys[y])
                 .all(|(&p, &q)| p >> low_width == q >> low_width)
     };
-    // A low value of one key is completed by that key's high value alone,
-    // so where such values are at least half of them, as on a wide low
-    // part, they are numbered through a slot per high value, unhashed.
-    let (low_atom, low_atoms) = if 2 * lone >= low_count {
-        let high = |k: u32| (keys[k as usize] >> low_width) as usize;
-        let runs = (low_starts.as_slice(), n, low_count - lone);
-        let mut ids = if spare.capacity() >= low_count {
-            std::mem::take(spare)
-        } else {
-            Vec::new()
-        };
-        ids.clear();
-        let table = (&mut s.slots, s.low_hash.as_slice(), &mut s.low_first);
-        number_lone(
-            lim,
-            table,
-            runs,
-            (&mut s.rank, high_count, high),
-            same_highs,
-            ids,
-        )?
-    } else {
-        number_hashed(lim, &mut s.slots, &s.low_hash, &mut s.low_first, same_highs)?
-    };
-
-    if let Some(held) = single_from_low(n, s) {
-        let (ends, lows) = pairs_from_low(lim, s, keys, low_width, high_atom, held)?;
-        return Ok((Decomposition::Grouped { ends, lows }, low_atom, low_atoms));
-    }
+    let (low_atom, low_atoms) =
+        number_hashed(lim, &mut s.slots, &s.low_hash, &mut s.low_first, same_highs)?;
 
     // Where each high value's low values go: the first run of each high
     // atom lists the atom's, in atom order, and the other runs none.
-    let bits = (
-        (index_bits(high_count) as usize).saturating_sub(BLOCK_BITS),
-        index_bits(n) as usize,
-    );
-    // The radix sort is done with its buffer, which is mapped wherever the
-    // sort needed it, so the keys are placed there.
-    std::mem::swap(&mut s.sort_keys, s.radix.spare());
-    place_by_block(lim, s, keys, low_width, bits)?;
     let merged = low_atoms as usize != low_count;
+    let high_count = s.high_starts.len();
     s.cursor.clear();
     lim.reserve_exact(&mut s.cursor, high_count)?;
     let mut held = 0u32;
@@ -889,16 +828,16 @@ fn group_single(
     lim.try_resize(&mut lows, held as usize, 0u32)?;
     let mut gate = lim.gate();
     gate.poll(n as u64)?;
-    let lookup = |low: u32| if merged { low_atom[low as usize] } else { low };
-    gather_by_block(
-        &s.sort_keys[..n],
-        &s.high_starts,
-        &mut s.cursor,
-        bits,
-        &mut lows,
-        lookup,
-    );
-    std::mem::swap(&mut s.sort_keys, s.radix.spare());
+    let (mut last, mut index) = (keys[0] & mask, 0u32);
+    for &key in keys {
+        index += u32::from(key & mask != last);
+        last = key & mask;
+        let at = &mut s.cursor[(key >> low_width) as usize];
+        if *at != u32::MAX {
+            lows[*at as usize] = if merged { low_atom[index as usize] } else { index };
+            *at += 1;
+        }
+    }
     // Each group's low values ascend as the low order meets them, and so do
     // their atoms unless low values merge.
     let sizes = s
@@ -942,34 +881,15 @@ fn dedup_tail<T: Copy + PartialEq>(v: &mut Vec<T>, start: usize) {
     v.truncate(kept);
 }
 
-/// Whether `group_single` reads its pairs off the low side, once both
-/// sides are numbered, and then how many keys the low side's first runs
-/// hold. The high side lays out and gathers every key and reads its first
-/// runs' keys again; the low side reads only its first runs' keys, each
-/// with a lookup of its high atom that can miss the cache. The low side is
-/// taken when its first runs' keys, `LOW_SIDE_COST` apiece, are at most
-/// `n` plus the high side's first runs' keys.
-fn single_from_low(n: usize, s: &Scratch) -> Option<usize> {
-    let low = held_keys(&s.low_starts, &s.low_first, n);
-    (low.saturating_mul(LOW_SIDE_COST) <= n + held_keys(&s.high_starts, &s.high_first, n))
-        .then_some(low)
-}
-
-/// What `single_from_low` counts a key of the low side's first runs at,
-/// against one key for each of `n` and the high side's first runs' keys.
-const LOW_SIDE_COST: usize = 4;
-
 /// The passes of `group_single` over the keys sorted by low part: where
 /// each low value's run starts, into `s.low_starts`, and then the runs'
-/// hashes into `s.low_hash` — every run's, or where at least half the runs
-/// hold one key, as `number_lone` numbers them, only the longer runs'.
-/// Returns how many runs hold one key.
+/// hashes into `s.low_hash`.
 fn low_runs(
     lim: &Limits,
     s: &mut Scratch,
     keys: &[u64],
     low_width: usize,
-) -> Result<usize, OperationError> {
+) -> Result<(), OperationError> {
     let n = keys.len();
     let mask = (1u64 << low_width) - 1;
     let mut gate = lim.gate();
@@ -981,163 +901,29 @@ fn low_runs(
     let most = runs_between(keys[0] & mask, keys[n - 1] & mask, n);
     lim.reserve_exact(&mut s.low_starts, most)?;
     s.low_starts.push(0);
-    let (mut last, mut start, mut lone) = (keys[0] & mask, 0usize, 0usize);
+    let mut last = keys[0] & mask;
     for (i, &key) in keys.iter().enumerate() {
         let low = key & mask;
         if low != last {
             s.low_starts.push(i as u32);
-            lone += usize::from(i - start == 1);
-            (last, start) = (low, i);
+            last = low;
         }
     }
-    lone += usize::from(n - start == 1);
     let count = s.low_starts.len();
     debug_assert!(count <= most, "the keys ascend by low part");
-    let long_only = 2 * lone >= count;
     gate.poll(n as u64)?;
     s.low_hash.clear();
-    lim.reserve_exact(
-        &mut s.low_hash,
-        if long_only { count - lone } else { count },
-    )?;
+    lim.reserve_exact(&mut s.low_hash, count)?;
     for range in runs(&s.low_starts, n) {
-        if !long_only || range.len() > 1 {
-            s.low_hash.push(
-                keys[range]
-                    .iter()
-                    .fold(RUN_SEED, |hash, &key| mix(hash, key >> low_width)),
-            );
-        }
+        s.low_hash.push(
+            keys[range]
+                .iter()
+                .fold(RUN_SEED, |hash, &key| mix(hash, key >> low_width)),
+        );
     }
     gate.flush()?;
-    Ok(lone)
-}
-
-/// The pairs of `group_single` read off the low side, `held` keys: the
-/// first run of each low atom names every high value that pairs with the
-/// atom, so their atoms are its partners. Read low atom by low atom, each
-/// high atom's partners come out ascending; a stamp per high atom drops the
-/// repeat that two of its values in one run make, and a counting sort
-/// groups the pairs by high atom. Returns where each high atom's partners
-/// end, and the partners.
-fn pairs_from_low(
-    lim: &Limits,
-    s: &mut Scratch,
-    keys: &[u64],
-    low_width: usize,
-    high_atom: &[u32],
-    held: usize,
-) -> Result<(Vec<u32>, Vec<u32>), OperationError> {
-    let n = keys.len();
-    let atoms = s.high_first.len();
-    let mut gate = lim.gate();
-    gate.poll(held as u64)?;
-    // Per high atom, the low atom it was last paired with.
-    s.cursor.clear();
-    lim.try_resize(&mut s.cursor, atoms, u32::MAX)?;
-    s.high_keys.clear();
-    lim.reserve_exact(&mut s.high_keys, held)?;
-    for (low, &k) in s.low_first.iter().enumerate() {
-        for &key in &keys[run(&s.low_starts, k, n)] {
-            let high = high_atom[(key >> low_width) as usize];
-            let last = &mut s.cursor[high as usize];
-            if *last != low as u32 {
-                *last = low as u32;
-                s.high_keys.push((high as u64) << 32 | low as u64);
-            }
-        }
-    }
-    let mut ends = Vec::new();
-    lim.try_resize(&mut ends, atoms, 0u32)?;
-    for &pair in &s.high_keys {
-        ends[(pair >> 32) as usize] += 1;
-    }
-    // Each high atom's next free place, and where its partners end.
-    let mut at = 0u32;
-    for (next, end) in s.cursor.iter_mut().zip(ends.iter_mut()) {
-        *next = at;
-        at += *end;
-        *end = at;
-    }
-    let mut lows = Vec::new();
-    lim.try_resize(&mut lows, s.high_keys.len(), 0u32)?;
-    for &pair in &s.high_keys {
-        let next = &mut s.cursor[(pair >> 32) as usize];
-        lows[*next as usize] = pair as u32;
-        *next += 1;
-    }
-    gate.flush()?;
-    Ok((ends, lows))
-}
-
-/// The layout pass of `group_single`'s high side over the keys sorted by
-/// low part: each key placed in its block of `s.sort_keys` as its high
-/// value's place in the block, `bits.0` bits of it, above its low value's
-/// index, `bits.1` bits. Block `b` holds high values `b << bits.0` on and
-/// lies where their runs do, so it has room for exactly their keys.
-fn place_by_block(
-    lim: &Limits,
-    s: &mut Scratch,
-    keys: &[u64],
-    low_width: usize,
-    (shift, low_bits): (usize, usize),
-) -> Result<(), OperationError> {
-    let n = keys.len();
-    let mask = (1u64 << low_width) - 1;
-    let blocks = ((s.high_starts.len() - 1) >> shift) + 1;
-    s.low_count.clear();
-    lim.reserve_exact(&mut s.low_count, blocks)?;
-    s.low_count
-        .extend((0..blocks).map(|block| s.high_starts[block << shift]));
-    let (next, in_block) = (&mut s.low_count, (1u64 << shift) - 1);
-    let placed = &mut s.sort_keys;
-    lim.try_resize(placed, n, 0u64)?;
-    lim.gate().poll(n as u64)?;
-    let (mut last, mut index) = (keys[0] & mask, 0u64);
-    for &key in keys {
-        let low = key & mask;
-        index += u64::from(low != last);
-        last = low;
-        let high = key >> low_width;
-        let at = &mut next[(high >> shift) as usize];
-        placed[*at as usize] = (high & in_block) << low_bits | index;
-        *at += 1;
-    }
     Ok(())
 }
-
-/// Write each key of `placed`, laid out by `place_by_block`, to its high
-/// value's next slot of `lows`, as `lookup` of its low value's index. A
-/// high value's slots start at its `cursor`, and `u32::MAX` there leaves
-/// its keys out.
-fn gather_by_block(
-    placed: &[u64],
-    high_starts: &[u32],
-    cursor: &mut [u32],
-    (shift, low_bits): (usize, usize),
-    lows: &mut [u32],
-    lookup: impl Fn(u32) -> u32,
-) {
-    let low_mask = (1u64 << low_bits) - 1;
-    for first in (0..high_starts.len()).step_by(1 << shift) {
-        let end = high_starts
-            .get(first + (1 << shift))
-            .map_or(placed.len(), |&end| end as usize);
-        let cursor = &mut cursor[first..];
-        for &pair in &placed[high_starts[first] as usize..end] {
-            let at = &mut cursor[(pair >> low_bits) as usize];
-            if *at != u32::MAX {
-                lows[*at as usize] = lookup((pair & low_mask) as u32);
-                *at += 1;
-            }
-        }
-    }
-}
-
-/// The most blocks `group_single` lays its keys out in, as a power of two:
-/// few enough to write to at once. A block spans more high values as the
-/// high values grow.
-const BLOCK_BITS: usize = 9;
 
 /// Where each group of `lows` ends, the groups listed one after another,
 /// `sizes` long. When low values merged, a group can list an atom twice
@@ -1168,63 +954,6 @@ fn close_groups(
     }
     lows.truncate(kept);
     Ok(ends)
-}
-
-/// [`number_hashed`] for runs of which many hold one key. The runs start
-/// at `runs.0`, the last running to `runs.1`, and `runs.2` of them hold
-/// more than one. A run of one key is numbered through `lone.0`, a slot
-/// for each of `lone.1` keys, addressed by `lone.2` of the key's position:
-/// the key is the run's content. Only the longer runs are hashed, and
-/// `table.1` lists theirs in order. The numbers go into `ids`, emptied.
-fn number_lone(
-    lim: &Limits,
-    (slots, hashes, firsts): (&mut Vec<u64>, &[u64], &mut Vec<u32>),
-    (starts, n, long): (&[u32], usize, usize),
-    (lone, keys, key): (&mut Vec<u32>, usize, impl Fn(u32) -> usize),
-    same: impl Fn(u32, u32) -> bool,
-    mut ids: Vec<u32>,
-) -> Result<(Vec<u32>, u32), OperationError> {
-    let runs = starts.len();
-    debug_assert_eq!(hashes.len(), long);
-    let bits = index_bits(2 * long).max(4);
-    slots.clear();
-    lim.try_resize(slots, 1 << bits, 0u64)?;
-    lone.clear();
-    lim.try_resize(lone, keys, u32::MAX)?;
-    ids.clear();
-    lim.reserve_exact(&mut ids, runs)?;
-    firsts.clear();
-    let mut gate = lim.gate();
-    gate.poll(runs as u64)?;
-    let mut hashed = 0;
-    for k in 0..runs {
-        let range = run(starts, k as u32, n);
-        let id = if range.len() == 1 {
-            let slot = &mut lone[key(range.start as u32)];
-            if *slot == u32::MAX {
-                *slot = firsts.len() as u32;
-                lim.try_push(firsts, k as u32)?;
-            }
-            *slot
-        } else {
-            if let Some(&ahead) = hashes.get(hashed + PROBE_AHEAD) {
-                prefetch_slot(slots, bits, ahead);
-            }
-            hashed += 1;
-            probe(
-                lim,
-                slots,
-                bits,
-                hashes[hashed - 1],
-                k as u32,
-                firsts,
-                &same,
-            )?
-        };
-        ids.push(id);
-    }
-    gate.flush()?;
-    Ok((ids, firsts.len() as u32))
 }
 
 /// Split one-word values whose low part is narrow enough to address, into
