@@ -90,13 +90,25 @@ impl Marker {
     }
 }
 
+/// The marked slots of `block`.
+#[inline]
+fn count(block: &[u64]) -> usize {
+    block.iter().map(|w| w.count_ones() as usize).sum()
+}
+
+/// The word of a block whose first `n` slots are marked, `1 <= n <= 64`.
+#[inline(always)]
+fn tail_mask(n: usize) -> u64 {
+    u64::MAX >> (64 - n)
+}
+
 /// Mark every one of the `width` slots of `block`, leaving the bits past
 /// `width` in the last word clear.
 fn mark_all(block: &mut [u64], width: usize) {
     let full = width >> 6;
     block[..full].fill(u64::MAX);
     if width & 63 != 0 {
-        block[full] = (1u64 << (width & 63)) - 1;
+        block[full] = tail_mask(width & 63);
     }
 }
 
@@ -105,7 +117,7 @@ fn mark_all(block: &mut [u64], width: usize) {
 fn all_marked(block: &[u64], width: usize) -> bool {
     let full = width >> 6;
     let tail = width & 63;
-    block[..full].iter().all(|&w| w == u64::MAX) && (tail == 0 || block[full] == (1u64 << tail) - 1)
+    block[..full].iter().all(|&w| w == u64::MAX) && (tail == 0 || block[full] == tail_mask(tail))
 }
 
 /// Call `f` with the index of every marked slot of `block`, ascending.
@@ -152,7 +164,7 @@ fn for_each_unmarked(block: &[u64], width: usize, mut f: impl FnMut(usize)) {
     for (w, &word) in block[..words(width)].iter().enumerate() {
         let mut x = !word;
         if (w + 1) << 6 > width {
-            x &= (1u64 << (width & 63)) - 1;
+            x &= tail_mask(width & 63);
         }
         while x != 0 {
             f((w << 6) + x.trailing_zeros() as usize);
@@ -226,11 +238,7 @@ impl<'a> Select<'a> {
 pub(super) fn new_indices(block: &[u64], span: usize, out: &mut [u32]) {
     let mut next = 0u32;
     for (word, slots) in block.iter().zip(out[..span].chunks_mut(64)) {
-        let full = if slots.len() == 64 {
-            u64::MAX
-        } else {
-            (1u64 << slots.len()) - 1
-        };
+        let full = tail_mask(slots.len());
         let word = word & full;
         if word == full {
             for (slot, index) in slots.iter_mut().zip(next..) {
@@ -1207,7 +1215,7 @@ fn compact_one_level(
             // dropped few slots, moves its references in one pass over its
             // words; otherwise its kept nodes' references are read through
             // the children's new indices.
-            let kept = own.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+            let kept = count(own);
             let dropped = |c: Child| {
                 if c.dirty {
                     few_dropped(&marks[c.base..], c.span)
@@ -1262,7 +1270,7 @@ fn compact_one_level(
     level.compact_pairs_if_stale();
     if let Some(before) = before.filter(|_| level.implicit().is_none()) {
         let pairs = match per_node {
-            Some(k) => own.iter().map(|w| w.count_ones() as usize).sum::<usize>() * k,
+            Some(k) => count(own) * k,
             None => before - dropped,
         };
         level.leave_live_pairs(pairs);
@@ -1375,14 +1383,7 @@ fn plan_level(
     }
     let (lm, rm) = child_remaps(marks, remap, left, right);
     // The nodes a child that lost one kept, as its marks count them.
-    let kept_of = |c: Child| {
-        c.dirty.then(|| {
-            marks[c.base..c.base + words(c.span)]
-                .iter()
-                .map(|w| w.count_ones() as usize)
-                .sum()
-        })
-    };
+    let kept_of = |c: Child| c.dirty.then(|| count(&marks[c.base..c.base + words(c.span)]));
     Ok(Some(
         match kept_described(lim, tdd, t, own, (lm, kept_of(left)), (rm, kept_of(right)))? {
             Some((d, dead)) => Kept::Described(d, dead),
@@ -1400,7 +1401,7 @@ pub(super) fn keep_marked(nodes: &mut Vec<EncodedNode>, own: &[u64]) {
     for (w, &word) in own[..words(width)].iter().enumerate() {
         let base = w << 6;
         let n = (width - base).min(64);
-        let full = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
+        let full = tail_mask(n);
         let mut x = word & full;
         if x == full {
             nodes.copy_within(base..base + n, write);
@@ -1455,7 +1456,7 @@ fn kept_described(
         .implicit()
         .expect("a description is kept as one");
     let k = d.pairs_per_node();
-    let nodes: usize = own.iter().map(|w| w.count_ones() as usize).sum();
+    let nodes = count(own);
     // Past 2^31 pairs a node's range takes the side table (`ranges`); the
     // written arena's would too, and renumbered ones might not. What is left
     // below the floor is stored.
@@ -1725,10 +1726,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         return mark_described::<LEFT, RIGHT>(lim, d, width, base, left_base, right_base, marks);
     }
     // The sides staged as bytes: their slots, rounded up to whole words.
-    let marked: usize = marks[base..base + words(width)]
-        .iter()
-        .map(|w| w.count_ones() as usize)
-        .sum();
+    let marked = count(&marks[base..base + words(width)]);
     let staged = |on: bool, c: VtreeIdx| {
         let slots = tdd.reference_slot_count(c);
         (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
@@ -2538,12 +2536,7 @@ pub(super) fn few_dropped(block: &[u64], span: usize) -> Option<Dropped> {
     let mut dropped = Dropped::NONE;
     for (w, &word) in block[..words(span)].iter().enumerate() {
         let slots = (span - 64 * w).min(64);
-        let mut lost = !word
-            & if slots == 64 {
-                u64::MAX
-            } else {
-                (1u64 << slots) - 1
-            };
+        let mut lost = !word & tail_mask(slots);
         if dropped.len + lost.count_ones() as usize > FEW_DROPPED {
             return None;
         }
