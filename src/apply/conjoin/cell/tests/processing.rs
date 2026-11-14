@@ -2,6 +2,7 @@ use super::*;
 use crate::diagram::ChildDecoder;
 use crate::Engine;
 use crate::test_helpers::pair;
+use super::super::rows_stream::ScratchSink;
 
 /// `ScratchSink` pushes must charge the apply soft budget (`try_push`), like
 /// the emit walk's `try_push_pair_into`: an uncharged push lets a wide
@@ -190,7 +191,7 @@ fn scratch_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::diagram::{ChildPair, NodeIdx, TddLevel, EncodedNode};
-    use super::{process_cell, ScratchSink, OperationError};
+    use super::{process_cell, OperationError};
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair f_pairs into the N×1 arm.
@@ -256,7 +257,7 @@ fn scratch_sink_respects_soft_budget() {
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     use crate::apply::conjoin::child_lookup::ChildLookup;
     use crate::diagram::{ChildPair, NodeIdx, TddLevel};
-    use super::{CellAction, CellArgs, ScratchSink, process_cell, run_level_rows};
+    use super::{CellAction, CellArgs, process_cell, run_level_rows};
 
     const K1: usize = 256;
     const PAIRS_PER_ROW: usize = 1024;
@@ -324,7 +325,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 /// scratch).
 #[test]
 fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
-    use super::{process_cell, CellCtx, ScratchSink};
+    use super::{process_cell, CellCtx};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     // A child resolution that depends on both refs, so an emitted pair carries
@@ -472,7 +473,7 @@ fn column_runs_charge_the_soft_budget_and_degrade_when_refused() {
 /// test and the per-pair right test skip entries.
 #[test]
 fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
-    use super::{process_cell, CellCtx, ScratchSink};
+    use super::{process_cell, CellCtx};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     struct SomeDead;
@@ -526,7 +527,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
 /// dead candidates on either side at the boundary.
 #[test]
 fn push_kept_grows_where_pushing_each_survivor_would() {
-    use super::{push_kept, ScratchSink, PairSink};
+    use super::{push_kept, PairSink};
     let eng = Engine::new();
     let cands: Vec<(u32, u32)> = (0..40u32)
         .map(|k| match k % 5 {

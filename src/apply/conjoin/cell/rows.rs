@@ -5,6 +5,42 @@ use super::*;
 use crate::diagram::{EncodedChildRef, NodeKind};
 use std::mem::MaybeUninit;
 
+/// Fold the per-row alive-column masks for one decoded f row.
+///
+/// left: pass-through ⇒ always alive (`MAX`); `!masked` ⇒ masks unused (`0`);
+/// else the OR of the side's `live_cols` over the row's left refs. right mirrors
+/// (`MAX` when pass-through OR `!masked`). Returns `None` when the row is
+/// provably dead under the masks (every cell in it would be culled) — the caller
+/// skips the whole row.
+#[inline(always)]
+pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, f_pairs: &[ChildPair]) -> Option<(u128, u128)> {
+    let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
+        u128::MAX // pass-through side: no grid; always alive
+    } else if !ctx.masked {
+        0u128
+    } else {
+        f_pairs.iter().fold(0u128, |acc, p1| {
+            acc | ctx.sides.left.live_cols[p1.left.raw() as usize]
+        })
+    };
+    if ctx.masked && left_alive_mask == 0 {
+        return None;
+    }
+
+    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.masked {
+        u128::MAX
+    } else {
+        f_pairs.iter().fold(0u128, |acc, p1| {
+            acc | ctx.sides.right.live_cols[p1.right.raw() as usize]
+        })
+    };
+    if ctx.masked && right_alive_mask == 0 {
+        return None;
+    }
+
+    Some((left_alive_mask, right_alive_mask))
+}
+
 // ============================= Row-loop driver =============================
 //
 // The four build routes — marginal-child emit (`run_level_rows_marginal`),

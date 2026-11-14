@@ -671,6 +671,62 @@ fn stream_fold_words<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     )
 }
 
+/// Collect surviving `(lc, rc)` pairs into a caller-owned scratch Vec — the
+/// streaming collapse-at-source walk (`run_level_rows_stream_count`). Touches
+/// neither `level` nor `node_idx[grid_pos]`; the caller folds the collected
+/// refs through its fold's `fold_cell`. Pushes are budget-tracked
+/// (`try_push`), matching the emit walk's `try_push_pair_into`: a wide
+/// streaming cell's scratch growth charges the apply soft budget and degrades
+/// to `Err(OverBudget)` instead of an allocator abort. The scratch is bounded
+/// to one cell's pairs and reused across cells.
+pub(crate) struct ScratchSink<'a> {
+    pub(crate) out: &'a mut Vec<ChildPair>,
+}
+
+impl PairSink for ScratchSink<'_> {
+    #[inline(always)]
+    fn single(
+        &mut self,
+        eng: &Engine,
+        _node_idx: &mut [u32],
+        _grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
+        self.pair(eng, lc, rc)
+    }
+
+    #[inline(always)]
+    fn begin(&mut self) -> usize {
+        0
+    }
+
+    #[inline(always)]
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        lim.try_push(
+            self.out,
+            raw_pair(lc, rc),
+        )
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        self.out
+    }
+
+    #[inline(always)]
+    fn end(
+        &mut self,
+        _eng: &Engine,
+        _node_idx: &mut [u32],
+        _grid_pos: usize,
+        _start: usize,
+    ) -> Result<(), OperationError> {
+        Ok(())
+    }
+}
+
 /// Collapse at the source: each live cell's pairs gathered into a reused
 /// scratch `Vec<ChildPair>` ([`ScratchSink`]) and folded into the column as
 /// the cell ends, never touching the output level.
