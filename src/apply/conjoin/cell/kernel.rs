@@ -223,6 +223,15 @@ where
         debug_assert!(!left.passthrough() && !right.passthrough());
         let n2 = g_pairs.len();
         let n1 = f_pairs.len();
+        // Read once per cell: indexed in the per-`p1` test, `reach[j]` was
+        // bounds checked and loaded again at every f pair. A side that
+        // cannot kill has no masks, and its test never reads the 0.
+        let rcols = ctx.sides.right.live_cols;
+        let rreach = if ctx.masked {
+            ctx.sides.right.reach.get(j).copied().unwrap_or(0)
+        } else {
+            0
+        };
         let mut p1_idx = 0;
         while p1_idx < n1 {
             let p1_left = f_pairs[p1_idx].left;
@@ -253,9 +262,7 @@ where
                 for p1 in g1 {
                     if ctx.masked
                         && right.kills()
-                        && ctx.sides.right.live_cols[p1.right.raw() as usize]
-                            & ctx.sides.right.reach[j]
-                            == 0
+                        && rcols[p1.right.raw() as usize] & rreach == 0
                     {
                         continue;
                     }
