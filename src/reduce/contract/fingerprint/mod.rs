@@ -110,6 +110,9 @@ pub(super) trait TwinEntries {
     /// Call `f(node, entry)` once per entry of every node.
     fn for_each(&self, f: impl FnMut(u32, u64));
 
+    /// The number of entries [`Self::for_each`] yields.
+    fn len(&self) -> usize;
+
     /// Whether none of the `width` nodes can have a twin: no two nodes share
     /// an entry, and at most one has none where two nodes with none are
     /// twins ([`Self::EMPTY_TWINS`]). `false` when that is not known.
@@ -165,6 +168,10 @@ impl TwinEntries for ContextEntries<'_> {
         for_each_target_sibling(self.parent_level, self.t1_side, |pi, target, sibling| {
             f(target, pack(pi, sibling));
         });
+    }
+
+    fn len(&self) -> usize {
+        self.parent_level.live_pairs()
     }
 
     /// Two nodes share a context only where a parent node pairs both with
@@ -391,6 +398,10 @@ impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         self.0
             .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
+    }
+
+    fn len(&self) -> usize {
+        self.0.live_pairs()
     }
 
     fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {

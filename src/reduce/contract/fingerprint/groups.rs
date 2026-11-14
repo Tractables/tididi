@@ -474,8 +474,12 @@ pub(super) fn group_single_entries(
 ) -> Result<Option<bool>, OperationError> {
     let lim = eng.limits();
     // One entry each needs as many entries as nodes.
-    let mut total = 0usize;
-    entries.for_each(|_, _| total += 1);
+    let total = entries.len();
+    debug_assert_eq!(total, {
+        let mut n = 0;
+        entries.for_each(|_, _| n += 1);
+        n
+    });
     if total != width {
         return Ok(None);
     }

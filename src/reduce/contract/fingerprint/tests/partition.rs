@@ -11,6 +11,10 @@ impl TwinEntries for Listed {
             f(node, entry);
         }
     }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// The groups of nodes with equal entry multisets, members ascending, groups
