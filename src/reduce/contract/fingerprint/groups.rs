@@ -454,12 +454,9 @@ fn group_by_hashed_signature(
 /// would not repay itself.
 pub(super) const SINGLE_ENTRY_MIN_WIDTH: usize = 1 << 16;
 
-/// The bits one pass of [`group_single_entries`]' radix sort reads.
-const SINGLE_ENTRY_DIGIT_BITS: u32 = 12;
-
 /// Twin groups of a level each of whose nodes has exactly one entry, where a
-/// signature is that entry: the nodes sorted by entry with a stable
-/// least-significant-digit radix sort of `(entry, node)` packed into one word,
+/// signature is that entry: the nodes sorted by entry with a radix sort
+/// ([`crate::sort::Radix`]) of `(entry, node)` packed into one word,
 /// and each run of two or more equal entries a group. Starting from the nodes
 /// in index order, a run lists its members ascending, and the groups are put
 /// in the order of their lowest members, which is what the fingerprint path
@@ -485,8 +482,7 @@ pub(super) fn group_single_entries(
     }
     let ContractScratch {
         fingerprints: records,
-        entries: other,
-        counts,
+        refine_radix: radix,
         twin_named,
         candidates,
         flat_groups,
@@ -524,32 +520,12 @@ pub(super) fn group_single_entries(
         *record = (key << node_bits) | node as u64;
     }
 
-    lim.try_resize(other, width, 0u64)?;
-    lim.try_resize(counts, 1 << SINGLE_ENTRY_DIGIT_BITS, 0u32)?;
-    let (mut src, mut dst): (&mut [u64], &mut [u64]) = (&mut records[..width], &mut other[..width]);
-    let end = node_bits + key_bits;
-    let mut shift = node_bits;
-    while shift < end {
-        let digit_bits = SINGLE_ENTRY_DIGIT_BITS.min(end - shift);
-        let mask = (1u64 << digit_bits) - 1;
-        let counts = &mut counts[..1 << digit_bits];
-        counts.fill(0);
-        for &record in src.iter() {
-            counts[((record >> shift) & mask) as usize] += 1;
-        }
-        // A digit every record shares moves none of them.
-        if !counts.iter().any(|&n| n as usize == width) {
-            prefix_sum_in_place(counts);
-            for &record in src.iter() {
-                let digit = ((record >> shift) & mask) as usize;
-                dst[counts[digit] as usize] = record;
-                counts[digit] += 1;
-            }
-            std::mem::swap(&mut src, &mut dst);
-        }
-        shift += digit_bits;
-    }
-    let sorted: &[u64] = src;
+    // The nodes ascend below the keys, so a sort of the keys is stable. The
+    // level's grouping charges no work for the sort, which only orders what
+    // the fingerprint pass read.
+    records.truncate(width);
+    radix.sort_polling(lim, records, node_bits as usize, key_bits as usize, &mut |_| Ok(()))?;
+    let sorted: &[u64] = records;
 
     // The runs of two or more, by their lowest member.
     let node_mask = (1u64 << node_bits) - 1;
