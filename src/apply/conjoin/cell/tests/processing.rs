@@ -165,6 +165,7 @@ fn columns_charge_and_release_the_soft_budget() {
 /// through `try_push` like the rest of the module.
 /// Always resolves children to a live (non-`NO_PRODUCT`) node, so every
 /// `(p1, p2)` combination emits one pair.
+#[derive(Clone, Copy)]
 struct AliveLookup;
 impl crate::apply::conjoin::child_lookup::ChildLookup for AliveLookup {
     type Row = ();
@@ -328,6 +329,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
 
     // A child resolution that depends on both refs, so an emitted pair carries
     // which column entries the walk actually read.
+    #[derive(Clone, Copy)]
     struct RefLookup;
     impl ChildLookup for RefLookup {
         type Row = u32;
@@ -474,6 +476,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
     use super::{process_cell, CellCtx};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
+    #[derive(Clone, Copy)]
     struct SomeDead;
     impl ChildLookup for SomeDead {
         type Row = u32;

@@ -196,7 +196,7 @@ where
 /// one never taken, is a call site in the loop nest, and the register
 /// allocator then keeps the walk's state in stack slots across it.
 #[inline(always)]
-fn cell_two_sided<L, R, S>(
+pub(super) fn cell_two_sided<L, R, S>(
     (eng, ctx): (&Engine, &CellCtx<'_>),
     (j, grid_pos): (usize, usize),
     f_pairs: &[ChildPair],
@@ -612,14 +612,13 @@ where
             (sink, gate),
         )?;
     } else {
-        cell_two_sided(
+        sink.two_sided(
             (eng, ctx),
             (j, grid_pos),
-            f_pairs,
-            g_pairs,
+            (f_pairs, g_pairs),
             node_idx,
             (left, right),
-            (sink, gate),
+            gate,
         )?;
     }
     Ok(())

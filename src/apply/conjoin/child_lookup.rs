@@ -34,7 +34,7 @@ fn child_grid_mul(a: u32, stride: u32) -> usize {
 /// the shared per-apply grid slab. Passing the slab per call rather than
 /// holding a borrow keeps the dense impl free of an aliasing borrow against
 /// the output writes into the same slab.
-pub(super) trait ChildLookup {
+pub(super) trait ChildLookup: Copy {
     /// A child grid row resolved once. The pair walks hold `row` fixed across
     /// a run of columns — both child coordinates of a cell take their row from
     /// the same f pair — so resolving the row is hoisted out of the column
@@ -88,6 +88,7 @@ pub(super) trait ChildLookup {
 ///
 /// [`Products::is_complete`]: super::products::Products::is_complete
 /// [`NodeIdx`]: crate::diagram::NodeIdx
+#[derive(Clone, Copy)]
 pub(super) struct CompleteLookup {
     pub(super) stride: u32,
 }
@@ -119,6 +120,7 @@ impl ChildLookup for CompleteLookup {
 }
 
 /// Existing grid representation: flat `node_idx[base + row*stride + col]`.
+#[derive(Clone, Copy)]
 pub(super) struct DenseLookup {
     pub(super) base: usize,
     pub(super) stride: u32,
@@ -158,6 +160,7 @@ impl ChildLookup for DenseLookup {
 /// consulted (indexing with it would read far out of bounds; see
 /// `plan_marginal_level`). `passthrough` is a per-level runtime flag, so the marginal
 /// inner loops pay one branch per access.
+#[derive(Clone, Copy)]
 pub(super) struct MarginalLookup {
     base: usize,
     stride: u32,

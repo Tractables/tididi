@@ -197,7 +197,7 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
     if let Some(products) = PlainProducts::of(&st.left, &st.right)
         && let Some(out) = st.counts.narrow_under(products.scale)
     {
-        let sink: PlainSink<'_, WORDS> = PlainSink::new(products, out);
+        let sink: PlainSink<'_, I, WORDS> = PlainSink::new(isa, products, out);
         if cells_only() {
             return run_level_rows::<false, _, _, _>(
                 eng,
@@ -571,7 +571,7 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
             if let Some(products) = PlainProducts::of(&st.left, &st.right)
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
-                let sink: PlainSink<'_> = PlainSink::new(products, out);
+                let sink: PlainSink<'_, Base> = PlainSink::new(Base, products, out);
                 return super::word_cells::rows_by_words::<true, _, _, _>(
                     eng,
                     (rows, scratch),
@@ -772,7 +772,9 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
 /// each cell's sum appended to the column as the float a column under the
 /// products' scale holds for it. The values are those [`FoldSink`] folds,
 /// bit for bit, with no pair list between the walk and the fold.
-struct PlainSink<'a, const WORDS: bool = false> {
+struct PlainSink<'a, I, const WORDS: bool = false> {
+    /// The instruction set the N×M leaves are compiled for.
+    isa: I,
     products: PlainProducts<'a>,
     /// The output column's floats, under `products.scale`.
     out: &'a mut Vec<f64>,
@@ -784,9 +786,10 @@ struct PlainSink<'a, const WORDS: bool = false> {
     none: Vec<ChildPair>,
 }
 
-impl<'a, const WORDS: bool> PlainSink<'a, WORDS> {
-    fn new(products: PlainProducts<'a>, out: &'a mut Vec<f64>) -> Self {
+impl<'a, I: Isa, const WORDS: bool> PlainSink<'a, I, WORDS> {
+    fn new(isa: I, products: PlainProducts<'a>, out: &'a mut Vec<f64>) -> Self {
         PlainSink {
+            isa,
             products,
             out,
             sum: 0.0,
@@ -813,7 +816,7 @@ impl<'a, const WORDS: bool> PlainSink<'a, WORDS> {
     }
 }
 
-impl<const WORDS: bool> PairSink for PlainSink<'_, WORDS> {
+impl<I: Isa, const WORDS: bool> PairSink for PlainSink<'_, I, WORDS> {
     /// A one-pair cell's sum is its product: adding a nonnegative float to
     /// zero gives it back.
     #[inline(always)]
@@ -868,6 +871,196 @@ impl<const WORDS: bool> PairSink for PlainSink<'_, WORDS> {
         let v = self.sum;
         self.push(eng, node_idx, grid_pos, v)
     }
+
+    /// [`cell_two_sided`]'s walk, in the same pair order, with its pairs
+    /// summed in a leaf function compiled apart from the row loop, which
+    /// it calls once per block of the cell the gate does not come due
+    /// inside; the gate is charged and polled between blocks as a poll per
+    /// group or f pair would charge it.
+    #[inline(always)]
+    fn two_sided<L: ChildLookup, R: ChildLookup>(
+        &mut self,
+        (eng, ctx): (&Engine, &CellCtx<'_>),
+        (j, grid_pos): (usize, usize),
+        (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
+        node_idx: &mut [u32],
+        (left, right): (&L, &R),
+        gate: &mut crate::limits::PollGate,
+    ) -> Result<(), OperationError> {
+        let mask = |side: &ChildPlan<'_>| if ctx.masked { side.reach.get(j).copied().unwrap_or(0) } else { 0 };
+        let c = NxmCell {
+            products: self.products,
+            pairs: (f_pairs, g_pairs),
+            node_idx: &*node_idx,
+            sides: (*left, *right),
+            masked: ctx.masked,
+            lmask: (ctx.sides.left.live_cols, mask(&ctx.sides.left)),
+            rmask: (ctx.sides.right.live_cols, mask(&ctx.sides.right)),
+        };
+        let (n1, n2) = (f_pairs.len(), g_pairs.len());
+        let mut acc = (0.0, false);
+        if n1 >= GROUPED_MIN_PAIRS
+            && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
+        {
+            debug_assert!(!left.passthrough() && !right.passthrough());
+            let (mut at, mut paid) = (0, 0u64);
+            while at < n1 {
+                let limit = gate.due_in().saturating_sub(1).saturating_add(paid);
+                let b = self.isa.nxm_grouped(c, g_runs, (at, limit), acc);
+                (at, acc) = (b.at, (b.sum, b.live));
+                gate.add_short(b.taken - paid);
+                paid = 0;
+                if b.due != 0 {
+                    gate.poll(b.due)?;
+                    paid = b.due;
+                }
+            }
+        } else {
+            // `paid` counts the f pairs at the block's head that the poll
+            // before it charged.
+            let (mut start, mut paid) = (0, 0);
+            loop {
+                let due = gate.due_in();
+                let end = if (((n1 - start - paid) * n2) as u64) < due {
+                    n1
+                } else {
+                    start + paid + (due.saturating_sub(1) / n2 as u64) as usize
+                };
+                gate.add_short(((end - start - paid) * n2) as u64);
+                if end > start {
+                    acc = self.isa.nxm_general(c, (start, end), acc);
+                }
+                if end == n1 {
+                    break;
+                }
+                start = end;
+                gate.poll(n2 as u64)?;
+                paid = 1;
+            }
+        }
+        if !acc.1 {
+            return Ok(());
+        }
+        self.push(eng, node_idx, grid_pos, acc.0)
+    }
+}
+
+/// What the N×M leaves read of a cell, passed by value so that a leaf
+/// keeps it in registers.
+#[derive(Clone, Copy)]
+struct NxmCell<'c, L, R> {
+    products: PlainProducts<'c>,
+    pairs: (&'c [ChildPair], &'c [ChildPair]),
+    node_idx: &'c [u32],
+    sides: (L, R),
+    masked: bool,
+    /// Each side's live columns and its reach mask of the cell's column, 0
+    /// where the level built no masks.
+    lmask: (&'c [u128], u128),
+    rmask: (&'c [u128], u128),
+}
+
+/// Where a block of a grouped N×M cell ([`nxm_grouped`]) stopped: the next
+/// f pair, the candidates it walked, those of the group it stopped at (0
+/// at the cell's end), and the cell's sum and whether a pair reached it.
+struct NxmBlock {
+    at: usize,
+    taken: u64,
+    due: u64,
+    sum: f64,
+    live: bool,
+}
+
+/// The grouped N×M walk of [`cell_two_sided`] from f pair `at`, group by
+/// group, as long as the groups' candidates add up to at most `limit`,
+/// each surviving product added to `acc`.
+#[inline(always)]
+fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
+    c: NxmCell<'_, L, R>,
+    g_runs: &[u32],
+    (at, limit): (usize, u64),
+    acc: (f64, bool),
+) -> NxmBlock {
+    let NxmCell { products, pairs: (f_pairs, g_pairs), node_idx, sides: (left, right), masked, lmask, rmask } = c;
+    let (n1, n2) = (f_pairs.len(), g_pairs.len());
+    let (mut sum, mut live) = acc;
+    let (mut p1_idx, mut taken, mut due) = (at, 0u64, 0u64);
+    while p1_idx < n1 {
+        let p1_left = f_pairs[p1_idx].left;
+        let mut g1_end = p1_idx + 1;
+        while g1_end < n1 && f_pairs[g1_end].left == p1_left {
+            g1_end += 1;
+        }
+        let units = ((g1_end - p1_idx) * n2) as u64;
+        if taken + units > limit {
+            due = units;
+            break;
+        }
+        taken += units;
+        let g1 = &f_pairs[p1_idx..g1_end];
+        p1_idx = g1_end;
+        if masked && left.kills() && lmask.0[p1_left.raw() as usize] & lmask.1 == 0 {
+            continue;
+        }
+        let mut g2_start = 0;
+        for &g2_end in g_runs {
+            let g2 = &g_pairs[g2_start..g2_end as usize];
+            g2_start = g2_end as usize;
+            let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+            if left.kills() && lc == NO_PRODUCT {
+                continue;
+            }
+            for p1 in g1 {
+                if masked && right.kills() && rmask.0[p1.right.raw() as usize] & rmask.1 == 0 {
+                    continue;
+                }
+                let rrow = right.row(p1.right.0);
+                for p2 in g2 {
+                    let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+                    if right.kills() && rc == NO_PRODUCT {
+                        continue;
+                    }
+                    sum += products.product(lc, rc);
+                    live = true;
+                }
+            }
+        }
+    }
+    NxmBlock { at: p1_idx, taken, due, sum, live }
+}
+
+/// The general N×M walk of [`cell_two_sided`] over the f pairs of `span`,
+/// each surviving product added to `acc`.
+#[inline(always)]
+fn nxm_general<L: ChildLookup, R: ChildLookup>(
+    c: NxmCell<'_, L, R>,
+    (start, end): (usize, usize),
+    acc: (f64, bool),
+) -> (f64, bool) {
+    let NxmCell { products, pairs: (f_pairs, g_pairs), node_idx, sides: (left, right), masked, lmask, rmask } = c;
+    let (mut sum, mut live) = acc;
+    for p1 in &f_pairs[start..end] {
+        if masked && !left.passthrough() && left.kills() && lmask.0[p1.left.raw() as usize] & lmask.1 == 0 {
+            continue;
+        }
+        if masked && !right.passthrough() && right.kills() && rmask.0[p1.right.raw() as usize] & rmask.1 == 0 {
+            continue;
+        }
+        let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
+        for p2 in g_pairs {
+            let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+            if left.kills() && lc == NO_PRODUCT {
+                continue;
+            }
+            let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+            if right.kills() && rc == NO_PRODUCT {
+                continue;
+            }
+            sum += products.product(lc, rc);
+            live = true;
+        }
+    }
+    (sum, live)
 }
 
 /// What [`read_columns`] writes for a column without pairs: no pair side a
@@ -1716,13 +1909,13 @@ const HELD_COLUMNS: usize = 64;
 /// a word of cells at a time ([`RowSum::WORDS`]).
 const EACH_COLUMNS: usize = 8;
 
-impl<'a, const W: bool> RowSum for PlainSink<'a, W> {
+impl<'a, I: Isa, const W: bool> RowSum for PlainSink<'a, I, W> {
     const CHECKED: bool = false;
     const WORDS: bool = W;
-    type Cells = PlainSink<'a, W>;
+    type Cells = PlainSink<'a, I, W>;
 
     #[inline(always)]
-    fn cells(&mut self) -> &mut PlainSink<'a, W> {
+    fn cells(&mut self) -> &mut PlainSink<'a, I, W> {
         self
     }
 
@@ -2103,6 +2296,24 @@ trait Isa: Copy {
         eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError>;
+
+    /// [`nxm_grouped`], out of line: the leaf [`PlainSink`] walks an N×M
+    /// cell in.
+    fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        g_runs: &[u32],
+        at: (usize, u64),
+        acc: (f64, bool),
+    ) -> NxmBlock;
+
+    /// [`nxm_general`], out of line.
+    fn nxm_general<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        span: (usize, usize),
+        acc: (f64, bool),
+    ) -> (f64, bool);
 }
 
 /// The target's own instruction set.
@@ -2144,6 +2355,27 @@ impl Isa for Base {
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
         ahead_row(sum, sums, flags, eng, row)
+    }
+
+    #[inline(never)]
+    fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        g_runs: &[u32],
+        at: (usize, u64),
+        acc: (f64, bool),
+    ) -> NxmBlock {
+        nxm_grouped(c, g_runs, at, acc)
+    }
+
+    #[inline(never)]
+    fn nxm_general<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        span: (usize, usize),
+        acc: (f64, bool),
+    ) -> (f64, bool) {
+        nxm_general(c, span, acc)
     }
 }
 
@@ -2189,6 +2421,29 @@ impl Isa for Avx2 {
         // Safety: as above.
         unsafe { avx2_ahead_row(sum, sums, flags, eng, row) }
     }
+
+    #[inline(always)]
+    fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        g_runs: &[u32],
+        at: (usize, u64),
+        acc: (f64, bool),
+    ) -> NxmBlock {
+        // Safety: as above.
+        unsafe { avx2_nxm_grouped(c, g_runs, at, acc) }
+    }
+
+    #[inline(always)]
+    fn nxm_general<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        span: (usize, usize),
+        acc: (f64, bool),
+    ) -> (f64, bool) {
+        // Safety: as above.
+        unsafe { avx2_nxm_general(c, span, acc) }
+    }
 }
 
 avx2_fn! {
@@ -2225,6 +2480,31 @@ avx2_fn! {
     #[inline(never)]
     fn avx2_ahead_row<L: ChildLookup, R: ChildLookup, S: RowSum>(sum: &mut S, sums: &[f64], flags: &[u8], eng: &Engine, row: WholeRow<'_, '_, L, R>) -> Result<usize, OperationError> {
         ahead_row(sum, sums, flags, eng, row)
+    }
+}
+
+avx2_fn! {
+    /// [`nxm_grouped`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_nxm_grouped<L: ChildLookup, R: ChildLookup>(
+        c: NxmCell<'_, L, R>,
+        g_runs: &[u32],
+        (at, limit): (usize, u64),
+        acc: (f64, bool),
+    ) -> NxmBlock {
+        nxm_grouped(c, g_runs, (at, limit), acc)
+    }
+}
+
+avx2_fn! {
+    /// [`nxm_general`] compiled with [`avx2_fn`]'s features.
+    #[inline(never)]
+    fn avx2_nxm_general<L: ChildLookup, R: ChildLookup>(
+        c: NxmCell<'_, L, R>,
+        span: (usize, usize),
+        acc: (f64, bool),
+    ) -> (f64, bool) {
+        nxm_general(c, span, acc)
     }
 }
 

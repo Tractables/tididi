@@ -3,6 +3,7 @@
 //! and only the sink differs.
 
 use super::*;
+use crate::limits::PollGate;
 
 /// Per-pair action of the cell product walk. All hooks are `#[inline(always)]`
 /// in impls, so each kernel instantiation monomorphizes to a specialized walk.
@@ -87,6 +88,33 @@ pub(crate) trait PairSink {
     #[inline(always)]
     fn enter_row(&mut self, _eng: &Engine, _i: usize) -> Result<(), OperationError> {
         Ok(())
+    }
+
+    /// The N×M arm of [`cell_pairs`]: a cell whose `f_pairs` and `g_pairs`
+    /// both hold more than one pair, walked and finished at `grid_pos`.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn two_sided<L: ChildLookup, R: ChildLookup>(
+        &mut self,
+        (eng, ctx): (&Engine, &CellCtx<'_>),
+        (j, grid_pos): (usize, usize),
+        (f_pairs, g_pairs): (&[ChildPair], &[ChildPair]),
+        node_idx: &mut [u32],
+        (left, right): (&L, &R),
+        gate: &mut PollGate,
+    ) -> Result<(), OperationError>
+    where
+        Self: Sized,
+    {
+        cell_two_sided(
+            (eng, ctx),
+            (j, grid_pos),
+            f_pairs,
+            g_pairs,
+            node_idx,
+            (left, right),
+            (self, gate),
+        )
     }
 }
 

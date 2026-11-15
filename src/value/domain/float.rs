@@ -259,6 +259,7 @@ fn plain_fold_centred(
 /// zero, so no cell falls back to the scaled fold. A cell's sum stands under
 /// `scale`, and is the float a narrow column under that scale holds for the
 /// cell's value, bit for bit.
+#[derive(Clone, Copy)]
 pub(crate) struct PlainProducts<'a> {
     left: &'a [f64],
     lview: ChildDecoder,
