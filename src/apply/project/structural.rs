@@ -33,6 +33,7 @@ use crate::diagram::sort_pairs;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, Tdd, TddLevel};
 use crate::limits::{Charged, OperationError, PollGate, Transient};
 use crate::reduce::ReductionPlan;
+use crate::sort::Radix;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::apply::TRUE_PAIR;
@@ -1079,11 +1080,14 @@ fn find_shared_one_atom<'a>(
 ) -> Result<SharedOneAtoms<'a>, OperationError> {
     /// A pair's atom, its sides ordered as the sort and the stamp read them,
     /// with the pair's position in the scan and the node holding it.
+    /// `pair` and `sorted` lie side by side as the sort key's halves, so
+    /// the key is one load.
     #[derive(Copy, Clone)]
+    #[repr(C)]
     struct Keyed {
+        pair: u32,
         sorted: u32,
         stamped: u32,
-        pair: u32,
         owner: u32,
     }
     /// An atom while its run is read: the node of its first pair, and its
@@ -1118,7 +1122,7 @@ fn find_shared_one_atom<'a>(
     }
     work.gate.poll(n_pairs as u64)?;
     let bits = u32::BITS - left_max.max(right_max).leading_zeros();
-    sort_by_key_stable(work, &mut keyed, bits, |k| k.sorted)?;
+    sort_by_high_half(work, &mut keyed, bits, |k| u64::from(k.sorted) << 32 | u64::from(k.pair))?;
 
     // The atoms of several owners. A run holds every pair of each of its
     // atoms, in scan order, so an atom's later owners differ from its first
@@ -1299,8 +1303,10 @@ fn regroup_single_by_left(
     }
     if reordered {
         let widest = out.iter().map(|pair| pair.left.0).max().unwrap_or(0);
-        sort_by_key_stable(work, &mut out, u32::BITS - widest.leading_zeros(), |pair| {
-            pair.left.0
+        // The right sides do not ascend, so a cell's order is left open;
+        // each cell is sorted below.
+        sort_by_high_half(work, &mut out, u32::BITS - widest.leading_zeros(), |pair| {
+            u64::from(pair.left.0) << 32 | u64::from(pair.right.0)
         })?;
     }
     if reordered || merged {
@@ -2040,73 +2046,30 @@ fn bucket_pairs(
             records.push((bucket, position));
         }
     }
-    sort_by_key_stable(
-        work,
-        &mut records,
-        u32::BITS - span.leading_zeros(),
-        |&(bucket, _)| bucket,
-    )?;
+    sort_by_high_half(work, &mut records, u32::BITS - span.leading_zeros(), |&(bucket, position)| {
+        u64::from(bucket) << 32 | u64::from(position)
+    })?;
     Ok(records)
 }
 
-/// Radix digits at most this wide below the length that takes wider ones: a
-/// histogram of 2048 counters.
-const RADIX_BITS: u32 = 11;
-
-/// Sort `items` stably by `key`, whose values are below `2^bits`: a least
-/// significant digit radix sort, one counting pass per digit, which skips a
-/// list already in order.
-fn sort_by_key_stable<T: Copy>(
+/// Sort `items` by the high half of `key`, of which the low `bits` may be
+/// set, unless they ascend in it already. Items whose low halves ascend
+/// keep that order among equal high halves ([`Radix::sort`]).
+fn sort_by_high_half<T: Copy>(
     work: &mut Rewrite<'_>,
     items: &mut Vec<T>,
     bits: u32,
-    key: impl Fn(&T) -> u32,
+    key: impl Fn(&T) -> u64,
 ) -> Result<(), OperationError> {
-    if items.is_sorted_by_key(&key) {
+    if items.is_sorted_by_key(|item| key(item) >> 32) {
         return Ok(());
     }
-    let n = items.len();
     let lim = work.eng.limits();
-    // The counts are `u32`.
-    u32::try_from(n).map_err(|_| OperationError::IndexOverflow)?;
-    // Many items take wider digits, as the crate's own radix sort does: a
-    // pass costs about the same per item up to that width, and fewer passes
-    // move the items fewer times.
-    let widest = if n >= 1 << crate::sort::RADIX_LARGE_BITS {
-        crate::sort::RADIX_LARGE_BITS as u32
-    } else {
-        RADIX_BITS
-    };
-    let passes = bits.div_ceil(widest);
-    let digit = bits.div_ceil(passes);
-    let mask = (1u32 << digit) - 1;
-    let mut counts = Vec::new();
-    lim.try_resize(&mut counts, mask as usize + 1, 0u32)?;
-    let mut other = Vec::new();
-    lim.try_resize(&mut other, n, items[0])?;
-    for pass in 0..passes {
-        work.gate.poll(n as u64)?;
-        let shift = pass * digit;
-        counts.fill(0);
-        for item in items.iter() {
-            counts[((key(item) >> shift) & mask) as usize] += 1;
-        }
-        let mut sum = 0u32;
-        for count in &mut counts {
-            let here = *count;
-            *count = sum;
-            sum += here;
-        }
-        for item in items.iter() {
-            let slot = &mut counts[((key(item) >> shift) & mask) as usize];
-            other[*slot as usize] = *item;
-            *slot += 1;
-        }
-        std::mem::swap(items, &mut other);
-    }
-    lim.discard(other);
-    lim.discard(counts);
-    Ok(())
+    let gate = &mut work.gate;
+    let mut radix = Radix::default();
+    let sorted = radix.sort_by_key_polling(lim, items, key, 32, bits as usize, &mut |units| gate.poll(units));
+    radix.discard(lim);
+    sorted
 }
 
 /// Replace level `parent`'s nodes with `new_nodes` (one run of pairs per new

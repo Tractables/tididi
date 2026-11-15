@@ -871,11 +871,11 @@ fn a_map_inverted_lists_the_keys_holding_each_item() {
     }
 }
 
-/// The radix sort against the standard stable sort, across lengths on both
-/// sides of the length that takes wider digits, and key widths from none to
-/// all 32 bits.
+/// The sort of records by a key's high half against the standard stable
+/// sort, across lengths on both sides of the length that takes wider
+/// digits, and key widths from none to all 32 bits.
 #[test]
-fn radix_sort_is_a_stable_sort_by_key() {
+fn sorting_by_high_half_is_a_stable_sort_by_it() {
     let mut rng = Lcg::new(7);
     let eng = Engine::new();
     let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
@@ -888,7 +888,7 @@ fn radix_sort_is_a_stable_sort_by_key() {
                 .collect();
             let mut want = items.clone();
             want.sort_by_key(|&(key, _)| key);
-            sort_by_key_stable(&mut work, &mut items, bits, |&(key, _)| key).unwrap();
+            sort_by_high_half(&mut work, &mut items, bits, |&(key, i)| u64::from(key) << 32 | u64::from(i)).unwrap();
             assert_eq!(items, want, "{len} items, {bits}-bit keys");
         }
     }
