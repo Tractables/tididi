@@ -1362,9 +1362,12 @@ where
     {
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
         // Emits the same pair multiset as the general double loop, in
-        // grouped order; every consumer is order-independent (pair lists
-        // are unordered sets — see diagram/level/mod.rs). The column table
-        // groups only levels with no pass-through side.
+        // grouped order. The word-cells path (`word_cells.rs`) emits a
+        // grouped cell's candidates in this same order, and
+        // `the_levels_read_by_vectors_build_what_the_row_loop_builds`
+        // requires each node's pairs in identical order from both, so a
+        // change to this walk's order must be made there too. The column
+        // table groups only levels with no pass-through side.
         debug_assert!(!left.passthrough() && !right.passthrough());
         let n2 = g_pairs.len();
         let n1 = f_pairs.len();
