@@ -1806,17 +1806,30 @@ pub(super) fn prune_walk(
         bytes,
         ..
     } = &mut *scratch;
+    // The walk from the root takes a block and a visit for every structural
+    // level: they are reserved here, where one at a time would reallocate on
+    // each, in the pass that counts the slots it is charged for.
+    let mut whole_slots = 0usize;
+    if let Start::Root = start {
+        let (mut levels, mut total) = (0usize, 0usize);
+        for t in (0..tdd.vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
+            whole_slots += tdd.reference_slot_count(t);
+            if tdd.is_structural_internal(t) {
+                levels += 1;
+                total += words(tdd.levels[t.idx()].slot_count());
+            }
+        }
+        visits.clear();
+        eng.limits().reserve_exact(marks, total.saturating_sub(marks.len()))?;
+        eng.limits().reserve_exact(visits, levels)?;
+    }
     let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes)?;
     match start {
         // A walk from the seeds is charged as one from the output would be.
         Start::Seeds(_, _, top) => {
             walk.slots = slots_from_output(eng.limits(), tdd, top, visits, entered, from_output)?;
         }
-        Start::Root => {
-            walk.slots = (0..tdd.vtree.num_nodes())
-                .map(|t| tdd.reference_slot_count(VtreeIdx(t as u32)))
-                .sum();
-        }
+        Start::Root => walk.slots = whole_slots,
         Start::Output => {}
     }
     compact_visited(eng, tdd, marks, remap, visits, walk.remap_need)?;
@@ -2451,12 +2464,22 @@ fn true_children(
     Ok(found)
 }
 
+/// [`alloc_block`]'s arm for a block past the end of `marks`, out of line so
+/// the walk's closure keeps the common arm inlined: it clears the words the
+/// block reuses, and the resize zeroes the ones it adds.
+#[inline(never)]
+fn grow_block(lim: &Limits, marks: &mut Vec<u64>, base: usize, end: usize) -> Result<(), OperationError> {
+    marks[base..].fill(0);
+    lim.try_resize(marks, end, 0)
+}
+
 /// Reserve a clear block of marks for `width` fresh slots at the end of
 /// `marks`, counting the slots in `slots`.
 ///
 /// The reservation goes through the engine's limits. Nothing in the diagram has
 /// been written while the walk is taking blocks, so a refusal leaves it as it
 /// was.
+#[inline(always)]
 fn alloc_block(
     lim: &Limits,
     marks: &mut Vec<u64>,
@@ -2467,9 +2490,10 @@ fn alloc_block(
     let base = *used;
     let end = base + words(width);
     if marks.len() < end {
-        lim.try_resize(marks, end, 0)?;
+        grow_block(lim, marks, base, end)?;
+    } else {
+        marks[base..end].fill(0);
     }
-    marks[base..end].fill(0);
     *used = end;
     *slots += width;
     Ok(base)
