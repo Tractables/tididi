@@ -197,7 +197,7 @@ fn float_level<const WORDS: bool, I: Isa, L: ChildLookup, R: ChildLookup>(
     if let Some(products) = PlainProducts::of(&st.left, &st.right)
         && let Some(out) = st.counts.narrow_under(products.scale)
     {
-        let sink: PlainSink<'_, I, WORDS> = PlainSink::new(isa, products, out);
+        let sink: PlainSink<'_, WORDS> = PlainSink::new(isa.leaves(), products, out);
         if cells_only() {
             return run_level_rows::<false, _, _, _>(
                 eng,
@@ -571,7 +571,7 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
             if let Some(products) = PlainProducts::of(&st.left, &st.right)
                 && let Some(out) = st.counts.narrow_under(products.scale)
             {
-                let sink: PlainSink<'_, Base> = PlainSink::new(Base, products, out);
+                let sink: PlainSink<'_> = PlainSink::new(Base.leaves(), products, out);
                 return super::word_cells::rows_by_words::<true, _, _, _>(
                     eng,
                     (rows, scratch),
@@ -772,9 +772,8 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
 /// each cell's sum appended to the column as the float a column under the
 /// products' scale holds for it. The values are those [`FoldSink`] folds,
 /// bit for bit, with no pair list between the walk and the fold.
-struct PlainSink<'a, I, const WORDS: bool = false> {
-    /// The instruction set the N×M leaves are compiled for.
-    isa: I,
+struct PlainSink<'a, const WORDS: bool = false> {
+    leaves: Leaves,
     products: PlainProducts<'a>,
     /// The output column's floats, under `products.scale`.
     out: &'a mut Vec<f64>,
@@ -786,10 +785,10 @@ struct PlainSink<'a, I, const WORDS: bool = false> {
     none: Vec<ChildPair>,
 }
 
-impl<'a, I: Isa, const WORDS: bool> PlainSink<'a, I, WORDS> {
-    fn new(isa: I, products: PlainProducts<'a>, out: &'a mut Vec<f64>) -> Self {
+impl<'a, const WORDS: bool> PlainSink<'a, WORDS> {
+    fn new(leaves: Leaves, products: PlainProducts<'a>, out: &'a mut Vec<f64>) -> Self {
         PlainSink {
-            isa,
+            leaves,
             products,
             out,
             sum: 0.0,
@@ -816,7 +815,7 @@ impl<'a, I: Isa, const WORDS: bool> PlainSink<'a, I, WORDS> {
     }
 }
 
-impl<I: Isa, const WORDS: bool> PairSink for PlainSink<'_, I, WORDS> {
+impl<const WORDS: bool> PairSink for PlainSink<'_, WORDS> {
     /// A one-pair cell's sum is its product: adding a nonnegative float to
     /// zero gives it back.
     #[inline(always)]
@@ -906,7 +905,7 @@ impl<I: Isa, const WORDS: bool> PairSink for PlainSink<'_, I, WORDS> {
             let (mut at, mut paid) = (0, 0u64);
             while at < n1 {
                 let limit = gate.due_in().saturating_sub(1).saturating_add(paid);
-                let b = self.isa.nxm_grouped(c, g_runs, (at, limit), acc);
+                let b = self.leaves.nxm_grouped(c, g_runs, (at, limit), acc);
                 (at, acc) = (b.at, (b.sum, b.live));
                 gate.add_short(b.taken - paid);
                 paid = 0;
@@ -928,7 +927,7 @@ impl<I: Isa, const WORDS: bool> PairSink for PlainSink<'_, I, WORDS> {
                 };
                 gate.add_short(((end - start - paid) * n2) as u64);
                 if end > start {
-                    acc = self.isa.nxm_general(c, (start, end), acc);
+                    acc = self.leaves.nxm_general(c, (start, end), acc);
                 }
                 if end == n1 {
                     break;
@@ -1979,13 +1978,13 @@ const HELD_COLUMNS: usize = 64;
 /// a word of cells at a time ([`RowSum::WORDS`]).
 const EACH_COLUMNS: usize = 8;
 
-impl<'a, I: Isa, const W: bool> RowSum for PlainSink<'a, I, W> {
+impl<'a, const W: bool> RowSum for PlainSink<'a, W> {
     const CHECKED: bool = false;
     const WORDS: bool = W;
-    type Cells = PlainSink<'a, I, W>;
+    type Cells = PlainSink<'a, W>;
 
     #[inline(always)]
-    fn cells(&mut self) -> &mut PlainSink<'a, I, W> {
+    fn cells(&mut self) -> &mut PlainSink<'a, W> {
         self
     }
 
@@ -2384,6 +2383,52 @@ trait Isa: Copy {
         span: (usize, usize),
         acc: (f64, bool),
     ) -> (f64, bool);
+
+    /// This instruction set as the [`PlainSink`] leaves' value.
+    fn leaves(self) -> Leaves;
+}
+
+/// The instruction set [`PlainSink`]'s N×M leaves run in, held as a value:
+/// with the [`Isa`] a type parameter of the sink, each function generic
+/// over the sink is compiled once per instruction set, and the compiler
+/// inlines differently into each copy's row loops (2% more instructions on
+/// some streamed float levels).
+#[derive(Clone, Copy)]
+enum Leaves {
+    Base,
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    Avx2(Avx2),
+}
+
+impl Leaves {
+    #[inline(always)]
+    fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        g_runs: &[u32],
+        at: (usize, u64),
+        acc: (f64, bool),
+    ) -> NxmBlock {
+        match self {
+            Leaves::Base => Base.nxm_grouped(c, g_runs, at, acc),
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            Leaves::Avx2(isa) => isa.nxm_grouped(c, g_runs, at, acc),
+        }
+    }
+
+    #[inline(always)]
+    fn nxm_general<L: ChildLookup, R: ChildLookup>(
+        self,
+        c: NxmCell<'_, L, R>,
+        span: (usize, usize),
+        acc: (f64, bool),
+    ) -> (f64, bool) {
+        match self {
+            Leaves::Base => Base.nxm_general(c, span, acc),
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            Leaves::Avx2(isa) => isa.nxm_general(c, span, acc),
+        }
+    }
 }
 
 /// The target's own instruction set.
@@ -2446,6 +2491,11 @@ impl Isa for Base {
         acc: (f64, bool),
     ) -> (f64, bool) {
         nxm_general(c, span, acc)
+    }
+
+    #[inline(always)]
+    fn leaves(self) -> Leaves {
+        Leaves::Base
     }
 }
 
@@ -2513,6 +2563,11 @@ impl Isa for Avx2 {
     ) -> (f64, bool) {
         // Safety: as above.
         unsafe { avx2_nxm_general(c, span, acc) }
+    }
+
+    #[inline(always)]
+    fn leaves(self) -> Leaves {
+        Leaves::Avx2(self)
     }
 }
 
