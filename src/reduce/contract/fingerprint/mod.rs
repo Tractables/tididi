@@ -424,18 +424,26 @@ pub(super) enum Screen {
 /// Two nodes are twins only where every parent node that names one names
 /// the other with the same siblings, so a level where no parent node names
 /// two nodes with the same siblings has none. The parent nodes are first
-/// tested for a repeated sibling ([`repeats_a_sibling`]); from the first
-/// that repeats one on, each is tested for two nodes with the same
-/// siblings ([`node_repeats_a_sibling`] with `SETS`). An implicit level is
-/// tested for a repeated sibling only, and is `Apart` or `Alike`.
+/// tested for a repeated sibling ([`repeats_a_sibling`]); where one
+/// repeats one, each is tested for two nodes with the same siblings
+/// ([`node_repeats_a_sibling`] with `SETS`). An implicit level is tested
+/// for a repeated sibling only, and is `Apart` or `Alike`.
 pub(super) fn screen_twins(
     level: &TddLevel,
     side: ChildSide,
     lim: &Limits,
     scratch: &mut ContractScratch,
 ) -> Result<Screen, OperationError> {
+    // The second test starts over rather than at the first node that
+    // repeats a sibling: a first test that tells where it stopped compiles
+    // to a slower loop than `repeats_a_sibling`'s, which reads every pair
+    // of the levels that end `Apart`, and cost some CNF compilations 3% of
+    // their instructions.
+    if !repeats_a_sibling(level, side, lim, scratch)? {
+        return Ok(Screen::Apart);
+    }
     let Some(stored) = level.stored() else {
-        return Ok(if repeats_a_sibling(level, side, lim, scratch)? { Screen::Alike } else { Screen::Apart });
+        return Ok(Screen::Alike);
     };
     let ContractScratch { twin_local, twin_generation, .. } = scratch;
     match side {
@@ -444,8 +452,8 @@ pub(super) fn screen_twins(
     }
 }
 
-/// [`screen_twins`] of a stored level, `LEFT` saying whether the child
-/// level is the left one.
+/// The second test of [`screen_twins`] on a stored level, `LEFT` saying
+/// whether the child level is the left one.
 fn stored_screen<const LEFT: bool>(
     stored: StoredPairs<'_>,
     lim: &Limits,
@@ -453,18 +461,7 @@ fn stored_screen<const LEFT: bool>(
     twin_generation: &mut u32,
 ) -> Result<Screen, OperationError> {
     let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
-    let nodes = stored.nodes();
-    let mut first = None;
-    for (i, node) in nodes.iter().enumerate() {
-        if node_repeats_a_sibling::<false>(stored.of(node), side, lim, twin_local, twin_generation)? {
-            first = Some(i);
-            break;
-        }
-    }
-    let Some(first) = first else {
-        return Ok(Screen::Apart);
-    };
-    for node in &nodes[first..] {
+    for node in stored.nodes() {
         if node_repeats_a_sibling::<true>(stored.of(node), side, lim, twin_local, twin_generation)? {
             return Ok(Screen::Alike);
         }
