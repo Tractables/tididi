@@ -771,7 +771,10 @@ impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
 /// row loop finds the pair, in the order [`FoldSink`] would collect it, and
 /// each cell's sum appended to the column as the float a column under the
 /// products' scale holds for it. The values are those [`FoldSink`] folds,
-/// bit for bit, with no pair list between the walk and the fold.
+/// bit for bit, with no pair list between the walk and the fold, except in
+/// a grouped N×M cell ([`nxm_grouped`]), which sums the right floats of a
+/// run before it multiplies them by the left one, and so may round
+/// differently.
 struct PlainSink<'a, const WORDS: bool = false> {
     leaves: Leaves,
     products: PlainProducts<'a>,
@@ -875,7 +878,9 @@ impl<const WORDS: bool> PairSink for PlainSink<'_, WORDS> {
     /// summed in a leaf function compiled apart from the row loop, which
     /// it calls once per block of the cell the gate does not come due
     /// inside; the gate is charged and polled between blocks as a poll per
-    /// group or f pair would charge it.
+    /// group or f pair would charge it. Where the products do not
+    /// [sum runs](PlainProducts::sums_runs), a grouped cell takes the
+    /// general leaf.
     #[inline(always)]
     fn two_sided<L: ChildLookup, R: ChildLookup>(
         &mut self,
@@ -899,6 +904,7 @@ impl<const WORDS: bool> PairSink for PlainSink<'_, WORDS> {
         let (n1, n2) = (f_pairs.len(), g_pairs.len());
         let mut acc = (0.0, false);
         if n1 >= GROUPED_MIN_PAIRS
+            && self.products.sums_runs()
             && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
         {
             debug_assert!(!left.passthrough() && !right.passthrough());
@@ -983,7 +989,9 @@ struct NxmBlock {
 
 /// The grouped N×M walk of [`cell_two_sided`] from f pair `at`, group by
 /// group, as long as the groups' candidates add up to at most `limit`,
-/// each surviving product added to `acc`.
+/// the surviving right floats of each run of the column summed across the
+/// group's rows and the sum's product with the run's left float added to
+/// `acc`, where the products [sum runs](PlainProducts::sums_runs).
 #[inline(always)]
 fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
     c: NxmCell<'_, L, R>,
@@ -991,7 +999,7 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
     (at, limit): (usize, u64),
     acc: (f64, bool),
 ) -> NxmBlock {
-    debug_assert!(!c.sides.0.passthrough() && !c.sides.1.passthrough());
+    debug_assert!(!c.sides.0.passthrough() && !c.sides.1.passthrough() && c.products.sums_runs());
     let NxmCell { products, pairs: (f_pairs, g_pairs), node_idx, sides: (left, right), masked, lmask, rmask } = c.grid();
     let (n1, n2) = (f_pairs.len(), g_pairs.len());
     let (mut sum, mut live) = acc;
@@ -1036,10 +1044,11 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
                 if left.kills() && lc == NO_PRODUCT {
                     continue;
                 }
-                let l = products.left_of(lc);
+                let mut run = 0.0;
                 for &rrow in rows {
-                    sum_run(&products, (node_idx, right, rrow), l, g2, (&mut sum, &mut live));
+                    sum_run(&products, (node_idx, right, rrow), g2, (&mut run, &mut live));
                 }
+                sum += products.run_left(lc) * run;
             }
             continue;
         }
@@ -1051,10 +1060,11 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
             if left.kills() && lc == NO_PRODUCT {
                 continue;
             }
-            let l = products.left_of(lc);
+            let mut run = 0.0;
             for p1 in g1.iter().filter(|p1| !cut(p1)) {
-                sum_run(&products, (node_idx, right, right.row(p1.right.0)), l, g2, (&mut sum, &mut live));
+                sum_run(&products, (node_idx, right, right.row(p1.right.0)), g2, (&mut run, &mut live));
             }
+            sum += products.run_left(lc) * run;
         }
     }
     NxmBlock { at: p1_idx, taken, due, sum, live }
@@ -1065,22 +1075,21 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
 /// takes them per run.
 const GROUP_ROWS: usize = 8;
 
-/// Add to `acc` the product of the scaled left float `l` with each live
-/// right value of row `rrow` at the columns of `g2`.
+/// Add to `run` each live right float of row `rrow` at the columns of
+/// `g2`, as the column holds it.
 #[inline(always)]
 fn sum_run<R: ChildLookup>(
     products: &PlainProducts<'_>,
     (node_idx, right, rrow): (&[u32], R, R::Row),
-    l: f64,
     g2: &[ChildPair],
-    (sum, live): (&mut f64, &mut bool),
+    (run, live): (&mut f64, &mut bool),
 ) {
     for p2 in g2 {
         let rc = right.get_in_row(node_idx, rrow, p2.right.0);
         if right.kills() && rc == NO_PRODUCT {
             continue;
         }
-        *sum += l * products.right_of(rc);
+        *run += products.right_float(rc);
         *live = true;
     }
 }

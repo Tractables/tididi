@@ -225,6 +225,42 @@ fn plain_products_sum_to_the_scaled_fold_bit_for_bit() {
     assert!(PlainProducts::of(&child(Plain::new(&l, 0)), &child(Plain::new(&r, 0))).is_none());
 }
 
+/// A left float read through `run_left` times a sum of right floats as the
+/// column holds them is the sum of their products up to rounding, and
+/// right floats whose sum may overflow decline it.
+#[test]
+fn a_left_float_times_a_sum_of_right_floats_is_the_sum_of_products() {
+    let mut rng = Lcg::new(0x51ab);
+    let (mut summed, mut declined) = (0, 0);
+    for round in 0..800 {
+        let (lo, hi) = RANGES[round % RANGES.len()];
+        let draw = |rng: &mut Lcg| column(rng, 40, lo, hi).into_iter().map(f64::abs).collect::<Vec<f64>>();
+        let (l, r) = (draw(&mut rng), draw(&mut rng));
+        let (ls, rs) = (rng.below(4000) as i64 - 2000, rng.below(4000) as i64 - 2000);
+        let (left, right) = (child(Plain::new(&l, ls)), child(Plain::new(&r, rs)));
+        let Some(products) = PlainProducts::of(&left, &right) else {
+            continue;
+        };
+        if !products.sums_runs() {
+            declined += 1;
+            continue;
+        }
+        summed += 1;
+        let lc = rng.below(40) as u32;
+        let rcs: Vec<u32> = (0..1 + rng.below(30)).map(|_| rng.below(40) as u32).collect();
+        let want = rcs.iter().fold(0.0, |sum, &rc| sum + products.product(lc, rc));
+        let got = products.run_left(lc) * rcs.iter().fold(0.0, |sum, &rc| sum + products.right_float(rc));
+        assert!(
+            (got - want).abs() <= want * 64.0 * f64::EPSILON && (want == 0.0 || got.is_normal()),
+            "round {round}: {got} against {want}"
+        );
+    }
+    assert!(summed > 300 && declined > 50, "{summed} summed, {declined} declined");
+    let (l, r) = ([2f64.powi(-1000)], [2f64.powi(1000)]);
+    let (left, right) = (child(Plain::new(&l, 0)), child(Plain::new(&r, 0)));
+    assert!(!PlainProducts::of(&left, &right).expect("offsets fit").sums_runs());
+}
+
 /// A column's offsets as a branch a float finds them: the least and
 /// greatest offset of its nonzero floats, and whether a sign bit is set.
 fn offsets_by_branch(vals: &[f64]) -> (i64, i64, bool) {
