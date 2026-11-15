@@ -1,4 +1,4 @@
-//! Radix sorting of bit-packed keys.
+//! Radix sorting of bit-packed keys, alone or carried by records.
 
 use crate::limits::{Limits, OperationError};
 
@@ -31,27 +31,35 @@ const RADIX_WIDE_BITS: usize = 12;
 /// rather than three, a 13-bit key in one.
 pub(crate) const RADIX_LARGE_BITS: usize = 14;
 
-/// The buffers a radix sort moves keys through, kept for the next sort.
-#[derive(Default)]
-pub(crate) struct Radix {
-    other: Vec<u64>,
+/// The buffers a radix sort moves keys or records through, kept for the
+/// next sort.
+pub(crate) struct Radix<T = u64> {
+    other: Vec<T>,
     counts: Vec<u32>,
 }
 
-impl crate::execution::pool::Buffers for Radix {
+impl<T> Default for Radix<T> {
+    fn default() -> Self {
+        Radix { other: Vec::new(), counts: Vec::new() }
+    }
+}
+
+impl<T> crate::execution::pool::Buffers for Radix<T> {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.other);
         visit(&mut self.counts);
     }
 }
 
-impl Radix {
+impl<T> Radix<T> {
     /// Drop the buffers and hand their charge back.
     pub(crate) fn discard(self, lim: &Limits) {
         lim.discard(self.other);
         lim.discard(self.counts);
     }
+}
 
+impl Radix {
     /// Sort keys ascending in their low `lo + bits` bits, then in the bits
     /// above, given that the input already lists them in ascending order of
     /// their low `lo` bits, and keys equal in their low `lo + bits` bits in
@@ -77,6 +85,22 @@ impl Radix {
         bits: usize,
         poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
+        self.sort_by_key_polling(lim, keys, |&key| key, lo, bits, poll)
+    }
+}
+
+impl<T: Copy> Radix<T> {
+    /// [`sort_polling`](Radix::sort_polling) of records by the key `key`
+    /// gives each, moving the records with their keys.
+    pub(crate) fn sort_by_key_polling(
+        &mut self,
+        lim: &Limits,
+        keys: &mut Vec<T>,
+        key: impl Fn(&T) -> u64,
+        lo: usize,
+        bits: usize,
+        poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let m = keys.len();
         if bits == 0 {
             // Nothing lies above the ordered low bits.
@@ -91,16 +115,16 @@ impl Radix {
             // Rotated, the sorted bits lead and the bits above break ties.
             let sorted = (lo + bits) as u32;
             poll((m * passes) as u64)?;
-            keys.sort_unstable_by_key(|&key| key.rotate_right(sorted));
+            keys.sort_unstable_by_key(|k| key(k).rotate_right(sorted));
             return Ok(());
         }
         if passes > RADIX_MAX_PASSES {
-            return self.sort_wide(lim, keys, lo, bits, poll);
+            return self.sort_wide(lim, keys, &key, lo, bits, poll);
         }
         if passes > 1 && m >= RADIX_TOP_MIN_ROWS {
-            return self.sort_by_top(lim, keys, lo, bits, poll);
+            return self.sort_by_top(lim, keys, &key, lo, bits, poll);
         }
-        self.sort_passes(lim, keys, lo, bits, passes, poll)
+        self.sort_passes(lim, keys, &key, (lo, bits), passes, poll)
     }
 
     /// The passes of [`sort`](Self::sort), least significant digit first:
@@ -108,9 +132,9 @@ impl Radix {
     fn sort_passes(
         &mut self,
         lim: &Limits,
-        keys: &mut Vec<u64>,
-        lo: usize,
-        bits: usize,
+        keys: &mut Vec<T>,
+        key: &impl Fn(&T) -> u64,
+        (lo, bits): (usize, usize),
         passes: usize,
         poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
@@ -125,29 +149,24 @@ impl Radix {
         let shift = |pass: usize| lo + (pass * digit).min(bits - digit);
         // Every slot of the buffer is written before it is read, so stale
         // contents from an earlier sort can stay.
-        resize_other(lim, &mut self.other, m)?;
+        resize_other(lim, &mut self.other, m, keys[0])?;
         lim.try_resize(&mut self.counts, passes * buckets, 0u32)?;
         let counts = &mut self.counts[..passes * buckets];
 
         // A pass permutes the keys without changing them, so one read counts
         // every pass's digits.
         poll(m as u64)?;
-        counts.fill(0);
-        for &word in keys.iter() {
-            for pass in 0..passes {
-                counts[pass * buckets + ((word >> shift(pass)) & mask) as usize] += 1;
-            }
-        }
+        count_digits(keys, key, counts, passes, shift, digit);
         for pass in 0..passes {
             poll(m as u64)?;
             let shift = shift(pass);
             let counts = &mut counts[pass * buckets..][..buckets];
-            if counts[((keys[0] >> shift) & mask) as usize] as usize == m {
+            if counts[((key(&keys[0]) >> shift) & mask) as usize] as usize == m {
                 // Every key holds the same digit, so this pass would copy the
                 // buffer onto itself. A bit-packed table often has such a pass.
                 continue;
             }
-            scatter_pass(keys, &mut self.other, counts, shift, mask);
+            scatter_pass(keys, &mut self.other, key, counts, shift, digit);
             std::mem::swap(keys, &mut self.other);
         }
         Ok(())
@@ -164,7 +183,8 @@ impl Radix {
     fn sort_by_top(
         &mut self,
         lim: &Limits,
-        keys: &mut Vec<u64>,
+        keys: &mut Vec<T>,
+        key: &impl Fn(&T) -> u64,
         lo: usize,
         bits: usize,
         poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
@@ -186,15 +206,15 @@ impl Radix {
         let run_digit = rest.div_ceil(rest.div_ceil(RADIX_WIDE_BITS));
         let run_passes = rest.div_ceil(run_digit);
         let Radix { other, counts } = self;
-        resize_other(lim, other, m)?;
+        resize_other(lim, other, m, keys[0])?;
         lim.try_resize(counts, buckets + 1 + (run_passes << run_digit), 0u32)?;
         let (top, run_counts) = counts.split_at_mut(buckets + 1);
         poll(m as u64)?;
         top.fill(0);
-        for &key in keys.iter() {
-            top[((key >> shift) & mask) as usize + 1] += 1;
+        for k in keys.iter() {
+            top[((key(k) >> shift) & mask) as usize + 1] += 1;
         }
-        let first = ((keys[0] >> shift) & mask) as usize;
+        let first = ((key(&keys[0]) >> shift) & mask) as usize;
         if top[first + 1] as usize == m {
             // One run: the keys stay where they are.
             for (d, end) in top.iter_mut().enumerate() {
@@ -205,9 +225,9 @@ impl Radix {
             for d in 1..=buckets {
                 top[d] += top[d - 1];
             }
-            for &key in keys.iter() {
-                let d = ((key >> shift) & mask) as usize;
-                other[top[d] as usize] = key;
+            for k in keys.iter() {
+                let d = ((key(k) >> shift) & mask) as usize;
+                other[top[d] as usize] = *k;
                 top[d] += 1;
             }
             std::mem::swap(keys, other);
@@ -221,9 +241,9 @@ impl Radix {
             let end = end as usize;
             let run = &mut keys[start..end];
             if run.len() < RUN_RADIX_MIN {
-                run.sort_unstable_by_key(|&key| key.rotate_right(sorted));
+                run.sort_unstable_by_key(|k| key(k).rotate_right(sorted));
             } else {
-                sort_run(run, &mut other[start..end], run_counts, (lo, rest), (run_digit, run_passes));
+                sort_run(run, &mut other[start..end], key, run_counts, (lo, rest), (run_digit, run_passes));
             }
             start = end;
         }
@@ -240,7 +260,8 @@ impl Radix {
     fn sort_wide(
         &mut self,
         lim: &Limits,
-        keys: &mut Vec<u64>,
+        keys: &mut Vec<T>,
+        key: &impl Fn(&T) -> u64,
         lo: usize,
         bits: usize,
         poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
@@ -251,23 +272,23 @@ impl Radix {
         let digit = (m.ilog2() as usize).saturating_sub(3).clamp(RADIX_BITS, 16).min(bits);
         let shift = lo + bits - digit;
         let mask = (1u64 << digit) - 1;
-        let top = |key: u64| ((key >> shift) & mask) as usize;
+        let top = |k: &T| ((key(k) >> shift) & mask) as usize;
         poll(m as u64)?;
-        if !keys.windows(2).all(|pair| top(pair[0]) <= top(pair[1])) {
+        if !keys.windows(2).all(|pair| top(&pair[0]) <= top(&pair[1])) {
             poll(2 * m as u64)?;
-            resize_other(lim, &mut self.other, m)?;
+            resize_other(lim, &mut self.other, m, keys[0])?;
             lim.try_resize(&mut self.counts, 1 << digit, 0u32)?;
             let counts = &mut self.counts[..1 << digit];
             counts.fill(0);
-            for &key in keys.iter() {
-                counts[top(key)] += 1;
+            for k in keys.iter() {
+                counts[top(k)] += 1;
             }
-            scatter_pass(keys, &mut self.other, counts, shift, mask);
+            scatter_pass(keys, &mut self.other, key, counts, shift, digit);
             std::mem::swap(keys, &mut self.other);
         }
         poll((m * (bits - digit).div_ceil(RADIX_BITS)) as u64)?;
-        for run in keys.chunk_by_mut(|a, b| top(*a) == top(*b)) {
-            run.sort_unstable_by_key(|&key| key.rotate_right(sorted));
+        for run in keys.chunk_by_mut(|a, b| top(a) == top(b)) {
+            run.sort_unstable_by_key(|k| key(k).rotate_right(sorted));
         }
         Ok(())
     }
@@ -285,26 +306,30 @@ const RUN_BITS: usize = 12;
 /// places them: its passes clear their counts per run.
 const RUN_RADIX_MIN: usize = 256;
 
-/// Resize `other` to exactly `m` slots without zeroing existing capacity.
+/// Resize `other` to exactly `m` slots, filling new ones with `fill`.
 #[inline]
-fn resize_other(lim: &Limits, other: &mut Vec<u64>, m: usize) -> Result<(), OperationError> {
-    lim.try_resize(other, m, 0u64)?;
+fn resize_other<T: Clone>(lim: &Limits, other: &mut Vec<T>, m: usize, fill: T) -> Result<(), OperationError> {
+    lim.try_resize(other, m, fill)?;
     other.truncate(m);
     Ok(())
 }
 
-/// Prefix-sum `counts` in place and scatter `from` into `to` by the digit at `shift` under `mask`.
+/// Prefix-sum `counts` in place and scatter `from` into `to` by the
+/// `digit` bits at `shift`.
 #[inline]
-fn scatter_pass(from: &[u64], to: &mut [u64], counts: &mut [u32], shift: usize, mask: u64) {
+fn scatter_pass<T: Copy>(from: &[T], to: &mut [T], key: &impl Fn(&T) -> u64, counts: &mut [u32], shift: usize, digit: usize) {
+    // Counts of exactly `1 << digit` let the compiler drop the bounds check
+    // of a masked digit.
+    let (counts, mask) = (&mut counts[..1 << digit], (1u64 << digit) - 1);
     let mut at = 0u32;
     for count in counts.iter_mut() {
         let here = *count;
         *count = at;
         at += here;
     }
-    for &key in from {
-        let d = ((key >> shift) & mask) as usize;
-        to[counts[d] as usize] = key;
+    for k in from {
+        let d = ((key(k) >> shift) & mask) as usize;
+        to[counts[d] as usize] = *k;
         counts[d] += 1;
     }
 }
@@ -313,29 +338,53 @@ fn scatter_pass(from: &[u64], to: &mut [u64], counts: &mut [u32], shift: usize, 
 /// of `digit` bits, the last overlapping the one before it as in
 /// [`Radix::sort`], through `buf` as long as `run` and `counts`, which
 /// holds `passes << digit` counts at least.
-fn sort_run(run: &mut [u64], buf: &mut [u64], counts: &mut [u32], (lo, bits): (usize, usize), (digit, passes): (usize, usize)) {
+fn sort_run<T: Copy>(run: &mut [T], buf: &mut [T], key: &impl Fn(&T) -> u64, counts: &mut [u32], (lo, bits): (usize, usize), (digit, passes): (usize, usize)) {
     let n = run.len();
     let (mask, buckets) = ((1u64 << digit) - 1, 1usize << digit);
     let shift = |pass: usize| lo + (pass * digit).min(bits - digit);
     let counts = &mut counts[..passes * buckets];
-    counts.fill(0);
-    for &key in run.iter() {
-        for pass in 0..passes {
-            counts[pass * buckets + ((key >> shift(pass)) & mask) as usize] += 1;
-        }
-    }
+    count_digits(run, key, counts, passes, shift, digit);
     let mut in_buf = false;
     for pass in 0..passes {
         let shift = shift(pass);
         let counts = &mut counts[pass * buckets..][..buckets];
-        let (from, to): (&[u64], &mut [u64]) = if in_buf { (&*buf, &mut *run) } else { (&*run, &mut *buf) };
-        if counts[((from[0] >> shift) & mask) as usize] as usize == n {
+        let (from, to): (&[T], &mut [T]) = if in_buf { (&*buf, &mut *run) } else { (&*run, &mut *buf) };
+        if counts[((key(&from[0]) >> shift) & mask) as usize] as usize == n {
             continue;
         }
-        scatter_pass(from, to, counts, shift, mask);
+        scatter_pass(from, to, key, counts, shift, digit);
         in_buf = !in_buf;
     }
     if in_buf {
         run.copy_from_slice(buf);
+    }
+}
+
+/// Count the digits of every pass in one read of `keys`: pass `p`'s
+/// `digit` bits at `shift(p)` into `counts[p << digit..]`, cleared first.
+fn count_digits<T>(keys: &[T], key: &impl Fn(&T) -> u64, counts: &mut [u32], passes: usize, shift: impl Fn(usize) -> usize, digit: usize) {
+    match passes {
+        1 => count_passes::<T, 1>(keys, key, counts, shift, digit),
+        2 => count_passes::<T, 2>(keys, key, counts, shift, digit),
+        _ => count_passes::<T, RADIX_MAX_PASSES>(keys, key, counts, shift, digit),
+    }
+}
+
+/// [`count_digits`] for `P` passes. With the pass count and the count
+/// tables' lengths known to the compiler, a key's passes unroll without
+/// bounds checks; a loop over a run-time count recomputed every shift and
+/// checked every index, at twice the instructions.
+fn count_passes<T, const P: usize>(keys: &[T], key: &impl Fn(&T) -> u64, counts: &mut [u32], shift: impl Fn(usize) -> usize, digit: usize) {
+    let (buckets, mask) = (1usize << digit, (1u64 << digit) - 1);
+    let shifts: [usize; P] = std::array::from_fn(shift);
+    let counts = &mut counts[..P * buckets];
+    counts.fill(0);
+    let mut tables = counts.chunks_exact_mut(buckets);
+    let tables: [&mut [u32]; P] = std::array::from_fn(|_| tables.next().unwrap_or_default());
+    for k in keys {
+        let k = key(k);
+        for pass in 0..P {
+            tables[pass][((k >> shifts[pass]) & mask) as usize] += 1;
+        }
     }
 }
