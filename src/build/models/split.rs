@@ -153,7 +153,7 @@ struct Scratch {
     /// or of its slots among the node's pairs.
     cursor: Vec<u32>,
     /// Per parent value, its low value index above its atom (in
-    /// `split_words`, the low value itself): the keys of the high child's
+    /// `runs_of_words`, the low value itself): the keys of the high child's
     /// runs. Once they are numbered, the packed triples. In `split_hashed`,
     /// each occupied low slot's run hashed.
     high_keys: Vec<u64>,
@@ -362,23 +362,35 @@ fn split(
         }
     }
     let parent = &*parent;
-    // Otherwise a high run names its low partners by value, above their
-    // atoms, which takes a low part of at most 32 bits.
-    if parent.words == 1 && (distinct || widths.0 <= 32) {
-        // The high values number at most the parent values and the high
-        // part's range; only when that bound leaves the index out are they
-        // counted.
-        let bound = n.min(1usize << widths.1.min(usize::BITS as usize - 1));
-        let mut key = KeyLayout::new(n, widths.0, bound, parent.atoms, distinct);
-        if !key.is_some_and(|key| key.indexed) {
-            let high_runs = count_high_runs(lim, parent, widths.0)?;
-            key = KeyLayout::new(n, widths.0, high_runs, parent.atoms, distinct);
-        }
-        if let Some(key) = key {
-            return split_words(lim, s, parent, widths.0, key);
-        }
+    let key = match parent.words == 1 {
+        true => word_key(lim, parent, widths, distinct)?,
+        false => None,
+    };
+    split_parts(lim, s, parent, widths, distinct, key)
+}
+
+/// The sort key of one-word values, if one fits a word. Unless every value
+/// is its own atom, a high run names its low partners by value, above their
+/// atoms, which takes a low part of at most 32 bits.
+fn word_key(
+    lim: &Limits,
+    parent: &Values,
+    (low_width, high_width): (usize, usize),
+    distinct: bool,
+) -> Result<Option<KeyLayout>, OperationError> {
+    if !distinct && low_width > 32 {
+        return Ok(None);
     }
-    split_parts(lim, s, parent, widths, distinct)
+    // The high values number at most the parent values and the high part's
+    // range; only when that bound leaves the index out are they counted.
+    let n = parent.len();
+    let bound = n.min(1usize << high_width.min(usize::BITS as usize - 1));
+    let key = KeyLayout::new(n, low_width, bound, parent.atoms, distinct);
+    if key.is_some_and(|key| key.indexed) {
+        return Ok(key);
+    }
+    let high_runs = count_high_runs(lim, parent, low_width)?;
+    Ok(KeyLayout::new(n, low_width, high_runs, parent.atoms, distinct))
 }
 
 /// How many distinct high parts one-word values have, the low part being
@@ -477,187 +489,6 @@ impl KeyLayout {
     fn run(self, key: u64) -> usize {
         (key >> (self.low_width + self.index_bits + self.atom_bits)) as usize
     }
-}
-
-/// Split one-word values whose sort keys `key` describes.
-///
-/// One pass over the parent values finds the high runs and writes the sort
-/// keys, the radix sort orders them by low part, and a second pass finds the
-/// low runs. Each key carries its value's atom and high value, which the
-/// low runs and the triples read in low order, so neither pass gathers.
-/// When every value is its own atom, the two passes write the triples
-/// themselves, and no run needs numbering.
-fn split_words(
-    lim: &Limits,
-    s: &mut Scratch,
-    parent: &Values,
-    low_width: usize,
-    key: KeyLayout,
-) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
-    let n = parent.len();
-    let distinct = parent.atoms as usize == n;
-    let low_mask = (1u64 << low_width) - 1;
-    let mut gate = lim.gate();
-
-    // The parent's order sorts by the high part first, so each high value
-    // is one run of parent values.
-    let mut triples = Vec::new();
-    s.sort_keys.clear();
-    lim.reserve_exact(&mut s.sort_keys, n)?;
-    s.high_starts.clear();
-    s.high_keys.clear();
-    if distinct {
-        lim.reserve_exact(&mut triples, n)?;
-    } else {
-        lim.reserve_exact(&mut s.high_keys, n)?;
-    }
-    gate.poll(n as u64)?;
-    let mut last = 0u64;
-    for (e, (&value, &atom)) in parent.data.iter().zip(&parent.atom).enumerate() {
-        let high = value >> low_width;
-        if e == 0 || high != last {
-            lim.try_push(&mut s.high_starts, e as u32)?;
-            last = high;
-        }
-        let run = s.high_starts.len() - 1;
-        let low = value & low_mask;
-        if distinct {
-            // Every value is its own atom, numbered in value order.
-            triples.push([atom, run as u32, 0]);
-            s.sort_keys.push(key.key(low, e, 0, 0));
-        } else {
-            // A high run names its low partners by value, which compares
-            // as their indices would.
-            s.high_keys.push(low << 32 | atom as u64);
-            s.sort_keys.push(key.key(low, e, atom, run));
-        }
-    }
-
-    // Keys of one low part differ above it, where they ascend in parent
-    // order: a value's high part does, and so does its index. The sort
-    // keeps that order, so each low value's run lists its keys canonically.
-    s.radix.sort(lim, &mut s.sort_keys, 0, low_width)?;
-    lim.check_stop()?;
-    s.low_starts.clear();
-    s.low_keys.clear();
-    if !distinct {
-        lim.reserve_exact(&mut s.low_keys, n)?;
-    }
-    gate.poll(n as u64)?;
-    for (i, &sorted) in s.sort_keys.iter().enumerate() {
-        let low = key.low(sorted);
-        if i == 0 || low != last {
-            lim.try_push(&mut s.low_starts, i as u32)?;
-            last = low;
-        }
-        if distinct {
-            triples[key.index(sorted)][2] = s.low_starts.len() as u32 - 1;
-        } else {
-            s.low_keys
-                .push((key.run(sorted) as u64) << 32 | key.atom(sorted) as u64);
-        }
-    }
-    gate.flush()?;
-
-    let mut low_data = Vec::new();
-    lim.reserve_exact(&mut low_data, s.low_starts.len())?;
-    low_data.extend(
-        s.low_starts
-            .iter()
-            .map(|&i| key.low(s.sort_keys[i as usize])),
-    );
-    let mut high_data = Vec::new();
-    lim.reserve_exact(&mut high_data, s.high_starts.len())?;
-    high_data.extend(
-        s.high_starts
-            .iter()
-            .map(|&e| parent.data[e as usize] >> low_width),
-    );
-    let (low_count, high_count) = (s.low_starts.len(), s.high_starts.len());
-
-    let (low_atom, low_atoms, high_atom, high_atoms) = if distinct {
-        (
-            identity(lim, low_count)?,
-            low_count as u32,
-            identity(lim, high_count)?,
-            high_count as u32,
-        )
-    } else {
-        let values = usize::try_from(1u64 << low_width).unwrap_or(usize::MAX);
-        let (high_atom, high_atoms) = number_runs(
-            lim,
-            &mut s.runs,
-            &s.high_keys,
-            &s.high_starts,
-            (values, parent.atoms),
-            &mut s.high_first,
-        )?;
-        let (low_atom, low_atoms) = number_runs(
-            lim,
-            &mut s.runs,
-            &s.low_keys,
-            &s.low_starts,
-            (high_count, parent.atoms),
-            &mut s.low_first,
-        )?;
-        triples = split_word_triples(
-            lim,
-            s,
-            parent,
-            key,
-            (&low_atom, low_atoms),
-            (&high_atom, high_atoms),
-        )?;
-        (low_atom, low_atoms, high_atom, high_atoms)
-    };
-    let split = Decomposition::Triples {
-        atoms: parent.atoms as usize,
-        triples,
-    };
-    let low = Values::owned(1, low_data, (low_atom, low_atoms));
-    let high = Values::owned(1, high_data, (high_atom, high_atoms));
-    Ok((split, low, high))
-}
-
-/// The triples of `split_words` when values are not all distinct. Emitting
-/// by high value first names each value's low value.
-fn split_word_triples(
-    lim: &Limits,
-    s: &mut Scratch,
-    parent: &Values,
-    key: KeyLayout,
-    low: (&[u32], u32),
-    high: (&[u32], u32),
-) -> Result<Vec<[u32; 3]>, OperationError> {
-    let n = parent.len();
-    let high_count = s.high_starts.len();
-    if !from_low(n, s) {
-        if s.low_of.len() < n {
-            lim.try_resize(&mut s.low_of, n, 0u32)?;
-        }
-        if key.indexed {
-            for (l, range) in runs(&s.low_starts, n).enumerate() {
-                for &sorted in &s.sort_keys[range] {
-                    s.low_of[key.index(sorted)] = l as u32;
-                }
-            }
-        } else {
-            // A high value's run ascends by low part, so the low order
-            // meets its values in parent order, and a cursor per run
-            // tells which.
-            s.cursor.clear();
-            lim.reserve_exact(&mut s.cursor, high_count)?;
-            s.cursor.extend_from_slice(&s.high_starts);
-            for (l, range) in runs(&s.low_starts, n).enumerate() {
-                for &sorted in &s.sort_keys[range] {
-                    let at = &mut s.cursor[key.run(sorted)];
-                    s.low_of[*at as usize] = l as u32;
-                    *at += 1;
-                }
-            }
-        }
-    }
-    triples(lim, s, parent, low, high)
 }
 
 /// Split one-word values that all lie in one parent atom, as the values of
@@ -1471,17 +1302,27 @@ fn from_low(n: usize, s: &Scratch) -> bool {
     held_keys(&s.low_starts, &s.low_first, n) <= held_keys(&s.high_starts, &s.high_first, n)
 }
 
-/// Split values of any width through their materialized parts.
+/// Split values through their runs: by high part in parent order, and by
+/// low part in the order a sort gives. One-word values whose sort keys `key`
+/// describes find both around one sort of those keys (`runs_of_words`),
+/// other values through their materialized parts (`runs_of_parts`).
 fn split_parts(
     lim: &Limits,
     s: &mut Scratch,
     parent: &Values,
     (low_width, high_width): (usize, usize),
     distinct: bool,
+    key: Option<KeyLayout>,
 ) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
     let n = parent.len();
     let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
-    runs_of_parts(lim, s, parent, low_width, high_width, distinct)?;
+    let written = match key {
+        Some(key) => runs_of_words(lim, s, parent, low_width, key)?,
+        None => {
+            runs_of_parts(lim, s, parent, low_width, high_width, distinct)?;
+            None
+        }
+    };
     let (low_count, high_count) = (s.low_starts.len(), s.high_starts.len());
 
     let (low_atom, low_atoms, high_atom, high_atoms) = if distinct {
@@ -1494,20 +1335,28 @@ fn split_parts(
     } else {
         // A high value's run lists its low partners in ascending order, and
         // a low value's run its high partners; each beside the parent atom.
-        s.high_keys.clear();
-        lim.reserve_exact(&mut s.high_keys, n)?;
-        s.high_keys.extend(
-            s.low_of[..n]
-                .iter()
-                .zip(&parent.atom)
-                .map(|(&l, &a)| (l as u64) << 32 | a as u64),
-        );
+        // `runs_of_words` names a low partner by value, which compares as
+        // its index would.
+        let low_values = match key {
+            Some(_) => usize::try_from(1u64 << low_width).unwrap_or(usize::MAX),
+            None => {
+                s.high_keys.clear();
+                lim.reserve_exact(&mut s.high_keys, n)?;
+                s.high_keys.extend(
+                    s.low_of[..n]
+                        .iter()
+                        .zip(&parent.atom)
+                        .map(|(&l, &a)| (l as u64) << 32 | a as u64),
+                );
+                low_count
+            }
+        };
         let (high_atom, high_atoms) = number_runs(
             lim,
             &mut s.runs,
             &s.high_keys,
             &s.high_starts,
-            (low_count, parent.atoms),
+            (low_values, parent.atoms),
             &mut s.high_first,
         )?;
         let (low_atom, low_atoms) = number_runs(
@@ -1518,26 +1367,41 @@ fn split_parts(
             (high_count, parent.atoms),
             &mut s.low_first,
         )?;
+        if let Some(key) = key
+            && !from_low(n, s)
+        {
+            words_low_of(lim, s, n, key)?;
+        }
         (low_atom, low_atoms, high_atom, high_atoms)
     };
-    let triples = triples(
-        lim,
-        s,
-        parent,
-        (&low_atom, low_atoms),
-        (&high_atom, high_atoms),
-    )?;
+    let triples = match written {
+        Some(triples) => triples,
+        None => triples(
+            lim,
+            s,
+            parent,
+            (&low_atom, low_atoms),
+            (&high_atom, high_atoms),
+        )?,
+    };
 
     let mut low_data = Vec::new();
     lim.reserve_exact(&mut low_data, low_count * lw)?;
-    for &i in &s.low_starts {
-        let e = s.order[i as usize] as usize;
-        low_data.extend_from_slice(&s.low[e * lw..][..lw]);
-    }
     let mut high_data = Vec::new();
     lim.reserve_exact(&mut high_data, high_count * rw)?;
-    for &e in &s.high_starts {
-        high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
+    if let Some(key) = key {
+        let lows = s.low_starts.iter();
+        low_data.extend(lows.map(|&i| key.low(s.sort_keys[i as usize])));
+        let highs = s.high_starts.iter();
+        high_data.extend(highs.map(|&e| parent.data[e as usize] >> low_width));
+    } else {
+        for &i in &s.low_starts {
+            let e = s.order[i as usize] as usize;
+            low_data.extend_from_slice(&s.low[e * lw..][..lw]);
+        }
+        for &e in &s.high_starts {
+            high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
+        }
     }
     let split = Decomposition::Triples {
         atoms: parent.atoms as usize,
@@ -1546,6 +1410,118 @@ fn split_parts(
     let low = Values::owned(lw, low_data, (low_atom, low_atoms));
     let high = Values::owned(rw, high_data, (high_atom, high_atoms));
     Ok((split, low, high))
+}
+
+/// The runs of `runs_of_parts` for one-word values, whose sort keys `key`
+/// describes, read off the values and their sorted keys: one pass over the
+/// values finds the high runs and writes the keys, the radix sort orders
+/// them by low part, and a second pass finds the low runs. Each key carries
+/// its value's atom and high value, which the low runs read in low order,
+/// so neither pass gathers. When every value is its own atom, the two
+/// passes write the triples themselves, which are returned; otherwise they
+/// leave in `high_keys` each value's low part above its atom, and neither
+/// `low_of` nor `high_of`.
+fn runs_of_words(
+    lim: &Limits,
+    s: &mut Scratch,
+    parent: &Values,
+    low_width: usize,
+    key: KeyLayout,
+) -> Result<Option<Vec<[u32; 3]>>, OperationError> {
+    let n = parent.len();
+    let distinct = parent.atoms as usize == n;
+    let low_mask = (1u64 << low_width) - 1;
+    let mut gate = lim.gate();
+    s.sort_keys.clear();
+    lim.reserve_exact(&mut s.sort_keys, n)?;
+    s.high_starts.clear();
+    s.high_keys.clear();
+    let mut triples = Vec::new();
+    if distinct {
+        lim.reserve_exact(&mut triples, n)?;
+    } else {
+        lim.reserve_exact(&mut s.high_keys, n)?;
+    }
+    gate.poll(n as u64)?;
+    let mut last = 0u64;
+    for (e, (&value, &atom)) in parent.data.iter().zip(&parent.atom).enumerate() {
+        let high = value >> low_width;
+        if e == 0 || high != last {
+            lim.try_push(&mut s.high_starts, e as u32)?;
+            last = high;
+        }
+        let run = s.high_starts.len() - 1;
+        let low = value & low_mask;
+        if distinct {
+            // Every value is its own atom, numbered in value order.
+            triples.push([atom, run as u32, 0]);
+            s.sort_keys.push(key.key(low, e, 0, 0));
+        } else {
+            s.high_keys.push(low << 32 | atom as u64);
+            s.sort_keys.push(key.key(low, e, atom, run));
+        }
+    }
+
+    // Keys of one low part differ above it, where they ascend in parent
+    // order: a value's high part does, and so does its index. The sort
+    // keeps that order, so each low value's run lists its keys canonically.
+    s.radix.sort(lim, &mut s.sort_keys, 0, low_width)?;
+    lim.check_stop()?;
+    s.low_starts.clear();
+    s.low_keys.clear();
+    if !distinct {
+        lim.reserve_exact(&mut s.low_keys, n)?;
+    }
+    gate.poll(n as u64)?;
+    for (i, &sorted) in s.sort_keys.iter().enumerate() {
+        let low = key.low(sorted);
+        if i == 0 || low != last {
+            lim.try_push(&mut s.low_starts, i as u32)?;
+            last = low;
+        }
+        if distinct {
+            triples[key.index(sorted)][2] = s.low_starts.len() as u32 - 1;
+        } else {
+            s.low_keys
+                .push((key.run(sorted) as u64) << 32 | key.atom(sorted) as u64);
+        }
+    }
+    gate.flush()?;
+    Ok(distinct.then_some(triples))
+}
+
+/// Each value's low run in `low_of`, read off the sorted keys of
+/// `runs_of_words`.
+fn words_low_of(
+    lim: &Limits,
+    s: &mut Scratch,
+    n: usize,
+    key: KeyLayout,
+) -> Result<(), OperationError> {
+    if s.low_of.len() < n {
+        lim.try_resize(&mut s.low_of, n, 0u32)?;
+    }
+    if key.indexed {
+        for (l, range) in runs(&s.low_starts, n).enumerate() {
+            for &sorted in &s.sort_keys[range] {
+                s.low_of[key.index(sorted)] = l as u32;
+            }
+        }
+        return Ok(());
+    }
+    // A high value's run ascends by low part, so the low order meets its
+    // values in parent order, and a cursor per run tells which.
+    s.cursor.clear();
+    lim.reserve_exact(&mut s.cursor, s.high_starts.len())?;
+    s.cursor.extend_from_slice(&s.high_starts);
+    for (l, range) in runs(&s.low_starts, n).enumerate() {
+        for &sorted in &s.sort_keys[range] {
+            let at = &mut s.cursor[key.run(sorted)];
+            s.low_of[*at as usize] = l as u32;
+            *at += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Find the runs of the parent values by their high part, in parent order,

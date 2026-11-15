@@ -82,9 +82,9 @@ fn a_key_without_the_index_splits_as_one_with_it() {
         assert!(indexed.indexed);
         let bare = KeyLayout { indexed: false, index_bits: 0, ..indexed };
         let mut s = Scratch::default();
-        let want = split_parts(&lim, &mut s, &parent, (low_width, high_width), false).unwrap();
+        let want = split_parts(&lim, &mut s, &parent, (low_width, high_width), false, None).unwrap();
         for key in [indexed, bare] {
-            let got = split_words(&lim, &mut s, &parent, low_width, key).unwrap();
+            let got = split_parts(&lim, &mut s, &parent, (low_width, high_width), false, Some(key)).unwrap();
             sides[usize::from(from_low(parent.len(), &s))] += 1;
             assert_same_split(&got, &want, &format!("round {round}"));
         }
@@ -163,14 +163,19 @@ fn with_atoms(mut values: Values<'static>, rng: &mut Lcg, low_width: usize, clas
 }
 
 /// Split `parent` through materialized parts and through every other split
-/// that takes it: the sorted single-atom split for one parent atom, and the
-/// hashed split for a low part narrow enough to address. Requires the same
-/// atoms and triples of all, and returns the reference's children, low then
-/// high, and which of the others ran.
+/// that takes it: the split through sorted one-word keys, the sorted
+/// single-atom split for one parent atom, and the hashed split for a low
+/// part narrow enough to address. Requires the same atoms and triples of
+/// all, and returns the reference's children, low then high, and which of
+/// the last two ran.
 fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str) -> (Values<'static>, Values<'static>, [bool; 2]) {
     let mut s = Scratch::default();
     let distinct = parent.atoms as usize == parent.len();
-    let want = split_parts(lim, &mut s, parent, widths, distinct).unwrap();
+    let want = split_parts(lim, &mut s, parent, widths, distinct, None).unwrap();
+    if let Some(key) = word_key(lim, parent, widths, distinct).unwrap() {
+        let words = split_parts(lim, &mut s, parent, widths, distinct, Some(key)).unwrap();
+        assert_same_split(&words, &want, what);
+    }
     let mut copy = Values { words: 1, data: parent.data.clone(), atom: parent.atom.clone(), atoms: parent.atoms };
     let sorted = match parent.atoms == 1 && !distinct {
         true => split_single(lim, &mut s, &mut copy, widths).unwrap(),
@@ -300,7 +305,7 @@ fn a_single_atom_split_of_few_high_values_splits_as_the_general_split_does() {
             continue;
         }
         let mut s = Scratch::default();
-        let want = split_parts(&lim, &mut s, &parent, widths, false).unwrap();
+        let want = split_parts(&lim, &mut s, &parent, widths, false, None).unwrap();
         let mut copy = Values { words: 1, data: parent.data.clone(), atom: parent.atom.clone(), atoms: 1 };
         let Some(got) = split_single(&lim, &mut s, &mut copy, widths).unwrap() else { continue };
         taken += 1;
