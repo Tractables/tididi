@@ -4,6 +4,9 @@
 
 Breaking changes:
 
+- `Engine::and_filter_products` is removed. Conjoin, then restrict to the
+  care constraint with `Engine::restrict_to_care`: the result agrees with
+  the filtered product under that constraint and is canonical.
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
