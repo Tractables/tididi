@@ -402,6 +402,11 @@ where
         all,
         output_grid_base: ctx.output_grid_base,
     });
+    let whole_grid = W == 0 && f_width.saturating_mul(width) <= OPEN_GRID_MAX_CELLS;
+    if whole_grid {
+        let base = ctx.output_grid_base;
+        open_row(slab, base, base + f_width * width);
+    }
     let mut next = 0;
     'rows: while next < f_width {
         // A row is written straight into the arenas, open across rows, where
@@ -439,7 +444,7 @@ where
             let i = next;
             next += 1;
             let row_base = ctx.output_grid_base + i * width;
-            if W == 0 {
+            if W == 0 && !whole_grid {
                 open_row(slab, row_base, row_base + width);
             }
             let f_pairs = match f_described {
