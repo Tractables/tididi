@@ -1002,31 +1002,76 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
         if masked && left.kills() && lmask.0[p1_left.raw() as usize] & lmask.1 == 0 {
             continue;
         }
+        let cut = |p1: &ChildPair| masked && right.kills() && rmask.0[p1.right.raw() as usize] & rmask.1 == 0;
+        let lrow = left.row(p1_left.0);
+        if g1.len() <= GROUP_ROWS {
+            // The f pairs that pass the right cull, and their right rows,
+            // are the same for every run of the column: take them once.
+            let mut rows = [right.row(g1[0].right.0); GROUP_ROWS];
+            let mut nrows = 0;
+            for p1 in g1.iter().filter(|p1| !cut(p1)) {
+                rows[nrows] = right.row(p1.right.0);
+                nrows += 1;
+            }
+            let rows = &rows[..nrows];
+            if rows.is_empty() {
+                continue;
+            }
+            let mut g2_start = 0;
+            for &g2_end in g_runs {
+                let g2 = &g_pairs[g2_start..g2_end as usize];
+                g2_start = g2_end as usize;
+                let lc = left.get_in_row(node_idx, lrow, g2[0].left.0);
+                if left.kills() && lc == NO_PRODUCT {
+                    continue;
+                }
+                let l = products.left_of(lc);
+                for &rrow in rows {
+                    sum_run(&products, (node_idx, right, rrow), l, g2, (&mut sum, &mut live));
+                }
+            }
+            continue;
+        }
         let mut g2_start = 0;
         for &g2_end in g_runs {
             let g2 = &g_pairs[g2_start..g2_end as usize];
             g2_start = g2_end as usize;
-            let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+            let lc = left.get_in_row(node_idx, lrow, g2[0].left.0);
             if left.kills() && lc == NO_PRODUCT {
                 continue;
             }
-            for p1 in g1 {
-                if masked && right.kills() && rmask.0[p1.right.raw() as usize] & rmask.1 == 0 {
-                    continue;
-                }
-                let rrow = right.row(p1.right.0);
-                for p2 in g2 {
-                    let rc = right.get_in_row(node_idx, rrow, p2.right.0);
-                    if right.kills() && rc == NO_PRODUCT {
-                        continue;
-                    }
-                    sum += products.product(lc, rc);
-                    live = true;
-                }
+            let l = products.left_of(lc);
+            for p1 in g1.iter().filter(|p1| !cut(p1)) {
+                sum_run(&products, (node_idx, right, right.row(p1.right.0)), l, g2, (&mut sum, &mut live));
             }
         }
     }
     NxmBlock { at: p1_idx, taken, due, sum, live }
+}
+
+/// The longest group of f pairs sharing `.left` whose right rows
+/// [`nxm_grouped`] takes once for all runs of the column; a longer group
+/// takes them per run.
+const GROUP_ROWS: usize = 8;
+
+/// Add to `acc` the product of the scaled left float `l` with each live
+/// right value of row `rrow` at the columns of `g2`.
+#[inline(always)]
+fn sum_run<R: ChildLookup>(
+    products: &PlainProducts<'_>,
+    (node_idx, right, rrow): (&[u32], R, R::Row),
+    l: f64,
+    g2: &[ChildPair],
+    (sum, live): (&mut f64, &mut bool),
+) {
+    for p2 in g2 {
+        let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+        if right.kills() && rc == NO_PRODUCT {
+            continue;
+        }
+        *sum += l * products.right_of(rc);
+        *live = true;
+    }
 }
 
 /// The general N×M walk of [`cell_two_sided`] over the f pairs of `span`,

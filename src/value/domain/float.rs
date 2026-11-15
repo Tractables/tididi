@@ -354,9 +354,21 @@ impl<'a> PlainProducts<'a> {
     /// names, as [`plain_fold`] and [`plain_fold_centred`] form it.
     #[inline(always)]
     pub(crate) fn product(&self, lc: u32, rc: u32) -> f64 {
-        let l = self.left[self.lview.index(EncodedChildRef::from_raw(lc))];
-        let r = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
-        self.times(l, r)
+        self.left_of(lc) * self.right_of(rc)
+    }
+
+    /// The left factor of [`product`](Self::product) for the value `lc`
+    /// names, scaled.
+    #[inline(always)]
+    pub(crate) fn left_of(&self, lc: u32) -> f64 {
+        self.scaled_left(self.left[self.lview.index(EncodedChildRef::from_raw(lc))])
+    }
+
+    /// The right factor of [`product`](Self::product) for the value `rc`
+    /// names, scaled.
+    #[inline(always)]
+    pub(crate) fn right_of(&self, rc: u32) -> f64 {
+        self.scaled_right(self.right[self.rview.index(EncodedChildRef::from_raw(rc))])
     }
 
     /// The product of a left float `l` and a right float `r` of the
