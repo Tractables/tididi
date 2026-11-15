@@ -342,6 +342,11 @@ impl GridArena {
     }
 }
 
+/// A row loop with a grid row an f row opens a grid of at most this many
+/// cells in one call ahead of its rows, and a larger one a row at a time,
+/// so that the row being written stays in cache.
+pub(super) const OPEN_GRID_MAX_CELLS: usize = 1 << 16;
+
 /// Make `start..end` of `slab` a row of `NO_PRODUCT` cells, extending the
 /// slab over it ([`extend_slab`]) or filling what an earlier grid left.
 ///

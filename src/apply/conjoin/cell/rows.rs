@@ -292,9 +292,16 @@ where
         right_view,
         f_pairs_scratch,
     );
+    let whole_grid = A::DENSE_SLAB && f_width.saturating_mul(g_width) <= OPEN_GRID_MAX_CELLS;
+    if whole_grid {
+        let base = ctx.output_grid_base;
+        open_row(slab, base, base + f_width * g_width);
+    }
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
-        open_row(slab, row_base, row_base + g_width);
+        if !whole_grid {
+            open_row(slab, row_base, row_base + g_width);
+        }
         let node_idx = &mut slab[..];
 
         let f_pairs = match f_described {
