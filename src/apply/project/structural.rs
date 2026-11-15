@@ -552,7 +552,7 @@ fn regroup(
     }
     // The pairs are filed by a side left as it is, when there is one: only a
     // rewritten side names the dense cells the stamp is indexed by.
-    let (mut by, mut bucket_remap, mut stamped) = match (left_remap, right_remap) {
+    let (by, bucket_remap, stamped) = match (left_remap, right_remap) {
         (None, None) => return Ok(None),
         (Some(left), None) => (Side::Right, None, left),
         (None, Some(right)) => (Side::Left, None, right),
@@ -589,13 +589,6 @@ fn regroup(
     let lim = work.eng.limits();
     let level = &tdd.levels[parent.idx()];
     let owned = scan_level(work, level)?;
-    if let Some(bucket) = bucket_remap
-        && fan_out(stamped, &owned, Side::Right) < fan_out(bucket, &owned, Side::Left)
-    {
-        // Both sides were rewritten: file by the one that expands into fewer
-        // references.
-        (by, bucket_remap, stamped) = (Side::Right, Some(stamped), bucket);
-    }
     let buckets = bucket_pairs(work, &owned, by, bucket_remap)?;
 
     // Each atom gets an index, and its owner set — the old nodes contributing
