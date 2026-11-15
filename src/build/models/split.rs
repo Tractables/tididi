@@ -1583,7 +1583,11 @@ fn runs_of_parts(
         for i in 0..n {
             let e = s.order[i] as usize;
             let previous = if i == 0 { 0 } else { s.order[i - 1] as usize };
-            if i == 0 || s.low[e * lw..][..lw] != s.low[previous * lw..][..lw] {
+            let new_run = match lw {
+                1 => i == 0 || s.low[e] != s.low[previous],
+                _ => i == 0 || s.low[e * lw..][..lw] != s.low[previous * lw..][..lw],
+            };
+            if new_run {
                 lim.try_push(&mut s.low_starts, i as u32)?;
             }
             s.low_of[e] = s.low_starts.len() as u32 - 1;
