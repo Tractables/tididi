@@ -140,10 +140,9 @@ impl Engine {
 /// hashes them, with no sort; at the root it is a radix sort on the
 /// value alone. Otherwise it is a sort by value: a radix sort of at most
 /// three passes while that value and the value's index fit one word. Past
-/// that, a one-word value that overflows by at most `WIDE_TOP_BITS` bits
-/// takes one counting pass on the top digit followed by a comparison sort
-/// of each run the digit leaves; a wider one-word value is sorted as
-/// 128-bit keys, and a value of several words by comparing indices.
+/// that, a one-word value is radix sorted on its high bits that fit beside
+/// the index, each run they leave tied then sorted by comparison on the
+/// rest, and a value of several words by comparing indices.
 fn build_sorted(
     eng: &Engine,
     vtree: &Arc<Vtree>,

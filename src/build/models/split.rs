@@ -136,8 +136,6 @@ struct Scratch {
     /// Sort keys: a low part beside the value's index, below it on the
     /// one-word path (see `KeyLayout`) and above it otherwise.
     sort_keys: Vec<u64>,
-    /// Sort keys too wide for one word.
-    wide_keys: Vec<u128>,
     /// The low child's value index of each parent value.
     low_of: Vec<u32>,
     /// The high child's value index of each parent value; in
@@ -195,7 +193,6 @@ impl Scratch {
             high,
             order,
             sort_keys,
-            wide_keys,
             low_of,
             high_of,
             low_starts,
@@ -233,7 +230,6 @@ impl Scratch {
             lim.discard(buf);
         }
         lim.discard(low_tally);
-        lim.discard(wide_keys);
         lim.discard(wide_triples);
         let RunTable {
             hashes,
@@ -1654,94 +1650,47 @@ fn order_by_low(
     s.order.clear();
     lim.reserve_exact(&mut s.order, n)?;
     let shift = index_bits(n) as usize;
-    if lw == 1 && low_width + shift <= 64 {
+    if lw == 1 {
         // The index below the low part makes every key distinct, and in
         // index order before sorting, so any sort of the keys is stable.
+        // Bits of the low part that do not fit above the index, its lowest,
+        // order each run the other bits leave tied.
+        let top = (low_width + shift).saturating_sub(64);
+        let mask = (1u64 << shift) - 1;
         s.sort_keys.clear();
         lim.reserve_exact(&mut s.sort_keys, n)?;
         s.sort_keys.extend(
             s.low
                 .iter()
                 .enumerate()
-                .map(|(e, &v)| v << shift | e as u64),
+                .map(|(e, &v)| v >> top << shift | e as u64),
         );
-        s.radix.sort(lim, &mut s.sort_keys, shift, low_width)?;
-        let mask = (1u64 << shift) - 1;
+        s.radix.sort(lim, &mut s.sort_keys, shift, low_width - top)?;
+        if top > 0 {
+            let low = &s.low;
+            for run in s.sort_keys.chunk_by_mut(|a, b| a >> shift == b >> shift) {
+                if run.len() > 1 {
+                    for key in run.iter_mut() {
+                        *key = low[(*key & mask) as usize] << (64 - top) >> (64 - top - shift) | *key & mask;
+                    }
+                    run.sort_unstable();
+                }
+            }
+        }
         s.order
             .extend(s.sort_keys.iter().map(|&key| (key & mask) as u32));
         lim.check_stop()?;
-        return Ok(Some(shift));
+        return Ok((top == 0).then_some(shift));
     }
-    let top = low_width + shift - 64;
-    if lw == 1 && top <= WIDE_TOP_BITS {
-        // Placed by the top bits of its low part first, a key holds the
-        // rest of the low part above its index in one word, so each run of
-        // one top digit sorts as words, in the cache, instead of every key
-        // sorting as a wider number.
-        let digit = top
-            .max((n.ilog2() as usize).saturating_sub(3).min(WIDE_TOP_BITS))
-            .min(low_width);
-        let rest = low_width - digit;
-        let (buckets, rest_mask) = (1usize << digit, (1u64 << rest) - 1);
-        let mut starts = Vec::new();
-        lim.try_resize(&mut starts, buckets + 1, 0u32)?;
-        let mut gate = lim.gate();
-        gate.poll(2 * n as u64)?;
-        for &v in &s.low {
-            starts[(v >> rest) as usize + 1] += 1;
-        }
-        for d in 1..=buckets {
-            starts[d] += starts[d - 1];
-        }
-        s.sort_keys.clear();
-        lim.try_resize(&mut s.sort_keys, n, 0u64)?;
-        let mut next = Vec::new();
-        lim.reserve_exact(&mut next, buckets)?;
-        next.extend_from_slice(&starts[..buckets]);
-        for (e, &v) in s.low.iter().enumerate() {
-            let at = &mut next[(v >> rest) as usize];
-            s.sort_keys[*at as usize] = (v & rest_mask) << shift | e as u64;
-            *at += 1;
-        }
-        for d in 0..buckets {
-            s.sort_keys[starts[d] as usize..starts[d + 1] as usize].sort_unstable();
-        }
-        gate.flush()?;
-        let mask = (1u64 << shift) - 1;
-        s.order
-            .extend(s.sort_keys.iter().map(|&key| (key & mask) as u32));
-        lim.discard(starts);
-        lim.discard(next);
-        lim.check_stop()?;
-        return Ok(None);
-    }
-    if lw == 1 {
-        s.wide_keys.clear();
-        lim.reserve_exact(&mut s.wide_keys, n)?;
-        s.wide_keys.extend(
-            s.low
-                .iter()
-                .enumerate()
-                .map(|(e, &v)| (v as u128) << 32 | e as u128),
-        );
-        s.wide_keys.sort_unstable();
-        s.order.extend(s.wide_keys.iter().map(|&key| key as u32));
-    } else {
-        s.order.extend(0..n as u32);
-        let low = &s.low;
-        s.order.sort_unstable_by(|&a, &b| {
-            let (x, y) = (&low[a as usize * lw..][..lw], &low[b as usize * lw..][..lw]);
-            x.iter().rev().cmp(y.iter().rev()).then(a.cmp(&b))
-        });
-    }
+    s.order.extend(0..n as u32);
+    let low = &s.low;
+    s.order.sort_unstable_by(|&a, &b| {
+        let (x, y) = (&low[a as usize * lw..][..lw], &low[b as usize * lw..][..lw]);
+        x.iter().rev().cmp(y.iter().rev()).then(a.cmp(&b))
+    });
     lim.check_stop()?;
     Ok(None)
 }
-
-/// Top bits of a one-word low part at most that `order_by_low` places
-/// first when the part and an index overflow a word: as many counts as fit
-/// the cache beside the keys.
-const WIDE_TOP_BITS: usize = 16;
 
 /// Number the runs of `keys` that start at `starts`, the last running to the
 /// end, by content, in order of first appearance. Every key is an index below
