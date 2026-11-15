@@ -872,15 +872,15 @@ fn a_map_inverted_lists_the_keys_holding_each_item() {
 }
 
 /// The radix sort against the standard stable sort, across lengths on both
-/// sides of the insertion-sort cutoff and of the length that takes wider
-/// digits, and key widths from none to all 32 bits.
+/// sides of the length that takes wider digits, and key widths from none to
+/// all 32 bits.
 #[test]
 fn radix_sort_is_a_stable_sort_by_key() {
     let mut rng = Lcg::new(7);
     let eng = Engine::new();
     let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
     let wide = 1usize << crate::sort::RADIX_LARGE_BITS;
-    for len in [0usize, 1, 2, RADIX_MIN - 1, RADIX_MIN, 1000, 5000, wide - 1, wide + 3] {
+    for len in [0usize, 1, 2, 63, 64, 1000, 5000, wide - 1, wide + 3] {
         for bits in [0u32, 1, 5, 11, 12, 23, 32] {
             let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
             let mut items: Vec<(u32, u32)> = (0..len as u32)

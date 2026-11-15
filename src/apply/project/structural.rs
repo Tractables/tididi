@@ -2053,12 +2053,9 @@ fn bucket_pairs(
 /// histogram of 2048 counters.
 const RADIX_BITS: u32 = 11;
 
-/// Below this many items an insertion sort replaces the counting passes.
-const RADIX_MIN: usize = 64;
-
 /// Sort `items` stably by `key`, whose values are below `2^bits`: a least
 /// significant digit radix sort, one counting pass per digit, which skips a
-/// digit every item shares and a list already in order.
+/// list already in order.
 fn sort_by_key_stable<T: Copy>(
     work: &mut Rewrite<'_>,
     items: &mut Vec<T>,
@@ -2069,21 +2066,9 @@ fn sort_by_key_stable<T: Copy>(
         return Ok(());
     }
     let n = items.len();
-    if n < RADIX_MIN {
-        for i in 1..n {
-            let item = items[i];
-            let k = key(&item);
-            let mut j = i;
-            while j > 0 && key(&items[j - 1]) > k {
-                items[j] = items[j - 1];
-                j -= 1;
-            }
-            items[j] = item;
-        }
-        return Ok(());
-    }
     let lim = work.eng.limits();
-    let everyone = u32::try_from(n).map_err(|_| OperationError::IndexOverflow)?;
+    // The counts are `u32`.
+    u32::try_from(n).map_err(|_| OperationError::IndexOverflow)?;
     // Many items take wider digits, as the crate's own radix sort does: a
     // pass costs about the same per item up to that width, and fewer passes
     // move the items fewer times.
@@ -2105,9 +2090,6 @@ fn sort_by_key_stable<T: Copy>(
         counts.fill(0);
         for item in items.iter() {
             counts[((key(item) >> shift) & mask) as usize] += 1;
-        }
-        if counts.contains(&everyone) {
-            continue;
         }
         let mut sum = 0u32;
         for count in &mut counts {
