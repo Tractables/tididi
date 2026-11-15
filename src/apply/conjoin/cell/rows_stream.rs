@@ -960,6 +960,17 @@ struct NxmCell<'c, L, R> {
     rmask: (&'c [u128], u128),
 }
 
+impl<'c, L: ChildLookup, R: ChildLookup> NxmCell<'c, L, R> {
+    /// The cell read through its sides' [grid](ChildLookup::grid) lookups,
+    /// for a cell neither of whose sides passes through.
+    #[inline(always)]
+    fn grid(self) -> NxmCell<'c, L::Grid, R::Grid> {
+        let NxmCell { products, pairs, node_idx, sides: (left, right), masked, lmask, rmask } = self;
+        let sides = (left.grid(), right.grid());
+        NxmCell { products, pairs, node_idx, sides, masked, lmask, rmask }
+    }
+}
+
 /// Where a block of a grouped N×M cell ([`nxm_grouped`]) stopped: the next
 /// f pair, the candidates it walked, those of the group it stopped at (0
 /// at the cell's end), and the cell's sum and whether a pair reached it.
@@ -981,7 +992,8 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
     (at, limit): (usize, u64),
     acc: (f64, bool),
 ) -> NxmBlock {
-    let NxmCell { products, pairs: (f_pairs, g_pairs), node_idx, sides: (left, right), masked, lmask, rmask } = c;
+    debug_assert!(!c.sides.0.passthrough() && !c.sides.1.passthrough());
+    let NxmCell { products, pairs: (f_pairs, g_pairs), node_idx, sides: (left, right), masked, lmask, rmask } = c.grid();
     let (n1, n2) = (f_pairs.len(), g_pairs.len());
     let (mut sum, mut live) = acc;
     let (mut p1_idx, mut taken, mut due) = (at, 0u64, 0u64);
@@ -1078,6 +1090,19 @@ fn sum_run<R: ChildLookup>(
 /// each surviving product added to `acc`.
 #[inline(always)]
 fn nxm_general<L: ChildLookup, R: ChildLookup>(
+    c: NxmCell<'_, L, R>,
+    span: (usize, usize),
+    acc: (f64, bool),
+) -> (f64, bool) {
+    if !c.sides.0.passthrough() && !c.sides.1.passthrough() {
+        return general_walk(c.grid(), span, acc);
+    }
+    general_walk(c, span, acc)
+}
+
+/// [`nxm_general`] through the lookups of `c`.
+#[inline(always)]
+fn general_walk<L: ChildLookup, R: ChildLookup>(
     c: NxmCell<'_, L, R>,
     (start, end): (usize, usize),
     acc: (f64, bool),

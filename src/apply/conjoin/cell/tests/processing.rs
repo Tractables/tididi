@@ -169,6 +169,8 @@ fn columns_charge_and_release_the_soft_budget() {
 struct AliveLookup;
 impl crate::apply::conjoin::child_lookup::ChildLookup for AliveLookup {
     type Row = ();
+    type Grid = Self;
+    fn grid(self) -> Self { self }
     fn row(&self, _row: u32) {}
     fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
 }
@@ -333,6 +335,8 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     struct RefLookup;
     impl ChildLookup for RefLookup {
         type Row = u32;
+        type Grid = Self;
+        fn grid(self) -> Self { self }
         fn row(&self, row: u32) -> u32 { row }
         fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
             row.wrapping_mul(31).wrapping_add(col) & 0x00ff_ffff
@@ -480,6 +484,8 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
     struct SomeDead;
     impl ChildLookup for SomeDead {
         type Row = u32;
+        type Grid = Self;
+        fn grid(self) -> Self { self }
         fn row(&self, row: u32) -> u32 { row }
         fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
             if (row + col).is_multiple_of(3) { NO_PRODUCT } else { row * 1000 + col }

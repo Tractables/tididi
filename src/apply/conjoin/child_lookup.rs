@@ -47,6 +47,14 @@ pub(super) trait ChildLookup: Copy {
     /// The child node at `col` of an already-resolved row.
     fn get_in_row(&self, node_idx: &[u32], row: Self::Row, col: u32) -> u32;
 
+    /// This lookup for a side that is not a pass-through carrier: the same
+    /// answers wherever [`passthrough`](Self::passthrough) is false, with
+    /// no pass-through test.
+    type Grid: ChildLookup;
+
+    /// See [`Grid`](Self::Grid); only where `passthrough` is false.
+    fn grid(self) -> Self::Grid;
+
     /// Resolve a child node at grid position `(row, col)` in one call, for a
     /// walk whose row changes per lookup.
     #[inline(always)]
@@ -102,6 +110,12 @@ impl CompleteLookup {
 impl ChildLookup for CompleteLookup {
     /// The row's first node.
     type Row = u32;
+    type Grid = Self;
+
+    #[inline(always)]
+    fn grid(self) -> Self {
+        self
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> u32 {
@@ -135,6 +149,12 @@ impl DenseLookup {
 impl ChildLookup for DenseLookup {
     /// The row's flat offset into the slab.
     type Row = usize;
+    type Grid = Self;
+
+    #[inline(always)]
+    fn grid(self) -> Self {
+        self
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> usize {
@@ -185,6 +205,13 @@ impl ChildLookup for MarginalLookup {
     /// The row's flat slab offset off pass-through, and the carried f field
     /// itself on it — where the value is the answer rather than a coordinate.
     type Row = usize;
+    type Grid = DenseLookup;
+
+    #[inline(always)]
+    fn grid(self) -> DenseLookup {
+        debug_assert!(!self.passthrough, "a pass-through side read as a grid");
+        DenseLookup { base: self.base, stride: self.stride }
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> usize {
