@@ -531,10 +531,10 @@ const NONE: u32 = u32::MAX;
 /// A level of one node has one owner and so one cell, which
 /// [`regroup_single_by_left`] writes run by run of its left side (an
 /// untouched one first, a rewritten one when the rows would cost more than the
-/// atoms), [`regroup_single_rows`] row by row, or [`regroup_single`] without
-/// the owner bookkeeping when neither applies; and a
-/// level each of whose pairs expands to one atom reads its owner sets off the
-/// atoms alone ([`regroup_atom_per_pair`]) where [`one_atom_pays`].
+/// atoms) or [`regroup_single_rows`] row by row; when neither applies it goes
+/// through the owner sets as any other level. A level each of whose pairs
+/// expands to one atom reads its owner sets off the atoms alone
+/// ([`regroup_atom_per_pair`]) where [`one_atom_pays`].
 ///
 /// `None` comes back when the partition did not change — cell `i` holds
 /// exactly what node `i` expanded to — because the level above would then
@@ -597,12 +597,6 @@ fn regroup(
         (by, bucket_remap, stamped) = (Side::Right, Some(stamped), bucket);
     }
     let buckets = bucket_pairs(work, &owned, by, bucket_remap)?;
-    if n_nodes == 1 && !owned.is_empty() {
-        regroup_single(work, tdd, parent, &owned, &buckets, by, stamped)?;
-        lim.discard(owned);
-        lim.discard(buckets);
-        return Ok(None);
-    }
 
     // Each atom gets an index, and its owner set — the old nodes contributing
     // it — is accumulated as a run of (atom, owner) entries. A bucket lists
@@ -1245,8 +1239,8 @@ fn write_cell(
 
 /// The most pairs a run of [`regroup_single_by_left`] may average when its
 /// right side was rewritten: a run's atoms are then sorted on their own. A
-/// node of longer runs is written as rows where [`RowPlan::pays`], and
-/// through buckets ([`regroup_single`]) where it does not.
+/// node of longer runs is written as rows where [`RowPlan::pays`], and by
+/// owner sets where it does not.
 const BY_LEFT_PAIRS_PER_RUN: usize = 64;
 
 /// [`regroup`] for a level of one node whose pairs are stored in order of
@@ -1489,62 +1483,6 @@ fn dedup_sorted(items: &mut [ChildPair]) -> usize {
         }
     }
     kept
-}
-
-/// [`regroup`] for a level of one node, which owns every atom: the level
-/// becomes the one cell holding them all, and its partition is unchanged.
-///
-/// The cell comes out in canonical order without a comparison sort over it.
-/// Filed by right reference, the buckets ascend by their right side and a
-/// stable sort by left cell finishes the order; filed by left reference, the
-/// buckets ascend by their left side and each sorts only its own atoms.
-fn regroup_single(
-    work: &mut Rewrite<'_>,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    owned: &[Owned],
-    buckets: &[(u32, u32)],
-    by: Side,
-    stamped: &Remap,
-) -> Result<(), OperationError> {
-    let lim = work.eng.limits();
-    let n_stamp = cell_count(stamped);
-    let mut stamp = Vec::new();
-    lim.try_resize(&mut stamp, n_stamp, 0u32)?;
-    let mut pairs: Vec<ChildPair> = Vec::new();
-    let mut run = 0u32;
-    for bucket in buckets.chunk_by(|a, b| a.0 == b.0) {
-        run = run.checked_add(1).ok_or(OperationError::IndexOverflow)?;
-        let here = bucket[0].0;
-        let start = pairs.len();
-        for &(_, s) in bucket {
-            let other = ChildDecoder::structural().node(by.other().of(owned[s as usize].pair));
-            let list = stamped.get(other.idx());
-            work.gate.poll(list.len() as u64 + 1)?;
-            for &there in list {
-                let seen = &mut stamp[there as usize];
-                if *seen != run {
-                    *seen = run;
-                    lim.try_push(&mut pairs, by.pair(here, there))?;
-                }
-            }
-        }
-        if by == Side::Left {
-            sort_pairs(&mut pairs[start..]);
-        }
-    }
-    lim.discard(stamp);
-    if by == Side::Right {
-        let width = usize::BITS - n_stamp.saturating_sub(1).leading_zeros();
-        sort_by_key_stable(work, &mut pairs, width, |pair| pair.left.0)?;
-    }
-    debug_assert!(
-        pairs.is_sorted() && pairs.windows(2).all(|w| w[0] != w[1]),
-        "a single cell's atoms are distinct and in canonical order"
-    );
-    work.write_one_node(tdd, parent, &pairs)?;
-    lim.discard(pairs);
-    Ok(())
 }
 
 /// What one read of a single node's pairs says about writing its cell row by

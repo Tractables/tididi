@@ -592,10 +592,9 @@ fn remap_with_gaps(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Rema
     Runs::pack(eng.limits(), keys, &entries, 0u32).unwrap()
 }
 
-/// Both writers of a level of one node against the owner-set rule written
-/// out, on every such level of random diagrams: the rows whatever they cost,
-/// and the sorted atoms under each side the pairs can be filed by. They write
-/// the same node, and every shape of the rows is reached: one row with a left
+/// The rows that write a level of one node against the owner-set rule
+/// written out, on every such level of random diagrams, whatever the rows
+/// cost. Every shape of the rows is reached: one row with a left
 /// side stored, rewritten, rewritten with a reference that expands to no
 /// cell, or rewritten into one cell with the right side rewritten too, so the
 /// atoms go uncounted; several rows with a left side stored, or rewritten
@@ -605,13 +604,13 @@ fn remap_with_gaps(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Rema
 /// rows write the level an implicit one-node level leaves as they write the
 /// one its stored copy leaves, once closed.
 #[test]
-fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
-    same_as_stored(written_alike_by_rows_and_by_sorting);
+fn a_level_of_one_node_is_written_by_rows_as_the_owner_set_rule_says() {
+    same_as_stored(written_by_rows);
 }
 
-/// The cases of [`a_level_of_one_node_is_written_alike_by_rows_and_by_sorting`]:
+/// The cases of [`a_level_of_one_node_is_written_by_rows_as_the_owner_set_rule_says`]:
 /// the diagrams the rows wrote, their levels closed.
-fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
+fn written_by_rows() -> Vec<Tdd> {
     let mut out = Vec::new();
     let mut rng = Lcg::new(20260926);
     let eng = Engine::new();
@@ -680,22 +679,6 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
                     };
                     *reached.entry(shape_reached).or_default() += 1;
 
-                    for by in [Side::Left, Side::Right] {
-                        let (filed, stamped) = match by {
-                            Side::Left => (left.as_ref(), right.as_ref()),
-                            Side::Right => (right.as_ref(), left.as_ref()),
-                        };
-                        // The atoms filed under one reference are told apart
-                        // by a rewritten other side.
-                        let Some(stamped) = stamped else { continue };
-                        let owned = scan_level(&mut work, level).unwrap();
-                        let buckets = bucket_pairs(&mut work, &owned, by, filed).unwrap();
-                        let mut by_sorting = f.clone();
-                        regroup_single(&mut work, &mut by_sorting, parent, &owned, &buckets, by, stamped).unwrap();
-                        let sorted = &by_sorting.levels[parent.idx()];
-                        assert!(sorted.nodes == written.nodes, "{shape}, level {parent:?}, filed by {by:?}: node");
-                        assert_eq!(sorted.pairs_vec(0), written.pairs_vec(0), "{shape}, level {parent:?}, filed by {by:?}");
-                    }
                     for level in &mut by_rows.levels {
                         level.close();
                     }
@@ -767,10 +750,10 @@ fn a_row_reads_back_its_columns_in_order_however_wide() {
 }
 
 /// A level of one node whose right side stores references wide enough that
-/// its rows span several summary words is written alike by the rows and by
-/// sorting its atoms, and like the owner-set rule written out.
+/// its rows span several summary words is written by the rows as the
+/// owner-set rule written out says.
 #[test]
-fn a_wide_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
+fn a_wide_level_of_one_node_is_written_by_rows_as_the_owner_set_rule_says() {
     let mut rng = Lcg::new(20260928);
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
@@ -804,12 +787,6 @@ fn a_wide_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
         let written = &by_rows.levels[parent.idx()];
         assert_eq!(written.nodes().len(), 1);
         assert_eq!(written.pairs_vec(0), want, "{keys} keys over {width} columns: rows");
-
-        let owned = scan_level(&mut work, level).unwrap();
-        let buckets = bucket_pairs(&mut work, &owned, Side::Right, None).unwrap();
-        let mut by_sorting = f.clone();
-        regroup_single(&mut work, &mut by_sorting, parent, &owned, &buckets, Side::Right, &left).unwrap();
-        assert_eq!(by_sorting.levels[parent.idx()].pairs_vec(0), want, "{keys} keys over {width} columns: sorting");
     }
 }
 
