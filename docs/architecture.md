@@ -176,11 +176,12 @@ algebra, so replacing the algebra invalidates every column.
 `restructure::EmbeddingPlan` keeps a source vtree, a destination vtree and the
 validated correspondence between their levels, so reusing it skips validation,
 and composing plans places a diagram directly without intermediate copies.
-Embedding assembles its result through `restructure::placement::CopyPlacement`
-and grafting through `MovePlacement`. Both own the destination levels and
-weights, keep local node indices while transferring levels, and repair the
-references that new joins introduce; each operation still checks shape and
-weight compatibility itself.
+Embedding and grafting assemble their results through
+`restructure::placement::MovePlacement`, which owns the destination levels and
+weights, moves a source's levels or copies those of a source it borrows, keeps
+local node indices while transferring levels, and repairs the references that
+new joins introduce; each operation still checks shape and weight compatibility
+itself.
 
 `Engine::embed_over` moves weight-marginal levels with their values through
 `MovePlacement`. A free variable under such a level's image scales its values

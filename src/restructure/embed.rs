@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::{
     EmbedError, EmbedRefused, Embedding,
     graft::check_part_weights,
-    placement::{CopyPlacement, MovePlacement},
+    placement::MovePlacement,
 };
 
 use crate::Engine;
@@ -764,50 +764,41 @@ pub(crate) fn place<'a>(
     }
 }
 
-/// Fill the destination's levels, then drop the pass-through nodes no copied
-/// level names.
+/// Copy a structural diagram's levels onto the destination through
+/// [`assemble_moving`], without its weights, and drop the pass-through nodes
+/// over a leaf that no level names.
 fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }
-    let mut placement = CopyPlacement::new(eng, into)?;
+    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build)
+        .map_err(|(e, _)| e)?;
+    // One unit per internal node and one per slot of its level, less the
+    // units `assemble_moving` polled: a large diagram's copy, charged a unit
+    // a level, would go a whole embedding without a test.
+    let internal = into.internal_bottomup_slice();
+    let built = internal.iter().filter(|t| plan.free[t.idx()]).count() + plan.pass_throughs.len();
+    let units: u64 = internal
+        .iter()
+        .map(|&t| 1 + result.level(t).slot_count() as u64)
+        .sum();
     let mut gate = eng.limits().gate();
-    for t in into.bottomup() {
-        if into.node(t).is_leaf() {
-            continue;
-        }
-        gate.poll(1)?;
-        let (left, right) = into.children(t);
-        if plan.free[t.idx()] {
-            placement.join(t, placement.true_node(left), placement.true_node(right))?;
-        } else if let Some(source) = plan.covered_by[t.idx()] {
-            match plan.mirrored.get(source.idx()).copied().unwrap_or(false) {
-                true => placement.copy_level_mirrored(tdd, source, t)?,
-                false => placement.copy_level(tdd, source, t)?,
-            }
-        } else {
-            placement.pass_through(
-                t,
-                if plan.free[left.idx()] {
-                    ChildSide::Left
-                } else {
-                    ChildSide::Right
-                },
-            )?;
-        }
-        // The level just built is the work: a large diagram's copy, charged
-        // one unit a level, would go a whole embedding without a test.
-        gate.poll(placement.slot_count(t) as u64)?;
-    }
+    gate.poll(units.saturating_sub(built as u64))?;
     gate.flush()?;
-    Ok(placement.finish(tdd.output().local)?)
+    if plan.pass_throughs.iter().any(|&t| {
+        let (left, right) = into.children(t);
+        into.node(if plan.free[left.idx()] { right } else { left }).is_leaf()
+    }) {
+        eng.reduce(&mut result, crate::reduce::ReductionPlan::Prune)?;
+    }
+    Ok(result)
 }
 
 /// Move the levels of a structural diagram onto the destination and build
-/// what it adds, as [`assemble`] does with copies; the diagram comes back,
-/// levels and worklists in place, when the result's storage is refused. A
-/// borrowed diagram, which has no weights, has its levels copied into the
-/// destination's instead, and a refusal drops the copies. The result takes
+/// what it adds; the diagram comes back, levels and worklists in place, when
+/// the result's storage is refused. A borrowed diagram has its levels, not
+/// its weights, copied into the destination's instead, and a refusal drops
+/// the copies. The result takes
 /// a moved diagram's worklists, and a copy of a borrowed one's, once nothing
 /// is left to refuse.
 #[expect(
@@ -842,7 +833,6 @@ fn assemble_moving<'a>(
             Some(known)
         }
         Cow::Borrowed(source) => {
-            debug_assert!(source.weights.is_none(), "a weighted diagram is moved");
             if let Err(e) = placement.copy_part(source, &plan.embedding.levels) {
                 return Err((e, tdd));
             }
