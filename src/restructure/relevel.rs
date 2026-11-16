@@ -275,9 +275,7 @@ pub(crate) fn rebuild_levels(
 /// A rotation's rebuild up to the writing of its two levels: the triples
 /// expanded, sorted and grouped by their inner pair, and the inner level's
 /// nodes numbered. [`prepare_levels`] fills one from a diagram and
-/// [`finish_levels`] writes the diagram's two levels from it, so a caller
-/// that rotates several diagrams can prepare them all, decide from the pairs
-/// each would hold, and write only the levels it keeps.
+/// [`finish_levels`] writes the diagram's two levels from it.
 #[derive(Default)]
 pub(crate) struct Prepared {
     // The triples, packed one per word under `layout`: in `narrow` where its
@@ -919,7 +917,7 @@ fn count_distinct_contexts(
 ///
 /// [`OperationError::OverBudget`] when a level's arena or a filing buffer is
 /// refused; the diagram is then as it was.
-pub(crate) fn finish_levels(
+fn finish_levels(
     lim: &Limits,
     tdd: &mut Tdd,
     info: &RotationInfo,

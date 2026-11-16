@@ -19,10 +19,11 @@ use std::sync::Arc;
 
 use crate::Engine;
 use crate::diagram::{Tdd, TddLevel};
-use crate::limits::{Charged, Limits, OperationError, Transient};
+use crate::limits::{Limits, OperationError, Transient};
+#[cfg(debug_assertions)]
+use crate::restructure::relevel::{Prepared, prepare_levels};
 use crate::restructure::relevel::{
-    Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels,
-    score_levels_crossed_too,
+    RotationStep, rebuild_levels, score_levels, score_levels_crossed_too,
 };
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rng::Lcg;
@@ -299,13 +300,12 @@ impl Engine {
     /// apply at its pivot, a member with summed-out levels, or a member whose
     /// rebuild would pass `bound` pairs abandons the move and returns
     /// `Ok(false)` without calling `accept`. An empty pool keeps nothing.
-    /// The members are only read until `accept` keeps the move: each
-    /// member's rebuild is prepared first, which gives the pairs its two
-    /// levels would hold, and the levels are written from it once the move is
-    /// kept. The copy of the tree charges its nodes to the work clock, and
-    /// each member the pairs of its two old and two new levels and the fixed
-    /// cost of a rebuild; a member whose two levels hold a pair each, or
-    /// none, holds as many after the move and is not prepared.
+    /// Each member's two levels are rebuilt before `accept` is asked, and put
+    /// back if it declines. The copy of the tree charges its nodes to the
+    /// work clock, and each member rebuilt the pairs of its two old and two
+    /// new levels and the fixed cost of a rebuild. A member whose two levels
+    /// hold a pair each, or none, holds as many after the move: it is charged
+    /// its pairs and one, and rebuilt only once the move is kept.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -1018,16 +1018,14 @@ struct Saved<'a> {
 
 type SavedMembers<'a> = Transient<'a, Vec<(usize, Saved<'a>)>>;
 
-/// Member `i`'s two levels at `step` rebuilt within `step.max_pairs`, from
-/// `prepared` where the probe prepared them, and what it needs to be put back
-/// saved: the new levels' pairs, or `None` where the rebuild would pass
-/// `step.max_pairs`.
+/// Member `i`'s two levels at `step` rebuilt within `step.max_pairs`, and
+/// what it needs to be put back saved: the new levels' pairs, or `None`
+/// where the rebuild would pass `step.max_pairs`.
 fn rebuild_member<'a>(
     lim: &'a Limits,
     i: usize,
     m: &mut Tdd,
     step: RotationStep<'_>,
-    prepared: Option<&mut Prepared>,
     saved: &mut Vec<(usize, Saved<'a>)>,
     scratch: &mut RestructureScratch,
 ) -> Result<Option<usize>, OperationError> {
@@ -1041,13 +1039,7 @@ fn rebuild_member<'a>(
     ));
     m.levels.forget();
     // No member has a marginal level here.
-    let rebuilt = match prepared {
-        Some(prepared) => {
-            finish_levels(lim, m, step.info, step.dir, false, scratch, prepared).map(Some)
-        }
-        None => rebuild_levels(lim, m, step, false, scratch),
-    };
-    let Some((outer, inner)) = rebuilt? else {
+    let Some((outer, inner)) = rebuild_levels(lim, m, step, false, scratch)? else {
         return Ok(None);
     };
     saved.last_mut().expect("pushed above").1.levels =
@@ -1055,65 +1047,47 @@ fn rebuild_member<'a>(
     Ok(Some(pivot_pairs(m, step.info)))
 }
 
-/// Rebuild every member at `step`, stopping on the first refusal or error, and
-/// returning the saved preimages and outcome for [`settle`].
+/// Rebuild at `step` each member `pick` names, stopping on the first refusal
+/// or error, what each needs to be put back filed in `saved`: the outcome for
+/// [`settle`].
 fn rebuild_other_members<'a>(
     lim: &'a Limits,
     members: &mut [&mut Tdd],
     step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
-    mut on_rebuilt: impl FnMut(usize, bool, usize) -> Result<(), OperationError>,
-    mut prepared: Option<&mut [Option<Prepared>]>,
-) -> Result<(SavedMembers<'a>, Result<bool, OperationError>), OperationError> {
-    let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
-    lim.reserve_exact(&mut saved, members.len())?;
-    let mut outcome: Result<bool, OperationError> = Ok(true);
+    saved: &mut Vec<(usize, Saved<'a>)>,
+    pick: impl Fn(usize) -> bool,
+    mut on_rebuilt: impl FnMut(usize, usize) -> Result<(), OperationError>,
+) -> Result<bool, OperationError> {
     for (i, m) in members.iter_mut().enumerate() {
-        let prep = prepared.as_deref_mut().and_then(|p| p[i].as_mut());
-        let had_prep = prep.is_some();
-        let rebuilt = rebuild_member(lim, i, m, step, prep, &mut saved, scratch);
-        debug_assert!(
-            !had_prep || !matches!(rebuilt, Ok(None)),
-            "a rebuild passes the bound its preparation passed"
-        );
-        outcome = match rebuilt {
-            Ok(Some(pairs)) => on_rebuilt(i, had_prep, pairs).map(|()| true),
-            other => other.map(|_| false),
-        };
-        if !matches!(outcome, Ok(true)) {
-            break;
+        if !pick(i) {
+            continue;
         }
+        let Some(pairs) = rebuild_member(lim, i, m, step, saved, scratch)? else {
+            return Ok(false);
+        };
+        on_rebuilt(i, pairs)?;
     }
-    Ok((saved, outcome))
+    Ok(true)
 }
 
-/// The rebuilds a probe prepared, one for each member but those it left
-/// out, charged with their buffers.
-#[derive(Default)]
-struct PreparedMembers(Vec<Option<Prepared>>);
-
-impl Charged for PreparedMembers {
-    fn charged_bytes(&self) -> u64 {
-        self.0
-            .iter()
-            .flatten()
-            .fold(self.0.charged_bytes(), |bytes, p| bytes + p.charged_bytes())
-    }
+/// Room in `saved` for every member.
+fn saved_members<'a>(lim: &'a Limits, members: usize) -> Result<SavedMembers<'a>, OperationError> {
+    let mut saved = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut saved, members)?;
+    Ok(saved)
 }
 
-/// The members' two levels at `step` prepared, the change shown to `accept`,
-/// and if kept, rebuilt for all members; `extra` units charged for the move
-/// itself. The members' tree is the caller's: a kept move leaves their levels
-/// on the tree `step.info` was taken from and their pointers on the old one.
+/// The members' two levels at `step` rebuilt, the change shown to `accept`,
+/// and the move kept for all members or put back for all; `extra` units
+/// charged for the move itself. The members' tree is the caller's: a kept
+/// move leaves their levels on the tree `step.info` was taken from and their
+/// pointers on the old one.
 ///
-/// Each member's levels are only read until the move is kept. The probe
-/// prepares each member's rebuild ([`prepare_levels`]), which gives the pairs
-/// its two levels would hold, and writes the levels from it once the move is
-/// kept ([`finish_levels`]). A member whose two levels hold one pair each, or
-/// none, holds as many after the move and is not prepared; a kept move
-/// rebuilds it. The charge of a member is the pairs of its two old and two
-/// new levels and [`REBUILD_UNITS`], taken when it is prepared, or for a
-/// member not prepared, by its rebuild once the move is kept.
+/// A member that keeps its pairs ([`keeps_its_pairs`]) is charged its pairs
+/// and one, and rebuilt only once the move is kept. A member rebuilt is
+/// charged the pairs of its two old and two new levels and
+/// [`REBUILD_UNITS`].
 ///
 /// The descent's probes decide from scores instead ([`probe_scored`]).
 fn probe(
@@ -1124,73 +1098,66 @@ fn probe(
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
-    let info = step.info;
     let lim = eng.limits();
+    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     let mut gate = lim.gate();
     gate.poll(extra)?;
     let mut before = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut before, members.len())?;
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
-    // Each member's prepared rebuild, held until the move is decided; a
-    // member prepared was charged its rebuild.
-    let mut prepared = Transient::new(lim, PreparedMembers::default());
-    lim.reserve_exact(&mut prepared.0, members.len())?;
+    let mut deferred = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut deferred, members.len())?;
     for m in members.iter() {
-        let (outer, inner) = (
-            m.levels[info.v_idx.idx()].live_pairs(),
-            m.levels[info.w_idx.idx()].live_pairs(),
-        );
-        let old = outer + inner;
-        before.push(old);
-        if keeps_its_pairs(outer, inner, step.max_pairs) {
+        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
+        let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, step.max_pairs));
+        if keeps {
             gate.poll(old as u64 + 1)?;
-            after.push(old);
-            prepared.0.push(None);
-            continue;
         }
-        prepared.0.push(Some(Prepared::default()));
-        let slot = prepared
-            .0
-            .last_mut()
-            .and_then(Option::as_mut)
-            .expect("pushed above");
-        let Some(new) = prepare_levels(lim, m, step, false, scratch, slot)? else {
-            return Ok(false);
-        };
-        gate.poll((old + new) as u64 + REBUILD_UNITS)?;
-        after.push(new);
+        before.push(old);
+        after.push(old);
+        deferred.push(keeps);
     }
-    // The gate's residue charged and the stop tested before `accept`
-    // decides.
-    gate.flush()?;
-    lim.check_stop()?;
-    if !accept(&PoolProbe {
-        before: &before,
-        after: &after,
-    }) {
-        return Ok(false);
-    }
-    // Kept: every member rebuilt, each put back if a later one is refused.
-    let (mut saved, outcome) = rebuild_other_members(
+    let mut saved = saved_members(lim, members.len())?;
+    let rebuilt = rebuild_other_members(
         lim,
         members,
         step,
         scratch,
-        |i, had_prep, pairs| {
-            debug_assert_eq!(
-                pairs, after[i],
-                "a rebuild leaves the pairs its preparation gave"
-            );
-            if had_prep {
-                Ok(())
-            } else {
-                gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
-            }
+        &mut saved,
+        |i| !deferred[i],
+        |i, pairs| {
+            after[i] = pairs;
+            gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
         },
-        Some(&mut prepared.0),
-    )?;
-    settle(lim, members, info, &mut saved, outcome, None)
+    );
+    // The gate's residue charged and the stop tested before `accept`
+    // decides.
+    let outcome = rebuilt.and_then(|rebuilt| {
+        gate.flush()?;
+        lim.check_stop()?;
+        Ok(rebuilt
+            && accept(&PoolProbe {
+                before: &before,
+                after: &after,
+            }))
+    });
+    let outcome = outcome.and_then(|kept| {
+        Ok(kept
+            && rebuild_other_members(
+                lim,
+                members,
+                step,
+                scratch,
+                &mut saved,
+                |i| deferred[i],
+                |i, pairs| {
+                    debug_assert_eq!(pairs, before[i], "a member that keeps its pairs");
+                    gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
+                },
+            )?)
+    });
+    settle(lim, members, step.info, &mut saved, outcome, None)
 }
 
 /// [`probe`] for a move kept exactly when it leaves the members' total below
@@ -1328,12 +1295,15 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         return Ok(false);
     }
-    let (mut saved, outcome) = rebuild_other_members(
+    let mut saved = saved_members(lim, members.len())?;
+    let outcome = rebuild_other_members(
         lim,
         members,
         step,
         scratch,
-        |i, _, pairs| {
+        &mut saved,
+        |_| true,
+        |i, pairs| {
             debug_assert!(
                 !scored[i] || pairs >= after[i],
                 "a score is at most the pairs: {} > {pairs}",
@@ -1342,8 +1312,7 @@ fn probe_scored<'l>(
             after[i] = pairs;
             gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
         },
-        None,
-    )?;
+    );
     // The gate's residue charged and the stop tested before the move is
     // kept.
     let outcome = outcome.and_then(|kept| {

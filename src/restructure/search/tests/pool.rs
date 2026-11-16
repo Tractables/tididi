@@ -138,7 +138,7 @@ fn a_declined_move_leaves_every_member_exactly_as_it_was() {
 }
 
 /// The pairs a probe shows `accept` are the pairs the kept move's rebuilt
-/// levels hold: the probe counts them without building the levels.
+/// levels hold.
 #[test]
 fn a_kept_move_rebuilds_the_pairs_its_probe_counted() {
     let original = pool();
