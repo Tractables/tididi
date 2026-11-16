@@ -565,10 +565,13 @@ impl<'a> Walk<'a> {
             }
             let (lc, rc) = vtree.children(v);
             let level = &f.levels[v.idx()];
-            for a in 0..self.keep[v.idx()].len() {
-                if !self.keep[v.idx()][a] {
-                    continue;
-                }
+            // A slice scan between kept nodes: indexing the row through
+            // `self` per node reloads it, at a cost that varies with `Walk`'s
+            // layout.
+            let mut next = 0;
+            while let Some(o) = self.keep[v.idx()][next..].iter().position(|&k| k) {
+                let a = next + o;
+                next = a + 1;
                 self.poll.poll(1)?;
                 self.alive[v.idx()][a] = true;
                 for p in level.pairs_iter_of_idx(a) {
