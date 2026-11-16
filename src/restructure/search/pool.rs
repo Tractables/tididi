@@ -75,8 +75,8 @@ impl PoolProbe<'_> {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PoolSearchConfig {
-    /// Sweeps over the internal nodes; a sweep that keeps nothing ends the
-    /// search earlier.
+    /// Sweeps over the internal nodes in each descent, the first and each
+    /// restart's; a sweep that keeps nothing ends that descent earlier.
     pub max_sweeps: usize,
     /// A move whose rebuild of one member's levels would pass this many
     /// pairs is abandoned. `usize::MAX` is no bound.
@@ -258,7 +258,8 @@ impl PoolRestarts {
 pub struct PoolSearchStats {
     /// Sweeps started.
     pub sweeps: usize,
-    /// Moves probed, abandoned ones included.
+    /// Moves probed, abandoned ones included, and moves refused again from
+    /// an earlier probe's refusal without being probed.
     pub probes: usize,
     /// Moves kept, not counting those of restarts put back.
     pub accepts: usize,
@@ -360,7 +361,9 @@ impl Engine {
     /// ([`PoolRestarts`]), which keep a result only when it is smaller by
     /// their minimum gain. A restart refused a buffer is put back and ends
     /// the restarts, the search going on to its closing reduction.
-    /// Every member is reduced before the search and after it.
+    /// Every member is reduced before the search and after it. Over a member
+    /// with summed-out levels the search keeps no move: each move is counted
+    /// as probed and refused at no charge.
     ///
     /// The members keep their functions and end up sharing one vtree
     /// allocation, a new one if any move was kept. Stops are polled once per
@@ -615,8 +618,9 @@ struct Known {
     /// child's. So it changes every move at those two nodes and, at the
     /// pivot's parent, the moves that promote the pivot, and no other. A
     /// move refused before is refused again at the same charge, so it is
-    /// charged and not probed: the descent decides and charges what it would
-    /// probing every move.
+    /// charged and not probed: at the pivots the descent visits, it decides
+    /// and charges what probing every move would. A pivot in `refused` is
+    /// passed over uncharged.
     refusals: Vec<[Option<u64>; 4]>,
 }
 
@@ -932,7 +936,7 @@ fn probe_in_place<'l>(
     }
 }
 
-/// Whether [`PoolDescent::descend`] charges a cached refusal rather than probing again.
+/// Whether [`PoolDescent::probe_pivot`] charges a cached refusal rather than probing again.
 #[inline]
 fn replay_refusals() -> bool {
     #[cfg(test)]
@@ -942,7 +946,7 @@ fn replay_refusals() -> bool {
     true
 }
 
-/// The slot of a move among its pivot's four in [`PoolDescent::descend`]'s refusals.
+/// The slot of a move among its pivot's four in [`Known::refusals`].
 fn move_slot(kind: RotationKind, crossed: bool) -> usize {
     2 * usize::from(kind == RotationKind::Right) + usize::from(crossed)
 }

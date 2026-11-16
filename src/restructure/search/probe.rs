@@ -168,8 +168,7 @@ impl Tdd {
     /// it may ask for more memory than the host has.
     ///
     /// The diagram must be canonical, which is what makes a rebuilt level
-    /// interchangeable with the one it replaced. A diagram with summed-out
-    /// levels is left alone rather than rebuilt.
+    /// interchangeable with the one it replaced.
     ///
     /// # Errors
     ///

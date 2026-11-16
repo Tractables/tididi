@@ -172,7 +172,6 @@ fn kick(
     Ok(())
 }
 
-/// Add one round's work to the running total.
 #[cfg(test)]
 #[path = "tests/multistart.rs"]
 mod tests;
