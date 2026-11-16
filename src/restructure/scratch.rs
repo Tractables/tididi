@@ -10,11 +10,10 @@ use super::relevel::{Prepared, ScoreScratch};
 /// Reusable scratch for `rebuild_levels`, the score's tables, the pool
 /// probe's tables and `restructure_to`, held across probes so the allocator
 /// churn is paid once per search rather than once per probe. Each field is `clear()`-ed before use in
-/// `rebuild_levels`, preserving the underlying capacity; a field is
-/// then released at its last read within the call rather than held across the
-/// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`). Every field grows
-/// through the engine's limits, so its growth is charged to the operation's
-/// byte meter, and what the retention policy drops is given back there.
+/// `rebuild_levels`, preserving the underlying capacity, and emptied again at
+/// its last read. Every field grows through the engine's limits, so its growth
+/// is charged to the operation's byte meter, and what the retention policy
+/// drops is given back there.
 #[derive(Default)]
 pub(crate) struct RestructureScratch {
     // The outer level's pairs filed by old v-node, node `i`'s ending at
@@ -111,30 +110,6 @@ impl PooledScratch for RestructureScratch {
 /// in the pool for the rest of the process; past this, the size-proportional
 /// buffers are released and the next take starts from empty.
 const RESTRUCTURE_TRIPLES_CAP_BYTES: usize = 64 << 20;
-
-/// Scratch entries kept across probes. At its last read a buffer this size or
-/// smaller is only `clear()`-ed, so the next probe reuses the allocation — the
-/// churn-avoidance the scratch exists for. A larger one is released outright:
-/// holding a high-water buffer across the successor-level builds, which
-/// allocate their own copy of the same data, is what sets this function's peak,
-/// and regrowing it costs one pass next to the sort that dominates a probe big
-/// enough to be over the threshold. Bail-out probes return before any release
-/// point, so the search's common path keeps full capacity either way.
-pub(super) const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
-
-/// Retire a buffer at its last read within a probe: past
-/// [`SCRATCH_RETAIN_ENTRIES`] entries of capacity the allocation goes back to
-/// `lim`, otherwise the buffer is emptied and stays warm for the next probe.
-///
-/// A struct field read in place has to be emptied here, or the next probe
-/// would see this one's contents; releasing leaves it empty as well.
-pub(super) fn release_or_clear<T>(lim: &Limits, buf: &mut Vec<T>) {
-    if buf.capacity() > SCRATCH_RETAIN_ENTRIES {
-        lim.discard(std::mem::take(buf));
-    } else {
-        buf.clear();
-    }
-}
 
 #[cfg(test)]
 #[path = "tests/scratch.rs"]

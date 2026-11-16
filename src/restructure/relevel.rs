@@ -25,7 +25,7 @@ use crate::vtree::rotate::RotationInfo;
 // The `marginal_ctx` branches below expand fully instead of sharing and
 // deduping; the argument is the module doc's "Marginal context" section.
 
-use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
+use super::scratch::{BucketScratch, RestructureScratch};
 use crate::execution::pool::Scratch;
 use crate::limits::{Charged, Limits, OperationError, Transient};
 use crate::sort::{RADIX_MIN_ROWS, Radix};
@@ -415,7 +415,7 @@ impl<W: Word> Packed<'_, W> {
             // Number the distinct cell lists in the order of their first
             // groups, which is the number of the inner node each group goes under.
             let nodes = number_cell_lists(lim, self.triples, &self.layout, self.groups, table);
-            release_or_clear(lim, table);
+            table.clear();
             nodes?
         };
         // Give up when the inner level's nodes plus pairs reach `max_pairs`.
@@ -665,12 +665,12 @@ fn score_crossings(
         }
         Ok(())
     })();
-    release_or_clear(lim, &mut s.block_ends);
-    release_or_clear(lim, &mut s.blocks);
-    release_or_clear(lim, &mut s.by_x);
-    release_or_clear(lim, &mut s.x_ends);
-    release_or_clear(lim, &mut s.keys);
-    release_or_clear(lim, &mut s.table);
+    s.block_ends.clear();
+    s.blocks.clear();
+    s.by_x.clear();
+    s.x_ends.clear();
+    s.keys.clear();
+    s.table.clear();
     scored
 }
 
@@ -963,13 +963,13 @@ impl<W: Word> Packed<'_, W> {
             // The inner nodes, each the inner pairs of its groups.
             let built =
                 cluster_by_cell_list(lim, &mut inner, self.groups, nodes, &mut scratch.bucket);
-            release_or_clear(lim, &mut scratch.bucket.ends);
-            release_or_clear(lim, &mut scratch.bucket.pairs);
+            scratch.bucket.ends.clear();
+            scratch.bucket.pairs.clear();
             built
         };
         if let Err(e) = built {
-            release_or_clear(lim, self.triples);
-            release_or_clear(lim, self.groups);
+            self.triples.clear();
+            self.groups.clear();
             return Err(e);
         }
         // Neither level is installed until both are built; a refusal in between
@@ -1299,11 +1299,8 @@ impl<W: Word> Packed<'_, W> {
     ) -> Result<TddLevel, OperationError> {
         let n_v = old_v_level.nodes().len();
         let filed = self.file_outer_pairs(lim, scratch, n_v);
-        // Last read of `self.triples` and the groups: the filed lists now hold every
-        // outer pair. Release the triples before the arena that copies those
-        // pairs is built.
-        release_or_clear(lim, self.triples);
-        release_or_clear(lim, self.groups);
+        self.triples.clear();
+        self.groups.clear();
         let built = filed.and_then(|()| {
             let mut outer_level = Transient::new(lim, TddLevel::new());
             let ends = &scratch.outer_ends;
@@ -1315,8 +1312,8 @@ impl<W: Word> Packed<'_, W> {
             }
             Ok(outer_level.keep())
         });
-        release_or_clear(lim, &mut scratch.outer_ends);
-        release_or_clear(lim, &mut scratch.outer_pairs);
+        scratch.outer_ends.clear();
+        scratch.outer_pairs.clear();
         built
     }
 }
