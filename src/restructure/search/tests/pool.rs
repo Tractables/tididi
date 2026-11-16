@@ -318,7 +318,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             for m in &members {
                 let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
                 let old = (outer + inner) as u64;
-                read += old + if outer <= 1 && inner == outer { 1 } else { super::REBUILD_UNITS };
+                read += old + super::REBUILD_UNITS;
             }
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
@@ -402,7 +402,7 @@ fn search_stops_before_another_applicable_move() {
 }
 
 #[test]
-fn a_member_that_keeps_its_pairs_is_charged_its_pairs_and_one() {
+fn a_declined_move_puts_every_member_back() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(VARS));
     let mut original = vec![Tdd::one(&vtree), Tdd::one(&vtree), compile_clauses(&vtree, &[vec![-4]])];
@@ -417,9 +417,10 @@ fn a_member_that_keeps_its_pairs_is_charged_its_pairs_and_one() {
         false
     })).unwrap());
     // Each member's two levels at the root and its right child hold a pair
-    // each: charged two pairs and one, and put back.
+    // each: charged its two old and two new pairs and a rebuild, and put
+    // back.
     let copy = super::PROBE_UNITS + vtree.num_nodes() as u64;
-    assert_eq!(eng.limits().work_units() - start, copy + 3 * 3);
+    assert_eq!(eng.limits().work_units() - start, copy + 3 * (4 + super::REBUILD_UNITS));
     for (m, before) in members.iter().zip(&original) {
         assert!(crate::test_helpers::same_storage(m, before));
         assert!(Arc::ptr_eq(m.vtree(), &vtree));
