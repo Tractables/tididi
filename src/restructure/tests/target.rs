@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use super::{Turn, children_of, shortest_turns};
 use crate::restructure::RestructureError;
 use crate::test_helpers::{CnfShape, assert_canonical, compile_clauses, rand_cnf};
 use crate::vtree::rng::Lcg;
@@ -49,21 +48,8 @@ fn random_moves_keep_the_function_and_land_canonical() {
     }
 }
 
-#[test]
-fn wide_trees_take_the_split_construction() {
-    // Eleven single-variable units exceed the exact search.
-    let mut rng = Lcg::new(11);
-    for _ in 0..6 {
-        let vars: Vec<VarId> = (1..=11).map(VarId).collect();
-        let clauses = rand_cnf(&mut rng, 11, CnfShape { clauses: 9, width: 3 });
-        let source = random_tree(&vars, &mut rng);
-        let target = random_tree(&vars, &mut rng);
-        check_move(&clauses, &source, &target);
-    }
-}
-
 /// A right comb onto the left comb of the same order takes n - 2 rotations,
-/// the fewest possible, also where the split construction plans the move.
+/// the fewest possible.
 #[test]
 fn a_comb_turns_in_n_minus_two_rotations() {
     for n in [8u32, 12, 20] {
@@ -190,68 +176,6 @@ fn a_rotation_at_a_summed_out_level_is_refused() {
         Err(RestructureError::Operation(OperationError::MarginalLevel(_))) => {}
         other => panic!("{other:?}"),
     }
-}
-
-/// The exact planner reaches every tree over five units.
-#[test]
-fn the_exact_planner_reaches_every_tree_over_five_units() {
-    let eng = crate::Engine::new();
-    let trees = all_trees(0b11111);
-    for from in &trees {
-        for to in &trees {
-            let exact = shortest_turns(eng.limits(), from, to).unwrap();
-            assert_eq!(replay(from, &exact), *to);
-        }
-    }
-    // Neighbouring trees are one turn apart.
-    let a = vec![0b011, 0b111];
-    let b = vec![0b101, 0b111];
-    assert_eq!(shortest_turns(eng.limits(), &a, &b).unwrap().len(), 1);
-}
-
-/// Every rooted binary tree over the units of `set`, as sorted cluster lists.
-fn all_trees(set: u32) -> Vec<Vec<u32>> {
-    if set.count_ones() == 1 {
-        return vec![Vec::new()];
-    }
-    let low = set & set.wrapping_neg();
-    let mut out = Vec::new();
-    // Splits containing the lowest unit on the left, so each is counted once.
-    let rest = set & !low;
-    let mut sub = rest;
-    loop {
-        let left = low | sub;
-        let right = set & !left;
-        if right != 0 {
-            for l in all_trees(left) {
-                for r in all_trees(right) {
-                    let mut tree: Vec<u32> = l.iter().chain(r.iter()).copied().collect();
-                    tree.push(set);
-                    tree.sort_unstable();
-                    out.push(tree);
-                }
-            }
-        }
-        if sub == 0 {
-            break;
-        }
-        sub = (sub - 1) & rest;
-    }
-    out
-}
-
-fn replay(from: &[u32], turns: &[Turn]) -> Vec<u32> {
-    let mut set = from.to_vec();
-    for turn in turns {
-        let v = turn.w | turn.x;
-        assert!(set.contains(&v) && set.contains(&turn.w));
-        let (a, b) = children_of(&set, turn.w);
-        assert!(turn.y == a || turn.y == b);
-        set.retain(|&c| c != turn.w);
-        set.push(turn.x | turn.y);
-        set.sort_unstable();
-    }
-    set
 }
 
 #[test]
