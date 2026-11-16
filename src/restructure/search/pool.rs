@@ -305,7 +305,7 @@ impl Engine {
     /// work clock, and each member rebuilt the pairs of its two old and two
     /// new levels and the fixed cost of a rebuild. A member whose two levels
     /// hold a pair each, or none, holds as many after the move: it is charged
-    /// its pairs and one, and rebuilt only once the move is kept.
+    /// its pairs and one.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -1015,22 +1015,18 @@ fn rebuild_member(
     Ok(Some(pivot_pairs(m, step.info)))
 }
 
-/// Rebuild at `step` each member `pick` names, stopping on the first refusal
-/// or error, what each needs to be put back filed in `pre`: the outcome for
+/// Rebuild every member at `step`, stopping on the first refusal or error,
+/// what each needs to be put back filed in `pre`: the outcome for
 /// [`settle`].
-fn rebuild_other_members(
+fn rebuild_members(
     lim: &Limits,
     members: &mut [&mut Tdd],
     step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
     pre: &mut Preimages<'_>,
-    pick: impl Fn(usize) -> bool,
     mut on_rebuilt: impl FnMut(usize, usize) -> Result<(), OperationError>,
 ) -> Result<bool, OperationError> {
     for (i, m) in members.iter_mut().enumerate() {
-        if !pick(i) {
-            continue;
-        }
         let Some(pairs) = rebuild_member(lim, i, m, step, pre, scratch)? else {
             return Ok(false);
         };
@@ -1046,8 +1042,7 @@ fn rebuild_other_members(
 /// pointers on the old one.
 ///
 /// A member that keeps its pairs ([`keeps_its_pairs`]) is charged its pairs
-/// and one, and rebuilt only once the move is kept. A member rebuilt is
-/// charged the pairs of its two old and two new levels and
+/// and one, any other the pairs of its two old and two new levels and
 /// [`REBUILD_UNITS`].
 ///
 /// The descent's probes decide from scores instead ([`probe_scored`]).
@@ -1067,31 +1062,22 @@ fn probe(
     lim.reserve_exact(&mut before, members.len())?;
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
-    let mut deferred = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut deferred, members.len())?;
+    let mut keeps = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut keeps, members.len())?;
     for m in members.iter() {
         let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, step.max_pairs));
-        if keeps {
-            gate.poll(old as u64 + 1)?;
-        }
-        before.push(old);
-        after.push(old);
-        deferred.push(keeps);
+        before.push(outer + inner);
+        keeps.push(keeps_its_pairs(outer, inner, step.max_pairs));
     }
     let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
-    let rebuilt = rebuild_other_members(
-        lim,
-        members,
-        step,
-        scratch,
-        &mut pre,
-        |i| !deferred[i],
-        |i, pairs| {
-            after[i] = pairs;
-            gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
-        },
-    );
+    let rebuilt = rebuild_members(lim, members, step, scratch, &mut pre, |i, pairs| {
+        after.push(pairs);
+        gate.poll(if keeps[i] {
+            before[i] as u64 + 1
+        } else {
+            (before[i] + pairs) as u64 + REBUILD_UNITS
+        })
+    });
     // The gate's residue charged and the stop tested before `accept`
     // decides.
     let outcome = rebuilt.and_then(|rebuilt| {
@@ -1103,21 +1089,6 @@ fn probe(
                 after: &after,
             }))
     });
-    let outcome = outcome.and_then(|kept| {
-        Ok(kept
-            && rebuild_other_members(
-                lim,
-                members,
-                step,
-                scratch,
-                &mut pre,
-                |i| deferred[i],
-                |i, pairs| {
-                    debug_assert_eq!(pairs, before[i], "a member that keeps its pairs");
-                    gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
-                },
-            )?)
-    });
     settle(members, step.info, pre, outcome, None)
 }
 
@@ -1128,7 +1099,7 @@ fn probe(
 /// Each member is scored ([`score_levels`]), which is never above the pairs
 /// its rebuild holds and almost always equal to them. A score reads the
 /// member's two levels and builds nothing, so the probe charges each
-/// member their pairs and [`REBUILD_UNITS`]. The members are scored in
+/// member as [`probe`] does. The members are scored in
 /// turn, each under a cap: the old total less the scores before it and the
 /// least the members after it can hold, a pair for each node of their outer
 /// level. A score that reaches its cap refuses the move, and the members
@@ -1180,19 +1151,18 @@ fn probe_scored_with<'l>(
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let ProbeTables { before, after, scored, floors, order } = tables;
+    let ProbeTables { before, after, units, floors, order } = tables;
     lim.reserve_exact(before, members.len())?;
-    // A member that keeps its pairs is not scored, and a scored member ends
-    // with at least a pair for each of its outer nodes.
-    lim.reserve_exact(scored, members.len())?;
+    // A member ends with at least a pair for each of its outer nodes. One
+    // that keeps its pairs is charged as in `probe`.
     lim.reserve_exact(floors, members.len())?;
+    lim.reserve_exact(units, members.len())?;
     for m in members.iter() {
         let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
         let old = outer + inner;
         before.push(old);
-        let scores = !keeps_its_pairs(outer, inner, step.max_pairs);
-        scored.push(scores);
-        floors.push(if scores { owners } else { old });
+        floors.push(owners);
+        units.push(old as u64 + if keeps_its_pairs(outer, inner, step.max_pairs) { 1 } else { REBUILD_UNITS });
     }
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
@@ -1215,13 +1185,6 @@ fn probe_scored_with<'l>(
     for (at, &i) in order.iter().enumerate() {
         let m = &members[i];
         rest -= floors[i];
-        let old = before[i];
-        if !scored[i] {
-            gate.poll(old as u64 + 1)?;
-            sum += old;
-            sum_crossed = sum_crossed.map(|s| s + old);
-            continue;
-        }
         #[cfg(test)]
         tests::note_score();
         let score = &mut scratch.score;
@@ -1253,7 +1216,7 @@ fn probe_scored_with<'l>(
             // Refused, by the cap or the bound: this member and the ones
             // after it charged as if scored.
             for &j in &order[at..] {
-                gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+                gate.poll(units[j])?;
             }
             #[cfg(debug_assertions)]
             debug_check_refusal(lim, members, step, limit, scratch)?;
@@ -1261,7 +1224,7 @@ fn probe_scored_with<'l>(
             lim.check_stop()?;
             return Ok(false);
         };
-        gate.poll(old as u64 + REBUILD_UNITS)?;
+        gate.poll(units[i])?;
         after[i] = new;
         sum += new;
     }
@@ -1275,16 +1238,15 @@ fn probe_scored_with<'l>(
         return Ok(false);
     }
     let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
-    let outcome = rebuild_other_members(
+    let outcome = rebuild_members(
         lim,
         members,
         step,
         scratch,
         &mut pre,
-        |_| true,
         |i, pairs| {
             debug_assert!(
-                !scored[i] || pairs >= after[i],
+                pairs >= after[i],
                 "a score is at most the pairs: {} > {pairs}",
                 after[i]
             );
@@ -1328,7 +1290,7 @@ enum Twin<'s> {
     Alone,
     /// The move is plain and its crossing is still to be probed: each
     /// member's score of the crossing taken with the move's, filed at the
-    /// member's index, `None` for a member not scored or not reached.
+    /// member's index, `None` for a member not reached.
     Fill(&'s mut Vec<Option<Option<usize>>>),
     /// The move is the crossing of a plain move refused just before, on the
     /// same levels, which filed these scores.
@@ -1368,11 +1330,7 @@ fn debug_check_scores(
     scores: &[usize],
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     for (m, &score) in members.iter().zip(scores) {
-        if keeps_its_pairs(m.levels[v].live_pairs(), m.levels[w].live_pairs(), step.max_pairs) {
-            continue;
-        }
         let mut prepared = Prepared::default();
         let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);
@@ -1397,14 +1355,8 @@ fn debug_check_refusal(
     total: usize,
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     let mut pairs = 0usize;
     for m in members {
-        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        if keeps_its_pairs(outer, inner, step.max_pairs) {
-            pairs += outer + inner;
-            continue;
-        }
         let mut prepared = Prepared::default();
         let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);

@@ -314,16 +314,11 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let Some(pending) = super::move_in_place(&mut tree, mv) else { continue };
             let info = pending.info();
             pending.revert(&mut tree);
-            let (mut read, mut scorable) = (0u64, 0usize);
+            let mut read = 0u64;
             for m in &members {
                 let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
                 let old = (outer + inner) as u64;
-                if outer <= 1 && inner == outer {
-                    read += old + 1;
-                } else {
-                    read += old + super::REBUILD_UNITS;
-                    scorable += 1;
-                }
+                read += old + if outer <= 1 && inner == outer { 1 } else { super::REBUILD_UNITS };
             }
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
@@ -333,7 +328,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
                 continue;
             }
             refused += 1;
-            capped += usize::from(SCORED.with(std::cell::Cell::get) - scored < scorable);
+            capped += usize::from(SCORED.with(std::cell::Cell::get) - scored < members.len());
             assert_eq!(eng.limits().work_units() - start, super::PROBE_UNITS + read, "{mv:?}");
             for (m, o) in members.iter().zip(original) {
                 assert!(crate::test_helpers::same_storage(m, o), "{mv:?}");
@@ -407,7 +402,7 @@ fn search_stops_before_another_applicable_move() {
 }
 
 #[test]
-fn a_declined_move_rebuilds_no_member_whose_levels_keep_their_size() {
+fn a_member_that_keeps_its_pairs_is_charged_its_pairs_and_one() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(VARS));
     let mut original = vec![Tdd::one(&vtree), Tdd::one(&vtree), compile_clauses(&vtree, &[vec![-4]])];
@@ -422,7 +417,7 @@ fn a_declined_move_rebuilds_no_member_whose_levels_keep_their_size() {
         false
     })).unwrap());
     // Each member's two levels at the root and its right child hold a pair
-    // each: read, charged, and left alone.
+    // each: charged two pairs and one, and put back.
     let copy = super::PROBE_UNITS + vtree.num_nodes() as u64;
     assert_eq!(eng.limits().work_units() - start, copy + 3 * 3);
     for (m, before) in members.iter().zip(&original) {
