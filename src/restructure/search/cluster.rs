@@ -14,20 +14,6 @@ use super::local::{MinimizePairs, RotationObjective};
 
 use super::probe::*;
 
-/// Build an allow-mask for `subtree(root)`: every internal node in
-/// `subtree(root)` (root included) is marked true. Used by the mid-compile
-/// rotation pass to confine the search to the post-order frontier's
-/// fully-compiled region. Including root is safe: the parent level has no
-/// compiled data yet, and rotation at root preserves 1-to-1 node
-/// correspondence at v_idx (rotation locality).
-fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
-    let mut mask = vec![false; vtree.num_nodes()];
-    for n in vtree.subtree(root) {
-        mask[n.idx()] = !vtree.node(n).is_leaf();
-    }
-    mask
-}
-
 /// Local per-level cost cap for a clustering rotation: skip it when the two
 /// affected levels together exceed this many input pairs. A clustering rotation
 /// multiset-expands the lower level by up to `bound_mult`× before
@@ -40,19 +26,21 @@ fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
 /// mark the pair tried.
 const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 
-/// Collect candidate `(pivot, kind)` rotations that would cluster two marginal
-/// levels under one parent. Read-only — does not touch the vtree Arc, so the
+/// Collect candidate `(pivot, kind)` rotations in `subtree(root)`, bottom-up,
+/// that would cluster two marginal levels under one parent. Read-only — does not touch the vtree Arc, so the
 /// common "nothing to cluster" case costs no clone.
 ///
 /// A `Left` rotation at `v=(A, w)`, `w=(B, C)` produces a lower node `(A, B)`:
 /// it clusters `A = v.left` and `B = v.right.left`.
 /// A `Right` rotation at `v=(w, C)`, `w=(A, B)` produces `(B, C)`: it clusters
 /// `B = v.left.right` and `C = v.right`.
-fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotationKind)> {
+fn collect_cluster_candidates(tdd: &Tdd, root: VtreeIdx) -> Vec<(VtreeIdx, RotationKind)> {
     let vtree = &*tdd.vtree;
     let mut out = Vec::new();
-    for (v, _, _) in vtree.internal_bottomup() {
-        if !allow[v.idx()] || tdd.levels[v.idx()].is_marginal() {
+    let mut nodes: Vec<VtreeIdx> = vtree.subtree(root).filter(|&n| !vtree.node(n).is_leaf()).collect();
+    nodes.sort_unstable_by_key(|&n| vtree.topo_pos(n));
+    for v in nodes {
+        if tdd.levels[v.idx()].is_marginal() {
             continue;
         }
         let (vl, vr) = vtree.children(v);
@@ -201,9 +189,8 @@ impl Engine {
         let _op = lim.enter()?;
         tdd.check_level_indices(&[root])?;
         lim.try_resize(tried, tdd.vtree.num_nodes(), 0)?;
-        let allow = subtree_allow_mask(&tdd.vtree, root);
         // Read-only bail: no candidate ⇒ no vtree clone, no work.
-        let mut cands = collect_cluster_candidates(tdd, &allow);
+        let mut cands = collect_cluster_candidates(tdd, root);
         if cands.is_empty() {
             return Ok(0);
         }
@@ -261,7 +248,7 @@ impl Engine {
             if !progress {
                 break;
             }
-            cands = collect_cluster_candidates(search.tdd, &allow);
+            cands = collect_cluster_candidates(search.tdd, root);
             if cands.is_empty() {
                 break;
             }

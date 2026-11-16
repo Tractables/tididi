@@ -69,7 +69,7 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed here");
     assert!(
-        !collect_cluster_candidates(&tdd, &subtree_allow_mask(&tdd.vtree, root)).is_empty(),
+        !collect_cluster_candidates(&tdd, root).is_empty(),
         "test setup: the fixture must offer the pass something to cluster",
     );
     (tdd, root)
