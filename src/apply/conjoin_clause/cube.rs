@@ -128,9 +128,9 @@ pub(crate) fn disjoin_cube_on(
     spine_walk(eng, f, cube, true)
 }
 
-/// `f ∨ M` as `¬(¬f ∧ ¬M)` — two make-full passes rather than the three a
-/// general disjunction runs, and the route for a cube the spine walk's chain
-/// cannot name. `clause` is `¬M` normalized and non-empty, and `f` has
+/// `f ∨ M` as `¬(¬f ∧ ¬M)`, the route for a cube the spine walk's chain
+/// cannot name. Its two complements make levels full, which the overlay
+/// disjunction ([`or`](crate::or)) never does. `clause` is `¬M` normalized and non-empty, and `f` has
 /// structure at its leaves. The result is minimized.
 pub(super) fn disjoin_cube_by_complement(
     eng: &Engine,

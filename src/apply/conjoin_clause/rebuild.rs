@@ -213,7 +213,8 @@ pub(super) fn rebuild_spine_level(
 
     // The rebuilt level copied the irrelevant side's pair refs verbatim,
     // inline marginal counts included, but started with zero `value_ref_sides`.
-    // The relevant side is never marginal (`plan_cd_map_bases` rejects it), so
+    // The relevant side is never marginal (`require_structure_at` rejects a
+    // marginal clause leaf, `plan_cd_map_bases` a marginal spine level), so
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
     Ok(())

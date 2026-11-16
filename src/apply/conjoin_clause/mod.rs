@@ -405,7 +405,7 @@ fn rebuild_along_spine(
         crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
             &out,
             Some(&recorded),
-            "and_clause",
+            if disjoin { "or_cube" } else { "and_clause" },
         );
     }
     Ok(out)
@@ -487,9 +487,10 @@ impl crate::Engine {
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.
-    /// Borrow a slice of signed integers or typed literals. Stop and output
-    /// limits are checked once per rebuilt level; the output cap counts nodes
-    /// in the levels rebuilt so far.
+    /// Borrow a slice of signed integers or typed literals. The output cap is
+    /// checked after each rebuilt level, against the nodes of the levels
+    /// rebuilt so far; a stop is also seen within a level as its work is
+    /// polled.
     ///
     /// # Errors
     ///
@@ -506,9 +507,11 @@ impl crate::Engine {
     }
 
     /// Run [`Tdd::or_cube`](crate::Tdd::or_cube) using this batch's scratch and resource limits.
-    /// Borrow a slice of signed integers or typed literals. Stop and output
-    /// limits are checked once per rebuilt level; the output cap counts nodes
-    /// in the levels rebuilt so far.
+    /// Borrow a slice of signed integers or typed literals. A cube naming
+    /// every variable is disjoined by the walk of
+    /// [`and_clause`](Self::and_clause) and checks the limits as it does; any
+    /// other cube by a negation, a clause conjunction and a negation, each
+    /// checking its own.
     ///
     /// # Errors
     ///

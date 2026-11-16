@@ -105,9 +105,7 @@ impl Tdd {
     /// The dual of [`and_clause`](Self::and_clause), and the way to add one
     /// model to a diagram: a cube naming every variable of the vtree is a
     /// single assignment, and disjoining it rebuilds the levels on that
-    /// assignment's path instead of complementing the operand. [`or`](crate::or)
-    /// complements both operands and their conjunction, so it can grow a
-    /// diagram where this does not.
+    /// assignment's path instead of complementing the operand.
     ///
     /// Accepts arrays, slices and vectors of signed, one-based integers or typed
     /// [`Literal`] values. Collect an iterator into a vector before passing it.

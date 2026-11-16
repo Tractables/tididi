@@ -126,7 +126,7 @@ pub(super) fn build_clause_spine(
 }
 
 /// Propagate `need_dt` top-down over the spine: a level needs the complement
-/// conjunction (acc × `d_t`) iff its parent does or both its children are on
+/// conjunction (acc × `d_t`) iff its parent needs it or has both children on
 /// the spine (the both-relevant `c_t` contains `(d_L, c_R)` and `(c_L, d_R)`).
 /// Only spine levels are written.
 pub(super) fn propagate_need_dt(
