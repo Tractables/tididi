@@ -13,30 +13,49 @@ use super::{OperationError, liveness};
 use crate::Engine;
 use crate::diagram::*;
 use crate::value::StreamCache;
+use crate::restructure::embed::Plan;
 use crate::vtree::{Vtree, VtreeIdx};
 
-/// A set of vtree nodes handed to the sweep: the levels it sums out. A
-/// membership array, or nothing.
+/// A set of vtree nodes handed to the sweep: the levels it sums out, or an
+/// operand's free levels. A membership array, a placement's free levels, or
+/// nothing.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct VtreeMask<'a>(Option<&'a [bool]>);
+pub(crate) struct VtreeMask<'a>(Members<'a>);
+
+#[derive(Clone, Copy, Default)]
+enum Members<'a> {
+    #[default]
+    Empty,
+    Flags(&'a [bool]),
+    Free(&'a Plan),
+}
 
 impl<'a> VtreeMask<'a> {
     /// The set `members` describes; `None` is the empty set.
     pub(crate) fn new(members: Option<&'a [bool]>) -> Self {
-        VtreeMask(members)
+        VtreeMask(members.map_or(Members::Empty, Members::Flags))
+    }
+
+    /// The free levels of a diagram placed by `plan`.
+    pub(crate) fn free_of(plan: &'a Plan) -> Self {
+        VtreeMask(Members::Free(plan))
     }
 
     /// Whether the set was given at all — what the streaming scratch and its
     /// pooling are conditioned on.
     #[inline]
     pub(crate) fn is_empty(self) -> bool {
-        self.0.is_none()
+        matches!(self.0, Members::Empty)
     }
 
     /// Whether vtree node `t_idx` is in the set.
     #[inline]
     pub(crate) fn contains(self, t_idx: usize) -> bool {
-        self.0.is_some_and(|members| members[t_idx])
+        match self.0 {
+            Members::Empty => false,
+            Members::Flags(members) => members[t_idx],
+            Members::Free(plan) => plan.is_free(VtreeIdx(t_idx as u32)),
+        }
     }
 }
 

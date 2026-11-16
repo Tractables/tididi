@@ -201,10 +201,8 @@ impl<'a> MovePlacement<'a> {
     /// [`TddLevel::swap_sides`]: crate::diagram::TddLevel
     pub(super) fn mirror(&mut self, plan: &crate::restructure::embed::Plan) {
         let (levels, _) = self.assembly.parts_mut();
-        for (s, &mirrored) in plan.mirrored.iter().enumerate() {
-            if mirrored {
-                levels[plan.embedding.levels[s].idx()].swap_sides();
-            }
+        for t in plan.mirrored_images() {
+            levels[t.idx()].swap_sides();
         }
     }
 

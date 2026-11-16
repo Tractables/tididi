@@ -97,8 +97,8 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             );
 
             let masks = Operands {
-                f: VtreeMask::new(Some(&f_plan.free)),
-                g: VtreeMask::new(Some(&g_plan.free)),
+                f: VtreeMask::free_of(&f_plan),
+                g: VtreeMask::free_of(&g_plan),
             };
             let (_, cone) = survey(
                 &eng,
@@ -119,19 +119,19 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
                 &mut lists,
             )
             .unwrap();
-            let free_at = |t: VtreeIdx| f_plan.free[t.idx()] || g_plan.free[t.idx()];
+            let free_at = |t: VtreeIdx| f_plan.is_free(t) || g_plan.is_free(t);
             let under_free = |t: VtreeIdx| {
                 std::iter::successors(into.node(t).parent(), |&p| into.node(p).parent())
                     .any(free_at)
             };
-            let width = |d: &Tdd, free: &[bool], t: VtreeIdx| {
-                if free[t.idx()] {
+            let width = |d: &Tdd, plan: &Plan, t: VtreeIdx| {
+                if plan.is_free(t) {
                     1
                 } else {
                     d.levels[t.idx()].slot_count() as u64
                 }
             };
-            let nodes = |t: VtreeIdx| width(&f, &f_plan.free, t) * width(&g, &g_plan.free, t);
+            let nodes = |t: VtreeIdx| width(&f, &f_plan, t) * width(&g, &g_plan, t);
             let built: Vec<_> = internal.iter().copied().filter(|&t| !free_at(t)).collect();
             let free: Vec<_> = internal.iter().copied().filter(|&t| free_at(t)).collect();
             let tops: Vec<_> = free.iter().copied().filter(|&t| !under_free(t)).collect();

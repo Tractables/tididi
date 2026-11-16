@@ -571,7 +571,7 @@ fn begin_phase(eng: &Engine, begun: bool) -> Result<(), OperationError> {
 /// The free levels of a diagram [`place_onto`] placed by `plan`: none for
 /// one it did not place, or for the false diagram, which has no levels.
 fn free_levels<'a>(tdd: &Tdd, plan: Option<&'a Plan>) -> VtreeMask<'a> {
-    VtreeMask::new(plan.filter(|_| !tdd.is_zero()).map(|plan| &plan.free[..]))
+    plan.filter(|_| !tdd.is_zero()).map_or_else(VtreeMask::default, VtreeMask::free_of)
 }
 
 impl crate::Engine {

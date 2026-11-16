@@ -419,23 +419,69 @@ impl Engine {
 /// What each destination node does in the copy, and where each source level went.
 #[derive(Debug)]
 pub(crate) struct Plan {
-    /// Whether no renamed source variable is under each destination node:
-    /// the nodes whose levels are constant true, the free levels.
-    pub(crate) free: Vec<bool>,
-    /// The source node a destination node is the image of, where there is one.
-    pub(crate) covered_by: Vec<Option<VtreeIdx>>,
-    /// The internal destination nodes with renamed variables on one side
-    /// only, each after the nodes under it.
-    pass_throughs: Vec<VtreeIdx>,
+    /// Per destination node, what its level is.
+    targets: Vec<Target>,
     /// The destination node each source node maps to.
     pub(crate) embedding: Embedding,
-    /// Per source node: its image has its children swapped, so its level is
-    /// copied with every pair read the other way round. Empty unless the
-    /// build was given `mirror`.
-    pub(crate) mirrored: Vec<bool>,
+    /// Whether any image is mirrored.
+    mirrors: bool,
+    /// The number of pass-throughs.
+    pass_throughs: usize,
+}
+
+/// What a destination node's level is under a [`Plan`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    /// No renamed source variable is under the node: a free level, constant
+    /// true.
+    Free,
+    /// The image of `source`; `mirrored` when its children are the source
+    /// node's swapped, so the level is copied with every pair read the other
+    /// way round.
+    Image { source: VtreeIdx, mirrored: bool },
+    /// An internal node with renamed variables on one side only, carrying
+    /// that side's source node.
+    PassThrough(VtreeIdx),
 }
 
 impl Plan {
+    /// Whether no renamed source variable is under destination node `t`.
+    #[inline]
+    pub(crate) fn is_free(&self, t: VtreeIdx) -> bool {
+        self.targets[t.idx()] == Target::Free
+    }
+
+    /// The source node destination node `t` is the image of, if any.
+    #[inline]
+    pub(crate) fn covered_by(&self, t: VtreeIdx) -> Option<VtreeIdx> {
+        match self.targets[t.idx()] {
+            Target::Image { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+
+    /// Whether destination node `t` is the image of a source node with its
+    /// children swapped.
+    #[inline]
+    pub(crate) fn is_mirrored(&self, t: VtreeIdx) -> bool {
+        matches!(self.targets[t.idx()], Target::Image { mirrored: true, .. })
+    }
+
+    /// The destination nodes that are mirrored images.
+    pub(crate) fn mirrored_images(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
+        let images: &[VtreeIdx] = if self.mirrors { &self.embedding.levels } else { &[] };
+        images.iter().copied().filter(|&t| self.is_mirrored(t))
+    }
+
+    /// The pass-throughs of the plan, `into`'s internal nodes with renamed
+    /// variables on one side only, bottom-up.
+    fn pass_throughs<'a>(&'a self, into: &'a Vtree) -> impl Iterator<Item = &'a VtreeIdx> {
+        into.internal_bottomup_slice()
+            .iter()
+            .filter(|&&t| matches!(self.targets[t.idx()], Target::PassThrough(_)))
+            .take(self.pass_throughs)
+    }
+
     /// Check the renaming against both trees and record the correspondence.
     ///
     /// Matches the two trees in one bottom-up pass over `into`, carrying to
@@ -463,15 +509,9 @@ impl Plan {
         mirror: bool,
     ) -> Result<Plan, EmbedError> {
         let lim = eng.limits();
-        let (mut free, mut covered_by, mut under) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut pass_throughs, mut embedding, mut mirrored) = (Vec::new(), Vec::new(), Vec::new());
-        lim.try_resize(&mut free, into.num_nodes(), true)?;
+        let (mut targets, mut embedding) = (Vec::new(), Vec::new());
+        lim.try_resize(&mut targets, into.num_nodes(), Target::Free)?;
         lim.try_resize(&mut embedding, source.num_nodes(), into.root())?;
-        lim.try_resize(&mut covered_by, into.num_nodes(), None)?;
-        lim.try_resize(&mut under, into.num_nodes(), None)?;
-        if mirror {
-            lim.try_resize(&mut mirrored, source.num_nodes(), false)?;
-        }
         let mut gate = lim.gate();
         for (leaf, var) in source.leaf_bottomup() {
             gate.poll(1)?;
@@ -480,26 +520,29 @@ impl Plan {
                 variable: image,
                 num_vars: into.num_vars(),
             })?;
-            if !free[target.idx()] {
+            if targets[target.idx()] != Target::Free {
                 return Err(VtreeError::OverlappingVariable(image).into());
             }
-            free[target.idx()] = false;
             embedding[leaf.idx()] = target;
-            covered_by[target.idx()] = Some(leaf);
-            under[target.idx()] = Some(leaf);
+            targets[target.idx()] = Target::Image { source: leaf, mirrored: false };
         }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
+        let carried = |target: Target| match target {
+            Target::Free => None,
+            Target::Image { source, .. } | Target::PassThrough(source) => Some(source),
+        };
         let mut visited = source.num_leaves() as u64;
+        let (mut mirrors, mut pass_throughs) = (false, 0);
         let mut refused = None;
         for &t in into.internal_bottomup_slice() {
             let (left, right) = into.children(t);
-            let carried = match (under[left.idx()], under[right.idx()]) {
+            targets[t.idx()] = match (carried(targets[left.idx()]), carried(targets[right.idx()])) {
                 (None, None) => continue,
                 (Some(s), None) | (None, Some(s)) => {
                     visited += 1;
-                    lim.try_push(&mut pass_throughs, t)?;
-                    s
+                    pass_throughs += 1;
+                    Target::PassThrough(s)
                 }
                 (Some(a), Some(b)) => {
                     visited += 1;
@@ -509,36 +552,30 @@ impl Plan {
                         refused = Some(p);
                         break;
                     }
-                    if swapped {
-                        mirrored[p.idx()] = true;
-                    }
                     embedding[p.idx()] = t;
-                    covered_by[t.idx()] = Some(p);
-                    p
+                    mirrors |= swapped;
+                    Target::Image { source: p, mirrored: swapped }
                 }
             };
-            free[t.idx()] = false;
-            under[t.idx()] = Some(carried);
         }
         gate.poll_each(visited)?;
         if let Some(s) = refused {
             return Err(EmbedError::NotIsomorphic { source: s });
         }
         debug_assert_eq!(
-            covered_by
+            targets
                 .iter()
-                .filter(|source| source.is_some())
+                .filter(|target| matches!(target, Target::Image { .. }))
                 .count(),
             source.num_nodes(),
             "a completed match gives every source level an image",
         );
         gate.flush()?;
         Ok(Plan {
-            free,
-            covered_by,
-            pass_throughs,
+            targets,
             embedding: Embedding { levels: embedding },
-            mirrored,
+            mirrors,
+            pass_throughs,
         })
     }
 }
@@ -630,7 +667,7 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
     // units `assemble_moving` polled: a large diagram's copy, charged a unit
     // a level, would go a whole embedding without a test.
     let internal = into.internal_bottomup_slice();
-    let built = internal.iter().filter(|t| plan.free[t.idx()]).count() + plan.pass_throughs.len();
+    let built = internal.iter().filter(|&&t| plan.is_free(t)).count() + plan.pass_throughs;
     let units: u64 = internal
         .iter()
         .map(|&t| 1 + result.level(t).slot_count() as u64)
@@ -638,9 +675,9 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
     let mut gate = eng.limits().gate();
     gate.poll(units.saturating_sub(built as u64))?;
     gate.flush()?;
-    if plan.pass_throughs.iter().any(|&t| {
+    if plan.pass_throughs(into).any(|&t| {
         let (left, right) = into.children(t);
-        into.node(if plan.free[left.idx()] { right } else { left }).is_leaf()
+        into.node(if plan.is_free(left) { right } else { left }).is_leaf()
     }) {
         eng.reduce(&mut result, crate::reduce::ReductionPlan::Prune)?;
     }
@@ -805,10 +842,8 @@ fn unseat<'a>(
 ) -> std::borrow::Cow<'a, Tdd> {
     let mut levels = std::mem::take(&mut result.levels).into_vec();
     if let (std::borrow::Cow::Owned(source), Some(known)) = (&mut tdd, known) {
-        for (s, &mirrored) in plan.mirrored.iter().enumerate() {
-            if mirrored {
-                levels[plan.embedding.levels[s].idx()].swap_sides();
-            }
+        for t in plan.mirrored_images() {
+            levels[t.idx()].swap_sides();
         }
         let source_levels = &mut source.levels[..];
         for (from, &to) in plan.embedding.levels.iter().enumerate() {
@@ -835,9 +870,11 @@ fn build_embedded_levels(
     let mut literal_tops = Vec::new();
     // A mirrored image was changed in place by `placement.mirror`, and its
     // seat closes it.
-    for &t in into.internal_bottomup_slice() {
-        if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
-            placement.changed_at(t);
+    if plan.mirrors {
+        for &t in into.internal_bottomup_slice() {
+            if plan.is_mirrored(t) {
+                placement.changed_at(t);
+            }
         }
     }
     // The free levels when they are built, then the pass-throughs, each
@@ -850,16 +887,16 @@ fn build_embedded_levels(
     };
     for &t in built
         .iter()
-        .filter(|t| plan.free[t.idx()])
-        .chain(&plan.pass_throughs)
+        .filter(|&&t| plan.is_free(t))
+        .chain(plan.pass_throughs(into))
     {
         gate.poll(1)?;
-        if plan.free[t.idx()] {
+        if plan.is_free(t) {
             placement.free(t);
             continue;
         }
         let (left, right) = into.children(t);
-        let (free_side, carried) = if plan.free[left.idx()] {
+        let (free_side, carried) = if plan.is_free(left) {
             (ChildSide::Left, right)
         } else {
             (ChildSide::Right, left)
@@ -916,14 +953,14 @@ fn moved_loose(
                 continue;
             }
             let mut foot = top;
-            while plan.covered_by[foot.idx()].is_none() && !into.node(foot).is_leaf() {
+            while plan.covered_by(foot).is_none() && !into.node(foot).is_leaf() {
                 let (l, r) = into.children(foot);
-                foot = if plan.free[l.idx()] { r } else { l };
+                foot = if plan.is_free(l) { r } else { l };
             }
             let named_whole = match into.node(foot).is_leaf() {
                 true => literal_tops.binary_search(&top).is_err(),
                 false => {
-                    let from = plan.covered_by[foot.idx()].expect("a chain's foot off a leaf is an image");
+                    let from = plan.covered_by(foot).expect("a chain's foot off a leaf is an image");
                     loose.binary_search(&from.0).is_err()
                 }
             };
@@ -949,7 +986,7 @@ fn literal_chain(
     let mut top = t;
     loop {
         match into.node(top).parent() {
-            Some(p) if plan.covered_by[p.idx()].is_none() => top = p,
+            Some(p) if plan.covered_by(p).is_none() => top = p,
             Some(p) => {
                 let named = placement.first_ref(p, ChildSide::of(into, p, top))?;
                 return (named != ONE_LEAF_IDX).then_some(top);
@@ -983,7 +1020,7 @@ fn assemble_marginal(
     let (inside, boundaries) = marginal_boundaries(tdd, into, plan);
     let mut gate = eng.limits().gate();
     for t in into.bottomup() {
-        if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
+        if into.node(t).is_leaf() || plan.covered_by(t).is_some() {
             continue;
         }
         gate.poll(1)?;
@@ -992,12 +1029,12 @@ fn assemble_marginal(
             continue;
         }
         let (left, right) = into.children(t);
-        if plan.free[t.idx()] {
+        if plan.is_free(t) {
             placement.join(t, placement.true_node(left), placement.true_node(right))?;
         } else {
             placement.pass_through(
                 t,
-                if plan.free[left.idx()] {
+                if plan.is_free(left) {
                     ChildSide::Left
                 } else {
                     ChildSide::Right
@@ -1022,7 +1059,7 @@ fn marginal_boundaries(tdd: &Tdd, into: &Vtree, plan: &Plan) -> (Vec<bool>, Vec<
         if into.node(t).is_leaf() {
             continue;
         }
-        let marginal = plan.covered_by[t.idx()].is_some_and(|s| tdd.level(s).is_marginal());
+        let marginal = plan.covered_by(t).is_some_and(|s| tdd.level(s).is_marginal());
         if marginal && !inside[t.idx()] {
             boundaries.push(t);
         }
@@ -1048,7 +1085,7 @@ fn scale_marginal_boundaries(
         stack.push(boundary);
         while let Some(t) = stack.pop() {
             if into.node(t).is_leaf() {
-                if plan.free[t.idx()] {
+                if plan.is_free(t) {
                     let free = weights.leaf_val(into.leaf_var(t), LeafLabel::One);
                     factor = Some(match factor {
                         None => free,
