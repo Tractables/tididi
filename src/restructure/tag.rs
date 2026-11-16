@@ -417,6 +417,7 @@ impl Memos {
                 }
             }
             // An array is at most a few slots per cube.
+            // The array bound `8 * named + 64` is arbitrary.
             memo[t.idx()] = match width {
                 w if w <= DIRECT_BITS && 1usize << w <= 8 * named + 64 => {
                     let mut slots = Vec::new();

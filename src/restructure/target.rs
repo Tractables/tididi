@@ -63,8 +63,9 @@ impl Tdd {
     /// pairs the other way round; no other level is touched. The largest
     /// subtrees the two vtrees share are kept whole, so the cost falls on the
     /// levels above them, and it depends on the diagram's size on each vtree
-    /// the rotations pass through, which neither end bounds. `bound` caps the
-    /// input pairs any one rebuild may expand; `usize::MAX` is no bound.
+    /// the rotations pass through, which neither end bounds. A rebuild is refused when its triples (one per old outer
+    /// pair and old inner pair) or the new inner level's nodes plus pairs
+    /// reach `bound`; `usize::MAX` is no bound.
     ///
     /// Diagrams with summed-out levels move as long as no rotation turns a
     /// summed-out level. Weighted diagrams are refused.
@@ -397,6 +398,7 @@ impl Mover<'_, '_> {
             bit_b.insert(partner, 1u32 << i);
             lim.try_push(work, (u, partner))?;
         }
+        // Two units need no turn.
         if units_a.len() <= 2 {
             return Ok(());
         }

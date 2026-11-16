@@ -36,8 +36,9 @@ impl Tdd {
     /// embedding the result back under the inverse renaming gives
     /// `∃ dropped. self`.
     ///
-    /// A diagram that does not depend on the dropped variables is moved in
-    /// `O(size)`: the levels with kept variables on both sides are copied,
+    /// A diagram that does not depend on the dropped variables is copied in
+    /// `O(size)`, after a clone and minimization if it is not certified
+    /// canonical: the levels with kept variables on both sides are copied,
     /// and the ones with kept variables on one side only are composed away.
     /// One that depends on them is first quantified with
     /// [`exists_vars`](Self::exists_vars) and minimized. Structural diagrams

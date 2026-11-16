@@ -27,7 +27,8 @@ impl Tdd {
     ///
     /// # Panics
     ///
-    /// If either diagram's level at `t` does not hold exactly one stored node.
+    /// If either diagram's level at `t` does not hold exactly one stored node, or
+    /// that node is not inline.
     pub unsafe fn splice_subtree_unchecked(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
         assert_eq!(
             self.levels[t.idx()].slot_count(), 1,

@@ -83,7 +83,7 @@ pub(super) trait Word: Copy + Ord + Default {
     fn inner_key(self, layout: &Layout) -> u64;
     /// The bits of the cell, fields 2 and 3: the fingerprint and dedup key.
     fn cell(self, layout: &Layout) -> u64;
-    /// Phase 2's sort: the triples, in ascending order of `src` as
+    /// The sort of the triples, in ascending order of `src` as
     /// [`Packed::collect_triples`] leaves them, into ascending order.
     ///
     /// The sort is not charged to the work clock: the probe charges the pairs
@@ -211,8 +211,8 @@ pub(crate) struct RotationStep<'a> {
 /// are built, so `Ok(None)` and every error leave the diagram byte-for-byte
 /// what it was on entry and the caller may probe the next candidate without
 /// any undo of its own. The rebuild returns `Ok(None)` when the rotation would
-/// exceed `max_pairs`, or when a bail check shows it cannot produce a
-/// well-formed pair of levels.
+/// exceed `max_pairs`: when the triples reach it, or when the new inner
+/// level's nodes plus pairs do.
 ///
 /// `dir` says whether the rotation promoted `w` from v's right child (a left
 /// rotation) or its left child (a right rotation), which fixes the geometry
@@ -439,13 +439,13 @@ impl<W: Word> Packed<'_, W> {
             // Sharing is suppressed: each distinct inner pair is a node of its own.
             inner_pairs
         } else {
-            // Phase 3: number the distinct cell lists in the order of their first
+            // Number the distinct cell lists in the order of their first
             // groups, which is the number of the inner node each group goes under.
             let nodes = number_cell_lists(lim, self.triples, &self.layout, self.groups, table);
             release_or_clear(lim, table);
             nodes?
         };
-        // Bail check 2: the inner level's nodes and pairs.
+        // Give up when the inner level's nodes plus pairs reach `max_pairs`.
         if nodes + inner_pairs >= max_pairs {
             return Ok(None);
         }
@@ -470,7 +470,7 @@ pub(crate) struct ScoreScratch {
     // The last stamp handed out; `marks` holds none above it.
     stamp: u32,
     // The old outer pairs `(owner, inner node)` filed by their child `x`,
-    // `x`'s ending at `x_ends[x + 1]`.
+    // `x`'s ending at `x_ends[x]` once filed.
     x_ends: Vec<u32>,
     by_x: Vec<(u32, u32)>,
     // One key per new inner pair: its context's hash and size.
@@ -1009,7 +1009,7 @@ impl<W: Word> Packed<'_, W> {
         let built = if self.marginal_ctx {
             expand_every_pair(lim, &mut inner, self.groups)
         } else {
-            // Phase 4: the inner nodes, each the inner pairs of its groups.
+            // The inner nodes, each the inner pairs of its groups.
             let built =
                 cluster_by_cell_list(lim, &mut inner, self.groups, nodes, &mut scratch.bucket);
             release_or_clear(lim, &mut scratch.bucket.ends);
@@ -1027,9 +1027,9 @@ impl<W: Word> Packed<'_, W> {
         Ok((outer, inner.keep()))
     }
 
-    /// Phases 1 and 2: every old v-pair expanded against the w-level into packed
+    /// Every old v-pair expanded against the w-level into packed
     /// triples, sorted, and grouped by their inner pair into `self.groups`.
-    /// Returns `false`, `self.triples` left empty, where bail check 1 gives up.
+    /// Returns `false`, `self.triples` left empty, where the triple count reaches `max_pairs`.
     ///
     /// # Errors
     ///
@@ -1048,7 +1048,7 @@ impl<W: Word> Packed<'_, W> {
             return Ok(false);
         }
 
-        // Phase 2: sort the packed triples. After sorting, cells for each inner
+        // Sort the packed triples. After sorting, cells for each inner
         // pair are contiguous and sorted — no per-group sort needed.
         W::sort(lim, &self.layout, self.triples)?;
 
@@ -1056,8 +1056,9 @@ impl<W: Word> Packed<'_, W> {
         // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
         // triples the `as u32` casts below would wrap, `same_cells` would compare
         // wrong-but-in-range cell slices, and the resulting inner-node sharing would
-        // silently change the count. `write <= read <= n`, so this single check
-        // covers every cast in the scan.
+        // silently change the count. `write <= read <= n`, so the bound on `n`
+        // covers every cast in the scan. `max_pairs` is capped at `u32::MAX` on
+        // entry to the rebuild, so the assertion cannot fire.
         let n = self.triples.len();
         debug_assert!(
             u32::try_from(n).is_ok(),
@@ -1066,7 +1067,7 @@ impl<W: Word> Packed<'_, W> {
 
         // In marginal context (full expansion) the cell multiset is kept: a duplicate
         // (axis, src) cell is a legitimate separate count-contribution (two
-        // marginalization-collapsed twin primes), so cell-deduping it would drop
+        // pairs that became equal when a level was summed out), so cell-deduping it would drop
         // count-mass. Boolean mode dedups.
         self.groups.clear();
         group_by_inner_pair(
@@ -1125,8 +1126,8 @@ fn field_bounds(
 }
 
 impl<W: Word> Packed<'_, W> {
-    /// Phase 1: expand every old v-pair against the w-level into packed triples.
-    /// Returns `false` if the triple count reaches `max_pairs` (bail check 1): the
+    /// Expand every old v-pair against the w-level into packed triples.
+    /// Returns `false` if the triple count reaches `max_pairs`: the
     /// distinct inner pairs are never more numerous than the triples, so a count
     /// of them could not bail earlier.
     ///
@@ -1189,7 +1190,7 @@ pub(super) struct PairGroup {
     node: NodeIdx,
 }
 
-/// Phase 2: dedup cells in-place within each inner-pair group of the sorted
+/// Dedup cells in-place within each inner-pair group of the sorted
 /// `triples` and record the group boundaries with a rolling fingerprint hash.
 /// `keep_cells` retains the cell multiset instead of deduping it.
 ///
@@ -1302,7 +1303,7 @@ fn number_cell_lists<W: Word>(
     Ok(nodes as usize)
 }
 
-/// Phase 4: emit the inner nodes, node `k` holding the inner pairs of every
+/// Emit the inner nodes, node `k` holding the inner pairs of every
 /// group numbered `k`, in the groups' order.
 fn cluster_by_cell_list(
     lim: &Limits,
@@ -1347,7 +1348,7 @@ fn cluster_by_cell_list(
 }
 
 impl<W: Word> Packed<'_, W> {
-    /// Phase 5: build the outer level from the deduped (packed) triples, one node
+    /// Build the outer level from the deduped (packed) triples, one node
     /// per old v-node. `self.triples` is released once its pairs have been filed, on
     /// the error path as well as the normal one.
     ///
@@ -1427,8 +1428,8 @@ impl<W: Word> Packed<'_, W> {
     /// pairs in ascending order as well. Where the axis references are too sparse
     /// for a counting pass, each node's pairs are sorted instead. Marginal context
     /// keeps the outer multiset in the order filed: a duplicate outer pair is a
-    /// legitimate separate count-mass (two marginalization-collapsed twin
-    /// primes), so the sum over the kept multiset is the pre-rotation count
+    /// legitimate separate count-mass (two pairs that became equal when a
+    /// level was summed out), so the sum over the kept multiset is the pre-rotation count
     /// exactly.
     ///
     /// # Errors
@@ -1479,6 +1480,8 @@ impl<W: Word> Packed<'_, W> {
             *at += 1;
         };
         let axis_range = max_axis as usize + 1;
+        // The counting pass applies up to `2 * cells + 64` axis values; the
+        // constants are arbitrary.
         let by_axis_order =
             !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
         if by_axis_order {

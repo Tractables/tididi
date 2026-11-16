@@ -1,4 +1,4 @@
-//! The reusable rotation-probe scratch and the engine's pool for it.
+//! The reusable scratch for rotation probes.
 
 use crate::limits::Limits;
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
@@ -7,9 +7,9 @@ use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use crate::diagram::ChildPair;
 use super::relevel::{Prepared, ScoreScratch};
 
-/// Reusable scratch for `rebuild_rotated_levels`. Threaded by
-/// the rotation-search loops so the per-probe allocator churn is paid once per
-/// search rather than once per probe. Each field is `clear()`-ed before use in
+/// Reusable scratch for `rebuild_rotated_levels`, the score's tables, the pool
+/// probe's tables and `restructure_to`, held across probes so the allocator
+/// churn is paid once per search rather than once per probe. Each field is `clear()`-ed before use in
 /// `rebuild_rotated_levels`, preserving the underlying capacity; a field is
 /// then released at its last read within the call rather than held across the
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`). Every field grows
