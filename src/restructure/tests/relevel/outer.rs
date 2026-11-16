@@ -68,7 +68,8 @@ fn sorted_and_deduplicated(triples: &[u128], groups: &[PairGroup], n_v: usize, d
     lists
 }
 
-/// The outer lists `Packed::file_outer_pairs` files from `triples` under `layout`.
+/// The outer lists `Packed::file_outer_pairs` files from `triples` under
+/// `layout`, each sorted.
 fn filed<W: Word>(triples: &mut Vec<W>, layout: Layout, groups: &mut Vec<PairGroup>, n_v: usize, dir: RotationKind) -> Vec<Vec<ChildPair>> {
     let eng = Engine::new();
     let mut scratch = RestructureScratch::default();
@@ -77,18 +78,19 @@ fn filed<W: Word>(triples: &mut Vec<W>, layout: Layout, groups: &mut Vec<PairGro
     let mut begin = 0;
     let mut lists = Vec::new();
     for &end in &scratch.outer_ends[..n_v] {
-        lists.push(scratch.outer_pairs[begin as usize..end as usize].to_vec());
+        let mut list = scratch.outer_pairs[begin as usize..end as usize].to_vec();
+        list.sort_unstable();
+        lists.push(list);
         begin = end;
     }
     lists
 }
 
-/// Filing only each node's first group, in order of the axes where they are
-/// dense and by sorting where they are sparse, gives each old v-node the pairs
-/// that filing every group, sorting and dropping repeats gave, from wide
-/// triples and from the same triples in a fitted word.
+/// Filing only each node's first group gives each old v-node the pairs that
+/// filing every group and dropping repeats gave, from wide triples and from
+/// the same triples in a fitted word, over dense and sparse axes.
 #[test]
-fn the_filed_outer_lists_are_the_sorted_distinct_pairs() {
+fn the_filed_outer_lists_are_the_distinct_pairs() {
     let mut rng = Lcg::new(5);
     let dense: Vec<u32> = (0..10).collect();
     let sparse: Vec<u32> = (0..10).map(|a| 1000 * a + 7).collect();

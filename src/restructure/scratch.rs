@@ -21,16 +21,12 @@ pub(crate) struct RestructureScratch {
     // `outer_ends[i]`.
     pub(super) outer_ends: Vec<u32>,
     pub(super) outer_pairs: Vec<ChildPair>,
-    // The end of each axis value's cells, for a right rotation's filing.
-    pub(super) axis_ends: Vec<u32>,
     pub(super) bucket: BucketScratch,
     // The rebuild's triples and their groups (see `Layout`). The sort in
     // `rebuild_levels` is the dominant cost of a probe; sorting the
     // packed words by a single integer key replaces a lexicographic compare
     // over the four fields.
     pub(super) prepared: Prepared,
-    // A right rotation's cells in order of their axis.
-    pub(super) by_axis: Vec<u64>,
     // The tables of a rotation's score (`score_levels`).
     pub(super) score: ScoreScratch,
     // A pool-search probe's tables, one entry per member.
@@ -73,10 +69,8 @@ impl Buffers for RestructureScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.outer_ends);
         visit(&mut self.outer_pairs);
-        visit(&mut self.axis_ends);
         self.prepared.buffers(visit);
         self.score.buffers(visit);
-        visit(&mut self.by_axis);
         visit(&mut self.bucket.table);
         visit(&mut self.bucket.ends);
         visit(&mut self.bucket.pairs);
@@ -92,13 +86,11 @@ impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
         self.prepared.clear();
         self.score.clear();
-        self.by_axis.clear();
         self.bucket.table.clear();
         self.bucket.ends.clear();
         self.bucket.pairs.clear();
         self.outer_ends.clear();
         self.outer_pairs.clear();
-        self.axis_ends.clear();
         self.probe.clear();
     }
 

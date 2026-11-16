@@ -1283,8 +1283,8 @@ impl<W: Word> Packed<'_, W> {
     /// per old v-node. `self.triples` is released once its pairs have been filed, on
     /// the error path as well as the normal one.
     ///
-    /// Each node's pairs come out in ascending order, the order a sort of each
-    /// node's list leaves, and in the Boolean build free of duplicates.
+    /// Each node's pairs come out in no particular order, and in the Boolean
+    /// build free of duplicates.
     ///
     /// # Errors
     ///
@@ -1304,8 +1304,6 @@ impl<W: Word> Packed<'_, W> {
         // pairs is built.
         release_or_clear(lim, self.triples);
         release_or_clear(lim, self.groups);
-        release_or_clear(lim, &mut scratch.by_axis);
-        release_or_clear(lim, &mut scratch.axis_ends);
         let built = filed.and_then(|()| {
             let mut outer_level = Transient::new(lim, TddLevel::new());
             let ends = &scratch.outer_ends;
@@ -1350,18 +1348,10 @@ impl<W: Word> Packed<'_, W> {
     /// under, under the old v-node it came from: node `i`'s pairs end up at
     /// `outer_pairs[outer_ends[i - 1]..outer_ends[i]]`, from 0 for the first.
     ///
-    /// The filed groups ([`filed_groups`]) come in ascending order of their node
-    /// and a group's cells in ascending order of their axis. So a left rotation,
-    /// whose outer pair is `(node, axis)`, files each node's pairs in ascending
-    /// order. A right rotation's pair is `(axis, node)`: its cells are first
-    /// placed in ascending order of their axis, in a counting pass that keeps
-    /// the node order within an axis, and then filed, which leaves each node's
-    /// pairs in ascending order as well. Where the axis references are too sparse
-    /// for a counting pass, each node's pairs are sorted instead. Marginal context
-    /// keeps the outer multiset in the order filed: a duplicate outer pair is a
-    /// legitimate separate count-mass (two pairs that became equal when a
-    /// level was summed out), so the sum over the kept multiset is the pre-rotation count
-    /// exactly.
+    /// A node's pairs are in no particular order. Marginal context keeps the
+    /// outer multiset as filed: a duplicate outer pair is a legitimate separate
+    /// count-mass (two pairs that became equal when a level was summed out), so
+    /// the sum over the kept multiset is the pre-rotation count exactly.
     ///
     /// # Errors
     ///
@@ -1376,8 +1366,6 @@ impl<W: Word> Packed<'_, W> {
         let dir = self.dir;
         let marginal_ctx = self.marginal_ctx;
         let RestructureScratch {
-            by_axis,
-            axis_ends,
             outer_ends: ends,
             outer_pairs: pairs,
             ..
@@ -1393,10 +1381,8 @@ impl<W: Word> Packed<'_, W> {
         ends.clear();
         lim.try_resize(ends, n_v + 1, 0)?;
         let mut cells = 0usize;
-        let mut max_axis = 0u32;
         for (_, p) in filed() {
             ends[tri_src(p, layout) as usize + 1] += 1;
-            max_axis = max_axis.max(tri_axis(p, layout).0);
             cells += 1;
         }
         // Each node's start; the filing below moves each to the node's end.
@@ -1405,67 +1391,24 @@ impl<W: Word> Packed<'_, W> {
         }
         pairs.clear();
         lim.try_resize(pairs, cells, ChildPair::new(NodeIdx(0), NodeIdx(0)))?;
-        let mut file = |src: u32, pair: ChildPair| {
-            let at = &mut ends[src as usize];
-            pairs[*at as usize] = pair;
+        for (node, p) in filed() {
+            let outer_pair = match dir {
+                RotationKind::Left => ChildPair::new(node, tri_axis(p, layout)),
+                RotationKind::Right => ChildPair::new(tri_axis(p, layout), node),
+            };
+            let at = &mut ends[tri_src(p, layout) as usize];
+            pairs[*at as usize] = outer_pair;
             *at += 1;
-        };
-        let axis_range = max_axis as usize + 1;
-        // The counting pass applies up to `2 * cells + 64` axis values; the
-        // constants are arbitrary.
-        let by_axis_order =
-            !marginal_ctx && dir == RotationKind::Right && axis_range <= 2 * cells + 64;
-        if by_axis_order {
-            axis_ends.clear();
-            lim.try_resize(axis_ends, axis_range + 1, 0)?;
-            for (_, p) in filed() {
-                axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
-            }
-            for a in 0..axis_range {
-                axis_ends[a + 1] += axis_ends[a];
-            }
-            by_axis.clear();
-            lim.try_resize(by_axis, cells, 0)?;
-            for (node, p) in filed() {
-                let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
-                by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
-                *at += 1;
-            }
-            let mut begin = 0;
-            for (a, &end) in axis_ends[..axis_range].iter().enumerate() {
-                for &e in &by_axis[begin as usize..end as usize] {
-                    file(
-                        (e >> 32) as u32,
-                        ChildPair::new(EncodedChildRef::from_raw(a as u32), NodeIdx(e as u32)),
-                    );
-                }
-                begin = end;
-            }
-        } else {
-            for (node, p) in filed() {
-                let outer_pair = match dir {
-                    RotationKind::Left => ChildPair::new(node, tri_axis(p, layout)),
-                    RotationKind::Right => ChildPair::new(tri_axis(p, layout), node),
-                };
-                file(tri_src(p, layout), outer_pair);
-            }
-            if !marginal_ctx && dir == RotationKind::Right {
-                let mut begin = 0;
-                for &end in &ends[..n_v] {
-                    pairs[begin as usize..end as usize].sort_unstable();
-                    begin = end;
-                }
-            }
         }
         debug_assert!(
             marginal_ctx
                 || (0..n_v).all(|i| {
                     let begin = if i == 0 { 0 } else { ends[i - 1] };
-                    pairs[begin as usize..ends[i] as usize]
-                        .windows(2)
-                        .all(|w| w[0] < w[1])
+                    let mut s = pairs[begin as usize..ends[i] as usize].to_vec();
+                    s.sort_unstable();
+                    s.windows(2).all(|w| w[0] < w[1])
                 }),
-            "each outer node's pairs are ascending and distinct",
+            "each outer node's pairs are distinct",
         );
         Ok(())
     }
