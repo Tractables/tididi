@@ -284,15 +284,7 @@ fn build_tag_cubes(
     let num_codes = codes.len() / words;
     let mut cube = Vec::new();
     lim.try_resize(&mut cube, num_codes, None)?;
-    let named = {
-        let mut seen = Vec::new();
-        lim.try_resize(&mut seen, num_codes, false)?;
-        tags.iter()
-            .flatten()
-            .filter(|&&k| !std::mem::replace(&mut seen[k as usize], true))
-            .count()
-    };
-    let mut memo = Memos::new(lim, into, right, leaf_bit, named)?;
+    let mut memo = Memos::new(lim, into, right, leaf_bit)?;
     let mut stack = Vec::new();
     let mut built = Vec::new();
     for &k in tags.iter().flatten() {
@@ -354,9 +346,6 @@ enum Step {
 /// The widest part of a code a node is looked up by.
 const KEY_BITS: usize = 128;
 
-/// The widest part of a code looked up in an array, one slot per value.
-const DIRECT_BITS: usize = 16;
-
 /// No node built yet.
 const UNBUILT: NodeIdx = NodeIdx(u32::MAX);
 
@@ -375,21 +364,18 @@ struct Memos {
 enum Memo {
     /// Wider than [`KEY_BITS`]: every node is interned.
     Unkeyed,
-    /// One slot per value of the part, [`UNBUILT`] where none is yet.
-    Direct(Vec<NodeIdx>),
     /// A slot of [`Memos::built`] per part seen.
     Hashed(FxHashMap<u128, u32>),
 }
 
 impl Memos {
     /// The memos of the internal nodes under `right`, whose leaves `t` read
-    /// bit `leaf_bit[t]` of a code, for a build of `named` cubes.
+    /// bit `leaf_bit[t]` of a code.
     fn new(
         lim: &Limits,
         into: &Vtree,
         right: VtreeIdx,
         leaf_bit: &[usize],
-        named: usize,
     ) -> Result<Self, OperationError> {
         let mut runs: Vec<Vec<(usize, usize)>> = Vec::new();
         lim.try_resize(&mut runs, into.num_nodes(), Vec::new())?;
@@ -416,17 +402,9 @@ impl Memos {
                     _ => lim.try_push(&mut runs[t.idx()], (b, 1))?,
                 }
             }
-            // An array is at most a few slots per cube.
-            // The array bound `8 * named + 64` is arbitrary.
-            memo[t.idx()] = match width {
-                w if w <= DIRECT_BITS && 1usize << w <= 8 * named + 64 => {
-                    let mut slots = Vec::new();
-                    lim.try_resize(&mut slots, 1usize << w, UNBUILT)?;
-                    Memo::Direct(slots)
-                }
-                w if w <= KEY_BITS => Memo::Hashed(FxHashMap::default()),
-                _ => Memo::Unkeyed,
-            };
+            if width <= KEY_BITS {
+                memo[t.idx()] = Memo::Hashed(FxHashMap::default());
+            }
             bits[t.idx()] = mine;
         }
         Ok(Self {
@@ -471,10 +449,6 @@ impl Memos {
         let key = self.key(t, code);
         match &mut self.memo[t.idx()] {
             Memo::Unkeyed => unreachable!("keyed above"),
-            Memo::Direct(slots) => Ok(match slots[key as usize] {
-                UNBUILT => Err(key as usize),
-                n => Ok(n),
-            }),
             Memo::Hashed(map) => {
                 lim.reserve_map(map, 1)?;
                 match map.entry(key) {
@@ -494,7 +468,6 @@ impl Memos {
     fn fill(&mut self, t: VtreeIdx, slot: usize, n: NodeIdx) {
         match &mut self.memo[t.idx()] {
             Memo::Unkeyed => {}
-            Memo::Direct(slots) => slots[slot] = n,
             Memo::Hashed(_) => self.built[slot] = n,
         }
     }
