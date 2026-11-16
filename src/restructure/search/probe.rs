@@ -61,7 +61,7 @@ pub struct RotationProbe<'a> {
     tdd: &'a Tdd,
     moves: &'a [RotationMove],
     changed: &'a [VtreeIdx],
-    preimages: &'a [Transient<'a, TddLevel>],
+    preimages: &'a [Preimage<'a>],
 }
 
 impl std::fmt::Debug for RotationProbe<'_> {
@@ -98,7 +98,7 @@ impl RotationProbe<'_> {
     /// the sequence did not rebuild.
     #[inline]
     pub fn before(&self, level: VtreeIdx) -> Option<&TddLevel> {
-        self.position(level).map(|i| &*self.preimages[i])
+        self.position(level).map(|i| &*self.preimages[i].level)
     }
 
     /// A changed level as it is now, or `None` for a level the sequence did
@@ -115,7 +115,7 @@ impl RotationProbe<'_> {
         let mut delta = 0i64;
         for (i, &level) in self.changed.iter().enumerate() {
             delta += self.tdd.level(level).live_pairs() as i64;
-            delta -= self.preimages[i].live_pairs() as i64;
+            delta -= self.preimages[i].level.live_pairs() as i64;
         }
         delta
     }
@@ -267,7 +267,7 @@ pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
     if moves.is_empty() {
         return Ok(false);
     }
-    let mut trial = RotationTrial::new(tdd, eng.limits());
+    let mut trial = RotationTrial::new(tdd, eng.limits(), moves.len())?;
     for mv in moves {
         let Some(info) = trial.rotate(*mv) else { return Ok(false) };
         // The two rebuilt levels need explicit pairs; marginal grandchildren are
@@ -293,7 +293,7 @@ pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
             tdd: trial.tdd,
             moves,
             changed: &trial.changed,
-            preimages: &trial.preimages,
+            preimages: &trial.pre.as_ref().expect("a trial holds its preimages until it ends").levels,
         },
         &info,
     );
@@ -309,17 +309,17 @@ pub(super) fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
 }
 
 /// A diagram's output, certification, closed-levels state, and pending
-/// reduction obligations, saved before a rotation trial or pool move.
-pub(super) struct DiagramHeader {
+/// reduction obligations.
+struct DiagramHeader {
     output: TddNodeId,
     canonical: bool,
     closed: bool,
-    pub(super) dirty: Dirty,
+    dirty: Dirty,
 }
 
 impl DiagramHeader {
     /// The header of `tdd`, with `dirty` for its pending obligations.
-    pub(super) fn new(tdd: &Tdd, dirty: Dirty) -> Self {
+    fn new(tdd: &Tdd, dirty: Dirty) -> Self {
         DiagramHeader {
             output: tdd.output,
             canonical: tdd.levels.is_canonical(tdd.output),
@@ -329,7 +329,7 @@ impl DiagramHeader {
     }
 
     /// Put the header back on `tdd`.
-    pub(super) fn restore(self, tdd: &mut Tdd) {
+    fn restore(self, tdd: &mut Tdd) {
         tdd.output = self.output;
         tdd.dirty = self.dirty;
         if self.canonical {
@@ -337,6 +337,86 @@ impl DiagramHeader {
         }
         if self.closed {
             tdd.reinstate_closed_levels();
+        }
+    }
+}
+
+/// A level a rotation replaced at `node` of diagram `diagram`.
+pub(super) struct Preimage<'a> {
+    diagram: usize,
+    pub(super) node: VtreeIdx,
+    level: Transient<'a, TddLevel>,
+}
+
+/// The headers of some diagrams and the levels rotations replaced in them,
+/// for the rotations to be kept or put back together. A diagram is named by
+/// its index in the slice handed back to [`keep`](Self::keep) or
+/// [`put_back`](Self::put_back). Room for every header and level is reserved
+/// up front, so filing one never fails.
+pub(super) struct Preimages<'a> {
+    lim: &'a Limits,
+    headers: Transient<'a, Vec<(usize, DiagramHeader)>>,
+    pub(super) levels: Transient<'a, Vec<Preimage<'a>>>,
+}
+
+impl<'a> Preimages<'a> {
+    pub(super) fn new(lim: &'a Limits, headers: usize, levels: usize) -> Result<Self, OperationError> {
+        let mut pre = Preimages {
+            lim,
+            headers: Transient::new(lim, Vec::new()),
+            levels: Transient::new(lim, Vec::new()),
+        };
+        lim.reserve_exact(&mut pre.headers, headers)?;
+        lim.reserve_exact(&mut pre.levels, levels)?;
+        Ok(pre)
+    }
+
+    /// File diagram `i`'s header, its pending obligations moved out of
+    /// `tdd`, or copied if `copy`.
+    pub(super) fn file_header(&mut self, i: usize, tdd: &mut Tdd, copy: bool) {
+        let dirty = if copy {
+            tdd.dirty.clone()
+        } else {
+            std::mem::take(&mut tdd.dirty)
+        };
+        self.headers.push((i, DiagramHeader::new(tdd, dirty)));
+    }
+
+    /// File `level`, the level a rotation replaced at `node` of diagram `i`.
+    pub(super) fn file(&mut self, i: usize, node: VtreeIdx, level: TddLevel) {
+        let level = Transient::new(self.lim, level);
+        self.levels.push(Preimage { diagram: i, node, level });
+    }
+
+    /// Keep the rotations: each diagram with a header has its `changed`
+    /// levels closed and its pending obligations put back under what the
+    /// rotations recorded. Returns the replaced levels, whose charge is handed
+    /// back as they drop.
+    pub(super) fn keep(
+        self,
+        diagrams: &mut [&mut Tdd],
+        changed: &[VtreeIdx],
+    ) -> Transient<'a, Vec<Preimage<'a>>> {
+        let Preimages { mut headers, levels, .. } = self;
+        for (i, header) in headers.drain(..) {
+            // The rebuilt levels are built stored; the kept rotations are the
+            // operation's end, which closes them.
+            diagrams[i].close_changed_levels(changed);
+            diagrams[i].dirty.merge_under_kept(header.dirty, changed);
+        }
+        levels
+    }
+
+    /// Put every filed level and header back, the levels that replaced them
+    /// discarded.
+    pub(super) fn put_back(self, diagrams: &mut [&mut Tdd]) {
+        let Preimages { lim, mut headers, mut levels } = self;
+        for p in levels.drain(..) {
+            let rebuilt = std::mem::replace(&mut diagrams[p.diagram].levels[p.node.idx()], p.level.keep());
+            lim.discard(rebuilt);
+        }
+        for (i, header) in headers.drain(..) {
+            header.restore(diagrams[i]);
         }
     }
 }
@@ -349,29 +429,25 @@ struct RotationTrial<'a> {
     /// One entry per applied move, in the order they were applied.
     pending: SmallVec<[PendingTopo; 3]>,
     /// The levels the sequence rebuilt, each recorded the first time a move
-    /// reached it, parallel to `preimages`.
+    /// reached it, in the order of their preimages in `pre`.
     changed: SmallVec<[VtreeIdx; 2]>,
-    preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
-    header: Option<DiagramHeader>,
-    /// Set by [`commit`](RotationTrial::commit), so the rollback in `Drop` knows
-    /// there is nothing left to roll back.
-    committed: bool,
+    /// Taken by [`commit`](RotationTrial::commit); what `Drop` puts back.
+    pre: Option<Preimages<'a>>,
 }
 
 impl<'a> RotationTrial<'a> {
-    /// Take the state a rollback restores.
-    fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
-        let dirty = std::mem::take(&mut tdd.dirty);
-        let header = Some(DiagramHeader::new(tdd, dirty));
-        RotationTrial {
+    /// Take the state a rollback restores, with room for the levels of
+    /// `moves` moves.
+    fn new(tdd: &'a mut Tdd, lim: &'a Limits, moves: usize) -> Result<Self, OperationError> {
+        let mut pre = Preimages::new(lim, 1, moves.saturating_mul(2))?;
+        pre.file_header(0, tdd, false);
+        Ok(RotationTrial {
             tdd,
             lim,
             pending: SmallVec::new(),
             changed: SmallVec::new(),
-            preimages: SmallVec::new(),
-            header,
-            committed: false,
-        }
+            pre: Some(pre),
+        })
     }
 
     /// Rotate the pointers for one move, retaining what a rollback needs.
@@ -387,12 +463,13 @@ impl<'a> RotationTrial<'a> {
     /// its earliest preimage, so the whole sequence is scored and reverted
     /// against the state it started from.
     fn record(&mut self, info: &RotationInfo, old: (TddLevel, TddLevel)) {
+        let pre = self.pre.as_mut().expect("a trial holds its preimages until it ends");
         for (level, preimage) in [(info.v_idx, old.0), (info.w_idx, old.1)] {
             if self.changed.contains(&level) {
                 self.lim.discard(preimage);
             } else {
                 self.changed.push(level);
-                self.preimages.push(Transient::new(self.lim, preimage));
+                pre.file(0, level, preimage);
             }
         }
     }
@@ -404,45 +481,26 @@ impl<'a> RotationTrial<'a> {
 
     /// Repair topology and release the preimage.
     fn commit(mut self) {
-        self.committed = true;
-        // The levels the moves rebuilt are built stored; the accepted
-        // sequence is the operation's end, which closes them.
-        self.tdd.close_changed_levels(&self.changed);
-        // Dropping the preimages hands their charge back, and the rebuild
-        // charged the levels that replaced them, so the operation's in-flight
-        // total ends up carrying the difference rather than both.
-        self.preimages.clear();
-        let changed = std::mem::take(&mut self.changed);
-        for pending in self.pending.drain(..) {
-            pending.commit(Arc::make_mut(&mut self.tdd.vtree));
-        }
+        let pre = self.pre.take().expect("a trial holds its preimages until it ends");
         // Both exits end with the pre-probe obligations still present: `Drop`
         // restores them wholesale on reject, and the accept path puts them back
         // underneath what the rotation itself recorded. Clearing here instead
         // dropped both, which left a later `minimize` skipping levels it still
         // owed work on. The pair fusion records stand where no move rebuilt
         // or pushed a level.
-        let carried = self.header.take().expect("a trial takes the worklists when it is created").dirty;
-        self.tdd.dirty.merge_under_kept(carried, &changed);
+        drop(pre.keep(std::slice::from_mut(&mut self.tdd), &self.changed));
+        for pending in self.pending.drain(..) {
+            pending.commit(Arc::make_mut(&mut self.tdd.vtree));
+        }
     }
 }
 
 impl Drop for RotationTrial<'_> {
     fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
+        let Some(pre) = self.pre.take() else { return };
         while let Some(pending) = self.pending.pop() {
             pending.revert(Arc::make_mut(&mut self.tdd.vtree));
         }
-        for (level, preimage) in self.changed.drain(..).zip(self.preimages.drain(..)) {
-            // The rebuilt level is the one being dropped here, so its charge is
-            // what the trial hands back.
-            let rebuilt = std::mem::replace(&mut self.tdd.levels[level.idx()], preimage.keep());
-            self.lim.discard(rebuilt);
-        }
-        if let Some(header) = self.header.take() {
-            header.restore(self.tdd);
-        }
+        pre.put_back(std::slice::from_mut(&mut self.tdd));
     }
 }

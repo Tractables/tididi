@@ -31,7 +31,7 @@ use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
-use super::probe::{DiagramHeader, pivot_pairs};
+use super::probe::{Preimage, Preimages, pivot_pairs};
 
 /// A rotation, with the promoted child's children swapped first if
 /// `crossed`.
@@ -526,7 +526,7 @@ impl<'l> PoolDescent<'l> {
                 *changed |= self.stats.accepts > accepts;
                 drop(undo);
             } else {
-                undo.revert(lim, members, self.tree, &mut self.known);
+                undo.revert(members, self.tree, &mut self.known);
                 self.stats.accepts = accepts;
             }
             match outcome {
@@ -676,20 +676,16 @@ impl Known {
 }
 
 /// What a restart needs to put the pool back as it began: the tree, what
-/// the descent knew, each member's output and state, and the first level
-/// each kept move replaced at each node.
+/// the descent knew, each member's header, and the first level each kept
+/// move replaced at each node.
 struct Undo<'a> {
     tree: Vtree,
     known: Known,
-    /// Each member's output, whether it was canonical and closed, and its
-    /// pending reduction work.
-    members: Vec<DiagramHeader>,
-    /// Whether a level of every member at each node is filed in `levels`.
+    /// Each member's header and the levels as the restart found them, room
+    /// for one per member and node reserved up front.
+    pre: Preimages<'a>,
+    /// Whether the level of every member at each node is in `pre`.
     filed: Vec<bool>,
-    /// (member, node, the level as the restart found it), room for one
-    /// per member and node reserved through the limits up front, so filing
-    /// a kept move's levels never fails.
-    levels: Transient<'a, Vec<(usize, usize, Transient<'a, TddLevel>)>>,
     /// The members' live pairs when the restart began.
     pairs: usize,
 }
@@ -697,53 +693,41 @@ struct Undo<'a> {
 impl<'a> Undo<'a> {
     fn begin(
         lim: &'a Limits,
-        members: &[&mut Tdd],
+        members: &mut [&mut Tdd],
         tree: &Vtree,
         known: &Known,
     ) -> Result<Undo<'a>, OperationError> {
-        let mut levels = Transient::new(lim, Vec::new());
-        lim.reserve_exact(&mut levels, members.len().saturating_mul(tree.num_nodes()))?;
+        let nodes = tree.num_nodes();
+        let mut pre = Preimages::new(lim, members.len(), members.len().saturating_mul(nodes))?;
+        for (i, m) in members.iter_mut().enumerate() {
+            pre.file_header(i, m, true);
+        }
         Ok(Undo {
             tree: tree.clone(),
             known: known.clone(),
-            members: members
-                .iter()
-                .map(|m| DiagramHeader::new(m, m.dirty.clone()))
-                .collect(),
-            filed: vec![false; tree.num_nodes()],
-            levels,
+            pre,
+            filed: vec![false; nodes],
             pairs: live_pairs(members),
         })
     }
 
-    /// File the levels a kept move replaced, `saved` holding member `i`'s
-    /// old levels at `v` and `w`; only the first replaced at a node is kept.
-    fn file(&mut self, v: usize, w: usize, saved: &mut Vec<(usize, Saved<'a>)>) {
-        let (first_v, first_w) = (!self.filed[v], !self.filed[w]);
-        for (i, s) in saved.iter_mut() {
-            if let Some((outer, inner)) = s.levels.take() {
-                if first_v {
-                    self.levels.push((*i, v, outer));
-                }
-                if first_w {
-                    self.levels.push((*i, w, inner));
-                }
+    /// File the levels a kept move at `v` and `w` replaced; only the first
+    /// replaced at a node is kept.
+    fn file(&mut self, v: VtreeIdx, w: VtreeIdx, mut replaced: Transient<'a, Vec<Preimage<'a>>>) {
+        let (first_v, first_w) = (!self.filed[v.idx()], !self.filed[w.idx()]);
+        for p in replaced.drain(..) {
+            if (p.node == v && first_v) || (p.node == w && first_w) {
+                self.pre.levels.push(p);
             }
         }
-        self.filed[v] = true;
-        self.filed[w] = true;
+        self.filed[v.idx()] = true;
+        self.filed[w.idx()] = true;
     }
 
     /// Put every member, the tree and what the descent knew back as the
     /// restart found them.
-    fn revert(mut self, lim: &Limits, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
-        for (i, t, level) in self.levels.drain(..) {
-            let rebuilt = std::mem::replace(&mut members[i].levels[t], level.keep());
-            lim.discard(rebuilt);
-        }
-        for (m, header) in members.iter_mut().zip(self.members) {
-            header.restore(m);
-        }
+    fn revert(self, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
+        self.pre.put_back(members);
         *tree = self.tree;
         *known = self.known;
     }
@@ -1009,53 +993,37 @@ fn keeps_its_pairs(outer: usize, inner: usize, bound: usize) -> bool {
     bound > 2 && outer <= 1 && inner == outer
 }
 
-/// What one member needs to be put back as it was.
-struct Saved<'a> {
-    header: DiagramHeader,
-    /// The levels the rebuild replaced, outer then inner.
-    levels: Option<(Transient<'a, TddLevel>, Transient<'a, TddLevel>)>,
-}
-
-type SavedMembers<'a> = Transient<'a, Vec<(usize, Saved<'a>)>>;
-
 /// Member `i`'s two levels at `step` rebuilt within `step.max_pairs`, and
-/// what it needs to be put back saved: the new levels' pairs, or `None`
-/// where the rebuild would pass `step.max_pairs`.
-fn rebuild_member<'a>(
-    lim: &'a Limits,
+/// what it needs to be put back filed in `pre`: the new levels' pairs, or
+/// `None` where the rebuild would pass `step.max_pairs`.
+fn rebuild_member(
+    lim: &Limits,
     i: usize,
     m: &mut Tdd,
     step: RotationStep<'_>,
-    saved: &mut Vec<(usize, Saved<'a>)>,
+    pre: &mut Preimages<'_>,
     scratch: &mut RestructureScratch,
 ) -> Result<Option<usize>, OperationError> {
-    let dirty = std::mem::take(&mut m.dirty);
-    saved.push((
-        i,
-        Saved {
-            header: DiagramHeader::new(m, dirty),
-            levels: None,
-        },
-    ));
+    pre.file_header(i, m, false);
     m.levels.forget();
     // No member has a marginal level here.
     let Some((outer, inner)) = rebuild_levels(lim, m, step, false, scratch)? else {
         return Ok(None);
     };
-    saved.last_mut().expect("pushed above").1.levels =
-        Some((Transient::new(lim, outer), Transient::new(lim, inner)));
+    pre.file(i, step.info.v_idx, outer);
+    pre.file(i, step.info.w_idx, inner);
     Ok(Some(pivot_pairs(m, step.info)))
 }
 
 /// Rebuild at `step` each member `pick` names, stopping on the first refusal
-/// or error, what each needs to be put back filed in `saved`: the outcome for
+/// or error, what each needs to be put back filed in `pre`: the outcome for
 /// [`settle`].
-fn rebuild_other_members<'a>(
-    lim: &'a Limits,
+fn rebuild_other_members(
+    lim: &Limits,
     members: &mut [&mut Tdd],
     step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
-    saved: &mut Vec<(usize, Saved<'a>)>,
+    pre: &mut Preimages<'_>,
     pick: impl Fn(usize) -> bool,
     mut on_rebuilt: impl FnMut(usize, usize) -> Result<(), OperationError>,
 ) -> Result<bool, OperationError> {
@@ -1063,19 +1031,12 @@ fn rebuild_other_members<'a>(
         if !pick(i) {
             continue;
         }
-        let Some(pairs) = rebuild_member(lim, i, m, step, saved, scratch)? else {
+        let Some(pairs) = rebuild_member(lim, i, m, step, pre, scratch)? else {
             return Ok(false);
         };
         on_rebuilt(i, pairs)?;
     }
     Ok(true)
-}
-
-/// Room in `saved` for every member.
-fn saved_members<'a>(lim: &'a Limits, members: usize) -> Result<SavedMembers<'a>, OperationError> {
-    let mut saved = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut saved, members)?;
-    Ok(saved)
 }
 
 /// The members' two levels at `step` rebuilt, the change shown to `accept`,
@@ -1118,13 +1079,13 @@ fn probe(
         after.push(old);
         deferred.push(keeps);
     }
-    let mut saved = saved_members(lim, members.len())?;
+    let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
     let rebuilt = rebuild_other_members(
         lim,
         members,
         step,
         scratch,
-        &mut saved,
+        &mut pre,
         |i| !deferred[i],
         |i, pairs| {
             after[i] = pairs;
@@ -1149,7 +1110,7 @@ fn probe(
                 members,
                 step,
                 scratch,
-                &mut saved,
+                &mut pre,
                 |i| deferred[i],
                 |i, pairs| {
                     debug_assert_eq!(pairs, before[i], "a member that keeps its pairs");
@@ -1157,7 +1118,7 @@ fn probe(
                 },
             )?)
     });
-    settle(lim, members, step.info, &mut saved, outcome, None)
+    settle(members, step.info, pre, outcome, None)
 }
 
 /// [`probe`] for a move kept exactly when it leaves the members' total below
@@ -1295,13 +1256,13 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         return Ok(false);
     }
-    let mut saved = saved_members(lim, members.len())?;
+    let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
     let outcome = rebuild_other_members(
         lim,
         members,
         step,
         scratch,
-        &mut saved,
+        &mut pre,
         |_| true,
         |i, pairs| {
             debug_assert!(
@@ -1320,7 +1281,7 @@ fn probe_scored<'l>(
         lim.check_stop()?;
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(lim, members, info, &mut saved, outcome, undo)
+    settle(members, info, pre, outcome, undo)
 }
 
 /// A level's live pairs and the nodes that hold them.
@@ -1356,49 +1317,27 @@ enum Twin<'s> {
     Given(&'s [Option<Option<usize>>]),
 }
 
-/// The end of a probe's rebuilds, `saved` holding what each member rebuilt
+/// The end of a probe's rebuilds, `pre` holding what each member rebuilt
 /// needs to be put back: where `outcome` keeps the move, every member's two
-/// rebuilt levels closed and its obligations merged back; otherwise every
-/// member rebuilt put back as it was. Returns `outcome`. A kept move's
-/// replaced levels go to `undo` when given.
+/// rebuilt levels kept ([`Preimages::keep`]) and the levels they replaced
+/// filed with `undo` when given; otherwise every member rebuilt put back as
+/// it was. Returns `outcome`.
 fn settle<'a>(
-    lim: &'a Limits,
     members: &mut [&mut Tdd],
     info: &RotationInfo,
-    saved: &mut Vec<(usize, Saved<'a>)>,
+    pre: Preimages<'a>,
     outcome: Result<bool, OperationError>,
     undo: Option<&mut Undo<'a>>,
 ) -> Result<bool, OperationError> {
-    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    if matches!(outcome, Ok(true)) {
-        if let Some(undo) = undo {
-            undo.file(v, w, saved);
-        }
-        // The preimages not filed hand their charge back as they drop; the
-        // obligations taken from each member go back under what the rebuild
-        // recorded. The two levels each member rebuilt are built stored; the
-        // kept move is the operation's end, which closes them.
-        for (i, s) in saved.drain(..) {
-            let m = &mut members[i];
-            m.close_changed_levels(&[info.v_idx, info.w_idx]);
-            m.dirty
-                .merge_under_kept(s.header.dirty, &[info.v_idx, info.w_idx]);
-        }
-        return Ok(true);
+    if !matches!(outcome, Ok(true)) {
+        pre.put_back(members);
+        return outcome;
     }
-    // Put back every member the rebuild reached, in any order: each has its
-    // own levels.
-    for (i, s) in saved.drain(..) {
-        let m = &mut members[i];
-        if let Some((outer, inner)) = s.levels {
-            let rebuilt_outer = std::mem::replace(&mut m.levels[v], outer.keep());
-            let rebuilt_inner = std::mem::replace(&mut m.levels[w], inner.keep());
-            lim.discard(rebuilt_outer);
-            lim.discard(rebuilt_inner);
-        }
-        s.header.restore(m);
+    let replaced = pre.keep(members, &[info.v_idx, info.w_idx]);
+    if let Some(undo) = undo {
+        undo.file(info.v_idx, info.w_idx, replaced);
     }
-    outcome
+    Ok(true)
 }
 
 /// A debug build's check of a move its scores refused: every member's
