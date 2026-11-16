@@ -115,9 +115,7 @@ impl Engine {
                 .expect("a checked renaming that keeps a variable restricts the vtree"),
         );
         let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        let result = self.project_along(tdd, &into, &plan, &dropped);
-        plan.recycle(self);
-        result
+        self.project_along(tdd, &into, &plan, &dropped)
     }
 
     /// [`project_to_vars`](Self::project_to_vars) onto `into`, for a
@@ -219,7 +217,7 @@ impl Engine {
             check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
         let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        let result = match weights {
+        match weights {
             Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
             weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
                 if let Some(store) = weights {
@@ -227,9 +225,7 @@ impl Engine {
                 }
                 Ok(result)
             }),
-        };
-        plan.recycle(self);
-        result
+        }
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in

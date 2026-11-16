@@ -554,12 +554,8 @@ fn conjoin_onto<'a>(
         fill_free_cow(&mut g, free.g);
         return Err(AndOntoRefused { error: error.into(), f: back(f, f_given), g: back(g, g_given) });
     }
-    let conjoined = conjoin_kept(eng, f, g, free)
-        .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) });
-    for plan in [f_plan, g_plan].into_iter().flatten() {
-        plan.recycle(eng);
-    }
-    conjoined
+    conjoin_kept(eng, f, g, free)
+        .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) })
 }
 
 /// Begin a phase of [`Engine::and_onto`](crate::Engine::and_onto) as the

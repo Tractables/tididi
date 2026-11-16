@@ -21,8 +21,7 @@ use crate::diagram::{
     ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, WeightStore,
     WeightValue, return_levels,
 };
-use crate::execution::pool::{Buffers, Drain, Pool, PooledScratch, Pools, Scratch};
-use crate::limits::{Limits, OperationError};
+use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
 /// A validated placement of a source vtree into a destination vtree.
@@ -259,7 +258,7 @@ impl Engine {
         tdd.require_structure()?;
         let plan = Plan::build(self, tdd.vtree(), into, map, true)?;
         let result = assemble(self, tdd, into, &plan)?;
-        Ok((result, plan.into_embedding(self)))
+        Ok((result, plan.embedding))
     }
 
     /// [`Engine::embed`] that moves the diagram's levels into the result
@@ -318,7 +317,7 @@ impl Engine {
             }
         };
         place_moving(self, tdd, into, map, Free::Build)
-            .map(|(result, plan)| (result, plan.into_embedding(self)))
+            .map(|(result, plan)| (result, plan.embedding))
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
@@ -413,7 +412,7 @@ impl Engine {
             }
             result
         };
-        Ok((result, plan.into_embedding(self)))
+        Ok((result, plan.embedding))
     }
 }
 
@@ -430,88 +429,10 @@ pub(crate) struct Plan {
     pass_throughs: Vec<VtreeIdx>,
     /// The destination node each source node maps to.
     pub(crate) embedding: Embedding,
-    /// Whether children may be matched swapped: everywhere but where the
-    /// assembly cannot mirror a level, a marginal one or a projection's.
-    mirror: bool,
     /// Per source node: its image has its children swapped, so its level is
-    /// copied with every pair read the other way round. Empty unless
-    /// `mirror`.
+    /// copied with every pair read the other way round. Empty unless the
+    /// build was given `mirror`.
     pub(crate) mirrored: Vec<bool>,
-    /// The build's own scratch, held to go back to the engine with the rest:
-    /// per destination node, the source node whose leaves are the renamed
-    /// variables under it.
-    under: Vec<Option<VtreeIdx>>,
-}
-
-/// The buffers of a [`Plan`], parked in the engine between placements. A
-/// conjunction onto a wider scope places both operands, and a caller looking
-/// for a copy of a diagram among other scopes may try many placements, most
-/// of which fail, so each placement takes the buffers the last one left.
-#[derive(Default)]
-pub(crate) struct PlanBuffers {
-    free: Vec<bool>,
-    covered_by: Vec<Option<VtreeIdx>>,
-    pass_throughs: Vec<VtreeIdx>,
-    embedding: Vec<VtreeIdx>,
-    mirrored: Vec<bool>,
-    under: Vec<Option<VtreeIdx>>,
-}
-
-impl Buffers for PlanBuffers {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.free);
-        visit(&mut self.covered_by);
-        visit(&mut self.pass_throughs);
-        visit(&mut self.embedding);
-        visit(&mut self.mirrored);
-        visit(&mut self.under);
-    }
-}
-
-impl PooledScratch for PlanBuffers {
-    fn prepare(&mut self) {
-        self.free.clear();
-        self.covered_by.clear();
-        self.pass_throughs.clear();
-        self.embedding.clear();
-        self.mirrored.clear();
-        self.under.clear();
-    }
-}
-
-/// Two parked [`PlanBuffers`], one for each placement of a conjunction.
-#[derive(Default)]
-pub(crate) struct PlanPool([Pool<PlanBuffers>; 2]);
-
-impl PlanPool {
-    /// Parked buffers, emptied, or new ones when none is parked.
-    fn take(&self, eng: &Engine) -> PlanBuffers {
-        let mut buffers = self
-            .0
-            .iter()
-            .find(|slot| slot.occupied())
-            .map(|slot| slot.take(eng))
-            .unwrap_or_default();
-        buffers.prepare();
-        buffers
-    }
-
-    /// Park `buffers` in a vacant slot, or in place of the first slot's.
-    fn put(&self, eng: &Engine, buffers: PlanBuffers) {
-        self.0
-            .iter()
-            .find(|slot| !slot.occupied())
-            .unwrap_or(&self.0[0])
-            .put(eng, buffers);
-    }
-}
-
-impl Pools for PlanPool {
-    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
-        for slot in &self.0 {
-            visit(slot);
-        }
-    }
 }
 
 impl Plan {
@@ -532,8 +453,8 @@ impl Plan {
     /// a renamed variable under it, in bottom-up order up to the one the
     /// match fails at, that one included.
     ///
-    /// The buffers come from the engine's [`PlanPool`], and a refused
-    /// build parks them back there.
+    /// `mirror` is unset where the assembly cannot mirror a level: a
+    /// marginal one, or a projection's.
     pub(super) fn build(
         eng: &Engine,
         source: &Vtree,
@@ -541,89 +462,15 @@ impl Plan {
         map: impl Fn(VarId) -> VarId,
         mirror: bool,
     ) -> Result<Plan, EmbedError> {
-        let PlanBuffers {
-            free,
-            covered_by,
-            pass_throughs,
-            embedding,
-            mirrored,
-            under,
-        } = eng.scratch.plans.take(eng);
-        let mut plan = Plan {
-            free,
-            covered_by,
-            pass_throughs,
-            embedding: Embedding { levels: embedding },
-            mirror,
-            mirrored,
-            under,
-        };
-        match plan.fill(eng.limits(), source, into, map) {
-            Ok(()) => Ok(plan),
-            Err(error) => {
-                plan.recycle(eng);
-                Err(error)
-            }
-        }
-    }
-
-    /// Park the plan's buffers in the engine for the placements that follow.
-    pub(crate) fn recycle(self, eng: &Engine) {
-        let Plan {
-            free,
-            covered_by,
-            pass_throughs,
-            embedding: Embedding { levels: embedding },
-            mirror: _,
-            mirrored,
-            under,
-        } = self;
-        eng.scratch.plans.put(
-            eng,
-            PlanBuffers {
-                free,
-                covered_by,
-                pass_throughs,
-                embedding,
-                mirrored,
-                under,
-            },
-        );
-    }
-
-    /// The embedding, the plan's other buffers parked as
-    /// [`recycle`](Self::recycle) parks them.
-    pub(crate) fn into_embedding(mut self, eng: &Engine) -> Embedding {
-        let embedding = Embedding {
-            levels: std::mem::take(&mut self.embedding.levels),
-        };
-        self.recycle(eng);
-        embedding
-    }
-
-    /// The body of [`build`](Self::build), into the plan's emptied buffers.
-    fn fill(
-        &mut self,
-        lim: &Limits,
-        source: &Vtree,
-        into: &Vtree,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<(), EmbedError> {
-        let Plan {
-            free,
-            covered_by,
-            pass_throughs,
-            embedding: Embedding { levels: embedding },
-            mirror,
-            mirrored,
-            under,
-        } = self;
-        lim.try_resize(free, into.num_nodes(), true)?;
-        lim.try_resize(embedding, source.num_nodes(), into.root())?;
-        lim.try_resize(covered_by, into.num_nodes(), None)?;
-        lim.try_resize(under, into.num_nodes(), None)?;
-        if *mirror {
-            lim.try_resize(mirrored, source.num_nodes(), false)?;
+        let lim = eng.limits();
+        let (mut free, mut covered_by, mut under) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut pass_throughs, mut embedding, mut mirrored) = (Vec::new(), Vec::new(), Vec::new());
+        lim.try_resize(&mut free, into.num_nodes(), true)?;
+        lim.try_resize(&mut embedding, source.num_nodes(), into.root())?;
+        lim.try_resize(&mut covered_by, into.num_nodes(), None)?;
+        lim.try_resize(&mut under, into.num_nodes(), None)?;
+        if mirror {
+            lim.try_resize(&mut mirrored, source.num_nodes(), false)?;
         }
         let mut gate = lim.gate();
         for (leaf, var) in source.leaf_bottomup() {
@@ -651,14 +498,14 @@ impl Plan {
                 (None, None) => continue,
                 (Some(s), None) | (None, Some(s)) => {
                     visited += 1;
-                    lim.try_push(pass_throughs, t)?;
+                    lim.try_push(&mut pass_throughs, t)?;
                     s
                 }
                 (Some(a), Some(b)) => {
                     visited += 1;
                     let p = source.node(a).parent().expect("a source node beside another is not the root");
                     let swapped = source.children(p).1 == a;
-                    if source.node(b).parent() != Some(p) || (swapped && !*mirror) {
+                    if source.node(b).parent() != Some(p) || (swapped && !mirror) {
                         refused = Some(p);
                         break;
                     }
@@ -678,7 +525,7 @@ impl Plan {
             return Err(EmbedError::NotIsomorphic { source: s });
         }
         debug_assert_eq!(
-            self.covered_by
+            covered_by
                 .iter()
                 .filter(|source| source.is_some())
                 .count(),
@@ -686,7 +533,13 @@ impl Plan {
             "a completed match gives every source level an image",
         );
         gate.flush()?;
-        Ok(())
+        Ok(Plan {
+            free,
+            covered_by,
+            pass_throughs,
+            embedding: Embedding { levels: embedding },
+            mirrored,
+        })
     }
 }
 
