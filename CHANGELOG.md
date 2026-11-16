@@ -11,6 +11,16 @@ Breaking changes:
   same diagram.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
   `Quantification::Fused` (the default) or `Quantification::Product`.
+- `Tdd::embed_mirrored`, `Engine::embed_mirrored`,
+  `Engine::embedding_plan_mirrored`, `EmbeddingPlan::new_mirrored`,
+  `Engine::embed_moving_mirrored` and `Engine::and_onto_mirrored` are
+  removed. `Tdd::embed`, `Engine::embed`, `Engine::embedding_plan`,
+  `EmbeddingPlan::new`, `Engine::embed_moving` and `Engine::and_onto` match
+  the vtrees up to mirrors and give the diagrams the removed forms gave; a
+  destination with some node's children in the other order is no longer
+  refused. `Engine::embed_over` does so for a structural diagram, and a
+  diagram with a marginal level still needs every node's children in their
+  order.
 
 ## 0.2.0
 

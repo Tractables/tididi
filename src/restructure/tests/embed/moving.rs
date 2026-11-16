@@ -34,14 +34,6 @@ fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(Var
     assert_moved_matches_copied(eng, moved, copied, what);
 }
 
-/// [`check_against_copy`] up to mirrors: `embed_moving_mirrored` against
-/// `embed_mirrored`.
-fn check_mirrored_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
-    let copied = eng.embed_mirrored(f, into, map).unwrap();
-    let moved = eng.embed_moving_mirrored(f.clone(), into, map).map_err(|r| r.error).unwrap();
-    assert_moved_matches_copied(eng, moved, copied, what);
-}
-
 /// Which children of a source node a mirrored destination swaps, by pick.
 fn swapped(pick: u32) -> impl Fn(crate::vtree::VtreeIdx) -> bool {
     move |t| match pick {
@@ -53,7 +45,7 @@ fn swapped(pick: u32) -> impl Fn(crate::vtree::VtreeIdx) -> bool {
 }
 
 #[test]
-fn every_shape_moves_mirrored_to_the_diagram_embed_mirrored_copies() {
+fn every_shape_moves_mirrored_to_the_diagram_embed_copies() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases() {
         if num_vars > 4 {
@@ -69,16 +61,16 @@ fn every_shape_moves_mirrored_to_the_diagram_embed_mirrored_copies() {
             for pick in 0..4 {
                 let image = super::mirror::mirrored_shape(&small, rename, swapped(pick), 2 * num_vars);
                 let beside = Arc::new(Vtree::join(&image, &free).unwrap());
-                check_mirrored_against_copy(&eng, &f, &beside, rename, &format!("{label}, pick {pick}"));
+                check_against_copy(&eng, &f, &beside, rename, &format!("{label}, pick {pick}"));
                 let under = Arc::new(Vtree::join(&free, &image).unwrap());
-                check_mirrored_against_copy(&eng, &f, &under, rename, &format!("{label}, pick {pick}, right"));
+                check_against_copy(&eng, &f, &under, rename, &format!("{label}, pick {pick}, right"));
             }
         }
     }
 }
 
 #[test]
-fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_mirrored_copies() {
+fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_copies() {
     // Pass-throughs over leaves under mirrored images: the literal chains
     // read their parents' sides once the sides are exchanged.
     let eng = Engine::new();
@@ -89,7 +81,7 @@ fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_mirrored_copie
         for clauses in [vec![vec![1, 2], vec![-3, 4]], vec![vec![1, -4], vec![2, 3, 4]], vec![vec![4]], vec![vec![1], vec![-2]]] {
             let mut f = compile_clauses(&small, &clauses);
             f.minimize().unwrap();
-            check_mirrored_against_copy(&eng, &f, &big, |v| VarId(positions[v.idx()]), &format!("spine, pick {pick}"));
+            check_against_copy(&eng, &f, &big, |v| VarId(positions[v.idx()]), &format!("spine, pick {pick}"));
         }
     }
 }
@@ -167,8 +159,7 @@ fn owe_work(eng: &Engine, f: &mut Tdd) {
 /// owes the reduction passes what the diagram owed, at the images, and the
 /// inner pass where the leaf pass, over the pass-through over a leaf.
 ///
-/// With `mirror`, onto the destination with some children swapped, by
-/// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts;
+/// With `mirror`, onto the destination with some children swapped; with `counts`, the diagram keeping level counts;
 /// with `owing`, the diagram owing work ([`owe_work`]).
 fn refuse_at_every_point(
     arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>,
@@ -190,21 +181,14 @@ fn refuse_at_every_point(
         true => Arc::new(super::mirror::mirrored_shape(&big, |v| v, |t| t.0.is_multiple_of(3), big.num_vars())),
         false => big,
     };
-    assert_eq!(eng.embed(&f, &big, map).is_err(), mirror, "the destination mirrors an image");
-    let (expected, _) = match mirror {
-        true => eng.embed_mirrored(&f, &big, map).unwrap(),
-        false => eng.embed(&f, &big, map).unwrap(),
-    };
+    let (expected, _) = eng.embed(&f, &big, map).unwrap();
     let mut refusals = 0;
     for n in 0.. {
         // Each attempt on cold pools: a buffer an earlier attempt grew skips
         // a reserve, and the points past it would never be refused.
         let eng = Engine::new();
         let scope = arm(&eng, n);
-        let outcome = match mirror {
-            true => eng.embed_moving_mirrored(f.clone(), &big, map),
-            false => eng.embed_moving(f.clone(), &big, map),
-        };
+        let outcome = eng.embed_moving(f.clone(), &big, map);
         drop(scope);
         eng.limits().grant_every_reserve();
         match outcome {

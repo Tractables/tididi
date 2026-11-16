@@ -18,36 +18,18 @@ impl<M: Fn(VarId) -> VarId + Copy> Map for M {}
 
 /// `tdd` on `into`: as it is when it is there already, else moved there.
 fn placed(eng: &Engine, tdd: Tdd, map: impl Map, into: &Arc<Vtree>) -> Tdd {
-    placed_by(eng, tdd, map, into, false)
-}
-
-/// [`placed`], up to mirrors with `mirror`.
-fn placed_by(eng: &Engine, tdd: Tdd, map: impl Map, into: &Arc<Vtree>, mirror: bool) -> Tdd {
     if Arc::ptr_eq(tdd.vtree(), into) {
         return tdd;
     }
-    let moved = match mirror {
-        true => eng.embed_moving_mirrored(tdd, into, map),
-        false => eng.embed_moving(tdd, into, map),
-    };
-    moved.map_err(|r| r.error).unwrap().0
+    eng.embed_moving(tdd, into, map).map_err(|r| r.error).unwrap().0
 }
 
-/// What `and_onto` stands for: each operand placed, then conjoined; with
-/// `mirror`, what `and_onto_mirrored` stands for.
-fn by_embeddings(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into: &Arc<Vtree>, mirror: bool) -> Tdd {
-    let (f, g) = (placed_by(eng, f.clone(), f_map, into, mirror), placed_by(eng, g.clone(), g_map, into, mirror));
+/// What `and_onto` stands for: each operand placed, then conjoined.
+fn by_embeddings(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into: &Arc<Vtree>) -> Tdd {
+    let (f, g) = (placed(eng, f.clone(), f_map, into), placed(eng, g.clone(), g_map, into));
     eng.and_restoring(f, g).map_err(|r| r.error).unwrap()
 }
 
-/// `and_onto`, or with `mirror` `and_onto_mirrored`.
-#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn onto(eng: &Engine, f: Tdd, f_map: impl Map, g: Tdd, g_map: impl Map, into: &Arc<Vtree>, mirror: bool) -> Result<Tdd, crate::apply::AndOntoRefused<'static>> {
-    match mirror {
-        true => eng.and_onto_mirrored(f, f_map, g, g_map, into),
-        false => eng.and_onto(f, f_map, g, g_map, into),
-    }
-}
 
 /// The levels of `into` a placement of `tdd` by `map` leaves free: the
 /// internal nodes none of its variables is under. None for a diagram on
@@ -74,18 +56,11 @@ fn free_levels(tdd: &Tdd, map: impl Map, into: &Arc<Vtree>) -> u64 {
 /// Check `and_onto` against the embeddings and conjunction it stands for:
 /// the same storage and worklists, for their work less the free levels.
 fn check(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into: &Arc<Vtree>, what: &str) {
-    check_by(eng, f, f_map, g, g_map, into, false, what);
-}
-
-/// [`check`], and with `mirror` `and_onto_mirrored` against the mirrored
-/// embeddings and conjunction.
-#[expect(clippy::too_many_arguments, reason = "a test's case")]
-fn check_by(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into: &Arc<Vtree>, mirror: bool, what: &str) {
     let mark = eng.limits().mark();
-    let expected = by_embeddings(eng, f, f_map, g, g_map, into, mirror);
+    let expected = by_embeddings(eng, f, f_map, g, g_map, into);
     let expected_work = eng.limits().work_since(mark);
     let mark = eng.limits().mark();
-    let got = onto(eng, f.clone(), f_map, g.clone(), g_map, into, mirror).map_err(|r| r.error).unwrap();
+    let got = eng.and_onto(f.clone(), f_map, g.clone(), g_map, into).map_err(|r| r.error).unwrap();
     let work = eng.limits().work_since(mark);
     assert!(same_storage(&got, &expected), "{what}: a different diagram");
     assert_eq!(format!("{:?}", got.dirty), format!("{:?}", expected.dirty), "{what}: worklists");
@@ -146,7 +121,7 @@ fn every_shape_conjoins_onto_as_embeddings_and_conjunction_do() {
 }
 
 #[test]
-fn every_shape_conjoins_onto_mirrors_as_mirrored_embeddings_and_conjunction_do() {
+fn every_shape_conjoins_onto_mirrors_as_its_embeddings_and_conjunction_do() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases() {
         if num_vars > 4 {
@@ -172,23 +147,15 @@ fn every_shape_conjoins_onto_mirrors_as_mirrored_embeddings_and_conjunction_do()
                 let what = |case: &str| format!("{label}, pick {pick}: {case}");
 
                 let apart = Arc::new(Vtree::join(&Vtree::join(&image_low, &spare).unwrap(), &image_high).unwrap());
-                check_by(&eng, &f, low, &g, high, &apart, true, &what("apart"));
-                check_by(&eng, &g, high, &f, low, &apart, true, &what("apart, swapped"));
-                check_by(&eng, &f, low, &f, high, &apart, true, &what("apart, one function"));
+                check(&eng, &f, low, &g, high, &apart, &what("apart"));
+                check(&eng, &g, high, &f, low, &apart, &what("apart, swapped"));
+                check(&eng, &f, low, &f, high, &apart, &what("apart, one function"));
 
                 let shared = Arc::new(Vtree::join(&spare, &image_low).unwrap());
-                check_by(&eng, &f, low, &g, low, &shared, true, &what("shared"));
-                let on = placed_by(&eng, f.clone(), low, &shared, true);
-                check_by(&eng, &g, low, &on, low, &shared, true, &what("one placed"));
-                check_by(&eng, &on, low, &g, low, &shared, true, &what("one placed, swapped"));
-
-                // Where no image is mirrored, the mirrored conjunction is the
-                // plain one.
-                if pick == 3 {
-                    let plain = eng.and_onto(f.clone(), low, g.clone(), high, &apart).map_err(|r| r.error).unwrap();
-                    let mirrored = eng.and_onto_mirrored(f.clone(), low, g.clone(), high, &apart).map_err(|r| r.error).unwrap();
-                    assert!(same_storage(&plain, &mirrored), "{}", what("unmirrored"));
-                }
+                check(&eng, &f, low, &g, low, &shared, &what("shared"));
+                let on = placed(&eng, f.clone(), low, &shared);
+                check(&eng, &g, low, &on, low, &shared, &what("one placed"));
+                check(&eng, &on, low, &g, low, &shared, &what("one placed, swapped"));
             }
         }
     }
@@ -239,13 +206,12 @@ fn overlapping_supports_conjoin_onto() {
     check(&eng, &f, same, &g, same, &into, "f, g");
     check(&eng, &g, same, &f, same, &into, "g, f");
     let mirrored = mirrored_into(&into);
-    assert!(eng.and_onto(f.clone(), same, g.clone(), same, &mirrored).is_err(), "a mirror the plain conjunction refuses");
-    check_by(&eng, &f, same, &g, same, &mirrored, true, "f, g, mirrored");
-    check_by(&eng, &g, same, &f, same, &mirrored, true, "g, f, mirrored");
+    check(&eng, &f, same, &g, same, &mirrored, "f, g, mirrored");
+    check(&eng, &g, same, &f, same, &mirrored, "g, f, mirrored");
 }
 
 /// [`overlapping`]'s destination with the children of every third node
-/// swapped: both operands place onto it up to mirrors only.
+/// swapped: both operands place onto it with mirrored levels.
 fn mirrored_into(into: &Vtree) -> Arc<Vtree> {
     Arc::new(mirrored_shape(into, |v| v, |t| t.0.is_multiple_of(3), into.num_vars()))
 }
@@ -261,7 +227,7 @@ type Placed = (bool, bool);
 /// point are refused at the same phase or an earlier one: `and_onto` charges
 /// less work. Returns where the refusals left the operands.
 ///
-/// With `mirror`, `and_onto_mirrored` onto [`mirrored_into`].
+/// With `mirror`, onto [`mirrored_into`].
 fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, no_earlier: bool, mirror: bool) -> Vec<Placed> {
     let eng = Engine::new();
     let (f, g, into) = overlapping();
@@ -270,20 +236,14 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
         false => into,
     };
     let same = |v: VarId| v;
-    let expected = by_embeddings(&eng, &f, same, &g, same, &into, mirror);
-    let (f_on, g_on) = (placed_by(&eng, f.clone(), same, &into, mirror), placed_by(&eng, g.clone(), same, &into, mirror));
+    let expected = by_embeddings(&eng, &f, same, &g, same, &into);
+    let (f_on, g_on) = (placed(&eng, f.clone(), same, &into), placed(&eng, g.clone(), same, &into));
     // Placed, or refused.
-    let moving = |tdd: Tdd| {
-        let moved = match mirror {
-            true => eng.embed_moving_mirrored(tdd, &into, same),
-            false => eng.embed_moving(tdd, &into, same),
-        };
-        moved.map(|(tdd, _)| tdd).ok()
-    };
+    let moving = |tdd: Tdd| eng.embed_moving(tdd, &into, same).map(|(tdd, _)| tdd).ok();
     let mut seen = Vec::new();
     for n in 0.. {
         let scope = arm(&eng, n);
-        let outcome = onto(&eng, f.clone(), same, g.clone(), same, &into, mirror);
+        let outcome = eng.and_onto(f.clone(), same, g.clone(), same, &into);
         let pending = scope.is_some() || eng.limits().refusal_pending();
         drop(scope);
         eng.limits().grant_every_reserve();

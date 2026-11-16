@@ -40,18 +40,6 @@ fn an_image_variable_outside_the_destination_is_refused() {
 }
 
 #[test]
-fn a_renaming_that_reverses_the_leaf_order_is_refused() {
-    let (small, f) = pair_relation();
-    let big = Arc::new(Vtree::linear(4));
-    // The relation's first variable would land to the right of its second.
-    let reversed = |v: VarId| if v == VarId(1) { VarId(3) } else { VarId(1) };
-    let Err(EmbedError::NotIsomorphic { source }) = f.embed(&big, reversed) else {
-        panic!("a reversed renaming has no level-by-level copy");
-    };
-    assert_eq!(source, small.root());
-}
-
-#[test]
 fn a_destination_grouping_the_variables_differently_is_refused() {
     let small = Arc::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&small, [1, -3]).unwrap();

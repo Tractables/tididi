@@ -72,19 +72,6 @@ impl EmbeddingPlan {
             .run(|eng| eng.embedding_plan(source, destination, map))
     }
 
-    /// [`Self::new`], accepting a destination that holds the source's shape
-    /// with the children of some nodes swapped, as [`Tdd::embed_mirrored`]
-    /// does.
-    pub fn new_mirrored(
-        source: &Arc<Vtree>,
-        destination: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<Self, EmbedError> {
-        destination
-            .context()
-            .run(|eng| eng.embedding_plan_mirrored(source, destination, map))
-    }
-
     /// Source vtree allocation required by [`Self::apply`].
     pub fn source(&self) -> &Arc<Vtree> {
         &self.source
@@ -133,12 +120,19 @@ impl Tdd {
     /// `map` must be injective, and `into` must contain a copy of this
     /// diagram's vtree under it: restricting `into` to the renamed variables,
     /// as [`Vtree::project_to_vars`] does, must give [`vtree`](Self::vtree)'s
-    /// shape with each leaf renamed. `into` may group the renamed variables
-    /// into a subtree of its own, or spread them along a spine with free
-    /// leaves in between; what it may not do is split or regroup them.
+    /// shape with each leaf renamed, **up to mirrors**: the children of any
+    /// node may come in the other order. `into` may group the renamed
+    /// variables into a subtree of its own, or spread them along a spine with
+    /// free leaves in between; what it may not do is split or regroup them.
     ///
     /// The levels are copied: no apply runs, the result shares `into`, and it
-    /// is canonical when this diagram is. The cost is the size of `into` plus
+    /// is canonical when this diagram is. A level whose image has its
+    /// children the other way round is copied with the two sides of every
+    /// pair exchanged, which denotes the same function over the mirrored
+    /// node, since a level's nodes are classes of assignments to the node's
+    /// variables whichever child is called left; a binary relation's diagram
+    /// placed with its two blocks the other way round is its transpose's.
+    /// The cost is the size of `into` plus
     /// the size of this diagram plus, at each destination level with renamed
     /// variables on one side only, the width of that populated side. Structural
     /// diagrams only; any weights are dropped. [`Engine::embed_over`] places a
@@ -181,7 +175,14 @@ impl Tdd {
     /// // `wide` that groups x3 with x4.
     /// let x3 = wide.leaf_of(VarId(3)).unwrap();
     /// assert_eq!(levels.level_of(r.vtree().root()), wide.node(x3).parent().unwrap());
+    ///
+    /// // x1 ∧ ¬x2 placed with x1 on the right leaf: the level is mirrored.
+    /// let f = Tdd::cube(&pair, [1, -2])?;
+    /// let into = Arc::new(Vtree::linear(2));
+    /// let (g, _) = f.embed(&into, |v| VarId(3 - v.0))?;
+    /// assert!(g.equivalent(&Tdd::cube(&into, [2, -1])?)?);
     /// # tididi::test_helpers::assert_canonical(&both);
+    /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn embed(
@@ -192,43 +193,6 @@ impl Tdd {
         into.context().run(|eng| eng.embed(self, into, map))
     }
 
-    /// [`embed`](Self::embed), where `into` may hold this diagram's vtree
-    /// shape **up to mirrors**: the children of any node may come in the
-    /// other order under the renaming. Such a level is copied with the two
-    /// sides of every pair exchanged, which denotes the same function over
-    /// the mirrored node — a level's nodes are classes of assignments to the
-    /// node's variables, whichever child is called left — so the result is
-    /// canonical when this diagram is, and costs what [`embed`](Self::embed)
-    /// costs. A binary relation's diagram placed with its two blocks the
-    /// other way round is its transpose's.
-    ///
-    /// # Errors
-    ///
-    /// As [`embed`](Self::embed).
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// // x1 ∧ ¬x2 on (x1 x2), placed so that x1 lands on the right leaf.
-    /// let pair = Arc::new(Vtree::linear(2));
-    /// let f = Tdd::cube(&pair, [1, -2])?;
-    /// let into = Arc::new(Vtree::linear(2));
-    /// assert!(f.embed(&into, |v| VarId(3 - v.0)).is_err());
-    /// let (g, _) = f.embed_mirrored(&into, |v| VarId(3 - v.0))?;
-    /// assert!(g.equivalent(&Tdd::cube(&into, [2, -1])?)?);
-    /// # tididi::test_helpers::assert_canonical(&g);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn embed_mirrored(
-        &self,
-        into: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<(Tdd, Embedding), EmbedError> {
-        into.context()
-            .run(|eng| eng.embed_mirrored(self, into, map))
-    }
 }
 
 impl Engine {
@@ -239,18 +203,13 @@ impl Engine {
         destination: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<EmbeddingPlan, EmbedError> {
-        self.plan_embedding(source, destination, map, false)
-    }
-
-    /// Prepare an [`EmbeddingPlan`] up to mirrors, as
-    /// [`Tdd::embed_mirrored`] places, under this engine's limits.
-    pub fn embedding_plan_mirrored(
-        &self,
-        source: &Arc<Vtree>,
-        destination: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<EmbeddingPlan, EmbedError> {
-        self.plan_embedding(source, destination, map, true)
+        let _op = self.limits().enter()?;
+        let layout = Plan::build(self, source, destination, map, true)?;
+        Ok(EmbeddingPlan {
+            source: source.clone(),
+            destination: destination.clone(),
+            layout,
+        })
     }
 
     /// [`EmbeddingPlan::apply`] under this engine's limits.
@@ -263,8 +222,7 @@ impl Engine {
         assemble(self, circuit, &plan.destination, &plan.layout)
     }
 
-    /// [`EmbeddingPlan::then`] under this engine's limits. The composition
-    /// matches up to mirrors when either plan does.
+    /// [`EmbeddingPlan::then`] under this engine's limits.
     pub fn compose_embeddings(
         &self,
         first: &EmbeddingPlan,
@@ -274,8 +232,7 @@ impl Engine {
         if !Arc::ptr_eq(&first.destination, &next.source) {
             return Err(OperationError::VtreeMismatch.into());
         }
-        let mirror = first.layout.mirror || next.layout.mirror;
-        self.plan_embedding(
+        self.embedding_plan(
             &first.source,
             &next.destination,
             |var| {
@@ -284,7 +241,6 @@ impl Engine {
                 next.destination
                     .leaf_var(next.levels().level_of(intermediate))
             },
-            mirror,
         )
     }
 
@@ -299,51 +255,9 @@ impl Engine {
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<(Tdd, Embedding), EmbedError> {
-        self.embed_on(tdd, into, map, false)
-    }
-
-    /// [`Tdd::embed_mirrored`] under this batch's scratch and resource limits.
-    ///
-    /// # Errors
-    ///
-    /// As [`Tdd::embed`].
-    pub fn embed_mirrored(
-        &self,
-        tdd: &Tdd,
-        into: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<(Tdd, Embedding), EmbedError> {
-        self.embed_on(tdd, into, map, true)
-    }
-
-    /// Match the two vtrees, up to mirrors when `mirror` is set.
-    fn plan_embedding(
-        &self,
-        source: &Arc<Vtree>,
-        destination: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-        mirror: bool,
-    ) -> Result<EmbeddingPlan, EmbedError> {
-        let _op = self.limits().enter()?;
-        let layout = Plan::build(self, source, destination, map, mirror)?;
-        Ok(EmbeddingPlan {
-            source: source.clone(),
-            destination: destination.clone(),
-            layout,
-        })
-    }
-
-    /// Match the two vtrees, up to mirrors when `mirror` is set, and copy.
-    fn embed_on(
-        &self,
-        tdd: &Tdd,
-        into: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-        mirror: bool,
-    ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
         tdd.require_structure()?;
-        let plan = Plan::build(self, tdd.vtree(), into, map, mirror)?;
+        let plan = Plan::build(self, tdd.vtree(), into, map, true)?;
         let result = assemble(self, tdd, into, &plan)?;
         Ok((result, plan.into_embedding(self)))
     }
@@ -352,10 +266,12 @@ impl Engine {
     /// instead of copying them, and gives the diagram back unchanged when it
     /// is refused.
     ///
-    /// The source's pairs are not touched: the cost is the size of `into`
-    /// plus, at each destination level with renamed variables on one side
-    /// only, the width of that populated side, and the pairs of a level that
-    /// reads a single variable through such levels. The result is the
+    /// The source's pairs are not touched, except that a level whose image
+    /// has its children the other way round has the two sides of every pair
+    /// exchanged in place: the cost is the size of `into` plus, at each
+    /// destination level with renamed variables on one side only, the width
+    /// of that populated side, the pairs of a level that reads a single
+    /// variable through such levels, and the pairs of each mirrored level. The result is the
     /// diagram [`Engine::embed`] returns, up to the numbering of its nodes and
     /// a node for a literal of such a variable that nothing reads, which
     /// [`Engine::minimize`] removes. The levels move into storage the engine
@@ -401,57 +317,7 @@ impl Engine {
                 });
             }
         };
-        place_moving(self, tdd, into, map, Free::Build, false)
-            .map(|(result, plan)| (result, plan.into_embedding(self)))
-    }
-
-    /// [`Engine::embed_moving`], where `into` may hold the diagram's vtree
-    /// shape up to mirrors, as [`Engine::embed_mirrored`] places it: a level
-    /// whose image has its children the other way round is moved and then
-    /// has the two sides of every pair exchanged in place, which costs its
-    /// pairs. The result is the diagram [`Engine::embed_mirrored`] returns,
-    /// up to what [`Engine::embed_moving`] differs by.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// // x1 ∧ ¬x2 on (x1 x2), placed so that x1 lands on the right leaf.
-    /// let engine = Engine::new();
-    /// let pair = Arc::new(Vtree::linear(2));
-    /// let f = engine.cube(&pair, [1, -2])?;
-    /// let into = Arc::new(Vtree::linear(2));
-    /// let (copied, _) = engine.embed_mirrored(&f, &into, |v| VarId(3 - v.0))?;
-    /// let (moved, _) = engine.embed_moving_mirrored(f, &into, |v| VarId(3 - v.0)).map_err(|r| r.error)?;
-    /// assert!(engine.equivalent(&moved, &copied)?);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Engine::embed_mirrored`], each with the diagram as it was
-    /// given.
-    #[expect(
-        clippy::result_large_err,
-        reason = "the refusal hands back what it was given"
-    )]
-    pub fn embed_moving_mirrored(
-        &self,
-        tdd: Tdd,
-        into: &Arc<Vtree>,
-        map: impl Fn(VarId) -> VarId,
-    ) -> Result<(Tdd, Embedding), EmbedRefused> {
-        let _op = match self.limits().enter() {
-            Ok(op) => op,
-            Err(e) => {
-                return Err(EmbedRefused {
-                    error: e.into(),
-                    tdd,
-                });
-            }
-        };
-        place_moving(self, tdd, into, map, Free::Build, true)
+        place_moving(self, tdd, into, map, Free::Build)
             .map(|(result, plan)| (result, plan.into_embedding(self)))
     }
 
@@ -467,7 +333,9 @@ impl Engine {
     /// values of its own. A structural diagram is placed as by
     /// [`Tdd::embed`] and takes `weights` as its store when one is given;
     /// a diagram with a marginal level needs one, whose table must give
-    /// each renamed variable the weights the source's gives the original.
+    /// each renamed variable the weights the source's gives the original,
+    /// and needs `into` to hold its vtree's shape with every node's children
+    /// in their order, as no level of it is mirrored.
     ///
     /// Copies the levels and their weight columns into storage reserved
     /// through the engine's limits, so a copy the budget or the allocator
@@ -519,7 +387,7 @@ impl Engine {
         weights: Option<WeightStore>,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
-        let plan = Plan::build(self, tdd.vtree(), into, &map, false)?;
+        let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level())?;
         // Integer counts reach a parent through inline references, which
         // do not survive a new parent; only weighted values are placed.
         if let Some(t) = tdd
@@ -562,7 +430,8 @@ pub(crate) struct Plan {
     pass_throughs: Vec<VtreeIdx>,
     /// The destination node each source node maps to.
     pub(crate) embedding: Embedding,
-    /// Whether children may be matched swapped.
+    /// Whether children may be matched swapped: everywhere but where the
+    /// assembly cannot mirror a level, a marginal one or a projection's.
     mirror: bool,
     /// Per source node: its image has its children swapped, so its level is
     /// copied with every pair read the other way round. Empty unless
@@ -835,8 +704,7 @@ pub(crate) enum Free {
 /// [`Engine::embed_moving`] under the caller's entry, with the plan it placed
 /// `tdd` by; with [`Free::Leave`], a diagram whose free levels are empty. A
 /// false diagram is the false diagram on `into`, every level empty, whatever
-/// `free` says. With `mirror`, `into` may hold the source's shape up to
-/// mirrors ([`Engine::embed_moving_mirrored`]).
+/// `free` says.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -847,9 +715,8 @@ pub(crate) fn place_moving(
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     free: Free,
-    mirror: bool,
 ) -> Result<(Tdd, Plan), EmbedRefused> {
-    place(eng, std::borrow::Cow::Owned(tdd), into, map, free, mirror).map_err(|(error, tdd)| {
+    place(eng, std::borrow::Cow::Owned(tdd), into, map, free).map_err(|(error, tdd)| {
         EmbedRefused {
             error,
             tdd: tdd.into_owned(),
@@ -871,13 +738,12 @@ pub(crate) fn place<'a>(
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     free: Free,
-    mirror: bool,
 ) -> Result<(Tdd, Plan), (EmbedError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
     if let Err(e) = tdd.require_structure() {
         return Err((e.into(), tdd));
     }
-    let plan = match Plan::build(eng, tdd.vtree(), into, map, mirror) {
+    let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
         Ok(plan) => plan,
         Err(error) => return Err((error, tdd)),
     };
@@ -1126,11 +992,9 @@ fn build_embedded_levels(
     let mut literal_tops = Vec::new();
     // A mirrored image was changed in place by `placement.mirror`, and its
     // seat closes it.
-    if !plan.mirrored.is_empty() {
-        for &t in into.internal_bottomup_slice() {
-            if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
-                placement.changed_at(t);
-            }
+    for &t in into.internal_bottomup_slice() {
+        if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
+            placement.changed_at(t);
         }
     }
     // The free levels when they are built, then the pass-throughs, each
