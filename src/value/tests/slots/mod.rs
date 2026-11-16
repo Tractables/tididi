@@ -6,7 +6,7 @@ mod compaction;
 #[test]
 fn refused_weight_slot_preserves_values_and_width() {
     use std::sync::Arc;
-    use crate::diagram::{Arithmetic, RationalWeights};
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
     use crate::test_helpers::{assert_canonical, compile_clauses, rat};
     use crate::Vtree;
 

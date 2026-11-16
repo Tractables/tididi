@@ -1267,25 +1267,15 @@ fn a_refused_rewrite_leaves_the_description() {
     assert_eq!(pairs_of(&level), want);
 }
 
-/// The lists a description is checked with, a node's offsets and the
-/// slots a move reads, are reserved: a refusal is an error and leaves the
-/// level as it was. Where the place digits show a node's pairs distinct,
-/// no list is made.
+/// The lists a description is checked with, the slots a move reads, are
+/// reserved: a refusal is an error and leaves the level as it was.
 #[test]
 fn the_lists_a_description_is_checked_with_are_reserved() {
     let lim = Limits::new();
-    // Offsets 0, 1, 1, 2 on the left: a node repeats a pair.
-    let repeating = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (1, 0))], &[(4, (3, 0))]);
-    lim.refuse_nth_reserve(0);
-    assert_eq!(repeating.repeats_a_pair(&lim), Err(OperationError::OverBudget));
-    assert_eq!(repeating.repeats_a_pair(&lim), Ok(true));
     let distinct = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (2, 0))], &[(4, (4, 0))]);
     assert!(distinct.nodes_distinct());
     let repeating_nodes = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (2, 0))], &[(2, (4, 0)), (2, (4, 0))]);
     assert!(!repeating_nodes.nodes_distinct());
-    lim.refuse_nth_reserve(0);
-    assert_eq!(distinct.repeats_a_pair(&lim), Ok(false));
-    assert_eq!(lim.reserve_exact(&mut Vec::<u8>::new(), 1), Err(OperationError::OverBudget), "nothing was listed");
     lim.refuse_nth_reserve(0);
     assert_eq!(distinct.pruned(&lim, 2, |j| (j < 2).then_some(j), || 0..2, |x| x, |x| x), Err(OperationError::OverBudget));
     lim.grant_every_reserve();

@@ -4,13 +4,12 @@
 
 use std::hash::Hash;
 
-use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use crate::value::{Count, CountRead, CountRef, IntFold, WeightFold};
 use crate::diagram::{weight_key, ChildSide, WeightKey};
 use crate::diagram::{
-    EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
+    EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightValue,
 };
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
@@ -242,8 +241,7 @@ pub(crate) fn push_count_slot(eng: &Engine, level: &mut TddLevel, value: Count) 
 // ── SlotValues ───────────────────────────────────────────────────────────────
 
 /// The value arithmetic of one marginal store, for the passes that compute a
-/// value and need a reference carrying it: the group sum of pair fusion and the
-/// run length of duplicate-pair resolution.
+/// value and need a reference carrying it: the group sum of pair fusion.
 ///
 /// Implemented on the same two domains as [`ValueDomain`](crate::value::domain::ValueDomain),
 /// so how a value is minted sits next to how it folds.
@@ -260,9 +258,6 @@ pub(crate) trait SlotValues {
     /// `v`, over the occurrence multiset: a reference that occurs twice is
     /// added twice.
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> Self::Value;
-
-    /// `k` times the value the marginal-side reference `raw` names at level `v`.
-    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Self::Value;
 
     /// The reference carrying `value` in the pair itself, when the domain has
     /// such an encoding for it.
@@ -291,21 +286,6 @@ pub(crate) trait SlotValues {
     fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &Self::Value) -> Option<u32>;
 }
 
-/// `value` as a marginal-side reference into level `v`: inline where the
-/// domain can carry it in the pair, a fresh slot otherwise. No interning: the
-/// slot pruner merges equal-valued slots on the next prune.
-pub(crate) fn mint_ref<D: SlotValues>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    v: VtreeIdx,
-    value: D::Value,
-) -> Result<u32, OperationError> {
-    if let Some(raw) = D::inline_ref(&value) {
-        return Ok(raw);
-    }
-    D::push_slot(eng, tdd, v, value).map(ValueRef::slot_raw)
-}
-
 impl SlotValues for IntFold {
     type Value = Count;
     type Key = Count;
@@ -318,25 +298,6 @@ impl SlotValues for IntFold {
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> Count {
         let counts = tdd.levels[v.idx()].count_column().expect("pair fusion: the marginal level has no count store");
         sum_marginal_counts(counts, refs)
-    }
-
-    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Count {
-        match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
-            // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
-            ValueRef::Inline(c) => Count::Fast(c as u128 * k as u128),
-            ValueRef::Slot(s) => {
-                let counts = tdd.levels[v.idx()]
-                    .count_column()
-                    .expect("scale: slot ref into non-marginal level");
-                match counts.get(s as usize) {
-                    CountRead::Big(b) => Count::Big(b * k),
-                    CountRead::Fast(c) => match c.checked_mul(k as u128) {
-                        Some(v) => Count::from_u128(v),
-                        None => Count::Big(BigUint::from(c) * k),
-                    },
-                }
-            }
-        }
     }
 
     /// A small count rides in the pair itself, which also skips slot sharing:
@@ -365,22 +326,6 @@ impl SlotValues for IntFold {
     fn leaf_ref(_: &Tdd, _: VtreeIdx, _: &Count) -> Option<u32> {
         unreachable!("an integer leaf column is not pinned")
     }
-}
-
-/// `k · v` in the store's active mode — the one place a multiplicity becomes a
-/// weighted factor. Building `k` as a same-mode `WeightValue` keeps the scale a
-/// same-variant `WeightValue::mul`.
-pub(crate) fn scaled_weight(ws: &WeightStore, v: &WeightValue, k: u32) -> WeightValue {
-    use crate::diagram::{Arithmetic, ScaledFloat, SignedLog};
-    use num_bigint::BigInt;
-    use num_rational::BigRational;
-    let k_w = match ws.arithmetic() {
-        Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k)))),
-        Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_f64(f64::from(k))),
-        // A `u32` multiplicity is always in the small exact representation.
-        Arithmetic::ExactRational => WeightValue::ExactSmall(i128::from(k)),
-    };
-    v.mul(&k_w)
 }
 
 impl SlotValues for WeightFold {
@@ -414,13 +359,6 @@ impl SlotValues for WeightFold {
             acc.add_assign(&values.expect("weighted pair fusion: marginal level has no WeightStore")[slot]);
         }
         acc
-    }
-
-    fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> WeightValue {
-        let slot = ChildDecoder::marginal().index(EncodedChildRef::from_raw(raw));
-        let ws = tdd.weight_store();
-        let values = ws.level(v.idx()).expect("scale: weighted level has no store");
-        scaled_weight(ws, &values[slot], k)
     }
 
     /// An inline payload is an integer count, which a weighted value has no

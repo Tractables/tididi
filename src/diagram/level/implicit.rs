@@ -574,30 +574,6 @@ impl ImplicitLevel {
         Ok(offsets)
     }
 
-    /// Whether a node's pairs repeat one: whether two of the offsets every
-    /// node adds to its first pair are equal. Where the place digits show
-    /// the offsets distinct ([`places_distinct`](Self::places_distinct)),
-    /// none are listed; otherwise they are listed, through `lim`, and
-    /// sorted.
-    ///
-    /// # Errors
-    ///
-    /// `Err(OperationError::OverBudget)` when the list is refused.
-    pub(crate) fn repeats_a_pair(&self, lim: &Limits) -> Result<bool, OperationError> {
-        if self.places_distinct() {
-            return Ok(false);
-        }
-        let mut offsets = self.offsets(lim)?;
-        offsets.sort_unstable();
-        Ok(offsets.windows(2).any(|w| w[0] == w[1]))
-    }
-
-    /// Whether the place digits show that a node's pairs are distinct
-    /// ([`steps_distinct`]).
-    fn places_distinct(&self) -> bool {
-        steps_distinct(&self.digits[..self.within])
-    }
-
     /// Whether the node digits show that the nodes' first pairs are
     /// distinct ([`steps_distinct`]): every node holds the same offsets from
     /// its first pair, a finite non-empty multiset, so two nodes hold the

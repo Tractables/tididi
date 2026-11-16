@@ -1,4 +1,5 @@
 use super::*;
+use num_bigint::BigUint;
 
 #[test]
 fn compaction_merges_values_and_rekeys_only_referenced_overflows() {
