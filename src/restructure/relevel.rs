@@ -311,11 +311,6 @@ impl Prepared {
         self.wide.clear();
         self.groups.clear();
     }
-
-    /// The bytes the triples hold.
-    pub(super) fn triple_bytes(&self) -> usize {
-        self.narrow.capacity() * size_of::<u64>() + self.wide.capacity() * size_of::<u128>()
-    }
 }
 
 /// Prepare the rebuild of the two levels of `step` into `prepared`: the

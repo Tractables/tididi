@@ -24,7 +24,7 @@ use crate::restructure::relevel::{
     Prepared, RotationStep, finish_levels, prepare_levels, rebuild_levels, score_levels,
     score_levels_crossed_too,
 };
-use crate::restructure::scratch::{ProbeTables, RestructureScratch};
+use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rng::Lcg;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -1220,12 +1220,28 @@ fn probe_scored<'l>(
     slack: usize,
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
-    // The probe's tables leave the scratch, whose rest the scores and the
-    // rebuilds read, and go back however the probe ends.
-    let mut tables = std::mem::take(&mut scratch.probe);
+    let mut tables = ProbeTables::default();
     let kept = probe_scored_with(eng, members, step, scratch, &mut tables, twin, slack, undo);
-    scratch.probe = tables;
+    let ProbeTables { before, after, scored, floors, order } = tables;
+    let lim = eng.limits();
+    lim.discard(before);
+    lim.discard(after);
+    lim.discard(scored);
+    lim.discard(floors);
+    lim.discard(order);
     kept
+}
+
+/// The tables a pool-search probe scores its members by: the pairs of each
+/// member's two levels before and after the move, whether it is scored, the
+/// least it can hold after the move, and the order it is scored in.
+#[derive(Default)]
+struct ProbeTables {
+    before: Vec<usize>,
+    after: Vec<usize>,
+    scored: Vec<bool>,
+    floors: Vec<usize>,
+    order: Vec<usize>,
 }
 
 /// [`probe_scored`] in `tables`.
@@ -1251,7 +1267,6 @@ fn probe_scored_with<'l>(
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     let defer = bound > 2;
-    tables.clear();
     let ProbeTables { before, after, scored, floors, order } = tables;
     lim.reserve_exact(before, members.len())?;
     // A member with at most one pair on each level is not scored, its pairs
