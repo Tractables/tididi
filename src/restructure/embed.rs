@@ -261,6 +261,29 @@ impl Engine {
         Ok((result, plan.embedding))
     }
 
+    /// [`Engine::embed`] under its removed name, until callers move to it.
+    #[doc(hidden)]
+    pub fn embed_mirrored(
+        &self,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedError> {
+        self.embed(tdd, into, map)
+    }
+
+    /// [`Engine::embedding_plan`] under its removed name, until callers move
+    /// to it.
+    #[doc(hidden)]
+    pub fn embedding_plan_mirrored(
+        &self,
+        source: &Arc<Vtree>,
+        destination: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<EmbeddingPlan, EmbedError> {
+        self.embedding_plan(source, destination, map)
+    }
+
     /// [`Engine::embed`] that moves the diagram's levels into the result
     /// instead of copying them, and gives the diagram back unchanged when it
     /// is refused.
