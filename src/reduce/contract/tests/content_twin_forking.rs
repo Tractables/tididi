@@ -5,7 +5,6 @@
 use crate::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::*;
-use crate::vtree::Vtree;
 use std::sync::Arc;
 use crate::vtree::VtreeIdx;
 use super::sweep::contract_all_twins;
@@ -40,9 +39,8 @@ fn boundary_content_twins_fixture(
     (tdd, root, gp, bp, m_v, s)
 }
 
-/// Directed fixture for duplicate-pair resolution by fork-down scaling
-/// (`duplicate_pair`): content-equal context-twins at a PLAIN level whose merge
-/// mints a duplicate pair, resolved by scaling the marginal-carrying child.
+/// Directed fixture for the multiplicity of a duplicate pair: content-equal
+/// context-twins at a PLAIN level whose merge mints a duplicate pair.
 ///
 /// Fixture (`boundary_internal_marginal_vtree`), left spine root → gp → bp:
 ///   m       = bp's right child (INTERNAL level) made MARGINAL; one slot, count 5
@@ -54,11 +52,9 @@ fn boundary_content_twins_fixture(
 ///
 /// Denoted count through root: MC(A)·MC(σ) + MC(B)·MC(σ) = 2·5·(…) — the twin
 /// merge must preserve the factor 2. Expected: A, B merge; the survivor's
-/// concat {(P,s), (P,s)} is kept as two multiset terms summing to 2·5·MC(s) —
-/// no O(1) absorber in this fixture (gp's own children `bp` and
-/// `s` are both plain; the marginal level `m` sits a level lower, under `bp`),
-/// so the duplicates legally remain uncollapsed. What still must not happen is
-/// set-dedup, which would drop a term and halve the total to 5.
+/// concat {(P,s), (P,s)} is kept as two multiset terms summing to 2·5·MC(s).
+/// What must not happen is set-dedup, which would drop a term and halve the
+/// total to 5.
 #[test]
 fn plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
@@ -105,7 +101,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
     // No twins left anywhere.
     crate::test_helpers::check::marginal::check_twin_canonicality(&tdd)
-        .unwrap_or_else(|e| panic!("twin survived fork-down: {e}"));
+        .unwrap_or_else(|e| panic!("twin survived contraction: {e}"));
 }
 
 /// WEIGHTED analogue of `plain_level_content_twins_fork_multiplicity_down`.
@@ -117,19 +113,10 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// content-equal twins A,B, leaving the survivor with the duplicate pair
 /// `(P, s),(P, s)`.
 ///
-/// No O(1) absorber in this fixture — gp's own children `bp` and
-/// `s` are both plain (the weight-marginal `m` sits one level lower, under
-/// `bp`), so `resolve_duplicate_pairs_in_node` early-outs and the duplicates
-/// legally remain uncollapsed. What this pins is that the weighted twin-fold
-/// completes without erroring or touching the `WeightStore`, and that the
-/// multiplicity survives as two multiset terms: their values SUM to
-/// 2·(3/7) = 6/7, exactly the total the scaled single pair used to carry, where
-/// a set-dedup would leave 3/7.
-///
-/// NOTE: the weighted scale dispatch itself (`try_scale_child`'s
-/// `is_weight_marginal()` branch → the weighted `scale_ref`) is no
-/// longer reached from this geometry — under the cost policy it needs a
-/// duplicate run at a plain level whose OWN child is the weight-marginal one.
+/// What this pins is that the weighted twin-fold completes without erroring
+/// or touching the `WeightStore`, and that the multiplicity survives as two
+/// multiset terms: their values SUM to 2·(3/7) = 6/7, where a set-dedup would
+/// leave 3/7.
 #[test]
 fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let eng = Engine::new();
@@ -220,10 +207,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 /// shared pair keeps its multiplicity; the disjoint remainder concats.
 ///   A = {(P, s), (Q, t)},  B = {(P, s), (R, u)}  →
 ///   survivor = {(P, s), (P, s), (Q, t), (R, u)}.
-/// No O(1) absorber in this fixture (gp's own children `bp` and
-/// `s` are both plain; the marginal `m` sits under `bp`), so the shared pair's
-/// duplicates legally remain uncollapsed instead of folding into P₂ = count 10.
-/// The multiset total is what count soundness rests on, and it is unchanged.
+/// The shared pair's duplicates remain as two multiset terms. The multiset total is what count soundness rests on, and it is unchanged.
 /// Uses `boundary_internal_marginal_vtree` so `m` is an internal marginal level.
 #[test]
 fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
@@ -320,140 +304,5 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
         "the kept run must preserve the survivor's total"
     );
 }
-
-// ── Fork-down scaling must be leaf-aware ────────────────────
-//
-// A marginalized LEAF keeps an EMPTY integer store: the production decoder
-// (`value::domain::count::read_marginal_count`) reads a bare marginal-side
-// ref at a leaf as a leaf-LABEL (fixed count), never indexing the store. So a
-// leaf store is not a legal fork-down mint target: indexing it panics (hazard
-// b), and minting a slot into it produces a ref that is silently re-decoded as
-// a label — a wrong count (hazard a). `try_scale_child` is leaf-aware
-// (`scale_leaf_marginal_label`); these two tests pin both hazards. Both drive
-// `resolve_duplicate_pairs_in_node` directly (isolating the scale from twin
-// detection / slot tagging) on `balanced(8)`, at the PLAIN level `bp` whose
-// right child `m_v` IS an integer-marginal leaf — the O(1)-absorber geometry
-// the cost policy admits, and the only one that still reaches the leaf scale.
-
-/// Build the shared hazard fixture: a PLAIN node at boundary parent `bp` holding
-/// the DUPLICATE pair `(Pos, marginal_ref)` twice, where `bp`'s right child `m_v` is
-/// an integer-marginal LEAF with an EMPTY store. Returns `(tdd, gp, bp, m_v)`.
-/// `marginal_ref` is caller-chosen to select the hazard: a bare leaf-label (hazard
-/// b) or an inline count (hazard a).
-fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(8));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (gp, _sigma_v) = vtree.children(root);
-    let (bp, s_v) = vtree.children(gp);
-    let (_, m_v) = vtree.children(bp);
-    // The hazard geometry: m_v is a LEAF (balanced(8) bottoms out here), and it
-    // is `bp`'s own child — so `bp` HAS an O(1) absorber and fork-down runs.
-    assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Leaf { .. }));
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels: Vec<TddLevel> =
-        (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-
-    // m_v: integer-marginal LEAF with an EMPTY store — the projection case in
-    // which bare refs are leaf-LABELS, not store slots.
-    levels[m_v.idx()].become_marginal(vec![], None);
-
-    // bp: one PLAIN node holding the duplicate pair (Pos, `marginal_ref`) twice. The
-    // marginal side is the leaf `m_v`, so this is exactly the run fork-down folds.
-    let p = levels[bp.idx()].push_internal_node(&[
-        ChildPair::new(pos, NodeIdx(marginal_ref)),
-        ChildPair::new(pos, NodeIdx(marginal_ref)),
-    ]);
-
-    let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-
-    // gp: a plain node over (P, s), so the diagram is well-formed above `bp`.
-    levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
-
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    (Tdd::from_levels_unchecked(vtree, levels, output), gp, bp, m_v)
-}
-
-/// Hazard (b): a bare leaf-LABEL ref on the duplicated pair's marginal side. Without
-/// the leaf branch, fork-down routes it into the integer `scale_ref`'s `Slot` arm,
-/// which indexes `counts[label_idx]` on the EMPTY leaf store — index-OOB PANIC.
-/// With it, the label decodes (Pos → 1), scales by k=2 → 2, and inlines (no
-/// store touched).
-#[test]
-fn b4_fork_down_leaf_label_ref_no_oob() {
-    let eng = Engine::new();
-    // No inline-max override: the doubled label count (2) must fit inline.
-
-    // A bare "Pos" leaf-label ref (raw = label index), not a store slot.
-    let pos_label_ref = ValueRef::slot_raw(LeafLabel::Pos as u32);
-    let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(pos_label_ref);
-
-    // The fork-down scratch is caller-owned and REUSED across the survivors of
-    // one pass, so it arrives holding the previous node's buffers. Hand it over
-    // dirty: the resolver must clear all three at entry, or it would resolve
-    // this node against another node's pair list / counts.
-    let mut scratch = super::scratch::DuplicateScratch::default();
-    scratch.pairs.push((7, 7));
-    scratch.counts.insert((7, 7), 5);
-    scratch.out.push(ChildPair::new(NodeIdx(7), NodeIdx(7)));
-
-    // PANICS without the leaf branch (counts[label] on empty leaf store).
-    let changed =
-        super::duplicate_pair::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
-            .expect("resolve must not error");
-    assert!(changed, "duplicate pair must be resolved");
-
-    // Survivor: one pair whose marginal ref decodes to Pos(1)·2 = 2.
-    assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 1, "duplicate must collapse to 1 pair");
-    let scaled_ref = tdd.levels[bp.idx()].pairs_vec(0)[0].right.0;
-    let count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(scaled_ref)) {
-        ValueRef::Inline(c) => c as u128,
-        ValueRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
-    };
-    assert_eq!(count, 2, "Pos leaf label (count 1) must double to 2");
-    // The leaf store must remain EMPTY — nothing was minted into it.
-    assert!(
-        tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
-        "leaf marginal store must stay empty (no slot minted)"
-    );
-}
-
-/// Hazard (a): an INLINE count on the marginal side whose ×k product overflows the
-/// inline cap. Without the leaf branch, `scale_ref` mints a fresh slot into
-/// the EMPTY leaf store and returns a bare slot ref — which the decoder re-reads
-/// as a leaf LABEL (slot 0 → label One), silently miscounting. With it the leaf
-/// side refuses (`None`); the other side is structural, which the O(1)-absorber
-/// cost policy never descends into, so nothing absorbs and the run is kept as
-/// two legal multiset terms — same count, no mint.
-#[test]
-fn b4_fork_down_leaf_inline_overflow_keeps_run() {
-    let eng = Engine::new();
-
-    // An inline count at the cap; ×2 overflows the inline range → cannot re-inline.
-    let big_inline = ValueRef::inline_raw(crate::diagram::MARGINAL_INLINE_MAX as u128)
-        .expect("cap value inlines");
-    let (mut tdd, _gp, bp, m_v) = b4_leaf_hazard_fixture(big_inline);
-
-    let mut scratch = super::scratch::DuplicateScratch::default();
-    let changed =
-        super::duplicate_pair::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
-            .expect("keeping the run is not an error");
-    assert!(!changed, "nothing can absorb the factor — the run must be kept as-is");
-
-    // Both terms survive, unscaled: the multiset still sums to the same count.
-    assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 2, "the duplicate run must be kept");
-    for pair in tdd.levels[bp.idx()].pairs_vec(0) {
-        assert_eq!(pair.right.0, big_inline, "kept terms must be the ORIGINAL ref");
-    }
-    // The regression this pins: no slot was minted into the leaf store, which
-    // the decoder would have re-read as a leaf LABEL (slot 0 → One = 2).
-    assert!(
-        tdd.levels[m_v.idx()].marginal_counts().is_none_or(|c| c.is_empty()),
-        "leaf marginal store must stay empty (no slot minted)"
-    );
-}
-
 
 // ── Mixed twin group: concat wins, the duplicate member stays ─────────────────────

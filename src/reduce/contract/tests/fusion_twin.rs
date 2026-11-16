@@ -1,5 +1,5 @@
 //! Where pair fusion and twin contraction meet: a fusion redex that creates
-//! twins, and the fork-down content twins above a boundary parent.
+//! twins, and the content twins above a boundary parent.
 
 use std::sync::Arc;
 

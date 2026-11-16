@@ -226,9 +226,9 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let allocation = scratch.merge.sel.as_ptr();
 
     // Reserves before the arena's: the absorbed bits, then the planner's
-    // three buffers (`sel`, `group_plans` and `resolve_keeps`; a diagram
-    // without a marginal level has no overlap filter to reserve for). The
-    // fifth is the survivor's pairs.
+    // three buffers (`sel`, `words` and `group_plans`; a diagram without a
+    // marginal level has no overlap filter to reserve for). The fifth is the
+    // survivor's pairs.
     eng.limits().refuse_nth_reserve(4);
     let result = contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch);
     eng.limits().grant_every_reserve();
@@ -369,8 +369,7 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     let before: Vec<Vec<ChildPair>> = content(&level);
     let mut bufs = three_group_buffers();
     let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 7], absorbed: vec![0], ..Default::default() };
-    let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
-    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
+    assert_eq!(mark_group_members(&mut remap, &bufs), 4);
     gather_words(&mut bufs, level.nodes.stored());
     let lim = Limits::new();
     let arenas = reserve_rebuilt(&lim, &level, &remap, &bufs, &[], None).unwrap();
@@ -419,8 +418,7 @@ fn the_reservation_off_the_census_is_exact() {
     let before: Vec<Vec<ChildPair>> = content(&level);
     let mut bufs = three_group_buffers();
     let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 8], absorbed: vec![0], ..Default::default() };
-    let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
-    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
+    assert_eq!(mark_group_members(&mut remap, &bufs), 4);
     gather_words(&mut bufs, level.nodes.stored());
     // Node 7 is named by no pair of the parent.
     remap.absorbed[0] |= 1 << 7;
@@ -464,8 +462,7 @@ fn the_rebuild_copies_untouched_ranges_in_runs() {
         ..Default::default()
     };
     let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 7], absorbed: vec![0], ..Default::default() };
-    let policy = MergePolicy { plain_level: true, parent_marginal: false, t1_scalable: false, disjoint_supports: true };
-    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 1);
+    assert_eq!(mark_group_members(&mut remap, &bufs), 1);
     gather_words(&mut bufs, level.nodes.stored());
     let lim = Limits::new();
     let arenas = reserve_rebuilt(&lim, &level, &remap, &bufs, &[], None).unwrap();

@@ -92,12 +92,8 @@ impl Buffers for PFusionScratch {
 /// Per-level working buffers for planning and committing twin merges.
 #[derive(Default)]
 pub(super) struct MergeBuffers {
-    /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
-    /// matching `flat_groups` — node indices in both cases, and
-    /// `fork_down` consumes them as `&[u32]`.
-    pub(super) resolve_keeps: Vec<u32>,
-    /// Overlap-filtered group members eligible for concat merge. u32-wide for
-    /// the same reason as `resolve_keeps` — they are node indices.
+    /// Overlap-filtered group members eligible for concat merge. u32-wide,
+    /// matching `flat_groups`: node indices in both cases.
     pub(super) filtered: Vec<u32>,
     /// Content-equal (duplicate pair list) group members. u32-wide, as above.
     pub(super) duplicate_members: Vec<u32>,
@@ -122,7 +118,6 @@ pub(super) struct MergeBuffers {
 
 impl Buffers for MergeBuffers {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.resolve_keeps);
         visit(&mut self.filtered);
         visit(&mut self.duplicate_members);
         visit(&mut self.keep_pairs_sorted);
@@ -137,7 +132,6 @@ impl Buffers for MergeBuffers {
 impl MergeBuffers {
     /// Empty every buffer, retaining capacity.
     pub(super) fn clear(&mut self) {
-        self.resolve_keeps.clear();
         self.filtered.clear();
         self.duplicate_members.clear();
         self.keep_pairs_sorted.clear();
@@ -146,40 +140,6 @@ impl MergeBuffers {
         self.sel.clear();
         self.group_plans.clear();
         self.words.clear();
-    }
-}
-
-/// Per-node working buffers of `duplicate_pair::resolve_duplicate_pairs_in_node`,
-/// held in `ContractScratch` and handed down by `&mut` from the fork-down loop,
-/// cleared per node inside the callee.
-#[derive(Default)]
-pub(super) struct DuplicateScratch {
-    /// The node's pair list, decoded to `(left_raw, right_raw)`.
-    pub(super) pairs: Vec<(u32, u32)>,
-    /// Multiplicity of each distinct pair. Only ever probed by key
-    /// (`entry`/`len`) and iterated to build `out`.
-    pub(super) counts: rustc_hash::FxHashMap<(u32, u32), u32>,
-    /// The rewritten pair list, copied back over the node's slice.
-    pub(super) out: Vec<crate::diagram::ChildPair>,
-}
-
-impl Buffers for DuplicateScratch {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.pairs);
-        visit(&mut self.counts);
-        visit(&mut self.out);
-    }
-}
-
-impl DuplicateScratch {
-    /// Empty every buffer, retaining capacity. Called at the top of each
-    /// `resolve_duplicate_pairs_in_node` so a handed-down scratch is
-    /// indistinguishable from a fresh one; the mid-function `?` bails
-    /// therefore need no cleanup.
-    pub(super) fn clear(&mut self) {
-        self.pairs.clear();
-        self.counts.clear();
-        self.out.clear();
     }
 }
 
@@ -355,8 +315,9 @@ pub(crate) struct ContractScratch {
     /// while the merge rebuilds a level in node order.
     pub(super) rooms: Vec<u32>,
     /// `has_marginal_below[v]` for every vtree node — computed at most once per
-    /// scratch checkout (see `duplicate_pair::compute_has_marginal_below_into`). Drives
-    /// the concat-then-fork-down path for overlapping twins at plain levels.
+    /// scratch checkout (see `merge::plan::compute_has_marginal_below_into`).
+    /// Where a child of a plain level has a marginal level below it,
+    /// overlapping twins there concatenate without the overlap filter.
     pub(super) has_marginal_below: Vec<bool>,
     /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
     /// this checkout is working on? Cleared by checkout, set by the fill in
@@ -397,9 +358,6 @@ pub(crate) struct ContractScratch {
     // ── `contract_twins` per-call buffers ──
     /// Working buffers cleared before planning each level's merges.
     pub(super) merge: MergeBuffers,
-    /// Fork-down duplicate resolution's per-node buffers; see [`DuplicateScratch`].
-    /// Borrowed in place (never moved out) — its only user takes it by `&mut`.
-    pub(super) duplicate: DuplicateScratch,
 }
 
 // Each buffer is bounded against its own capacity, not against one buffer
@@ -458,7 +416,6 @@ impl Buffers for ContractScratch {
         self.pair_fusion.buffers(visit);
         visit(&mut self.boundaries);
         self.merge.buffers(visit);
-        self.duplicate.buffers(visit);
     }
 }
 

@@ -14,9 +14,9 @@ mod data;
 mod plan;
 mod rewrite;
 
-use data::{InOrder, fork_down, in_order_pairs, rebuild_in_order, rebuild_level, reserve_rebuilt};
+use data::{InOrder, in_order_pairs, rebuild_in_order, rebuild_level, reserve_rebuilt};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
-use plan::{MergePolicy, plan_groups};
+use plan::{MergePolicy, compute_has_marginal_below_into, plan_groups};
 use rewrite::rewrite_parent;
 pub(in crate::reduce::contract) use rewrite::{DISCARDED, DROPPED, survivor};
 
@@ -84,7 +84,6 @@ pub(super) fn contract_twins(
     let ContractScratch {
         remap,
         merge: bufs,
-        duplicate,
         group_starts,
         flat_groups,
         has_marginal_below,
@@ -116,7 +115,7 @@ pub(super) fn contract_twins(
     // are disjoint, and the plan concatenates every member anyway.
     if policy.plain_level && diagram_marginal {
         if !*has_marginal_below_valid {
-            super::duplicate_pair::compute_has_marginal_below_into(lim, tdd, has_marginal_below)?;
+            compute_has_marginal_below_into(lim, tdd, has_marginal_below)?;
             *has_marginal_below_valid = true;
         }
         policy.t1_scalable = MergePolicy::scalable(tdd, t1, has_marginal_below);
@@ -131,13 +130,11 @@ pub(super) fn contract_twins(
         tdd.levels.mark_changed(t1);
     }
     plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
-    // At most one fork-down survivor per planned group.
-    lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     let merged_members = if marked {
-        debug_assert!(!policy.t1_scalable, "no fork-down without a marginal level");
+        debug_assert!(!policy.t1_scalable, "a search marks only in a diagram without a marginal level");
         flat_groups.len() - group_starts.len()
     } else {
-        mark_group_members(&policy, remap, bufs)
+        mark_group_members(remap, bufs)
     };
     for &u in unnamed.iter() {
         debug_assert!(
@@ -195,11 +192,9 @@ pub(super) fn contract_twins(
     tdd.dirty.set_loose(loose);
     tdd.levels.mark_changed(parent);
 
-    // A repeated pair is legal where a level of the diagram is marginal, and
-    // where fork-down resolves it right after the rebuild; elsewhere debug
-    // builds check the unions for one.
+    // A repeated pair is legal where a level of the diagram is marginal;
+    // elsewhere debug builds check the unions for one.
     let check_disjoint = cfg!(debug_assertions)
-        && !policy.t1_scalable
         && !diagram_marginal
         && !tdd.levels[t1.idx()].any_value_ref_side();
     match in_order {
@@ -253,16 +248,12 @@ pub(super) fn contract_twins(
             }
         }
     }
-    fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
-    // The merge's two levels are left their live pairs: t1's counted as
-    // its arenas were reserved, the parent's as it was rewritten. A
-    // fork-down folds repeated pairs of t1's survivors, which are then
-    // counted again.
-    if bufs.resolve_keeps.is_empty() {
-        tdd.levels[t1.idx()].leave_live_pairs(t1_pairs);
-    } else {
-        tdd.levels[t1.idx()].leave_census();
+    if tdd.output.vtree == t1 {
+        tdd.output.local = survivor(&remap.final_remap, tdd.output.local.idx());
     }
+    // The merge's two levels are left their live pairs: t1's counted as
+    // its arenas were reserved, the parent's as it was rewritten.
+    tdd.levels[t1.idx()].leave_live_pairs(t1_pairs);
     tdd.levels[parent.idx()].leave_live_pairs(parent_pairs);
     Ok(merged_members + unnamed.len())
 }
@@ -296,8 +287,7 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
         && plans.iter().all(|p| p.action == GroupAction::Concat)
 }
 
-/// Mark each planned group's absorbed members, and list the concat
-/// survivors fork-down resolves. A member's `final_remap` entry holds its
+/// Mark each planned group's absorbed members. A member's `final_remap` entry holds its
 /// survivor's old index, with [`DROPPED`] set unless the member is a
 /// content-equal redirect, whose entry [`rebuild_level`] sets to the
 /// survivor's new number. Returns the number of members merged away — 0
@@ -305,20 +295,14 @@ pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bo
 /// unions the pairs.
 ///
 fn mark_group_members(
-    policy: &MergePolicy,
     remap: &mut MergeRemap,
-    bufs: &mut MergeBuffers,
+    bufs: &MergeBuffers,
 ) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.
     let mut merged_members = 0usize;
-    let MergeBuffers {
-        sel,
-        group_plans,
-        resolve_keeps,
-        ..
-    } = bufs;
-    for p in &*group_plans {
+    let MergeBuffers { sel, group_plans, .. } = bufs;
+    for p in group_plans {
         let members = &sel[p.start as usize..p.end as usize];
         let keep = members[0];
         // A content-equal redirect keeps the members' parent pairs, remapped
@@ -333,11 +317,6 @@ fn mark_group_members(
             remap.final_remap[idx as usize] = NodeIdx(keep | dropped);
         }
         merged_members += members.len() - 1;
-        // Concat-all path: the survivor may hold duplicate pairs, which
-        // fork-down resolves after the rebuild.
-        if p.action == GroupAction::Concat && policy.t1_scalable {
-            resolve_keeps.push(keep);
-        }
     }
     merged_members
 }

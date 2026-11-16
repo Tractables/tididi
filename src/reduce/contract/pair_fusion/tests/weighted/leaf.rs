@@ -158,15 +158,13 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     crate::test_helpers::assert_canonical(&tdd);
 }
 
-// ── T8: equal weights — the post-canon duplicate run folds on either route ───
+// ── T8: equal weights — the post-canon duplicate run folds ───
 
 /// At `w⁺ = w⁻` the leaf-marginal pass canonicalizes `(x,Neg)` onto `(x,Pos)`, so the
-/// parent holds a duplicate run. Two rewrites can reach it — pair fusion's group sum
-/// (`w⁺ + w⁺`) and duplicate resolution's multiplicity scale (`2·w⁺`) — and both compute
-/// the same number, `2w⁺ = w⁺+w⁻ = One`. Whichever runs first must therefore land
-/// on the same pinned slot, mint nothing, and keep the value exact.
+/// parent holds a duplicate run. Pair fusion's group sum (`w⁺ + w⁺ = One`) must
+/// land on the pinned One slot, mint nothing, and keep the value exact.
 #[test]
-fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
+fn weighted_leaf_equal_weight_duplicate_run_folds_to_one() {
     let eng = Engine::new();
     let weights = equal_leaf_weights();
     let node = vec![
@@ -174,7 +172,6 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         (LeafLabel::Pos as u32, LeafLabel::Neg as u32),
     ];
 
-    // Route A: pair fusion's sum lookup.
     let (pairs_a, before_a, after_a) = {
         let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, std::slice::from_ref(&node));
         let canon: Vec<u32> = tdd.levels[root.idx()]
@@ -199,27 +196,6 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         (pairs, before, after)
     };
 
-    // Route B: duplicate resolution's k-scale lookup on the same duplicate run.
-    let (pairs_b, before_b, after_b) = {
-        let (mut tdd, root, leaf) = weighted_leaf_fixture(&weights, std::slice::from_ref(&node));
-        let before = with_ws(&tdd, |ws| node_value(&tdd, ws, root, leaf, 0));
-        let mut scratch = crate::reduce::contract::scratch::DuplicateScratch::default();
-        let changed = crate::reduce::contract::duplicate_pair::resolve_duplicate_pairs_in_node(
-            &eng,
-            &mut tdd,
-            root,
-            0,
-            &mut scratch,
-        )
-        .expect("no budget → must not over-budget");
-        assert!(
-            changed,
-            "the duplicate run must be absorbed by the marginal leaf side"
-        );
-        let (pairs, after) = inspect_leaf_fusion_state(&tdd, root, leaf);
-        (pairs, before, after)
-    };
-
     assert_eq!(
         pairs_a.len(),
         1,
@@ -231,15 +207,7 @@ fn weighted_leaf_equal_weight_duplicate_run_folds_to_one_on_either_route() {
         "2w⁺ = w⁺+w⁻ must fold onto the One slot"
     );
     assert_eq!(
-        pairs_a, pairs_b,
-        "both routes must produce the identical pair list"
-    );
-    assert_eq!(
         before_a, after_a,
         "pair fusion's fold must preserve the semiring value"
-    );
-    assert_eq!(
-        before_b, after_b,
-        "duplicate resolution's fold must preserve the semiring value"
     );
 }

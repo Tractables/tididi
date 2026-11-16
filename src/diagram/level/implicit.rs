@@ -112,8 +112,8 @@ pub struct Digit {
 /// The reductions read implicit levels as they read stored ones: a level
 /// the close describes need not be reduced, since a prune-only reduction or
 /// the seating of a diagram closes levels no contraction has visited. Twin
-/// merging, leaf contraction, pair fusion and duplicate resolution find
-/// their work in the description, and the one that changes a level stores
+/// merging, leaf contraction and pair fusion find their work in the
+/// description, and the one that changes a level stores
 /// it first.
 ///
 /// Beside its digits a description keeps what the places of its fastest

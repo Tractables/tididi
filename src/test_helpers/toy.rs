@@ -125,11 +125,10 @@ pub fn toy_weighted(
 }
 
 
-/// Vtree shape shared by the fork-down fixtures below. Custom (not `balanced`)
-/// so the marginal-carrying level `m` sits at an internal vtree node: an integer
-/// marginal leaf keeps an empty store (bare refs are leaf labels, decoded by
-/// `read_marginal_count`), so it is not a legal fork-down scale target
-/// (`scale_leaf_marginal_label` in `reduce/contract/duplicate_pair/scale.rs`).
+/// Vtree shape of the plain-level content-twin fixtures. Custom (not
+/// `balanced`) so the marginal-carrying level `m` sits at an internal vtree
+/// node, where an integer marginal level has a count store (a marginal leaf
+/// keeps an empty one: its bare refs are leaf labels).
 /// Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
 ///   root → (gp, σ);  gp → (bp, s);  bp → (x, a leaf; m, internal);
 ///   m → (m_l, m_r);  s → (s_l, s_r);  σ → (sig_l, sig_r).

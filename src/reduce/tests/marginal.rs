@@ -150,7 +150,7 @@ fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
     );
 
     // (b) v_left must have contracted from width 2 to width 1 (Q2 merged).
-    //     Contraction's fork-down path would merge them too; (d) is what
+    //     Contraction's concat path would merge them too; (d) is what
     //     tells the two apart.
     assert_eq!(
         tdd.levels[v_left.idx()].slot_count(), 1,
@@ -168,8 +168,8 @@ fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
     // The redirect leaves root with duplicate (Q1,slot0),(Q1,slot0) pairs;
     // pair fusion folds them into (Q1, new_slot=2*`C_VR`) and `prune_value_slots`
     // compacts v_right from [C_VR, 2*C_VR] down to [2*C_VR]. Cancelling the
-    // redirect instead would take contraction's fork-down path, which scales
-    // sub_left_r's count and leaves v_right's slot at `C_VR`.
+    // redirect instead would take contraction's concat path, which leaves
+    // v_right's slot at `C_VR`.
     assert_eq!(
         tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],
         2 * C_VR,

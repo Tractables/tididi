@@ -859,19 +859,6 @@ impl TddLevel {
         self.leave_live_pairs(self.pairs.len() + inline);
     }
 
-    /// [`leave_live_pairs`](Self::leave_live_pairs) off a census of the
-    /// level ([`live_pairs`](Self::live_pairs)), for an operation that has
-    /// just written its nodes and knows no count.
-    #[inline]
-    pub(crate) fn leave_census(&mut self) {
-        if matches!(self.state, LevelState::Structural(_)) {
-            let n = self.live_pairs();
-            if let LevelState::Structural(held) = &mut self.state {
-                held.leave(n as u64);
-            }
-        }
-    }
-
     /// Leave the live pairs this level keeps ([`HeldPairs`](super::HeldPairs))
     /// for the close that ends the operation, on a level an operation moved
     /// into its result unchanged from a closed diagram.

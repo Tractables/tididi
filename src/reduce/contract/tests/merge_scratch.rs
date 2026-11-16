@@ -120,7 +120,6 @@ fn merge_buffers_clear_retains_allocations() {
     let mut seen_pairs: rustc_hash::FxHashSet<(u32, u32)> = Default::default();
     seen_pairs.insert((5, 6));
     let mut b = MergeBuffers {
-        resolve_keeps: vec![1],
         filtered: vec![2],
         duplicate_members: vec![3],
         keep_pairs_sorted: vec![(1, 2)],
@@ -137,7 +136,6 @@ fn merge_buffers_clear_retains_allocations() {
     let allocation = b.sel.as_ptr();
     b.clear();
     assert_eq!(b.sel.as_ptr(), allocation);
-    assert!(b.resolve_keeps.is_empty(), "resolve_keeps must be cleared");
     assert!(b.filtered.is_empty(), "filtered must be cleared");
     assert!(b.duplicate_members.is_empty(), "duplicate_members must be cleared");
     assert!(b.keep_pairs_sorted.is_empty(), "keep_pairs_sorted must be cleared");

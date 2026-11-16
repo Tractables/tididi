@@ -62,14 +62,46 @@ impl MergePolicy {
     }
 
     /// Whether a child side of the plain level `t1` has marginalization
-    /// below it. Overlapping twins there concat-merge unconditionally and
-    /// `fork_down` folds the resulting duplicate pairs where it
-    /// can; see the module doc of `duplicate_pair`.
+    /// below it. Overlapping twins there concat-merge unconditionally: a
+    /// repeated `(L, R)` pair in the survivor is a multiset term, and the
+    /// count recurrences, which sum over a node's pairs, count it k times.
     pub(super) fn scalable(tdd: &Tdd, t1: VtreeIdx, has_marginal_below: &[bool]) -> bool {
         let (t1_l, t1_r) = tdd.vtree.children(t1);
         has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
             || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
     }
+}
+
+/// `has_marginal_below[v]`: v's vtree subtree (including v itself) contains a
+/// marginal level. Stable across one minimize pass: marginalization converts
+/// levels between compile phases, never during contraction. Fills `below` in
+/// place (buffer reused across contract runs via ContractScratch), charging
+/// its growth to `lim`.
+///
+/// O(vtree nodes), so the caller fills it lazily: on the first merge of a
+/// checkout at a plain level of a diagram with a marginal level, never where
+/// twin supports are disjoint. See `ContractScratch::has_marginal_below_valid`.
+pub(super) fn compute_has_marginal_below_into(
+    lim: &Limits,
+    tdd: &Tdd,
+    below: &mut Vec<bool>,
+) -> Result<(), OperationError> {
+    let n = tdd.vtree.num_nodes();
+    below.clear();
+    lim.try_resize(below, n, false)?;
+    for i in 0..n.min(tdd.levels.len()) {
+        if tdd.levels[i].is_marginal() {
+            let mut v = Some(VtreeIdx(i as u32));
+            while let Some(x) = v {
+                if below[x.idx()] {
+                    break; // ancestors above already marked by an earlier walk
+                }
+                below[x.idx()] = true;
+                v = tdd.vtree.node(x).parent();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Pass A: decide every group's action before any of them commits, so the
@@ -114,8 +146,8 @@ pub(super) fn plan_groups(
     if !plain_level || t1_scalable {
         // Every group concatenates whole, as the searches list it, and `sel`
         // is `flat_groups`: at a marginal-flagged level duplicate pairs are
-        // legal multiset entries, and on the scalable plain path fork-down
-        // resolves them right after compaction (`duplicate_pair`).
+        // legal multiset entries, and so they are on the scalable plain path
+        // (`MergePolicy::scalable`).
         sel.extend_from_slice(flat_groups);
         group_plans.extend((0..group_starts.len()).map(|g| {
             let (start, end) = group_bounds(g);

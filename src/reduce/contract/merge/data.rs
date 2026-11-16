@@ -1,19 +1,16 @@
 //! Unioning twin pair lists into the survivor and compacting the level, in
 //! one rebuild of the level's arenas.
 
-use crate::Engine;
-use crate::vtree::VtreeIdx;
-
 use crate::diagram::{
-    ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, RangeTable, Tdd, TddLevel,
+    ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, RangeTable, TddLevel,
 };
 use crate::isa::prefetch_line;
 use crate::limits::{Limits, OperationError};
 
 use super::super::bits;
-use super::super::scratch::{ClassInfo, DuplicateScratch, Marks, MergeBuffers, MergeRemap};
+use super::super::scratch::{ClassInfo, Marks, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
-use super::rewrite::{DISCARDED, DROPPED, survivor};
+use super::rewrite::{DISCARDED, DROPPED};
 
 /// The arenas the merged level is rebuilt into, had before the merge
 /// changes anything ([`reserve_rebuilt`]).
@@ -333,7 +330,7 @@ fn commit_rebuilt_arenas(
 /// never pair order, so concatenation is the union with no sort. A repeated
 /// `(L, R)` entry across the members is a legitimate multiset entry at a
 /// marginal-child level and is kept; where `check_disjoint` says no pair may
-/// repeat (no marginal level in the diagram and no fork-down after), debug
+/// repeat (no marginal level in the diagram), debug
 /// builds check that the supports are disjoint (determinism, invariant 1).
 pub(super) fn rebuild_level(
     level: &mut TddLevel,
@@ -707,31 +704,4 @@ pub(super) fn rebuild_in_order(
         }
     }
     commit_rebuilt_arenas(level, write, fresh, None, reserved);
-}
-
-/// Point the output at its survivor if it is at `t1`, then run fork-down
-/// duplicate resolution on the survivors merged via the concat-all path.
-/// Fork-down runs after the rebuild so survivor indices are final; it folds
-/// a run of k equal pairs into one pair with its marginal side scaled by k
-/// only where t1 has a marginal child, and otherwise leaves the run (see the
-/// module doc of `duplicate_pair`).
-pub(super) fn fork_down(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    t1: VtreeIdx,
-    resolve_keeps: &[u32],
-    remap: &MergeRemap,
-    duplicate: &mut DuplicateScratch,
-) -> Result<(), OperationError> {
-    if tdd.output.vtree == t1 {
-        tdd.output.local = survivor(&remap.final_remap, tdd.output.local.idx());
-    }
-    // One scratch for the whole loop, cleared per node inside the callee.
-    for &old_keep in resolve_keeps {
-        let new_idx = remap.final_remap[old_keep as usize].idx();
-        super::super::duplicate_pair::resolve_duplicate_pairs_in_node(
-            eng, tdd, t1, new_idx, duplicate,
-        )?;
-    }
-    Ok(())
 }
