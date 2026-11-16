@@ -424,11 +424,32 @@ impl Mover<'_, '_> {
         let lim = self.eng.limits();
         let mut counts = Transient::new(lim, Vec::<(u32, u32)>::new());
         lim.try_resize(&mut counts, self.tdd.vtree.num_nodes(), (0, 0))?;
-        for t in self.tdd.vtree.bottomup() {
+        let mut order = Transient::new(lim, Vec::new());
+        for t in self.tdd.vtree.subtree(root) {
+            lim.try_push(&mut order, t)?;
+        }
+        // The target's node over each node's leaves, and each target node's
+        // leaf count: a pure child moves across only where the two together
+        // are a node of the target.
+        let mut tl = Transient::new(lim, Vec::<VtreeIdx>::new());
+        lim.try_resize(&mut tl, self.tdd.vtree.num_nodes(), VtreeIdx(0))?;
+        let mut tsize = Transient::new(lim, Vec::<u32>::new());
+        lim.try_resize(&mut tsize, self.target.num_nodes(), 0)?;
+        for t in self.target.bottomup() {
+            tsize[t.idx()] = match self.target.node(t) {
+                VtreeNode::Leaf { .. } => 1,
+                VtreeNode::Internal { left, right, .. } => tsize[left.idx()] + tsize[right.idx()],
+            };
+        }
+        for &t in order.iter().rev() {
             lim.check_stop()?;
             counts[t.idx()] = match self.tdd.vtree.node(t) {
-                VtreeNode::Leaf { var, .. } => (u32::from(self.target.in_subtree(self.target.leaf_of(*var).expect("same variables"), target)), 1),
+                VtreeNode::Leaf { var, .. } => {
+                    tl[t.idx()] = self.target.leaf_of(*var).expect("same variables");
+                    (u32::from(self.target.in_subtree(tl[t.idx()], target)), 1)
+                }
                 VtreeNode::Internal { left, right, .. } => {
+                    tl[t.idx()] = self.target.lca(tl[left.idx()], tl[right.idx()]);
                     let (l, r) = (counts[left.idx()], counts[right.idx()]);
                     (l.0 + r.0, l.1 + r.1)
                 }
@@ -448,14 +469,38 @@ impl Mover<'_, '_> {
                     let (lc, rc) = (counts[l.idx()], counts[r.idx()]);
                     let all = |c: (u32, u32)| c.0 == c.1;
                     if (all(lc) && rc.0 == 0) || (all(rc) && lc.0 == 0) { continue; }
-                    let (w, next) = if lc.0 == 0 { (r, Task::Lift(v, r)) }
-                        else if rc.0 == 0 { (l, Task::Lift(v, l)) }
-                        else if all(lc) { (r, Task::Join(v, r)) }
-                        else if all(rc) { (l, Task::Join(v, l)) }
-                        else { (l, Task::Both(v, l)) };
-                    lim.try_push(&mut tasks, next)?;
-                    lim.try_push(&mut tasks, Task::Split(w))?;
-                    continue;
+                    // One side is pure and the mixed side `w` has a child `c`
+                    // pure the same way: move `c` across now, which keeps
+                    // the pure side whole, and look at `v` again.
+                    let pure = |c: (u32, u32)| if all(c) { Some(true) } else if c.0 == 0 { Some(false) } else { None };
+                    let across = match (pure(lc), pure(rc)) {
+                        (Some(p), None) => Some((r, p, l)),
+                        (None, Some(p)) => Some((l, p, r)),
+                        _ => None,
+                    }
+                    .and_then(|(w, p, side)| {
+                        let (wl, wr) = self.tdd.vtree.children(w);
+                        [wl, wr]
+                            .into_iter()
+                            .find(|c| {
+                                pure(counts[c.idx()]) == Some(p)
+                                    && tsize[self.target.lca(tl[side.idx()], tl[c.idx()]).idx()] == counts[side.idx()].1 + counts[c.idx()].1
+                            })
+                            .map(|c| (w, c))
+                    });
+                    if let Some((w, c)) = across {
+                        lim.try_push(&mut tasks, Task::Split(v))?;
+                        (v, w, c)
+                    } else {
+                        let (w, next) = if lc.0 == 0 { (r, Task::Lift(v, r)) }
+                            else if rc.0 == 0 { (l, Task::Lift(v, l)) }
+                            else if all(lc) { (r, Task::Join(v, r)) }
+                            else if all(rc) { (l, Task::Join(v, l)) }
+                            else { (l, Task::Both(v, l)) };
+                        lim.try_push(&mut tasks, next)?;
+                        lim.try_push(&mut tasks, Task::Split(w))?;
+                        continue;
+                    }
                 }
                 Task::Join(v, w) => (v, w, wanted_child(&self.tdd.vtree, &counts, w)),
                 Task::Lift(v, w) | Task::Both(v, w) => {
@@ -473,6 +518,7 @@ impl Mover<'_, '_> {
                 let (l, r) = self.tdd.vtree.children(t);
                 let (lc, rc) = (counts[l.idx()], counts[r.idx()]);
                 counts[t.idx()] = (lc.0 + rc.0, lc.1 + rc.1);
+                tl[t.idx()] = self.target.lca(tl[l.idx()], tl[r.idx()]);
             }
         }
         Ok(wanted_child(&self.tdd.vtree, &counts, root))

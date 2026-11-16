@@ -62,6 +62,23 @@ fn wide_trees_take_the_split_construction() {
     }
 }
 
+/// A right comb onto the left comb of the same order takes n - 2 rotations,
+/// the fewest possible, also where the split construction plans the move.
+#[test]
+fn a_comb_turns_in_n_minus_two_rotations() {
+    for n in [8u32, 12, 20] {
+        let leaves: Vec<Vtree> = (1..=n).map(|v| Vtree::leaf(VarId(v))).collect();
+        let right = leaves.iter().rev().cloned().reduce(|t, l| Vtree::join(&l, &t).unwrap()).unwrap();
+        let left = leaves.iter().cloned().reduce(|t, l| Vtree::join(&t, &l).unwrap()).unwrap();
+        let (source, target) = (Arc::new(right), Arc::new(left));
+        let clauses: Vec<Vec<i32>> = (1..n as i32).map(|i| vec![i, -(i + 1)]).collect();
+        let mut moved = compile_clauses(&source, &clauses);
+        let stats = moved.restructure_to(&target, usize::MAX).unwrap();
+        assert_eq!(stats.rotations, n as usize - 2, "n = {n}");
+        check_move(&clauses, &source, &target);
+    }
+}
+
 /// Blocks of three variables kept whole in both trees: only the levels above
 /// them are rebuilt, and three blocks need at most one rotation.
 #[test]
