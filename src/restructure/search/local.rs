@@ -116,81 +116,88 @@ impl std::ops::AddAssign<&RotationSearchStats> for RotationSearchStats {
     }
 }
 
-/// The search behind [`Engine::rotation_search_with`]: sweep every internal
-/// vtree node, probe the configured neighborhood at each, and keep a sequence
-/// whenever `policy` accepts its score. Sweeps repeat until the policy stops
-/// or `config.max_sweeps` is hit. The engine's stop is polled once per pivot.
-///
-/// A policy that keeps worsening moves does not end on its best diagram, so
-/// the search logs what it kept and rewinds to the best prefix with inverse
-/// rotations before returning.
-///
-/// # Errors
-///
-/// [`OperationError::UnboundedSearch`] when `policy` may keep a worsening move
-/// and `config.max_inner_pairs` has no bound, before anything is probed.
-/// [`OperationError::OverBudget`] from the opening reduction or a rebuild that
-/// does not fit. [`OperationError::Stopped`] when the armed stop fires between
-/// pivots. The diagram is left at whatever point the search had reached —
-/// canonical, count-correct, and safe to keep or to search again.
-pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    objective: &mut O,
-    policy: &mut A,
-    config: &RotationSearchConfig,
-) -> Result<RotationSearchStats, OperationError> {
-    let _op = eng.limits().enter()?;
-    if policy.may_worsen() && config.max_inner_pairs == usize::MAX {
-        return Err(OperationError::UnboundedSearch {
-            option: "RotationSearchConfig::max_inner_pairs",
-            needed_by: "a policy that keeps worsening moves",
-        });
-    }
-    policy.begin();
-    let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
-    let mut scratch = eng.scratch.restructure.checkout(eng);
+impl Engine {
+    /// [`rotation_search`](Self::rotation_search) with the decision rule
+    /// given, instead of the [`Greedy`](super::Greedy) one it defaults to.
+    ///
+    /// The objective says what a sequence of rotations costs; the policy says
+    /// what to do about the cost. Each sweep probes the configured
+    /// neighborhood at every internal vtree node and keeps a sequence
+    /// whenever `policy` accepts its score; sweeps repeat until the policy
+    /// stops or `config.max_sweeps` is hit. A policy that keeps a worsening
+    /// sequence searches past the local minimum a descent stops at, and the
+    /// search rewinds to the best diagram it passed through, with inverse
+    /// rotations, before returning: the result is never worse than the
+    /// descent's, at the price of the extra sweeps.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::UnboundedSearch`] when `policy` may keep a worsening
+    /// sequence and `config.max_inner_pairs` has no bound, before anything is
+    /// probed: those rebuilds are the ones that grow, and without a bound a
+    /// probe can ask for more memory than the host has. Otherwise the errors
+    /// of [`rotation_search`](Self::rotation_search). The diagram is left at
+    /// whatever point the search had reached, canonical, count-correct, and
+    /// safe to keep or to search again.
+    pub fn rotation_search_with<O: RotationObjective, A: AcceptancePolicy>(
+        &self,
+        tdd: &mut Tdd,
+        objective: &mut O,
+        policy: &mut A,
+        config: &RotationSearchConfig,
+    ) -> Result<RotationSearchStats, OperationError> {
+        let _op = self.limits().enter()?;
+        if policy.may_worsen() && config.max_inner_pairs == usize::MAX {
+            return Err(OperationError::UnboundedSearch {
+                option: "RotationSearchConfig::max_inner_pairs",
+                needed_by: "a policy that keeps worsening moves",
+            });
+        }
+        policy.begin();
+        let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
+        let mut scratch = self.scratch.restructure.checkout(self);
 
-    // Rotation-locality precondition: the locality assertion and the level
-    // revert need a canonical input, so establish it once here.
-    // Marginal-free diagrams only: in marginal context the restructure keeps
-    // the child multiset without Boolean dedup, which is what preserves the
-    // count, and a minimize here would collapse it.
-    if !tdd.has_marginal_level() {
-        eng.reduce(tdd, crate::reduce::ReductionPlan::default())?;
-    }
+        // Rotation-locality precondition: the locality assertion and the level
+        // revert need a canonical input, so establish it once here.
+        // Marginal-free diagrams only: in marginal context the restructure keeps
+        // the child multiset without Boolean dedup, which is what preserves the
+        // count, and a minimize here would collapse it.
+        if !tdd.has_marginal_level() {
+            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+        }
 
-    let mut search = super::SearchTree::new(tdd);
-    loop {
-        if let Some(cap) = config.max_sweeps
-            && rule.stats.sweeps >= cap {
+        let mut search = super::SearchTree::new(tdd);
+        loop {
+            if let Some(cap) = config.max_sweeps
+                && rule.stats.sweeps >= cap {
+                    break;
+                }
+            rule.stats.sweeps += 1;
+
+            // Unevaluated snapshot of the internal nodes each sweep: an accept relabels
+            // parent/child relations, so re-collecting keeps the walk honest (a stale
+            // index can only mis-skip a probe, never break count-soundness — the next
+            // sweep re-picks it up).
+            let internals: Vec<VtreeIdx> =
+                search.tdd.vtree.internal_bottomup().map(|(v, _, _)| v).collect();
+
+            let mut accepted_this_sweep = 0usize;
+            for v in internals {
+                // Once per pivot, not once per probe: the probes below share the
+                // pivot's setup, and a stop between them would leave the sweep's
+                // accept count describing half a pivot.
+                self.limits().check_stop()?;
+                let kept = sweep_pivot(self, &mut search, v, &mut rule, &mut scratch, config)?;
+                accepted_this_sweep += kept;
+            }
+            if !rule.policy.keep_sweeping(&rule.stats, accepted_this_sweep) {
                 break;
             }
-        rule.stats.sweeps += 1;
-
-        // Unevaluated snapshot of the internal nodes each sweep: an accept relabels
-        // parent/child relations, so re-collecting keeps the walk honest (a stale
-        // index can only mis-skip a probe, never break count-soundness — the next
-        // sweep re-picks it up).
-        let internals: Vec<VtreeIdx> =
-            search.tdd.vtree.internal_bottomup().map(|(v, _, _)| v).collect();
-
-        let mut accepted_this_sweep = 0usize;
-        for v in internals {
-            // Once per pivot, not once per probe: the probes below share the
-            // pivot's setup, and a stop between them would leave the sweep's
-            // accept count describing half a pivot.
-            eng.limits().check_stop()?;
-            let kept = sweep_pivot(eng, &mut search, v, &mut rule, &mut scratch, config)?;
-            accepted_this_sweep += kept;
         }
-        if !rule.policy.keep_sweeping(&rule.stats, accepted_this_sweep) {
-            break;
-        }
+        let Policed { stats, log, .. } = rule;
+        rewind_to_best(self, search.tdd, &log, &mut scratch)?;
+        Ok(stats)
     }
-    let Policed { stats, log, .. } = rule;
-    rewind_to_best(eng, search.tdd, &log, &mut scratch)?;
-    Ok(stats)
 }
 
 /// Probe the configured neighborhood at one pivot and return how many
@@ -209,7 +216,7 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
 ) -> Result<usize, OperationError> {
     let mut kept = 0usize;
     for &kind in &KINDS {
-        if try_sequence(eng, search, &[RotationMove { pivot: v, kind }], rule, scratch, config)? {
+        if search.probe_moves(eng, &[RotationMove { pivot: v, kind }], rule, scratch, config.max_inner_pairs)? {
             kept += 1;
         }
     }
@@ -232,7 +239,7 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
                     continue;
                 }
                 let pair = [first, next];
-                if try_sequence(eng, search, &pair, rule, scratch, config)? {
+                if search.probe_moves(eng, &pair, rule, scratch, config.max_inner_pairs)? {
                     return Ok(1);
                 }
                 let Some(third) = &third else { continue };
@@ -243,7 +250,7 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
                             continue;
                         }
                         let triple = [first, next, last];
-                        if try_sequence(eng, search, &triple, rule, scratch, config)? {
+                        if search.probe_moves(eng, &triple, rule, scratch, config.max_inner_pairs)? {
                             return Ok(1);
                         }
                     }
@@ -252,18 +259,6 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
         }
     }
     Ok(0)
-}
-
-/// Probe one sequence under the search's rule and bound.
-fn try_sequence<O: RotationObjective, A: AcceptancePolicy>(
-    eng: &Engine,
-    search: &mut super::SearchTree<'_>,
-    moves: &[RotationMove],
-    rule: &mut Policed<'_, O, A>,
-    scratch: &mut RestructureScratch,
-    config: &RotationSearchConfig,
-) -> Result<bool, OperationError> {
-    search.probe_moves(eng, moves, rule, scratch, config.max_inner_pairs)
 }
 
 /// The pivots a sequence may continue at after turning the internal node

@@ -30,7 +30,7 @@ use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
-use super::probe::DiagramHeader;
+use super::probe::{DiagramHeader, pivot_pairs};
 
 /// A rotation, with the promoted child's children swapped first if
 /// `crossed`.
@@ -344,7 +344,12 @@ impl Engine {
         let info = pending.commit(&mut tree);
         let mut scratch = self.scratch.restructure.checkout(self);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        let step = BoundedMove { info, mv, bound };
+        let step = RotationStep {
+            info: &info,
+            dir: mv.rotation.kind,
+            crossed: mv.crossed,
+            max_pairs: bound,
+        };
         let kept = probe(self, members, step, copy, &mut scratch, accept)?;
         if kept {
             install(members, tree);
@@ -405,10 +410,7 @@ impl Engine {
         start: u64,
         stats: &mut PoolSearchStats,
     ) -> Result<(), OperationError> {
-        for m in members.iter_mut() {
-            self.reduce(m, crate::reduce::ReductionPlan::default())?;
-        }
-        stats.pairs_before = members.iter().map(|m| m.pair_count()).sum();
+        stats.pairs_before = self.reduce_members(members)?;
         let mut scratch = self.scratch.restructure.checkout(self);
         // The members' tree, moved in place as moves are kept. The members
         // keep the old allocation until the descent ends, which hands them
@@ -422,11 +424,16 @@ impl Engine {
             install(members, tree);
         }
         result?;
+        stats.pairs_after = self.reduce_members(members)?;
+        Ok(())
+    }
+
+    /// Reduce every member; their live pairs after.
+    fn reduce_members(&self, members: &mut [&mut Tdd]) -> Result<usize, OperationError> {
         for m in members.iter_mut() {
             self.reduce(m, crate::reduce::ReductionPlan::default())?;
         }
-        stats.pairs_after = members.iter().map(|m| m.pair_count()).sum();
-        Ok(())
+        Ok(live_pairs(members))
     }
 }
 
@@ -701,7 +708,7 @@ impl<'a> Undo<'a> {
             known: known.clone(),
             members: members
                 .iter()
-                .map(|m| DiagramHeader::clone_from_tdd(m))
+                .map(|m| DiagramHeader::new(m, m.dirty.clone()))
                 .collect(),
             filed: vec![false; tree.num_nodes()],
             levels,
@@ -910,7 +917,12 @@ fn probe_in_place<'l>(
         return Ok(false);
     };
     let info = pending.info();
-    let step = BoundedMove { info, mv, bound };
+    let step = RotationStep {
+        info: &info,
+        dir: mv.rotation.kind,
+        crossed: mv.crossed,
+        max_pairs: bound,
+    };
     match probe_scored(eng, members, step, scratch, twin, slack, undo) {
         Ok(true) => {
             // The bottom-up order's repair moves the promoted node past the
@@ -989,23 +1001,12 @@ fn shared_vtree(members: &[&mut Tdd]) -> Result<Arc<Vtree>, OperationError> {
     Ok(shared)
 }
 
-/// A probed rotation step and its inner-pair bound.
-#[derive(Clone, Copy)]
-struct BoundedMove {
-    info: RotationInfo,
-    mv: PoolMove,
-    bound: usize,
-}
-
-impl BoundedMove {
-    fn step(&self) -> RotationStep<'_> {
-        RotationStep {
-            info: &self.info,
-            dir: self.mv.rotation.kind,
-            crossed: self.mv.crossed,
-            max_pairs: self.bound,
-        }
-    }
+/// Whether a member whose two levels at a move hold `outer` and `inner`
+/// pairs holds as many after it: a level of one pair rebuilds into one of
+/// one pair, two pairs for the two levels, which a `bound` above two lets
+/// through.
+fn keeps_its_pairs(outer: usize, inner: usize, bound: usize) -> bool {
+    bound > 2 && outer <= 1 && inner == outer
 }
 
 /// What one member needs to be put back as it was.
@@ -1017,24 +1018,24 @@ struct Saved<'a> {
 
 type SavedMembers<'a> = Transient<'a, Vec<(usize, Saved<'a>)>>;
 
-/// Member `i`'s two levels at `step` rebuilt within `step.bound`, from
+/// Member `i`'s two levels at `step` rebuilt within `step.max_pairs`, from
 /// `prepared` where the probe prepared them, and what it needs to be put back
 /// saved: the new levels' pairs, or `None` where the rebuild would pass
-/// `step.bound`.
+/// `step.max_pairs`.
 fn rebuild_member<'a>(
     lim: &'a Limits,
     i: usize,
     m: &mut Tdd,
-    step: BoundedMove,
+    step: RotationStep<'_>,
     prepared: Option<&mut Prepared>,
     saved: &mut Vec<(usize, Saved<'a>)>,
     scratch: &mut RestructureScratch,
 ) -> Result<Option<usize>, OperationError> {
-    let BoundedMove { info, mv, .. } = step;
+    let dirty = std::mem::take(&mut m.dirty);
     saved.push((
         i,
         Saved {
-            header: DiagramHeader::take(m),
+            header: DiagramHeader::new(m, dirty),
             levels: None,
         },
     ));
@@ -1042,18 +1043,16 @@ fn rebuild_member<'a>(
     // No member has a marginal level here.
     let rebuilt = match prepared {
         Some(prepared) => {
-            finish_levels(lim, m, &info, mv.rotation.kind, false, scratch, prepared).map(Some)
+            finish_levels(lim, m, step.info, step.dir, false, scratch, prepared).map(Some)
         }
-        None => rebuild_levels(lim, m, step.step(), false, scratch),
+        None => rebuild_levels(lim, m, step, false, scratch),
     };
     let Some((outer, inner)) = rebuilt? else {
         return Ok(None);
     };
     saved.last_mut().expect("pushed above").1.levels =
         Some((Transient::new(lim, outer), Transient::new(lim, inner)));
-    Ok(Some(
-        m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs(),
-    ))
+    Ok(Some(pivot_pairs(m, step.info)))
 }
 
 /// Rebuild every member at `step`, stopping on the first refusal or error, and
@@ -1061,7 +1060,7 @@ fn rebuild_member<'a>(
 fn rebuild_other_members<'a>(
     lim: &'a Limits,
     members: &mut [&mut Tdd],
-    step: BoundedMove,
+    step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
     mut on_rebuilt: impl FnMut(usize, bool, usize) -> Result<(), OperationError>,
     mut prepared: Option<&mut [Option<Prepared>]>,
@@ -1120,16 +1119,13 @@ impl Charged for PreparedMembers {
 fn probe(
     eng: &Engine,
     members: &mut [&mut Tdd],
-    step: BoundedMove,
+    step: RotationStep<'_>,
     extra: u64,
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
-    let BoundedMove { info, bound, .. } = step;
+    let info = step.info;
     let lim = eng.limits();
-    // A level of one pair rebuilds into one of one pair, two pairs for the
-    // two levels, which a bound above two lets through.
-    let defer = bound > 2;
     let mut gate = lim.gate();
     gate.poll(extra)?;
     let mut before = Transient::new(lim, Vec::new());
@@ -1147,7 +1143,7 @@ fn probe(
         );
         let old = outer + inner;
         before.push(old);
-        if defer && outer <= 1 && inner == outer {
+        if keeps_its_pairs(outer, inner, step.max_pairs) {
             gate.poll(old as u64 + 1)?;
             after.push(old);
             prepared.0.push(None);
@@ -1159,7 +1155,7 @@ fn probe(
             .last_mut()
             .and_then(Option::as_mut)
             .expect("pushed above");
-        let Some(new) = prepare_levels(lim, m, step.step(), false, scratch, slot)? else {
+        let Some(new) = prepare_levels(lim, m, step, false, scratch, slot)? else {
             return Ok(false);
         };
         gate.poll((old + new) as u64 + REBUILD_UNITS)?;
@@ -1194,7 +1190,7 @@ fn probe(
         },
         Some(&mut prepared.0),
     )?;
-    settle(lim, members, &info, &mut saved, outcome, None)
+    settle(lim, members, info, &mut saved, outcome, None)
 }
 
 /// [`probe`] for a move kept exactly when it leaves the members' total below
@@ -1212,88 +1208,54 @@ fn probe(
 /// alone. A move whose scores do not lower the total is refused, the
 /// members only read. Otherwise every member is rebuilt in turn, charged
 /// what preparing it costs, and the move kept if their pairs lower the total
-/// after all; if not, or if a rebuild passes `step.bound` or fails, every
+/// after all; if not, or if a rebuild passes `step.max_pairs` or fails, every
 /// member is put back. So the scores decide, and no member's rebuild waits
 /// for the others'.
 fn probe_scored<'l>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
-    step: BoundedMove,
+    step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
-    twin: Twin<'_>,
-    slack: usize,
-    undo: Option<&mut Undo<'l>>,
-) -> Result<bool, OperationError> {
-    let mut tables = ProbeTables::default();
-    let kept = probe_scored_with(eng, members, step, scratch, &mut tables, twin, slack, undo);
-    let ProbeTables { before, after, scored, floors, order } = tables;
-    let lim = eng.limits();
-    lim.discard(before);
-    lim.discard(after);
-    lim.discard(scored);
-    lim.discard(floors);
-    lim.discard(order);
-    kept
-}
-
-/// The tables a pool-search probe scores its members by: the pairs of each
-/// member's two levels before and after the move, whether it is scored, the
-/// least it can hold after the move, and the order it is scored in.
-#[derive(Default)]
-struct ProbeTables {
-    before: Vec<usize>,
-    after: Vec<usize>,
-    scored: Vec<bool>,
-    floors: Vec<usize>,
-    order: Vec<usize>,
-}
-
-/// [`probe_scored`] in `tables`.
-#[expect(clippy::too_many_arguments, reason = "probe_scored's arguments and its tables")]
-fn probe_scored_with<'l>(
-    eng: &'l Engine,
-    members: &mut [&mut Tdd],
-    step: BoundedMove,
-    scratch: &mut RestructureScratch,
-    tables: &mut ProbeTables,
     mut twin: Twin<'_>,
     slack: usize,
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
-    let BoundedMove { info, mv, bound } = step;
+    let info = step.info;
     debug_assert!(match twin {
         Twin::Alone => true,
-        Twin::Fill(_) => !mv.crossed,
-        Twin::Given(_) => mv.crossed,
+        Twin::Fill(_) => !step.crossed,
+        Twin::Given(_) => step.crossed,
     });
     let lim = eng.limits();
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let defer = bound > 2;
-    let ProbeTables { before, after, scored, floors, order } = tables;
-    lim.reserve_exact(before, members.len())?;
-    // A member with at most one pair on each level is not scored, its pairs
-    // unchanged, and a scored member ends with at least a pair for each of
-    // its outer nodes.
-    lim.reserve_exact(scored, members.len())?;
-    lim.reserve_exact(floors, members.len())?;
+    let mut before = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut before, members.len())?;
+    // A member that keeps its pairs is not scored, and a scored member ends
+    // with at least a pair for each of its outer nodes.
+    let mut scored = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut scored, members.len())?;
+    let mut floors = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut floors, members.len())?;
     for m in members.iter() {
         let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
         let old = outer + inner;
         before.push(old);
-        let scores = !(defer && outer <= 1 && inner == outer);
+        let scores = !keeps_its_pairs(outer, inner, step.max_pairs);
         scored.push(scores);
         floors.push(if scores { owners } else { old });
     }
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
-    lim.reserve_exact(after, members.len())?;
-    after.extend_from_slice(before);
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, members.len())?;
+    after.extend_from_slice(&before);
     // The largest members first: a move they refuse is refused with less
     // of the pool read.
-    lim.reserve_exact(order, members.len())?;
+    let mut order = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut order, members.len())?;
     order.extend(0..members.len());
     order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
     if let Twin::Fill(slots) = &mut twin {
@@ -1316,9 +1278,9 @@ fn probe_scored_with<'l>(
         }
         #[cfg(test)]
         tests::note_score();
-        let (kind, score) = (mv.rotation.kind, &mut scratch.score);
+        let score = &mut scratch.score;
         let new = match &mut twin {
-            Twin::Alone => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
+            Twin::Alone => score_levels(lim, m, step, score, cap(sum, rest))?,
             Twin::Fill(slots) => {
                 // A crossing refused by an earlier member's score is capped
                 // at nothing.
@@ -1326,10 +1288,10 @@ fn probe_scored_with<'l>(
                 let [plain, crossed] = score_levels_crossed_too(
                     lim,
                     m,
-                    &info,
-                    kind,
+                    info,
+                    step.dir,
                     score,
-                    bound,
+                    step.max_pairs,
                     [cap(sum, rest), crossed_cap],
                 )?;
                 slots[i] = Some(crossed);
@@ -1338,7 +1300,7 @@ fn probe_scored_with<'l>(
             }
             Twin::Given(slots) => match slots.get(i) {
                 Some(&Some(given)) => given,
-                _ => score_levels(lim, m, step.step(), score, cap(sum, rest))?,
+                _ => score_levels(lim, m, step, score, cap(sum, rest))?,
             },
         };
         let Some(new) = new else {
@@ -1361,7 +1323,7 @@ fn probe_scored_with<'l>(
     // the search refuses.
     if sum >= limit {
         #[cfg(debug_assertions)]
-        debug_check_scores(lim, members, step, after, scratch)?;
+        debug_check_scores(lim, members, step, &after, scratch)?;
         gate.flush()?;
         lim.check_stop()?;
         return Ok(false);
@@ -1389,7 +1351,7 @@ fn probe_scored_with<'l>(
         lim.check_stop()?;
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(lim, members, &info, &mut saved, outcome, undo)
+    settle(lim, members, info, &mut saved, outcome, undo)
 }
 
 /// A level's live pairs and the nodes that hold them.
@@ -1476,18 +1438,17 @@ fn settle<'a>(
 fn debug_check_scores(
     lim: &Limits,
     members: &[&mut Tdd],
-    step: BoundedMove,
+    step: RotationStep<'_>,
     scores: &[usize],
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let BoundedMove { info, .. } = step;
-    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     for (m, &score) in members.iter().zip(scores) {
-        if m.levels[v].live_pairs() <= 1 && m.levels[w].live_pairs() == m.levels[v].live_pairs() {
+        if keeps_its_pairs(m.levels[v].live_pairs(), m.levels[w].live_pairs(), step.max_pairs) {
             continue;
         }
         let mut prepared = Prepared::default();
-        let new = prepare_levels(lim, m, step.step(), false, scratch, &mut prepared)?;
+        let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);
         if let Some(new) = new {
             debug_assert!(
@@ -1506,21 +1467,20 @@ fn debug_check_scores(
 fn debug_check_refusal(
     lim: &Limits,
     members: &[&mut Tdd],
-    step: BoundedMove,
+    step: RotationStep<'_>,
     total: usize,
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let BoundedMove { info, .. } = step;
-    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     let mut pairs = 0usize;
     for m in members {
         let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        if outer <= 1 && inner == outer {
+        if keeps_its_pairs(outer, inner, step.max_pairs) {
             pairs += outer + inner;
             continue;
         }
         let mut prepared = Prepared::default();
-        let new = prepare_levels(lim, m, step.step(), false, scratch, &mut prepared)?;
+        let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);
         let Some(new) = new else { return Ok(()) };
         pairs += new;

@@ -69,33 +69,6 @@ impl crate::Engine {
     ) -> Result<RotationSearchStats, OperationError> {
         self.rotation_search_with(tdd, objective, &mut Greedy, config)
     }
-
-    /// [`rotation_search`](Self::rotation_search) with the decision rule
-    /// given, instead of the [`Greedy`] one it defaults to.
-    ///
-    /// The objective says what a sequence of rotations costs; the policy says
-    /// what to do about the cost. A policy that keeps a worsening sequence
-    /// searches past the local minimum a descent stops at, and the search
-    /// rewinds to the best diagram it passed through before returning — so the
-    /// result is never worse than the descent's, at the price of the extra
-    /// sweeps.
-    ///
-    /// # Errors
-    ///
-    /// [`OperationError::UnboundedSearch`] when `policy` may keep a worsening
-    /// sequence and `config.max_inner_pairs` has no bound: those rebuilds are
-    /// the ones that grow, and without a bound a probe can ask for more memory
-    /// than the host has. Otherwise the errors of
-    /// [`rotation_search`](Self::rotation_search).
-    pub fn rotation_search_with<O: RotationObjective, A: AcceptancePolicy>(
-        &self,
-        tdd: &mut Tdd,
-        objective: &mut O,
-        policy: &mut A,
-        config: &RotationSearchConfig,
-    ) -> Result<RotationSearchStats, OperationError> {
-        crate::restructure::search::local::rotation_search_on(self, tdd, objective, policy, config)
-    }
 }
 
 /// Keep one private vtree across probes, restoring shared identity if none was

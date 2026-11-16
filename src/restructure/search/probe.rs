@@ -303,6 +303,11 @@ pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
     Ok(keep)
 }
 
+/// The live pairs of the two levels a rotation rebuilds.
+pub(super) fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
+    tdd.levels[info.v_idx.idx()].live_pairs() + tdd.levels[info.w_idx.idx()].live_pairs()
+}
+
 /// A diagram's output, certification, closed-levels state, and pending
 /// reduction obligations, saved before a rotation trial or pool move.
 pub(super) struct DiagramHeader {
@@ -313,25 +318,13 @@ pub(super) struct DiagramHeader {
 }
 
 impl DiagramHeader {
-    /// Take the header from `tdd`, moving its pending obligations out.
-    pub(super) fn take(tdd: &mut Tdd) -> Self {
-        let output = tdd.output;
+    /// The header of `tdd`, with `dirty` for its pending obligations.
+    pub(super) fn new(tdd: &Tdd, dirty: Dirty) -> Self {
         DiagramHeader {
-            output,
-            canonical: tdd.levels.is_canonical(output),
+            output: tdd.output,
+            canonical: tdd.levels.is_canonical(tdd.output),
             closed: tdd.levels.is_closed(),
-            dirty: std::mem::take(&mut tdd.dirty),
-        }
-    }
-
-    /// Snapshot the header of `tdd`, cloning its pending obligations.
-    pub(super) fn clone_from_tdd(tdd: &Tdd) -> Self {
-        let output = tdd.output;
-        DiagramHeader {
-            output,
-            canonical: tdd.levels.is_canonical(output),
-            closed: tdd.levels.is_closed(),
-            dirty: tdd.dirty.clone(),
+            dirty,
         }
     }
 
@@ -368,7 +361,8 @@ struct RotationTrial<'a> {
 impl<'a> RotationTrial<'a> {
     /// Take the state a rollback restores.
     fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
-        let header = Some(DiagramHeader::take(tdd));
+        let dirty = std::mem::take(&mut tdd.dirty);
+        let header = Some(DiagramHeader::new(tdd, dirty));
         RotationTrial {
             tdd,
             lim,

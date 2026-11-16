@@ -161,13 +161,6 @@ impl ProbeRule for ClusterRule {
     }
 }
 
-/// The pair count of the two levels a rotation rebuilds — what both the local
-/// cost cap and the rebuild bound are measured in.
-fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
-    tdd.levels[info.v_idx.idx()].live_pairs()
-        + tdd.levels[info.w_idx.idx()].live_pairs()
-}
-
 impl Engine {
     /// Rotate within `root` to bring already-marginal levels under a common
     /// parent, then sum out that parent when doing so reduces pair count.
