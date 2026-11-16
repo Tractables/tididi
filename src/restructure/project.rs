@@ -3,13 +3,12 @@
 //! The inverse of an embedding. Restricting the vtree to the kept variables
 //! ([`Vtree::project_to_vars`]) keeps every node with kept variables on both
 //! sides, splices out a node with kept variables on one side only, and drops
-//! a node with none. On a canonical diagram that does not depend on the
-//! dropped variables the levels follow the same pattern: a level with no kept
-//! variable holds the single true node, and a level with kept variables on
-//! one side pairs each node of that side with the true node once, so it is a
-//! bijection the splice composes away. The kept levels are copied with their
-//! references read through those bijections. A diagram that depends on a
-//! dropped variable is quantified and minimized first.
+//! a node with none. The diagram is first quantified over the dropped
+//! variables and minimized; its levels then follow the same pattern: a level
+//! with no kept variable holds the single true node, and a level with kept
+//! variables on one side pairs each node of that side with the true node
+//! once, so it is a bijection the splice composes away. The kept levels are
+//! copied with their references read through those bijections.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -36,12 +35,10 @@ impl Tdd {
     /// embedding the result back under the inverse renaming gives
     /// `∃ dropped. self`.
     ///
-    /// A diagram that does not depend on the dropped variables is copied in
-    /// `O(size)`, after a clone and minimization if it is not certified
-    /// canonical: the levels with kept variables on both sides are copied,
-    /// and the ones with kept variables on one side only are composed away.
-    /// One that depends on them is first quantified with
-    /// [`exists_vars`](Self::exists_vars) and minimized. Structural diagrams
+    /// The diagram is first quantified with [`exists_vars`](Self::exists_vars)
+    /// and minimized; then the levels with kept variables on both sides are
+    /// copied, and the ones with kept variables on one side only are
+    /// composed away. Structural diagrams
     /// only; any weights are dropped. Runs on this diagram's execution
     /// context; use [`Engine::project_to_vars`] inside a batch with resource
     /// limits.
@@ -242,11 +239,8 @@ impl Engine {
             return Ok(crate::build::constant_zero(self, into));
         }
         let f = self.canonical_copy(tdd)?;
-        if let Some(result) = splice(self, &f, into, plan)? {
-            return Ok(result);
-        }
-        // The diagram reads a dropped variable: quantify it first, on a copy
-        // the limits are charged for where `f` is the caller's.
+        // Quantify on a copy the limits are charged for where `f` is the
+        // caller's.
         let f = match f {
             Cow::Borrowed(f) => f.try_clone_on(self)?,
             Cow::Owned(f) => f,
