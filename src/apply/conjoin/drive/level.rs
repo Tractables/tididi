@@ -1149,11 +1149,10 @@ pub(super) fn build_level_dense(
             );
         }
 
-        // A level of the plain or streaming routes whose candidates
-        // outnumber what the vectors of its child rows cost reads its cells
-        // by g-pair vectors (`run_level_rows_words`,
-        // `run_level_rows_stream_words`); a streaming level needs a side
-        // that is not carried through.
+        // A level of the plain or streaming routes reads its cells by g-pair
+        // vectors (`run_level_rows_words`, `run_level_rows_stream_words`)
+        // where `words_pay` says so, by a sample and two cost models; a
+        // streaming level needs a side that is not carried through.
         let words = !pairs
             && match route {
                 Route::PlainDense => !single_pair && stream_state.is_none(),

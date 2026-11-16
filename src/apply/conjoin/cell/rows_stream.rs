@@ -499,9 +499,10 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 }
 
 /// [`run_level_rows_stream_count`] on a level whose cells are read by g-pair
-/// vectors ([`super::word_cells::words_pay_marginal`]): the same column, each
-/// cell's pairs folded in the order the row loop folds them, and the same
-/// work. A side carried through kills nothing.
+/// vectors ([`super::word_cells::words_pay_marginal`]): the same column and
+/// the same work; a count or weight cell's pairs folded in the order the row
+/// loop folds them, a float cell's summed in another order. A side carried
+/// through kills nothing.
 pub(crate) fn run_level_rows_stream_words(
     eng: &Engine,
     rows: RowLoop<'_>,
