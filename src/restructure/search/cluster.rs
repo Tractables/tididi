@@ -26,6 +26,16 @@ use super::probe::*;
 /// mark the pair tried.
 const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 
+/// The fewest pairs a clustering rotation must save, its closure's credit
+/// less the growth of its two levels. A kept rotation reshapes the vtree
+/// every later step of the compile conjoins over, and a gain of a few pairs
+/// does not pay for that: on one model-counting run, 23 rotations that each
+/// saved fewer than 100 pairs left a later step at 75M pairs where it held
+/// 29M without them, and the run took a third more instructions. The value
+/// is a policy choice: 256, 1,024 and 4,096 all remove that cost, and 4,096
+/// also declines rotations of 1,184 and 3,072 pairs that pay on another run.
+const CLUSTER_MIN_GAIN: i64 = 256;
+
 /// Collect candidate `(pivot, kind)` rotations in `subtree(root)`, bottom-up,
 /// that would cluster two marginal levels under one parent. Read-only — does not touch the vtree Arc, so the
 /// common "nothing to cluster" case costs no clone.
@@ -133,9 +143,8 @@ impl ProbeRule for ClusterRule {
 
     /// The pair growth of the two rebuilt levels — the default objective's
     /// measurement, unchanged — against the pairs `marginalize_closure` is
-    /// about to remove. The test `delta < credit` reads as "the v/w growth
-    /// must be repaid by the imminent closure", a purely two-level comparison,
-    /// where calling `tdd.pair_count()` would be O(total nodes) per rotation.
+    /// about to remove: the growth must be repaid by the imminent closure with
+    /// [`CLUSTER_MIN_GAIN`] pairs to spare.
     ///
     /// A rotation with nothing to close is not this pass's business even when
     /// it happens to shrink, so no closure means a credit that declines.
@@ -145,13 +154,17 @@ impl ProbeRule for ClusterRule {
             0 => i64::MIN / 2,
             savings => savings as i64,
         };
-        MinimizePairs.delta(probe) < credit
+        MinimizePairs.delta(probe) + CLUSTER_MIN_GAIN <= credit
     }
 }
 
 impl Engine {
     /// Rotate within `root` to bring already-marginal levels under a common
     /// parent, then sum out that parent when doing so reduces pair count.
+    ///
+    /// A rotation is kept only when the closure saves at least 256 pairs more
+    /// than the rotation adds to its two levels: the vtree a smaller gain
+    /// leaves has been measured to cost later steps more than it saved.
     ///
     /// Returns the number of accepted rotations. Each preserves the count.
     /// `bound_mult` limits a

@@ -34,13 +34,13 @@ fn short_attempt_storage_grows_without_losing_prior_entries() {
 /// Refusals after a committed rotation must keep its vtree with the rebuilt levels.
 #[test]
 fn allocation_refusals_preserve_cluster_counts() {
-    let (mut original, root) = deadline::one_candidate_tdd();
+    let (mut original, root) = deadline::worthwhile_candidate_tdd();
     original.minimize().unwrap();
     crate::test_helpers::assert_canonical(&original);
     let expected = original.model_count().unwrap();
     let mut refused = 0;
     let mut completed = false;
-    for cut in 0..128 {
+    for cut in 0..1024 {
         let eng = Engine::new();
         let mut tdd = original.clone();
         let mut tried = vec![0; tdd.vtree().num_nodes()];
@@ -59,4 +59,23 @@ fn allocation_refusals_preserve_cluster_counts() {
         }
     }
     assert!(refused > 0 && completed);
+}
+
+/// The small fixture's rotation would shrink the diagram by 2 pairs, under
+/// `CLUSTER_MIN_GAIN`: the pass tries it, declines it and leaves the diagram
+/// as it was.
+#[test]
+fn a_rotation_that_saves_less_than_the_minimum_gain_is_declined() {
+    let (mut tdd, root) = deadline::one_candidate_tdd();
+    tdd.minimize().unwrap();
+    crate::test_helpers::assert_canonical(&tdd);
+    let count = tdd.model_count().unwrap();
+    let pairs = tdd.pair_count();
+    let eng = Engine::new();
+    let mut tried = vec![0u8; tdd.vtree().num_nodes()];
+    assert_eq!(eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried), Ok(0));
+    assert_eq!(tried[root.idx()], 0b01, "the left rotation at the root was tried");
+    assert_eq!(tdd.pair_count(), pairs);
+    assert_eq!(tdd.model_count().unwrap(), count);
+    crate::test_helpers::assert_canonical(&tdd);
 }
