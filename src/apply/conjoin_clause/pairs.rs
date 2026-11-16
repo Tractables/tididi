@@ -7,7 +7,7 @@ use super::*;
 /// Inner loop for the both-relevant pair-accumulation step.
 ///
 /// Accumulates `c_t` pairs of types 1/2/3 directly onto `level.pairs` and
-/// `d_t` pairs into the tables' `dt_pairs`. The caller records
+/// `d_t` pairs into `work.dt_pairs`. The caller records
 /// `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the call,
 /// and emits the node afterwards.
 pub(super) fn build_both_rel_pairs<const DT: bool>(
@@ -15,7 +15,7 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
     inputs: &[ChildPair],
     ctx: SpineCtx,
     level: &mut TddLevel,
-    tables: &mut ClauseTables<'_>,
+    work: &mut ClauseWork,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let SpineCtx {
@@ -23,9 +23,9 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
         right_grid_base,
         ..
     } = ctx;
-    let cd_map: &[[u32; 2]] = tables.cd_map;
-    let clause_t3_buf = &mut *tables.t3_buf;
-    let clause_dt_pairs = &mut *tables.dt_pairs;
+    let cd_map: &[[u32; 2]] = &work.cd_map;
+    let clause_t3_buf = &mut work.t3_buf;
+    let clause_dt_pairs = &mut work.dt_pairs;
     let mut prev_left = u32::MAX;
     for p in inputs {
         if p.left.0 != prev_left {
@@ -75,7 +75,7 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
 /// Inner loop for the single-relevant pair-accumulation step.
 ///
 /// Accumulates `c_t` pairs directly onto `level.pairs` and `d_t` pairs into
-/// the tables' `dt_pairs`. The caller records `level.pairs.len()` and clears
+/// `work.dt_pairs`. The caller records `level.pairs.len()` and clears
 /// `dt_pairs` before the call, and emits the node afterwards.
 ///
 /// `ctx` says which child is the relevant one and where the children's
@@ -86,7 +86,7 @@ pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
     inputs: &[ChildPair],
     ctx: SpineCtx,
     level: &mut TddLevel,
-    tables: &mut ClauseTables<'_>,
+    work: &mut ClauseWork,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let SpineCtx {
@@ -94,8 +94,8 @@ pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
         right_grid_base,
         ..
     } = ctx;
-    let cd_map: &[[u32; 2]] = tables.cd_map;
-    let clause_dt_pairs = &mut *tables.dt_pairs;
+    let cd_map: &[[u32; 2]] = &work.cd_map;
+    let clause_dt_pairs = &mut work.dt_pairs;
     for p in inputs {
         let e = if LEFT {
             cd_map[left_grid_base + p.left.raw() as usize]

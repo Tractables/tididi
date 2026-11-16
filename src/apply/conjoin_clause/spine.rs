@@ -5,8 +5,8 @@ use super::*;
 /// Per-level marks over the vtree, with a rollback log so clearing them
 /// visits only the levels marked.
 ///
-/// The flags are all false whenever the buffer is parked in its pool: the
-/// log is replayed when the buffer goes back, on an error exit as much as on
+/// The flags are all false whenever the buffer is parked with its working set
+/// ([`ClauseWork`]): the log is replayed when the set goes back, on an error exit as much as on
 /// success, so a walk that stopped part-way leaves nothing behind for the
 /// next checkout.
 #[derive(Default)]
@@ -53,29 +53,27 @@ impl crate::execution::pool::Buffers for MarkBuffer {
     }
 }
 
-impl crate::execution::pool::PooledScratch for MarkBuffer {
-    fn prepare(&mut self) {
+impl MarkBuffer {
+    pub(super) fn debug_assert_clear(&self) {
         debug_assert!(
             self.set.is_empty() && self.flags.iter().all(|&b| !b),
             "clause-spine marks were not cleared"
         );
     }
 
-    /// Replay the log so the parked buffer is all false, then apply the
-    /// retention cap to both arrays.
-    fn retain(&mut self, lim: &crate::limits::Limits) -> usize {
-        use crate::execution::pool::Buffers;
+    /// Replay the log, so every flag is false again.
+    pub(super) fn unmark_all(&mut self) {
         for &t in &self.set {
             self.flags[t.idx()] = false;
         }
         self.set.clear();
-        self.release_oversized(lim)
     }
 }
 
 /// Build the clause spine: mark every ancestor (inclusive) of each clause
 /// leaf in `on_spine`, then collect the spine's internal levels bottom-up
-/// (post-order) into `spine_internal`.
+/// (post-order) into `spine_internal`. `spine_internal` and `dfs_stack` start
+/// empty.
 pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
@@ -101,8 +99,6 @@ pub(super) fn build_clause_spine(
 
     // The marked set is ancestor-closed, so it is a connected subtree
     // containing the root; the DFS descends only into marked children.
-    spine_internal.clear();
-    dfs_stack.clear();
     let root = vtree.root();
     if on_spine[root.idx()] && !vtree.node(root).is_leaf() {
         lim.try_push(dfs_stack, (root, false))?;

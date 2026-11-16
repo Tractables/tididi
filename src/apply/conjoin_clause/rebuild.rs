@@ -2,29 +2,6 @@
 
 use super::*;
 
-/// The clause's per-level tables and the two pair buffers, threaded through
-/// every spine level's rebuild.
-pub(super) struct ClauseTables<'a> {
-    /// Per accumulator node, the output index of its `c_t` and `d_t` node,
-    /// in one block per spine level.
-    pub(super) cd_map: &'a mut [[u32; 2]],
-    /// Where each spine level's block starts in `cd_map`.
-    pub(super) level_base: &'a [usize],
-    /// Whether a level's complement conjunction is needed.
-    pub(super) need_dt: &'a [bool],
-    /// Whether a level's subtree holds a clause variable.
-    pub(super) on_spine: &'a [bool],
-    /// The both-relevant type-3 pairs of the node being rebuilt, held back
-    /// until its left index changes so the pair list stays sorted.
-    pub(super) t3_buf: &'a mut Vec<ChildPair>,
-    /// The `d_t` pairs of the node being rebuilt.
-    pub(super) dt_pairs: &'a mut Vec<ChildPair>,
-    /// Disjunction only: the `cd_map` slot of the accumulator's output node
-    /// and the one extra pair naming the cube, appended to that node's `c_t`
-    /// pair list. `None` for a conjunction; see [`cube`](super::cube).
-    pub(super) output_cube_pair: Option<(usize, ChildPair)>,
-}
-
 /// The largest worst case, in pairs, a spine level's arena is sized for
 /// before its first node. A clause's walk rebuilds dozens of levels, most of
 /// a few pairs each; where a both-relevant level was sized at twice its
@@ -52,10 +29,10 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     ctx: SpineCtx,
     level: &mut TddLevel,
     slot: usize,
-    tables: &mut ClauseTables<'_>,
+    work: &mut ClauseWork,
 ) -> Result<usize, OperationError> {
     // The cube pair of a disjunction, if this is the node that carries it.
-    let cube_pair = tables
+    let cube_pair = work
         .output_cube_pair
         .and_then(|(s, p)| (s == slot).then_some(p));
     // Reserve this node's whole worst case before emitting any of it, so
@@ -67,16 +44,16 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     )?;
     let ct_start = level.pairs.stored_len();
     if DT {
-        tables.dt_pairs.clear();
+        work.dt_pairs.clear();
     }
 
     // The virtual c_t has three products when both children carry clause
     // variables, and one otherwise; each builder leaves its pairs sorted.
     if LEFT && RIGHT {
-        tables.t3_buf.clear();
-        build_both_rel_pairs::<DT>(eng, inputs, ctx, level, tables)?;
+        work.t3_buf.clear();
+        build_both_rel_pairs::<DT>(eng, inputs, ctx, level, work)?;
     } else {
-        build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, tables)?;
+        build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, work)?;
     }
     if let Some(pair) = cube_pair {
         // `c_t` emits only the (c,c), (c,d) and (d,c) cells, so the cube's
@@ -87,19 +64,19 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         pairs.push(pair);
         sort_pairs(&mut pairs[ct_start..]);
     }
-    let written = level.pairs.stored_len() - ct_start + if DT { tables.dt_pairs.len() } else { 0 };
+    let written = level.pairs.stored_len() - ct_start + if DT { work.dt_pairs.len() } else { 0 };
     let ct = emit_from(eng, level, ct_start)?;
     // The parent's both-relevant pass requires the c_t index below d_t. The
     // d_t pairs fit the reservation above: at most one per input pair, which
     // `pair_mult` counts.
     let dt = if DT {
         let dt_start = level.pairs.stored_len();
-        level.pairs.stored_mut().extend_from_slice(tables.dt_pairs);
+        level.pairs.stored_mut().extend_from_slice(&work.dt_pairs);
         emit_from(eng, level, dt_start)?
     } else {
         NO_PRODUCT
     };
-    tables.cd_map[slot] = [ct, dt];
+    work.cd_map[slot] = [ct, dt];
     Ok(written)
 }
 
@@ -110,20 +87,20 @@ pub(super) fn rebuild_spine_level(
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
-    tables: &mut ClauseTables<'_>,
+    work: &mut ClauseWork,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
     let left_idx = left.idx();
     let right_idx = right.idx();
-    let base = tables.level_base[t_idx];
-    let compute_dt = tables.need_dt[t_idx];
-    let left_rel = tables.on_spine[left_idx];
-    let right_rel = tables.on_spine[right_idx];
+    let base = work.level_base[t_idx];
+    let compute_dt = work.need_dt[t_idx];
+    let left_rel = work.on_spine[left_idx];
+    let right_rel = work.on_spine[right_idx];
     let both_rel = left_rel && right_rel;
-    let left_grid_base = tables.level_base[left_idx];
-    let right_grid_base = tables.level_base[right_idx];
+    let left_grid_base = work.level_base[left_idx];
+    let right_grid_base = work.level_base[right_idx];
 
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
@@ -185,22 +162,22 @@ pub(super) fn rebuild_spine_level(
     };
     match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
-            rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, work)?
         }
         (true, true, false) => {
-            rebuild_nodes::<true, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, false>(eng, &old, nodes, ctx, level, base, work)?
         }
         (true, false, true) => {
-            rebuild_nodes::<true, false, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, true>(eng, &old, nodes, ctx, level, base, work)?
         }
         (true, false, false) => {
-            rebuild_nodes::<true, false, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, false>(eng, &old, nodes, ctx, level, base, work)?
         }
         (false, true, true) => {
-            rebuild_nodes::<false, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, true>(eng, &old, nodes, ctx, level, base, work)?
         }
         (false, true, false) => {
-            rebuild_nodes::<false, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, false>(eng, &old, nodes, ctx, level, base, work)?
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
@@ -233,7 +210,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     ctx: SpineCtx,
     level: &mut TddLevel,
     base: usize,
-    tables: &mut ClauseTables<'_>,
+    work: &mut ClauseWork,
 ) -> Result<(), OperationError> {
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
@@ -252,15 +229,15 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             }
             (None, _) => old.described_read_next(&mut cursor, i, &mut buf),
         };
-        let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
+        let carries_cube = work.output_cube_pair.is_some_and(|(s, _)| s == base + i);
         if inputs.is_empty() && !carries_cube {
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
-            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            work.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
             continue;
         }
         let written =
-            conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
+            conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, work)?;
         gate.poll((inputs.len() + written) as u64)?;
     }
     gate.flush()
