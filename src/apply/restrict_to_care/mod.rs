@@ -37,7 +37,10 @@
 //!    every product on the path between the two roots is an `f` node beside a
 //!    `care` not rooted yet: their liveness is one pass up the path's levels
 //!    and their marks one pass down, on arrays by node, with nothing
-//!    discovered or hashed.
+//!    discovered or hashed. Where `f` is rooted below `care`, `f` has no pair
+//!    above its root, and off the path a product is a `care` node beside
+//!    `⊤`, live unless `ZERO`: one pass down the path over `care`'s nodes
+//!    finds the products at `f`'s root that the root reaches.
 //! 3. If the root product is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node
 //!    and pair reachable from `f`'s root is marked → `Unchanged`. Otherwise the
 //!    unmarked pairs are dropped in place (marginal levels untouched) and the
