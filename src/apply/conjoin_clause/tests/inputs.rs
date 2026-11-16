@@ -106,3 +106,17 @@ fn empty_clause_gives_a_canonical_false() {
     assert!(out.levels.is_canonical(out.output), "a constant is certified canonical");
     assert_canonical(&out);
 }
+
+/// The walk reads the output's `cd_map` block, which it plans only on the
+/// clause's spine, and the root is on every spine. Every diagram the public
+/// API builds has its output at the root (`TddBuilder::finish` refuses
+/// another, and every operation keeps it there); a fixture rooted lower, with
+/// a clause variable outside its subtree, would read a block never planned.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "the clause walk needs the output at the root level")]
+fn an_operand_rooted_below_the_root_is_caught() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let low = crate::test_helpers::reroot_to_child(&Tdd::clause(&vtree, [1, 2]).unwrap(), crate::diagram::ChildSide::Left);
+    let _ = Engine::new().and_clause(low, &[Literal::try_from(5).unwrap()]);
+}

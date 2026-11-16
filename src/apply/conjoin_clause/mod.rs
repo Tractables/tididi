@@ -264,6 +264,9 @@ fn rebuild_along_spine(
     let pool = &eng.scratch.clause;
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
+    // Only a test fixture puts the output below the root; the walk would read
+    // the output's `cd_map` block unplanned where the clause leaves its subtree.
+    debug_assert_eq!(f.output.vtree, vtree.root(), "the clause walk needs the output at the root level");
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
@@ -363,9 +366,8 @@ fn rebuild_along_spine(
         lim.level_done(out_nodes)?;
     }
 
-    // Output: conjunction of f's output with c_t at the root. `out_vtree` is
-    // an ancestor of every clause leaf, so it is on the spine and its `cd_map`
-    // block is filled.
+    // Output: conjunction of f's output with c_t at the root, which is on
+    // every spine, so its `cd_map` block is filled.
     let out_base = level_base[out_vtree.idx()];
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
     let out_local = if ct_out != NO_PRODUCT {
