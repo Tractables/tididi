@@ -351,8 +351,9 @@ pub(super) const OPEN_GRID_MAX_CELLS: usize = 1 << 16;
 /// slab over it ([`extend_slab`]) or filling what an earlier grid left.
 ///
 /// Out of line: inlined, the reset's code changed the code of the cell walk
-/// that follows it in each row loop, and with it one network's instructions
-/// by 2% with no change in its work.
+/// that follows it in the streaming and pair-row loops, and with it one
+/// network's instructions by 2% with no change in its work. The general
+/// row loop resets its rows inline, where the call a row cost more.
 #[inline(never)]
 pub(super) fn open_row(slab: &mut Vec<u32>, start: usize, end: usize) {
     if !extend_slab(slab, start, end) {

@@ -299,8 +299,8 @@ where
     }
     for i in 0..f_width {
         let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
-        if !whole_grid {
-            open_row(slab, row_base, row_base + g_width);
+        if !whole_grid && !extend_slab(slab, row_base, row_base + g_width) {
+            slab[row_base..row_base + g_width].fill(NO_PRODUCT);
         }
         let node_idx = &mut slab[..];
 
