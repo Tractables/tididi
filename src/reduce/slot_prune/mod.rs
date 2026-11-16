@@ -188,10 +188,7 @@ fn repeats(keys: &mut [(u64, i64)]) -> bool {
 
 /// A hash of a bounded key whose every bit depends on both words.
 fn mix((bits, word): (u64, i64)) -> u64 {
-    let mut h = bits ^ (word as u64).rotate_left(32).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    h ^ (h >> 31)
+    crate::reduce::contract::mix64(bits ^ (word as u64).rotate_left(32).wrapping_mul(0x9e37_79b9_7f4a_7c15))
 }
 
 #[cfg(test)]

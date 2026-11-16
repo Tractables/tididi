@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Limits, OperationError, Transient};
-use crate::restructure::relevel::rebuild_rotated_levels;
+use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, VtreeIdx};
@@ -280,8 +280,9 @@ pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
             return Ok(false);
         }
         let bound = rule.bound(trial.tdd, &info, default_bound);
-        let rebuilt =
-            rebuild_rotated_levels(eng.limits(), trial.tdd, &info, mv.kind, scratch, bound)?;
+        let marginal = trial.tdd.has_marginal_level();
+        let step = RotationStep { info: &info, dir: mv.kind, crossed: false, max_pairs: bound };
+        let rebuilt = rebuild_levels(eng.limits(), trial.tdd, step, marginal, scratch)?;
         let Some(old) = rebuilt else { return Ok(false) };
         trial.record(&info, old);
     }

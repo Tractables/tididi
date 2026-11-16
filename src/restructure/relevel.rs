@@ -201,8 +201,25 @@ pub(crate) struct RotationStep<'a> {
     pub(crate) max_pairs: usize,
 }
 
-/// Rebuild the two levels of a rotation in `dir` and return the levels the
-/// rotation replaced, or `None` if the probe was abandoned.
+/// `$body` with `$p` a [`Packed`] over the narrow triples where `$layout`
+/// fits 64 bits, else over the wide ones.
+macro_rules! with_packed {
+    ($layout:expr, $narrow:expr, $wide:expr, $groups:expr, $dir:expr, $crossed:expr, $marginal:expr, |$p:ident| $body:expr) => {{
+        let layout: Layout = $layout;
+        if layout.bits() <= 64 {
+            let mut $p = Packed { layout, triples: $narrow, groups: $groups, dir: $dir, crossed: $crossed, marginal_ctx: $marginal };
+            $body
+        } else {
+            let mut $p = Packed { layout, triples: $wide, groups: $groups, dir: $dir, crossed: $crossed, marginal_ctx: $marginal };
+            $body
+        }
+    }};
+}
+
+/// Rebuild the two levels of rotation `step` and return the levels the
+/// rotation replaced, or `None` if the probe was abandoned. `marginal` is
+/// whether `tdd` has a marginal level: a caller that rebuilds many diagrams
+/// knows that once, and asking again reads every level.
 ///
 /// Cells are grouped by sorting the inner pairs and scanning the runs, which
 /// keeps the probe free of per-pair allocations.
@@ -214,7 +231,7 @@ pub(crate) struct RotationStep<'a> {
 /// exceed `max_pairs`: when the triples reach it, or when the new inner
 /// level's nodes plus pairs do.
 ///
-/// `dir` says whether the rotation promoted `w` from v's right child (a left
+/// `step.dir` says whether the rotation promoted `w` from v's right child (a left
 /// rotation) or its left child (a right rotation), which fixes the geometry
 /// of the triple expansion.
 ///
@@ -225,28 +242,6 @@ pub(crate) struct RotationStep<'a> {
 /// expansion grows, the pair table included, is charged through the engine's
 /// limits, so a rotation too wide for the host comes back as an answer rather
 /// than an abort.
-pub(crate) fn rebuild_rotated_levels(
-    lim: &Limits,
-    tdd: &mut Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    scratch: &mut RestructureScratch,
-    max_pairs: usize,
-) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
-    let marginal = tdd.has_marginal_level();
-    let step = RotationStep {
-        info,
-        dir,
-        crossed: false,
-        max_pairs,
-    };
-    rebuild_levels(lim, tdd, step, marginal, scratch)
-}
-
-/// [`rebuild_rotated_levels`], given whether `tdd` has a marginal level
-/// (`marginal`). A caller that rebuilds many diagrams knows that once:
-/// each rebuild forgets what the diagram knows of its levels, and asking
-/// again reads every level.
 ///
 /// Where `step.crossed`, the rotation's promoted node had its two children
 /// swapped first ([`swap_children`](crate::vtree::rotate::swap_children)):
@@ -351,11 +346,11 @@ pub(crate) fn prepare_levels(
     } = step;
     debug_assert_eq!(marginal, tdd.has_marginal_level());
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
-    // The group table indexes the triples with `u32` offsets;
-    // `collect_triples` gives up once the count reaches `max_pairs`.
+    // The group table indexes the triples with `u32` offsets. Bail check 1:
+    // a rebuild of `max_pairs` triples or more is refused before any is
+    // collected.
     let max_pairs = max_pairs.min(u32::MAX as usize);
     let (bounds, triples) = field_bounds(old_v, old_w, dir, crossed);
-    // `collect_triples` gives up once it has pushed `max_pairs` triples.
     if triples >= max_pairs.max(1) {
         prepared.clear();
         return Ok(None);
@@ -369,29 +364,9 @@ pub(crate) fn prepare_levels(
         nodes,
     } = prepared;
     let table = &mut scratch.bucket.table;
-    let counted = if fitted.bits() <= 64 {
-        *layout = fitted;
-        let mut packed = Packed {
-            layout: fitted,
-            triples: narrow,
-            groups,
-            dir,
-            crossed,
-            marginal_ctx: marginal,
-        };
-        packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
-    } else {
-        *layout = Layout::WIDE;
-        let mut packed = Packed {
-            layout: Layout::WIDE,
-            triples: wide,
-            groups,
-            dir,
-            crossed,
-            marginal_ctx: marginal,
-        };
-        packed.prepare(lim, old_v, old_w, triples, table, max_pairs)
-    };
+    *layout = if fitted.bits() <= 64 { fitted } else { Layout::WIDE };
+    let counted = with_packed!(*layout, narrow, wide, groups, dir, crossed, marginal, |packed| packed
+        .prepare(lim, old_v, old_w, triples, table, max_pairs));
     match counted {
         Ok(Some((inner_nodes, pairs))) => {
             *nodes = inner_nodes;
@@ -429,9 +404,7 @@ impl<W: Word> Packed<'_, W> {
     ) -> Result<Option<(usize, usize)>, OperationError> {
         self.triples.clear();
         lim.reserve_exact(self.triples, count)?;
-        if !self.group_triples(lim, old_v, old_w, max_pairs)? {
-            return Ok(None);
-        }
+        self.group_triples(lim, old_v, old_w)?;
         // One group per distinct inner pair, so this is the new inner level's
         // pair count.
         let inner_pairs = self.groups.len();
@@ -548,13 +521,10 @@ fn next_stamp(stamp: &mut u32, marks: &mut [Mark]) -> u32 {
     *stamp
 }
 
-/// A 64-bit mix of `x` (the `splitmix64` finalizer).
+/// A 64-bit mix of `x` (`splitmix64`: the golden-ratio step, then the finalizer).
 #[inline(always)]
 fn mix(x: u64) -> u64 {
-    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    crate::reduce::contract::mix64(x.wrapping_add(0x9E37_79B9_7F4A_7C15))
 }
 
 /// The pairs the two levels of a rotation `step` would hold, scored
@@ -752,7 +722,7 @@ fn file_outer_pairs_by_x(
         s.x_ends[x] += s.x_ends[x - 1];
     }
     let v_pairs = s.x_ends.last().map_or(0, |&n| n as usize);
-    // `collect_triples` gives up once it has pushed `max_pairs` triples, one
+    // A rebuild gives up where its triples reach `max_pairs`, one
     // per pair of an old inner node an old outer pair reaches: at most the
     // most pairs one node holds for each, and counted only where that could
     // reach the bound.
@@ -970,27 +940,8 @@ pub(crate) fn finish_levels(
         groups,
         nodes,
     } = prepared;
-    let built = if layout.bits() <= 64 {
-        let mut packed = Packed {
-            layout: *layout,
-            triples: narrow,
-            groups,
-            dir,
-            crossed: false,
-            marginal_ctx: marginal,
-        };
-        packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
-    } else {
-        let mut packed = Packed {
-            layout: *layout,
-            triples: wide,
-            groups,
-            dir,
-            crossed: false,
-            marginal_ctx: marginal,
-        };
-        packed.finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch)
-    };
+    let built = with_packed!(*layout, narrow, wide, groups, dir, false, marginal, |packed| packed
+        .finish(lim, &tdd.levels[info.v_idx.idx()], *nodes, scratch));
     let (outer, inner) = built?;
     Ok(tdd.replace_level_pair((info.v_idx, outer), (info.w_idx, inner)))
 }
@@ -1029,24 +980,14 @@ impl<W: Word> Packed<'_, W> {
 
     /// Every old v-pair expanded against the w-level into packed
     /// triples, sorted, and grouped by their inner pair into `self.groups`.
-    /// Returns `false`, `self.triples` left empty, where the triple count reaches `max_pairs`.
     ///
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] if the triples, the sort's buffers or the
     /// group table are refused.
-    fn group_triples(
-        &mut self,
-        lim: &Limits,
-        old_v: &TddLevel,
-        old_w: &TddLevel,
-        max_pairs: usize,
-    ) -> Result<bool, OperationError> {
+    fn group_triples(&mut self, lim: &Limits, old_v: &TddLevel, old_w: &TddLevel) -> Result<(), OperationError> {
         self.triples.clear();
-        if !self.collect_triples(lim, old_v, old_w, max_pairs)? {
-            self.triples.clear();
-            return Ok(false);
-        }
+        self.collect_triples(lim, old_v, old_w)?;
 
         // Sort the packed triples. After sorting, cells for each inner
         // pair are contiguous and sorted — no per-group sort needed.
@@ -1076,8 +1017,7 @@ impl<W: Word> Packed<'_, W> {
             &self.layout,
             self.groups,
             self.marginal_ctx,
-        )?;
-        Ok(true)
+        )
     }
 }
 
@@ -1127,9 +1067,6 @@ fn field_bounds(
 
 impl<W: Word> Packed<'_, W> {
     /// Expand every old v-pair against the w-level into packed triples.
-    /// Returns `false` if the triple count reaches `max_pairs`: the
-    /// distinct inner pairs are never more numerous than the triples, so a count
-    /// of them could not bail earlier.
     ///
     /// # Errors
     ///
@@ -1139,8 +1076,7 @@ impl<W: Word> Packed<'_, W> {
         lim: &Limits,
         old_v_level: &TddLevel,
         old_w_level: &TddLevel,
-        max_pairs: usize,
-    ) -> Result<bool, OperationError> {
+    ) -> Result<(), OperationError> {
         for i in 0..old_v_level.nodes().len() {
             let src = i as u32;
             for vp in old_v_level.pairs_iter_of_idx(i) {
@@ -1165,15 +1101,10 @@ impl<W: Word> Packed<'_, W> {
                         RotationKind::Right => (ChildPair::new(w_right, v_axis), w_left),
                     };
                     lim.try_push(self.triples, W::pack(&self.layout, inner, src, axis))?;
-                    // Checked per triple: one `vp` whose `w_local` fans out widely
-                    // can push `triples` far past `max_pairs` within one `vp`.
-                    if self.triples.len() >= max_pairs {
-                        return Ok(false);
-                    }
                 }
             }
         }
-        Ok(true)
+        Ok(())
     }
 }
 

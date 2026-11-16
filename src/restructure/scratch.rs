@@ -7,10 +7,10 @@ use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use crate::diagram::ChildPair;
 use super::relevel::{Prepared, ScoreScratch};
 
-/// Reusable scratch for `rebuild_rotated_levels`, the score's tables, the pool
+/// Reusable scratch for `rebuild_levels`, the score's tables, the pool
 /// probe's tables and `restructure_to`, held across probes so the allocator
 /// churn is paid once per search rather than once per probe. Each field is `clear()`-ed before use in
-/// `rebuild_rotated_levels`, preserving the underlying capacity; a field is
+/// `rebuild_levels`, preserving the underlying capacity; a field is
 /// then released at its last read within the call rather than held across the
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`). Every field grows
 /// through the engine's limits, so its growth is charged to the operation's
@@ -25,7 +25,7 @@ pub(crate) struct RestructureScratch {
     pub(super) axis_ends: Vec<u32>,
     pub(super) bucket: BucketScratch,
     // The rebuild's triples and their groups (see `Layout`). The sort in
-    // `rebuild_rotated_levels` is the dominant cost of a probe; sorting the
+    // `rebuild_levels` is the dominant cost of a probe; sorting the
     // packed words by a single integer key replaces a lexicographic compare
     // over the four fields.
     pub(super) prepared: Prepared,

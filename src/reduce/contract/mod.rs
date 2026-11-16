@@ -8,6 +8,7 @@
 pub(crate) mod scratch;
 mod bits;
 mod fingerprint;
+pub(crate) use fingerprint::mix64;
 mod sweep;
 mod merge;
 pub(crate) mod contract_leaf; // twin contraction at leaf-adjacent levels

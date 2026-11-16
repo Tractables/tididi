@@ -23,7 +23,7 @@ use crate::apply::apply_and;
 use crate::build::constant_one;
 use crate::diagram::{Arithmetic, RationalWeights, Tdd, WeightStore};
 use crate::marginal::marginalize_closure;
-use crate::restructure::relevel::rebuild_rotated_levels;
+use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::{
     CnfShape, Lcg, assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight,
@@ -60,29 +60,17 @@ fn build_by_rotation_round_trip(
     let left = rotate_left(&mut vt, root)?;
     acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::default();
-    rebuild_rotated_levels(
-        eng.limits(),
-        &mut acc,
-        &left,
-        RotationKind::Left,
-        &mut scratch,
-        usize::MAX,
-    )
-    .unwrap()?;
+    let marginal = acc.has_marginal_level();
+    let step = RotationStep { info: &left, dir: RotationKind::Left, crossed: false, max_pairs: usize::MAX };
+    rebuild_levels(eng.limits(), &mut acc, step, marginal, &mut scratch).unwrap()?;
     acc.minimize().unwrap();
 
     let right =
         rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.vtree = Arc::new(vt);
-    rebuild_rotated_levels(
-        eng.limits(),
-        &mut acc,
-        &right,
-        RotationKind::Right,
-        &mut scratch,
-        usize::MAX,
-    )
-    .unwrap()?;
+    let marginal = acc.has_marginal_level();
+    let step = RotationStep { info: &right, dir: RotationKind::Right, crossed: false, max_pairs: usize::MAX };
+    rebuild_levels(eng.limits(), &mut acc, step, marginal, &mut scratch).unwrap()?;
     acc.minimize().unwrap();
     assert!(
         acc.vtree.same_tree(vtree),

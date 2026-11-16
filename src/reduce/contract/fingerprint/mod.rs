@@ -57,7 +57,8 @@ fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (u32, u32) {
 /// whether a golden-ratio increment is added first) — that prelude is what
 /// makes each rule's fingerprint distribution distinct, so do not fold one
 /// caller's prelude in here.
-pub(super) fn mix64(mut x: u64) -> u64 {
+#[inline(always)]
+pub(crate) fn mix64(mut x: u64) -> u64 {
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
     x ^ (x >> 31)

@@ -3,7 +3,20 @@ use crate::Engine;
 use crate::vtree::{RotationKind, Vtree};
 use crate::diagram::TddLevel;
 use crate::test_helpers::{assert_canonical, compile_clauses, rotate_left, rotate_right};
-use crate::restructure::relevel::rebuild_rotated_levels;
+
+/// `rebuild_levels` of an uncrossed rotation.
+fn rebuild_rotated_levels(
+    lim: &crate::limits::Limits,
+    tdd: &mut Tdd,
+    info: &crate::vtree::rotate::RotationInfo,
+    dir: RotationKind,
+    scratch: &mut RestructureScratch,
+    max_pairs: usize,
+) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
+    let marginal = tdd.has_marginal_level();
+    let step = crate::restructure::relevel::RotationStep { info, dir, crossed: false, max_pairs };
+    crate::restructure::relevel::rebuild_levels(lim, tdd, step, marginal, scratch)
+}
 
 /// The size-objective descent of `Engine::rotation_search` under
 /// [`MinimizePairs`](crate::restructure::search::local::MinimizePairs).
