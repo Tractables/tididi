@@ -23,7 +23,7 @@ use crate::diagram::{
 };
 use crate::execution::pool::{Buffers, Drain, Pool, PooledScratch, Pools, Scratch};
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
+use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
 /// A validated placement of a source vtree into a destination vtree.
 ///
@@ -569,10 +569,9 @@ pub(crate) struct Plan {
     /// `mirror`.
     pub(crate) mirrored: Vec<bool>,
     /// The build's own scratch, held to go back to the engine with the rest:
-    /// a leaf under each source node, read where `mirror` is set, and the
-    /// match's stack.
-    some_leaf: Vec<VtreeIdx>,
-    stack: Vec<(VtreeIdx, VtreeIdx)>,
+    /// per destination node, the source node whose leaves are the renamed
+    /// variables under it.
+    under: Vec<Option<VtreeIdx>>,
 }
 
 /// The buffers of a [`Plan`], parked in the engine between placements. A
@@ -586,8 +585,7 @@ pub(crate) struct PlanBuffers {
     pass_throughs: Vec<VtreeIdx>,
     embedding: Vec<VtreeIdx>,
     mirrored: Vec<bool>,
-    some_leaf: Vec<VtreeIdx>,
-    stack: Vec<(VtreeIdx, VtreeIdx)>,
+    under: Vec<Option<VtreeIdx>>,
 }
 
 impl Buffers for PlanBuffers {
@@ -597,8 +595,7 @@ impl Buffers for PlanBuffers {
         visit(&mut self.pass_throughs);
         visit(&mut self.embedding);
         visit(&mut self.mirrored);
-        visit(&mut self.some_leaf);
-        visit(&mut self.stack);
+        visit(&mut self.under);
     }
 }
 
@@ -609,8 +606,7 @@ impl PooledScratch for PlanBuffers {
         self.pass_throughs.clear();
         self.embedding.clear();
         self.mirrored.clear();
-        self.some_leaf.clear();
-        self.stack.clear();
+        self.under.clear();
     }
 }
 
@@ -652,17 +648,20 @@ impl Pools for PlanPool {
 impl Plan {
     /// Check the renaming against both trees and record the correspondence.
     ///
-    /// Matches the two trees top-down: a destination node with renamed
-    /// variables on one side only is a pass-through and the walk descends
-    /// into the other side without advancing the source, which is exactly the
-    /// node [`Vtree::project_to_vars`] splices out. Every other node must
-    /// correspond to the current source node. `O(nodes of into)`; up to
-    /// mirrors, each source node's orientation is read off where the image of
-    /// one of its left child's leaves lies, `O(depth of into)` more per node.
+    /// Matches the two trees in one bottom-up pass over `into`, carrying to
+    /// each node the source node whose leaves are the renamed variables under
+    /// it. A node with renamed variables on one side only is a pass-through
+    /// carrying that side's source node, which is exactly the node
+    /// [`Vtree::project_to_vars`] splices out. A node with renamed variables
+    /// on both sides is the image of the parent of the two source nodes its
+    /// children carry, which must be siblings, and is mirrored when the left
+    /// child carries the right sibling, which an exact match refuses.
+    /// `O(nodes of into)`.
     ///
     /// The work clock is charged one unit for each source leaf, one for each
-    /// internal node of `into`, and one for each node the match visits, the
-    /// one it fails at included.
+    /// internal node of `into`, and one for each internal node of `into` with
+    /// a renamed variable under it, in bottom-up order up to the one the
+    /// match fails at, that one included.
     ///
     /// The buffers come from the engine's [`PlanPool`], and a refused
     /// build parks them back there.
@@ -679,8 +678,7 @@ impl Plan {
             pass_throughs,
             embedding,
             mirrored,
-            some_leaf,
-            stack,
+            under,
         } = eng.scratch.plans.take(eng);
         let mut plan = Plan {
             free,
@@ -689,8 +687,7 @@ impl Plan {
             embedding: Embedding { levels: embedding },
             mirror,
             mirrored,
-            some_leaf,
-            stack,
+            under,
         };
         match plan.fill(eng.limits(), source, into, map) {
             Ok(()) => Ok(plan),
@@ -710,8 +707,7 @@ impl Plan {
             embedding: Embedding { levels: embedding },
             mirror: _,
             mirrored,
-            some_leaf,
-            stack,
+            under,
         } = self;
         eng.scratch.plans.put(
             eng,
@@ -721,8 +717,7 @@ impl Plan {
                 pass_throughs,
                 embedding,
                 mirrored,
-                some_leaf,
-                stack,
+                under,
             },
         );
     }
@@ -747,11 +742,20 @@ impl Plan {
     ) -> Result<(), EmbedError> {
         let Plan {
             free,
+            covered_by,
+            pass_throughs,
             embedding: Embedding { levels: embedding },
-            ..
+            mirror,
+            mirrored,
+            under,
         } = self;
         lim.try_resize(free, into.num_nodes(), true)?;
         lim.try_resize(embedding, source.num_nodes(), into.root())?;
+        lim.try_resize(covered_by, into.num_nodes(), None)?;
+        lim.try_resize(under, into.num_nodes(), None)?;
+        if *mirror {
+            lim.try_resize(mirrored, source.num_nodes(), false)?;
+        }
         let mut gate = lim.gate();
         for (leaf, var) in source.leaf_bottomup() {
             gate.poll(1)?;
@@ -765,41 +769,45 @@ impl Plan {
             }
             free[target.idx()] = false;
             embedding[leaf.idx()] = target;
-            // The image's ancestors have a renamed variable under them, up to
-            // the one where an earlier image's path joins.
-            let mut node = target;
-            while let Some(parent) = into.node(node).parent()
-                && free[parent.idx()]
-            {
-                free[parent.idx()] = false;
-                node = parent;
-            }
+            covered_by[target.idx()] = Some(leaf);
+            under[target.idx()] = Some(leaf);
         }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
-        // A leaf under each source node, and whether each source node's
-        // image has its children the other way round.
-        if self.mirror {
-            let Plan {
-                some_leaf,
-                mirrored,
-                ..
-            } = self;
-            lim.try_resize(some_leaf, source.num_nodes(), source.root())?;
-            lim.try_resize(mirrored, source.num_nodes(), false)?;
-            for s in source.bottomup() {
-                some_leaf[s.idx()] = match source.node(s).is_leaf() {
-                    true => s,
-                    false => some_leaf[source.children(s).0.idx()],
-                };
-            }
+        let mut visited = source.num_leaves() as u64;
+        let mut refused = None;
+        for &t in into.internal_bottomup_slice() {
+            let (left, right) = into.children(t);
+            let carried = match (under[left.idx()], under[right.idx()]) {
+                (None, None) => continue,
+                (Some(s), None) | (None, Some(s)) => {
+                    visited += 1;
+                    lim.try_push(pass_throughs, t)?;
+                    s
+                }
+                (Some(a), Some(b)) => {
+                    visited += 1;
+                    let p = source.node(a).parent().expect("a source node beside another is not the root");
+                    let swapped = source.children(p).1 == a;
+                    if source.node(b).parent() != Some(p) || (swapped && !*mirror) {
+                        refused = Some(p);
+                        break;
+                    }
+                    if swapped {
+                        mirrored[p.idx()] = true;
+                    }
+                    embedding[p.idx()] = t;
+                    covered_by[t.idx()] = Some(p);
+                    p
+                }
+            };
+            free[t.idx()] = false;
+            under[t.idx()] = Some(carried);
         }
-
-        lim.try_resize(&mut self.covered_by, into.num_nodes(), None)?;
-        let mut visited = 0;
-        let matched = self.match_down(lim, source, into, &mut visited);
         gate.poll_each(visited)?;
-        matched?;
+        if let Some(s) = refused {
+            return Err(EmbedError::NotIsomorphic { source: s });
+        }
         debug_assert_eq!(
             self.covered_by
                 .iter()
@@ -809,80 +817,6 @@ impl Plan {
             "a completed match gives every source level an image",
         );
         gate.flush()?;
-        Ok(())
-    }
-
-    /// The top-down match of [`build`](Self::build), once the free nodes
-    /// are marked, counting in `visited` the nodes it visits.
-    fn match_down(
-        &mut self,
-        lim: &Limits,
-        source: &Vtree,
-        into: &Vtree,
-        visited: &mut u64,
-    ) -> Result<(), EmbedError> {
-        let Plan {
-            free,
-            covered_by,
-            pass_throughs,
-            embedding: Embedding { levels: embedding },
-            mirror,
-            mirrored,
-            some_leaf,
-            stack,
-        } = self;
-        // An image pushes one entry more than it pops and a leaf one fewer,
-        // so the stack holds one entry at most for each source leaf.
-        lim.reserve_exact(stack, source.num_nodes() / 2 + 1)?;
-        lim.try_push(stack, (into.root(), source.root()))?;
-        while let Some((mut d, s)) = stack.pop() {
-            // Down the chain of pass-throughs at `d` to the node `s` maps
-            // to, each visited at `s`.
-            let image = loop {
-                *visited += 1;
-                match into.node(d) {
-                    &VtreeNode::Internal { left, right, .. }
-                        if free[left.idx()] || free[right.idx()] =>
-                    {
-                        lim.try_push(pass_throughs, d)?;
-                        d = if free[left.idx()] { right } else { left };
-                    }
-                    node => break node,
-                }
-            };
-            match (image, source.node(s)) {
-                // A source leaf meets the destination leaf carrying its image.
-                (VtreeNode::Leaf { .. }, VtreeNode::Leaf { .. }) if embedding[s.idx()] == d => {}
-                (
-                    &VtreeNode::Internal { left, right, .. },
-                    &VtreeNode::Internal {
-                        left: source_left,
-                        right: source_right,
-                        ..
-                    },
-                ) => {
-                    let (mut source_left, mut source_right) = (source_left, source_right);
-                    if *mirror
-                        && lies_under(
-                            into,
-                            embedding[some_leaf[source_left.idx()].idx()],
-                            right,
-                            d,
-                        )
-                    {
-                        mirrored[s.idx()] = true;
-                        std::mem::swap(&mut source_left, &mut source_right);
-                    }
-                    lim.try_push(stack, (left, source_left))?;
-                    lim.try_push(stack, (right, source_right))?;
-                }
-                _ => return Err(EmbedError::NotIsomorphic { source: s }),
-            }
-            embedding[s.idx()] = d;
-            covered_by[d.idx()] = Some(s);
-        }
-        // Visited top-down, a node comes before the nodes under it.
-        pass_throughs.reverse();
         Ok(())
     }
 }
@@ -961,23 +895,6 @@ pub(crate) fn place<'a>(
     match placed {
         Ok(result) => Ok((result, plan)),
         Err((e, tdd)) => Err((e.into(), tdd)),
-    }
-}
-
-/// Whether the ancestor path from `node` meets `target` before `stop`, for a
-/// `node` below `stop`.
-fn lies_under(into: &Vtree, mut node: VtreeIdx, target: VtreeIdx, stop: VtreeIdx) -> bool {
-    loop {
-        if node == target {
-            return true;
-        }
-        if node == stop {
-            return false;
-        }
-        match into.node(node).parent() {
-            Some(parent) => node = parent,
-            None => return false,
-        }
     }
 }
 

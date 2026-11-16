@@ -48,7 +48,7 @@ fn a_renaming_that_reverses_the_leaf_order_is_refused() {
     let Err(EmbedError::NotIsomorphic { source }) = f.embed(&big, reversed) else {
         panic!("a reversed renaming has no level-by-level copy");
     };
-    assert!(small.node(source).is_leaf());
+    assert_eq!(source, small.root());
 }
 
 #[test]
