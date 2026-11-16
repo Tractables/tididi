@@ -158,11 +158,11 @@ fn the_rebuild_recovers_after_each_refused_reservation() {
     assert!(reached_success, "the sweep must cover every reservation");
 }
 
-/// The node filter's bottom-up sweep and this depth-first rebuild keep the
-/// same function once both are minimized, on structural operands and on
+/// The node filter and the restriction's rebuild from marks keep the same
+/// function once both are minimized, on structural operands and on
 /// operands with a summed-out subtree.
 #[test]
-fn the_node_filter_agrees_with_the_depth_first_rebuild() {
+fn the_node_filter_agrees_with_the_rebuild_from_marks() {
     use crate::apply::FilterOutcome;
     use crate::test_helpers::{
         CnfShape, Lcg, assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes,
@@ -227,14 +227,14 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                         }
                     }
                 }
-                let mut dfs = marks.rebuild(&eng, f.clone()).unwrap();
-                eng.minimize(&mut dfs).unwrap();
+                let mut rebuilt = marks.rebuild(&eng, f.clone()).unwrap();
+                eng.minimize(&mut rebuilt).unwrap();
                 if sweep.is_zero() {
-                    assert!(dfs.is_zero());
+                    assert!(rebuilt.is_zero());
                     continue;
                 }
-                assert_same_shape(&sweep, &dfs, "the sweep against the depth-first rebuild");
-                assert_eq!(sweep.model_count().unwrap(), dfs.model_count().unwrap());
+                assert_same_shape(&sweep, &rebuilt, "the node filter against the rebuild from marks");
+                assert_eq!(sweep.model_count().unwrap(), rebuilt.model_count().unwrap());
                 let counts = |g: &Tdd| -> Vec<Option<Vec<u128>>> {
                     g.levels
                         .iter()
@@ -247,7 +247,7 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                         })
                         .collect()
                 };
-                assert_eq!(counts(&sweep), counts(&dfs));
+                assert_eq!(counts(&sweep), counts(&rebuilt));
                 compared += 1;
             }
         }

@@ -18,9 +18,12 @@
 //! level whose join would cost too much, or that has no such child, is decided
 //! pair by pair when the walk asks. The walk then enumerates a product's live
 //! pairs from the listing, or for an undecided level through the same grouping. Above that root one
-//! operand is `⊤`, so a product pairs one node with `⊤`: those are discovered,
-//! decided bottom-up and marked top-down directly, except an `f` node beside
-//! a `care` that is `⊤` over its whole subtree, which is kept whole unwalked.
+//! operand is `⊤`, so a product pairs one node with `⊤`. Where `f` is the
+//! upper operand they are decided by one pass up the path to `care`'s root
+//! and marked by one pass down it ([`Walk::path_top`]); otherwise they are
+//! discovered, decided bottom-up and marked top-down ([`Walk::top`]). Either
+//! way an `f` node beside a `care` that is `⊤` over its whole subtree is kept
+//! whole unwalked.
 //! A listed product's position is found in its `f` node's row of the
 //! listing, never hashed, and marks it visited by a bit.
 //! Where each `f` node has at most one live product, the listings are the
@@ -127,7 +130,9 @@ const DEPTH: u32 = 64;
 /// The live products of one level below the lower root, where both operands
 /// store nodes.
 enum Products {
-    /// A leaf, a level marginal in either operand, or one above the lower root.
+    /// A leaf, a level marginal in either operand, one above the lower root,
+    /// one where `care` reads as `⊤` ([`Walk::reads_top`]), or a listed
+    /// child while a join holds its listing ([`Walk::take`]).
     Absent,
     /// Every live pair of nodes, found by the bottom-up join.
     Listed(Listed),

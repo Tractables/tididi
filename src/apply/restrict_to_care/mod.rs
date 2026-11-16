@@ -114,7 +114,8 @@ struct Marking {
     alive: Vec<Vec<bool>>,
     /// `[v.idx()][f-local]` — an f-node a live product pairs with a `care`
     /// that is `⊤` over the level's variables: the node and everything below
-    /// it survive whole, so the walk never enters it. Empty when none is.
+    /// it survive whole, so the walk never enters it. Empty only in
+    /// [`Marking::trivial`].
     keep: Vec<Vec<bool>>,
     /// Pair liveness, including nodes wider than a machine word.
     pair_alive: pairs::PairMarks,
@@ -127,7 +128,9 @@ impl crate::Engine {
     ///
     /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].
     /// The care diagram is neither copied nor reduced. `max_pair_visits`
-    /// bounds product-pair probes across discovery and liveness evaluation.
+    /// bounds the product-pair probes of the bottom-up joins, of the
+    /// decisions made when asked, of the walk above the lower operand root
+    /// and of the walk down; marks read off the joins' listings take none.
     /// Exhausting it returns [`RestrictionOutcome::Unchanged`] with the
     /// original operand intact. Zero skips the optional restriction.
     ///
@@ -149,6 +152,9 @@ impl crate::Engine {
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
+    /// Reduces `care` in full first, which [`Self::restrict_to_care_bounded`]
+    /// does not.
+    ///
     /// # Errors
     ///
     /// Returns the linked operation's errors; cancellation, allocation refusal and
@@ -160,8 +166,9 @@ impl crate::Engine {
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
-        // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
-        // does not depend on it; the reduced one gives the walk fewer pairs.
+        // Sound for any representation of `care` whose nodes each have a
+        // model (invariant 2), which the walk assumes of both operands; the
+        // reduced one gives the walk fewer pairs.
         self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
         restrict_prepared(self, f, &care, u64::MAX)
     }
