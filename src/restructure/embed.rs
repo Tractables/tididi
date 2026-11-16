@@ -359,7 +359,8 @@ impl Engine {
     /// diagram [`Engine::embed`] returns, up to the numbering of its nodes and
     /// a node for a literal of such a variable that nothing reads, which
     /// [`Engine::minimize`] removes. The levels move into storage the engine
-    /// supplies without charging its limits, as [`Tdd::graft_over`] does.
+    /// supplies and are not charged again; the level array and every level
+    /// the embedding builds are charged to the engine's limits.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -462,7 +463,7 @@ impl Engine {
     /// it to. The result sums over the same assignments as the source and
     /// over every free variable of `into`, so a variable `into` adds below
     /// the image of a marginal level multiplies that level's values by the
-    /// variable's weight of `true`, and a level `into` adds below it holds no
+    /// variable's total weight (the sum of its two literal weights), and a level `into` adds below it holds no
     /// values of its own. A structural diagram is placed as by
     /// [`Tdd::embed`] and takes `weights` as its store when one is given;
     /// a diagram with a marginal level needs one, whose table must give

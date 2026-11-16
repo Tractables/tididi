@@ -2,8 +2,9 @@
 //!
 //! Move each part's levels to their grafted indices, then join part roots and
 //! free-variable leaves with one pair per new level. Whole-level moves preserve
-//! local node indices. Canonical parts introduce no structural twins; marginal
-//! roots are tagged and pruned after acquiring their new parent references.
+//! local node indices. Canonical parts introduce no structural twins. For
+//! marginal parts the assembly canonicalizes weighted leaf references, inlines
+//! small marginal references, then prunes or reduces.
 
 use super::{GraftError, placement::MovePlacement};
 
@@ -82,8 +83,9 @@ impl Tdd {
     /// Pass `None` for an unweighted graft as in [`Tdd::graft`]. Stored integer
     /// counts cannot be reweighted, and stored weights cannot be discarded.
     /// `parts` is consumed; `eng` supplies level storage. Attaching a marginal
-    /// root below a new parent runs a prune under the engine's limits; the
-    /// structural assembly does not consult them.
+    /// root below a new parent runs a prune under the engine's limits. The
+    /// assembly charges its level storage to the limits and a refusal comes
+    /// back as [`GraftError::Operation`]; it does not poll the work clock.
     ///
     /// # Errors
     ///

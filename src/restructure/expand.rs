@@ -244,7 +244,7 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
             continue;
         }
         // A reference into a class leaf goes to the node built for it;
-        // false and references into other levels are kept.
+        // references into other levels are kept.
         let redirect = |child: VtreeIdx, map: Option<&[Option<NodeIdx>; 3]>, side: EncodedChildRef| match map {
             Some(map) if side != ZERO.into() => {
                 map[leaf_node(tdd.level(child), side)].expect("a referenced class node is built").into()

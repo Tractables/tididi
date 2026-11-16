@@ -3,8 +3,8 @@
 //! Two assemblers own the destination storage while an operation fills it.
 //! [`CopyPlacement`] copies structural levels out of a source that stays as it
 //! is, the way an embedding does; [`MovePlacement`] moves whole parts, levels
-//! and weight columns alike, the way a graft does. Both keep local node
-//! indices through the transfer and prune what the new joins leave unused.
+//! and weight columns alike, the way a graft does, and copies the levels of a
+//! borrowed source. Both keep local node indices through the transfer.
 
 use std::sync::Arc;
 
@@ -217,8 +217,9 @@ impl<'a> CopyPlacement<'a> {
     }
 }
 
-/// Whole parts moved into a destination, levels and weight columns alike,
-/// under graft assembly's untracked contract.
+/// Whole parts moved into a destination, levels and weight columns alike.
+/// The level array and every level it builds are charged to the engine's
+/// limits; the moved levels are not charged again.
 pub(super) struct MovePlacement<'a> {
     eng: &'a Engine,
     vtree: &'a Arc<Vtree>,
