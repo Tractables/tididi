@@ -87,33 +87,32 @@ enum Normalized {
     Clause(Vec<(Literal, VtreeIdx)>),
 }
 
-/// Resolve `lits` against `vtree` and drop the repeats. With `negate` each
-/// literal is complemented first, which turns a cube into the clause the walk
-/// carries: a cube naming a variable in both polarities is false, and its
-/// negation a tautology.
+/// Convert `lits`, resolve them against `vtree` and drop the repeats. With
+/// `negate` each literal is complemented first, which turns a cube into the
+/// clause the walk carries: a cube naming a variable in both polarities is
+/// false, and its negation a tautology.
 ///
 /// # Errors
 ///
-/// [`OperationError::VariableNotInVtree`] for a variable the vtree lacks,
-/// whatever else the clause says, and the limits' errors.
-fn normalize(
+/// Per literal in order, [`OperationError::InvalidLiteral`] for integer zero,
+/// then [`OperationError::VariableNotInVtree`] for a variable the vtree
+/// lacks, whatever else the clause says; and the limits' errors.
+fn normalize<L: crate::LiteralInput>(
     lim: &Limits,
     vtree: &Vtree,
-    lits: &[Literal],
+    lits: &[L],
     negate: bool,
 ) -> Result<Normalized, OperationError> {
     let mut gate = lim.gate();
     // Every literal is resolved before a tautology is answered, so an absent
     // variable errors whatever else the clause says.
-    let mut leaves: Vec<VtreeIdx> = Vec::new();
-    lim.reserve_exact(&mut leaves, lits.len())?;
-    for lit in lits {
+    let mut resolved: Vec<(Literal, VtreeIdx)> = Vec::new();
+    lim.reserve_exact(&mut resolved, lits.len())?;
+    for &lit in lits {
         gate.poll(1)?;
-        leaves.push(
-            vtree
-                .leaf_of(lit.var)
-                .ok_or(OperationError::VariableNotInVtree(lit.var))?,
-        );
+        let lit = lit.literal()?;
+        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+        resolved.push((lit, leaf));
     }
     gate.flush()?;
     // A literal is kept where its leaf first occurs; a later one of the other
@@ -126,16 +125,16 @@ fn normalize(
     lim.try_resize(&mut first, lits.len(), 0)?;
     if lits.len() <= SCAN_REPEATS_UP_TO {
         for i in 0..lits.len() {
-            first[i] = (0..i).find(|&j| leaves[j] == leaves[i]).unwrap_or(i) as u32;
+            first[i] = (0..i).find(|&j| resolved[j].1 == resolved[i].1).unwrap_or(i) as u32;
         }
     } else {
         let mut order: Vec<(usize, u32)> = Vec::new();
         lim.reserve_exact(&mut order, lits.len())?;
         order.extend(
-            leaves
+            resolved
                 .iter()
                 .enumerate()
-                .map(|(i, leaf)| (leaf.idx(), i as u32)),
+                .map(|(i, &(_, leaf))| (leaf.idx(), i as u32)),
         );
         order.sort_unstable();
         let mut run_start = 0;
@@ -148,15 +147,12 @@ fn normalize(
     }
     let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
     let mut tautology = false;
-    for (i, lit) in lits.iter().enumerate() {
+    for (i, &(lit, leaf)) in resolved.iter().enumerate() {
         let f = first[i] as usize;
         if f == i {
-            lim.try_push(
-                &mut clause,
-                (if negate { lit.negated() } else { *lit }, leaves[i]),
-            )?;
+            lim.try_push(&mut clause, (if negate { lit.negated() } else { lit }, leaf))?;
         } else {
-            tautology |= lits[f].sign != lit.sign;
+            tautology |= resolved[f].0.sign != lit.sign;
         }
     }
     Ok(if tautology {
@@ -174,10 +170,10 @@ const SCAN_REPEATS_UP_TO: usize = 16;
 /// `disjoin` — disjoin the cube `lits`, by carrying the [`CubeChain`]
 /// alongside. `f` is consumed on every outcome; a level array it no longer
 /// needs goes back to the engine's pool.
-fn spine_walk(
+fn spine_walk<L: crate::LiteralInput>(
     eng: &Engine,
     mut f: Tdd,
-    lits: &[Literal],
+    lits: &[L],
     disjoin: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
@@ -417,10 +413,10 @@ fn rebuild_along_spine(
 /// # Errors
 ///
 /// The errors of [`Engine::and_clause`](crate::Engine::and_clause).
-pub(crate) fn conjoin_clause_on(
+pub(crate) fn conjoin_clause_on<L: crate::LiteralInput>(
     eng: &Engine,
     f: Tdd,
-    clause: &[Literal],
+    clause: &[L],
 ) -> Result<Tdd, OperationError> {
     spine_walk(eng, f, clause, false)
 }
@@ -503,7 +499,7 @@ impl crate::Engine {
         f: Tdd,
         clause: &[L],
     ) -> Result<Tdd, OperationError> {
-        L::conjoin(self, f, clause)
+        conjoin_clause_on(self, f, clause)
     }
 
     /// Run [`Tdd::or_cube`](crate::Tdd::or_cube) using this batch's scratch and resource limits.
@@ -524,7 +520,7 @@ impl crate::Engine {
         f: Tdd,
         cube: &[L],
     ) -> Result<Tdd, OperationError> {
-        L::disjoin(self, f, cube)
+        disjoin_cube_on(self, f, cube)
     }
 }
 

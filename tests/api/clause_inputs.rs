@@ -54,6 +54,8 @@ fn integer_clauses_validate_even_after_tautology_or_on_false() {
         assert_canonical(&input);
         assert_eq!(input.clone().and_clause([1, -1, 0]).unwrap_err(), OperationError::InvalidLiteral(0));
         assert_eq!(input.clone().and_clause([1, -1, 4]).unwrap_err(), OperationError::VariableNotInVtree(VarId(4)));
+        assert_eq!(input.clone().and_clause([4, 0]).unwrap_err(), OperationError::VariableNotInVtree(VarId(4)));
+        assert_eq!(input.clone().or_cube([0, 4]).unwrap_err(), OperationError::InvalidLiteral(0));
         assert_eq!(input.and_clause([i32::MIN]).unwrap_err(), OperationError::VariableNotInVtree(VarId(1 << 31)));
     }
 }

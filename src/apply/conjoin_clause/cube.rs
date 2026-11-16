@@ -120,10 +120,10 @@ impl CubeChain {
 /// # Errors
 ///
 /// Returns the [`OperationError`] the disjunction stopped on.
-pub(crate) fn disjoin_cube_on(
+pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
     eng: &Engine,
     f: Tdd,
-    cube: &[Literal],
+    cube: &[L],
 ) -> Result<Tdd, OperationError> {
     spine_walk(eng, f, cube, true)
 }
