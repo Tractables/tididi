@@ -85,7 +85,6 @@ impl RestrictionOutcome {
 /// product-pair probes.
 fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
     if care.is_zero() {
-        // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
     }
     let v0 = f.output.vtree;
@@ -95,17 +94,22 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    let Some(marks) = Marking::walk(eng, &f, care, r, max_pair_visits)? else {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    };
-    if !marks.root_live {
-        // care killed every model of f ⇒ f ∧ care = ∅.
-        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
-    }
-    if marks.nothing_reachable_died(eng, &f)? {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    }
-    Ok(RestrictionOutcome::Shrunk(marks.rebuild(eng, f)?))
+    Ok(match Marking::walk(eng, &f, care, r, max_pair_visits)? {
+        Walked::Unchanged => RestrictionOutcome::Unchanged(f),
+        Walked::Unsatisfiable => RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?),
+        Walked::Marks(marks) if marks.nothing_reachable_died(eng, &f)? => RestrictionOutcome::Unchanged(f),
+        Walked::Marks(marks) => RestrictionOutcome::Shrunk(marks.rebuild(eng, f)?),
+    })
+}
+
+/// What [`Marking::walk`] found.
+enum Walked {
+    /// Nothing can die: the root product is a compatible leaf or a marginal
+    /// scalar, or the probe allowance ran out.
+    Unchanged,
+    /// The root product is dead: `f ∧ care ≡ ⊥`.
+    Unsatisfiable,
+    Marks(Marking),
 }
 
 /// Liveness marks over `f` produced by the `f × care` walk.
@@ -114,13 +118,10 @@ struct Marking {
     alive: Vec<Vec<bool>>,
     /// `[v.idx()][f-local]` — an f-node a live product pairs with a `care`
     /// that is `⊤` over the level's variables: the node and everything below
-    /// it survive whole, so the walk never enters it. Empty only in
-    /// [`Marking::trivial`].
+    /// it survive whole, so the walk never enters it.
     keep: Vec<Vec<bool>>,
     /// Pair liveness, including nodes wider than a machine word.
     pair_alive: pairs::PairMarks,
-    /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?
-    root_live: bool,
 }
 
 impl crate::Engine {

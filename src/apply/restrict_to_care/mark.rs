@@ -1,37 +1,15 @@
-//! The liveness walk over `f × care`.
+//! The liveness walk over `f × care`; the algorithm is in the parent
+//! module's doc.
 //!
 //! A *product* is a pair of references at one vtree level, one into each
 //! operand: a node, or `None` where the operand is `⊤` there (not yet rooted,
-//! or `care` marginal). It is *live* when some assignment satisfies both. The
-//! walk keeps an `f`-pair when a live product it reaches from the root pairs
-//! it with a `care` pair whose two child products are live; those are exactly
-//! the pairs that the models of `f ∧ care` use.
-//!
-//! Below the lower of the two operand roots both operands hold nodes, and
-//! whether a pair of nodes is live is decided bottom-up before the walk
-//! ([`Products`]). A level whose two children are listed or leaves joins its
-//! pairs on both, as the conjunction's sparse route does: for each `f` child on
-//! one side, the `care` pairs whose child there is live with it are gathered by
-//! their other child, and each `f` pair under it is looked up among them, so
-//! every pair of pairs it meets is live. A level with one such child joins on
-//! it and tests the other side, which a marginal operand decides at once. A
-//! level whose join would cost too much, or that has no such child, is decided
-//! pair by pair when the walk asks. The walk then enumerates a product's live
-//! pairs from the listing, or for an undecided level through the same grouping. Above that root one
-//! operand is `⊤`, so a product pairs one node with `⊤`. Where `f` is the
-//! upper operand they are decided by one pass up the path to `care`'s root
-//! and marked by one pass down it ([`Walk::path_top`]); otherwise they are
-//! discovered, decided bottom-up and marked top-down ([`Walk::top`]). Either
-//! way an `f` node beside a `care` that is `⊤` over its whole subtree is kept
-//! whole unwalked.
-//! A listed product's position is found in its `f` node's row of the
-//! listing, never hashed, and marks it visited by a bit.
-//! Where each `f` node has at most one live product, the listings are the
-//! marks and nothing is walked down ([`Walk::functional`]); a level where
-//! `care` holds one node of few pairs is joined pair by pair in storage
-//! order ([`Walk::join_spine`]), and one whose `f` nodes have one live
-//! product each at its children by looking each `f` pair's partners up
-//! ([`Walk::join_paired`], [`Walk::join_keyed`]).
+//! or `care` marginal). A listed product's position is found in its `f`
+//! node's row of the listing, never hashed, and marks it visited by a bit.
+//! Besides the joins on both children or on one ([`Walk::join_both`],
+//! [`Walk::join_one`]), a level where `care` holds one node of few pairs is
+//! joined pair by pair in storage order ([`Walk::join_spine`]), and one
+//! whose `f` nodes have one live product each at its children by looking
+//! each `f` pair's partners up ([`Walk::join_paired`], [`Walk::join_keyed`]).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -46,7 +24,7 @@ use crate::diagram::{
 };
 use crate::vtree::VtreeIdx;
 
-use super::Marking;
+use super::{Marking, Walked};
 use super::pairs::PairMarks;
 
 /// One operand's reference into a vtree level: `None` = the operand is `⊤` here
@@ -330,6 +308,9 @@ struct Walk<'a> {
     lower: VtreeIdx,
     /// Whether a vtree node lies in the lower operand root's subtree.
     inner: Vec<bool>,
+    /// The internal levels in that subtree where `f` is not marginal,
+    /// children before parents.
+    below: Vec<VtreeIdx>,
     /// Whether `care`'s root lies in a vtree node's subtree: where it does
     /// not, `care` is `⊤` over the node's variables until it is rooted.
     holds_care: Vec<bool>,
@@ -347,13 +328,10 @@ struct Walk<'a> {
     care_index: Vec<CareIndex>,
     remaining: u64,
     poll: PollGate<'a>,
-    alive: Vec<Vec<bool>>,
-    /// See [`Marking::keep`].
-    keep: Vec<Vec<bool>>,
+    marks: Marking,
     /// Levels whose every node [`Walk::mark_listed`] kept, so
     /// [`Walk::spread_keep`] has nothing to carry down from them.
     whole_levels: Vec<bool>,
-    pair_alive: PairMarks,
     /// Lazy levels the decision in progress has descended ([`DEPTH`]).
     depth: u32,
     /// The products a decision past [`DEPTH`] set aside, deepest first.
@@ -365,56 +343,39 @@ impl Marking {
     /// vtree node `r` (a root of one operand).
     ///
     /// `remaining` is the allowance of product-pair probes across the
-    /// bottom-up decision and the walk; spending it returns `None` with the
-    /// marks abandoned.
+    /// bottom-up decision and the walk; spending it returns
+    /// [`Walked::Unchanged`] with the marks abandoned.
     pub(super) fn walk(
         eng: &Engine,
         f: &Tdd,
         care: &Tdd,
         r: VtreeIdx,
         remaining: u64,
-    ) -> Result<Option<Marking>, OperationError> {
+    ) -> Result<Walked, OperationError> {
         let root_key = match child(f, care, r, None, None) {
             Child::Pair(k) => k,
-            // A compatible leaf or a marginal scalar: nothing died.
-            Child::Live => return Marking::trivial(eng, f, true).map(Some),
-            Child::Dead => return Marking::trivial(eng, f, false).map(Some),
+            Child::Live => return Ok(Walked::Unchanged),
+            Child::Dead => return Ok(Walked::Unsatisfiable),
         };
         let mut walk = Walk::new(eng, f, care, r, remaining)?;
         let root_key = walk.top_care(r, root_key);
         match walk.run(r, root_key) {
-            Ok(root_live) => {
+            Ok(true) => {
                 walk.poll.flush()?;
                 walk.spread_keep()?;
-                Ok(Some(Marking {
-                    alive: walk.alive,
-                    keep: walk.keep,
-                    pair_alive: walk.pair_alive,
-                    root_live,
-                }))
+                Ok(Walked::Marks(walk.marks))
+            }
+            Ok(false) => {
+                walk.poll.flush()?;
+                Ok(Walked::Unsatisfiable)
             }
             Err(Halt::Spent) => {
                 walk.poll.flush()?;
-                Ok(None)
+                Ok(Walked::Unchanged)
             }
             Err(Halt::Error(e)) => Err(e),
             Err(Halt::Deeper) => unreachable!("a deep decision resumes inside the walk"),
         }
-    }
-
-    /// Marks for a walk that never examined a pair: nothing dies (every reachable
-    /// node is reported alive, so `nothing_reachable_died` holds).
-    pub(super) fn trivial(
-        eng: &Engine,
-        f: &Tdd,
-        root_live: bool,
-    ) -> Result<Marking, OperationError> {
-        Ok(Marking {
-            alive: mark_rows(eng, f, true)?,
-            keep: Vec::new(),
-            pair_alive: PairMarks::all(),
-            root_live,
-        })
     }
 
     /// Is every node and pair reachable from `f`'s root marked live? Then the
@@ -438,7 +399,7 @@ impl Marking {
             if std::mem::replace(&mut seen[v.idx()][l.idx()], true) {
                 continue;
             }
-            if self.keep.get(v.idx()).is_some_and(|row| row[l.idx()]) {
+            if self.keep[v.idx()][l.idx()] {
                 // Kept whole: nothing under it died.
                 continue;
             }
@@ -493,6 +454,12 @@ impl<'a> Walk<'a> {
                 lim.try_push(&mut stack, rv)?;
             }
         }
+        let mut below = Vec::new();
+        for (u, _, _) in vtree.internal_bottomup() {
+            if inner[u.idx()] && !f.levels[u.idx()].is_marginal() {
+                lim.try_push(&mut below, u)?;
+            }
+        }
         let mut products = Vec::new();
         lim.reserve_exact(&mut products, nlev)?;
         products.resize_with(nlev, || Products::Absent);
@@ -516,6 +483,7 @@ impl<'a> Walk<'a> {
             care,
             lower,
             inner,
+            below,
             holds_care,
             seen,
             care_top,
@@ -524,10 +492,12 @@ impl<'a> Walk<'a> {
             care_index,
             remaining,
             poll: lim.gate(),
-            alive: mark_rows(eng, f, false)?,
-            keep: mark_rows(eng, f, false)?,
+            marks: Marking {
+                alive: mark_rows(eng, f, false)?,
+                keep: mark_rows(eng, f, false)?,
+                pair_alive: PairMarks::new(eng, f)?,
+            },
             whole_levels: Vec::new(),
-            pair_alive: PairMarks::new(eng, f)?,
             depth: 0,
             pending: Vec::new(),
         })
@@ -537,23 +507,21 @@ impl<'a> Walk<'a> {
     /// reads every product it hands down.
     fn top_care(&self, v: VtreeIdx, k: Key) -> Key {
         match k {
-            (fo, Some(b))
-                if self.care_top[v.idx()]
-                    .get(b.idx())
-                    .copied()
-                    .unwrap_or(false) =>
-            {
-                (fo, None)
-            }
+            (fo, Some(b)) if self.reads_as_top(v, b) => (fo, None),
             k => k,
         }
+    }
+
+    /// Whether `care` node `b` at `v` is `⊤` over `v`'s variables.
+    fn reads_as_top(&self, v: VtreeIdx, b: NodeIdx) -> bool {
+        self.care_top[v.idx()].get(b.idx()).copied().unwrap_or(false)
     }
 
     /// Record that `f` node `a` at `v` survives whole: a live product pairs
     /// it with `care`'s `⊤`, and every node of a diagram has a model.
     fn keep_node(&mut self, v: VtreeIdx, a: NodeIdx) {
         if !self.f.vtree.node(v).is_leaf() && !self.f.levels[v.idx()].is_marginal() {
-            self.keep[v.idx()][a.idx()] = true;
+            self.marks.keep[v.idx()][a.idx()] = true;
         }
     }
 
@@ -574,11 +542,11 @@ impl<'a> Walk<'a> {
             // `self` per node reloads it, at a cost that varies with `Walk`'s
             // layout.
             let mut next = 0;
-            while let Some(o) = self.keep[v.idx()][next..].iter().position(|&k| k) {
+            while let Some(o) = self.marks.keep[v.idx()][next..].iter().position(|&k| k) {
                 let a = next + o;
                 next = a + 1;
                 self.poll.poll(1)?;
-                self.alive[v.idx()][a] = true;
+                self.marks.alive[v.idx()][a] = true;
                 for p in level.pairs_iter_of_idx(a) {
                     for (cv, side) in [(lc, p.left), (rc, p.right)] {
                         if vtree.node(cv).is_leaf() || f.levels[cv.idx()].is_marginal() {
@@ -586,7 +554,7 @@ impl<'a> Walk<'a> {
                         }
                         let x = ChildDecoder::structural().node(side);
                         if x != ZERO {
-                            self.keep[cv.idx()][x.idx()] = true;
+                            self.marks.keep[cv.idx()][x.idx()] = true;
                         }
                     }
                 }
@@ -627,12 +595,7 @@ impl<'a> Walk<'a> {
     /// Take one probe from the allowance.
     #[inline]
     fn spend(&mut self) -> Result<(), Halt> {
-        if self.remaining == 0 {
-            return Err(Halt::Spent);
-        }
-        self.remaining -= 1;
-        self.poll.poll(1)?;
-        Ok(())
+        self.spend_many(1)
     }
 
     /// Take `n` probes from the allowance at once.
@@ -675,12 +638,12 @@ impl<'a> Walk<'a> {
     /// before parents. An `f` node beside `⊤` is live without a look: no
     /// node of a diagram computes `⊥`.
     fn decide(&mut self) -> Result<(), Halt> {
-        let f = self.f;
-        for (u, lc, rc) in f.vtree.internal_bottomup() {
-            if !self.inner[u.idx()] || f.levels[u.idx()].is_marginal() || self.reads_top(u) {
-                continue;
+        for i in 0..self.below.len() {
+            let u = self.below[i];
+            if !self.reads_top(u) {
+                let (lc, rc) = self.f.vtree.children(u);
+                self.products[u.idx()] = self.list(u, lc, rc)?;
             }
-            self.products[u.idx()] = self.list(u, lc, rc)?;
         }
         Ok(())
     }
@@ -921,12 +884,7 @@ impl<'a> Walk<'a> {
             }
             return Ok(SideTest::Leaf(table));
         }
-        let Some(b) = co.filter(|b| {
-            !self.care_top[cv.idx()]
-                .get(b.idx())
-                .copied()
-                .unwrap_or(false)
-        }) else {
+        let Some(b) = co.filter(|&b| !self.reads_as_top(cv, b)) else {
             return Ok(SideTest::Model);
         };
         let Products::Listed(l) = &self.products[cv.idx()] else {
@@ -1018,7 +976,7 @@ impl<'a> Walk<'a> {
         let cg = groups(eng, care, u, k, ck)?;
         let level = &f.levels[u.idx()];
         let partners = |p: ChildPair| {
-            let x = ChildDecoder::structural().node(side_of(p, k));
+            let x = node_of(p, k);
             if x == ZERO {
                 None
             } else {
@@ -1291,13 +1249,13 @@ impl<'a> Walk<'a> {
         if sides[s] == Side::Leaf {
             let mut by_label: [Vec<u32>; LEAF_WIDTH] = Default::default();
             for (j, q) in cp.iter().enumerate() {
-                let y = ChildDecoder::structural().node(side_of(*q, s));
+                let y = node_of(*q, s);
                 if y != ZERO {
                     eng.limits().try_push(&mut by_label[y.idx()], j as u32)?;
                 }
             }
             for (i, p) in fp.iter().enumerate() {
-                let x = ChildDecoder::structural().node(side_of(*p, s));
+                let x = node_of(*p, s);
                 if x == ZERO {
                     continue;
                 }
@@ -1329,7 +1287,7 @@ impl<'a> Walk<'a> {
                 let mut index = Vec::new();
                 eng.limits().reserve_exact(&mut index, cp.len())?;
                 for (j, q) in cp.iter().enumerate() {
-                    let y = ChildDecoder::structural().node(side_of(*q, s));
+                    let y = node_of(*q, s);
                     if y != ZERO {
                         index.push((y.0, j as u32));
                     }
@@ -1340,7 +1298,7 @@ impl<'a> Walk<'a> {
         };
         let mut probed = Ok(());
         for (i, p) in fp.iter().enumerate() {
-            let x = ChildDecoder::structural().node(side_of(*p, s));
+            let x = node_of(*p, s);
             if x == ZERO {
                 continue;
             }
@@ -1836,8 +1794,8 @@ impl<'a> Walk<'a> {
     /// are dropped, for the rebuild's prune.
     fn functional(&self) -> bool {
         let f = self.f;
-        for (u, _, _) in f.vtree.internal_bottomup() {
-            if !self.inner[u.idx()] || f.levels[u.idx()].is_marginal() || self.reads_top(u) {
+        for &u in &self.below {
+            if self.reads_top(u) {
                 continue;
             }
             let Products::Listed(l) = &self.products[u.idx()] else {
@@ -1869,13 +1827,10 @@ impl<'a> Walk<'a> {
         let (eng, f) = (self.eng, self.f);
         eng.limits()
             .try_resize(&mut self.whole_levels, f.vtree.num_nodes(), false)?;
-        for (u, _, _) in f.vtree.internal_bottomup() {
-            if !self.inner[u.idx()] || f.levels[u.idx()].is_marginal() {
-                continue;
-            }
+        for &u in &self.below {
             if self.reads_top(u) {
-                self.keep[u.idx()].fill(true);
-                self.alive[u.idx()].fill(true);
+                self.marks.keep[u.idx()].fill(true);
+                self.marks.alive[u.idx()].fill(true);
                 self.whole_levels[u.idx()] = true;
                 continue;
             }
@@ -1885,10 +1840,10 @@ impl<'a> Walk<'a> {
             let level = &f.levels[u.idx()];
             for (p, &(a, _)) in l.products.iter().enumerate() {
                 self.poll.poll(1)?;
-                self.alive[u.idx()][a as usize] = true;
+                self.marks.alive[u.idx()][a as usize] = true;
                 let combos = l.combos.run(p);
                 let count = level.pair_count_at(a as usize);
-                self.pair_alive.mark_many(
+                self.marks.pair_alive.mark_many(
                     eng,
                     u,
                     NodeIdx(a),
@@ -1907,9 +1862,9 @@ impl<'a> Walk<'a> {
         a: NodeIdx,
         pairs: impl IntoIterator<Item = u32>,
     ) -> Result<(), OperationError> {
-        self.alive[v.idx()][a.idx()] = true;
+        self.marks.alive[v.idx()][a.idx()] = true;
         let count = self.f.levels[v.idx()].pair_count_at(a.idx());
-        self.pair_alive.mark_many(self.eng, v, a, count, pairs)
+        self.marks.pair_alive.mark_many(self.eng, v, a, count, pairs)
     }
 }
 
@@ -2006,7 +1961,7 @@ fn groups(
     let mut total = 0usize;
     for a in 0..level.nodes().len() {
         for p in level.pairs_iter_of_idx(a) {
-            let x = ChildDecoder::structural().node(side_of(p, s));
+            let x = node_of(p, s);
             if x != ZERO {
                 offsets[x.idx() + 1] += 1;
                 total += 1;
@@ -2025,7 +1980,7 @@ fn groups(
     let mut cursor = Transient::new(eng.limits(), eng.limits().try_to_vec(&offsets)?);
     for a in 0..level.nodes().len() {
         for (i, p) in level.pairs_iter_of_idx(a).enumerate() {
-            let x = ChildDecoder::structural().node(side_of(p, s));
+            let x = node_of(p, s);
             if x != ZERO {
                 entries[cursor[x.idx()] as usize] = (a as u32, i as u32, side_of(p, 1 - s));
                 cursor[x.idx()] += 1;
@@ -2067,7 +2022,7 @@ fn join_cost(
     let mut cost = 0u64;
     for a in 0..level.nodes().len() {
         for p in level.pairs_iter_of_idx(a) {
-            let x = ChildDecoder::structural().node(side_of(p, o));
+            let x = node_of(p, o);
             if x == ZERO {
                 continue;
             }
@@ -2078,7 +2033,7 @@ fn join_cost(
             if !std::mem::replace(&mut counted[x.idx()], true) {
                 cost = cost.saturating_add(g);
             }
-            let xi = ChildDecoder::structural().node(side_of(p, 1 - o));
+            let xi = node_of(p, 1 - o);
             if xi != ZERO {
                 cost = cost.saturating_add((inner.of(xi.0).len() as u64).min(g));
             }
@@ -2184,6 +2139,12 @@ fn sort_found(eng: &Engine, nodes: usize, found: Found) -> Result<Found, Operati
 #[inline]
 fn side_of(p: ChildPair, s: usize) -> EncodedChildRef {
     if s == 0 { p.left } else { p.right }
+}
+
+/// The node side `s` of a structural pair names.
+#[inline]
+fn node_of(p: ChildPair, s: usize) -> NodeIdx {
+    ChildDecoder::structural().node(side_of(p, s))
 }
 
 /// The reference a pair side of `t` makes into child level `cv`: `None` toward

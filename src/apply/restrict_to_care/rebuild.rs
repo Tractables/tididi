@@ -26,7 +26,7 @@ impl Marking {
         let vtree = Arc::clone(&f.vtree);
         // A child reference names a dead node: `ZERO`, or a structural node
         // the marks did not keep. Marginal children and leaf labels never die.
-        let keep = |v: VtreeIdx, a: usize| self.keep.get(v.idx()).is_some_and(|row| row[a]);
+        let keep = |v: VtreeIdx, a: usize| self.keep[v.idx()][a];
         let dead = |cv: VtreeIdx, child: &TddLevel, side: EncodedChildRef| {
             if child.is_marginal() { return false; }
             let node = ChildDecoder::structural().node(side);

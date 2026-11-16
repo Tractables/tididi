@@ -11,7 +11,6 @@ use crate::vtree::VtreeIdx;
 pub(super) struct PairMarks {
     small: Vec<Vec<u64>>,
     wide: FxHashMap<(VtreeIdx, NodeIdx), Vec<u64>>,
-    all: bool,
 }
 
 impl PairMarks {
@@ -24,19 +23,13 @@ impl PairMarks {
             eng.limits().try_resize(&mut row, level.nodes().len(), 0)?;
             small.push(row);
         }
-        Ok(Self { small, wide: FxHashMap::default(), all: false })
-    }
-
-    /// Identity marking for walks with no constrained pairs.
-    pub(super) fn all() -> Self {
-        Self { small: Vec::new(), wide: FxHashMap::default(), all: true }
+        Ok(Self { small, wide: FxHashMap::default() })
     }
 
     /// Mark pairs `pairs` of one node live in at least one care context,
     /// with one look-up of a wide node's row for all of them.
     pub(super) fn mark_many(&mut self, eng: &Engine, v: VtreeIdx, node: NodeIdx,
                            count: usize, pairs: impl IntoIterator<Item = u32>) -> Result<(), OperationError> {
-        if self.all { return Ok(()); }
         if count <= 64 {
             let word = &mut self.small[v.idx()][node.idx()];
             for k in pairs {
@@ -62,9 +55,7 @@ impl PairMarks {
 
     /// One node's marks, looked up once for a pass over its pairs.
     pub(super) fn row(&self, v: VtreeIdx, node: NodeIdx, count: usize) -> PairRow<'_> {
-        if self.all {
-            PairRow::All
-        } else if count <= 64 {
+        if count <= 64 {
             PairRow::Word(self.small[v.idx()][node.idx()])
         } else {
             self.wide.get(&(v, node)).map_or(PairRow::Word(0), |words| PairRow::Words(words))
@@ -73,7 +64,6 @@ impl PairMarks {
 
     /// Whether all source pairs survive, including a partial last word.
     pub(super) fn complete(&self, v: VtreeIdx, node: NodeIdx, count: usize) -> bool {
-        if self.all { return true; }
         if count <= 64 {
             self.small[v.idx()][node.idx()].count_ones() as usize == count
         } else {
@@ -86,7 +76,6 @@ impl PairMarks {
 /// One node's pair marks ([`PairMarks::row`]).
 #[derive(Clone, Copy)]
 pub(super) enum PairRow<'a> {
-    All,
     Word(u64),
     Words(&'a [u64]),
 }
@@ -96,7 +85,6 @@ impl PairRow<'_> {
     #[inline]
     pub(super) fn contains(self, k: usize) -> bool {
         match self {
-            PairRow::All => true,
             PairRow::Word(w) => k < 64 && w & (1 << k) != 0,
             PairRow::Words(words) => words[k / 64] & (1 << (k % 64)) != 0,
         }
