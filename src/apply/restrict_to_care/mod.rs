@@ -83,6 +83,33 @@ impl RestrictionOutcome {
 
 /// Restrict a non-false `f` to `care`, giving the walk `max_pair_visits`
 /// product-pair probes.
+/// [`restrict_prepared`] of operands on different projections of one home:
+/// a copy of `f` placed with `care`, and `f` itself when nothing is removed.
+#[cold]
+fn restrict_across(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
+    let [placed, care] = crate::apply::extend::borrowed(eng, [&f, care])?;
+    if f.is_zero() || max_pair_visits == 0 {
+        return Ok(RestrictionOutcome::Unchanged(f));
+    }
+    let placed = crate::apply::extend::into_owned(eng, placed)?;
+    match restrict_prepared(eng, placed, &care, max_pair_visits)? {
+        RestrictionOutcome::Unchanged(_) => Ok(RestrictionOutcome::Unchanged(f)),
+        outcome => outcome.trimmed(eng),
+    }
+}
+
+impl RestrictionOutcome {
+    /// The outcome with a new diagram on a projection trimmed.
+    fn trimmed(self, eng: &Engine) -> Result<Self, OperationError> {
+        use crate::apply::extend::trimmed;
+        Ok(match self {
+            RestrictionOutcome::Unchanged(f) => RestrictionOutcome::Unchanged(f),
+            RestrictionOutcome::Shrunk(f) => RestrictionOutcome::Shrunk(trimmed(eng, f)?),
+            RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(trimmed(eng, f)?),
+        })
+    }
+}
+
 fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
@@ -142,9 +169,11 @@ impl crate::Engine {
     /// allowance does not suppress engine cancellation.
     pub fn restrict_to_care_bounded(&self, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, care)?;
+        if crate::apply::extend::needed([&f, care]) {
+            return restrict_across(self, f, care, max_pair_visits);
+        }
         if f.is_zero() || max_pair_visits == 0 { return Ok(RestrictionOutcome::Unchanged(f)); }
-        restrict_prepared(self, f, care, max_pair_visits)
+        restrict_prepared(self, f, care, max_pair_visits)?.trimmed(self)
     }
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
@@ -156,13 +185,16 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, &care)?;
+        if crate::apply::extend::needed([&f, &care]) {
+            self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
+            return restrict_across(self, f, &care, u64::MAX);
+        }
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
         // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
         // does not depend on it; the reduced one gives the walk fewer pairs.
         self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
-        restrict_prepared(self, f, &care, u64::MAX)
+        restrict_prepared(self, f, &care, u64::MAX)?.trimmed(self)
     }
 }

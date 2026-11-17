@@ -115,7 +115,8 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
+    /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor
+    /// on projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
     /// [`OperationError::IncompatibleWeights`] when either operand has weights
     /// attached, [`OperationError::MarginalLevel`] at a level one operand
     /// summed out where the other still depends on the variables below it,
@@ -125,7 +126,8 @@ impl Engine {
     pub fn marginal_product_count(&self, l: &Tdd, r: &Tdd) -> Result<BigUint, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        crate::apply::check_vtree(l, r)?;
+        let [l, r] = crate::apply::extend::borrowed(self, [l, r])?;
+        let (l, r) = (&*l, &*r);
         if l.weights.is_some()
             || r.weights.is_some()
             || l.levels
@@ -136,15 +138,19 @@ impl Engine {
             return Err(OperationError::IncompatibleWeights);
         }
         let same = std::ptr::eq(l, r) || same_diagram(l, r);
-        match product::<u128>(lim, l, r, same) {
-            Ok(v) => Ok(BigUint::from(v)),
+        let count = match product::<u128>(lim, l, r, same) {
+            Ok(v) => BigUint::from(v),
             Err(Halt::Overflow) => match product::<BigUint>(lim, l, r, same) {
-                Ok(v) => Ok(v),
+                Ok(v) => v,
                 Err(Halt::Overflow) => unreachable!("an exact count does not overflow"),
-                Err(Halt::Refused(e)) => Err(e),
+                Err(Halt::Refused(e)) => return Err(e),
             },
-            Err(Halt::Refused(e)) => Err(e),
-        }
+            Err(Halt::Refused(e)) => return Err(e),
+        };
+        Ok(match l.vtree.free_leaves() {
+            0 => count,
+            free => count << free,
+        })
     }
 }
 

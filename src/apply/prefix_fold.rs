@@ -322,8 +322,8 @@ impl Engine {
     /// block; [`PrefixFoldError::Codes`] when the coding has other than one
     /// code per fold, or a code with a bit at or past its code block's
     /// width; [`PrefixFoldError::Operation`] with
-    /// [`OperationError::VtreeMismatch`] for operands on different vtree
-    /// allocations, [`OperationError::MarginalLevel`] for an operand that
+    /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor
+    /// on projections of one home, [`OperationError::MarginalLevel`] for an operand that
     /// has discarded the structure at a level,
     /// [`OperationError::IndexOverflow`] when a level's states or products
     /// outgrow a 32-bit index, and for a refused allocation or an armed stop.
@@ -340,7 +340,8 @@ impl Engine {
     ) -> Result<Tdd, PrefixFoldError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        crate::apply::check_vtree(points, values)?;
+        let [points, values] = crate::apply::extend::borrowed(self, [points, values])?;
+        let (points, values) = (&*points, &*values);
         let vtree = points.vtree();
         let counted = monoid.count(1).is_some();
         let layout = Layout::new(lim, vtree, order, value_vars, counted)?;

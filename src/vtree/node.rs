@@ -128,7 +128,8 @@ impl Vtree {
     /// The reusable execution context associated with this tree.
     ///
     /// Cloning a vtree preserves its context. Context sharing does not change
-    /// the requirement that binary diagram operands share one vtree allocation.
+    /// the requirement that binary diagram operands share one vtree allocation
+    /// or one home ([`Vtree::projection`](crate::Vtree::projection)).
     #[must_use]
     pub fn context(&self) -> &std::sync::Arc<crate::Context> {
         &self.context

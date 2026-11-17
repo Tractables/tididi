@@ -91,6 +91,7 @@ mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 mod projected;
+use crate::apply::extend;
 use output::*;
 mod drive;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
@@ -212,7 +213,7 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 /// [`Engine::and`] after its entry, for operands each owned or borrowed
 /// ([`conjoin_cow`]).
 fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    if !Arc::ptr_eq(f.vtree(), g.vtree()) {
+    if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
         return projected::conjoin_projections(eng, f, g);
     }
     prepare_owned_weights(&mut f, &mut g)?;
@@ -656,6 +657,10 @@ impl crate::Engine {
             Ok(op) => op,
             Err(error) => return Err(AndRefused { error, f, g }),
         };
+        if f.vtree().home().is_some() || g.vtree().home().is_some() {
+            return projected::conjoin_projections(self, Cow::Borrowed(&*f), Cow::Borrowed(&*g))
+                .map_err(|error| AndRefused { error, f, g });
+        }
         if let Err(error) = crate::apply::check_vtree(&f, &g) {
             return Err(AndRefused { error, f, g });
         }
@@ -819,10 +824,13 @@ impl crate::Engine {
         g: impl Into<Cow<'g, Tdd>>,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
-        let (mut f, mut g) = (f.into(), g.into());
+        let (f, g) = (f.into(), g.into());
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
+        let from = Arc::clone(f.vtree());
+        let [mut f, mut g] = extend::cows(self, [f, g])?;
+        let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
+        let targets = translated.as_deref().unwrap_or(targets);
         prepare_owned_weights(&mut f, &mut g)?;
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
@@ -844,7 +852,7 @@ impl crate::Engine {
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
         }
-        Ok(out)
+        extend::trimmed(self, out)
     }
 
     /// Count the models of `f ∧ g` without keeping the conjunction.
@@ -878,13 +886,16 @@ impl crate::Engine {
     /// [`Engine::model_count`]. Both operands are consumed on every outcome.
     pub fn and_model_count(
         &self,
-        mut f: Tdd,
-        mut g: Tdd,
+        f: Tdd,
+        g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<num_bigint::BigUint, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
+        let from = Arc::clone(f.vtree());
+        let [mut f, mut g] = extend::owned(self, [f, g])?;
+        let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
+        let targets = translated.as_deref().unwrap_or(targets);
         if f.weights.is_some() || g.weights.is_some() {
             let out = self.and_marginalizing(f, g, targets)?;
             return self.model_count(&out);
@@ -912,7 +923,10 @@ impl crate::Engine {
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
         diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
         match result? {
-            Conjoined::Counted(count) => Ok(count),
+            Conjoined::Counted(count) => Ok(match vtree.free_leaves() {
+                0 => count,
+                free => count << free,
+            }),
             Conjoined::Built(out) => self.model_count(&out),
         }
     }

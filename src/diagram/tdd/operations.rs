@@ -390,8 +390,9 @@ impl Tdd {
     ///
     /// Each source variable appears once; omitted sources keep their meaning.
     /// Replacements are used as given, without recursively substituting inside
-    /// them. All diagrams must be structural and share the same vtree allocation
-    /// and output level. The result retains this diagram's literal weights;
+    /// them. All diagrams must be structural, on one vtree or on projections of
+    /// one home, which places them on the projection holding all their
+    /// variables. The result retains this diagram's literal weights;
     /// replacement weights are ignored.
     ///
     /// Consumes this diagram on success and error and borrows replacements without
@@ -423,8 +424,8 @@ impl Tdd {
     ///
     /// The result `g` is no larger than this function `f` and satisfies
     /// `g ∧ care == f ∧ care`; outside the care set its value is unspecified.
-    /// Both operands must share a vtree allocation, but their output levels may
-    /// differ. Both are consumed on success and error.
+    /// Both operands are on one vtree or on projections of one home, and their
+    /// output levels may differ. Both are consumed on success and error.
     ///
     /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
     /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
@@ -437,7 +438,8 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::VtreeMismatch`] for different vtree allocations,
+    /// Returns [`OperationError::VtreeMismatch`] for operands neither on one
+    /// vtree nor on projections of one home,
     /// [`OperationError::IndexOverflow`] when a level's live products outgrow a
     /// 32-bit index, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
@@ -515,17 +517,18 @@ impl Tdd {
 
     /// Whether two structural diagrams represent the same Boolean function.
     ///
-    /// Borrows both operands without changing them; they must share the same vtree
-    /// allocation and output level. Weights are ignored. The inputs need not be
+    /// Borrows both operands without changing them; they must be on one vtree
+    /// or on projections of one home. Weights are ignored. The inputs need not be
     /// minimal or use the same node numbering or pair order: checked copies are
     /// minimized and compared. This needs temporary storage proportional to the
     /// diagrams, plus sorting of each node's pairs.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] if the operands do not share one vtree
-    /// allocation, [`OperationError::MarginalLevel`] if either has discarded the
-    /// structure at a level, or [`OperationError::OverBudget`] for a refused
+    /// [`OperationError::VtreeMismatch`] if the operands are neither on one
+    /// vtree nor on projections of one home, [`OperationError::MarginalLevel`]
+    /// if either has discarded the structure at a level, or
+    /// [`OperationError::OverBudget`] for a refused
     /// allocation.
     ///
     /// ```
@@ -545,16 +548,17 @@ impl Tdd {
 
     /// Whether every model of this structural function satisfies `other`.
     ///
-    /// Both diagrams are borrowed and unchanged. They must share the same vtree
-    /// allocation and output level; attached weights are ignored. Checks whether
+    /// Both diagrams are borrowed and unchanged. They must be on one vtree or
+    /// on projections of one home; attached weights are ignored. Checks whether
     /// `self ∧ ¬other` is false using copies, so intermediate storage can exceed
     /// both operand sizes. The inputs need not be minimized.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] if the operands do not share one vtree
-    /// allocation, [`OperationError::MarginalLevel`] if either has discarded the
-    /// structure at a level, [`OperationError::OverBudget`] for a refused
+    /// [`OperationError::VtreeMismatch`] if the operands are neither on one
+    /// vtree nor on projections of one home, [`OperationError::MarginalLevel`]
+    /// if either has discarded the structure at a level,
+    /// [`OperationError::OverBudget`] for a refused
     /// allocation, or [`OperationError::OutputCap`] if the conjunction it builds
     /// exceeds the output-node cap.
     ///

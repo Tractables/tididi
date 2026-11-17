@@ -19,6 +19,7 @@
 //! The [API overview](crate::guide::api) connects circuit operations with worked examples.
 
 mod add;
+pub(crate) mod extend;
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
 mod conjoin_in_place;
@@ -57,12 +58,6 @@ pub(crate) fn check_vtree(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::O
         return Err(crate::OperationError::VtreeMismatch);
     }
     Ok(())
-}
-
-/// Require every operand to share the first one's vtree allocation.
-pub(crate) fn check_same_vtree(operands: &[crate::Tdd]) -> Result<(), crate::OperationError> {
-    let Some((first, rest)) = operands.split_first() else { return Ok(()) };
-    rest.iter().try_for_each(|g| check_vtree(first, g))
 }
 
 /// Validate one weight interpretation for all operands, then install it where absent.

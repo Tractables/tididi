@@ -544,15 +544,19 @@ fn prune_under(
 
 /// The implementation behind [`Engine::and_in_place`]: the products below
 /// each branching level found bottom-up ([`block_products`]).
-pub(crate) fn and_in_place_on(
+pub(crate) fn and_in_place_on(eng: &Engine, f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
+    let _op = eng.limits().enter()?;
+    let (f, g) = super::extend::owned_borrowed(eng, f, g)?;
+    super::extend::trimmed(eng, and_in_place_kernel(eng, f, &g, prune)?)
+}
+
+fn and_in_place_kernel(
     eng: &Engine,
     mut f: Tdd,
     g: &Tdd,
     prune: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    let _op = lim.enter()?;
-    super::check_vtree(&f, g)?;
     f.require_structure()?;
     g.require_structure()?;
     if f.weights.is_some() || g.weights.is_some() {
@@ -796,8 +800,8 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] when the operands do not share a
-    /// vtree, [`OperationError::MarginalLevel`] when either has a marginal
+    /// [`OperationError::VtreeMismatch`] when the operands are neither on one
+    /// vtree nor on projections of one home, [`OperationError::MarginalLevel`] when either has a marginal
     /// level, [`OperationError::InertOption`] when either is weighted,
     /// [`OperationError::IndexOverflow`] when a level's products outgrow a
     /// 32-bit index, and the engine's refusals ([`OperationError::Stopped`],

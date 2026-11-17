@@ -10,12 +10,16 @@ use std::sync::Arc;
 use super::{conjoin_cow, conjoin_onto, prepare_owned_weights, VtreeMask};
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
 use crate::limits::OperationError;
-use crate::restructure::EmbedError;
+use crate::apply::extend;
+use crate::build::constant_without_leaf;
 use crate::vtree::{LeafSets, Vtree, VtreeIdx};
 use crate::Engine;
 
 /// [`Engine::and`] of operands on different vtree allocations.
 pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>) -> Result<Tdd, OperationError> {
+    if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
+        return conjoin_constant(eng, f, g);
+    }
     let into = match Vtree::leaf_sets(f.vtree(), g.vtree()).ok_or(OperationError::VtreeMismatch)? {
         LeafSets::Equal => {
             reseat_either(eng, &mut f, &mut g)?;
@@ -34,7 +38,21 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             into
         }
     };
-    conjoin_onto(eng, f, |v| v, g, |v| v, &into, false).map_err(|refused| operation_error(refused.error))
+    conjoin_onto(eng, f, |v| v, g, |v| v, &into, false).map_err(|refused| extend::operation_error(refused.error))
+}
+
+/// `f ∧ g` where one operand is a constant on the empty projection: false,
+/// or the other operand.
+fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+    Vtree::leaf_sets(f.vtree(), g.vtree()).ok_or(OperationError::VtreeMismatch)?;
+    let (constant, other) = match f.vtree().num_nodes() {
+        0 => (f, g),
+        _ => (g, f),
+    };
+    if constant.is_zero() || other.is_zero() {
+        return Ok(constant_without_leaf(&Vtree::empty_projection(constant.vtree()), false));
+    }
+    extend::into_owned(eng, other)
 }
 
 /// Put one operand on the other's vtree, of the same layout: an owned one is
@@ -52,16 +70,6 @@ fn reseat_either<'a>(eng: &Engine, f: &mut Cow<'a, Tdd>, g: &mut Cow<'a, Tdd>) -
     // node, with the same variable ids.
     unsafe { from.to_mut().reseat_vtree_unchecked(&onto) };
     Ok(())
-}
-
-/// The conjunction's error for a refusal of [`conjoin_onto`] on operands of
-/// one home, where the placement maps are the identity and cannot fail.
-fn operation_error(error: EmbedError) -> OperationError {
-    match error {
-        EmbedError::Operation(error) => error,
-        EmbedError::SourceWeights(_) | EmbedError::DestinationWeights(_) => OperationError::IncompatibleWeights,
-        _ => OperationError::VtreeMismatch,
-    }
 }
 
 /// Whether [`join_at_root`] takes `tdd`: it moves levels and pairs two

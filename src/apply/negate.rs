@@ -89,6 +89,9 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let f = f.into();
+        if f.vtree.num_nodes() == 0 {
+            return Ok(crate::build::constant_without_leaf(&f.vtree, !f.is_one()));
+        }
         let canonical = f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
         // `expand_full` left every level below the root covering its

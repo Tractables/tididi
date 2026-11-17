@@ -112,7 +112,8 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
     Ok(out)
 }
 
-/// Return the disjunction of two structural diagrams sharing a vtree allocation.
+/// Return the disjunction of two structural diagrams on one vtree or on
+/// projections of one home.
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
@@ -139,7 +140,10 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 ///
 /// # Errors
 ///
-/// [`OperationError::VtreeMismatch`] for different vtree allocations,
+/// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
+/// projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
+/// [`OperationError::WeightsAcrossProjections`] when one with weights or a
+/// summed-out level would move to a larger projection,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
 /// even when the other operand is false; [`OperationError::IndexOverflow`] when
@@ -150,7 +154,8 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     context.run(|eng| eng.or(f, g))
 }
 
-/// Return the disjunction of any number of diagrams sharing a vtree allocation.
+/// Return the disjunction of any number of diagrams on one vtree or on
+/// projections of one home.
 ///
 /// Combines nonfalse operands through [`or`] in a balanced tree. No operand
 /// is complemented; intermediate sizes depend on the operands and their grouping.
@@ -231,20 +236,21 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_same_vtree(&operands)?;
+        let operands = crate::apply::extend::owned_vec(self, operands)?;
         let (live, a_false_one) = live_operands(operands)?;
         if live.is_empty() {
             // Every operand is false, so every complement is true.
             let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
-            return crate::build::constant_like(self, &f, true);
+            return crate::apply::extend::trimmed(self, crate::build::constant_like(self, &f, true)?);
         }
         let complements = complements_of(self, live)?;
         let bytes = complements.charged_bytes();
-        fold_balanced(self, complements, bytes, |eng, a, b| {
+        let result = fold_balanced(self, complements, bytes, |eng, a, b| {
             let mut result = eng.and(a, b)?;
             eng.reduce(&mut result, ReductionPlan::default())?;
             Ok(result)
-        })
+        })?;
+        crate::apply::extend::trimmed(self, result)
     }
 
     /// Run [`or`] using this batch's scratch and resource limits.
@@ -266,8 +272,8 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_same_vtree(&operands)?;
-        disjoin_many_on(self, operands)
+        let operands = crate::apply::extend::owned_vec(self, operands)?;
+        crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)
     }
 }
 

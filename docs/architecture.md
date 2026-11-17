@@ -13,8 +13,9 @@ start with the [API overview].
 A [`Tdd`] value holds:
 
 - **its vtree**, an `Arc<Vtree>` shared with every diagram it may be combined
-  with. Binary operations compare the allocation, not just the shape, so two
-  separately built but identical vtrees are incompatible;
+  with, or a projection of a home vtree those diagrams' vtrees are
+  projections of too. Binary operations compare the allocation, not just the
+  shape, so two separately built but identical vtrees are incompatible;
 - **its levels**, one [`TddLevel`] per vtree node, stored at that node's index;
 - **its output**, a reference to the node that denotes the whole function, or
   a sentinel for the constant false function ([`Tdd::is_zero`]);
@@ -51,8 +52,9 @@ Follow one conjunction, [`and(f, g)`]:
    engine holds reusable scratch buffers and the limits for this call. Kernels
    pass the same engine down to nested work, so limits and metering cover the
    whole operation.
-2. **Check the operands.** Both must share the vtree allocation, and the
-   operation must accept their kinds of level.
+2. **Check the operands.** Both must share the vtree allocation, or be
+   placed on the projection of their home holding both their variables, and
+   the operation must accept their kinds of level.
 3. **Build the result bottom-up.** At each structural level, the conjunction
    forms a *product grid*: each *cell* pairs a node of `f` with a node of `g`,
    and its pairs are the products of the two nodes' pairs, using the products

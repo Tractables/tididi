@@ -20,12 +20,16 @@ impl Engine {
         f: Tdd,
         replacements: &[(VarId, &Tdd)],
     ) -> Result<Tdd, OperationError> {
+        if replacements.iter().any(|&(_, diagram)| super::extend::needed([&f, diagram])) {
+            return self.substitute_across(f, replacements);
+        }
         self.substitute_with(
             f,
             replacements
                 .iter()
                 .map(|&(var, diagram)| (var, Replacement::Diagram(diagram))),
         )
+        .and_then(|result| super::extend::trimmed(self, result))
     }
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
@@ -61,10 +65,12 @@ impl Engine {
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
         for (var, replacement) in replacements {
             gate.poll(1)?;
-            let leaf = f
-                .vtree()
-                .leaf_of(var)
-                .ok_or(OperationError::VariableNotInVtree(var))?;
+            let Some(leaf) = f.vtree().leaf_of(var) else {
+                if f.vtree().home_has(var) {
+                    continue;
+                }
+                return Err(OperationError::VariableNotInVtree(var));
+            };
             if by_leaf[leaf.idx()].replace(replacement).is_some() {
                 return Err(OperationError::DuplicateVariable(var));
             }
@@ -86,6 +92,25 @@ impl Engine {
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
+    }
+
+    /// [`Engine::substitute`] with diagrams on different projections of one
+    /// home: `f` and every replacement placed on the projection holding all
+    /// their variables.
+    #[cold]
+    fn substitute_across(&self, f: Tdd, replacements: &[(VarId, &Tdd)]) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
+        let operands = std::iter::once(std::borrow::Cow::Owned(f))
+            .chain(replacements.iter().map(|&(_, diagram)| std::borrow::Cow::Borrowed(diagram)))
+            .collect();
+        let mut operands = super::extend::mixed(self, operands)?.into_iter();
+        let f = operands.next().expect("f").into_owned();
+        let placed: Vec<_> = operands.collect();
+        let result = self.substitute_with(
+            f,
+            replacements.iter().zip(&placed).map(|(&(var, _), diagram)| (var, Replacement::Diagram(diagram))),
+        )?;
+        super::extend::trimmed(self, result)
     }
 
     /// Rebuild from validated simultaneous replacements while retaining the operation's poll state.

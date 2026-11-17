@@ -38,8 +38,14 @@ pub enum OperationError {
     /// pointless. Splitting the operation, or ordering the vtree so the level
     /// it happened at stays narrower, is what answers it.
     IndexOverflow,
-    /// The operands do not share the same vtree allocation.
+    /// The operands are neither on one vtree nor on projections of one home
+    /// vtree ([`Vtree::projection`](crate::Vtree::projection)).
     VtreeMismatch,
+    /// The operands are on different projections of one home vtree, and one
+    /// that would move to the projection holding all their variables carries
+    /// weights or a summed-out level, which move with it only between
+    /// diagrams of one vtree.
+    WeightsAcrossProjections,
     /// A [`PairIndex`](crate::diagram::PairIndex) was built from another
     /// diagram than the operand it is read with, or from that diagram
     /// before it changed. Building the index again from the operand is
@@ -152,7 +158,10 @@ impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OperationError::InvalidLiteral(literal) => write!(f, "{literal} is not a literal; use a nonzero signed integer"),
-            OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
+            OperationError::VtreeMismatch => f.write_str("operands must share one vtree or one home vtree"),
+            OperationError::WeightsAcrossProjections => {
+                f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
+            }
             OperationError::IndexMismatch => f.write_str("the pair index was built from another diagram than its operand"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),

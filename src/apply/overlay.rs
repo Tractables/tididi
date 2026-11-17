@@ -561,10 +561,10 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
 pub(crate) fn overlay_on(
     eng: &Engine,
     op: Overlay,
-    mut f: Tdd,
-    mut g: Tdd,
+    f: Tdd,
+    g: Tdd,
 ) -> Result<Tdd, OperationError> {
-    crate::apply::check_vtree(&f, &g)?;
+    let [mut f, mut g] = crate::apply::extend::owned(eng, [f, g])?;
     f.require_structure()?;
     g.require_structure()?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
@@ -581,11 +581,11 @@ pub(crate) fn overlay_on(
     };
     result.weights = weights;
     eng.reduce(&mut result, ReductionPlan::default())?;
-    Ok(result)
+    crate::apply::extend::trimmed(eng, result)
 }
 
 /// Return `f ∧ ¬g`, the models of `f` that are not models of `g`, for two
-/// structural diagrams sharing a vtree allocation.
+/// structural diagrams on one vtree or on projections of one home.
 ///
 /// Uses the shared vtree's execution context automatically. Unlike
 /// `f & !g`, it never builds the complement of `g`: each node of `f` is split
@@ -608,7 +608,10 @@ pub(crate) fn overlay_on(
 ///
 /// # Errors
 ///
-/// [`OperationError::VtreeMismatch`] for different vtree allocations,
+/// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
+/// projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
+/// [`OperationError::WeightsAcrossProjections`] when one with weights or a
+/// summed-out level would move to a larger projection,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
 /// even when the other operand is false; [`OperationError::IndexOverflow`] when

@@ -15,17 +15,17 @@ impl Engine {
     /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(f, g)?;
+        let [f, g] = crate::apply::extend::borrowed(self, [f, g])?;
         f.require_structure()?;
         g.require_structure()?;
         if f.is_zero() || g.is_zero() {
             return Ok(f.is_zero() == g.is_zero());
         }
-        if std::ptr::eq(f, g) {
+        if std::ptr::eq(&*f, &*g) {
             return Ok(true);
         }
-        let f = self.canonical(f)?;
-        let g = self.canonical(g)?;
+        let f = self.canonical(&f)?;
+        let g = self.canonical(&g)?;
         same_minimized(self, &f, &g)
     }
 
@@ -39,14 +39,14 @@ impl Engine {
     /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(f, g)?;
+        let [f, g] = crate::apply::extend::borrowed(self, [f, g])?;
         f.require_structure()?;
         g.require_structure()?;
-        if f.is_zero() || std::ptr::eq(f, g) {
+        if f.is_zero() || std::ptr::eq(&*f, &*g) {
             return Ok(true);
         }
-        let mut f = f.try_clone_on(self)?;
-        let mut g = g.try_clone_on(self)?;
+        let mut f = crate::apply::extend::into_owned(self, f)?;
+        let mut g = crate::apply::extend::into_owned(self, g)?;
         f.weights = None;
         g.weights = None;
         Ok(self.and(f, self.negate(g)?)?.is_zero())
@@ -106,7 +106,7 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         f.require_structure()?;
-        if f.is_zero() { return Ok(Vec::new()); }
+        if f.is_zero() || f.vtree.num_nodes() == 0 { return Ok(Vec::new()); }
         let f = self.canonical(f)?;
         let mut result = Vec::new();
         let mut gate = lim.gate();

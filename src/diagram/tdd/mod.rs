@@ -48,7 +48,9 @@ use super::primitives::{LEAF_WIDTH, TddNodeId, TRUE, ZERO};
 /// ```
 ///
 /// Each diagram owns its nodes and shares a vtree through `Arc`. Operands must
-/// share the same `Arc<Vtree>` allocation, even if different batches built them.
+/// share the same `Arc<Vtree>` allocation, even if different batches built them,
+/// or be on projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
+/// which an operation places on the projection holding all their variables.
 /// Operations reuse scratch from the vtree's context automatically; use
 /// [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
 ///

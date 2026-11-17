@@ -12,7 +12,7 @@ use super::pool::{Drain, Pool, Pools, ScratchLedger};
 /// outlive it. Retained scratch shares one capacity ceiling across operations;
 /// [`clear_scratch`](Self::clear_scratch) releases it explicitly.
 /// Operands may come from different engines; binary operations require a shared
-/// vtree allocation, as described on [`Tdd`](crate::Tdd).
+/// vtree allocation or home vtree, as described on [`Tdd`](crate::Tdd).
 /// Ordinary [`and`](crate::and), [`or`](crate::or) and diagram queries use the
 /// vtree's [`Context`] automatically.
 /// An engine is `Send` but not `Sync`: it can move between threads, and one

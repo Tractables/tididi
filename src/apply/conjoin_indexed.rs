@@ -608,8 +608,19 @@ pub(crate) fn and_indexed_counted(
     g: &Tdd,
     index: &PairIndex,
 ) -> Result<(Tdd, IndexedWork), OperationError> {
+    let _op = eng.limits().enter()?;
+    let f = super::extend::onto(eng, f, g.vtree())?;
+    let (result, work) = and_indexed_on(eng, &f, g, index)?;
+    Ok((super::extend::trimmed(eng, result)?, work))
+}
+
+fn and_indexed_on(
+    eng: &Engine,
+    f: &Tdd,
+    g: &Tdd,
+    index: &PairIndex,
+) -> Result<(Tdd, IndexedWork), OperationError> {
     let lim = eng.limits();
-    let _op = lim.enter()?;
     check_operands(f, g, index, "and_indexed")?;
     if f.is_zero() || g.is_zero() {
         return Ok((
@@ -690,6 +701,8 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
 ) -> Result<(A::Column, IndexedWork), OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
+    let f = super::extend::onto(eng, f, g.vtree())?;
+    let f = &*f;
     check_operands(f, g, index, "sum_indexed")?;
     let vtree = Arc::clone(f.vtree());
     if at.idx() >= vtree.num_nodes() {
@@ -825,8 +838,9 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] when `f`, `g` and the index do not
-    /// share one vtree, [`OperationError::IndexMismatch`] when the index was
+    /// [`OperationError::VtreeMismatch`] when `g` and the index do not share
+    /// one vtree, or `f` is on neither it nor a projection of its home inside
+    /// it, [`OperationError::IndexMismatch`] when the index was
     /// built from another diagram than `g`, [`OperationError::MarginalLevel`]
     /// when either operand has a marginal level,
     /// [`OperationError::InertOption`] when either is weighted,

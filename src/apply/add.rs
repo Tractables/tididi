@@ -46,8 +46,8 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index, overlay_on};
 
-/// Return `f + g`, the pointwise sum of two count diagrams sharing a vtree
-/// allocation.
+/// Return `f + g`, the pointwise sum of two count diagrams on one vtree or
+/// on projections of one home.
 ///
 /// A diagram denotes a count for each assignment of its structural
 /// variables: one for a model and zero otherwise while no level is summed
@@ -103,7 +103,9 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// # Errors
 ///
-/// [`OperationError::VtreeMismatch`] for different vtree allocations;
+/// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
+/// projections of one home; [`OperationError::WeightsAcrossProjections`]
+/// when one with a summed-out level would move to a larger projection;
 /// [`OperationError::MarginalLevel`] naming the lowest level that one
 /// operand has summed out and the other has not;
 /// [`OperationError::SharedModel`] when neither operand has a summed-out
@@ -135,8 +137,8 @@ impl Engine {
 }
 
 /// `f + g` of two owned operands on one vtree, minimized.
-fn add_on(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
-    crate::apply::check_vtree(&f, &g)?;
+fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let [mut f, mut g] = crate::apply::extend::owned(eng, [f, g])?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero()) {
@@ -165,7 +167,7 @@ fn add_on(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
         }
     };
     eng.reduce(&mut result, ReductionPlan::default())?;
-    Ok(result)
+    crate::apply::extend::trimmed(eng, result)
 }
 
 /// What a pair side of a count level is rewritten onto.

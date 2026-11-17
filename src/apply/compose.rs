@@ -68,7 +68,8 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 ///
 /// The condition is itself a Boolean function, evaluated on each assignment:
 /// `(condition ∧ then_branch) ∨ (¬condition ∧ else_branch)`. All three operands
-/// must be structural and share a vtree allocation and compatible weights;
+/// must be structural, on one vtree or on projections of one home, with
+/// compatible weights;
 /// an unweighted operand inherits the agreed weights. The result is minimized.
 ///
 /// Operands are consumed on success or error. Composition copies the condition
@@ -181,13 +182,13 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn ite(
         &self,
-        mut condition: Tdd,
-        mut then_branch: Tdd,
-        mut else_branch: Tdd,
+        condition: Tdd,
+        then_branch: Tdd,
+        else_branch: Tdd,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        super::check_vtree(&condition, &then_branch)?;
-        super::check_vtree(&condition, &else_branch)?;
+        let [mut condition, mut then_branch, mut else_branch] =
+            super::extend::owned(self, [condition, then_branch, else_branch])?;
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
@@ -204,9 +205,9 @@ impl Engine {
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
-    pub fn xor(&self, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
+    pub fn xor(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        super::check_vtree(&f, &g)?;
+        let [mut f, mut g] = super::extend::owned(self, [f, g])?;
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
@@ -272,14 +273,14 @@ impl Engine {
     /// As [`and_exists_with`](Self::and_exists_with).
     pub fn and_exists_with_reduction(
         &self,
-        mut f: Tdd,
-        mut g: Tdd,
+        f: Tdd,
+        g: Tdd,
         vars: &[VarId],
         how: Quantification,
         plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        super::check_vtree(&f, &g)?;
+        let [mut f, mut g] = super::extend::owned(self, [f, g])?;
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
@@ -301,9 +302,9 @@ impl Engine {
             // No sweep runs to reduce the product, so it is reduced here.
             let mut product = product;
             self.reduce(&mut product, plan)?;
-            return Ok(product);
+            return super::extend::trimmed(self, product);
         }
-        super::project::exists_targets_on(self, product, &targets, plan)
+        super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, plan)?)
     }
 }
 
