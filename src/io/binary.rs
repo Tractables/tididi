@@ -250,9 +250,33 @@ fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
     Ok((total, version))
 }
 
+// The vtree with no node is told apart here rather than in `parse_body`:
+// any test there changes the code of the level reader inlined into it.
+#[inline(always)]
+fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    match vtree.num_nodes() {
+        0 => decode_without_leaf(bytes, vtree),
+        _ => decode_levels(bytes, vtree),
+    }
+}
+
+/// A file over a vtree with no node holds the false or the true diagram;
+/// the bytes are checked against their encodings.
+#[cold]
+#[inline(never)]
+fn decode_without_leaf(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    for value in [false, true] {
+        let tdd = crate::build::constant_without_leaf(vtree, value);
+        if encode(&tdd) == bytes {
+            return Ok(tdd);
+        }
+    }
+    Err(malformed("a vtree with no node holds only a constant, and the file is neither"))
+}
+
 /// Check the header, the length and the checksum of one whole file, then
 /// parse its body.
-fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+fn decode_levels(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let (total, version) = check_header(bytes)?;
     if bytes.len() < total {
         return Err(truncated(bytes.len(), total));
@@ -811,12 +835,6 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
 
     let root = vtree.root();
     let output = body.varint("output")?;
-    if vtree.num_nodes() == 0 {
-        if output > 1 || body.left() != 0 {
-            return Err(malformed("a vtree with no node holds only a constant"));
-        }
-        return Ok(crate::build::constant_without_leaf(vtree, output == 1));
-    }
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let mut width = vec![LEAF_WIDTH; vtree.num_nodes()];
     if output != 0 {
