@@ -6,7 +6,7 @@ use num_bigint::BigUint;
 
 use crate::diagram::ChildPair;
 use crate::diagram::{ScaledFloat, ScaledSum, WeightValue};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::{Count, CountRead, CountVec};
 use crate::diagram::{NodeChunks, Pairs, StoredPairs, TddLevel};
@@ -334,29 +334,26 @@ pub(crate) fn walk_bottom_up<C, E>(
     let mut t = root;
     let mut subtree_done = false;
     loop {
+        let node = vtree.node(t);
         if subtree_done || !held(cols, t.idx()) {
-            if !subtree_done && !vtree.node(t).is_leaf() {
-                t = vtree.children(t).0;
-                continue;
-            }
-            compute(cols, t)?;
-            if let Some(keep) = frontier
-                && !vtree.node(t).is_leaf()
-            {
-                let (l, r) = vtree.children(t);
-                for c in [l, r] {
-                    if c != keep { release(cols, c.idx()); }
+            match *node {
+                VtreeNode::Internal { left, .. } if !subtree_done => {
+                    t = left;
+                    continue;
                 }
+                VtreeNode::Internal { left, right, .. } => {
+                    compute(cols, t)?;
+                    if let Some(keep) = frontier {
+                        if left != keep { release(cols, left.idx()); }
+                        if right != keep { release(cols, right.idx()); }
+                    }
+                }
+                VtreeNode::Leaf { .. } => compute(cols, t)?,
             }
         }
         if t == root { return Ok(()); }
-        let parent = vtree.node(t).parent().expect("a non-root walk node has a parent");
-        if t == vtree.children(parent).0 {
-            t = vtree.children(parent).1;
-            subtree_done = false;
-        } else {
-            t = parent;
-            subtree_done = true;
-        }
+        let parent = node.parent().expect("a non-root walk node has a parent");
+        let (left, right) = vtree.children(parent);
+        (t, subtree_done) = if t == left { (right, false) } else { (parent, true) };
     }
 }
