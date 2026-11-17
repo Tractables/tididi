@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::diagram::{NodeIdx, Tdd};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
@@ -153,6 +153,13 @@ fn build_sorted(
 ) -> Result<Tdd, OperationError> {
     let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix)?;
     emit::fill(eng, vtree, layout, &mut plans)
+}
+
+/// A charged vector of `len` copies of `fill`.
+fn filled<T: Clone>(lim: &Limits, len: usize, fill: T) -> Result<Vec<T>, OperationError> {
+    let mut out = Vec::new();
+    lim.try_resize(&mut out, len, fill)?;
+    Ok(out)
 }
 
 #[cfg(test)]

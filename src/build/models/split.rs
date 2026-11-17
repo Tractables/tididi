@@ -680,7 +680,7 @@ fn dedup_range<T: Copy + PartialEq>(
 
 /// Drop adjacent duplicates from `v[start..]`.
 #[inline(always)]
-fn dedup_tail<T: Copy + PartialEq>(v: &mut Vec<T>, start: usize) {
+pub(super) fn dedup_tail<T: Copy + PartialEq>(v: &mut Vec<T>, start: usize) {
     let len = v.len();
     let kept = dedup_range(v, start, len, start);
     v.truncate(kept);

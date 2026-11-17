@@ -195,51 +195,28 @@ fn pack(
     lim.reserve_exact(&mut packed, chosen * w)?;
     let mut gate = lim.gate();
     gate.poll((chosen * columns.len().max(1)) as u64)?;
-    if w == 1 {
-        let one = |r: usize| -> u64 {
-            let mut word = 0u64;
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                word |= match placement {
-                    Placement::Shift { shift, mask, .. } => u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        (0..*bytes).fold(0, |acc, k| acc | table[k * 256 + ((code >> (8 * k)) & 0xff) as usize])
-                    }
-                };
-            }
-            word
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(|r| packed.push(one(r))),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| packed.push(one(r as usize))),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| packed.push(one(r)));
-            }
-        }
-    } else {
-        let mut row = vec![0u64; w];
-        let mut one = |r: usize| {
-            row.iter_mut().for_each(|word| *word = 0);
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                match placement {
-                    Placement::Shift { word, shift, mask } => row[*word] |= u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        for k in 0..*bytes {
-                            let entry = &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
-                            row.iter_mut().zip(entry).for_each(|(word, &bits)| *word |= bits);
-                        }
+    let mut row = vec![0u64; w];
+    let mut one = |r: usize| {
+        row.iter_mut().for_each(|word| *word = 0);
+        for (placement, column) in placements.iter().zip(codes) {
+            let code = column[r];
+            match placement {
+                Placement::Shift { word, shift, mask } => row[*word] |= u64::from(code & mask) << shift,
+                Placement::Spread { bytes, table } => {
+                    for k in 0..*bytes {
+                        let entry = &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
+                        row.iter_mut().zip(entry).for_each(|(word, &bits)| *word |= bits);
                     }
                 }
             }
-            packed.extend_from_slice(&row);
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(&mut one),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| one(r));
-            }
+        }
+        packed.extend_from_slice(&row);
+    };
+    match rows {
+        RowSelection::All => (0..codes[0].len()).for_each(&mut one),
+        RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
+        RowSelection::Marked(marked) => {
+            marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| one(r));
         }
     }
     gate.flush()?;

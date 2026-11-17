@@ -38,9 +38,10 @@ use crate::diagram::{NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{VarId, Vtree};
 
+use super::filled;
 use super::layout::Layout;
 use super::rows::{extract, index_bits, words_per_row};
-use super::split::{Decomposition, Plan};
+use super::split::{Decomposition, Plan, dedup_tail};
 use crate::sort::Radix;
 
 impl Tdd {
@@ -162,6 +163,30 @@ struct Pieces {
 }
 
 impl Pieces {
+    /// No pieces of `words` words.
+    fn empty(words: usize) -> Pieces {
+        Pieces {
+            words,
+            value: Vec::new(),
+            fixed: Vec::new(),
+            atom: Vec::new(),
+            atoms: 0,
+        }
+    }
+
+    /// The pieces of `value` and `fixed`, `words` apiece, at `firsts`, in
+    /// that order, with no atoms yet.
+    fn at(lim: &Limits, words: usize, value: &[u64], fixed: &[u64], firsts: &[u32]) -> Result<Pieces, OperationError> {
+        let mut out = Pieces::empty(words);
+        lim.reserve_exact(&mut out.value, firsts.len() * words)?;
+        lim.reserve_exact(&mut out.fixed, firsts.len() * words)?;
+        for &k in firsts {
+            out.value.extend_from_slice(&value[k as usize * words..][..words]);
+            out.fixed.extend_from_slice(&fixed[k as usize * words..][..words]);
+        }
+        Ok(out)
+    }
+
     fn len(&self) -> usize {
         self.atom.len()
     }
@@ -171,13 +196,6 @@ impl Charged for Pieces {
     fn charged_bytes(&self) -> u64 {
         self.value.charged_bytes() + self.fixed.charged_bytes() + self.atom.charged_bytes()
     }
-}
-
-/// A charged vector of `len` copies of `fill`.
-fn filled<T: Clone>(lim: &Limits, len: usize, fill: T) -> Result<Vec<T>, OperationError> {
-    let mut out = Vec::new();
-    lim.try_resize(&mut out, len, fill)?;
-    Ok(out)
 }
 
 /// The buffers one split reuses from the last.
@@ -219,11 +237,7 @@ fn root_pieces(
         // One table per byte of the input word holds where that byte's bits
         // land, so a word is re-encoded by eight lookups.
         let table = layout.byte_table(lim)?;
-        let live = if num_vars >= 64 {
-            !0u64
-        } else {
-            (1u64 << num_vars) - 1
-        };
+        let live = lower_bits(0, num_vars);
         gate.poll(2 * n as u64)?;
         for k in 0..n {
             let care = cubes[2 * k + 1] & live;
@@ -236,9 +250,7 @@ fn root_pieces(
             gate.poll(2 * w as u64)?;
             let (row, mask) = cubes[2 * k * w..2 * (k + 1) * w].split_at(w);
             for j in 0..w {
-                let used = num_vars - j * 64;
-                let live = if used >= 64 { !0 } else { (1u64 << used) - 1 };
-                let mut care = mask[j] & live;
+                let mut care = mask[j] & lower_bits(j, num_vars);
                 let ones = row[j] & care;
                 while care != 0 {
                     let bit = care.trailing_zeros() as usize;
@@ -251,14 +263,8 @@ fn root_pieces(
         }
     }
     gate.flush()?;
-    let mut out = Pieces {
-        words: w,
-        value: Vec::new(),
-        fixed: Vec::new(),
-        atom: Vec::new(),
-        atoms: 1,
-    };
     if w == 1 {
+        let mut out = Pieces { atoms: 1, ..Pieces::empty(w) };
         // A one-word cube sorts as its value above its mask, in one word
         // through the radix sort where both fit, else as a pair.
         let distinct = if 2 * num_vars <= 64 {
@@ -269,11 +275,7 @@ fn root_pieces(
             lim.discard(fixed);
             s.radix.sort(lim, &mut keys, 0, 2 * num_vars)?;
             keys.dedup();
-            let mask = if num_vars == 0 {
-                0
-            } else {
-                !0u64 >> (64 - num_vars)
-            };
+            let mask = lower_bits(0, num_vars);
             lim.reserve_exact(&mut out.value, keys.len())?;
             lim.reserve_exact(&mut out.fixed, keys.len())?;
             out.value.extend(keys.iter().map(|&key| key >> num_vars));
@@ -305,12 +307,7 @@ fn root_pieces(
         return Ok(out);
     }
     let (order, ids) = distinct(lim, s, 64 * w, w, &value, &fixed)?;
-    lim.reserve_exact(&mut out.value, order.len() * w)?;
-    lim.reserve_exact(&mut out.fixed, order.len() * w)?;
-    for &k in &order {
-        out.value.extend_from_slice(&value[k as usize * w..][..w]);
-        out.fixed.extend_from_slice(&fixed[k as usize * w..][..w]);
-    }
+    let mut out = Pieces { atoms: 1, ..Pieces::at(lim, w, &value, &fixed, &order)? };
     out.atom = filled(lim, order.len(), 0u32)?;
     for buf in [value, fixed] {
         lim.discard(buf);
@@ -553,8 +550,8 @@ fn split(
     low.pieces.atom = low_atom;
     low.pieces.atoms = low_atoms;
     let (high_pieces, low_pieces) = (
-        std::mem::replace(&mut high.pieces, empty()),
-        std::mem::replace(&mut low.pieces, empty()),
+        std::mem::replace(&mut high.pieces, Pieces::empty(1)),
+        std::mem::replace(&mut low.pieces, Pieces::empty(1)),
     );
     high.discard(lim);
     low.discard(lim);
@@ -587,13 +584,12 @@ fn sorted_triples(
         keys.extend(each.map(|[a, h, l]| (a as u64) << mid | (h as u64) << low | l as u64));
         s.radix.sort(lim, keys, 0, mid + bits[0])?;
         keys.dedup();
-        let mask = |width: usize| if width == 0 { 0 } else { !0u64 >> (64 - width) };
         lim.reserve_exact(&mut triples, keys.len())?;
         triples.extend(keys.iter().map(|&k| {
             [
                 (k >> mid) as u32,
-                ((k >> low) & mask(bits[1])) as u32,
-                (k & mask(low)) as u32,
+                ((k >> low) & lower_bits(0, bits[1])) as u32,
+                (k & lower_bits(0, low)) as u32,
             ]
         }));
     } else {
@@ -613,18 +609,8 @@ fn sorted_triples(
     Ok(triples)
 }
 
-/// No pieces.
-fn empty() -> Pieces {
-    Pieces {
-        words: 1,
-        value: Vec::new(),
-        fixed: Vec::new(),
-        atom: Vec::new(),
-        atoms: 0,
-    }
-}
-
 /// Lists of items, one after another.
+#[derive(Default)]
 struct Lists {
     /// Where each list starts, with one entry past the last list.
     starts: Vec<u32>,
@@ -660,10 +646,7 @@ impl Lists {
     ) -> Result<Lists, OperationError> {
         // Every start is at most `total`.
         lim.list_index(total)?;
-        let mut out = Lists {
-            starts: Vec::new(),
-            items: Vec::new(),
-        };
+        let mut out = Lists::default();
         lim.reserve_exact(&mut out.starts, count + 1)?;
         lim.reserve_exact(&mut out.items, total)?;
         for (list, item) in entries {
@@ -716,12 +699,7 @@ fn coarse_atoms(
         }
         s.radix.sort(lim, keys, 0, piece + bits[0])?;
         keys.dedup();
-        let atom_mask = if part == 0 { 0 } else { !0u64 >> (64 - part) };
-        let part_mask = if bits[1] == 0 {
-            0
-        } else {
-            !0u64 >> (64 - bits[1])
-        };
+        let (atom_mask, part_mask) = (lower_bits(0, part), lower_bits(0, bits[1]));
         let entries = keys.iter().map(|&k| {
             (
                 (k >> piece) as u32,
@@ -764,10 +742,7 @@ fn coarse_atoms(
     lim.discard(firsts);
     lim.discard(set_id);
     // Each atom's set, once.
-    let mut sets = Lists {
-        starts: Vec::new(),
-        items: Vec::new(),
-    };
+    let mut sets = Lists::default();
     lim.reserve_exact(&mut sets.starts, set_firsts.len() + 1)?;
     sets.starts.push(0);
     for &k in &set_firsts {
@@ -921,19 +896,7 @@ fn side(
     }
     gate.flush()?;
     let (firsts, part_of) = distinct(lim, s, width, w, &value, &fixed)?;
-    let mut parts = Pieces {
-        words: w,
-        value: Vec::new(),
-        fixed: Vec::new(),
-        atom: Vec::new(),
-        atoms: 0,
-    };
-    lim.reserve_exact(&mut parts.value, firsts.len() * w)?;
-    lim.reserve_exact(&mut parts.fixed, firsts.len() * w)?;
-    for &k in &firsts {
-        parts.value.extend_from_slice(&value[k as usize * w..][..w]);
-        parts.fixed.extend_from_slice(&fixed[k as usize * w..][..w]);
-    }
+    let parts = Pieces::at(lim, w, &value, &fixed, &firsts)?;
     lim.discard(value);
     lim.discard(fixed);
     lim.discard(firsts);
@@ -954,10 +917,7 @@ fn expand_coarse_lists(
     firsts: &[u32],
     fine: &Side,
 ) -> Result<Lists, OperationError> {
-    let mut expanded = Lists {
-        starts: Vec::new(),
-        items: Vec::new(),
-    };
+    let mut expanded = Lists::default();
     lim.reserve_exact(&mut expanded.starts, firsts.len() + 1)?;
     let total: usize = firsts
         .iter()
@@ -984,14 +944,7 @@ fn expand_coarse_lists(
         if !set.is_sorted() {
             set.sort_unstable();
         }
-        let mut kept = 0;
-        for at in 0..set.len() {
-            if at == 0 || set[at] != set[kept - 1] {
-                set[kept] = set[at];
-                kept += 1;
-            }
-        }
-        expanded.items.truncate(start + kept);
+        dedup_tail(&mut expanded.items, start);
         expanded.starts.push(expanded.items.len() as u32);
     }
     gate.flush()?;
@@ -1054,13 +1007,7 @@ fn refine(
         bit: width,
         value: 0,
     }];
-    let mut out = Pieces {
-        words: w,
-        value: Vec::new(),
-        fixed: Vec::new(),
-        atom: Vec::new(),
-        atoms: 0,
-    };
+    let mut out = Pieces::empty(w);
     // Each piece's cubes, as ranges of the arena: a cube free at a split
     // is listed on both sides, so the arena can outgrow a 32-bit offset.
     let mut members: Vec<(u32, u32)> = Vec::new();
