@@ -72,7 +72,11 @@ pub(crate) fn reset_level(level: &mut TddLevel, room: &mut u64) -> u64 {
         bytes
     }
     let within = |room: u64| usize::try_from(room).unwrap_or(usize::MAX);
-    level.clear_keeping(within(*room));
+    if level.is_clear_but_held() {
+        level.forget_held_pairs();
+    } else {
+        level.clear_keeping(within(*room));
+    }
     let arenas = retain(level.nodes.stored_mut(), room) + retain(level.pairs.stored_mut(), room);
     let ranges = level.ranges.retain(within(*room));
     *room -= ranges;
