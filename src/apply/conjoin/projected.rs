@@ -50,7 +50,7 @@ fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Td
         _ => (g, f),
     };
     if constant.is_zero() || other.is_zero() {
-        return Ok(constant_without_leaf(&Vtree::empty_projection(constant.vtree()), false));
+        return Ok(constant_without_leaf(&Vtree::empty_projection(constant.vtree().home().expect("a vtree with no node is a projection")), false));
     }
     extend::into_owned(eng, other)
 }

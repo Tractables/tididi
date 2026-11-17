@@ -17,9 +17,8 @@
 //!
 //! Without arguments, as `cargo test` runs it: `1024 4 4 transport 4 mirror`.
 
-use std::sync::Arc;
 
-use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use tididi::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 use tididi::{Engine, Tdd};
 
 fn mirror_image(home: &Vtree) -> Vtree {
@@ -62,13 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("p and blocks must be positive and the blocks must fit in the home".into());
     }
 
-    let home = Arc::new(Vtree::balanced(h));
-    let homes = [Arc::clone(&home), Arc::new(mirror_image(&home))];
-    // A home's index is built at its first projection; build both before
-    // the moves.
-    for home in &homes {
-        Vtree::projection(home, [VarId(1)])?;
-    }
+    let home = Home::new(Vtree::balanced(h));
+    let homes = [home.clone(), Home::new(mirror_image(home.vtree()))];
     let eng = Engine::new();
     let mut f: Option<Tdd> = None;
     for b in 0..blocks {
@@ -95,11 +89,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "transport" => eng.transport(f, to, |v| v).map_err(|r| r.error)?,
             "embed" => {
                 let moved = match mirror {
-                    true => eng.embed_moving_mirrored(f, to, |v| v),
-                    false => eng.embed_moving(f, to, |v| v),
+                    true => eng.embed_moving_mirrored(f, to.vtree(), |v| v),
+                    false => eng.embed_moving(f, to.vtree(), |v| v),
                 };
                 let (mut g, _) = moved.map_err(|r| r.error)?;
-                eng.trim(&mut g)?;
+                eng.trim(&mut g, to)?;
                 g
             }
             _ => f,

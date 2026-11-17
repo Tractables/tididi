@@ -7,6 +7,7 @@ use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{and2, equiv, exact_weight, rand_conj};
 use crate::vtree::rng::Lcg;
+use crate::vtree::Home;
 use crate::literal;
 
 use super::*;
@@ -67,24 +68,25 @@ fn trimmed_copies_answer_as_the_original() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(8) as u32;
         let home = Arc::new(Vtree::random(n, seed));
+        let hm = Home::new(Arc::clone(&home));
         let f = random_diagram(&home, n, &mut rng);
         let label = format!("seed {seed}, {n} variables");
 
         let mut g = f.clone();
-        trimmed_any += usize::from(g.trim().unwrap());
+        trimmed_any += usize::from(g.trim(&hm).unwrap());
         check_trimmed(&g, false).unwrap_or_else(|e| panic!("{label}: {e}"));
-        assert!(!g.trim().unwrap(), "{label}: a second trim moved the diagram");
+        assert!(!g.trim(&hm).unwrap(), "{label}: a second trim moved the diagram");
         same_queries(&f, &g, n, &mut rng, &label);
 
         if g.vtree().num_nodes() > 0 {
-            assert!(Arc::ptr_eq(g.vtree().home().unwrap_or(g.vtree()), &home), "{label}: another home");
+            assert!(g.vtree().is_on(&hm), "{label}: another home");
             let (back, _) = g.embed(&home, |v| v).unwrap();
             assert!(equiv(&f, &back), "{label}: the embedded copy is another function");
         }
 
         let mut h = g.clone();
         h.minimize().unwrap();
-        h.trim().unwrap();
+        h.trim(&hm).unwrap();
         check_trimmed(&h, true).unwrap_or_else(|e| panic!("{label}, minimized: {e}"));
         same_queries(&f, &h, n, &mut rng, &format!("{label}, minimized"));
     }
@@ -94,24 +96,25 @@ fn trimmed_copies_answer_as_the_original() {
 #[test]
 fn constants_have_no_leaf() {
     let home = Arc::new(Vtree::balanced(5));
+    let hm = Home::new(Arc::clone(&home));
     let mut zero = Tdd::clause(&home, [1]).unwrap().condition_var(VarId(1), false).unwrap();
-    assert!(zero.trim().unwrap());
+    assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
     assert_eq!(zero.model_count().unwrap(), 0u32.into());
 
     let mut one = Tdd::one(&home);
-    assert!(one.trim().unwrap());
+    assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
-    assert!(Arc::ptr_eq(one.vtree().home().unwrap(), &home));
+    assert!(Arc::ptr_eq(one.vtree().home().unwrap().vtree(), &home));
     assert_eq!(one.model_count().unwrap(), 32u32.into());
     assert_eq!(one.projected_model_count(&[VarId(2), VarId(4), VarId(2)]).unwrap(), 4u32.into());
     assert!(one.is_sat().unwrap());
-    assert!(!one.trim().unwrap());
+    assert!(!one.trim(&hm).unwrap());
     check_trimmed(&one, true).unwrap();
 
     let mut x = literal(&home, 3).unwrap();
-    assert!(x.trim().unwrap());
+    assert!(x.trim(&hm).unwrap());
     assert_eq!(x.vtree().num_nodes(), 1);
     assert_eq!(x.model_count().unwrap(), 16u32.into());
     check_trimmed(&x, true).unwrap();
@@ -140,16 +143,17 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
         let mut rng = Lcg::new(seed);
         let n = 1 + rng.below(12) as u32;
         let home = Arc::new(Vtree::random(n, seed));
+        let hm = Home::new(Arc::clone(&home));
         let mut vars = var_subset(n, &mut rng);
         if vars.is_empty() {
             vars.push(VarId(1));
         }
-        let own = Vtree::projection(&home, vars).unwrap();
+        let own = Vtree::projection(&hm, vars).unwrap();
         for h in (0..home.num_nodes() as u32).map(VtreeIdx) {
             assert_eq!(own.own_at(h), own_at_by_walk(&own, &home, h), "seed {seed}, home node {}", h.0);
         }
         assert_eq!(home.own_at(home.root()), Some(home.root()));
-        let empty = Vtree::empty_projection(&home);
+        let empty = Vtree::empty_projection(&hm);
         assert_eq!(empty.own_at(home.root()), None);
     }
 }
@@ -157,7 +161,8 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
 #[test]
 fn counts_on_a_projection_are_over_the_home() {
     let home = Arc::new(Vtree::balanced(6));
-    let own = Vtree::projection(&home, [VarId(2), VarId(5)]).unwrap();
+    let hm = Home::new(Arc::clone(&home));
+    let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
     let f = Tdd::clause(&own, [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
     assert_eq!(f.projected_model_count(&[VarId(2), VarId(1)]).unwrap(), 4u32.into());
@@ -176,6 +181,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let eng = Engine::new();
     // x1 ↔ x2, its two nodes under one root node beside true over x3, x4.
     let home = Arc::new(Vtree::balanced(4));
+    let hm = Home::new(Arc::clone(&home));
     let (l, r) = home.children(home.root());
     let mut b = Tdd::builder(&eng, &home).unwrap();
     let same = b.push(&eng, l, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -184,7 +190,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let root = b.push(&eng, home.root(), &[ChildPair::new(same, t), ChildPair::new(differ, t)]).unwrap();
     let f = b.finish(TddNodeId { vtree: home.root(), local: root }).unwrap();
     let mut g = f.clone();
-    assert!(g.trim().unwrap());
+    assert!(g.trim(&hm).unwrap());
     check_trimmed(&g, false).unwrap();
     assert_eq!(g.vtree().num_nodes(), 3);
     assert_eq!(g.level(g.vtree().root()).slot_count(), 1);
@@ -194,12 +200,13 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
     let two = Arc::new(Vtree::balanced(2));
+    let hm = Home::new(Arc::clone(&two));
     let mut b = Tdd::builder(&eng, &two).unwrap();
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
         .unwrap();
     let mut f = b.finish(TddNodeId { vtree: two.root(), local: root }).unwrap();
-    assert!(f.trim().unwrap());
+    assert!(f.trim(&hm).unwrap());
     assert!(f.is_one());
     assert_eq!(f.model_count().unwrap(), 4u32.into());
 }
@@ -210,9 +217,10 @@ fn counters_count_over_the_home() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(7) as u32;
         let home = Arc::new(Vtree::random(n, seed));
+        let hm = Home::new(Arc::clone(&home));
         let f = random_diagram(&home, n, &mut rng);
         let mut g = f.clone();
-        g.trim().unwrap();
+        g.trim(&hm).unwrap();
         let mut fc = f.counter().unwrap();
         let mut gc = g.counter().unwrap();
         assert_eq!(fc.model_count().unwrap(), gc.model_count().unwrap(), "seed {seed}");
@@ -308,6 +316,7 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     let mut rng = Lcg::new(seed.wrapping_mul(0x9e37_79b9) ^ 0x7121);
     let n = 2 + rng.below(9) as u32;
     let home = Arc::new(Vtree::random(n, seed));
+    let hm = Home::new(Arc::clone(&home));
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
     } else {
@@ -324,10 +333,10 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     let label = format!("seed {seed}, {n} variables");
 
     let (mut g, mut h) = (f.clone(), f.clone());
-    let moved = g.trim().unwrap();
-    assert_eq!(moved, trim_by_rebuild(&mut h).unwrap(), "{label}: whether the diagram moved");
+    let moved = g.trim(&hm).unwrap();
+    assert_eq!(moved, trim_by_rebuild(&mut h, &hm).unwrap(), "{label}: whether the diagram moved");
     check_trimmed(&g, false).unwrap_or_else(|e| panic!("{label}: {e}"));
-    assert!(!g.clone().trim().unwrap(), "{label}: a second trim moved the diagram");
+    assert!(!g.clone().trim(&hm).unwrap(), "{label}: a second trim moved the diagram");
     assert_eq!(leaf_vars(g.vtree()), leaf_vars(h.vtree()), "{label}: leaves kept");
     assert_eq!(g.weights().is_some(), weighted, "{label}: weights carried");
     if weighted {

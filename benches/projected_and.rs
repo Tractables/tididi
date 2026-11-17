@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use tididi::vtree::{VarId, Vtree};
+use tididi::vtree::{Home, VarId, Vtree};
 use tididi::{Engine, Tdd};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,16 +37,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("n must be at least 3".into());
     }
 
-    let home = Arc::new(Vtree::balanced(n));
+    let home = Home::new(Vtree::balanced(n));
     let vtree_of = |vars: &[u32]| -> Result<Arc<Vtree>, Box<dyn std::error::Error>> {
         Ok(match projected {
             true => Vtree::projection(&home, vars.iter().map(|&v| VarId(v)))?,
-            false => Arc::clone(&home),
+            false => Arc::clone(home.vtree()),
         })
     };
-    // The home's index is built at the first projection; build it before
-    // the clauses, so a run with none measures it.
-    vtree_of(&[1])?;
 
     let mut state = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move |below: u32| {

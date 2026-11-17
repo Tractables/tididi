@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::apply::{FoldCodes, FoldMonoid, FoldRange, PrefixFoldError};
 use crate::test_helpers::{Lcg, assert_canonical, eval};
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
 /// A running total, each model of the value block worth `3v + 1`.
@@ -1033,8 +1033,9 @@ fn operands_on_projections_fold_as_on_their_home() {
                 let a = eng.from_models(&vtree, &all[..nk as usize + m as usize], &a_rows).unwrap();
                 let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
                 let (mut ta, mut tb) = (a.clone(), b.clone());
-                ta.trim().unwrap();
-                tb.trim().unwrap();
+                let home = Home::new(Arc::clone(&vtree));
+                ta.trim(&home).unwrap();
+                tb.trim(&home).unwrap();
                 assert!(ta.vtree().free_leaves() >= nv);
                 let coding = |folds: &[u64]| {
                     let sorted: BTreeSet<u64> = folds.iter().copied().collect();

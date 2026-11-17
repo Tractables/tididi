@@ -9,7 +9,7 @@ use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::restructure::EmbedError;
 use crate::test_helpers::check::check_trimmed;
 use crate::vtree::rng::Lcg;
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
 
 /// `vtree` with every variable renamed through `rename` and the children of
@@ -62,7 +62,7 @@ fn diagram(eng: &Engine, vtree: &Arc<Vtree>, trim: bool, rng: &mut Lcg) -> Tdd {
         f = eng.and_clause(f, &clause).unwrap();
     }
     if trim {
-        eng.trim(&mut f).unwrap();
+        eng.trim(&mut f, &Home::new(Arc::clone(vtree))).unwrap();
     }
     f
 }
@@ -84,17 +84,17 @@ fn store(n: u32, rng: &mut Lcg) -> WeightStore {
 /// and mirrored at random, or on a root vtree of that shape; `back` takes
 /// its variables to `dest`'s.
 struct Case {
-    dest: Arc<Vtree>,
+    dest: Home,
     f: Tdd,
     back: Vec<VarId>,
 }
 
 fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
     let n = 2 + rng.below(11) as u32;
-    let dest = Arc::new(Vtree::random(n, seed));
+    let dest = Home::new(Vtree::random(n, seed));
     let perm = permutation(n, rng);
     let back = inverse(&perm);
-    let source_home = Arc::new(renamed_mirrored(&dest, &perm, n, rng));
+    let source_home = Home::new(renamed_mirrored(dest.vtree(), &perm, n, rng));
     let vars: Vec<VarId> = (1..=n).map(VarId).filter(|_| rng.below(3) != 0).collect();
     let vars = if vars.is_empty() { vec![VarId(1 + rng.below(n as u64) as u32)] } else { vars };
     let vtree = match rng.below(3) {
@@ -123,17 +123,17 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
     assert_eq!(f.pair_count(), pairs);
     if f.vtree().num_nodes() == 0 {
         assert_eq!(got.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(got.vtree().home().unwrap(), dest));
+        assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
         assert_eq!((got.is_one(), got.is_zero()), (f.is_one(), f.is_zero()));
         assert_eq!(got.weights().is_some(), weighted.is_some());
         return;
     }
 
-    let (mut expected, _) = eng.embed_mirrored(f, dest, map).unwrap();
+    let (mut expected, _) = eng.embed_mirrored(f, dest.vtree(), map).unwrap();
     if let Some(ws) = weighted {
         expected.set_weights(ws.clone()).unwrap();
     }
-    eng.trim(&mut expected).unwrap();
+    eng.trim(&mut expected, dest).unwrap();
     let unweighted = |t: &Tdd| {
         let mut t = t.clone();
         t.take_weights().unwrap();
@@ -147,7 +147,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         v
     };
     assert_eq!(leaf_vars(got.vtree()), images);
-    assert!(Arc::ptr_eq(got.vtree().home().unwrap(), dest));
+    assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
     let trimmed = check_trimmed(f, false).is_ok();
     if trimmed {
         check_trimmed(&got, false).unwrap_or_else(|e| panic!("{e}"));
@@ -176,8 +176,8 @@ fn transport_is_embed_then_trim() {
     for seed in 0..300 {
         let c = case(&eng, seed, &mut rng);
         check_against_embed(&eng, &c, rng.coin(), None);
-        let mut weighted = Case { dest: Arc::clone(&c.dest), f: c.f.clone(), back: c.back.clone() };
-        let ws = store(c.dest.num_vars(), &mut rng);
+        let mut weighted = Case { dest: c.dest.clone(), f: c.f.clone(), back: c.back.clone() };
+        let ws = store(c.dest.vtree().num_vars(), &mut rng);
         weighted.f.set_weights(ws.clone()).unwrap();
         check_against_embed(&eng, &weighted, rng.coin(), Some(&ws));
     }
@@ -190,12 +190,12 @@ fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
     let (mut accepted, mut refused) = (0, 0);
     for seed in 0..300 {
         let n = 3 + rng.below(8) as u32;
-        let dest = Arc::new(Vtree::random(n, seed));
+        let dest = Home::new(Vtree::random(n, seed));
         let source = Arc::new(Vtree::random(n, seed ^ 0xffff));
         let f = diagram(&eng, &source, false, &mut rng);
         let perm = permutation(n, &mut rng);
         let map = |v: VarId| perm[v.idx()];
-        let embedded = eng.embed_mirrored(&f, &dest, map);
+        let embedded = eng.embed_mirrored(&f, dest.vtree(), map);
         let (pairs, vtree) = (f.pair_count(), Arc::clone(f.vtree()));
         let owned = eng.transport(f.clone(), &dest, map);
         let borrowed = eng.transport(&f, &dest, map);
@@ -222,7 +222,7 @@ fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
 #[test]
 fn bad_images_marginal_levels_and_constants() {
     let eng = Engine::new();
-    let home = Arc::new(Vtree::balanced(6));
+    let home = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
     let f = eng.clause(&own, [1, -2, 3]).unwrap();
 
@@ -242,13 +242,13 @@ fn bad_images_marginal_levels_and_constants() {
     let r = eng.transport(summed, &home, |v| v).unwrap_err();
     assert!(matches!(r.error, EmbedError::Operation(OperationError::MarginalLevel(_))), "{:?}", r.error);
 
-    let other = Arc::new(Vtree::linear(4));
+    let other = Home::new(Vtree::linear(4));
     for value in [false, true] {
         let empty = Vtree::empty_projection(&home);
         let c = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
         let moved = eng.transport(c, &other, |v| v).map_err(|r| r.error).unwrap();
         assert_eq!(moved.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(moved.vtree().home().unwrap(), &other));
+        assert!(Arc::ptr_eq(moved.vtree().home().unwrap().vtree(), other.vtree()));
         assert_eq!(moved.is_one(), value);
         assert_eq!(moved.is_zero(), !value);
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{rotate_left, rotate_right};
 use crate::vtree::rng::Lcg;
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
 fn rotated_home(n: u32, seed: u64) -> Arc<Vtree> {
@@ -43,7 +43,7 @@ fn part(vars: &[VarId], rng: &mut Lcg) -> Vec<VarId> {
 /// A random trimmed diagram on a projection of `home` inside `vars`: a CNF
 /// of one to four clauses, a constant on the empty projection when `vars`
 /// is empty.
-fn operand(eng: &Engine, home: &Arc<Vtree>, vars: &[VarId], rng: &mut Lcg) -> Tdd {
+fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let empty = Vtree::empty_projection(home);
     if vars.is_empty() {
         return if rng.coin() { Tdd::one(&empty) } else { Tdd::zero(&empty) };
@@ -60,7 +60,7 @@ fn operand(eng: &Engine, home: &Arc<Vtree>, vars: &[VarId], rng: &mut Lcg) -> Td
             .collect();
         f = eng.and_clause(f, &clause).unwrap();
     }
-    eng.trim(&mut f).unwrap();
+    eng.trim(&mut f, home).unwrap();
     f
 }
 
@@ -242,13 +242,14 @@ fn operations_on_projections_are_operations_on_the_home() {
     let eng = Engine::new();
     for seed in 0..150u64 {
         let home = rotated_home(2 + (seed % 9) as u32, seed);
+        let hm = Home::new(Arc::clone(&home));
         let mut rng = Lcg::new(seed ^ 0x5851_f42d);
         let all = vars_under(&home, home.root());
         for (k, (fv, gv)) in leaf_set_pairs(&home, &mut rng).into_iter().enumerate() {
-            let f = operand(&eng, &home, &fv, &mut rng);
-            let g = operand(&eng, &home, &gv, &mut rng);
+            let f = operand(&eng, &hm, &fv, &mut rng);
+            let g = operand(&eng, &hm, &gv, &mut rng);
             let hv = part(&all, &mut rng);
-            let h = operand(&eng, &home, &hv, &mut rng);
+            let h = operand(&eng, &hm, &hv, &mut rng);
             let case = Case { eng: &eng, home: &home, what: format!("seed {seed} pair {k} f {fv:?} g {gv:?} h {hv:?}") };
             check_operations(&case, &f, &g, &h, &mut rng);
         }
@@ -258,7 +259,7 @@ fn operations_on_projections_are_operations_on_the_home() {
 #[test]
 fn constants_on_the_empty_projection() {
     let eng = Engine::new();
-    let home = rotated_home(5, 3);
+    let home = Home::new(rotated_home(5, 3));
     let empty = Vtree::empty_projection(&home);
     let (one, zero) = (Tdd::one(&empty), Tdd::zero(&empty));
     for (c, value) in [(&one, true), (&zero, false)] {
@@ -291,7 +292,7 @@ fn constants_on_the_empty_projection() {
 #[test]
 fn weights_and_summed_out_levels_do_not_move() {
     let eng = Engine::new();
-    let home = rotated_home(6, 11);
+    let home = Home::new(rotated_home(6, 11));
     let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap(), [1, 2, 3]).unwrap();
     let g = Tdd::clause(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap(), [4, -5]).unwrap();
     let mut summed = f.clone();

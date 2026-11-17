@@ -16,7 +16,7 @@ use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
 use crate::test_helpers::{and2, exact_weight, rand_conj};
 use crate::value::Retention;
 use crate::vtree::rng::Lcg;
-use crate::vtree::{VarId, VtreeIdx};
+use crate::vtree::{Home, VarId, VtreeIdx};
 use crate::{Engine, Literal, OperationError};
 
 use super::*;
@@ -200,7 +200,7 @@ fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
 
 /// `g` on `home` when it is on a projection of it or on it.
 fn placed(g: &Tdd, home: &Arc<Vtree>) -> Option<Tdd> {
-    let on = |v: &Arc<Vtree>| Arc::ptr_eq(v.home().unwrap_or(v), home);
+    let on = |v: &Arc<Vtree>| Arc::ptr_eq(v.home().map(Home::vtree).unwrap_or(v), home);
     on(g.vtree()).then(|| on_home(g, home))
 }
 
@@ -231,6 +231,7 @@ fn sorted<T: Ord + Clone>(v: &[T]) -> Vec<T> {
 
 #[allow(clippy::too_many_lines)]
 fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg) {
+    let hm = Home::new(Arc::clone(home));
     let var = |rng: &mut Lcg| VarId(1 + rng.below(u64::from(n)) as u32);
     let vars = |rng: &mut Lcg| -> Vec<VarId> { (1..=n).filter(|_| rng.coin()).map(VarId).collect() };
     let equiv = |x: &Tdd, y: &Tdd| match (placed(x, home), placed(y, home)) {
@@ -373,7 +374,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         op(&mut t).map(|()| t)
     };
     a.check("minimize", || mutate(g, &|t| t.minimize()), || mutate(f, &|t| t.minimize()), same_tdd);
-    a.check("trim", || mutate(g, &|t| t.trim().map(drop)), || mutate(f, &|t| t.trim().map(drop)), same_tdd);
+    a.check("trim", || mutate(g, &|t| t.trim(&hm).map(drop)), || mutate(f, &|t| t.trim(&hm).map(drop)), same_tdd);
     a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), same_tdd);
     a.check("attach_level_counts", || mutate(g, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), || mutate(f, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), PartialEq::eq);
     let root = g.vtree().root();
@@ -423,10 +424,10 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || Ok(f.clone()),
         same_tdd,
     );
-    a.check("transport", || eng.transport(g, home, |v| v).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
+    a.check("transport", || eng.transport(g, &hm, |v| v).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
     a.check(
         "transport_projection",
-        || eng.transport_projection(g.vtree(), home, |v| v).map(|v| v.num_leaves()),
+        || eng.transport_projection(g.vtree(), &hm, |v| v).map(|v| v.num_leaves()),
         || Ok(g.vtree().num_leaves()),
         PartialEq::eq,
     );
@@ -482,7 +483,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
         let home = Arc::new(Vtree::random(n, seed));
         let f = diagram(&home, n, &mut rng);
         let mut g = f.clone();
-        g.trim().unwrap();
+        g.trim(&Home::new(Arc::clone(&home))).unwrap();
         audit.case = format!("seed {seed}, {n} variables, {} of them kept", g.vtree().num_leaves());
         audit_case(&mut audit, &eng, &home, &f, &g, n, &mut rng);
     }
@@ -498,7 +499,7 @@ fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
     let f = eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap();
     let mut g = f.clone();
-    assert!(g.trim().unwrap());
+    assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
     assert_eq!(g.vtree().free_vars(), [VarId(2), VarId(4)]);
     (home, f, g)
 }
@@ -519,13 +520,14 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     assert_eq!(sum(&g, root), sum(&f, home_root));
     assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(4))));
 
+    let hm = g.vtree().home().unwrap();
     let mut one = Tdd::one(&home);
-    one.trim().unwrap();
+    one.trim(hm).unwrap();
     assert_eq!(one.vtree().num_nodes(), 0);
     assert_eq!(one.evaluate_columns(&counts).unwrap(), BigUint::from(16u32));
     assert_eq!(one.evaluate_columns(&Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
     let mut zero = Tdd::zero(&home);
-    zero.trim().unwrap();
+    zero.trim(hm).unwrap();
     assert_eq!(zero.evaluate_columns(&Counts { free: false }).unwrap(), BigUint::ZERO);
 }
 
@@ -555,9 +557,10 @@ fn diagrams_on_projections_are_written_and_read() {
     let (home, f, g) = x1_not_x3(&eng);
     let mut one = Tdd::one(&home);
     let mut zero = Tdd::zero(&home);
-    one.trim().unwrap();
-    zero.trim().unwrap();
-    let same_leaves = Vtree::projection(&home, [VarId(3), VarId(1)]).unwrap();
+    let hm = g.vtree().home().unwrap();
+    one.trim(hm).unwrap();
+    zero.trim(hm).unwrap();
+    let same_leaves = Vtree::projection(hm, [VarId(3), VarId(1)]).unwrap();
     let cases = [(&f, home.clone()), (&g, g.vtree().clone()), (&g, same_leaves), (&one, one.vtree().clone()), (&zero, zero.vtree().clone())];
     for (t, vtree) in cases {
         let mut text = Vec::new();
@@ -590,7 +593,7 @@ fn the_vtree_check_agrees_with_transport() {
         let home = Arc::new(Vtree::random(n, seed));
         let source = if rng.coin() {
             let mut g = diagram(&home, n, &mut rng);
-            g.trim().unwrap();
+            g.trim(&Home::new(Arc::clone(&home))).unwrap();
             g
         } else {
             rand_conj(&Arc::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
@@ -599,8 +602,9 @@ fn the_vtree_check_agrees_with_transport() {
         let wide = Arc::new(Vtree::random(n + shift, seed + 2000));
         let target = if rng.coin() { &home } else { &wide };
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
-        let checked = eng.transport_projection(source.vtree(), target, map);
-        match eng.transport(&source, target, map) {
+        let target_home = Home::new(Arc::clone(target));
+        let checked = eng.transport_projection(source.vtree(), &target_home, map);
+        match eng.transport(&source, &target_home, map) {
             Ok(moved) => {
                 accepted += 1;
                 let leaves = |v: &Vtree| v.leaf_bottomup().map(|(_, var)| var).collect::<Vec<_>>();
