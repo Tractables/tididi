@@ -275,4 +275,11 @@ impl WeightStore {
     pub(crate) fn is_set(&self, level: usize) -> bool {
         self.per_level.contains_key(&level)
     }
+
+    /// Move the column of each level `old` to level `map(old)`, dropping the
+    /// columns `map` sends to `None`.
+    pub(crate) fn rekey_levels(&mut self, map: impl Fn(usize) -> Option<usize>) {
+        let old = std::mem::take(&mut self.per_level);
+        self.per_level = old.into_iter().filter_map(|(level, values)| Some((map(level)?, values))).collect();
+    }
 }

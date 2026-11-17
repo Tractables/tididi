@@ -407,7 +407,7 @@ fn fold_columns<A: ColumnAlgebra>(
     let mut out = algebra.column(t, base + inline.len());
     let level = &tdd.levels[t.idx()];
     let mut n = BigUint::ZERO;
-    if tdd.vtree.node(t).is_leaf() {
+    if tdd.vtree.node(t).is_var_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
             algebra.leaf(t, var, LeafLabel::from_idx(i), &mut out);

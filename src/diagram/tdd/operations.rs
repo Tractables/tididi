@@ -1252,6 +1252,54 @@ impl Tdd {
         self.context_arc().run(|eng| eng.marginalize_levels(self, levels))
     }
 
+    /// Sum out the variables under nodes of the home vtree.
+    ///
+    /// Targets are nodes of [`Vtree::home`](crate::Vtree::home) of the
+    /// diagram's vtree; on a root vtree, this is
+    /// [`marginalize_levels`](Self::marginalize_levels). For each target
+    /// not under another, the diagram's own vtree loses the subtree standing
+    /// for it, which becomes one childless node, a region
+    /// ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region)), whose
+    /// level holds per node the count or weighted value of the target's
+    /// variables, the home variables the diagram does not use included. A
+    /// target under which the diagram uses one variable leaves that
+    /// variable's leaf, summed out, and the other variables free; one under
+    /// which it uses none, or already summed out, changes nothing. Counts
+    /// and evaluations equal those of [`marginalize_levels`](Self::marginalize_levels)
+    /// of the diagram placed on the home.
+    ///
+    /// A diagram with no summed-out level is first trimmed
+    /// ([`trim`](Self::trim)).
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::LevelNotInVtree`] for a target that is not a home
+    /// node, and [`OperationError::MarginalLevel`] for an internal summed-out
+    /// level that is not a region, as
+    /// [`marginalize_levels`](Self::marginalize_levels) leaves on a
+    /// projection; both before mutation. Refusals of allocation or a stop
+    /// are those of [`marginalize_levels`](Self::marginalize_levels); the
+    /// targets folded before one become regions.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
+    /// let mut f = Tdd::clause(&own, [1, 2, 3])?;
+    /// let before = f.model_count()?;
+    /// let (left, _) = home.vtree().children(home.vtree().root());
+    /// f.marginalize(&[left])?;
+    /// assert_eq!(f.vtree().num_leaves(), 1);
+    /// assert_eq!(f.model_count()?, before);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn marginalize(&mut self, targets: &[VtreeIdx]) -> Result<(), OperationError> {
+        self.context_arc().run(|eng| eng.marginalize(self, targets))
+    }
+
     /// Search nearby vtree shapes while preserving this function and its count.
     ///
     /// Each sweep probes left and right rotations at internal nodes, accepting

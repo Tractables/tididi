@@ -472,7 +472,7 @@ pub(crate) fn free_subsumed_marginal_children(
     let (l, r) = vtree.children(parent);
     for c in [l.idx(), r.idx()] {
         crate::diagram::MarginalStorage::new(&mut levels[c], ws.as_deref_mut(), c)
-            .clear(vtree.node(VtreeIdx(c as u32)).is_leaf());
+            .clear(vtree.node(VtreeIdx(c as u32)).is_var_leaf());
     }
 }
 

@@ -219,6 +219,10 @@ pub(crate) struct HomeLink {
     pub(super) regions: Vec<Region>,
 }
 
+/// Home ranks as half-open intervals, ascending, neither touching nor
+/// overlapping.
+pub(crate) type Extent = Box<[(u32, u32)]>;
+
 /// The home variables a region ([`VtreeNode::is_region`]) stands for, and
 /// where it sits.
 ///
@@ -230,9 +234,7 @@ pub(crate) struct HomeLink {
 pub(crate) struct Region {
     /// The index of its anchor in [`HomeLink::ranks`].
     pub(super) at: u32,
-    /// Home ranks as half-open intervals, ascending, neither touching nor
-    /// overlapping.
-    pub(super) extent: Box<[(u32, u32)]>,
+    pub(super) extent: Extent,
     /// The number of ranks in `extent`.
     pub(super) count: u32,
 }
@@ -603,6 +605,46 @@ impl Vtree {
         };
         let (a_offset, b_offset) = if a_left { (0, la.in_order.len() + 1) } else { (lb.in_order.len() + 1, 0) };
         Some((map(la, a_offset), map(lb, b_offset), a_left))
+    }
+
+    /// The home variables under home node `h` that this projection has
+    /// neither as a leaf nor in an extent, left to right.
+    pub(crate) fn free_vars_under(&self, h: VtreeIdx) -> Vec<VarId> {
+        let link = self.home.as_deref().expect("a projection");
+        let under = link.home.rank_range(h);
+        let mut own = link.ranks[link.ranks.partition_point(|&r| r < under.start)..].iter().copied().peekable();
+        let mut free = Vec::new();
+        for rank in under {
+            if own.next_if_eq(&rank).is_none() && !link.regions.iter().any(|region| region.covers(rank, rank + 1)) {
+                free.push(link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]));
+            }
+        }
+        free
+    }
+
+    /// The anchor rank and extent of region `t` of this projection.
+    pub(crate) fn region_at(&self, t: VtreeIdx) -> (u32, Extent) {
+        let link = self.home.as_deref().expect("a projection");
+        let region = link.regions.iter().find(|region| link.region_node(region) == t).expect("a region");
+        (link.ranks[region.at as usize], region.extent.clone())
+    }
+
+    /// The projection of `home` on the leaves of `ranks` and on `regions`,
+    /// each an anchor rank and its extent, the anchor the leftmost rank of
+    /// a new extent; together not empty, the extents holding no other rank.
+    pub(crate) fn project_regions(home: &Home, mut ranks: Vec<u32>, regions: Vec<(u32, Extent)>) -> Arc<Vtree> {
+        ranks.extend(regions.iter().map(|&(anchor, _)| anchor));
+        ranks.sort_unstable();
+        let mut regions: Vec<Region> = regions
+            .into_iter()
+            .map(|(anchor, extent)| Region {
+                at: ranks.binary_search(&anchor).expect("an anchor") as u32,
+                count: extent.iter().map(|&(lo, hi)| hi - lo).sum(),
+                extent,
+            })
+            .collect();
+        regions.sort_unstable_by_key(|region| region.at);
+        Arc::new(Self::project_ranks(home, ranks, regions))
     }
 
     /// The projection of `home` on the leaves of `ranks`, ascending and not

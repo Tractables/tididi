@@ -119,7 +119,7 @@ fn read_level_count<'a>(
             // leaf-label index with a fixed count — decode it directly rather
             // than indexing the (empty) store. Reached by paths that leave a
             // leaf-side ref bare (e.g. projection) instead of inlining it.
-            ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
+            ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_var_leaf() => {
                 CountRead::Fast(leaf_count(LeafLabel::from_idx(s as usize)))
             }
             ValueRef::Slot(s) => col.get(s as usize),

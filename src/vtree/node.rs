@@ -50,6 +50,11 @@ impl VtreeNode {
     pub fn is_region(&self) -> bool {
         matches!(self, VtreeNode::Leaf { var, .. } if *var == REGION_VAR)
     }
+
+    /// Whether this node is a variable's leaf.
+    pub(crate) fn is_var_leaf(&self) -> bool {
+        matches!(self, VtreeNode::Leaf { var, .. } if *var != REGION_VAR)
+    }
 }
 
 /// The arm of an operation that does not take a vtree with a region.
