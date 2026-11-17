@@ -157,14 +157,6 @@ pub(crate) trait Buffers {
         self.buffers(&mut |buf| kept = kept.saturating_add(release_if_oversized(lim, buf)));
         usize::try_from(kept).unwrap_or(usize::MAX)
     }
-
-    /// Release every buffer, giving the freed bytes back to `lim`.
-    fn release_all(&mut self, lim: &Limits) {
-        self.buffers(&mut |buf| {
-            lim.release_bytes(buf.charged_bytes());
-            buf.release();
-        });
-    }
 }
 
 /// Checkout preparation and capacity retention for an engine-owned working set.

@@ -35,8 +35,7 @@ pub(super) fn from_models_bottom_up(
         });
     }
 
-    let mut layout = eng.scratch.model_layout.checkout(eng);
-    layout.prepare_for(lim, vtree, vars)?;
+    let layout = Layout::new(lim, vtree, vars)?;
     if rows.is_empty() || vars.is_empty() {
         return crate::build::constant_on(eng, vtree, !rows.is_empty());
     }

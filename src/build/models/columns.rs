@@ -112,8 +112,7 @@ impl Engine {
         for column in columns {
             vars.extend_from_slice(column);
         }
-        let mut layout = self.scratch.model_layout.checkout(self);
-        layout.prepare_for(lim, vtree, &vars)?;
+        let layout = Layout::new(lim, vtree, &vars)?;
         let chosen = match rows {
             RowSelection::All => len,
             RowSelection::Listed(listed) => listed.len(),

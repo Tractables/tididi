@@ -111,8 +111,7 @@ impl Engine {
             return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
         }
 
-        let mut layout = self.scratch.model_layout.checkout(self);
-        layout.prepare_for(lim, vtree, vars)?;
+        let layout = Layout::new(lim, vtree, vars)?;
         if rows.is_empty() || vars.is_empty() {
             return super::constant_on(self, vtree, !rows.is_empty());
         }

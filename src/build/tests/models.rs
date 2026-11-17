@@ -495,50 +495,6 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     );
 }
 
-#[test]
-fn cached_layout_tracks_column_order_and_vtree_identity() {
-    let eng = Engine::new();
-    let a = Arc::new(Vtree::balanced(4));
-    let b = Arc::new(Vtree::linear(4));
-    for vtree in [&a, &b, &a] {
-        for columns in [[VarId(1), VarId(4)], [VarId(4), VarId(1)]] {
-            for rows in [&[1u64][..], &[2u64, 3][..], &[][..]] {
-                let f = eng.from_models(vtree, &columns, rows).unwrap();
-                let table: Vec<_> = rows.iter().map(|&r| vec![r & 1 != 0, r & 2 != 0]).collect();
-                let expected = table_function(vtree, &columns, &table);
-                assert_canonical(&f);
-                assert_canonical(&expected);
-                assert!(f.equivalent(&expected).unwrap());
-            }
-        }
-    }
-}
-
-#[test]
-fn layout_cache_reuses_storage_and_does_not_retain_vtree() {
-    let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let weak = Arc::downgrade(&vtree);
-    let columns = [VarId(3), VarId(1)];
-    let f = eng.from_models(&vtree, &columns, &[1, 2]).unwrap();
-    assert_canonical(&f);
-    drop(f);
-    let allocation = eng.scratch.model_layout.checkout(&eng).position.as_ptr();
-    let f = eng.from_models(&vtree, &columns, &[3]).unwrap();
-    assert_canonical(&f);
-    assert_eq!(eng.scratch.model_layout.checkout(&eng).position.as_ptr(), allocation);
-    drop(f);
-    assert_eq!(eng.from_models(&vtree, &[VarId(2), VarId(2)], &[0]).unwrap_err(),
-        OperationError::DuplicateVariable(VarId(2)));
-    let f = eng.from_models(&vtree, &columns, &[2]).unwrap();
-    assert_canonical(&f);
-    assert_eq!(eng.scratch.model_layout.checkout(&eng).position.as_ptr(), allocation);
-    drop(f);
-    drop(vtree);
-    // A context parks an engine, so its layout must not keep the vtree alive.
-    assert!(weak.upgrade().is_none());
-}
-
 /// Two builds left the same levels, node for node: the same nodes in the
 /// same order, each with the same pairs, and the same output.
 fn assert_same_levels(a: &Tdd, b: &Tdd, what: &str) {

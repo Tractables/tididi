@@ -131,8 +131,7 @@ impl Engine {
                 per_row: 2 * w,
             });
         }
-        let mut layout = self.scratch.model_layout.checkout(self);
-        layout.prepare_for(lim, vtree, vars)?;
+        let layout = Layout::new(lim, vtree, vars)?;
         if cubes.is_empty() || vars.is_empty() {
             return crate::build::constant_on(self, vtree, !cubes.is_empty());
         }
