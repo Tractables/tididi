@@ -4,11 +4,12 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{EmbedError, TransportRefused};
+use super::{EmbedError, RestructureError, TransportRefused};
 
 use crate::Engine;
 use crate::build::constant_without_leaf;
 use crate::diagram::{LevelCounts, Tdd, TddLevel, TddNodeId, return_levels};
+use crate::limits::Limits;
 use crate::value::CountVec;
 use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -76,7 +77,7 @@ impl Engine {
             Ok(op) => op,
             Err(e) => return Err(TransportRefused { error: e.into(), tdd: f }),
         };
-        let route = match Route::find(self, &f, home, map) {
+        let route = match Route::find(self.limits(), &f, home, map) {
             Ok(route) => route,
             Err(error) => return Err(TransportRefused { error, tdd: f }),
         };
@@ -90,6 +91,74 @@ impl Engine {
         route.seat(self, &mut moved);
         Ok(moved)
     }
+
+    /// `f`, a diagram on a projection, on [`Vtree::projection`] of `home` on
+    /// the same variables, so that its counts and evaluations are over
+    /// `home`'s variables.
+    ///
+    /// Where that projection has the shape of `f`'s vtree up to mirrors, this
+    /// is [`Engine::transport`] with every variable kept, which costs no
+    /// rotation. Elsewhere it is [`Engine::restructure_to`] onto the
+    /// projection under `bound`, which refuses weighted diagrams; a `bound`
+    /// of 0 allows no rotation.
+    ///
+    /// A projection of a home that a rotation search moved keeps its shape on
+    /// the search's new home when every kept move had its leaves under at
+    /// most two of the three subtrees it turned, so such a diagram rehomes
+    /// with `bound` 0.
+    ///
+    /// ```
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::{Home, VarId};
+    ///
+    /// let engine = Engine::new();
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
+    /// let f = engine.clause(&own, [1, 3])?;
+    /// let other = Home::new(Vtree::linear(4));
+    /// let g = engine.rehome(&f, &other, 0)?;
+    /// assert!(g.vtree().home().is_some_and(|h| std::sync::Arc::ptr_eq(h.vtree(), other.vtree())));
+    /// assert_eq!(engine.model_count(&g)?, 12u32.into());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`RestructureError::Variables`] for a variable of `f` with no leaf in
+    /// `home`; with `bound` 0, [`RestructureError::Bound`] naming the node of
+    /// `f`'s vtree with no image in the projection; otherwise those of
+    /// [`Engine::restructure_to`], and [`RestructureError::Operation`] for a
+    /// summed-out level.
+    pub fn rehome<'a>(&self, f: impl Into<Cow<'a, Tdd>>, home: &Home, bound: usize) -> Result<Tdd, RestructureError> {
+        let refused = match self.transport(f, home, |v| v) {
+            Ok(moved) => return Ok(moved),
+            Err(refused) => refused,
+        };
+        match refused.error {
+            EmbedError::NotIsomorphic { source } if bound == 0 => Err(RestructureError::Bound { pivot: source }),
+            EmbedError::NotIsomorphic { .. } => {
+                let mut moved = crate::apply::extend::into_owned(self, refused.tdd)?;
+                let vars: Vec<VarId> = moved.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+                let target = Vtree::projection(home, vars).expect("the transport found every variable in the home");
+                self.restructure_to(&mut moved, &target, bound)?;
+                Ok(moved)
+            }
+            EmbedError::VariableOutOfRange { variable, .. } => Err(RestructureError::Variables { variable }),
+            error => Err(crate::apply::extend::operation_error(error).into()),
+        }
+    }
+}
+
+/// `f`, on a projection that rotations and swaps moved since its link was
+/// made, seated level for level on the projection of
+/// [`Vtree::lifted_home`] on its leaves; nothing on a root vtree.
+pub(super) fn seat_on_lifted_home(eng: &Engine, f: &mut Tdd) {
+    let Some(home) = f.vtree.lifted_home() else { return };
+    // Nothing here is the caller's to refuse: a search keeps its moves
+    // before this runs, and the diagram is only valid once seated.
+    let route = Route::find(&Limits::new(), f, &home, |v| v).expect("the lifted home has the moved tree's shape");
+    debug_assert!(route.mirrored.is_empty());
+    route.seat(eng, f);
 }
 
 /// Where each level of the diagram goes, with every allocation the move
@@ -106,9 +175,8 @@ struct Route {
 }
 
 impl Route {
-    fn find(eng: &Engine, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
+    fn find(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
         f.require_structure()?;
-        let lim = eng.limits();
         let source = f.vtree();
         let empty = Self { into: Arc::clone(source), to: Vec::new(), mirrored: Vec::new(), levels: Vec::new(), columns: Vec::new() };
         if source.num_nodes() == 0 {

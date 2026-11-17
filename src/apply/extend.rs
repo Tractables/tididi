@@ -117,7 +117,7 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
         return Ok(Cow::Borrowed(f));
     }
     match Vtree::leaf_sets(&f.vtree, into) {
-        Some(LeafSets::Equal | LeafSets::AInB) if into.num_nodes() != 0 => {}
+        Some(LeafSets::Equal(_) | LeafSets::AInB) if into.num_nodes() != 0 => {}
         _ => return Err(OperationError::VtreeMismatch),
     }
     check_movable(f, into)?;
@@ -168,7 +168,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
     let mut into = Arc::clone(&first.vtree);
     for g in rest {
         match Vtree::leaf_sets(&into, &g.vtree).ok_or(OperationError::VtreeMismatch)? {
-            LeafSets::Equal | LeafSets::BInA => {}
+            LeafSets::Equal(_) | LeafSets::BInA => {}
             LeafSets::AInB => into = Arc::clone(&g.vtree),
             LeafSets::Union(union) => into = union,
         }
@@ -185,9 +185,10 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
 }
 
 /// Whether `f` is on a projection with fewer leaves than `into`, which
-/// holds its leaf set.
+/// holds its leaf set, or `into` is the home: a projection on all of the
+/// home's leaves has the home's shape but not its node numbering.
 fn moves(f: &Tdd, into: &Vtree) -> bool {
-    f.vtree.num_nodes() != into.num_nodes()
+    f.vtree.num_nodes() != into.num_nodes() || f.vtree.home().is_some() != into.home().is_some()
 }
 
 fn check_movable(f: &Tdd, into: &Vtree) -> Result<(), OperationError> {
@@ -204,10 +205,11 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         return Ok(f);
     }
     if !moves(&f, into) {
+        let Some(LeafSets::Equal(same)) = Vtree::leaf_sets(&f.vtree, into) else {
+            unreachable!("a projection holding the leaf set of another with as many nodes has that leaf set")
+        };
         let mut f = into_owned(eng, f)?;
-        // Safety: equal leaf sets of one home give one layout, node for node,
-        // with the same variable ids.
-        unsafe { f.reseat_vtree_unchecked(into) };
+        f.reseat(&same);
         return Ok(Cow::Owned(f));
     }
     if f.vtree.num_nodes() == 0 {

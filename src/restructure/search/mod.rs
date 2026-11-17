@@ -78,23 +78,32 @@ impl crate::Engine {
 /// from its sharers once, before the first probe, and put back when the
 /// search ends with nothing kept, so a declined trial leaves not just the
 /// shape but the allocation as it was.
+///
+/// A projection keeps its link while it moves, stale but for its leaves. A
+/// search that kept a move ends by seating the diagram on the projection of
+/// the home the moves imply (`Vtree::lifted_home`), so its
+/// counts stay over a home's variables; one that kept nothing makes no home.
 pub(super) struct SearchTree<'a> {
     pub(super) tdd: &'a mut Tdd,
+    eng: &'a crate::Engine,
     original: Option<std::sync::Arc<crate::Vtree>>,
+    kept: bool,
 }
 
 impl<'a> SearchTree<'a> {
     /// Detach a shared tree once before probing any pivots.
-    pub(super) fn new(tdd: &'a mut Tdd) -> Self {
+    pub(super) fn new(eng: &'a crate::Engine, tdd: &'a mut Tdd) -> Self {
         use std::sync::Arc;
         let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
         Arc::make_mut(&mut tdd.vtree);
-        Self { tdd, original }
+        Self { tdd, eng, original, kept: false }
     }
 
     /// [`probe_moves`](probe::probe_moves) on the private tree; a kept
-    /// sequence is what makes the private tree the diagram's own.
+    /// sequence is what makes the private tree the diagram's own. On a
+    /// projection, a diagram with a summed-out level keeps no move: the seat
+    /// on the new home moves structural levels only.
     fn probe_moves<R: probe::ProbeRule>(
         &mut self,
         eng: &crate::Engine,
@@ -103,9 +112,13 @@ impl<'a> SearchTree<'a> {
         scratch: &mut crate::restructure::scratch::RestructureScratch,
         bound: usize,
     ) -> Result<bool, OperationError> {
+        if self.tdd.vtree.home().is_some() && self.tdd.has_marginal_level() {
+            return Ok(false);
+        }
         let kept = probe::probe_moves(eng, self.tdd, moves, rule, scratch, bound)?;
         if kept {
             self.original = None;
+            self.kept = true;
         }
         Ok(kept)
     }
@@ -113,7 +126,11 @@ impl<'a> SearchTree<'a> {
 
 impl Drop for SearchTree<'_> {
     fn drop(&mut self) {
-        if let Some(original) = self.original.take() { self.tdd.vtree = original; }
+        if let Some(original) = self.original.take() {
+            self.tdd.vtree = original;
+        } else if self.kept {
+            crate::restructure::transport::seat_on_lifted_home(self.eng, self.tdd);
+        }
     }
 }
 

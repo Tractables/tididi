@@ -217,7 +217,7 @@ pub(super) fn rotate_if_on(
     let _op = eng.limits().enter()?;
     let mut scratch = eng.scratch.restructure.checkout(eng);
     let mut rule = Closure { accept: Some(accept) };
-    super::SearchTree::new(tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)
+    super::SearchTree::new(eng, tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)
 }
 
 /// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,
@@ -490,7 +490,7 @@ impl<'a> RotationTrial<'a> {
         // or pushed a level.
         drop(pre.keep(std::slice::from_mut(&mut self.tdd), &self.changed));
         for pending in self.pending.drain(..) {
-            pending.commit(Arc::make_mut(&mut self.tdd.vtree));
+            pending.commit_in_probe(Arc::make_mut(&mut self.tdd.vtree));
         }
     }
 }

@@ -20,7 +20,7 @@ mod tests;
 
 use std::sync::Arc;
 
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{SameLayout, Vtree, VtreeIdx};
 use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
@@ -293,6 +293,18 @@ impl Tdd {
         );
         self.levels.forget();
         self.vtree = Arc::clone(vtree);
+    }
+
+    /// This diagram on the vtree `same` pairs with its own.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `same` does not name this diagram's vtree.
+    pub(crate) fn reseat(&mut self, same: &SameLayout) {
+        let onto = Arc::clone(same.other(&self.vtree));
+        // Safety: the two vtrees of `same` have the same nodes at the same
+        // indices with the same variables.
+        unsafe { self.reseat_vtree_unchecked(&onto) };
     }
 
     /// Seat hand-built test fixture levels, unchecked.

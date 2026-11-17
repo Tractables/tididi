@@ -10,6 +10,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use super::layout::SameLayout;
 use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
@@ -226,7 +227,7 @@ impl HomeLink {
 #[derive(Debug)]
 pub(crate) enum LeafSets {
     /// The same leaf set and the same layout.
-    Equal,
+    Equal(SameLayout),
     /// The first vtree's leaves are a proper subset of the second's, or the
     /// second is the home.
     AInB,
@@ -420,7 +421,7 @@ impl Vtree {
             return None;
         }
         let (la, lb) = match (a.home.as_deref(), b.home.as_deref()) {
-            (None, None) => return Some(LeafSets::Equal),
+            (None, None) => return Some(LeafSets::Equal(SameLayout::new(a, b))),
             (Some(_), None) => return Some(LeafSets::AInB),
             (None, Some(_)) => return Some(LeafSets::BInA),
             (Some(la), Some(lb)) => (la, lb),
@@ -437,7 +438,7 @@ impl Vtree {
             j += usize::from(y <= x);
         }
         Some(match (a_only, b_only) {
-            (false, false) => LeafSets::Equal,
+            (false, false) => LeafSets::Equal(SameLayout::new(a, b)),
             (false, true) => LeafSets::AInB,
             (true, false) => LeafSets::BInA,
             (true, true) => LeafSets::Union(Arc::new(Self::project_ranks(&la.home, union))),
@@ -526,10 +527,10 @@ impl Vtree {
         self.home.as_deref().map_or(0, |link| link.home.vtree().num_vars())
     }
 
-    /// Called by every kept change of shape (a reverted rotation probe
-    /// restores the shape the link describes): a projection becomes a root
-    /// with a dense leaf table. Inline, because a rotation search commits
-    /// rotations by the hundred thousand on vtrees that are not projections.
+    /// Called by every kept change of shape that does not end on a lifted
+    /// home, as a rotation search's does: a projection becomes a root with a
+    /// dense leaf table. Inline, because a restructure commits rotations by
+    /// the hundred thousand on vtrees that are not projections.
     #[inline]
     pub(crate) fn reshaped(&mut self) {
         if self.home.is_some() {
