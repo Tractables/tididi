@@ -272,50 +272,7 @@ fn root_pieces(
         }
     }
     gate.flush()?;
-    if w == 1 {
-        let mut out = Pieces { atoms: 1, ..Pieces::empty(w) };
-        // A one-word cube sorts as its value above its mask, in one word
-        // through the radix sort where both fit, else as a pair.
-        let distinct = if 2 * num_vars <= 64 {
-            let mut keys = value;
-            for (key, &mask) in keys.iter_mut().zip(&fixed) {
-                *key = *key << num_vars | mask;
-            }
-            lim.discard(fixed);
-            s.radix.sort(lim, &mut keys, 0, 2 * num_vars)?;
-            keys.dedup();
-            let mask = lower_bits(0, num_vars);
-            lim.reserve_exact(&mut out.value, keys.len())?;
-            lim.reserve_exact(&mut out.fixed, keys.len())?;
-            out.value.extend(keys.iter().map(|&key| key >> num_vars));
-            out.fixed.extend(keys.iter().map(|&key| key & mask));
-            keys.len()
-        } else {
-            let mut keys: Vec<u128> = Vec::new();
-            lim.reserve_exact(&mut keys, n)?;
-            keys.extend(
-                value
-                    .iter()
-                    .zip(&fixed)
-                    .map(|(&v, &f)| (v as u128) << 64 | f as u128),
-            );
-            lim.discard(value);
-            lim.discard(fixed);
-            lim.gate().poll(n as u64)?;
-            keys.sort_unstable();
-            keys.dedup();
-            lim.reserve_exact(&mut out.value, keys.len())?;
-            lim.reserve_exact(&mut out.fixed, keys.len())?;
-            out.value.extend(keys.iter().map(|&key| (key >> 64) as u64));
-            out.fixed.extend(keys.iter().map(|&key| key as u64));
-            let len = keys.len();
-            lim.discard(keys);
-            len
-        };
-        out.atom = filled(lim, distinct, 0u32)?;
-        return Ok(out);
-    }
-    let (order, ids) = distinct(lim, s, 64 * w, w, &value, &fixed)?;
+    let (order, ids) = distinct(lim, s, num_vars, w, &value, &fixed)?;
     let mut out = Pieces { atoms: 1, ..Pieces::at(lim, w, &value, &fixed, &order)? };
     out.atom = filled(lim, order.len(), 0u32)?;
     for buf in [value, fixed] {
@@ -841,34 +798,6 @@ fn refine(
     parts: Pieces,
 ) -> Result<(Pieces, Vec<u32>, Vec<u32>), OperationError> {
     let (k, w) = (parts.value.len() / parts.words, parts.words);
-    // The parts ascend by value. Where each fixes a leading run of the bits
-    // and leaves the rest free, an interval aligned to a power of two, and
-    // each such interval ends before the next begins, they are disjoint
-    // already.
-    let aligned_and_apart = w == 1 && {
-        let mut end = 0u128;
-        (0..k).all(|p| {
-            let (value, free) = (parts.value[p], !parts.fixed[p] & lower_bits(0, width));
-            let apart = free & free.wrapping_add(1) == 0 && (p == 0 || value as u128 >= end);
-            end = value as u128 + free as u128 + 1;
-            apart
-        })
-    };
-    if aligned_and_apart
-        || (0..k).all(|p| (0..w).all(|j| parts.fixed[p * w + j] == lower_bits(j, width)))
-    {
-        // Distinct cubes that fix every bit are disjoint already.
-        let mut starts = Vec::new();
-        lim.reserve_exact(&mut starts, k + 1)?;
-        starts.extend(0..=k as u32);
-        let mut cover = Vec::new();
-        lim.reserve_exact(&mut cover, k)?;
-        cover.extend(0..k as u32);
-        let mut parts = parts;
-        parts.atom = filled(lim, k, 0u32)?;
-        return Ok((parts, starts, cover));
-    }
-
     // Depth first over the bits, highest first, each frame a set of cubes
     // that agree on the bits above `bit` and the piece they share there.
     struct Frame {
@@ -897,7 +826,6 @@ fn refine(
     let (mut or_f, mut and_f, mut or_v, mut and_v) =
         (vec![0u64; w], vec![0u64; w], vec![0u64; w], vec![0u64; w]);
     let mut split_bits = vec![0u64; w];
-    let mut masks = vec![0u64; w];
     let mut gate = lim.gate();
     while let Some(frame) = stack.pop() {
         let (from, len) = frame.items;
@@ -921,48 +849,6 @@ fn refine(
             and_f[j] &= below;
             or_f[j] &= below;
             split_bits[j] = ((or_f[j] & !and_f[j]) | (and_f[j] & (or_v[j] ^ and_v[j]))) & below;
-        }
-        if len > 1 && (0..w).all(|j| and_f[j] == lower_bits(j, frame.bit)) {
-            // Every cube here fixes every bit left, so the cubes of one
-            // value below the path are one piece, and different values are
-            // disjoint: no bit needs splitting one at a time.
-            let start = arena.len();
-            lim.reserve(&mut arena, len)?;
-            arena.extend_from_within(from..from + len);
-            for (j, mask) in masks.iter_mut().enumerate() {
-                *mask = lower_bits(j, frame.bit);
-            }
-            let values = &parts.value;
-            let lower = |p: u32| {
-                let masks = &masks;
-                (0..w)
-                    .rev()
-                    .map(move |j| values[p as usize * w + j] & masks[j])
-            };
-            arena[start..].sort_unstable_by(|&a, &b| lower(a).cmp(lower(b)));
-            let mut at = start;
-            while at < arena.len() {
-                let mut end = at + 1;
-                while end < arena.len() && lower(arena[end]).eq(lower(arena[at])) {
-                    end += 1;
-                }
-                let p = arena[at] as usize;
-                lim.reserve_exact(&mut out.value, w)?;
-                lim.reserve_exact(&mut out.fixed, w)?;
-                for j in 0..w {
-                    out.value.push(
-                        paths[frame.value + j]
-                            | (parts.value[p * w + j] & lower_bits(j, frame.bit)),
-                    );
-                }
-                for j in 0..w {
-                    out.fixed
-                        .push(paths[frame.value + w + j] | lower_bits(j, frame.bit));
-                }
-                lim.try_push(&mut members, span(lim, at, end)?)?;
-                at = end;
-            }
-            continue;
         }
         let top = (0..w)
             .rev()
