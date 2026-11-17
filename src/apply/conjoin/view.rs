@@ -116,20 +116,29 @@ impl View {
     fn renumber(&mut self, lim: &Limits, tdd: &Tdd, tops: &[VtreeIdx]) -> Result<(), OperationError> {
         const REMAP: [u32; 3] = [u32::MAX, 0, 1];
         let vtree = Arc::clone(&self.vtree);
-        for (i, &top) in tops.iter().enumerate() {
+        // Each reader once, with the sides on which it reads a chain.
+        let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
+        lim.reserve_exact(&mut parents, tops.len())?;
+        for &top in tops {
             let Some(parent) = vtree.node(top).parent() else {
                 if (self.output.local.0 as usize) < REMAP.len() {
                     self.output.local = NodeIdx(REMAP[self.output.local.idx()]);
                 }
                 continue;
             };
-            // A reader of two chains is renumbered once, at the first.
-            let (left, right) = vtree.children(parent);
-            let sibling = if top == left { right } else { left };
-            if tops[..i].contains(&sibling) {
-                continue;
+            let left = vtree.children(parent).0 == top;
+            parents.push((parent, Sides { left, right: !left }));
+        }
+        parents.sort_unstable_by_key(|&(parent, _)| parent.0);
+        parents.dedup_by(|later, kept| {
+            let same = later.0 == kept.0;
+            if same {
+                kept.1 = Sides { left: kept.1.left || later.1.left, right: kept.1.right || later.1.right };
             }
-            let moving = Sides { left: tops.contains(&left), right: tops.contains(&right) };
+            same
+        });
+        for (parent, moving) in parents {
+            let (left, right) = vtree.children(parent);
             let decoders = Sides {
                 left: self.level(tdd, left.idx()).child_decoder(),
                 right: self.level(tdd, right.idx()).child_decoder(),
