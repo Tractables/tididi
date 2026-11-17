@@ -41,11 +41,6 @@ pub enum OperationError {
     /// The operands are neither on one vtree nor on projections of one home
     /// vtree ([`Vtree::projection`](crate::Vtree::projection)).
     VtreeMismatch,
-    /// The operands are on different projections of one home vtree, and one
-    /// that would move to the projection holding all their variables carries
-    /// weights or a summed-out level, which move with it only between
-    /// diagrams of one vtree.
-    WeightsAcrossProjections,
     /// A [`PairIndex`](crate::diagram::PairIndex) was built from another
     /// diagram than the operand it is read with, or from that diagram
     /// before it changed. Building the index again from the operand is
@@ -155,6 +150,11 @@ pub enum OperationError {
         /// The variables listed.
         vars: usize,
     },
+    /// The operands are on different projections of one home vtree, and one
+    /// that would move to the projection holding all their variables carries
+    /// weights or a summed-out level, which move with it only between
+    /// diagrams of one vtree.
+    WeightsAcrossProjections,
 }
 
 impl std::fmt::Display for OperationError {
@@ -162,9 +162,6 @@ impl std::fmt::Display for OperationError {
         match self {
             OperationError::InvalidLiteral(literal) => write!(f, "{literal} is not a literal; use a nonzero signed integer"),
             OperationError::VtreeMismatch => f.write_str("operands must share one vtree or one home vtree"),
-            OperationError::WeightsAcrossProjections => {
-                f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
-            }
             OperationError::IndexMismatch => f.write_str("the pair index was built from another diagram than its operand"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
@@ -201,6 +198,9 @@ impl std::fmt::Display for OperationError {
             OperationError::RowOutOfRange { row, rows } => write!(f, "row {row} is past the {rows} rows the columns hold"),
             OperationError::TableTooWide { vars } => {
                 write!(f, "a count table over {vars} variables is past the {} it may list", crate::query::MAX_COUNT_TABLE_VARS)
+            }
+            OperationError::WeightsAcrossProjections => {
+                f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
             }
         }
     }
