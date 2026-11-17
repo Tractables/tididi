@@ -41,11 +41,17 @@ impl LevelFold for OverflowingCounts<'_> {
         CountVec::try_with_width(eng, width)
     }
 
-    /// A leaf's column is kept: the next pass seeds every slot of it, and
-    /// a Frontier counter would otherwise allocate one per leaf a count.
+    /// A column of at most a leaf's width keeps its slots, as a Frontier
+    /// counter would otherwise allocate one per leaf a count, but not a
+    /// value past u64: narrow levels near the top of a large diagram hold
+    /// counts of thousands of digits each, and a fold keeping those holds
+    /// them all. Values within u64 stay, as zeroing them on every release
+    /// costs a Frontier counter 7%.
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
         if col.len() > crate::diagram::LEAF_WIDTH {
             eng.limits().discard(std::mem::take(col));
+        } else if !col.as_count_ref().all_u64() {
+            col.zero(eng);
         }
     }
 

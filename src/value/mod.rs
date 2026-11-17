@@ -257,6 +257,16 @@ impl CountVec {
         self.fast.len()
     }
 
+    /// Zero every slot, keeping the dense buffer; the side table goes, its
+    /// charge returned.
+    pub(crate) fn zero(&mut self, eng: &Engine) {
+        if let Some(big) = self.big.take() {
+            eng.limits().release_bytes(big.buffer_bytes());
+        }
+        self.fast.fill(0);
+        self.all_u64 = true;
+    }
+
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at
     /// the `become_marginal` boundary. Both halves are exactly what `TddLevel`
     /// stores, so the handoff is a move — no re-shaping.
