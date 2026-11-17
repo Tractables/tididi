@@ -124,15 +124,10 @@ pub(super) fn rebuild_spine_level(
 
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
-    let mut old = std::mem::take(&mut levels[t_idx]);
+    let old = std::mem::take(&mut levels[t_idx]);
     let k = old.slot_count();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];
-    // An empty input pair arena has no borrowed pairs and can retain
-    // emission capacity; a described one, of one-pair nodes, holds none.
-    if old.pairs.is_empty() && old.pairs.implicit().is_none() {
-        level.pairs = std::mem::take(&mut old.pairs);
-    }
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
     lim.reserve(level.nodes.stored_mut(), node_cap)?;
