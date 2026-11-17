@@ -121,7 +121,8 @@ pub struct Vtree {
     /// `Mutex` may sit in a `Vtree`'s own bytes: a type with interior
     /// mutability is not `Freeze`, so `&Vtree` arguments lose `noalias
     /// readonly` and hot loops reload vtree fields (0.4% of a consumer's
-    /// instructions). A home's index is therefore kept in its context.
+    /// instructions). A home's index is therefore kept in a table by the
+    /// home's allocation.
     pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
 }
 

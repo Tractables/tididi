@@ -122,29 +122,16 @@ impl HomeLink {
     }
 }
 
-/// The indexes of the homes of one context's vtrees, by the home's
-/// allocation. A rotation reaches a vtree in an `Arc` only through
-/// `Arc::make_mut`, which moves a vtree with weak references to a new
-/// allocation, so an entry never describes a changed shape. A dropped home's
-/// entry is freed at the next miss.
-#[derive(Default)]
-pub(crate) struct HomeIndexes(Mutex<Vec<(Weak<Vtree>, Arc<HomeIndex>)>>);
+/// The index of each home, by the home's allocation. A rotation reaches a
+/// vtree in an `Arc` only through `Arc::make_mut`, which moves a vtree with
+/// weak references to a new allocation, so an entry never describes a changed
+/// shape. A dropped home's entry is freed at the next miss. Not a field of
+/// [`Context`](crate::Context): one that needs dropping cost a consumer that
+/// makes a context per vtree 0.03% of its instructions.
+static HOMES: Mutex<Vec<(Weak<Vtree>, Arc<HomeIndex>)>> = Mutex::new(Vec::new());
 
-impl HomeIndexes {
-    fn get(&self, home: &Arc<Vtree>) -> Option<Arc<HomeIndex>> {
-        let entries = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        entries.iter().find(|(h, _)| ptr::eq(h.as_ptr(), Arc::as_ptr(home))).map(|(_, index)| Arc::clone(index))
-    }
-
-    fn insert(&self, home: &Arc<Vtree>, index: Arc<HomeIndex>) -> Arc<HomeIndex> {
-        let mut entries = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some((_, theirs)) = entries.iter().find(|(h, _)| ptr::eq(h.as_ptr(), Arc::as_ptr(home))) {
-            return Arc::clone(theirs);
-        }
-        entries.retain(|(h, _)| h.strong_count() > 0);
-        entries.push((Arc::downgrade(home), Arc::clone(&index)));
-        index
-    }
+fn cached_index(entries: &[(Weak<Vtree>, Arc<HomeIndex>)], home: &Arc<Vtree>) -> Option<Arc<HomeIndex>> {
+    entries.iter().find(|(h, _)| ptr::eq(h.as_ptr(), Arc::as_ptr(home))).map(|(_, index)| Arc::clone(index))
 }
 
 /// How the leaf sets of two vtrees with one home compare.
@@ -370,8 +357,18 @@ impl Vtree {
     }
 
     pub(super) fn home_index(self: &Arc<Self>) -> Arc<HomeIndex> {
-        let homes = &self.context.homes;
-        homes.get(self).unwrap_or_else(|| homes.insert(self, Arc::new(HomeIndex::new(self))))
+        let homes = || HOMES.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(index) = cached_index(&homes(), self) {
+            return index;
+        }
+        let index = Arc::new(HomeIndex::new(self));
+        let mut entries = homes();
+        if let Some(theirs) = cached_index(&entries, self) {
+            return theirs;
+        }
+        entries.retain(|(h, _)| h.strong_count() > 0);
+        entries.push((Arc::downgrade(self), Arc::clone(&index)));
+        index
     }
 
     /// The projection of root `home` on the leaves of `ranks`, ascending and
@@ -428,7 +425,7 @@ impl Vtree {
     /// with a dense leaf table. Inline, because a rotation search commits
     /// rotations by the hundred thousand on vtrees that are not projections.
     #[inline]
-    pub(super) fn reshaped(&mut self) {
+    pub(crate) fn reshaped(&mut self) {
         if self.home.is_some() {
             self.leave_home();
         }

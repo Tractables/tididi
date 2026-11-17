@@ -25,7 +25,6 @@ use crate::Vtree;
 pub struct Context {
     /// Checkout moves only the pointer to the retained engine.
     idle: Mutex<Option<Box<Engine>>>,
-    pub(crate) homes: crate::vtree::HomeIndexes,
 }
 
 impl std::fmt::Debug for Context {
