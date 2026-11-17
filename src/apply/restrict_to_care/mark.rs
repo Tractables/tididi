@@ -54,8 +54,6 @@ enum Pass {
 
 /// Why the walk ended before its marks were complete.
 enum Halt {
-    /// The probe allowance is spent: the restriction is abandoned.
-    Spent,
     /// An engine limit or cancellation.
     Error(OperationError),
     /// A product [`DEPTH`] lazy levels below the one asked for was needed
@@ -293,7 +291,6 @@ struct Walk<'a> {
     /// Per level, a `care` node's pairs keyed by their child on one side, as
     /// `(child, pair index)` ascending, for the nodes the walk joined on it.
     care_index: Vec<CareIndex>,
-    remaining: u64,
     poll: PollGate<'a>,
     marks: Marking,
     /// Levels whose every node [`Walk::mark_listed`] kept, so
@@ -308,23 +305,18 @@ struct Walk<'a> {
 impl Marking {
     /// Mark every `f`-node and `f`-pair that a model of `f ∧ care` uses, from
     /// vtree node `r` (a root of one operand).
-    ///
-    /// `remaining` is the allowance of product-pair probes across the
-    /// bottom-up decision and the walk; spending it returns
-    /// [`Walked::Unchanged`] with the marks abandoned.
     pub(super) fn walk(
         eng: &Engine,
         f: &Tdd,
         care: &Tdd,
         r: VtreeIdx,
-        remaining: u64,
     ) -> Result<Walked, OperationError> {
         let root_key = match child(f, care, r, None, None) {
             Child::Pair(k) => k,
             Child::Live => return Ok(Walked::Unchanged),
             Child::Dead => return Ok(Walked::Unsatisfiable),
         };
-        let mut walk = Walk::new(eng, f, care, r, remaining)?;
+        let mut walk = Walk::new(eng, f, care, r)?;
         let root_key = walk.top_care(r, root_key);
         match walk.run(r, root_key) {
             Ok(true) => {
@@ -335,10 +327,6 @@ impl Marking {
             Ok(false) => {
                 walk.poll.flush()?;
                 Ok(Walked::Unsatisfiable)
-            }
-            Err(Halt::Spent) => {
-                walk.poll.flush()?;
-                Ok(Walked::Unchanged)
             }
             Err(Halt::Error(e)) => Err(e),
             Err(Halt::Deeper) => unreachable!("a deep decision resumes inside the walk"),
@@ -400,7 +388,6 @@ impl<'a> Walk<'a> {
         f: &'a Tdd,
         care: &'a Tdd,
         r: VtreeIdx,
-        remaining: u64,
     ) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let vtree = &f.vtree;
@@ -448,7 +435,6 @@ impl<'a> Walk<'a> {
             care_flat,
             products,
             care_index,
-            remaining,
             poll: lim.gate(),
             marks: Marking {
                 alive: mark_rows(eng, f, false)?,
@@ -547,23 +533,6 @@ impl<'a> Walk<'a> {
             self.descend(seeds)?;
         }
         Ok(root_live)
-    }
-
-    /// Take one probe from the allowance.
-    #[inline]
-    fn spend(&mut self) -> Result<(), Halt> {
-        self.spend_many(1)
-    }
-
-    /// Take `n` probes from the allowance at once.
-    #[inline]
-    fn spend_many(&mut self, n: u64) -> Result<(), Halt> {
-        if self.remaining < n {
-            return Err(Halt::Spent);
-        }
-        self.remaining -= n;
-        self.poll.poll(n)?;
-        Ok(())
     }
 
     /// Resolve child references at `cv` (see [`child`]); a `care` node that
@@ -713,7 +682,7 @@ impl<'a> Walk<'a> {
             gathered.clear();
             for &(_, y) in outer.of(x) {
                 for &(b, j, cin) in cg.of(y) {
-                    self.spend()?;
+                    self.poll.poll(1)?;
                     let yi = ChildDecoder::structural().node(cin);
                     if yi != ZERO {
                         eng.limits().try_push(&mut gathered, (yi.0, b, j))?;
@@ -732,7 +701,7 @@ impl<'a> Walk<'a> {
                 let partners = inner.of(xi.0);
                 if partners.len() < gathered.len() {
                     for &(_, y) in partners {
-                        self.spend()?;
+                        self.poll.poll(1)?;
                         let lo = gathered.partition_point(|e| e.0 < y);
                         for &(_, b, j) in gathered[lo..].iter().take_while(|e| e.0 == y) {
                             eng.limits().try_push(&mut found, (a, b, i, j))?;
@@ -740,7 +709,7 @@ impl<'a> Walk<'a> {
                     }
                 } else {
                     for &(y, b, j) in &gathered {
-                        self.spend()?;
+                        self.poll.poll(1)?;
                         if inner.contains(xi.0, y) {
                             eng.limits().try_push(&mut found, (a, b, i, j))?;
                         }
@@ -795,7 +764,7 @@ impl<'a> Walk<'a> {
                 }
                 i += 1;
             }
-            self.spend_many(u64::from(i) * per_pair)?;
+            self.poll.poll(u64::from(i) * per_pair)?;
         }
         Ok(found)
     }
@@ -919,7 +888,7 @@ impl<'a> Walk<'a> {
                 }
                 i += 1;
             }
-            self.spend_many(u64::from(i))?;
+            self.poll.poll(u64::from(i))?;
         }
         self.restore(kids[k], keyed);
         if let Some(l) = other {
@@ -968,7 +937,7 @@ impl<'a> Walk<'a> {
                     continue;
                 }
                 for &(b, j, cside) in cands {
-                    self.spend()?;
+                    self.poll.poll(1)?;
                     if self.other_live(other, other_kind, fo, cside)? {
                         eng.limits().try_push(&mut found, (a, b, i, j))?;
                     }
@@ -1128,7 +1097,7 @@ impl<'a> Walk<'a> {
             'f: for (i, p) in fp.iter().enumerate() {
                 let (fl, fr) = (decode(f, lc, p.left), decode(f, rc, p.right));
                 for (j, q) in cp.iter().enumerate() {
-                    self.spend()?;
+                    self.poll.poll(1)?;
                     if self.live(lc, fl, decode(care, lc, q.left))?
                         && self.live(rc, fr, decode(care, rc, q.right))?
                     {
@@ -1239,7 +1208,7 @@ impl<'a> Walk<'a> {
         let (f, care) = (self.f, self.care);
         let fo = decode(f, other, side_of(p, 1 - s));
         for &j in cands {
-            self.spend()?;
+            self.poll.poll(1)?;
             let co = decode(care, other, side_of(cp[j as usize], 1 - s));
             if self.live(other, fo, co)? {
                 self.eng.limits().try_push(out, (i, j))?;
@@ -1357,7 +1326,7 @@ impl<'a> Walk<'a> {
         (down, side): (Ref, Ref),
         next: &mut Reached,
     ) -> Result<(), Halt> {
-        self.spend()?;
+        self.poll.poll(1)?;
         if matches!(self.child(off, None, side), Child::Dead) {
             return Ok(());
         }
@@ -1442,7 +1411,7 @@ impl<'a> Walk<'a> {
                     }
                     live_pairs.clear();
                     for (k, p) in level.pairs_iter_of_idx(a).enumerate() {
-                        self.spend()?;
+                        self.poll.poll(1)?;
                         let (down, side) = if on_left {
                             (p.left, p.right)
                         } else {
@@ -1577,7 +1546,7 @@ impl<'a> Walk<'a> {
                 },
                 None => {
                     for (i, p) in fp.iter().enumerate() {
-                        self.spend()?;
+                        self.poll.poll(1)?;
                         if self.live(lc, decode(f, lc, p.left), None)?
                             && self.live(rc, decode(f, rc, p.right), None)?
                         {

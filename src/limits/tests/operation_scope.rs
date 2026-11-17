@@ -90,7 +90,6 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.xor(f.clone(), g()).err(), Some(Stopped));
     assert_eq!(eng.ite(f.clone(), g(), f.clone()).err(), Some(Stopped));
     assert_eq!(eng.restrict_to_care(f.clone(), &g()).err(), Some(Stopped));
-    assert_eq!(eng.restrict_to_care_bounded(f.clone(), &other, 10).err(), Some(Stopped));
     assert_eq!(eng.exists_vars(f.clone(), &absent).err(), Some(Stopped));
     assert_eq!(eng.projected_model_count(&f, &absent).err(), Some(Stopped));
     assert_eq!(eng.condition(f.clone(), [99]).err(), Some(Stopped));

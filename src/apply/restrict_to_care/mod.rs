@@ -84,9 +84,8 @@ impl RestrictionOutcome {
     }
 }
 
-/// Restrict a non-false `f` to `care`, giving the walk `max_pair_visits`
-/// product-pair probes.
-fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
+/// Restrict a non-false `f` to `care`.
+fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
     if care.is_zero() {
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
     }
@@ -97,7 +96,7 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    Ok(match Marking::walk(eng, &f, care, r, max_pair_visits)? {
+    Ok(match Marking::walk(eng, &f, care, r)? {
         Walked::Unchanged => RestrictionOutcome::Unchanged(f),
         Walked::Unsatisfiable => RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?),
         Walked::Marks(marks) if marks.nothing_reachable_died(eng, &f)? => RestrictionOutcome::Unchanged(f),
@@ -108,7 +107,7 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
 /// What [`Marking::walk`] found.
 enum Walked {
     /// Nothing can die: the root product is a compatible leaf or a marginal
-    /// scalar, or the probe allowance ran out.
+    /// scalar.
     Unchanged,
     /// The root product is dead: `f ∧ care ≡ ⊥`.
     Unsatisfiable,
@@ -128,33 +127,6 @@ struct Marking {
 }
 
 impl crate::Engine {
-    /// [`Self::restrict_to_care`] with an allowance, abandoning an expensive
-    /// discovery.
-    ///
-    /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].
-    /// `max_pair_visits` bounds the product-pair probes of the bottom-up
-    /// joins, of the decisions made when asked, of the walk above the lower
-    /// operand root and of the walk down; marks read off the joins' listings
-    /// take none.
-    /// Exhausting it returns [`RestrictionOutcome::Unchanged`] with the
-    /// original operand intact. Zero skips the optional restriction.
-    ///
-    /// The allowance does not bound linear setup, the reachable-node check,
-    /// or rebuilding after successful discovery. It is not a wall-time or
-    /// total-work limit; the engine's limits still govern those operations.
-    ///
-    /// # Errors
-    ///
-    /// Vtree mismatch and engine cancellation, allocation and output limits
-    /// are errors as for [`Self::restrict_to_care`]. Exhausting the discovery
-    /// allowance does not suppress engine cancellation.
-    pub fn restrict_to_care_bounded(&self, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
-        let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, care)?;
-        if f.is_zero() || max_pair_visits == 0 { return Ok(RestrictionOutcome::Unchanged(f)); }
-        restrict_prepared(self, f, care, max_pair_visits)
-    }
-
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
     /// # Errors
@@ -168,6 +140,6 @@ impl crate::Engine {
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
-        restrict_prepared(self, f, care, u64::MAX)
+        restrict_prepared(self, f, care)
     }
 }

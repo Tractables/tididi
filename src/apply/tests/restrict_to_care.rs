@@ -1173,3 +1173,42 @@ fn refusals_beside_a_join_given_up_reach_the_caller() {
         });
     });
 }
+
+#[test]
+fn restriction_to_an_unreduced_care_agrees_on_care_for_every_assignment() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    for pivot in 1..=6 {
+        let f = eng.clause(&vtree, [pivot, pivot % 6 + 1, (pivot + 1) % 6 + 1]).unwrap();
+        let left = eng.clause(&vtree, [-pivot, (pivot + 2) % 6 + 1]).unwrap();
+        let right = eng.clause(&vtree, [-((pivot + 1) % 6 + 1)]).unwrap();
+        let care = eng.and(left, right).unwrap();
+        let care_allocation = care.levels.as_ptr();
+        let mut g = eng.restrict_to_care(f.clone(), &care).unwrap().into_tdd();
+        assert_eq!(care.levels.as_ptr(), care_allocation);
+        assert!(g.pair_count() <= f.pair_count());
+        eng.minimize(&mut g).unwrap();
+        assert_canonical(&g);
+        for mask in 0..64 {
+            let assignment: Vec<_> = (0..6).map(|bit| mask & (1 << bit) != 0).collect();
+            if eval(&care, &assignment) { assert_eq!(eval(&f, &assignment), eval(&g, &assignment)); }
+        }
+    }
+}
+
+#[test]
+fn the_walk_polls_the_engine_limits() {
+    use crate::limits::{LimitConfig, OperationError, StopAt, StopRules};
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let f = eng.clause(&vtree, [1, 2, 3, 4, 5, 6]).unwrap();
+    let care = eng.clause(&vtree, [-1, -2, -3]).unwrap();
+    for allowance in [0, 1] {
+        let limits = LimitConfig::none().with_stop_rules(StopRules {
+            unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + allowance)),
+            after_pairs: None,
+        });
+        let _scope = eng.limits().scope(limits);
+        assert!(matches!(eng.restrict_to_care(f.clone(), &care), Err(OperationError::Stopped)));
+    }
+}

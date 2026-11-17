@@ -12,6 +12,8 @@ Breaking changes:
 - `Tdd::restrict_to_care` and `Engine::restrict_to_care` borrow `care` and
   no longer reduce it first. The walk's cost follows `care` as written, so
   reduce an unreduced care before the call.
+- `Engine::restrict_to_care_bounded` is removed. `Engine::restrict_to_care`
+  runs the same walk; the engine's limits bound its work.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
   `Quantification::Fused` (the default) or `Quantification::Product`.
 - `Tdd::embed_mirrored`, `EmbeddingPlan::new_mirrored`,

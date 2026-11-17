@@ -26,7 +26,6 @@ mod conjoin_in_place;
 mod conjoin_indexed;
 mod project;
 mod restrict_to_care;
-mod restrict_budget;
 mod restrict_marginal;
 mod restrict_marginal_gate;
 mod restrict_deep;
