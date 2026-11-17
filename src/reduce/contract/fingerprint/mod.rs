@@ -187,18 +187,13 @@ impl TwinEntries for ContextEntries<'_> {
         if !self.early_stop {
             return Ok(false);
         }
-        Ok(!repeats_a_sibling(
-            self.parent_level,
-            self.t1_side,
-            lim,
-            scratch,
-        )?)
+        Ok(repeats_a_sibling(self.parent_level, self.t1_side, lim, scratch)?.is_none())
     }
 }
 
-/// Whether some node of `level` pairs two nodes of the child level on
-/// `side` with one sibling. Two nodes share a context only there (math
-/// §2.8), so without one no node has a twin.
+/// The pair count of a node of `level` that pairs two nodes of the child
+/// level on `side` with one sibling, if one does. Two nodes share a context
+/// only there (math §2.8), so without one no node has a twin.
 ///
 /// Each parent node is tested alone, in cache, and the test stops at the
 /// first such sibling ([`node_repeats_a_sibling`]). A stored level's nodes
@@ -210,7 +205,7 @@ pub(super) fn repeats_a_sibling(
     side: ChildSide,
     lim: &Limits,
     scratch: &mut ContractScratch,
-) -> Result<bool, OperationError> {
+) -> Result<Option<usize>, OperationError> {
     let ContractScratch {
         twin_local,
         twin_generation,
@@ -228,33 +223,71 @@ pub(super) fn repeats_a_sibling(
             for i in 0..level.node_count() {
                 let pairs = level.described_read_next(&mut cursor, i, &mut buf);
                 if node_repeats_a_sibling::<false>(pairs, side, lim, twin_local, twin_generation)? {
-                    return Ok(true);
+                    return Ok(Some(pairs.len()));
                 }
             }
-            Ok(false)
+            Ok(None)
         }
     }
 }
 
+/// A stored level of at least this many nodes, and at least twice as many
+/// arena pairs, whose first 64th holds no node that repeats a sibling has
+/// its widest node tested next. On a level of narrower nodes the pass that
+/// finds it costs about what reading the level does.
+const WIDEST_FIRST_MIN_NODES: usize = 1 << 16;
+
 /// [`repeats_a_sibling`] of a stored level, `LEFT` saying whether the
 /// child level is the left one.
+///
+/// Where few nodes of a level repeat a sibling, the node numbering decides
+/// how much of the level the test reads before the first, and a wider node
+/// is likelier to be one. On a large level the test reads a prefix in
+/// order, then the widest node of the rest, then the rest in order.
 fn stored_repeats_a_sibling<const LEFT: bool>(
     stored: StoredPairs<'_>,
     lim: &Limits,
     twin_local: &mut Vec<u64>,
     twin_generation: &mut u32,
-) -> Result<bool, OperationError> {
+) -> Result<Option<usize>, OperationError> {
     let side = if LEFT {
         ChildSide::Left
     } else {
         ChildSide::Right
     };
-    for node in stored.nodes() {
-        if node_repeats_a_sibling::<false>(stored.of(node), side, lim, twin_local, twin_generation)? {
-            return Ok(true);
+    let nodes = stored.nodes();
+    let head = if nodes.len() >= WIDEST_FIRST_MIN_NODES && stored.arena().len() >= 2 * nodes.len() {
+        nodes.len() / 64
+    } else {
+        nodes.len()
+    };
+    for node in &nodes[..head] {
+        let pairs = stored.of(node);
+        if node_repeats_a_sibling::<false>(pairs, side, lim, twin_local, twin_generation)? {
+            return Ok(Some(pairs.len()));
         }
     }
-    Ok(false)
+    let rest = &nodes[head..];
+    // A ranged node's words hold one pair; the last pass reads it.
+    let (mut widest, mut most) = (None, refine::SMALL_PAIRS as u32);
+    for node in rest {
+        if node.held_count() > most {
+            (widest, most) = (Some(node), node.held_count());
+        }
+    }
+    if let Some(node) = widest {
+        let pairs = stored.of(node);
+        if node_repeats_a_sibling::<false>(pairs, side, lim, twin_local, twin_generation)? {
+            return Ok(Some(pairs.len()));
+        }
+    }
+    for node in rest {
+        let pairs = stored.of(node);
+        if node_repeats_a_sibling::<false>(pairs, side, lim, twin_local, twin_generation)? {
+            return Ok(Some(pairs.len()));
+        }
+    }
+    Ok(None)
 }
 
 /// Whether the parent node of `pairs` pairs two nodes of the child level
@@ -440,8 +473,12 @@ pub(super) fn screen_twins(
     // to a slower loop than `repeats_a_sibling`'s, which reads every pair
     // of the levels that end `Apart`, and cost some CNF compilations 3% of
     // their instructions.
-    if !repeats_a_sibling(level, side, lim, scratch)? {
+    let Some(pairs) = repeats_a_sibling(level, side, lim, scratch)? else {
         return Ok(Screen::Apart);
+    };
+    // Past `SMALL_PAIRS` the second test of a node is the first one.
+    if pairs > refine::SMALL_PAIRS {
+        return Ok(Screen::Alike);
     }
     let Some(stored) = level.stored() else {
         return Ok(Screen::Alike);
