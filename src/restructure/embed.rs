@@ -675,6 +675,10 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
     let mut gate = eng.limits().gate();
     gate.poll(units.saturating_sub(built as u64))?;
     gate.flush()?;
+    // Every internal level owes the contraction passes, as an assembly's seat
+    // queues them, though the copies are as reduced as `tdd`: the vtree
+    // search races its candidates by the work this queues, and was tuned on it.
+    result.dirty = crate::diagram::Dirty::default().seeded(into, internal.iter().copied(), Some(eng))?;
     if plan.pass_throughs(into).any(|&t| {
         let (left, right) = into.children(t);
         into.node(if plan.is_free(left) { right } else { left }).is_leaf()
