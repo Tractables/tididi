@@ -7,7 +7,10 @@
 //! the home's size; the one table sized by the home is the home's
 //! [`HomeIndex`], built once and shared by all its projections.
 
-use std::sync::{Arc, OnceLock};
+use std::marker::PhantomData;
+use std::ptr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
@@ -121,6 +124,111 @@ impl HomeLink {
     }
 }
 
+/// What a vtree is to projections: the home of some, with their shared
+/// index, or one of them.
+#[derive(Debug)]
+pub(crate) enum Role {
+    Home(Arc<HomeIndex>),
+    Projection(HomeLink),
+}
+
+/// A vtree's [`Role`], set on a root by its first projection through a
+/// shared reference, kept by clones and dropped by a change of shape.
+///
+/// One pointer, null on a vtree that is neither, because every vtree pays
+/// for its size: a consumer building many small vtrees paid 0.2% to 0.4% of
+/// its instructions for 32 more bytes. `OnceLock` would take two words.
+pub(crate) struct HomeCell(AtomicPtr<Role>, PhantomData<Arc<Role>>);
+
+impl HomeCell {
+    pub(super) const fn none() -> Self {
+        HomeCell(AtomicPtr::new(ptr::null_mut()), PhantomData)
+    }
+
+    fn holding(role: Role) -> Self {
+        HomeCell(AtomicPtr::new(Arc::into_raw(Arc::new(role)).cast_mut()), PhantomData)
+    }
+
+    pub(super) fn projection(link: HomeLink) -> Self {
+        Self::holding(Role::Projection(link))
+    }
+
+    pub(super) fn role(&self) -> Option<&Role> {
+        // Safety: a non-null pointer came from `Arc::into_raw` and its count
+        // is released only through `&mut self`.
+        unsafe { self.0.load(Ordering::Acquire).as_ref() }
+    }
+
+    pub(super) fn link(&self) -> Option<&HomeLink> {
+        match self.role()? {
+            Role::Projection(link) => Some(link),
+            Role::Home(_) => None,
+        }
+    }
+
+    fn index_or_init(&self, init: impl FnOnce() -> HomeIndex) -> Arc<HomeIndex> {
+        let role = match self.role() {
+            Some(role) => role,
+            None => {
+                let mine = Arc::into_raw(Arc::new(Role::Home(Arc::new(init())))).cast_mut();
+                match self.0.compare_exchange(ptr::null_mut(), mine, Ordering::AcqRel, Ordering::Acquire) {
+                    // Safety: the cell now holds `mine`'s count.
+                    Ok(_) => unsafe { &*mine },
+                    Err(theirs) => {
+                        // Safety: `mine` was never shared, and `theirs` is held
+                        // by the cell as in `role`.
+                        unsafe {
+                            drop(Arc::from_raw(mine));
+                            &*theirs
+                        }
+                    }
+                }
+            }
+        };
+        match role {
+            Role::Home(index) => Arc::clone(index),
+            Role::Projection(_) => unreachable!("a projection is no home"),
+        }
+    }
+
+    fn is_null(&mut self) -> bool {
+        self.0.get_mut().is_null()
+    }
+
+    pub(super) fn take(&mut self) -> Option<Arc<Role>> {
+        let p = std::mem::replace(self.0.get_mut(), ptr::null_mut());
+        // Safety: as in `role`; the cell no longer holds the count.
+        (!p.is_null()).then(|| unsafe { Arc::from_raw(p) })
+    }
+}
+
+impl Clone for HomeCell {
+    fn clone(&self) -> Self {
+        let p = self.0.load(Ordering::Acquire);
+        if !p.is_null() {
+            // Safety: as in `role`.
+            unsafe { Arc::increment_strong_count(p) };
+        }
+        HomeCell(AtomicPtr::new(p), PhantomData)
+    }
+}
+
+impl Drop for HomeCell {
+    fn drop(&mut self) {
+        let p = *self.0.get_mut();
+        if !p.is_null() {
+            // Safety: as in `role`.
+            drop(unsafe { Arc::from_raw(p) });
+        }
+    }
+}
+
+impl std::fmt::Debug for HomeCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.role().fmt(f)
+    }
+}
+
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
 #[cfg_attr(not(test), expect(dead_code, reason = "binary operations across projections will read it"))]
@@ -215,11 +323,9 @@ impl Vtree {
             nodes: Vec::new(),
             root: VtreeIdx(0),
             var_to_leaf: Vec::new(),
-            id_space: root.num_vars(),
             leaf_count: 0,
             topo: TopoOrder::default(),
-            home: Some(Arc::new(link)),
-            home_index: OnceLock::new(),
+            home: HomeCell::projection(link),
         })
     }
 
@@ -228,7 +334,7 @@ impl Vtree {
     /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
     /// of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.link() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (&*link.index, &link.ranks);
@@ -253,13 +359,13 @@ impl Vtree {
 
     /// The number of home leaves this vtree does not have; 0 on a root.
     pub(crate) fn free_leaves(&self) -> u32 {
-        self.home.as_ref().map_or(0, |link| link.home.num_leaves() - self.leaf_count)
+        self.home.link().map_or(0, |link| link.home.num_leaves() - self.leaf_count)
     }
 
     /// The variables of the home leaves this vtree does not have, left to
     /// right; none on a root.
     pub(crate) fn free_vars(&self) -> Vec<VarId> {
-        let Some(link) = &self.home else { return Vec::new() };
+        let Some(link) = self.home.link() else { return Vec::new() };
         let mut own = link.ranks.iter().copied().peekable();
         let mut free = Vec::with_capacity(self.free_leaves() as usize);
         for (rank, &leaf) in link.index.leaf_at.iter().enumerate() {
@@ -272,7 +378,7 @@ impl Vtree {
 
     /// The home this vtree is a projection of; `None` on a root vtree.
     pub fn home(&self) -> Option<&Arc<Vtree>> {
-        self.home.as_ref().map(|link| &link.home)
+        self.home.link().map(|link| &link.home)
     }
 
     /// The node of [`Vtree::home`] that own node `t` stands for; `t` itself on
@@ -282,7 +388,7 @@ impl Vtree {
     ///
     /// Panics if `t` is not below [`num_nodes`](Self::num_nodes).
     pub fn home_node(&self, t: VtreeIdx) -> VtreeIdx {
-        match &self.home {
+        match self.home.link() {
             None => {
                 assert!(t.idx() < self.nodes.len(), "home_node: {} is not a node", t.0);
                 t
@@ -295,7 +401,7 @@ impl Vtree {
     /// root vtree, `h` itself when it is a node. Logarithmic in
     /// [`num_leaves`](Self::num_leaves).
     pub fn node_at_home(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.link() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let slot = *link.index.slot.get(h.idx())?;
@@ -320,7 +426,7 @@ impl Vtree {
         if root_of(a) != root_of(b) {
             return None;
         }
-        let (la, lb) = match (&a.home, &b.home) {
+        let (la, lb) = match (a.home.link(), b.home.link()) {
             (None, None) => return Some(LeafSets::Equal),
             (Some(_), None) => return Some(LeafSets::AInB),
             (None, Some(_)) => return Some(LeafSets::BInA),
@@ -346,8 +452,7 @@ impl Vtree {
     }
 
     pub(super) fn home_index(&self) -> Arc<HomeIndex> {
-        debug_assert!(self.home.is_none());
-        Arc::clone(self.home_index.get_or_init(|| Arc::new(HomeIndex::new(self))))
+        self.home.index_or_init(|| HomeIndex::new(self))
     }
 
     /// The projection of root `home` on the leaves of `ranks`, ascending and
@@ -377,9 +482,8 @@ impl Vtree {
             node_of[in_order[2 * i + 1].idx()] = index.gap_node[g as usize];
         }
         own.var_to_leaf = Vec::new();
-        own.id_space = home.num_vars();
         own.context = Arc::clone(&home.context);
-        own.home = Some(Arc::new(HomeLink { home: Arc::clone(home), index, ranks, node_of, in_order }));
+        own.home = HomeCell::projection(HomeLink { home: Arc::clone(home), index, ranks, node_of, in_order });
         debug_assert_eq!(own.validate(), Ok(()));
         own
     }
@@ -389,16 +493,35 @@ impl Vtree {
     #[cold]
     #[inline(never)]
     pub(super) fn projected_leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
-        self.home.as_deref()?.leaf_of(var)
+        self.home.link()?.leaf_of(var)
+    }
+
+    /// [`Vtree::num_vars`] of a vtree with an empty leaf table, which only a
+    /// projection has.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn projected_num_vars(&self) -> u32 {
+        self.home.link().map_or(0, |link| link.home.num_vars())
     }
 
     /// Called by every kept change of shape (a reverted rotation probe
     /// restores the shape the index and the link describe): a root's index
     /// goes stale, and a projection becomes a root with a dense leaf table.
+    /// Inline, because a rotation search commits rotations by the hundred
+    /// thousand on vtrees that are neither.
+    #[inline]
     pub(super) fn reshaped(&mut self) {
-        self.home_index.take();
-        if self.home.take().is_some() {
-            self.var_to_leaf = vec![VtreeIdx(0); self.id_space as usize];
+        if !self.home.is_null() {
+            self.leave_home();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn leave_home(&mut self) {
+        let Some(role) = self.home.take() else { return };
+        if let Role::Projection(link) = &*role {
+            self.var_to_leaf = vec![VtreeIdx(0); link.home.num_vars() as usize];
             for (i, node) in self.nodes.iter().enumerate() {
                 if let VtreeNode::Leaf { var, .. } = node {
                     self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
@@ -413,13 +536,13 @@ impl Vtree {
     /// ancestor in the home of the leaves on either side of it, and a parent
     /// for a shallower home node than its child.
     pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.link() else {
             return Ok(());
         };
         let fail = |msg: String| Err(VtreeError::Invalid(format!("projection: {msg}")));
         let (home, index) = (&*link.home, &*link.index);
         let k = self.num_leaves() as usize;
-        if home.home.is_some() || link.ranks.len() != k || link.node_of.len() != self.nodes.len() {
+        if home.home().is_some() || link.ranks.len() != k || link.node_of.len() != self.nodes.len() {
             return fail("the link does not fit the tree".to_string());
         }
         if link.ranks.windows(2).any(|w| w[0] >= w[1]) || link.ranks.last().is_some_and(|&r| r >= home.num_leaves()) {

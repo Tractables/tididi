@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::test_helpers::{rotate_left, rotate_right};
-use crate::vtree::home::LeafSets;
+use crate::vtree::home::{HomeCell, LeafSets, Role};
 use crate::vtree::rng::Lcg;
 
 /// A random tree over `n` variables, rotated at random so that its node
@@ -219,10 +219,10 @@ fn rotating_clears_the_home() {
     assert_eq!(swapped.validate(), Ok(()));
 
     let mut moved = (*home).clone();
-    assert!(moved.home_index.get().is_some());
+    assert!(matches!(moved.home.role(), Some(Role::Home(_))));
     let root = moved.root();
     rotate_right(&mut moved, root).or_else(|| rotate_left(&mut moved, root)).unwrap();
-    assert!(moved.home_index.get().is_none());
+    assert!(moved.home.role().is_none());
     let moved = Arc::new(moved);
     let again = Vtree::projection(&moved, [1, 3, 4, 8, 11].map(VarId)).unwrap();
     assert_eq!(again.validate(), Ok(()));
@@ -234,8 +234,8 @@ fn validate_checks_the_link() {
     let home = Arc::new(Vtree::balanced(8));
     let own = Vtree::projection(&home, [2, 3, 6].map(VarId)).unwrap();
     let mut broken = (*own).clone();
-    let mut link = (**broken.home.as_ref().unwrap()).clone();
+    let mut link = broken.home.link().unwrap().clone();
     link.node_of.swap(0, 1);
-    broken.home = Some(Arc::new(link));
+    broken.home = HomeCell::projection(link);
     assert!(matches!(broken.validate(), Err(VtreeError::Invalid(_))));
 }

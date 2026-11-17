@@ -592,11 +592,9 @@ fn reindex(root: VtreeIdx, n: usize, num_vars: u32, shape: impl Fn(VtreeIdx) -> 
         nodes,
         root: old_to_new[root.idx()],
         var_to_leaf,
-        id_space: num_vars,
         leaf_count,
         topo,
-        home: None,
-        home_index: std::sync::OnceLock::new(),
+        home: super::home::HomeCell::none(),
     };
     debug_assert_eq!(vtree.validate(), Ok(()));
     Some((vtree, old_to_new))

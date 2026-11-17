@@ -94,7 +94,7 @@ impl Vtree {
     fn validate_leaves(&self) -> Result<(), VtreeError> {
         let mut leaf_count = 0u32;
         let num_vars = self.num_vars();
-        let table = if self.home.is_some() { 0 } else { num_vars as usize };
+        let table = if self.home().is_some() { 0 } else { num_vars as usize };
         if self.var_to_leaf.len() != table {
             return invalid(format!("the leaf table has {} entries for an id space of {num_vars}", self.var_to_leaf.len()));
         }
