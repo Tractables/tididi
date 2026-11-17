@@ -338,7 +338,8 @@ pub trait ColumnAlgebra {
     /// home's leaf of the first variable with [`leaf`](Self::leaf), calls
     /// this with the other variables, and reads its `One` slot. `false`
     /// makes the evaluation return
-    /// [`OperationError::FreeVariables`](crate::OperationError::FreeVariables);
+    /// [`OperationError::VariableNotInVtree`](crate::OperationError::VariableNotInVtree)
+    /// naming one of `vars`;
     /// the default writes nothing and returns `false`.
     fn free(&self, _t: VtreeIdx, _vars: &[VarId], _col: &mut Self::Column) -> bool {
         false

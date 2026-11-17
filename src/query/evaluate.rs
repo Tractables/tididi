@@ -381,7 +381,7 @@ fn inline_counts(tdd: &Tdd, t: VtreeIdx, root: VtreeIdx) -> Vec<u32> {
 /// Multiply `col`, the column of `t`, by every assignment to `vars` when
 /// there are any.
 pub(crate) fn free_factor<A: ColumnAlgebra>(algebra: &A, t: VtreeIdx, vars: &[VarId], col: &mut A::Column) -> Result<(), OperationError> {
-    if vars.is_empty() || algebra.free(t, vars, col) { Ok(()) } else { Err(OperationError::FreeVariables) }
+    if vars.is_empty() || algebra.free(t, vars, col) { Ok(()) } else { Err(OperationError::VariableNotInVtree(vars[0])) }
 }
 
 /// [`Engine::evaluate_columns`]'s walk over the levels under `root`, `keep`

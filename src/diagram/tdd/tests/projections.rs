@@ -263,7 +263,9 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     a.check("evaluate_columns", || g.evaluate_columns(&Counts { free: true }), || f.evaluate_columns(&Counts { free: true }), PartialEq::eq);
     if g.vtree().free_leaves() > 0 && !g.is_zero() {
         let refused = g.evaluate_columns(&Counts { free: false });
-        a.check("evaluate_columns without free", || Ok::<_, OperationError>(refused), || Ok(Err(OperationError::FreeVariables)), PartialEq::eq);
+        // The constant true values its first free variable as a leaf.
+        let named = g.vtree().free_vars()[usize::from(g.is_one())];
+        a.check("evaluate_columns without free", || Ok::<_, OperationError>(refused), || Ok(Err(OperationError::VariableNotInVtree(named))), PartialEq::eq);
     }
     a.check(
         "weighted_value",
@@ -509,19 +511,19 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     let four = BigUint::from(4u32);
     assert_eq!(f.evaluate_columns(&counts).unwrap(), four);
     assert_eq!(g.evaluate_columns(&counts).unwrap(), four);
-    assert_eq!(g.evaluate_columns(&Counts { free: false }), Err(OperationError::FreeVariables));
+    assert_eq!(g.evaluate_columns(&Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
     let (root, home_root) = (g.vtree().root(), home.root());
     assert_eq!(g.vtree().home_node(root), home_root);
     assert_eq!(g.evaluate_columns_at(root, &counts).unwrap(), f.evaluate_columns_at(home_root, &counts).unwrap());
     let sum = |t: &Tdd, at| eng.sum_indexed(t, t, &PairIndex::new(t).unwrap(), at, &counts).unwrap();
     assert_eq!(sum(&g, root), sum(&f, home_root));
-    assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::FreeVariables));
+    assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(4))));
 
     let mut one = Tdd::one(&home);
     one.trim().unwrap();
     assert_eq!(one.vtree().num_nodes(), 0);
     assert_eq!(one.evaluate_columns(&counts).unwrap(), BigUint::from(16u32));
-    assert_eq!(one.evaluate_columns(&Counts { free: false }), Err(OperationError::FreeVariables));
+    assert_eq!(one.evaluate_columns(&Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
     let mut zero = Tdd::zero(&home);
     zero.trim().unwrap();
     assert_eq!(zero.evaluate_columns(&Counts { free: false }).unwrap(), BigUint::ZERO);

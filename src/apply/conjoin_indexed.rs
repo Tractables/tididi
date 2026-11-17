@@ -914,9 +914,9 @@ impl Engine {
     ///
     /// [`OperationError::LevelNotInVtree`] for an `at` outside the vtree,
     /// [`OperationError::InertOption`] for an `at` that is a leaf or for a
-    /// weighted operand, [`OperationError::FreeVariables`] on a projection
-    /// lacking variables under `at`'s node in the home that the algebra does
-    /// not value ([`ColumnAlgebra::free`]), and
+    /// weighted operand, [`OperationError::VariableNotInVtree`] on a
+    /// projection lacking variables under `at`'s node in the home that the
+    /// algebra does not value ([`ColumnAlgebra::free`]), and
     /// [`and_indexed`](Self::and_indexed)'s errors.
     ///
     /// # Panics

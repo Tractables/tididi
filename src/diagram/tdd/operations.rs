@@ -913,7 +913,7 @@ impl Tdd {
     ///
     /// Returns [`OperationError::MarginalLevel`] for a marginal level the
     /// algebra values no count of, or one summed under weights,
-    /// [`OperationError::FreeVariables`] on a projection whose free
+    /// [`OperationError::VariableNotInVtree`] on a projection whose free
     /// variables the algebra does not value, or
     /// [`OperationError::OverBudget`] if the table of columns is refused.
     ///
@@ -1025,7 +1025,7 @@ impl Tdd {
     /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
     /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for a
     /// marginal level the algebra values no count of, or one summed under
-    /// weights, [`OperationError::FreeVariables`] when the algebra does not
+    /// weights, [`OperationError::VariableNotInVtree`] when the algebra does not
     /// value those variables, or [`OperationError::OverBudget`] if the table
     /// of columns is refused.
     ///
