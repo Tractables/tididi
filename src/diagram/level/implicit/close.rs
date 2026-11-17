@@ -1,4 +1,5 @@
-//! Closing, rewriting and materializing implicit levels.
+//! Closing implicit levels, moving their child slots, and storing or
+//! rewriting them in place.
 
 use super::super::LevelState;
 use super::super::arena::ArenaGrowth;
@@ -62,7 +63,8 @@ impl crate::diagram::Tdd {
 impl TddLevel {
     /// The description of the level's pairs, when the level is implicit:
     /// node `i` holds pairs `i · k .. (i + 1) · k` of the arena, `k` the
-    /// pairs of every node. `None` on a stored level.
+    /// pairs of every node, or at one pair a node holds its pair inline and
+    /// the arena holds none. `None` on a stored level.
     #[inline]
     pub fn implicit(&self) -> Option<&ImplicitLevel> {
         let d = self.pairs.implicit()?;

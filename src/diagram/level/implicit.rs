@@ -1034,15 +1034,13 @@ fn digits_hold(digits: &[(usize, (i64, i64))], n: usize, mut value: impl FnMut(u
     true
 }
 
-/// The pairs arenas have held as their description, over the process.
+/// The count [`described`] reads.
 static DESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The pairs a prune has kept as the description of what it left of an
-/// implicit level, over the process.
+/// The count [`redescribed`] reads.
 static REDESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The pairs of implicit levels a renumbering of their children left not
-/// affine, stored moved, over the process.
+/// The count [`stored_moved`] reads.
 static STORED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The pairs of implicit levels that a renumbering of their child levels
@@ -1054,15 +1052,17 @@ pub fn stored_moved() -> u64 {
 
 /// The pairs the conjunction and the closes at the ends of operations have
 /// held as the description of implicit levels instead of storing them, over
-/// the whole process.
+/// the whole process. A level of one pair a node holds its pairs inline in
+/// its nodes, not in a pair arena, and is not counted.
 pub fn described() -> u64 {
     DESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The pairs prunes have kept as the description of what they left of
-/// implicit levels instead of storing them, over the whole process. A level
-/// a prune shrinks, or whose children it renumbers, stays implicit when what
-/// is left is affine in a mixed radix.
+/// The pairs prunes and renumberings of child levels have kept as the
+/// description of what they left of implicit levels instead of storing them,
+/// over the whole process. A level a prune shrinks, or whose children a pass
+/// renumbers, stays implicit when what is left is affine in a mixed radix. A
+/// level of one pair a node is not counted, as in [`described`].
 pub fn redescribed() -> u64 {
     REDESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
