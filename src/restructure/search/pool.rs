@@ -365,24 +365,21 @@ impl Engine {
             return Ok(false);
         };
         let info = pending.commit_in_probe(&mut tree);
-        let (mut touched, mut own) = (Vec::new(), Vec::new());
-        let mut copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        match groups.as_mut() {
-            None => touched.extend((0..members.len()).map(|i| (i, info))),
+        let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
+        let mut scratch = self.scratch.restructure.checkout(self);
+        let kept = match groups.as_mut() {
+            None => {
+                let every = Every { members: members.len(), info: &info };
+                probe(self, members, Touched::new(every, mv, bound), copy, &mut scratch, accept)?
+            }
             Some(groups) => {
+                let (mut touched, mut own) = (Vec::new(), Vec::new());
                 groups.touch(&info, mv, &mut touched, &mut own);
                 groups.settle(&mut own, true, mv.crossed);
-                copy = copy.saturating_add(groups.nodes() as u64);
+                let copy = copy.saturating_add(groups.nodes() as u64);
+                probe(self, members, Touched::new(Listed(&touched), mv, bound), copy, &mut scratch, accept)?
             }
-        }
-        let mut scratch = self.scratch.restructure.checkout(self);
-        let moved = Touched {
-            at: &touched,
-            dir: mv.rotation.kind,
-            crossed: mv.crossed,
-            max_pairs: bound,
         };
-        let kept = probe(self, members, moved, copy, &mut scratch, accept)?;
         if kept {
             if let Some(groups) = groups.as_mut() {
                 groups.kept(&tree, &info, mv.crossed, members, None);
@@ -495,7 +492,7 @@ struct PoolDescent<'a> {
     stats: &'a mut PoolSearchStats,
     known: Known,
     crossed_scores: Transient<'a, Vec<Option<Option<usize>>>>,
-    /// The probe under way's [`Touched`] members, and its moves on the
+    /// The probe under way's [`Listed`] members, and its moves on the
     /// groups' trees.
     touched: Vec<(usize, RotationInfo)>,
     own: Vec<(usize, PendingTopo)>,
@@ -972,22 +969,22 @@ impl<'l> PoolDescent<'l> {
             return Ok(false);
         };
         let info = pending.info();
-        touched.clear();
-        match groups.as_mut() {
-            None => touched.extend((0..members.len()).map(|i| (i, info))),
-            Some(groups) => groups.touch(&info, mv, touched, own),
-        }
-        let moved = Touched {
-            at: touched,
-            dir: mv.rotation.kind,
-            crossed: mv.crossed,
-            max_pairs: config.max_inner_pairs,
+        let bound = config.max_inner_pairs;
+        let outcome = match groups.as_mut() {
+            None => {
+                let every = Every { members: members.len(), info: &info };
+                probe_scored(eng, members, Touched::new(every, mv, bound), scratch, twin, slack, undo.as_deref_mut())
+            }
+            Some(groups) => {
+                touched.clear();
+                groups.touch(&info, mv, touched, own);
+                let listed = Touched::new(Listed(touched), mv, bound);
+                let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
+                groups.settle(own, matches!(outcome, Ok(true)), mv.crossed);
+                outcome
+            }
         };
-        let outcome = probe_scored(eng, members, moved, scratch, twin, slack, undo.as_deref_mut());
         let kept = matches!(outcome, Ok(true));
-        if let Some(groups) = groups.as_mut() {
-            groups.settle(own, kept, mv.crossed);
-        }
         if kept {
             // The bottom-up order's repair moves the promoted node past the
             // subtree it now needs below it, and every node between.
@@ -1332,28 +1329,86 @@ fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Opt
     }
 }
 
-/// A move as each member it touches sees it: `at` holds each such member's
-/// index and the rotation made on its tree.
+/// The members a move touches, by their index among those touched: each
+/// one's index among the members and the rotation made on its tree.
+trait TouchedAt<'t>: Copy {
+    fn len(self) -> usize;
+    fn member(self, k: usize) -> usize;
+    fn info(self, k: usize) -> &'t RotationInfo;
+}
+
+/// Every member, on one shared tree. Kept apart from [`Listed`] so the
+/// probes of a pool on one allocation build no list and index none.
 #[derive(Clone, Copy)]
-struct Touched<'t> {
-    at: &'t [(usize, RotationInfo)],
+struct Every<'t> {
+    members: usize,
+    info: &'t RotationInfo,
+}
+
+impl<'t> TouchedAt<'t> for Every<'t> {
+    fn len(self) -> usize {
+        self.members
+    }
+
+    fn member(self, k: usize) -> usize {
+        k
+    }
+
+    fn info(self, _: usize) -> &'t RotationInfo {
+        self.info
+    }
+}
+
+/// Members on projections of one home, each with its own rotation.
+#[derive(Clone, Copy)]
+struct Listed<'t>(&'t [(usize, RotationInfo)]);
+
+impl<'t> TouchedAt<'t> for Listed<'t> {
+    fn len(self) -> usize {
+        self.0.len()
+    }
+
+    fn member(self, k: usize) -> usize {
+        self.0[k].0
+    }
+
+    fn info(self, k: usize) -> &'t RotationInfo {
+        &self.0[k].1
+    }
+}
+
+/// A move as each member it touches sees it.
+#[derive(Clone, Copy)]
+struct Touched<A> {
+    at: A,
     dir: RotationKind,
     crossed: bool,
     max_pairs: usize,
 }
 
-impl<'t> Touched<'t> {
+impl<A> Touched<A> {
+    fn new(at: A, mv: PoolMove, max_pairs: usize) -> Touched<A> {
+        Touched {
+            at,
+            dir: mv.rotation.kind,
+            crossed: mv.crossed,
+            max_pairs,
+        }
+    }
+}
+
+impl<'t, A: TouchedAt<'t>> Touched<A> {
     fn len(&self) -> usize {
         self.at.len()
     }
 
     fn member(&self, k: usize) -> usize {
-        self.at[k].0
+        self.at.member(k)
     }
 
     fn step(&self, k: usize) -> RotationStep<'t> {
         RotationStep {
-            info: &self.at[k].1,
+            info: self.at.info(k),
             dir: self.dir,
             crossed: self.crossed,
             max_pairs: self.max_pairs,
@@ -1394,10 +1449,10 @@ fn rebuild_member(
 /// Rebuild each touched member `pick` names, by its index in `moved`,
 /// stopping on the first refusal or error, what each needs to be put back
 /// filed in `pre`: the outcome for [`settle`].
-fn rebuild_other_members(
+fn rebuild_other_members<'t>(
     lim: &Limits,
     members: &mut [&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     scratch: &mut RestructureScratch,
     pre: &mut Preimages<'_>,
     pick: impl Fn(usize) -> bool,
@@ -1428,10 +1483,10 @@ fn rebuild_other_members(
 /// [`REBUILD_UNITS`].
 ///
 /// The descent's probes decide from scores instead ([`probe_scored`]).
-fn probe(
+fn probe<'t>(
     eng: &Engine,
     members: &mut [&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     extra: u64,
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
@@ -1447,7 +1502,8 @@ fn probe(
     lim.reserve_exact(&mut deferred, moved.len())?;
     before.resize(members.len(), 0);
     after.resize(members.len(), 0);
-    for (k, &(i, info)) in moved.at.iter().enumerate() {
+    for k in 0..moved.len() {
+        let (i, info) = (moved.member(k), moved.step(k).info);
         let m = &members[i];
         let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
         let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, moved.max_pairs));
@@ -1521,10 +1577,10 @@ fn probe(
 /// after all; if not, or if a rebuild passes `step.max_pairs` or fails, every
 /// member is put back. So the scores decide, and no member's rebuild waits
 /// for the others'.
-fn probe_scored<'l>(
+fn probe_scored<'l, 't>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     scratch: &mut RestructureScratch,
     twin: Twin<'_>,
     slack: usize,
@@ -1543,10 +1599,10 @@ fn probe_scored<'l>(
 /// [`probe_scored`] in `tables`, which, like the scores of `twin`, are by
 /// index in `moved`.
 #[expect(clippy::too_many_arguments, reason = "probe_scored's arguments and its tables")]
-fn probe_scored_with<'l>(
+fn probe_scored_with<'l, 't>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     scratch: &mut RestructureScratch,
     tables: &mut ProbeTables,
     mut twin: Twin<'_>,
@@ -1568,7 +1624,8 @@ fn probe_scored_with<'l>(
     // with at least a pair for each of its outer nodes.
     lim.reserve_exact(scored, n)?;
     lim.reserve_exact(floors, n)?;
-    for &(i, info) in moved.at {
+    for k in 0..n {
+        let (i, info) = (moved.member(k), moved.step(k).info);
         let m = &members[i];
         let ((outer, owners), inner) =
             (pairs_and_owners(&m.levels[info.v_idx.idx()]), m.levels[info.w_idx.idx()].live_pairs());
@@ -1745,10 +1802,10 @@ fn settle<'a>(
 /// A debug build's check of a move its scores refused: every touched
 /// member's preparation gives at least its score.
 #[cfg(debug_assertions)]
-fn debug_check_scores(
+fn debug_check_scores<'t>(
     lim: &Limits,
     members: &[&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     scores: &[usize],
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
@@ -1775,10 +1832,10 @@ fn debug_check_scores(
 /// of the last member is one whose rebuilt members would hold at least
 /// `total` pairs.
 #[cfg(debug_assertions)]
-fn debug_check_refusal(
+fn debug_check_refusal<'t>(
     lim: &Limits,
     members: &[&mut Tdd],
-    moved: Touched<'_>,
+    moved: Touched<impl TouchedAt<'t>>,
     total: usize,
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
