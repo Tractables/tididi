@@ -70,14 +70,20 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
         for n in 0.. {
             let scope = arm(&eng, n);
             let outcome = eng.and_restoring(a.clone(), b.clone());
+            let pending = scope.is_some() || eng.limits().refusal_pending();
             drop(scope);
             eng.limits().grant_every_reserve();
             match outcome {
                 Ok(out) => {
                     assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
-                    break;
+                    if pending {
+                        break;
+                    }
+                    continue;
                 }
                 Err(refused) => {
+                    let count = |t: &Tdd| Engine::new().model_count(t).map_err(|e| format!("{e:?}"));
+                    assert_eq!((count(&refused.f), count(&refused.g)), (count(a), count(b)), "refused at {n}: another model count");
                     assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
                     refusals += 1;
                 }
@@ -92,7 +98,7 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
 fn every_refused_reserve_gives_the_operands_back() {
     for counts in [false, true] {
         refuse_at_every_point(counts, |eng, n| {
-            eng.limits().refuse_nth_reserve(n as u32);
+            eng.refuse_nth_reserve(n as u32);
             None
         });
     }

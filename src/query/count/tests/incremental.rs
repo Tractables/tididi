@@ -14,7 +14,7 @@ fn interrupted_ancestor_growth_leaves_room_for_further_pin_updates() {
         let mut counter = diagram.counter().unwrap();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
         counter.set_pin(VarId(1), Some(false)).unwrap();
-        engine.limits().refuse_nth_reserve(reserve);
+        engine.refuse_nth_reserve(reserve);
         let result = counter.bind(&engine).model_count();
         engine.limits().grant_every_reserve();
         let capacity = counter.cache.observations.changed.capacity();
@@ -86,7 +86,7 @@ fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     assert!(!counter.cache.observations.evaluated);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
     // Repeating observations leaves the root cached, even if allocations would be refused.
-    engine.limits().refuse_nth_reserve(0);
+    engine.refuse_nth_reserve(0);
     counter.set_pins(&pins).unwrap();
     assert!(counter.cache.observations.evaluated);
     assert_eq!(counter.bind(&engine).model_count().unwrap(), BigUint::from(1u32));

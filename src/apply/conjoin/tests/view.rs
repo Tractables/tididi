@@ -111,7 +111,7 @@ fn run<'t>(
         (given(f, bf), |v: VarId| f_map[v.0 as usize - 1]),
         (given(g, bg), |v: VarId| g_map[v.0 as usize - 1]),
         u,
-        (false, viewing),
+        viewing,
     );
     let work = eng.limits().work_since(mark);
     (out, work)

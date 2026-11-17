@@ -185,7 +185,7 @@ fn a_refused_allocation_leaves_the_calls_so_far_given() {
         let mut completed = false;
         for nth in 0..4096 {
             let eng = Engine::new();
-            eng.limits().refuse_nth_reserve(nth);
+            eng.refuse_nth_reserve(nth);
             let (mut sink, activation) = Recorder::over(f, None);
             let result = eng.encode_cnf(f, CnfScheme::Equivalence, activation, &mut sink);
             eng.limits().grant_every_reserve();

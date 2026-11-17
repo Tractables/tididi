@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, LevelCounts, NodeIdx, Tdd, TddNodeId, WeightStore, ZERO};
 use crate::limits::OperationError;
-use crate::value::{Count, CountRead, CountVec};
+use crate::value::CountVec;
 use crate::vtree::VtreeIdx;
 
 /// A node of a renumbered level that no pair has named yet.
@@ -264,11 +264,7 @@ fn renumber_counts(eng: &Engine, f: &Tdd, counts: &LevelCounts, numbering: &Numb
         }
         let mut moved = CountVec::try_with_capacity(eng, order.len())?;
         for &old in order {
-            let count = match column.get(old as usize) {
-                CountRead::Fast(v) => Count::Fast(v),
-                CountRead::Big(v) => Count::Big(v.clone()),
-            };
-            moved.push(eng, count)?;
+            moved.push(eng, column.get(old as usize).to_count())?;
         }
         out.set(t, Arc::new(moved));
     }

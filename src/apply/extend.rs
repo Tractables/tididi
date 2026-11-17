@@ -213,11 +213,8 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
     if f.vtree.num_nodes() == 0 {
         return Ok(Cow::Owned(crate::build::constant_on(eng, into, f.is_one())?));
     }
-    match place(eng, f, into, |var| var, Free::Build, false) {
-        Ok((placed, plan)) => {
-            plan.recycle(eng);
-            Ok(Cow::Owned(placed))
-        }
+    match place(eng, f, into, |var| var, Free::Build) {
+        Ok((placed, _)) => Ok(Cow::Owned(placed)),
         Err((error, _)) => Err(operation_error(error)),
     }
 }

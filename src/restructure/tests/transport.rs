@@ -1,4 +1,4 @@
-//! `Engine::transport` against `Engine::embed_mirrored` followed by a trim.
+//! `Engine::transport` against `Engine::embed` followed by a trim.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -129,7 +129,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         return;
     }
 
-    let (mut expected, _) = eng.embed_mirrored(f, dest.vtree(), map).unwrap();
+    let (mut expected, _) = eng.embed(f, dest.vtree(), map).unwrap();
     if let Some(ws) = weighted {
         expected.set_weights(ws.clone()).unwrap();
     }
@@ -195,7 +195,7 @@ fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
         let f = diagram(&eng, &source, false, &mut rng);
         let perm = permutation(n, &mut rng);
         let map = |v: VarId| perm[v.idx()];
-        let embedded = eng.embed_mirrored(&f, dest.vtree(), map);
+        let embedded = eng.embed(&f, dest.vtree(), map);
         let (pairs, vtree) = (f.pair_count(), Arc::clone(f.vtree()));
         let owned = eng.transport(f.clone(), &dest, map);
         let borrowed = eng.transport(&f, &dest, map);

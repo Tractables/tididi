@@ -334,3 +334,38 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
         "expected rows of streamed levels read by vectors, got none over {cases} cases"
     );
 }
+
+/// The column and run tables a summing conjunction reads its g-pair
+/// vectors through are best-effort: refused at each reserve in turn, every
+/// granted conjunction builds the levels the unrefused one builds.
+#[test]
+fn a_refused_column_table_builds_the_same_levels() {
+    let mut rng = Lcg::new(0x3c5e_a1f8);
+    let n = 10u32;
+    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
+    let route = SparseRoute { sparsity: 64, min_grid: usize::MAX };
+    let mut absorbed = 0;
+    for (name, vtree) in vtree_shapes(n).into_iter().take(2) {
+        let mut operand = || {
+            let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
+            Tdd::from_models(&vtree, &vars, &models).unwrap()
+        };
+        let (f, g) = (operand(), operand());
+        let targets: Vec<VtreeIdx> = vtree.bottomup().filter(|&v| !vtree.node(v).is_leaf()).collect();
+        let (want, _) = word_cells_on(|| marginalize(&f, &g, &targets, route));
+        let eng = Engine::new();
+        let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(route));
+        let swept = word_cells_on(|| {
+            eng.sweep_reserves(
+                &crate::OperationError::OverBudget,
+                || eng.and_marginalizing(f.clone(), g.clone(), &targets),
+                |out, at| {
+                    assert_eq!(format!("{:?}", out.levels), format!("{:?}", want.levels), "{name}, {at}");
+                    assert_eq!(out.model_count(), want.model_count(), "{name}, {at}");
+                },
+            )
+        });
+        absorbed += swept.absorbed;
+    }
+    assert!(absorbed > 0, "no best-effort reserve refused");
+}

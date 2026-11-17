@@ -574,12 +574,10 @@ type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>, bool), (EmbedError, Cow<'a
 /// [`Engine::and_onto`](crate::Engine::and_onto), with the plan that embeds
 /// it: as it is, with no plan, when it is on `into` already; with
 /// `viewing`, left as it is for a [`View`] where it is structural,
-/// unweighted, not false and not `mirror`ed, which the flag says; placed
-/// otherwise, free levels left empty, a borrowed one copied into the
+/// unweighted, not false and its plan mirrors no image, which the flag says;
+/// placed otherwise, free levels left empty, a borrowed one copied into the
 /// placement ([`place`]). `begun` says whether a phase of the operation has
-/// begun, and is set. With `mirror`, up to mirrors
-/// ([`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored)).
-/// Refused, the operand comes back as it was given.
+/// begun, and is set. Refused, the operand comes back as it was given.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn place_onto<'a>(
     eng: &Engine,
@@ -587,7 +585,7 @@ fn place_onto<'a>(
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     begun: &mut bool,
-    (mirror, viewing): (bool, bool),
+    viewing: bool,
 ) -> Placed<'a> {
     if Arc::ptr_eq(tdd.vtree(), into) {
         return Ok((tdd, None, false));
@@ -596,13 +594,17 @@ fn place_onto<'a>(
         return Err((error.into(), tdd));
     }
     *begun = true;
-    if viewing && !mirror && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
-        return match Plan::build(eng, tdd.vtree(), into, map, false) {
-            Ok(plan) => Ok((tdd, Some(plan), true)),
-            Err(error) => Err((error, tdd)),
+    if viewing && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
+        let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
+            Ok(plan) => plan,
+            Err(error) => return Err((error, tdd)),
         };
+        if plan.mirrored_images().next().is_none() {
+            return Ok((tdd, Some(plan), true));
+        }
+        return place_by(eng, tdd, into, &plan, Free::Leave).map(|tdd| (Cow::Owned(tdd), Some(plan), false));
     }
-    place(eng, tdd, into, map, Free::Leave, mirror).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
+    place(eng, tdd, into, map, Free::Leave).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
 }
 
 /// The view of `tdd` by `plan` where `viewed`, charging the work clock
@@ -614,8 +616,7 @@ fn view_of(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: Option<&Plan>, view
     }
 }
 
-/// [`Engine::and_onto`](crate::Engine::and_onto), and with `mirror`
-/// [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored).
+/// [`Engine::and_onto`](crate::Engine::and_onto).
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn conjoin_onto<'a>(
     eng: &Engine,
@@ -624,9 +625,8 @@ fn conjoin_onto<'a>(
     g: Cow<'a, Tdd>,
     g_map: impl Fn(VarId) -> VarId,
     into: &Arc<Vtree>,
-    mirror: bool,
 ) -> Result<Tdd, AndOntoRefused<'a>> {
-    conjoin_onto_as(eng, (f, f_map), (g, g_map), into, (mirror, true))
+    conjoin_onto_as(eng, (f, f_map), (g, g_map), into, true)
 }
 
 /// [`conjoin_onto`], reading its plain operands through views where
@@ -637,7 +637,7 @@ pub(crate) fn conjoin_onto_as<'a>(
     (f, f_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
     (g, g_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
     into: &Arc<Vtree>,
-    (mirror, viewing): (bool, bool),
+    viewing: bool,
 ) -> Result<Tdd, AndOntoRefused<'a>> {
     let _op = match eng.limits().enter() {
         Ok(op) => op,
@@ -652,20 +652,19 @@ pub(crate) fn conjoin_onto_as<'a>(
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
     let mut begun = false;
-    let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, (mirror, viewing)) {
+    let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, viewing) {
         Ok(placed) => placed,
         Err((error, f)) => return Err(AndOntoRefused { error, f, g }),
     };
     let free_f = free_levels(&f, f_plan.as_ref());
     // The free levels a placement left empty, which a refusal builds.
     let placed_f = if f_viewed { VtreeMask::default() } else { free_f };
-    // A refusal drops the plans rather than parking them.
     let refuse_f = |error: EmbedError, f: Cow<'a, Tdd>, g| {
         let mut f = f;
         fill_free_cow(&mut f, placed_f);
         Err(AndOntoRefused { error, f: back(f, f_given), g })
     };
-    let (g, g_plan, g_viewed) = match place_onto(eng, g, into, g_map, &mut begun, (mirror, viewing)) {
+    let (g, g_plan, g_viewed) = match place_onto(eng, g, into, g_map, &mut begun, viewing) {
         Ok(placed) => placed,
         Err((error, g)) => return refuse_f(error, f, g),
     };
@@ -683,18 +682,13 @@ pub(crate) fn conjoin_onto_as<'a>(
         && fp.embedding.levels == gp.embedding.levels
         && same_levels(&f, &g, Operands::default())
     {
-        if let Err(error) = eng.limits().gate().poll_each(gp.pass_throughs.len() as u64) {
+        if let Err(error) = eng.limits().gate().poll_each(gp.pass_throughs as u64) {
             return refuse(error.into(), f, g);
         }
-        let fp = f_plan.expect("viewed");
-        let placed = place_by(eng, f, into, &fp, Free::Leave).map(|mut out| {
-            fill_free(&mut out, VtreeMask::new(Some(&fp.free)));
+        let placed = place_by(eng, f, into, fp, Free::Leave).map(|mut out| {
+            fill_free(&mut out, VtreeMask::free_of(fp));
             out
         });
-        fp.recycle(eng);
-        if let Some(gp) = g_plan {
-            gp.recycle(eng);
-        }
         return placed.map_err(|(error, f)| AndOntoRefused { error, f: back(f, f_given), g });
     }
     let mut f_view = match view_of(eng, &f, into, f_plan.as_ref(), f_viewed) {
@@ -705,15 +699,11 @@ pub(crate) fn conjoin_onto_as<'a>(
         Ok(view) => view,
         Err(error) => return refuse(error.into(), f, g),
     };
-    let conjoined = match begin_phase(eng, begun) {
+    match begin_phase(eng, begun) {
         Err(error) => refuse(error.into(), f, g),
         Ok(()) => conjoin_kept(eng, f, g, free, Operands { f: f_view.as_mut(), g: g_view.as_mut() })
             .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
-    };
-    for plan in [f_plan, g_plan].into_iter().flatten() {
-        plan.recycle(eng);
     }
-    conjoined
 }
 
 /// Begin a phase of [`Engine::and_onto`](crate::Engine::and_onto) as the
@@ -729,7 +719,7 @@ fn begin_phase(eng: &Engine, begun: bool) -> Result<(), OperationError> {
 /// The free levels of a diagram [`place_onto`] placed by `plan`: none for
 /// one it did not place, or for the false diagram, which has no levels.
 fn free_levels<'a>(tdd: &Tdd, plan: Option<&'a Plan>) -> VtreeMask<'a> {
-    VtreeMask::new(plan.filter(|_| !tdd.is_zero()).map(|plan| &plan.free[..]))
+    plan.filter(|_| !tdd.is_zero()).map_or_else(VtreeMask::default, VtreeMask::free_of)
 }
 
 impl crate::Engine {
@@ -858,48 +848,7 @@ impl crate::Engine {
         g_map: impl Fn(VarId) -> VarId,
         into: &Arc<Vtree>,
     ) -> Result<Tdd, AndOntoRefused<'a>> {
-        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into, false)
-    }
-
-    /// [`Engine::and_onto`], where `into` may hold either operand's vtree
-    /// shape up to mirrors: [`Engine::and_restoring`] of `f` and `g` placed
-    /// as [`Engine::embed_moving_mirrored`] places them, free levels left
-    /// as `and_onto` leaves them. A level whose image has its children the
-    /// other way round has the sides of its pairs exchanged in place.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// // x1 ∨ x2 on (x1 x2), placed with x1 on the right leaf of (x3 x4).
-    /// let engine = Engine::new();
-    /// let pair = Arc::new(Vtree::linear(2));
-    /// let wide = Arc::new(Vtree::balanced(4));
-    /// let f = engine.clause(&pair, [1, 2])?;
-    /// let g = engine.clause(&pair, [-1, -2])?;
-    /// assert!(engine.and_onto(f.clone(), |v| VarId(5 - v.0), g.clone(), |v| v, &wide).is_err());
-    /// let both = engine
-    ///     .and_onto_mirrored(f, |v| VarId(5 - v.0), g, |v| v, &wide)
-    ///     .map_err(|r| r.error)?;
-    /// assert_eq!(engine.model_count(&both)?, 9u32.into());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// As [`Engine::and_onto`], with [`Engine::embed_moving_mirrored`]'s for
-    /// the placements.
-    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn and_onto_mirrored<'a>(
-        &self,
-        f: impl Into<Cow<'a, Tdd>>,
-        f_map: impl Fn(VarId) -> VarId,
-        g: impl Into<Cow<'a, Tdd>>,
-        g_map: impl Fn(VarId) -> VarId,
-        into: &Arc<Vtree>,
-    ) -> Result<Tdd, AndOntoRefused<'a>> {
-        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into, true)
+        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into)
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.

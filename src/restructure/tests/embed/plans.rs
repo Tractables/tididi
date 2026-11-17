@@ -62,7 +62,7 @@ fn prepared_placements_recover_from_allocation_refusal_without_rebuilding_the_pl
     let engine = Engine::new();
     let mut completed = false;
     for refusal in 0..128 {
-        engine.limits().refuse_nth_reserve(refusal);
+        engine.refuse_nth_reserve(refusal);
         let result = engine.embed_with(&f, &plan);
         engine.limits().grant_every_reserve();
         let retry = engine.embed_with(&f, &plan).unwrap();

@@ -415,7 +415,6 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
 
     // Moves between vtrees.
     a.check("embed", || g.embed(home, |v| v).map(|r| r.0), || Ok::<_, crate::restructure::EmbedError>(f.clone()), same_tdd);
-    a.check("embed_mirrored", || g.embed_mirrored(home, |v| v).map(|r| r.0), || Ok(f.clone()), same_tdd);
     a.check("embed_moving", || eng.embed_moving(g.clone(), home, |v| v).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
     a.check("embed_over", || eng.embed_over(g, home, |v| v, None).map(|r| r.0), || Ok(f.clone()), same_tdd);
     a.check(

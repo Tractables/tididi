@@ -67,7 +67,7 @@ fn every_refused_reservation_of_a_content_twin_merge_leaves_a_valid_diagram() {
     let mut refused = 0;
     loop {
         let eng = Engine::new();
-        eng.limits().refuse_nth_reserve(refused);
+        eng.refuse_nth_reserve(refused);
         let mut tdd = original.clone();
         match merge_content_equal_nodes(&eng, &mut tdd, None) {
             Err(e) => {

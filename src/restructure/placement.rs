@@ -1,16 +1,15 @@
 //! Place levels and connect their roots after an operation validates its layout.
 //!
-//! Two assemblers own the destination storage while an operation fills it.
-//! [`CopyPlacement`] copies structural levels out of a source that stays as it
-//! is, the way an embedding does; [`MovePlacement`] moves whole parts, levels
-//! and weight columns alike, the way a graft does, and copies the levels of a
-//! borrowed source. Both keep local node indices through the transfer.
+//! [`MovePlacement`] owns the destination storage while an operation fills
+//! it: it moves whole parts, levels and weight columns alike, or copies the
+//! levels of a source that stays as it is, keeps local node indices through
+//! the transfer and prunes what the new joins leave unused.
 
 use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, ChildSide, Dirty, EncodedNode, ImplicitLevel, LevelView, MarginalStorage, NodeIdx, Tdd,
+    Assembly, ChildPair, ChildSide, Dirty, EncodedNode, ImplicitLevel, MarginalStorage, NodeIdx, Tdd,
     TddBuildError, TddLevel, TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, floor,
     stored_levels_forced, try_take_levels,
 };
@@ -146,87 +145,6 @@ impl<'a> Changed<'a> {
     }
 }
 
-/// Bounded structural copies into a fresh destination, under the engine's
-/// limits.
-pub(super) struct CopyPlacement<'a> {
-    eng: &'a Engine,
-    vtree: &'a Arc<Vtree>,
-    assembly: Assembly<'a>,
-    prune: bool,
-    changed: Changed<'a>,
-}
-
-impl<'a> CopyPlacement<'a> {
-    pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>) -> Result<Self, OperationError> {
-        let changed = Changed::new(eng, vtree)?;
-        Ok(Self { eng, vtree, assembly: Assembly::new(eng, vtree)?, prune: false, changed })
-    }
-
-    /// Copy a structural level without its source's weight configuration.
-    #[inline]
-    pub(super) fn copy_level(&mut self, source: &Tdd, from: VtreeIdx, to: VtreeIdx) -> Result<(), OperationError> {
-        let view = LevelView::unweighted(source.level(from))
-            .expect("embedding requires structural levels");
-        self.changed.take_from(source);
-        self.assembly.replace_level(self.eng, to, view)
-    }
-
-    /// [`copy_level`](Self::copy_level) onto a destination node whose children
-    /// are the source node's, swapped: every pair is read the other way round.
-    pub(super) fn copy_level_mirrored(&mut self, source: &Tdd, from: VtreeIdx, to: VtreeIdx) -> Result<(), OperationError> {
-        self.copy_level(source, from, to)?;
-        let (levels, _) = self.assembly.parts_mut();
-        levels[to.idx()].swap_sides();
-        self.changed.push(to);
-        Ok(())
-    }
-
-    /// The true reference for an unconstrained child already placed bottom-up.
-    #[inline]
-    pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
-        true_node(self.vtree, child)
-    }
-
-    /// The slots placed at `at` so far.
-    #[inline]
-    pub(super) fn slot_count(&self, at: VtreeIdx) -> usize {
-        self.assembly.level(at).slot_count()
-    }
-
-    /// Lift all references from one child through a join with a free sibling.
-    #[inline]
-    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
-        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
-        // A leaf contributes all three implicit labels. Prune any wrappers the
-        // copied parent does not use; keep their indices until then.
-        self.prune |= through.carries_leaf;
-        for (left, right) in through.pairs() {
-            self.join(at, left, right)?;
-        }
-        Ok(())
-    }
-
-    /// Add a connecting node.
-    #[inline]
-    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
-        self.changed.push(at);
-        self.assembly.push(self.eng, at, &[ChildPair::new(left, right)])
-    }
-
-    /// Seat the chosen root reference and drop what the joins left unused.
-    ///
-    /// Copies of a valid diagram's levels joined through true nodes are valid
-    /// storage by construction, so only debug builds check them.
-    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
-        let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_asserted(output, self.changed.to_close())?;
-        if self.prune {
-            prune(self.eng, &mut result)?;
-        }
-        Ok(result)
-    }
-}
-
 /// Whole parts moved into a destination, levels and weight columns alike.
 /// The level array and every level it builds are charged to the engine's
 /// limits; the moved levels are not charged again.
@@ -267,15 +185,14 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
-    /// Copy every level of `source`, a diagram without weights, through a
-    /// checked placement map, each over the level the placement took from
+    /// Copy every level of `source`, not its weights, through a checked
+    /// placement map, each over the level the placement took from
     /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
     /// Hands back a refusal, for the caller to drop the placement.
     ///
     /// [`TddLevel::try_copy_over`]: crate::diagram::TddLevel
     pub(super) fn copy_part(&mut self, source: &Tdd, map: &[VtreeIdx]) -> Result<(), OperationError> {
         debug_assert_eq!(source.vtree().num_nodes(), map.len());
-        debug_assert!(source.weights.is_none(), "a weighted part is moved with its columns");
         self.changed.take_from(source);
         let (levels, _) = self.assembly.parts_mut();
         let lim = self.eng.limits();
@@ -294,10 +211,8 @@ impl<'a> MovePlacement<'a> {
     /// [`TddLevel::swap_sides`]: crate::diagram::TddLevel
     pub(super) fn mirror(&mut self, plan: &crate::restructure::embed::Plan) {
         let (levels, _) = self.assembly.parts_mut();
-        for (s, &mirrored) in plan.mirrored.iter().enumerate() {
-            if mirrored {
-                levels[plan.embedding.levels[s].idx()].swap_sides();
-            }
+        for t in plan.mirrored_images() {
+            levels[t.idx()].swap_sides();
         }
     }
 

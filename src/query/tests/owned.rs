@@ -76,7 +76,7 @@ fn owned_queries_bind_to_limits_and_recover_after_every_reservation_refusal() {
         for refusal in 0..128 {
             let mut count = f.clone().into_counter().unwrap();
             let mut value = f.clone().into_evaluator(RationalWeights::unit(16)).unwrap();
-            engine.limits().refuse_nth_reserve(refusal);
+            engine.refuse_nth_reserve(refusal);
             let result = if evaluator { value.bind(&engine).value().map(|_| ()) }
                 else { count.bind(&engine).model_count().map(|_| ()) };
             engine.limits().grant_every_reserve();

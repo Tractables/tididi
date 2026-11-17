@@ -99,7 +99,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
 
     let mut refused_or = 0;
     for nth in 0..RESERVES_PER_DISJUNCTION {
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let res = eng.or(f.clone(), g.clone());
         eng.limits().grant_every_reserve();
         match res {
@@ -120,7 +120,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     let not_g = negate_on(eng, g.clone()).unwrap();
     let mut refused_and = 0;
     for nth in 0..RESERVES_PER_DISJUNCTION {
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let res = eng.and(not_f.clone(), not_g.clone());
         eng.limits().grant_every_reserve();
         if res.is_err() {

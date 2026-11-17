@@ -1225,12 +1225,12 @@ fn mirrored_placements_match_enumeration(case: &Case) {
     let tf = diagram_truth(&f, n);
 
     step("a copy onto a mirror");
-    let (copied, _) = eng.embed_mirrored(&f, &mirror, |v| v).unwrap();
+    let (copied, _) = eng.embed(&f, &mirror, |v| v).unwrap();
     assert_canonical_after_minimize(&copied);
     assert_truth(&diagram_truth(&copied, n), &tf, n, "a copy onto a mirror");
 
     step("a move onto a mirror");
-    let (mut moved, _) = eng.embed_moving_mirrored(f, &mirror, |v| v).map_err(|r| r.error).unwrap();
+    let (mut moved, _) = eng.embed_moving(f, &mirror, |v| v).map_err(|r| r.error).unwrap();
     assert_truth(&diagram_truth(&moved, n), &tf, n, "a move onto a mirror");
     moved.minimize().unwrap();
     assert_canonical(&moved);
@@ -1242,7 +1242,7 @@ fn mirrored_placements_match_enumeration(case: &Case) {
     let split = case.clauses.len().div_ceil(2);
     let (head, tail) = compile_split(case, split);
     let both = eng
-        .and_onto_mirrored(head, |v| v, tail, |v| v, &mirror)
+        .and_onto(head, |v| v, tail, |v| v, &mirror)
         .map_err(|r| r.error)
         .unwrap();
     assert_canonical_after_minimize(&both);

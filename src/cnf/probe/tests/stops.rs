@@ -69,7 +69,7 @@ fn a_refused_allocation_leaves_the_calls_so_far_given() {
             for nth in 0..4096 {
                 let (encoding, mut host) = Host::over(&f, &phi, None);
                 let eng = Engine::new();
-                eng.limits().refuse_nth_reserve(nth);
+                eng.refuse_nth_reserve(nth);
                 let probed = eng.probe_nodes(&f, &encoding, ProbeOrder::BottomUp { counts: &counts }, rounds, witness, &mut host);
                 eng.limits().grant_every_reserve();
                 match probed {

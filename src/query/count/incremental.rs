@@ -150,10 +150,7 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
 
     fn output(&self, col: &C, i: usize) -> BigUint {
         let i = if C::PREPARED_READS { self.prepared.output.unwrap_or(i) } else { i };
-        match col.get(i) {
-            CountRead::Fast(value) => BigUint::from(value),
-            CountRead::Big(value) => value.clone(),
-        }
+        col.get(i).to_biguint()
     }
 
     /// The own count times two for each home variable the projection lacks,

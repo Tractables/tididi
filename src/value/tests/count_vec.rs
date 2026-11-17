@@ -317,7 +317,7 @@ fn refused_big_set_preserves_the_previous_value() {
     let eng = Engine::new();
     let mut col = CountVec::try_with_width(&eng, 1).unwrap();
     col.set(&eng, 0, Count::Fast(7)).unwrap();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     assert_eq!(col.set(&eng, 0, Count::Big(BigUint::from(1u32) << 200)), Err(crate::OperationError::OverBudget));
     eng.limits().grant_every_reserve();
     assert_eq!(col.get(0).to_count(), Count::Fast(7));
@@ -331,7 +331,7 @@ fn refused_big_push_preserves_length_and_slot_alignment() {
     let eng = Engine::new();
     let mut col = CountVec::try_with_capacity(&eng, 2).unwrap();
     col.push(&eng, Count::Fast(7)).unwrap();
-    eng.limits().refuse_nth_reserve(1);
+    eng.refuse_nth_reserve(1);
     assert_eq!(col.push(&eng, Count::Big(BigUint::from(1u32) << 200)), Err(crate::OperationError::OverBudget));
     eng.limits().grant_every_reserve();
     assert_eq!(col.len(), 1);
@@ -418,7 +418,7 @@ fn refused_overflow_append_preserves_the_existing_slots() {
                 append_count(&eng, &mut counts, &mut big, value.clone()).unwrap();
             }
             let next = Count::Big(BigUint::from(1u32) << 200);
-            eng.limits().refuse_nth_reserve(refusal);
+            eng.refuse_nth_reserve(refusal);
             assert_eq!(
                 append_count(&eng, &mut counts, &mut big, next.clone()),
                 Err(OperationError::OverBudget),

@@ -215,21 +215,25 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
                             let config = if arm == "work" { LimitConfig::none().with_stop_rules(stop) } else { LimitConfig::none() };
                             let _scope = eng.limits().scope(config);
                             if arm == "reserve" {
-                                eng.limits().refuse_nth_reserve(n as u32);
+                                eng.refuse_nth_reserve(n as u32);
                             }
-                            eng.and_restoring(given(a, borrow.0), given(b, borrow.1)).map(drop).map_err(|r| {
+                            let outcome = eng.and_restoring(given(a, borrow.0), given(b, borrow.1)).map(drop).map_err(|r| {
                                 assert!(
                                     handed_back(&r.f, a, borrow.0) && handed_back(&r.g, b, borrow.1),
                                     "{what}, borrowing {borrow:?}: refused at {arm} {n}, not handed back as given",
                                 );
-                            })
+                            });
+                            outcome.map(|()| arm == "work" || eng.limits().refusal_pending())
                         };
                         let outcome = attempt((borrow_a, borrow_b));
                         if arm == "work" {
                             assert_eq!(outcome.is_ok(), attempt((false, false)).is_ok(), "{what}: at work {n}, refused unlike the owned one");
                         }
-                        if outcome.is_ok() {
-                            break;
+                        if let Ok(pending) = outcome {
+                            if pending {
+                                break;
+                            }
+                            continue;
                         }
                         refusals += 1;
                         assert!(n < 100_000, "{what}: never granted");
@@ -292,8 +296,13 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
                 for n in 0u32.. {
                     let eng = Engine::new();
                     let _scope = eng.limits().scope(LimitConfig::none());
-                    eng.limits().refuse_nth_reserve(n);
-                    let Err(r) = eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into) else { break };
+                    eng.refuse_nth_reserve(n);
+                    let Err(r) = eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into) else {
+                        if eng.limits().refusal_pending() {
+                            break;
+                        }
+                        continue;
+                    };
                     for (back, t, borrowed) in [(&r.f, a, borrow_a), (&r.g, b, borrow_b)] {
                         let as_placed = !borrowed && matches!(back, Cow::Owned(back) if same_storage(back, &placed(t)));
                         assert!(handed_back(back, t, borrowed) || as_placed, "{at}: refused at reserve {n}, an operand handed back neither as given nor placed");
@@ -389,7 +398,7 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                         let borrow = (true, true);
                         for n in 0u32.. {
                             let eng = Engine::new();
-                            eng.limits().refuse_nth_reserve(n);
+                            eng.refuse_nth_reserve(n);
                             let refused = eng.and_marginalizing(&acc, &g, &targets).is_err();
                             let fired = !eng.limits().refusal_pending();
                             eng.limits().grant_every_reserve();

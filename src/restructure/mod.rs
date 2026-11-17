@@ -47,8 +47,8 @@ pub enum RestructureError {
     },
     /// The diagram has a weight table, which the move does not carry.
     Weighted,
-    /// A rotation at this vtree node would have produced `bound` or more
-    /// triples, or new inner-level nodes and pairs.
+    /// A rotation at this vtree node would have expanded more pairs than the
+    /// bound allows.
     Bound {
         /// The node the refused rotation turns.
         pivot: VtreeIdx,
@@ -98,7 +98,10 @@ pub enum EmbedError {
     /// The destination vtree does not contain the source vtree's shape under
     /// the renaming, so no level-by-level copy exists.
     NotIsomorphic {
-        /// The leaf of the destination vtree the source stopped matching at.
+        /// The source vtree node the destination has no image of: the
+        /// parent of the source node met on the left where the destination
+        /// joins it to a node that is not its sibling, or to its sibling in
+        /// the other order where the match is exact.
         source: VtreeIdx,
     },
     /// The diagram's stored values cannot be interpreted in the destination:

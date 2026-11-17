@@ -22,7 +22,7 @@ fn empty_ranges_stay_allocation_free_through_pool_operations() {
 fn wide_ranges_retry_reservation_and_release_the_cold_header() {
     let eng = crate::Engine::new();
     let mut ranges = RangeTable::default();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     assert_eq!(ranges.grow(eng.limits(), 1), Err(OperationError::OverBudget));
     assert!(ranges.0.is_none());
     eng.limits().grant_every_reserve();

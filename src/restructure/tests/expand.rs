@@ -315,3 +315,36 @@ fn a_stop_at_a_poll_is_refused_work_and_a_retry_expands() {
     assert_canonical(&retry);
     assert_eq!(retry.model_count().unwrap(), expected);
 }
+
+/// An expansion refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operand's model count as given, the engine
+/// expands after it, and every granted attempt is the expansion.
+#[test]
+fn every_refused_reserve_of_an_expansion_leaves_the_operand() {
+    let mut rng = Lcg::new(0x5eed_e4aa);
+    let mut refused = 0;
+    for n in 2..=4u32 {
+        for (shape, vtree) in vtree_shapes(n).into_iter().take(2) {
+            let eng = Engine::new();
+            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize + 1, width: 3 }));
+            let expansion = random_expansion(&mut rng, n);
+            let count = f.model_count().unwrap();
+            let want = eng.expand_variables(&f, &expansion).unwrap();
+            refused += eng
+                .sweep_reserves(
+                    &crate::restructure::ExpandError::Operation(crate::OperationError::OverBudget),
+                    || {
+                        let out = eng.expand_variables(&f, &expansion);
+                        assert_eq!(f.model_count().unwrap(), count, "{shape} n={n}");
+                        out
+                    },
+                    |g, at| {
+                        assert_canonical(&g);
+                        assert_eq!(format!("{:?}", g.levels), format!("{:?}", want.levels), "{shape} n={n}, {at}");
+                    },
+                )
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no expansion refused");
+}

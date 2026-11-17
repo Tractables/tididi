@@ -37,26 +37,29 @@ fn shuffled_vars(rng: &mut Lcg, n: u32) -> Vec<VarId> {
 /// call returns `OverBudget` and returns its level buffer to the pool.
 fn assert_refusal_sweep_returns_buffers(
     vtree: &Arc<Vtree>,
-    cuts: u32,
     build: impl Fn(&Engine) -> Result<Tdd, OperationError>,
     check_ok: impl Fn(&Tdd, u32),
 ) {
     let mut refused = 0;
-    for cut in 0..cuts {
+    for cut in 0.. {
         let eng = Engine::new();
         // Park a level array so the pool holds exactly one either way: a build
         // that takes it and then refuses has to hand it back.
         Tdd::builder(&eng, vtree).unwrap().abandon(&eng);
         eng.limits().refuse_nth_reserve(cut);
-        match build(&eng) {
-            Ok(f) => check_ok(&f, cut),
+        let built = build(&eng);
+        eng.limits().grant_every_reserve();
+        match built {
+            Ok(f) => {
+                check_ok(&f, cut);
+                break;
+            }
             Err(e) => {
                 assert_eq!(e, OperationError::OverBudget, "cut {cut}");
                 assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
                 refused += 1;
             }
         }
-        eng.limits().grant_every_reserve();
     }
     assert!(refused > 0, "no reservation was refused across the sweep");
 }
@@ -487,7 +490,6 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     let rows = pack_table(&table);
     assert_refusal_sweep_returns_buffers(
         &vtree,
-        40,
         |eng| eng.from_models(&vtree, &vars(6), &rows),
         |f, _| assert_canonical(f),
     );

@@ -283,3 +283,42 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
         }
     }
 }
+
+/// A tagging refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operand's model count as given, the engine tags
+/// after it, and every granted attempt is the tagging.
+#[test]
+fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
+    let mut refused = 0;
+    for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)).take(4) {
+        let vtree = vtree_shapes(num_vars).into_iter().next().unwrap().1;
+        let f = compile_clauses(&vtree, &clauses);
+        let count = f.model_count().unwrap();
+        let (left, right) = vtree.children(vtree.root());
+        for at in [vtree.root(), left, right] {
+            if vtree.node(at).is_leaf() {
+                continue;
+            }
+            let (into, local, code_vars) = destination(&f, at);
+            let tags = cycling(&f, at);
+            let tag = |eng: &Engine| eng.tag_level(&f, at, &into, |v| local[v.idx()].unwrap(), &tags, &code_vars, &CODES);
+            let want = tag(&Engine::new()).unwrap();
+            let eng = Engine::new();
+            refused += eng
+                .sweep_reserves(
+                    &TagError::Operation(OperationError::OverBudget),
+                    || {
+                        let out = tag(&eng);
+                        assert_eq!(f.model_count().unwrap(), count, "at {at:?}");
+                        out
+                    },
+                    |g, n| {
+                        assert_canonical(&g);
+                        assert_eq!(format!("{:?}", g.levels), format!("{:?}", want.levels), "at {at:?}, {n}");
+                    },
+                )
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no tagging refused");
+}

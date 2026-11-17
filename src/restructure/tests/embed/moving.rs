@@ -34,14 +34,6 @@ fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(Var
     assert_moved_matches_copied(eng, moved, copied, what);
 }
 
-/// [`check_against_copy`] up to mirrors: `embed_moving_mirrored` against
-/// `embed_mirrored`.
-fn check_mirrored_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
-    let copied = eng.embed_mirrored(f, into, map).unwrap();
-    let moved = eng.embed_moving_mirrored(f.clone(), into, map).map_err(|r| r.error).unwrap();
-    assert_moved_matches_copied(eng, moved, copied, what);
-}
-
 /// Which children of a source node a mirrored destination swaps, by pick.
 fn swapped(pick: u32) -> impl Fn(crate::vtree::VtreeIdx) -> bool {
     move |t| match pick {
@@ -53,7 +45,7 @@ fn swapped(pick: u32) -> impl Fn(crate::vtree::VtreeIdx) -> bool {
 }
 
 #[test]
-fn every_shape_moves_mirrored_to_the_diagram_embed_mirrored_copies() {
+fn every_shape_moves_mirrored_to_the_diagram_embed_copies() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases() {
         if num_vars > 4 {
@@ -69,16 +61,16 @@ fn every_shape_moves_mirrored_to_the_diagram_embed_mirrored_copies() {
             for pick in 0..4 {
                 let image = super::mirror::mirrored_shape(&small, rename, swapped(pick), 2 * num_vars);
                 let beside = Arc::new(Vtree::join(&image, &free).unwrap());
-                check_mirrored_against_copy(&eng, &f, &beside, rename, &format!("{label}, pick {pick}"));
+                check_against_copy(&eng, &f, &beside, rename, &format!("{label}, pick {pick}"));
                 let under = Arc::new(Vtree::join(&free, &image).unwrap());
-                check_mirrored_against_copy(&eng, &f, &under, rename, &format!("{label}, pick {pick}, right"));
+                check_against_copy(&eng, &f, &under, rename, &format!("{label}, pick {pick}, right"));
             }
         }
     }
 }
 
 #[test]
-fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_mirrored_copies() {
+fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_copies() {
     // Pass-throughs over leaves under mirrored images: the literal chains
     // read their parents' sides once the sides are exchanged.
     let eng = Engine::new();
@@ -89,7 +81,7 @@ fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_mirrored_copie
         for clauses in [vec![vec![1, 2], vec![-3, 4]], vec![vec![1, -4], vec![2, 3, 4]], vec![vec![4]], vec![vec![1], vec![-2]]] {
             let mut f = compile_clauses(&small, &clauses);
             f.minimize().unwrap();
-            check_mirrored_against_copy(&eng, &f, &big, |v| VarId(positions[v.idx()]), &format!("spine, pick {pick}"));
+            check_against_copy(&eng, &f, &big, |v| VarId(positions[v.idx()]), &format!("spine, pick {pick}"));
         }
     }
 }
@@ -164,10 +156,10 @@ fn owe_work(eng: &Engine, f: &mut Tdd) {
 /// Refuse the embedding at each point `arm` picks in turn, checking that
 /// every refusal hands the diagram back unchanged, stored and known as it
 /// was given ([`known`]), until one is granted, and that the granted one
-/// owes the reduction passes what the diagram owed, at the images.
+/// owes the reduction passes what the diagram owed, at the images, and the
+/// inner pass where the leaf pass, over the pass-through over a leaf.
 ///
-/// With `mirror`, onto the destination with some children swapped, by
-/// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts;
+/// With `mirror`, onto the destination with some children swapped; with `counts`, the diagram keeping level counts;
 /// with `owing`, the diagram owing work ([`owe_work`]).
 fn refuse_at_every_point(
     arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>,
@@ -189,18 +181,14 @@ fn refuse_at_every_point(
         true => Arc::new(super::mirror::mirrored_shape(&big, |v| v, |t| t.0.is_multiple_of(3), big.num_vars())),
         false => big,
     };
-    assert_eq!(eng.embed(&f, &big, map).is_err(), mirror, "the destination mirrors an image");
-    let (expected, _) = match mirror {
-        true => eng.embed_mirrored(&f, &big, map).unwrap(),
-        false => eng.embed(&f, &big, map).unwrap(),
-    };
+    let (expected, _) = eng.embed(&f, &big, map).unwrap();
     let mut refusals = 0;
     for n in 0.. {
+        // Each attempt on cold pools: a buffer an earlier attempt grew skips
+        // a reserve, and the points past it would never be refused.
+        let eng = Engine::new();
         let scope = arm(&eng, n);
-        let outcome = match mirror {
-            true => eng.embed_moving_mirrored(f.clone(), &big, map),
-            false => eng.embed_moving(f.clone(), &big, map),
-        };
+        let outcome = eng.embed_moving(f.clone(), &big, map);
         drop(scope);
         eng.limits().grant_every_reserve();
         match outcome {
@@ -209,6 +197,17 @@ fn refuse_at_every_point(
                 let mut owed = f.dirty.clone();
                 owed.take_loose();
                 owed.remap(&embedding.levels);
+                let image_leaf = |c| big.node(c).is_leaf() && embedding.levels.contains(&c);
+                let pass_through_over_leaf = |c| {
+                    !big.node(c).is_leaf() && !embedding.levels.contains(&c) && {
+                        let (left, right) = big.children(c);
+                        image_leaf(left) || image_leaf(right)
+                    }
+                };
+                owed.leaf_owes_inner(|t| {
+                    let (left, right) = big.children(crate::vtree::VtreeIdx(t));
+                    pass_through_over_leaf(left) || pass_through_over_leaf(right)
+                });
                 owed.dedup_above(big.num_nodes());
                 let mut carried = out.dirty.clone();
                 carried.take_loose();
@@ -216,6 +215,8 @@ fn refuse_at_every_point(
                 break;
             }
             Err(refused) => {
+                let count = |t: &Tdd| Engine::new().model_count(t).map_err(|e| format!("{e:?}"));
+                assert_eq!(count(&refused.tdd), count(&f), "refused at {n}: another model count");
                 assert!(same_storage(&refused.tdd, &f), "refused at {n}: the diagram changed");
                 assert_eq!(known(&refused.tdd), known(&f), "refused at {n}: the diagram known otherwise");
                 refusals += 1;
@@ -231,7 +232,7 @@ fn every_refused_reserve_gives_the_diagram_back() {
     for (mirror, counts, owing) in [(false, false, false), (true, false, false), (false, true, false), (true, true, true), (false, false, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
-                eng.limits().refuse_nth_reserve(n as u32);
+                eng.refuse_nth_reserve(n as u32);
                 None
             },
             mirror,
@@ -365,11 +366,11 @@ fn moved_diagrams_negate_and_disjoin_like_copies() {
 }
 
 /// Each half of the clauses compiled on the vtree `vtree` projects to its
-/// variables, minimized with `settled` and else a bare conjunction that
-/// still owes its contraction, then moved onto `vtree`. A moved half owes
-/// what its source owed, and it, its conjunction with a unit clause and the
-/// conjunction of the two halves minimize from those worklists to the
-/// canonical diagram. On implicit levels and on stored ones alike
+/// variables, minimized, contracted inside only (owing its leaf
+/// contraction) or a bare conjunction that owes both, then moved onto
+/// `vtree`. A moved half owes what its source owed, and it, its conjunction
+/// with a unit clause and the conjunction of the two halves minimize from
+/// those worklists to the canonical diagram. On implicit levels and on stored ones alike
 /// ([`same_as_stored`](crate::test_helpers::same_as_stored)).
 #[test]
 fn moved_halves_conjoin_to_the_canonical_diagram() {
@@ -379,7 +380,14 @@ fn moved_halves_conjoin_to_the_canonical_diagram() {
 /// The cases of [`moved_halves_conjoin_to_the_canonical_diagram`]: the
 /// minimized diagrams.
 fn moved_halves_conjoin() -> Vec<Tdd> {
+    use crate::reduce::ReductionPlan;
     use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
+    #[derive(Clone, Copy, Debug)]
+    enum Owes {
+        Nothing,
+        LeafContraction,
+        Contractions,
+    }
     let mut outs = Vec::new();
     let eng = Engine::new();
     for seed in 0..60u64 {
@@ -392,7 +400,7 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
         }
         for (label, vtree) in vtree_shapes(num_vars) {
             let expected = compile_clauses(&vtree, &clauses);
-            let moved = |part: &[Vec<i32>], settled: bool| -> Tdd {
+            let moved = |part: &[Vec<i32>], owes: Owes| -> Tdd {
                 let mut vars: Vec<u32> = part.iter().flatten().map(|l| l.unsigned_abs()).collect();
                 vars.sort_unstable();
                 vars.dedup();
@@ -407,8 +415,10 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
                     let c = c.iter().map(|&l| if l < 0 { -local(l.unsigned_abs()) } else { local(l.unsigned_abs()) });
                     f = eng.and(f, eng.clause(&small, c).unwrap()).unwrap();
                 }
-                if settled {
-                    eng.minimize(&mut f).unwrap();
+                match owes {
+                    Owes::Nothing => eng.minimize(&mut f).unwrap(),
+                    Owes::LeafContraction => eng.reduce(&mut f, ReductionPlan::Contract).unwrap(),
+                    Owes::Contractions => {}
                 }
                 eng.embed_moving(f, &vtree, |v| VarId(vars[v.0 as usize - 1])).map_err(|r| r.error).unwrap().0
             };
@@ -419,17 +429,17 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
             let mut with_unit = a.to_vec();
             with_unit.push(vec![unit]);
             let with_unit = compile_clauses(&vtree, &with_unit);
-            for settled in [true, false] {
-                let what = format!("seed {seed}, {label}, settled {settled}");
-                let mut out = moved(a, settled);
+            for owes in [Owes::Nothing, Owes::LeafContraction, Owes::Contractions] {
+                let what = format!("seed {seed}, {label}, owes {owes:?}");
+                let mut out = moved(a, owes);
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &alone, &format!("{what}, alone"));
                 outs.push(out);
-                let mut out = eng.and(moved(a, settled), eng.clause(&vtree, [unit]).unwrap()).unwrap();
+                let mut out = eng.and(moved(a, owes), eng.clause(&vtree, [unit]).unwrap()).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &with_unit, &format!("{what}, with a unit"));
                 outs.push(out);
-                let mut out = eng.and(moved(a, settled), moved(b, settled)).unwrap();
+                let mut out = eng.and(moved(a, owes), moved(b, owes)).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &expected, &what);
                 outs.push(out);
@@ -493,4 +503,25 @@ fn wide_pass_throughs_build_the_levels_their_joins_build() {
         described += usize::from(implicit);
     }
     assert!(all > 0 && described == all, "{described} of {all} wide pass-throughs held as descriptions");
+}
+
+/// A diagram that owes its leaf contraction and no inner one, as
+/// [`ReductionPlan::Contract`](crate::reduce::ReductionPlan::Contract)
+/// leaves it, minimizes to the canonical diagram once moved. Where a leaf
+/// lands beside a free variable, its two literals are two nodes of the
+/// pass-through over it, and a leaf twin of the source is an inner twin of
+/// the result.
+#[test]
+fn a_moved_leaf_twin_is_contracted() {
+    use crate::reduce::ReductionPlan;
+    let eng = Engine::new();
+    let small = Arc::new(Vtree::linear(2));
+    // x1 beside x2 and a free x3.
+    let into = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n").unwrap());
+    // (x1 ∨ x2) ∧ x1 pairs x1 with both literals of x2 until a leaf
+    // contraction merges them.
+    let mut f = eng.and(eng.clause(&small, [1, 2]).unwrap(), eng.clause(&small, [1]).unwrap()).unwrap();
+    assert_eq!(f.pair_count(), 2);
+    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+    check_against_copy(&eng, &f, &into, |v| v, "a leaf twin under a pass-through");
 }

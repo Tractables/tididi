@@ -71,7 +71,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
         let eng = Engine::new();
         let (_vtree, mut tdd) = two_twin_groups();
         let count_before = tdd.model_count().unwrap();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let res = contract_all_twins(&eng, &mut tdd);
         eng.limits().grant_every_reserve();
         if res.is_err() {
@@ -128,7 +128,7 @@ fn test_contract_dirty_worklist_restored_on_err() {
     for nth in 0..RESERVES_PER_CONTRACTION {
         let eng = Engine::new();
         let (_vtree, mut tdd, root, v_right) = two_dirty_parents();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let res = super::contract::contract_all_twins(&eng, &mut tdd);
         eng.limits().grant_every_reserve();
         if res.is_err() {
@@ -316,7 +316,7 @@ fn a_full_reduction_of_a_marginal_diagram_refuses_cleanly_at_every_reserve() {
     for nth in 0..RESERVES_PER_MARGINAL_REDUCTION {
         let mut f = edited_marginal_diagram(&eng);
         let count = f.model_count().unwrap();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let res = eng.reduce(&mut f, ReductionPlan::Full(ContentTwinPolicy::Fresh));
         eng.limits().grant_every_reserve();
         if let Err(e) = res {
@@ -395,7 +395,7 @@ fn a_merge_refused_the_room_of_an_implicit_parent_changes_nothing() {
                 assert_eq!(tdd.levels[v.idx()].implicit().is_some(), implicit);
                 let count = tdd.model_count().unwrap();
                 let before = tdd.clone();
-                eng.limits().refuse_nth_reserve(refused);
+                eng.refuse_nth_reserve(refused);
                 let res = eng.reduce(&mut tdd, ReductionPlan::Contract);
                 eng.limits().grant_every_reserve();
                 match res {

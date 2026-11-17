@@ -424,12 +424,14 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
         let mut finished = false;
         for n in 0..4096 {
             let eng = Engine::new();
-            eng.limits().refuse_nth_reserve(n);
-            match exercise(&eng, op, &f, &g) {
-                Ok(()) => {
+            eng.refuse_nth_reserve(n);
+            let outcome = exercise(&eng, op, &f, &g);
+            match outcome {
+                Ok(()) if eng.limits().refusal_pending() => {
                     finished = true;
                     break;
                 }
+                Ok(()) => {}
                 Err(e) => assert_eq!(
                     e,
                     OperationError::OverBudget,
@@ -579,8 +581,9 @@ fn substitution_refusals_leave_replacements_usable() {
     for cut in 0..2000 {
         let eng = Engine::new();
         let input = f.clone();
-        eng.limits().refuse_nth_reserve(cut);
+        eng.refuse_nth_reserve(cut);
         let result = eng.substitute(input, &replacements);
+        let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         assert_eq!(format!("{g:?} {h:?}"), before, "reservation {cut}");
         match result {
@@ -589,7 +592,7 @@ fn substitution_refusals_leave_replacements_usable() {
                 assert_canonical(&result);
                 assert!(result.weights().is_none());
                 assert!(result.equivalent(&expected).unwrap());
-                completed = true;
+                completed = pending;
             }
             other => panic!("reservation {cut}: {other:?}"),
         }

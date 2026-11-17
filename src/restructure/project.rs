@@ -115,9 +115,7 @@ impl Engine {
                 .expect("a checked renaming that keeps a variable restricts the vtree"),
         );
         let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        let result = self.project_along(tdd, &into, &plan, &dropped);
-        plan.recycle(self);
-        result
+        self.project_along(tdd, &into, &plan, &dropped)
     }
 
     /// [`project_to_vars`](Self::project_to_vars) onto `into`, for a
@@ -219,7 +217,7 @@ impl Engine {
             check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
         let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        let result = match weights {
+        match weights {
             Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
             weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
                 if let Some(store) = weights {
@@ -227,9 +225,7 @@ impl Engine {
                 }
                 Ok(result)
             }),
-        };
-        plan.recycle(self);
-        result
+        }
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in
@@ -326,7 +322,7 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
     let mut gate = lim.gate();
     for t in vtree.bottomup() {
         gate.poll(1)?;
-        if plan.covered_by[t.idx()].is_some() || vtree.node(t).parent().is_some_and(|p| tdd.level(p).is_marginal()) {
+        if plan.covered_by(t).is_some() || vtree.node(t).parent().is_some_and(|p| tdd.level(p).is_marginal()) {
             continue;
         }
         // A node `into` does not keep has a dropped variable under it, on
@@ -334,7 +330,7 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
         let mut n = t;
         while !vtree.node(n).is_leaf() {
             let (left, right) = vtree.children(n);
-            n = if plan.free[right.idx()] { right } else { left };
+            n = if plan.is_free(right) { right } else { left };
         }
         return Err(EmbedError::Unsummed { variable: vtree.leaf_var(n) });
     }
@@ -385,7 +381,7 @@ fn splice(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Optio
     for t in vtree.bottomup() {
         gate.poll(1)?;
         let leaf = vtree.node(t).is_leaf();
-        if plan.free[t.idx()] {
+        if plan.is_free(t) {
             free[t.idx()] = leaf || {
                 let (left, right) = vtree.children(t);
                 let level = f.level(t);
@@ -400,11 +396,11 @@ fn splice(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Optio
             };
             continue;
         }
-        if leaf || plan.covered_by[t.idx()].is_some() {
+        if leaf || plan.covered_by(t).is_some() {
             continue;
         }
         let (left, right) = vtree.children(t);
-        let (carried, open, carried_left) = match !plan.free[left.idx()] {
+        let (carried, open, carried_left) = match !plan.is_free(left) {
             true => (left, right, true),
             false => (right, left, false),
         };

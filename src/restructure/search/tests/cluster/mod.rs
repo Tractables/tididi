@@ -44,7 +44,7 @@ fn allocation_refusals_preserve_cluster_counts() {
         let eng = Engine::new();
         let mut tdd = original.clone();
         let mut tried = vec![0; tdd.vtree().num_nodes()];
-        eng.limits().refuse_nth_reserve(cut);
+        eng.refuse_nth_reserve(cut);
         let result = eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried);
         eng.limits().grant_every_reserve();
         assert_eq!(tdd.model_count().unwrap(), expected, "reservation {cut}");

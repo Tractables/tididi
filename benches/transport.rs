@@ -88,11 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         f = match mode {
             "transport" => eng.transport(f, to, |v| v).map_err(|r| r.error)?,
             "embed" => {
-                let moved = match mirror {
-                    true => eng.embed_moving_mirrored(f, to.vtree(), |v| v),
-                    false => eng.embed_moving(f, to.vtree(), |v| v),
-                };
-                let (mut g, _) = moved.map_err(|r| r.error)?;
+                let (mut g, _) = eng.embed_moving(f, to.vtree(), |v| v).map_err(|r| r.error)?;
                 eng.trim(&mut g, to)?;
                 g
             }

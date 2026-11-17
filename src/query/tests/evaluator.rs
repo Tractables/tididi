@@ -116,7 +116,7 @@ fn allocation_refusals_preserve_pins_and_retry_on_the_same_engine() {
             let mut e = f.evaluator(RationalWeights::unit(8)).unwrap();
             if incremental { e.value().unwrap(); }
             e.observe([-1]).unwrap();
-            engine.limits().refuse_nth_reserve(n);
+            engine.refuse_nth_reserve(n);
             let result = e.bind(&engine).value();
             engine.limits().grant_every_reserve();
             e.observe([3]).unwrap();

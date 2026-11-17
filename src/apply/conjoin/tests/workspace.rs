@@ -15,16 +15,19 @@ fn conjunction_returns_workspace_after_refusal_and_reuses_it() {
     assert_canonical(&f);
     let allocation = eng.scratch.apply.workspace.checkout(&eng).f_widths.as_ptr();
     let mut refusals = 0;
-    for cut in 0..20 {
+    for cut in 0.. {
         eng.limits().refuse_nth_reserve(cut);
         let result = eng.and(left.clone(), right.clone());
         eng.limits().grant_every_reserve();
-        if result.is_err() { refusals += 1; }
         assert_eq!(eng.scratch.apply.workspace.checkout(&eng).f_widths.as_ptr(), allocation);
         let mut recovered = eng.and(left.clone(), right.clone()).unwrap();
         eng.minimize(&mut recovered).unwrap();
         assert_canonical(&recovered);
         assert!(recovered.equivalent(&f).unwrap());
+        match result {
+            Ok(_) => break,
+            Err(_) => refusals += 1,
+        }
     }
     assert!(refusals > 0);
 }

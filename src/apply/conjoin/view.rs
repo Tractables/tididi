@@ -71,14 +71,14 @@ impl View {
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
         };
-        lim.reserve_exact(&mut view.built, plan.pass_throughs.len())?;
-        let own = |p: VtreeIdx| &tdd.levels[plan.covered_by[p.idx()].expect("a chain's reader is an image").idx()];
+        lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
+        let own = |p: VtreeIdx| &tdd.levels[plan.covered_by(p).expect("a chain's reader is an image").idx()];
         let mut literal_tops = Vec::new();
         let mut gate = lim.gate();
-        for &t in &plan.pass_throughs {
+        for &t in plan.pass_throughs(into) {
             gate.poll(1)?;
             let (left, _) = into.children(t);
-            let free_side = if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right };
+            let free_side = if plan.is_free(left) { ChildSide::Left } else { ChildSide::Right };
             let through = PassThrough::new(into, t, free_side, |c| view.level(tdd, c.idx()).slot_count());
             let mut level = TddLevel::new();
             if !through.carries_leaf {
@@ -217,8 +217,16 @@ fn moved_dirty(
     literal_tops: &mut [VtreeIdx],
 ) -> Result<Dirty, OperationError> {
     let mut carried = tdd.dirty.clone_on(eng)?;
+    carried.reserve_leaf_owes_inner(eng)?;
     let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
+    literal_tops.sort_unstable();
+    if !literal_tops.is_empty() {
+        carried.leaf_owes_inner(|t| {
+            let (left, right) = into.children(VtreeIdx(t));
+            literal_tops.binary_search(&left).is_ok() || literal_tops.binary_search(&right).is_ok()
+        });
+    }
     carried.dedup_above(into.num_nodes());
     if let Some(mut loose) = loose {
         let mut listed = Vec::new();
@@ -226,7 +234,6 @@ fn moved_dirty(
             eng.limits().reserve_exact(&mut listed, into.num_nodes())?;
         }
         loose.sort_unstable();
-        literal_tops.sort_unstable();
         moved_loose(tdd.vtree(), into, plan, &loose, literal_tops, &mut listed);
         carried.set_loose(Some(listed));
     }

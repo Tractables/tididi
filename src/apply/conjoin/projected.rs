@@ -38,7 +38,7 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             into
         }
     };
-    conjoin_onto(eng, f, |v| v, g, |v| v, &into, false).map_err(|refused| extend::operation_error(refused.error))
+    conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))
 }
 
 /// `f ∧ g` where one operand is a constant on the empty projection: false,

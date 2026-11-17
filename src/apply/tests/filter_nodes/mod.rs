@@ -203,8 +203,9 @@ fn a_refused_allocation_leaves_the_operand_intact() {
     let mut completed = false;
     for nth in 0..4096 {
         let eng = Engine::new();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let result = eng.filter_nodes_with(&f, &keep, ReductionPlan::default());
+        let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         assert_eq!(storage(&f), before, "reservation {nth} changed the operand");
         assert_eq!(f.output(), output);
@@ -213,8 +214,10 @@ fn a_refused_allocation_leaves_the_operand_intact() {
                 let (g, stats) = filtered(outcome);
                 assert_eq!(stats, expected_stats);
                 assert_same_shape(&g, &expected, "after refusals");
-                completed = true;
-                break;
+                if pending {
+                    completed = true;
+                    break;
+                }
             }
             Err(error) => assert_eq!(error, OperationError::OverBudget),
         }

@@ -67,7 +67,7 @@ fn refused_minimization_does_not_certify_partial_work() {
     let source = Tdd::clause(&vtree, [1, 2, 3]).unwrap();
     let mut f = Tdd::from_levels_unchecked(vtree, source.levels.clone().into_vec(), source.output);
     let eng = Engine::new();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     assert_eq!(eng.minimize(&mut f), Err(crate::OperationError::OverBudget));
     assert!(!f.levels.is_canonical(f.output));
     eng.limits().grant_every_reserve();

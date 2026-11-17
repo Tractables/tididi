@@ -229,7 +229,7 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     // three buffers (`sel`, `words` and `group_plans`; a diagram without a
     // marginal level has no overlap filter to reserve for). The fifth is the
     // survivor's pairs.
-    eng.limits().refuse_nth_reserve(4);
+    eng.refuse_nth_reserve(4);
     let result = contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch);
     eng.limits().grant_every_reserve();
     assert_eq!(result, Err(OperationError::OverBudget));

@@ -68,7 +68,7 @@ fn prepared_counts_promote_and_retry_after_every_reservation_failure() {
         let mut counter = f.counter().unwrap();
         counter.observe([-1]).unwrap();
         let before = counter.model_count().unwrap();
-        eng.limits().refuse_nth_reserve(refusal);
+        eng.refuse_nth_reserve(refusal);
         let result = counter.bind(&eng).prepare();
         eng.limits().grant_every_reserve();
         assert_eq!(counter.model_count().unwrap(), before);
@@ -172,7 +172,7 @@ fn marginal_implicit_and_constant_levels_keep_their_readers() {
         let mut c = f.counter().unwrap();
         c.prepare().unwrap();
         assert_eq!(c.model_count().unwrap(), f.model_count().unwrap());
-        eng.limits().refuse_nth_reserve(0);
+        eng.refuse_nth_reserve(0);
         c.bind(&eng).prepare().unwrap();
         eng.limits().grant_every_reserve();
     }

@@ -299,8 +299,9 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
             let mut got = original.clone();
             {
                 let mut batch = eng.maintain(&mut got).unwrap();
-                eng.limits().refuse_nth_reserve(cut);
+                eng.refuse_nth_reserve(cut);
                 let result = apply_update(&mut batch, &model, insert);
+                let pending = eng.limits().refusal_pending();
                 eng.limits().grant_every_reserve();
                 match result {
                     Err(error) => {
@@ -308,7 +309,7 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
                         assert!(batch.diagram().equivalent(&original).unwrap(), "cut {cut} changed the function");
                         refusals += 1;
                     }
-                    Ok(()) => finished = true,
+                    Ok(()) => finished = pending,
                 }
                 // The same batch must be usable after refusal, including when
                 // a new unreachable node was appended before the refusal.
@@ -391,8 +392,9 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
             let mut f = original.clone();
             {
                 let mut batch = eng.maintain(&mut f).unwrap();
-                eng.limits().refuse_nth_reserve(cut);
+                eng.refuse_nth_reserve(cut);
                 let outcome = apply_update(&mut batch, &model, insert);
+                let pending = eng.limits().refusal_pending();
                 eng.limits().grant_every_reserve();
                 match outcome {
                     Err(e) => {
@@ -400,7 +402,7 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
                         assert!(batch.diagram().equivalent(&original).unwrap());
                         assert_eq!(batch.diagram().weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(8, 1));
                     }
-                    Ok(()) => succeeded = true,
+                    Ok(()) => succeeded = pending,
                 }
                 apply_update(&mut batch, &model, insert).unwrap();
             }
