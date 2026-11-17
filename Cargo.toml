@@ -35,3 +35,7 @@ tididi = { path = ".", features = ["testing"] }
 [[bench]]
 name = "projected_and"
 harness = false
+
+[[bench]]
+name = "transport"
+harness = false

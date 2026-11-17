@@ -6,7 +6,9 @@
 //! sequence at a time under the caller's own decision.
 //! [`Tdd::graft`](crate::Tdd::graft) joins diagrams over disjoint variables on
 //! a grafted vtree. [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a
-//! larger vtree under a renaming of its variables, and
+//! larger vtree under a renaming of its variables,
+//! [`Engine::transport`](crate::Engine::transport) moves one onto the
+//! projection of a home vtree on its renamed variables, and
 //! [`Tdd::expand_variables`](crate::Tdd::expand_variables) expands each of its
 //! variables into a class of new ones.
 
@@ -21,6 +23,7 @@ pub(crate) mod placement;
 mod project;
 mod tag;
 mod splice;
+mod transport;
 pub(crate) mod target;
 
 pub use crate::vtree::graft::Embedding;
@@ -125,6 +128,17 @@ pub struct EmbedRefused {
     pub error: EmbedError,
     /// The diagram, unchanged.
     pub tdd: crate::Tdd,
+}
+
+/// A transport [`Engine::transport`](crate::Engine::transport) refused, with
+/// the diagram as it was given: an owned one unchanged, a borrowed one as the
+/// borrow.
+#[derive(Debug)]
+pub struct TransportRefused<'a> {
+    /// Why the transport was refused.
+    pub error: EmbedError,
+    /// The diagram, unchanged.
+    pub tdd: std::borrow::Cow<'a, crate::Tdd>,
 }
 
 impl std::fmt::Display for EmbedError {
