@@ -65,10 +65,9 @@ fn operation_error(error: EmbedError) -> OperationError {
 }
 
 /// Whether [`join_at_root`] takes `tdd`: it moves levels and pairs two
-/// outputs, so the operand owes no reduction and carries no weights or
-/// summed-out level.
+/// outputs, so the operand carries no weights or summed-out level.
 fn joinable(tdd: &Tdd) -> bool {
-    tdd.weights.is_none() && tdd.dirty.is_empty() && !tdd.is_zero() && !tdd.has_marginal_level()
+    tdd.weights.is_none() && !tdd.is_zero() && !tdd.has_marginal_level()
 }
 
 /// The conjunction of `f` and `g` whose leaf sets lie under the two children
@@ -91,24 +90,31 @@ fn join_at_root(
     };
     let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?, None);
     let (levels, _) = assembly.parts_mut();
+    // A moved level owes the reductions it owed in its operand, at its image.
+    let mut carried = Dirty::default();
     for (operand, map) in [(f, f_map), (g, g_map)] {
-        match operand {
+        let mut owed = match operand {
             Cow::Owned(mut moved) => {
                 let source = &mut moved.levels[..];
                 for (from, &to) in map.iter().enumerate() {
                     std::mem::swap(&mut levels[to.idx()], &mut source[from]);
                 }
                 return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
+                moved.take_worklists()
             }
             Cow::Borrowed(source) => {
                 for (from, &to) in map.iter().enumerate() {
                     source.levels[from].try_copy_over(lim, &mut levels[to.idx()])?;
                 }
+                source.dirty.clone_on(eng)?
             }
-        }
+        };
+        owed.remap(map);
+        carried.merge_under(owed);
     }
+    carried.dedup_above(into.num_nodes());
     let root = into.root();
     let local = levels[root.idx()].push_node(lim, &[pair])?;
     let changed = [root];
-    assembly.finish_with(TddNodeId { vtree: root, local }, Dirty::default(), &[], closed.then_some(&changed[..]))
+    assembly.finish_with(TddNodeId { vtree: root, local }, carried, &[], closed.then_some(&changed[..]))
 }

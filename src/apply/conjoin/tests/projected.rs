@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::Engine;
+use crate::reduce::ReductionPlan;
 use crate::test_helpers::{assert_canonical, rotate_left, rotate_right};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{VarId, Vtree};
@@ -119,6 +120,36 @@ fn and_on_projections_is_and_on_the_home() {
 }
 
 #[test]
+fn join_at_the_root_carries_what_the_operands_owe() {
+    let eng = Engine::new();
+    let mut owed = 0;
+    for seed in 0..40u64 {
+        let home = rotated_home(4 + (seed % 10) as u32 * 2, seed);
+        let mut rng = Lcg::new(seed ^ 0x2545_f491);
+        let (l, r) = home.children(home.root());
+        let (fv, gv) = (part(&vars_under(&home, l), &mut rng), part(&vars_under(&home, r), &mut rng));
+        let (f, g) = (cnf_on(&eng, &home, &fv, &mut rng), cnf_on(&eng, &home, &gv, &mut rng));
+        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        // Contraction visits only the levels a diagram owes it.
+        let contracted = |mut d: Tdd| {
+            eng.reduce(&mut d, ReductionPlan::Contract).unwrap();
+            d
+        };
+        let joined_reduced = eng.and(contracted(f.clone()), contracted(g.clone())).unwrap();
+        owed += usize::from(joined_reduced.pair_count() < eng.and(&f, &g).unwrap().pair_count());
+        for h in [eng.and(f.clone(), g.clone()).unwrap(), eng.and(&f, &g).unwrap()] {
+            let h = contracted(h);
+            assert_eq!(h.pair_count(), joined_reduced.pair_count(), "seed {seed}");
+            assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
+            let mut h = h;
+            eng.minimize(&mut h).unwrap();
+            assert_canonical(&h);
+        }
+    }
+    assert!(owed > 0, "no pair of operands owed a contraction");
+}
+
+#[test]
 fn and_across_homes_is_refused() {
     let eng = Engine::new();
     let (a, b) = (Arc::new(Vtree::balanced(4)), Arc::new(Vtree::balanced(4)));
@@ -168,6 +199,8 @@ fn absent_variables_leave_the_operand() {
     same(eng.forall_vars(f.clone(), &[VarId(3)]).unwrap());
     same(eng.condition(f.clone(), [crate::Literal::pos(VarId(4))]).unwrap());
     same(eng.condition_vars(f.clone(), &[VarId(1)], false).unwrap());
+    let x = [crate::Literal::pos(VarId(4)), crate::Literal::neg(VarId(4))];
+    assert!(!eng.is_sat(&eng.condition(f.clone(), x).unwrap()).unwrap());
     assert_eq!(
         eng.exists_vars(f.clone(), &[VarId(7)]).unwrap_err(),
         OperationError::VariableNotInVtree(VarId(7))
