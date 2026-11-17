@@ -28,7 +28,7 @@ use crate::Engine;
 
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError, PollGate, Transient};
-use crate::vtree::VtreeIdx;
+use crate::vtree::{Vtree, VtreeIdx};
 
 /// The new index of a slot that did not survive, in the remap a parent
 /// rewrites its references through. Every survivor's index is below the
@@ -603,11 +603,21 @@ pub(crate) fn settle_loose(
     tdd: &Tdd,
     listed: &[u32],
 ) -> Result<Vec<u32>, OperationError> {
+    settle_loose_in(eng, &tdd.vtree, &|t| &tdd.levels[t.idx()], listed)
+}
+
+/// [`settle_loose`] of the diagram on `vtree` whose level at each node is
+/// `level` of it.
+pub(crate) fn settle_loose_in<'a>(
+    eng: &Engine,
+    vtree: &Vtree,
+    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
+    listed: &[u32],
+) -> Result<Vec<u32>, OperationError> {
     if listed.is_empty() {
         return Ok(Vec::new());
     }
     let lim = eng.limits();
-    let vtree = &tdd.vtree;
     // Per level, whether it stays listed (`AT`) and whether a level strictly
     // under it stays listed (`UNDER`): set on the levels above each one that
     // stays, up to the first set already, whose own levels above are set.
@@ -643,7 +653,7 @@ pub(crate) fn settle_loose(
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, tdd, p, sides, counts, &mut gate)?;
+            let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
@@ -669,18 +679,19 @@ pub(crate) fn settle_loose(
 /// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
-fn unnamed_children(
+fn unnamed_children<'a>(
     lim: &Limits,
-    tdd: &Tdd,
+    (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
     p: VtreeIdx,
     sides: [bool; 2],
     counts: &mut Vec<u32>,
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
-    if sides == [false; 2] || !tdd.is_structural_internal(p) {
+    let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level_at(t).is_marginal();
+    if sides == [false; 2] || !structural_internal(p) {
         return Ok(sides);
     }
-    let (left, right) = tdd.vtree.children(p);
+    let (left, right) = vtree.children(p);
     let children = [left, right];
     // Each side's block of counts, the left one's first: one a slot and one
     // past them ([`count_named`]), nothing for a side not read.
@@ -689,11 +700,11 @@ fn unnamed_children(
         if !sides[k] {
             continue;
         }
-        if !tdd.is_structural_internal(children[k]) {
+        if !structural_internal(children[k]) {
             unread[k] = true;
             continue;
         }
-        let slots = tdd.levels[children[k].idx()].slot_count();
+        let slots = level_at(children[k]).slot_count();
         width[k] = if slots > 0 { slots + 1 } else { 0 };
     }
     let used = width[0] + width[1];
@@ -701,7 +712,7 @@ fn unnamed_children(
         lim.try_resize(counts, used, 0)?;
     }
     counts[..used].fill(0);
-    let level = &tdd.levels[p.idx()];
+    let level = level_at(p);
     let (l, r) = counts[..used].split_at_mut(width[0]);
     let named = match width.map(|n| n > 0) {
         [true, true] => count_named::<true, true>(level, [l, r], gate)?,

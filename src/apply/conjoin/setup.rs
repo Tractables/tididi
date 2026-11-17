@@ -3,6 +3,7 @@
 //! product-list allocation, bundled into `ApplyRun` by `apply_and_setup` for
 //! the driver to sweep with.
 
+use crate::apply::conjoin::held::Held;
 use super::marginal_plan::EntryMarginality;
 use super::price::{combinations_bound, over_floor};
 use super::products::Products;
@@ -403,15 +404,15 @@ impl ApplyRun<'_, '_> {
     /// This level's marginality, in the two senses [`route_level`](super::route::route_level) needs.
     pub(super) fn level_marginal(
         &self,
-        f: &Tdd,
-        g: &Tdd,
+        f: &Held<'_>,
+        g: &Held<'_>,
         shape: LevelShape,
         targets: VtreeMask<'_>,
     ) -> LevelMarg {
         let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
         let now = |i: usize| self.levels[i].is_marginal();
         let any = |i: usize| {
-            self.levels[i].is_marginal() || f.levels[i].is_marginal() || g.levels[i].is_marginal()
+            self.levels[i].is_marginal() || f.level(i).is_marginal() || g.level(i).is_marginal()
         };
         LevelMarg {
             left_now: now(left_idx),
@@ -578,7 +579,7 @@ struct Snapshot {
 fn survey<'r>(
     eng: &Engine,
     vtree: &'r Vtree,
-    ops: Operands<&Tdd>,
+    ops: Operands<&Held<'_>>,
     masks: Operands<VtreeMask<'r>>,
     min_grid: usize,
     (widths, marginal): (Operands<&mut [usize]>, Operands<&mut [bool]>),
@@ -614,7 +615,7 @@ fn survey<'r>(
     // The marginality of each level is kept from the first marginal one
     // on, the levels read before it being all clear.
     let mut level = |t: VtreeIdx, f_widths: &mut [usize], g_widths: &mut [usize]| {
-        let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
+        let (fl, gl) = (&f.level(t.idx()), &g.level(t.idx()));
         let (fm, gm) = (fl.is_marginal(), gl.is_marginal());
         if fm | gm && !any_entry_marginal {
             any_entry_marginal = true;
@@ -643,7 +644,7 @@ fn survey<'r>(
             cells(
                 w1,
                 w2,
-                combinations_bound(&f.levels[t.idx()], &g.levels[t.idx()]),
+                combinations_bound(f.level(t.idx()), g.level(t.idx())),
             );
         }
         let cone = Cone {
@@ -688,11 +689,11 @@ fn survey<'r>(
         let (free_f, free_g) = (masks.f.contains(at), masks.g.contains(at));
         if free_f || free_g {
             debug_assert!(
-                !f.levels[at].is_marginal() && !g.levels[at].is_marginal(),
+                !f.level(at).is_marginal() && !g.level(at).is_marginal(),
                 "an operand with a free level has a marginal level at {at}",
             );
-            let w1 = if free_f { 1 } else { f.levels[at].slot_count() };
-            let w2 = if free_g { 1 } else { g.levels[at].slot_count() };
+            let w1 = if free_f { 1 } else { f.level(at).slot_count() };
+            let w2 = if free_g { 1 } else { g.level(at).slot_count() };
             f_widths[at] = w1;
             g_widths[at] = w2;
             free_nodes = free_nodes.saturating_add(cells(w1, w2, 0));
@@ -700,7 +701,7 @@ fn survey<'r>(
             continue;
         }
         let (w1, w2) = level(t, f_widths, g_widths);
-        cells(w1, w2, combinations_bound(&f.levels[at], &g.levels[at]));
+        cells(w1, w2, combinations_bound(f.level(at), g.level(at)));
         built.push(t);
         free_before.push(free_nodes);
         let (left, right) = vtree.children(t);
@@ -751,16 +752,16 @@ fn survey<'r>(
 ///
 /// A level whose children are not both marked or leaves is decided without
 /// reading it.
-pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&Tdd>, out: &mut [bool]) -> bool {
+pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&Held<'_>>, out: &mut [bool]) -> bool {
     let leaves = vtree.num_leaves() as usize;
     let mut any = false;
     for &t in vtree.internal_bottomup_slice() {
         let (left, right) = vtree.children(t);
         let (left_leaf, right_leaf) = (left.idx() < leaves, right.idx() < leaves);
-        let true_node = |d: &Tdd| {
-            let level = &d.levels[t.idx()];
+        let true_node = |d: &Held<'_>| {
+            let level = &d.level(t.idx());
             let leaf_one = |leaf: VtreeIdx, side: EncodedChildRef| {
-                !d.levels[leaf.idx()].is_marginal() && side == ONE_LEAF_IDX.into()
+                !d.level(leaf.idx()).is_marginal() && side == ONE_LEAF_IDX.into()
             };
             if level.is_marginal() || level.node_count() != 1 {
                 return false;
@@ -829,7 +830,7 @@ fn preflight_dense_budget(
 pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
-    ops: Operands<&Tdd>,
+    ops: Operands<&Held<'_>>,
     (targets, free, found_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],

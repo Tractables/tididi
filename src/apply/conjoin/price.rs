@@ -42,8 +42,9 @@
 //! ([`LevelRefusal`](crate::limits::LevelRefusal)). Debug builds count every
 //! level they can and check the count against the level built.
 
+use crate::apply::conjoin::held::Held;
 use crate::limits::{Charged, Limits, OperationError};
-use crate::diagram::{ChildPair, ChildSide, EncodedNode, Tdd, TddLevel};
+use crate::diagram::{ChildPair, ChildSide, EncodedNode, TddLevel};
 use crate::vtree::VtreeIdx;
 use super::{Complete, Passthrough, NO_PRODUCT};
 use super::grid_arena::grid_cells;
@@ -502,8 +503,8 @@ fn counted(pairs: Result<Option<Pairs>, OperationError>) -> Result<Option<Pairs>
 pub(super) fn price_dense_level(
     lim: &Limits,
     run: &ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     route: Route,
 ) -> Result<Option<Pairs>, OperationError> {
@@ -547,7 +548,7 @@ pub(super) fn price_dense_level(
 pub(super) fn price_sparse_level(
     lim: &Limits,
     run: &ApplyRun,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     shape: LevelShape,
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<Option<Pairs>, OperationError> {
@@ -630,7 +631,7 @@ pub(super) struct CompleteLevel {
 /// are complete and read by arithmetic.
 pub(super) fn complete_level(
     run: &ApplyRun,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     shape: LevelShape,
     route: Route,
 ) -> Option<CompleteLevel> {
@@ -668,7 +669,7 @@ pub(super) fn complete_level(
 pub(super) fn refuse_past_cap(
     lim: &Limits,
     run: &ApplyRun,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     shape: LevelShape,
     route: Route,
     before: u64,

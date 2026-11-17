@@ -25,7 +25,7 @@ fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
 
 /// The true reference for an unconstrained child already placed bottom-up.
 #[inline]
-fn true_node(vtree: &Vtree, child: VtreeIdx) -> NodeIdx {
+pub(crate) fn true_node(vtree: &Vtree, child: VtreeIdx) -> NodeIdx {
     if vtree.node(child).is_leaf() { ONE_LEAF_IDX } else { NodeIdx(0) }
 }
 
@@ -37,22 +37,32 @@ pub(crate) fn push_free_level(level: &mut TddLevel, vtree: &Vtree, at: VtreeIdx)
     level.push_internal_node(&[ChildPair::new(true_node(vtree, left), true_node(vtree, right))]);
 }
 
+/// The first reference a structural `level` holds on `side`, if it holds any.
+pub(crate) fn first_ref(level: &TddLevel, side: ChildSide) -> Option<NodeIdx> {
+    let (_, mut pairs) = level.internal_inputs_iter().next()?;
+    let pair = pairs.next()?;
+    let decoder = crate::diagram::ChildDecoder::structural();
+    Some(decoder.node(side.pick(pair.left, pair.right)))
+}
+
 /// The joins that lift every reference of one child of `at` through a free
 /// sibling: one node per slot of the carried child, at the same index.
-struct PassThrough {
-    carries: VtreeIdx,
-    carries_leaf: bool,
-    one: NodeIdx,
-    width: usize,
+pub(crate) struct PassThrough {
+    pub(crate) carries: VtreeIdx,
+    pub(crate) carries_leaf: bool,
+    pub(crate) one: NodeIdx,
+    pub(crate) width: usize,
     free_side: ChildSide,
 }
 
 impl PassThrough {
-    fn new(vtree: &Vtree, assembly: &Assembly<'_>, at: VtreeIdx, free_side: ChildSide) -> Self {
+    /// The joins at `at`, whose child on `free_side` is free, the carried
+    /// internal child's level having `slots(child)` slots.
+    pub(crate) fn new(vtree: &Vtree, at: VtreeIdx, free_side: ChildSide, slots: impl FnOnce(VtreeIdx) -> usize) -> Self {
         let (left, right) = vtree.children(at);
         let (free, carries) = free_side.pick((left, right), (right, left));
         let carries_leaf = vtree.node(carries).is_leaf();
-        let width = if carries_leaf { LEAF_WIDTH } else { assembly.level(carries).slot_count() };
+        let width = if carries_leaf { LEAF_WIDTH } else { slots(carries) };
         Self { carries, carries_leaf, one: true_node(vtree, free), width, free_side }
     }
 
@@ -74,7 +84,7 @@ impl PassThrough {
     /// Where nothing bounds memory, a level the seat's close would hold as
     /// the description of its pairs is held so here, its node arena's
     /// growth charged and nothing stored.
-    fn build(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
+    pub(crate) fn build(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(!self.carries_leaf && level.nodes().is_empty() && level.pairs.is_empty());
         let width = self.width;
         if width >= floor().max(2) && lim.memory_unbounded() && !stored_levels_forced() {
@@ -186,7 +196,7 @@ impl<'a> CopyPlacement<'a> {
     /// Lift all references from one child through a join with a free sibling.
     #[inline]
     pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
-        let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
+        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
         // A leaf contributes all three implicit labels. Prune any wrappers the
         // copied parent does not use; keep their indices until then.
         self.prune |= through.carries_leaf;
@@ -329,7 +339,7 @@ impl<'a> MovePlacement<'a> {
     /// Lift all references from one child through a join with a free sibling.
     /// Hands back a join's refusal.
     pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
-        let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
+        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
         self.prune |= through.carries_leaf;
         self.contract |= self.assembly.level(through.carries).is_marginal();
         let (l, r) = self.vtree.children(at);
@@ -365,10 +375,7 @@ impl<'a> MovePlacement<'a> {
     /// The first reference the level at `at` holds on `side`, if it holds
     /// any.
     pub(super) fn first_ref(&self, at: VtreeIdx, side: ChildSide) -> Option<NodeIdx> {
-        let (_, mut pairs) = self.assembly.level(at).internal_inputs_iter().next()?;
-        let pair = pairs.next()?;
-        let decoder = crate::diagram::ChildDecoder::structural();
-        Some(decoder.node(side.pick(pair.left, pair.right)))
+        first_ref(self.assembly.level(at), side)
     }
 
     /// Add a connecting node, recording any marginal boundary it introduces.

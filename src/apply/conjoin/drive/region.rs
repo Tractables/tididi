@@ -13,9 +13,8 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{ONE_LEAF_IDX, Tdd, TddLevel};
+use crate::diagram::{ONE_LEAF_IDX, TddLevel};
 use crate::limits::{Limits, OperationError};
-use crate::restructure::placement::push_free_level;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::super::held::Held;
@@ -88,19 +87,25 @@ pub(super) fn take_regions(
     let moved = if run.adopted { cone.tops } else { cone.free };
     for &t in moved {
         let at = t.idx();
-        let owned = if carried_from_f(cone, at) {
-            f.owned()
-        } else {
-            g.owned()
-        };
-        if let Some(owned) = owned {
-            if cone.free_in_f(at) && cone.free_in_g(at) {
-                push_free_level(&mut owned.levels[at], vtree, t);
-            }
-            std::mem::swap(&mut run.levels[at], &mut owned.levels[at]);
+        let both = cone.free_in_f(at) && cone.free_in_g(at);
+        match carried_from_f(cone, at) {
+            true => move_region_level(lim, f, t, both, &mut run.levels[at])?,
+            false => move_region_level(lim, g, t, both, &mut run.levels[at])?,
         }
     }
     Ok(())
+}
+
+/// Move an owned carrier's level at `t`, a free level of the other
+/// operand, into `out`, built first where it is free in both.
+fn move_region_level(lim: &Limits, carrier: &mut Held<'_>, t: VtreeIdx, both: bool, out: &mut TddLevel) -> Result<(), OperationError> {
+    if carrier.is_borrowed() {
+        return Ok(());
+    }
+    if both {
+        carrier.build_free(t);
+    }
+    carrier.carry(lim, t.idx(), out)
 }
 
 /// Move the levels [`take_regions`] took back to their owned operands, for
@@ -127,7 +132,7 @@ pub(super) fn give_back_regions(
 /// `d`, which are constant true. `stack` is scratch for the walk.
 fn constant_true(
     vtree: &Vtree,
-    d: &Tdd,
+    d: &Held<'_>,
     cone: Cone<'_>,
     is_f: bool,
     t: VtreeIdx,
@@ -141,7 +146,7 @@ fn constant_true(
         }
     };
     // Most tops hold more than one node: decided without the stack.
-    if !free_in_d(t.idx()) && d.levels[t.idx()].slot_count() != 1 {
+    if !free_in_d(t.idx()) && d.level(t.idx()).slot_count() != 1 {
         return false;
     }
     stack.clear();
@@ -150,7 +155,7 @@ fn constant_true(
         if free_in_d(t.idx()) {
             continue;
         }
-        let level = &d.levels[t.idx()];
+        let level = &d.level(t.idx());
         if level.slot_count() != 1 {
             return false;
         }

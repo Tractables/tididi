@@ -1,8 +1,9 @@
 //! The leaf levels before the bottom-up loop: their constant product grids,
 //! and the output's marginal leaves seeded from the operands.
 
+use crate::apply::conjoin::held::Held;
 use crate::{Engine, OperationError};
-use crate::diagram::{Tdd, TddLevel, WeightStore, LEAF_WIDTH};
+use crate::diagram::{TddLevel, WeightStore, LEAF_WIDTH};
 use crate::vtree::VtreeIdx;
 use super::setup::Operands;
 use super::setup::ApplyRun;
@@ -67,8 +68,8 @@ pub(super) fn apply_leaf_levels(
 // factored form hides which case is which.
 #[expect(clippy::nonminimal_bool)]
 pub(crate) fn seed_output_leaves(
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     leaves: &[VtreeIdx],
     levels: &mut [TddLevel],
     identity: Operands<&[bool]>,
@@ -91,8 +92,8 @@ pub(crate) fn seed_output_leaves(
     let mut canon_leaves: Vec<usize> = Vec::new();
     for &leaf in leaves {
         let left_idx = leaf.idx();
-        let left_m = f.levels[left_idx].is_marginal();
-        let right_m = g.levels[left_idx].is_marginal();
+        let left_m = f.level(left_idx).is_marginal();
+        let right_m = g.level(left_idx).is_marginal();
         if left_m || right_m {
             debug_assert!(
                 (left_m && right_m) || (left_m && g_identity[left_idx]) || (right_m && f_identity[left_idx]),
@@ -101,8 +102,8 @@ pub(crate) fn seed_output_leaves(
                  left_id={} right_id={}",
                 f_identity[left_idx], g_identity[left_idx],
             );
-            let w1 = f.levels[left_idx].is_weight_marginal();
-            let w2 = g.levels[left_idx].is_weight_marginal();
+            let w1 = f.level(left_idx).is_weight_marginal();
+            let w2 = g.level(left_idx).is_weight_marginal();
             if w1 || w2 {
                 // The column is pinned (invariant 11), so the output level's
                 // slot count is `LEAF_WIDTH`.
@@ -121,11 +122,11 @@ pub(crate) fn seed_output_leaves(
                      pinned {leaf_slots}-slot leaf_val cache",
                 );
                 debug_assert!(
-                    (!w1 || f.levels[left_idx].slot_count() == leaf_slots)
-                        && (!w2 || g.levels[left_idx].slot_count() == leaf_slots),
+                    (!w1 || f.level(left_idx).slot_count() == leaf_slots)
+                        && (!w2 || g.level(left_idx).slot_count() == leaf_slots),
                     "weight-marginal leaf {left_idx}: operand slot carriers \
                      (f={}, g={}) disagree with `LEAF_WIDTH` ({leaf_slots})",
-                    f.levels[left_idx].slot_count(), g.levels[left_idx].slot_count(),
+                    f.level(left_idx).slot_count(), g.level(left_idx).slot_count(),
                 );
                 levels[left_idx].become_marginal_weighted(leaf_slots as u32);
                 if w1 != w2 {

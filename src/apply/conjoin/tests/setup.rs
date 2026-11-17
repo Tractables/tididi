@@ -69,7 +69,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             let (_, cone) = survey(
                 &eng,
                 &into,
-                Operands { f: &f, g: &g },
+                Operands { f: &crate::apply::conjoin::held::Held::reading(&f), g: &crate::apply::conjoin::held::Held::reading(&g) },
                 Operands::default(),
                 0,
                 (
@@ -103,7 +103,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             let (_, cone) = survey(
                 &eng,
                 &into,
-                Operands { f: &f, g: &g },
+                Operands { f: &crate::apply::conjoin::held::Held::reading(&f), g: &crate::apply::conjoin::held::Held::reading(&g) },
                 masks,
                 0,
                 (

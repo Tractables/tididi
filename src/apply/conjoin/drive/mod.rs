@@ -36,6 +36,7 @@ mod compose;
 mod level;
 mod owed;
 mod region;
+use crate::apply::conjoin::held::Held;
 use level::{
     LevelBuild, build_level_dense, count_sparse_root, counts_root, run_sparse_level,
 };
@@ -45,7 +46,7 @@ use super::*;
 use super::identity::init_leaf_identity_over;
 use super::price::{built_pairs, price_dense_level, refuse_past_cap};
 use crate::Engine;
-use crate::reduce::prune::settle_loose;
+use crate::reduce::prune::settle_loose_in;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.
@@ -235,7 +236,7 @@ fn build_level(
     }
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.
-    run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
+    run.reclaim_child_grids(left_idx, right_idx, f.output().vtree);
     Ok(())
 }
 
@@ -248,7 +249,7 @@ fn build_level(
 fn describes_marginal_child(
     eng: &Engine,
     run: &ApplyRun,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     sweep: &Sweep<'_>,
     shape: LevelShape,
     (plan, marginal): (&MarginalPlan, &LevelMarg),
@@ -308,10 +309,10 @@ pub(crate) fn apply_and_restoring(
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Tdd, OperationError> {
     debug_assert!(
-        f.weights.is_none()
-            && g.weights.is_none()
-            && !f.has_marginal_level()
-            && !g.has_marginal_level()
+        f.tdd().weights.is_none()
+            && g.tdd().weights.is_none()
+            && !f.tdd().has_marginal_level()
+            && !g.tdd().has_marginal_level()
     );
     apply_and_held(
         eng,
@@ -340,10 +341,8 @@ fn give_back(
             false => g.uncarry(t, &mut levels[t]),
         }
     }
-    if let Some(f) = f.owned() {
-        for &t in &lists.lent {
-            f.levels.swap_arenas(t, &mut levels[t]);
-        }
+    for &t in &lists.lent {
+        f.swap_arenas(t, &mut levels[t]);
     }
     region::give_back_regions(levels, cone, f, g);
 }
@@ -386,7 +385,7 @@ pub(crate) fn apply_and_core(
     targets: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    apply_and_held(eng, &mut Held::Owned(f), &mut Held::Owned(g), targets, mode)
+    apply_and_held(eng, &mut Held::owning(f), &mut Held::owning(g), targets, mode)
 }
 
 /// [`apply_and_core`] of operands each owned or borrowed: a borrowed operand is read in place, weights and marginal levels
@@ -420,8 +419,8 @@ fn apply_and_held(
     debug_assert!(
         [(&*f, free.f), (&*g, free.g)]
             .into_iter()
-            .all(|(op, free)| !op.is_borrowed() || free.is_empty()),
-        "a borrowed operand has no free level",
+            .all(|(op, free)| !op.is_borrowed() || op.is_viewed() || free.is_empty()),
+        "a borrowed operand on its own vtree has no free level",
     );
     let count_root = matches!(mode, ConjoinMode::Count);
     let restoring = matches!(mode, ConjoinMode::Restore { .. });
@@ -434,9 +433,10 @@ fn apply_and_held(
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
-    let take_weights = |op: &mut Held<'_>| match op {
-        Held::Owned(op) => Ok(op.weights.take()),
-        Held::Borrowed(op) => op
+    let take_weights = |op: &mut Held<'_>| match op.owned() {
+        Some(op) => Ok(op.weights.take()),
+        None => op
+            .tdd()
             .weights
             .as_ref()
             .map(|ws| ws.try_clone_on(lim))
@@ -452,9 +452,10 @@ fn apply_and_held(
     debug_assert!(
         ws.is_some()
             || !f
+                .tdd()
                 .levels
                 .iter()
-                .chain(g.levels.iter())
+                .chain(g.tdd().levels.iter())
                 .any(|l| l.is_weight_marginal()),
         "an operand has weight-marginal levels but neither carries a weight store"
     );
@@ -467,18 +468,21 @@ fn apply_and_held(
     // paths carry them: the setup finds them (`mark_constant_true`). Most levels of two
     // diagrams on a large vtree that each mention a few of its variables
     // are such levels.
-    let find_free = unmarked && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore { .. });
+    let find_free = unmarked
+        && !f.is_viewed()
+        && !g.is_viewed()
+        && matches!(mode, ConjoinMode::Build | ConjoinMode::Restore { .. });
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
-    let vtree = Arc::clone(&f.vtree);
+    let vtree = Arc::clone(f.vtree());
     let num_nodes = vtree.num_nodes();
-    if f.is_zero() || g.is_zero() {
+    if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
         return diagram::Assembly::from_levels(eng, vtree, levels, ws)
             .finish(TddNodeId {
-                vtree: f.output.vtree,
+                vtree: f.output().vtree,
                 local: ZERO,
             })
             .map(Conjoined::Built);
@@ -551,10 +555,10 @@ fn apply_and_held(
 
     // The operands' loose levels as a prune would settle them, read before
     // the sweep drops the operands' levels.
-    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
+    let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
         (Some(lf), Some(lg)) if plain => Some(Operands {
-            f: settle_loose(eng, f, lf)?,
-            g: settle_loose(eng, g, lg)?,
+            f: settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
+            g: settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
         }),
         _ => None,
     };
@@ -574,8 +578,8 @@ fn apply_and_held(
     // or drop any operand level: an access that changed a level would have
     // dropped them.
     let closed = Operands {
-        f: f.levels.is_closed(),
-        g: g.levels.is_closed(),
+        f: f.tdd().levels.is_closed(),
+        g: g.tdd().levels.is_closed(),
     };
     region::take_regions(&vtree, lim, &mut run, f, g)?;
     let mut sweep = Sweep {
@@ -616,7 +620,7 @@ fn apply_and_held(
     }
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
-    let out_vtree = f.output.vtree;
+    let out_vtree = f.output().vtree;
     let output = TddNodeId {
         vtree: out_vtree,
         local: out_local,
@@ -671,7 +675,7 @@ fn apply_and_held(
         false => None,
     };
     let finished = if plain {
-        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, lists.built.len());
+        let mut owed = crate::diagram::Dirty::stacked(g.dirty(), f.dirty(), lists.built.len());
         owed.requeue(
             crate::diagram::Pass::LeafContract,
             lists.twin_free.iter().map(|t| t.0),
@@ -717,7 +721,7 @@ fn apply_and_held(
         let levels = assembly.parts_mut().0;
         match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None) {
             Ok(()) if cone.constant => {
-                let owed = crate::diagram::Dirty::stacked(&Default::default(), &f.dirty, cone.built.len());
+                let owed = crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len());
                 assembly.finish_with_or_return(output, owed, cone.built, Some(cone.built))
             }
             Ok(()) => assembly.finish_or_return(output),
