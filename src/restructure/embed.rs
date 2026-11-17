@@ -1039,6 +1039,13 @@ fn assemble_moving<'a>(
     free: Free,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
+    // Room for the inner pass's share of the leaf pass's worklist (below),
+    // taken while a refusal has nothing to undo.
+    if let Cow::Owned(moved) = &mut tdd
+        && let Err(e) = moved.dirty.reserve_leaf_owes_inner(eng)
+    {
+        return Err((e, tdd));
+    }
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -1078,6 +1085,7 @@ fn assemble_moving<'a>(
             Ok(tops) => tops,
             Err(e) => return Err(refuse(e, placement, tdd)),
         };
+    let chains = !literal_tops.is_empty();
     // Seated owing nothing: `tdd` keeps its worklists until the last
     // refusal is behind, which leaves nothing to put back.
     let mut result = match placement.seat(tdd.output().local, crate::diagram::Dirty::default()) {
@@ -1095,16 +1103,18 @@ fn assemble_moving<'a>(
     }
     // Room for the result's loose levels where `tdd`'s are known and some
     // may be listed, then the worklists: a moved diagram's own, a borrowed
-    // one's copied.
+    // one's copied, with room for the inner pass's share of the leaf pass's.
     let mut listed = Vec::new();
-    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || !literal_tops.is_empty());
+    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || chains);
     let carried = match listing {
         true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
         false => Ok(()),
     }
     .and_then(|()| match &mut tdd {
         Cow::Owned(moved) => Ok(moved.take_worklists()),
-        Cow::Borrowed(source) => source.dirty.clone_on(eng),
+        Cow::Borrowed(source) => {
+            source.dirty.clone_on(eng).and_then(|mut copied| copied.reserve_leaf_owes_inner(eng).map(|()| copied))
+        }
     });
     let mut carried = match carried {
         Ok(carried) => carried,
@@ -1115,16 +1125,23 @@ fn assemble_moving<'a>(
     if let Cow::Owned(moved) = &mut tdd {
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
     }
-    if !literal_tops.is_empty() {
+    if chains {
         result.close_marked_levels(closed);
     }
     // A moved level keeps its nodes and, through the pass-throughs and the
     // renumbered literal chains, the identities of its children's, so it
-    // owes the contraction passes what it owed in `tdd`, at its image. New
-    // pass-through nodes have distinct child identities, and free levels
-    // have one node, so neither introduces twins. A later child contraction
-    // queues its parents. The lists are bounded as a seat bounds an
-    // assembly's.
+    // owes the contraction passes what it owed in `tdd`, at its image. A
+    // leaf read through a literal chain is the exception: its two literals
+    // are two nodes of a pass-through level, so a leaf twin over it is an
+    // inner twin, which only the inner pass contracts. Where there are
+    // chains, the inner pass is owed wherever the leaf pass is. New
+    // pass-through nodes have distinct child identities,
+    // and free levels have one node, so neither introduces twins. A later
+    // child contraction queues its parents. The lists are bounded as a seat
+    // bounds an assembly's.
+    if chains {
+        carried.leaf_owes_inner();
+    }
     let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
     carried.dedup_above(into.num_nodes());

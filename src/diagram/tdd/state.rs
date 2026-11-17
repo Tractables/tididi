@@ -477,6 +477,20 @@ impl Dirty {
         self.list(pass).extend(levels);
     }
 
+    /// Room on the inner pass's list for [`leaf_owes_inner`](Self::leaf_owes_inner).
+    pub(crate) fn reserve_leaf_owes_inner(&mut self, eng: &crate::Engine) -> Result<(), crate::OperationError> {
+        match self.lists[Pass::LeafContract as usize].len() {
+            0 => Ok(()),
+            leaf => eng.limits().reserve_exact(self.list(Pass::Contract), leaf),
+        }
+    }
+
+    /// Owe the inner pass at every level the leaf pass is owed at.
+    pub(crate) fn leaf_owes_inner(&mut self) {
+        let [inner, leaf, _] = &mut self.lists;
+        inner.extend_from_slice(leaf);
+    }
+
     /// Room in every list for `n` more levels, for a rewrite about to
     /// invalidate up to `n` levels one at a time, which then grows each list
     /// once at most. Untracked, as [`Tdd::invalidate`]'s pushes are.

@@ -164,7 +164,8 @@ fn owe_work(eng: &Engine, f: &mut Tdd) {
 /// Refuse the embedding at each point `arm` picks in turn, checking that
 /// every refusal hands the diagram back unchanged, stored and known as it
 /// was given ([`known`]), until one is granted, and that the granted one
-/// owes the reduction passes what the diagram owed, at the images.
+/// owes the reduction passes what the diagram owed, at the images, and the
+/// inner pass wherever the leaf pass, for the pass-through over a leaf.
 ///
 /// With `mirror`, onto the destination with some children swapped, by
 /// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts;
@@ -208,6 +209,7 @@ fn refuse_at_every_point(
                 assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
                 let mut owed = f.dirty.clone();
                 owed.take_loose();
+                owed.leaf_owes_inner();
                 owed.remap(&embedding.levels);
                 owed.dedup_above(big.num_nodes());
                 let mut carried = out.dirty.clone();
@@ -365,11 +367,11 @@ fn moved_diagrams_negate_and_disjoin_like_copies() {
 }
 
 /// Each half of the clauses compiled on the vtree `vtree` projects to its
-/// variables, minimized with `settled` and else a bare conjunction that
-/// still owes its contraction, then moved onto `vtree`. A moved half owes
-/// what its source owed, and it, its conjunction with a unit clause and the
-/// conjunction of the two halves minimize from those worklists to the
-/// canonical diagram. On implicit levels and on stored ones alike
+/// variables, minimized, contracted inside only (owing its leaf
+/// contraction) or a bare conjunction that owes both, then moved onto
+/// `vtree`. A moved half owes what its source owed, and it, its conjunction
+/// with a unit clause and the conjunction of the two halves minimize from
+/// those worklists to the canonical diagram. On implicit levels and on stored ones alike
 /// ([`same_as_stored`](crate::test_helpers::same_as_stored)).
 #[test]
 fn moved_halves_conjoin_to_the_canonical_diagram() {
@@ -379,7 +381,14 @@ fn moved_halves_conjoin_to_the_canonical_diagram() {
 /// The cases of [`moved_halves_conjoin_to_the_canonical_diagram`]: the
 /// minimized diagrams.
 fn moved_halves_conjoin() -> Vec<Tdd> {
+    use crate::reduce::ReductionPlan;
     use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
+    #[derive(Clone, Copy, Debug)]
+    enum Owes {
+        Nothing,
+        LeafContraction,
+        Contractions,
+    }
     let mut outs = Vec::new();
     let eng = Engine::new();
     for seed in 0..60u64 {
@@ -392,7 +401,7 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
         }
         for (label, vtree) in vtree_shapes(num_vars) {
             let expected = compile_clauses(&vtree, &clauses);
-            let moved = |part: &[Vec<i32>], settled: bool| -> Tdd {
+            let moved = |part: &[Vec<i32>], owes: Owes| -> Tdd {
                 let mut vars: Vec<u32> = part.iter().flatten().map(|l| l.unsigned_abs()).collect();
                 vars.sort_unstable();
                 vars.dedup();
@@ -407,8 +416,10 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
                     let c = c.iter().map(|&l| if l < 0 { -local(l.unsigned_abs()) } else { local(l.unsigned_abs()) });
                     f = eng.and(f, eng.clause(&small, c).unwrap()).unwrap();
                 }
-                if settled {
-                    eng.minimize(&mut f).unwrap();
+                match owes {
+                    Owes::Nothing => eng.minimize(&mut f).unwrap(),
+                    Owes::LeafContraction => eng.reduce(&mut f, ReductionPlan::Contract).unwrap(),
+                    Owes::Contractions => {}
                 }
                 eng.embed_moving(f, &vtree, |v| VarId(vars[v.0 as usize - 1])).map_err(|r| r.error).unwrap().0
             };
@@ -419,17 +430,17 @@ fn moved_halves_conjoin() -> Vec<Tdd> {
             let mut with_unit = a.to_vec();
             with_unit.push(vec![unit]);
             let with_unit = compile_clauses(&vtree, &with_unit);
-            for settled in [true, false] {
-                let what = format!("seed {seed}, {label}, settled {settled}");
-                let mut out = moved(a, settled);
+            for owes in [Owes::Nothing, Owes::LeafContraction, Owes::Contractions] {
+                let what = format!("seed {seed}, {label}, owes {owes:?}");
+                let mut out = moved(a, owes);
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &alone, &format!("{what}, alone"));
                 outs.push(out);
-                let mut out = eng.and(moved(a, settled), eng.clause(&vtree, [unit]).unwrap()).unwrap();
+                let mut out = eng.and(moved(a, owes), eng.clause(&vtree, [unit]).unwrap()).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &with_unit, &format!("{what}, with a unit"));
                 outs.push(out);
-                let mut out = eng.and(moved(a, settled), moved(b, settled)).unwrap();
+                let mut out = eng.and(moved(a, owes), moved(b, owes)).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &expected, &what);
                 outs.push(out);
