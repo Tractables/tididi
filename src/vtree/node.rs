@@ -116,6 +116,10 @@ pub struct Vtree {
     /// change after a rotation. See [`TopoOrder`] for the properties it
     /// maintains.
     pub(super) topo: TopoOrder,
+    /// Set on a projection, whose `var_to_leaf` is empty.
+    pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
+    /// Built on a root vtree at its first projection; a rotation clears it.
+    pub(super) home_index: std::sync::OnceLock<std::sync::Arc<super::home::HomeIndex>>,
 }
 
 impl Vtree {
@@ -168,7 +172,9 @@ impl Vtree {
     /// variable ids leaves uncarried.
     #[inline]
     pub fn leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
-        let leaf = *self.var_to_leaf.get(var.0.checked_sub(1)? as usize)?;
+        let Some(&leaf) = self.var_to_leaf.get(var.0.checked_sub(1)? as usize) else {
+            return self.home.as_deref()?.leaf_of(var);
+        };
         match self.nodes.get(leaf.idx()) {
             Some(VtreeNode::Leaf { var: on_leaf, .. }) if *on_leaf == var => Some(leaf),
             _ => None,
@@ -183,7 +189,10 @@ impl Vtree {
     /// [`Vtree::from_nodes`] make it larger.
     #[inline]
     pub fn num_vars(&self) -> u32 {
-        self.var_to_leaf.len() as u32
+        match &self.home {
+            None => self.var_to_leaf.len() as u32,
+            Some(link) => link.home.num_vars(),
+        }
     }
 
     /// Total number of vtree nodes (leaves + internals).

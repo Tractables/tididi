@@ -13,8 +13,9 @@ impl Vtree {
     /// the child of two nodes; the bottom-up order covers every node once with
     /// children before parents (so there is no cycle) and its filtered views
     /// agree with it; every variable sits on at most one leaf, within the id
-    /// space, with [`Vtree::leaf_of`] pointing at it; and
-    /// [`Vtree::num_leaves`] counts the leaves.
+    /// space, with [`Vtree::leaf_of`] pointing at it;
+    /// [`Vtree::num_leaves`] counts the leaves; and on a projection, each
+    /// node stands for the node of [`Vtree::home`] the projection defines.
     ///
     /// `O(nodes)`. Every constructor runs it in debug builds, and
     /// [`Vtree::from_nodes`] refuses a node list it would reject, so a vtree in
@@ -92,17 +93,15 @@ impl Vtree {
     /// a leaf count that matches [`Vtree::num_leaves`].
     fn validate_leaves(&self) -> Result<(), VtreeError> {
         let mut leaf_count = 0u32;
-        let mut carried = vec![false; self.var_to_leaf.len()];
+        let num_vars = self.num_vars();
         for (i, node) in self.nodes.iter().enumerate() {
             if let VtreeNode::Leaf { var, .. } = node {
                 leaf_count += 1;
-                if var.0 == 0 || var.idx() >= carried.len() {
-                    return invalid(format!("leaf {i} carries variable {} outside the id space {}", var.0, carried.len()));
+                if var.0 == 0 || var.0 > num_vars {
+                    return invalid(format!("leaf {i} carries variable {} outside the id space {num_vars}", var.0));
                 }
-                if std::mem::replace(&mut carried[var.idx()], true) {
-                    return invalid(format!("variable {} sits on two leaves", var.0));
-                }
-                if self.var_to_leaf[var.idx()].idx() != i {
+                // A variable on two leaves fails here on one of them.
+                if self.leaf_of(*var) != Some(VtreeIdx(i as u32)) {
                     return invalid(format!("leaf_of({}) does not point at leaf {i}", var.0));
                 }
             }
@@ -110,6 +109,6 @@ impl Vtree {
         if leaf_count != self.num_leaves() {
             return invalid(format!("num_leaves() is {} but {leaf_count} leaves exist", self.num_leaves()));
         }
-        Ok(())
+        self.validate_home()
     }
 }

@@ -374,6 +374,13 @@ impl Vtree {
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn from_in_order(vars: &[VarId], depths: &[u32], num_vars: u32) -> Result<Self, VtreeError> {
+        Self::from_in_order_with_map(vars, depths, num_vars).map(|(vtree, _)| vtree)
+    }
+
+    /// [`Vtree::from_in_order`], with the map from in-order position to
+    /// node: leaf `i` is entry `2i`, and the node between leaves `i` and
+    /// `i + 1` is entry `2i + 1`.
+    pub(super) fn from_in_order_with_map(vars: &[VarId], depths: &[u32], num_vars: u32) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
         let k = vars.len();
         if k == 0 {
             return Err(VtreeError::Invalid("a vtree needs at least one variable".to_string()));
@@ -417,7 +424,7 @@ impl Vtree {
             if t.is_multiple_of(2) { Shape::Leaf(vars[t / 2]) } else { Shape::Internal(kids[t - 1], kids[t]) }
         };
         match reindex(root, n, num_vars, shape) {
-            Some((vtree, _)) => Ok(vtree),
+            Some(built) => Ok(built),
             None => {
                 let mut variables = vec![false; num_vars as usize];
                 for &var in vars {
@@ -587,6 +594,8 @@ fn reindex(root: VtreeIdx, n: usize, num_vars: u32, shape: impl Fn(VtreeIdx) -> 
         var_to_leaf,
         leaf_count,
         topo,
+        home: None,
+        home_index: std::sync::OnceLock::new(),
     };
     debug_assert_eq!(vtree.validate(), Ok(()));
     Some((vtree, old_to_new))

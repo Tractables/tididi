@@ -193,6 +193,7 @@ pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind
     };
     let (y, z) = promoted_first(kind, left, right);
 
+    vtree.reshaped();
     vtree.nodes[v.idx()] = internal_with(kind, y, w, v_parent);
     vtree.nodes[w.idx()] = internal_with(kind, z, x, Some(v));
     set_parent(&mut vtree.nodes, x, w);
@@ -215,6 +216,7 @@ impl Vtree {
     /// so it holds as it is; the diagram level at `v` has to have its pairs
     /// read the other way round to keep its meaning.
     pub(crate) fn swap_children(&mut self, v: VtreeIdx) {
+        self.reshaped();
         if let VtreeNode::Internal { left, right, .. } = &mut self.nodes[v.idx()] {
             std::mem::swap(left, right);
         }

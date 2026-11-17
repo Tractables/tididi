@@ -30,6 +30,7 @@
 mod build;
 mod expand;
 pub(crate) mod graft;
+mod home;
 mod node;
 mod project;
 pub(crate) mod rng;
