@@ -385,6 +385,7 @@ pub(super) fn take_level_fast_path(
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
+    let (f_t, g_t) = (f.level(t_idx), g.level(t_idx));
     let cone = run.cone;
     let ApplyRun {
         levels,
@@ -413,8 +414,8 @@ pub(super) fn take_level_fast_path(
     // be equal.
     let both_marginal_w1 = left_width == 1
         && right_width == 1
-        && f.level(t_idx).is_marginal()
-        && g.level(t_idx).is_marginal()
+        && f_t.is_marginal()
+        && g_t.is_marginal()
         && f_identity[left_idx]
         && f_identity[right_idx]
         && g_identity[left_idx]
@@ -423,8 +424,8 @@ pub(super) fn take_level_fast_path(
     if both_marginal_w1 {
         let mass = |level: &TddLevel| level.count_column().map(|c| c.get(0).to_count());
         debug_assert_eq!(
-            mass(f.level(t_idx)),
-            mass(g.level(t_idx)),
+            mass(f_t),
+            mass(g_t),
             "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
              masses — absorbing one side would be unsound"
         );
@@ -432,8 +433,8 @@ pub(super) fn take_level_fast_path(
     if right_width == 1
         && g_identity[left_idx]
         && g_identity[right_idx]
-        && (!g.level(t_idx).is_marginal() || both_marginal_w1)
-        && !(!f.level(t_idx).is_marginal()
+        && (!g_t.is_marginal() || both_marginal_w1)
+        && !(!f_t.is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP1: f is the carrier, g is the identity operand. A free level
@@ -452,8 +453,8 @@ pub(super) fn take_level_fast_path(
     if left_width == 1
         && f_identity[left_idx]
         && f_identity[right_idx]
-        && !f.level(t_idx).is_marginal()
-        && !(!g.level(t_idx).is_marginal()
+        && !f_t.is_marginal()
+        && !(!g_t.is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.

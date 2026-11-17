@@ -3,7 +3,7 @@
 //! [`Sides<T>`] holds the symmetric plans for the two children. Liveness masks
 //! are populated only after the selected route materializes its child grids.
 
-use crate::apply::conjoin::held::Held;
+use crate::apply::conjoin::held::Here;
 use crate::diagram::{ChildDecoder, ChildSide, Sides, TddLevel};
 use super::OperationError;
 use crate::Engine;
@@ -117,9 +117,7 @@ pub(super) struct MarginalPlan {
 /// the entry snapshot lets the test see a child that was marginal at entry
 /// but has since been stolen into the output by an identity swap.
 fn carrier(
-    f: &Held<'_>,
-    g: &Held<'_>,
-    t_idx: usize,
+    here: Operands<Here<'_>>,
     child_idx: usize,
     side: ChildSide,
     run: &ApplyRun,
@@ -141,15 +139,15 @@ fn carrier(
     // mid-loop cascade, and reads stale-false in the cells where the child
     // marginalizes mid-loop.
     // (1) is one read and (2) up to three, so (1) is tested first.
-    let marginal_ref = |op: &Held<'_>, carrier: Carrier| {
-        op.level(child_idx).is_marginal()
+    let marginal_ref = |op: Here<'_>, carrier: Carrier| {
+        side.pick(op.left, op.right).is_marginal()
             || entry.was_marginal(carrier, child_idx)
-            || op.level(t_idx).has_value_refs(side)
+            || op.t.has_value_refs(side)
     };
-    if g_identity[child_idx] && marginal_ref(f, Carrier::F) {
+    if g_identity[child_idx] && marginal_ref(here.f, Carrier::F) {
         return Some(Carrier::F);
     }
-    if f_identity[child_idx] && marginal_ref(g, Carrier::G) {
+    if f_identity[child_idx] && marginal_ref(here.g, Carrier::G) {
         return Some(Carrier::G);
     }
     None
@@ -170,21 +168,20 @@ fn carrier(
 ///
 /// The check is a debug assertion and is compiled out of a release build.
 fn debug_assert_no_marginal_products(
-    f: &Held<'_>,
-    g: &Held<'_>,
+    here: Operands<Here<'_>>,
     shape: LevelShape,
     passthrough: Sides<bool>,
 ) {
     let t_idx = shape.t.idx();
-    let both_marginal = |child_idx: usize| f.level(child_idx).is_marginal() && g.level(child_idx).is_marginal();
+    let (f, g) = (here.f, here.g);
     debug_assert!(
-        !both_marginal(shape.left.idx()) || passthrough.left,
+        !(f.left.is_marginal() && g.left.is_marginal()) || passthrough.left,
         "marginal×marginal product at left child {} (vtree {t_idx}): both operands carry \
          marginal counts and neither is the identity — a marginalized scope was re-constrained",
         shape.left.idx()
     );
     debug_assert!(
-        !both_marginal(shape.right.idx()) || passthrough.right,
+        !(f.right.is_marginal() && g.right.is_marginal()) || passthrough.right,
         "marginal×marginal product at right child {} (vtree {t_idx}): both operands carry \
          marginal counts and neither is the identity — a marginalized scope was re-constrained",
         shape.right.idx()
@@ -205,18 +202,17 @@ fn debug_assert_no_marginal_products(
 /// operand to the output, and the remaining parent references still use that
 /// child's marginal encoding.
 pub(super) fn plan_marginal_level(
-    f: &Held<'_>,
-    g: &Held<'_>,
+    here: Operands<Here<'_>>,
     shape: LevelShape,
     run: &ApplyRun,
     marginal: &LevelMarg,
 ) -> MarginalPlan {
-    let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
+    let (left_idx, right_idx) = (shape.left.idx(), shape.right.idx());
     let (left_marginal, right_marginal) = (marginal.left_any, marginal.right_any);
     let carriers = Sides { left: left_idx, right: right_idx }
-        .map(|side, child_idx| carrier(f, g, t_idx, child_idx, side, run));
+        .map(|side, child_idx| carrier(here, child_idx, side, run));
     debug_assert_no_marginal_products(
-        f, g, shape,
+        here, shape,
         Sides { left: carriers.left.is_some(), right: carriers.right.is_some() },
     );
 
@@ -235,10 +231,10 @@ pub(super) fn plan_marginal_level(
         shape.f.here.saturating_mul(shape.g.here),
         Sides { left: shape.g.left, right: shape.g.right },
     );
-    let f_multi = f.level(t).has_multi_pair();
-    let g_multi = (f_multi || one_sided_fits) && g.level(t).has_multi_pair();
+    let f_multi = here.f.t.has_multi_pair();
+    let g_multi = (f_multi || one_sided_fits) && here.g.t.has_multi_pair();
     let both_multi_pair = f_multi && g_multi;
-    let single_pair = !f_multi && !if one_sided_fits { g_multi } else { g.level(t).has_multi_pair() };
+    let single_pair = !f_multi && !if one_sided_fits { g_multi } else { here.g.t.has_multi_pair() };
     let one_sided_masks = one_sided_fits && f_multi != g_multi && !super::one_sided_masks_forced_off();
     // A pass-through side has no product grid to filter against, so it is
     // treated as alive throughout. The liveness masks, which read the child

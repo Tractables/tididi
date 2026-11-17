@@ -42,7 +42,7 @@
 //! ([`LevelRefusal`](crate::limits::LevelRefusal)). Debug builds count every
 //! level they can and check the count against the level built.
 
-use crate::apply::conjoin::held::Held;
+use crate::apply::conjoin::held::{Held, Here};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::diagram::{ChildPair, ChildSide, EncodedNode, TddLevel};
 use crate::vtree::VtreeIdx;
@@ -50,7 +50,7 @@ use super::{Complete, Passthrough, NO_PRODUCT};
 use super::grid_arena::grid_cells;
 use super::products::{ProductEntry, Products};
 use super::route::Route;
-use super::setup::{ApplyRun, LevelShape};
+use super::setup::{ApplyRun, LevelShape, Operands};
 
 /// The fewest bytes one output pair holds: a slot of the pairs arena, or,
 /// as a node's one pair, the node's own word.
@@ -503,8 +503,7 @@ fn counted(pairs: Result<Option<Pairs>, OperationError>) -> Result<Option<Pairs>
 pub(super) fn price_dense_level(
     lim: &Limits,
     run: &ApplyRun,
-    f: &Held<'_>,
-    g: &Held<'_>,
+    here: Operands<Here<'_>>,
     shape: LevelShape,
     route: Route,
 ) -> Result<Option<Pairs>, OperationError> {
@@ -517,7 +516,7 @@ pub(super) fn price_dense_level(
     };
     let grid = cells(fw.here, gw.here) + ungridded(left, fw.left, gw.left) + ungridded(right, fw.right, gw.right);
     let grid = grid_bytes(products, grid);
-    let (f_level, g_level) = (f.level(t), g.level(t));
+    let (f_level, g_level) = (here.f.t, here.g.t);
     // Read where the grid and every combination of pairs could outgrow it:
     // a level they fit in is neither counted nor refused.
     let room = room_short_of(lim, grid.saturating_add(output_bytes(combinations_bound(f_level, g_level))));
@@ -631,7 +630,7 @@ pub(super) struct CompleteLevel {
 /// are complete and read by arithmetic.
 pub(super) fn complete_level(
     run: &ApplyRun,
-    (f, g): (&Held<'_>, &Held<'_>),
+    here: Operands<Here<'_>>,
     shape: LevelShape,
     route: Route,
 ) -> Option<CompleteLevel> {
@@ -643,8 +642,8 @@ pub(super) fn complete_level(
     {
         return None;
     }
-    let (fp, fl, fs) = census(f.level(shape.t));
-    let (gp, gl, gs) = census(g.level(shape.t));
+    let (fp, fl, fs) = census(here.f.t);
+    let (gp, gl, gs) = census(here.g.t);
     Some(CompleteLevel {
         nodes: fl * gl,
         work: fp * gp + fl * shape.g.here as u128,
@@ -669,7 +668,7 @@ pub(super) fn complete_level(
 pub(super) fn refuse_past_cap(
     lim: &Limits,
     run: &ApplyRun,
-    (f, g): (&Held<'_>, &Held<'_>),
+    here: Operands<Here<'_>>,
     shape: LevelShape,
     route: Route,
     before: u64,
@@ -683,9 +682,9 @@ pub(super) fn refuse_past_cap(
     {
         return Ok(());
     }
-    let Some(level) = complete_level(run, (f, g), shape, route) else { return Ok(()) };
+    let Some(level) = complete_level(run, here, shape, route) else { return Ok(()) };
     let total = u128::from(before) + level.nodes;
-    let emit = emit_pair_bound(f.level(shape.t), g.level(shape.t));
+    let emit = emit_pair_bound(here.f.t, here.g.t);
     // The meter rises by the arena's seed, the capacity the output level
     // holds from the pool doubled at most, and the doublings to the
     // arena's pairs.
