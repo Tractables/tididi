@@ -322,13 +322,13 @@ impl Vtree {
         // refuses one, the full check, which reads the whole list, names what
         // is wrong. Both refuse the same lists.
         let n = old_nodes.len();
+        // A region reads as a leaf of no variable, which the walk refuses.
         let shape = |t: VtreeIdx| match old_nodes[t.idx()] {
-            VtreeNode::Leaf { var, .. } => Shape::Leaf(var),
-            VtreeNode::Region { .. } => Shape::Region,
             VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
+            VtreeNode::Leaf { var, .. } => Shape::Leaf(var),
+            VtreeNode::Region { .. } => Shape::Leaf(VarId(0)),
         };
-        let has_region = old_nodes.iter().any(VtreeNode::is_region);
-        let reindexed = if n > 0 && root.idx() < n && !has_region && check_var_space(num_vars, n).is_ok() {
+        let reindexed = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
             reindex(root, (n, 0), num_vars, shape)
         } else {
             None
@@ -384,7 +384,7 @@ impl Vtree {
     /// [`Vtree::from_in_order`], with the map from in-order position to
     /// node: leaf `i` is entry `2i`, and the node between leaves `i` and
     /// `i + 1` is entry `2i + 1`. The positions in `regions`, ascending, are
-    /// regions, and their entries of `vars` are not read.
+    /// regions, and their entries of `vars` are ignored.
     pub(super) fn from_in_order_with_map(
         vars: &[VarId],
         depths: &[u32],
@@ -431,13 +431,20 @@ impl Vtree {
         }
         let shape = |t: VtreeIdx| {
             let t = t.idx();
-            match t.is_multiple_of(2) {
-                true if regions.binary_search(&(t as u32 / 2)).is_ok() => Shape::Region,
-                true => Shape::Leaf(vars[t / 2]),
-                false => Shape::Internal(kids[t - 1], kids[t]),
-            }
+            if t.is_multiple_of(2) { Shape::Leaf(vars[t / 2]) } else { Shape::Internal(kids[t - 1], kids[t]) }
         };
-        match reindex(root, (n, regions.len() as u32), num_vars, shape) {
+        // Its own instance of the reindex, so that a tree without regions
+        // runs no region test.
+        let built = if regions.is_empty() {
+            reindex(root, (n, 0), num_vars, shape)
+        } else {
+            let shape = |t: VtreeIdx| match shape(t) {
+                Shape::Leaf(_) if regions.binary_search(&(t.0 / 2)).is_ok() => Shape::Region,
+                other => other,
+            };
+            reindex(root, (n, regions.len() as u32), num_vars, shape)
+        };
+        match built {
             Some(built) => Ok(built),
             None => {
                 let mut variables = vec![false; num_vars as usize];

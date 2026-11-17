@@ -4,7 +4,7 @@ use super::topo::TopoOrder;
 use super::{VarId, VtreeIdx};
 
 /// A node in the vtree (variable tree).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VtreeNode {
     /// A leaf holding a single variable.
     Leaf {

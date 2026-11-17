@@ -850,33 +850,25 @@ impl Plan {
                     node => break node,
                 }
             };
-            match (image, source.node(s)) {
-                // A source leaf meets the destination leaf carrying its image.
-                (VtreeNode::Leaf { .. }, VtreeNode::Leaf { .. }) if embedding[s.idx()] == d => {}
-                (
-                    &VtreeNode::Internal { left, right, .. },
-                    &VtreeNode::Internal {
-                        left: source_left,
-                        right: source_right,
-                        ..
-                    },
-                ) => {
-                    let (mut source_left, mut source_right) = (source_left, source_right);
-                    if *mirror
-                        && lies_under(
-                            into,
-                            embedding[some_leaf[source_left.idx()].idx()],
-                            right,
-                            d,
-                        )
-                    {
-                        mirrored[s.idx()] = true;
-                        std::mem::swap(&mut source_left, &mut source_right);
-                    }
-                    lim.try_push(stack, (left, source_left))?;
-                    lim.try_push(stack, (right, source_right))?;
+            // One variant test per node: a `match` over the pair decodes the
+            // node's niche discriminant first, which costs this loop more.
+            if let &VtreeNode::Internal { left, right, .. } = image {
+                let &VtreeNode::Internal { left: mut source_left, right: mut source_right, .. } = source.node(s) else {
+                    return Err(EmbedError::NotIsomorphic { source: s });
+                };
+                if *mirror && lies_under(into, embedding[some_leaf[source_left.idx()].idx()], right, d) {
+                    mirrored[s.idx()] = true;
+                    std::mem::swap(&mut source_left, &mut source_right);
                 }
-                _ => return Err(EmbedError::NotIsomorphic { source: s }),
+                lim.try_push(stack, (left, source_left))?;
+                lim.try_push(stack, (right, source_right))?;
+            } else if !(matches!(image, VtreeNode::Leaf { .. })
+                && matches!(source.node(s), VtreeNode::Leaf { .. })
+                && embedding[s.idx()] == d)
+            {
+                // Only a source leaf meeting the destination leaf carrying its
+                // image matches here.
+                return Err(EmbedError::NotIsomorphic { source: s });
             }
             embedding[s.idx()] = d;
             covered_by[d.idx()] = Some(s);
