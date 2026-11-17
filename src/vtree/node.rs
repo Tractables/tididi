@@ -107,6 +107,8 @@ pub struct Vtree {
     /// that carry no leaf are meaningless, which is why [`Vtree::leaf_of`] is
     /// documented for covered variables only.
     pub(super) var_to_leaf: Vec<VtreeIdx>,
+    /// [`Vtree::num_vars`]: `var_to_leaf.len()`, or the home's on a projection.
+    pub(super) id_space: u32,
     /// Number of leaf nodes; smaller than `var_to_leaf.len()` when the variable
     /// numbering has gaps.
     pub(super) leaf_count: u32,
@@ -173,7 +175,7 @@ impl Vtree {
     #[inline]
     pub fn leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
         let Some(&leaf) = self.var_to_leaf.get(var.0.checked_sub(1)? as usize) else {
-            return self.home.as_deref()?.leaf_of(var);
+            return self.projected_leaf_of(var);
         };
         match self.nodes.get(leaf.idx()) {
             Some(VtreeNode::Leaf { var: on_leaf, .. }) if *on_leaf == var => Some(leaf),
@@ -189,10 +191,7 @@ impl Vtree {
     /// [`Vtree::from_nodes`] make it larger.
     #[inline]
     pub fn num_vars(&self) -> u32 {
-        match &self.home {
-            None => self.var_to_leaf.len() as u32,
-            Some(link) => link.home.num_vars(),
-        }
+        self.id_space
     }
 
     /// Total number of vtree nodes (leaves + internals).

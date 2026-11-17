@@ -290,18 +290,27 @@ impl Vtree {
             node_of[in_order[2 * i + 1].idx()] = index.gap_node[g as usize];
         }
         own.var_to_leaf = Vec::new();
+        own.id_space = home.num_vars();
         own.context = Arc::clone(&home.context);
         own.home = Some(Arc::new(HomeLink { home: Arc::clone(home), index, ranks, node_of, in_order }));
         debug_assert_eq!(own.validate(), Ok(()));
         own
     }
 
+    /// Kept out of line so that [`Vtree::leaf_of`] on a root vtree stays as
+    /// small as it was before projections.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn projected_leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
+        self.home.as_deref()?.leaf_of(var)
+    }
+
     /// Called by every change of shape: a root's index goes stale, and a
     /// projection becomes a root with a dense leaf table.
     pub(super) fn reshaped(&mut self) {
         self.home_index.take();
-        if let Some(link) = self.home.take() {
-            self.var_to_leaf = vec![VtreeIdx(0); link.home.num_vars() as usize];
+        if self.home.take().is_some() {
+            self.var_to_leaf = vec![VtreeIdx(0); self.id_space as usize];
             for (i, node) in self.nodes.iter().enumerate() {
                 if let VtreeNode::Leaf { var, .. } = node {
                     self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
