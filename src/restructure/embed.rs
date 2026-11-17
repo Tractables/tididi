@@ -1086,6 +1086,26 @@ fn assemble_moving<'a>(
             Err(e) => return Err(refuse(e, placement, tdd)),
         };
     let chains = !literal_tops.is_empty();
+    // Room for the result's loose levels where `tdd`'s are known and some
+    // may be listed, and a borrowed diagram's worklists copied with room
+    // for the inner pass's share of the leaf pass's, taken before the seat:
+    // `unseat` does not undo the renumbering below.
+    let mut listed = Vec::new();
+    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || chains);
+    let copied = match listing {
+        true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
+        false => Ok(()),
+    }
+    .and_then(|()| match &tdd {
+        Cow::Owned(_) => Ok(None),
+        Cow::Borrowed(source) => {
+            source.dirty.clone_on(eng).and_then(|mut copied| copied.reserve_leaf_owes_inner(eng).map(|()| Some(copied)))
+        }
+    });
+    let copied = match copied {
+        Ok(copied) => copied,
+        Err(e) => return Err(refuse(e, placement, tdd)),
+    };
     // Seated owing nothing: `tdd` keeps its worklists until the last
     // refusal is behind, which leaves nothing to put back.
     let mut result = match placement.seat(tdd.output().local, crate::diagram::Dirty::default()) {
@@ -1093,32 +1113,17 @@ fn assemble_moving<'a>(
         Err((e, placement)) => return Err(refuse(e, placement, tdd)),
     };
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
-    // The renumbering is planned whole, so a refusal finds `result` as
-    // seated and gives a moved diagram its levels back.
+    // The last refusal: the renumbering is planned whole, so a refusal finds
+    // `result` as seated and gives a moved diagram its levels back.
     let closed = result.levels.is_closed();
     if !literal_tops.is_empty()
         && let Err(e) = crate::diagram::remap_refs_into_all(eng.limits(), &mut result, &literal_tops, &[u32::MAX, 0, 1])
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
-    // Room for the result's loose levels where `tdd`'s are known and some
-    // may be listed, then the worklists: a moved diagram's own, a borrowed
-    // one's copied, with room for the inner pass's share of the leaf pass's.
-    let mut listed = Vec::new();
-    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || chains);
-    let carried = match listing {
-        true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
-        false => Ok(()),
-    }
-    .and_then(|()| match &mut tdd {
-        Cow::Owned(moved) => Ok(moved.take_worklists()),
-        Cow::Borrowed(source) => {
-            source.dirty.clone_on(eng).and_then(|mut copied| copied.reserve_leaf_owes_inner(eng).map(|()| copied))
-        }
-    });
-    let mut carried = match carried {
-        Ok(carried) => carried,
-        Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
+    let mut carried = match (&mut tdd, copied) {
+        (Cow::Owned(moved), _) => moved.take_worklists(),
+        (Cow::Borrowed(_), copied) => copied.expect("a borrowed diagram's worklists are copied"),
     };
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
