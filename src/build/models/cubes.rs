@@ -225,8 +225,7 @@ impl Scratch {
     }
 }
 
-/// Cubes from which one-word cubes are re-encoded through byte tables, as
-/// rows are.
+/// Cubes from which one-word cubes are re-encoded through byte tables.
 const BYTE_TABLE_MIN_CUBES: usize = 64;
 
 /// The input cubes in leaf order, values clear where they are free, each

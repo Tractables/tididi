@@ -113,36 +113,6 @@ fn owned_rows(
         for row in packed.chunks_exact_mut(w) {
             row[w - 1] &= tail_mask;
         }
-    } else if layout.is_reversed() {
-        // `vars` runs left to right in leaf order and the leftmost leaf holds
-        // the highest bit, so re-encoding reverses a row's bits; the bits past
-        // the last variable land below the row and shift out.
-        gate.poll(rows.len() as u64)?;
-        let shift = w * 64 - num_vars;
-        if w == 1 {
-            packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
-        } else {
-            packed.resize(rows.len(), 0);
-            for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
-                for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
-                    *to = word.reverse_bits();
-                }
-                if shift > 0 {
-                    for j in 0..w {
-                        let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
-                        out[j] = out[j] >> shift | above;
-                    }
-                }
-            }
-        }
-    } else if w == 1 && n >= BYTE_TABLE_MIN_ROWS {
-        // One table per byte of the input word holds where that byte's bits
-        // land, so a row is re-encoded by eight lookups instead of one step
-        // per set bit.
-        let table = layout.byte_table(lim)?;
-        gate.poll(n as u64)?;
-        packed.extend(rows.iter().map(|&word| Layout::reencode_word(&table, word)));
-        lim.discard(table);
     } else {
         packed.resize(rows.len(), 0);
         for k in 0..n {
@@ -166,7 +136,7 @@ fn owned_rows(
     }
 
     gate.flush()?;
-    sorted_distinct(lim, radix, num_vars, layout, packed, w)
+    sorted_distinct(lim, radix, num_vars, packed, w)
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats
@@ -175,7 +145,6 @@ pub(super) fn sorted_distinct(
     lim: &Limits,
     radix: &mut Radix,
     num_vars: usize,
-    layout: &Layout,
     mut packed: Vec<u64>,
     w: usize,
 ) -> Result<Vec<u64>, OperationError> {
@@ -188,8 +157,7 @@ pub(super) fn sorted_distinct(
         if !packed.is_sorted() {
             // The words are bit-packed values, which a radix sort places in a
             // fixed number of linear passes.
-            let lo = ordered_low_bits(layout, &packed);
-            radix.sort(lim, &mut packed, lo, num_vars - lo)?;
+            radix.sort(lim, &mut packed, 0, num_vars)?;
         }
         packed.dedup();
         return Ok(packed);
@@ -220,38 +188,6 @@ pub(super) fn sorted_distinct(
     lim.discard(order);
     Ok(out)
 }
-
-/// The widest trailing subtree whose bits already ascend down the rows.
-///
-/// A trailing subtree's variables, the vtree's rightmost, are the low bits
-/// of a re-encoded row. A table sorted on the columns placed there, as
-/// tables usually are on their first column, lists its rows in ascending
-/// order of those bits, and the radix sort need not place them. Zero when no
-/// trailing subtree is ordered.
-fn ordered_low_bits(layout: &Layout, packed: &[u64]) -> usize {
-    let mut below = 64;
-    loop {
-        // The widest trailing subtree narrower than the last one tried.
-        let widest = (0..layout.lo.len())
-            .filter(|&t| layout.lo[t] == 0 && layout.count[t] > 0 && layout.count[t] < below)
-            .map(|t| layout.count[t])
-            .max();
-        let Some(width) = widest else { return 0 };
-        let mask = (1u64 << width) - 1;
-        if packed
-            .windows(2)
-            .all(|pair| pair[0] & mask <= pair[1] & mask)
-        {
-            return width as usize;
-        }
-        below = width;
-    }
-}
-
-/// Rows from which re-encoding a one-word row goes through byte tables,
-/// whose construction costs about as much as re-encoding this many rows bit
-/// by bit.
-const BYTE_TABLE_MIN_ROWS: usize = 64;
 
 /// Compare two whole rows as numbers, high word first.
 fn compare_row(packed: &[u64], w: usize, a: u32, b: u32) -> std::cmp::Ordering {

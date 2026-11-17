@@ -199,6 +199,20 @@ fn compare_value(
     std::cmp::Ordering::Equal
 }
 
+/// First re-encoded bit of each vtree node's subtree: a right child's bits
+/// lie below its left sibling's.
+fn subtree_lo(vtree: &Vtree, layout: &Layout) -> Vec<u32> {
+    let mut lo = vec![0u32; vtree.num_nodes()];
+    for t in vtree.bottomup().rev() {
+        if !vtree.node(t).is_leaf() {
+            let (left, right) = vtree.children(t);
+            lo[right.idx()] = lo[t.idx()];
+            lo[left.idx()] = lo[t.idx()] + layout.count[right.idx()];
+        }
+    }
+    lo
+}
+
 /// Fill every level bottom-up and return the diagram's output node.
 fn fill(
     eng: &Engine,
@@ -217,6 +231,7 @@ fn fill(
     let mut emitted = 0u64;
     let num_vars = layout.count[vtree.root().idx()] as usize;
     let varying = varying_bits(lim, sorted, w)?;
+    let lo = subtree_lo(vtree, layout);
 
     for t in vtree.bottomup() {
         lim.check_stop()?;
@@ -224,7 +239,7 @@ fn fill(
         let width = layout.count[t.idx()] as usize;
         let finished = match (width, one_sided_child(vtree, layout, t)) {
             (0, _) => free_subtree(eng, assembly, vtree, &state, t, leaf)?,
-            (_, _) if leaf => leaf_atoms(lim, sorted, w, layout.lo[t.idx()] as usize, &varying)?,
+            (_, _) if leaf => leaf_atoms(lim, sorted, w, lo[t.idx()] as usize, &varying)?,
             (_, Some(constrained)) => {
                 carry_child(eng, assembly, vtree, &mut state, t, constrained)?
             }
@@ -232,7 +247,7 @@ fn fill(
                 close_subtree(eng, assembly, vtree, &state, &mut scratch, t, (sorted, w))?
             }
             _ => {
-                let lo = layout.lo[t.idx()] as usize;
+                let lo = lo[t.idx()] as usize;
                 let span = ValueSpan {
                     lo,
                     width,
@@ -973,43 +988,6 @@ fn leaves(vtree: &Vtree, t: crate::vtree::VtreeIdx, out: &mut Vec<VarId>) {
     let (left, right) = vtree.children(t);
     leaves(vtree, left, out);
     leaves(vtree, right, out);
-}
-
-#[test]
-fn rows_ordered_on_a_trailing_subtree_sort_only_the_bits_above_it() {
-    // Tables usually arrive sorted on their first column. When that column
-    // fills a trailing subtree, whose leaves are the low bits of a
-    // re-encoded row, the row sort starts above the subtree's bits.
-    let mut rng = Lcg::new(0x5eed);
-    for round in 0..9usize {
-        let n = 20 + (rng.next_u64() % 40) as u32;
-        let vt = vtrees(n, &mut rng);
-        let (name, vtree) = &vt[round % vt.len()];
-        let mut vars = Vec::new();
-        leaves(vtree, vtree.root(), &mut vars);
-        vars.reverse();
-        let mut trail = vtree.children(vtree.root()).1;
-        for _ in 0..round % 3 {
-            if !vtree.node(trail).is_leaf() {
-                trail = vtree.children(trail).1;
-            }
-        }
-        let mut trailing = Vec::new();
-        leaves(vtree, trail, &mut trailing);
-        let mask = (1u64 << trailing.len()) - 1;
-        let m = 17000 + (rng.next_u64() % 20000) as usize;
-        let mut rows = rows_for(n as usize, m, round as u64, &mut rng);
-        rows.sort_by_key(|&row| row & mask);
-        check(
-            vtree,
-            &vars,
-            &rows,
-            &format!(
-                "ordered round {round} {name} n={n} trailing={}",
-                trailing.len()
-            ),
-        );
-    }
 }
 
 #[test]

@@ -16,11 +16,8 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 /// out left to right lists them, are already in ascending order.
 pub(crate) struct Layout {
     identity: bool,
-    reversed: bool,
     /// Constrained variables in each vtree node's subtree.
     pub(super) count: Vec<u32>,
-    /// First re-encoded bit position of each vtree node's subtree.
-    pub(super) lo: Vec<u32>,
     /// Re-encoded bit position of each variable of `vars`.
     pub(super) position: Vec<u32>,
 }
@@ -58,22 +55,15 @@ impl Layout {
             let leaf = vtree.leaf_of(var).expect("checked above");
             position[i] = lo[leaf.idx()];
         }
+        lim.discard(lo);
         let identity = position.iter().enumerate().all(|(i, &p)| p as usize == i);
-        let last = vars.len().saturating_sub(1);
-        let reversed = position.iter().enumerate().all(|(i, &p)| p as usize == last - i);
-        Ok(Transient::new(lim, Layout { identity, reversed, count, lo, position }))
+        Ok(Transient::new(lim, Layout { identity, count, position }))
     }
 
     /// Whether `vars` was given from the rightmost leaf to the leftmost, so
     /// that re-encoding a row is a copy.
     pub(super) fn is_identity(&self) -> bool {
         self.identity
-    }
-
-    /// Whether `vars` was given in leaf order, left to right, so that
-    /// re-encoding a row reverses its bits.
-    pub(super) fn is_reversed(&self) -> bool {
-        self.reversed
     }
 
     /// The node at or below the constrained node `t` whose atoms are `t`'s: `t`
@@ -92,7 +82,7 @@ impl Layout {
     }
 
     /// One table per byte of an input word holding where that byte's bits land
-    /// in a re-encoded word, so a one-word row is re-encoded by eight lookups
+    /// in a re-encoded word, so a one-word cube is re-encoded by eight lookups
     /// ([`Self::reencode_word`]).
     pub(super) fn byte_table(&self, lim: &Limits) -> Result<Vec<u64>, OperationError> {
         let mut table = Vec::new();
@@ -117,6 +107,6 @@ impl Layout {
 
 impl Charged for Layout {
     fn charged_bytes(&self) -> u64 {
-        [&self.count, &self.lo, &self.position].iter().map(|buf| buf.charged_bytes()).sum()
+        [&self.count, &self.position].iter().map(|buf| buf.charged_bytes()).sum()
     }
 }
