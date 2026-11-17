@@ -56,7 +56,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     for cut in 0..10u32 {
         let eng = Engine::new();
         let mut b = Tdd::builder(&eng, &tree).unwrap();
-        eng.limits().refuse_nth_reserve(cut);
+        eng.refuse_nth_reserve(cut);
         match fill(&eng, &mut b, &tree) {
             Ok(output) => {
                 eng.limits().grant_every_reserve();
@@ -80,7 +80,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
 fn a_refused_level_take_leaves_the_builder_over_budget() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     assert_eq!(Tdd::builder(&eng, &tree).unwrap_err(), crate::OperationError::OverBudget);
     eng.limits().grant_every_reserve();
     assert!(Tdd::builder(&eng, &tree).is_ok());
@@ -127,12 +127,12 @@ fn interning_recovers_after_an_index_update_is_refused() {
         builder.reserve(&eng, root, 1, second.len()).unwrap();
         // The append fits the reservation, so the first reserve the push
         // takes is its hash-table update: refuse that one.
-        eng.limits().refuse_nth_reserve(0);
+        eng.refuse_nth_reserve(0);
         assert_eq!(builder.push(&eng, root, &second), Err(OperationError::OverBudget));
         eng.limits().grant_every_reserve();
         assert_eq!(builder.level(root).slot_count(), 2);
         // Rebuilding the discarded index may also be refused and retried.
-        eng.limits().refuse_nth_reserve(0);
+        eng.refuse_nth_reserve(0);
         assert_eq!(builder.intern(&eng, root, &second), Err(OperationError::OverBudget));
         eng.limits().grant_every_reserve();
         let recovered = builder.intern(&eng, root, &second).unwrap();

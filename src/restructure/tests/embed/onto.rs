@@ -302,10 +302,15 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
                 break;
             }
             Err(refused) => {
-                let back = |got: &Tdd, given: &Tdd, on: &Tdd| match Arc::ptr_eq(got.vtree(), &into) {
-                    true => same_storage(got, on),
-                    false => same_storage(got, given),
+                let reference = |got: &Tdd, given: &Tdd, on: &Tdd| match Arc::ptr_eq(got.vtree(), &into) {
+                    true => on.clone(),
+                    false => given.clone(),
                 };
+                let count = |t: &Tdd| Engine::new().model_count(t).map_err(|e| format!("{e:?}"));
+                for (got, given, on) in [(&refused.f, &f, &f_on), (&refused.g, &g, &g_on)] {
+                    assert_eq!(count(got), count(&reference(got, given, on)), "refused at {n}: another model count");
+                }
+                let back = |got: &Tdd, given: &Tdd, on: &Tdd| same_storage(got, &reference(got, given, on));
                 assert!(back(&refused.f, &f, &f_on) && back(&refused.g, &g, &g_on), "refused at {n}: an operand changed");
                 let at = (Arc::ptr_eq(refused.f.vtree(), &into), Arc::ptr_eq(refused.g.vtree(), &into));
                 if no_earlier {
@@ -326,7 +331,7 @@ fn every_refused_reserve_gives_the_operands_back() {
     for mirror in [false, true] {
         let seen = refuse_at_every_point(
             |eng, n| {
-                eng.limits().refuse_nth_reserve(n as u32);
+                eng.refuse_nth_reserve(n as u32);
                 None
             },
             false,

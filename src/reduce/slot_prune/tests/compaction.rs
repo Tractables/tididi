@@ -482,7 +482,7 @@ fn a_refused_prune_leaves_the_level_untouched() {
         let mut refusals = 0;
         for n in 0.. {
             let mut tdd = original.clone();
-            eng.limits().refuse_nth_reserve(n);
+            eng.refuse_nth_reserve(n);
             let outcome = prune_value_slots(&eng, &mut tdd);
             let fired = !eng.limits().refusal_pending();
             eng.limits().grant_every_reserve();

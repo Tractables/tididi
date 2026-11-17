@@ -251,7 +251,7 @@ fn conditioning_recovers_from_each_reservation_refusal() {
             let mut refusals = 0;
             for cut in 0..256 {
                 let engine = Engine::new();
-                engine.limits().refuse_nth_reserve(cut);
+                engine.refuse_nth_reserve(cut);
                 let result = engine.condition(f.clone(), [-5, last]);
                 engine.limits().grant_every_reserve();
                 let g = match result {

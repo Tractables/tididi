@@ -288,7 +288,7 @@ fn every_refused_reservation_comes_back_as_a_refusal() {
                 let label = format!("{shape} {name} prune {prune}");
                 let mut refusals = 0;
                 for n in 0.. {
-                    eng.limits().refuse_nth_reserve(n);
+                    eng.refuse_nth_reserve(n);
                     let got = and_in_place_on(&eng, f.clone(), g, prune);
                     let fired = !eng.limits().refusal_pending();
                     eng.limits().grant_every_reserve();

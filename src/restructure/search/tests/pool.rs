@@ -451,7 +451,7 @@ fn every_refused_pool_reservation_restores_all_members() {
     let mut granted = false;
     for nth in 0..1000 {
         let mut members = original.clone();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let result = with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| true));
         eng.limits().grant_every_reserve();
         match result {
@@ -574,7 +574,7 @@ fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
         let (mut refused, mut absorbed, mut nth) = (0, 0, 0);
         loop {
             let mut members = original.clone();
-            eng.limits().refuse_nth_reserve(nth);
+            eng.refuse_nth_reserve(nth);
             let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &config));
             let pending = eng.limits().refusal_pending();
             eng.limits().grant_every_reserve();
@@ -620,7 +620,7 @@ fn a_refused_restart_returns_the_descents_pool_and_charges() {
     let vtree = descended[0].vtree().to_text();
     let search = |nth: u32| {
         let mut members = original.clone();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &with_restarts()));
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();

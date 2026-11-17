@@ -26,7 +26,7 @@ fn refused_weight_slot_preserves_values_and_width() {
     // Force the next append to grow instead of using spare capacity.
     let column = tdd.weights.as_mut().unwrap().level_vals_mut(level.idx()).unwrap();
     *column = std::mem::take(column).into_boxed_slice().into_vec();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     let result = WeightFold::push_slot(&eng, &mut tdd, level, WeightValue::ExactSmall(0));
     eng.limits().grant_every_reserve();
     assert_eq!(result, Err(OperationError::OverBudget));

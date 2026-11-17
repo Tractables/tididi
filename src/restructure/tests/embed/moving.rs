@@ -248,7 +248,7 @@ fn every_refused_reserve_gives_the_diagram_back() {
     for (mirror, counts, owing) in [(false, false, false), (true, false, false), (false, true, false), (true, true, true), (false, false, true)] {
         let refusals = refuse_at_every_point(
             |eng, n| {
-                eng.limits().refuse_nth_reserve(n as u32);
+                eng.refuse_nth_reserve(n as u32);
                 None
             },
             mirror,

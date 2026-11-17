@@ -17,7 +17,7 @@ fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
     }
     let mut completed = false;
     for reserve in 0..128 {
-        eng.limits().refuse_nth_reserve(reserve);
+        eng.refuse_nth_reserve(reserve);
         let result = eng.counter_with(&f, Retention::All, PinSemantics::Evidence);
         eng.limits().grant_every_reserve();
         match result {
@@ -45,7 +45,7 @@ fn overflow_refusals(retention: Retention) {
         for var in 1..=132 { counter.set_pin(VarId(var), Some(false)).unwrap(); }
         assert_eq!(counter.model_count().unwrap(), 1u32.into());
         for var in 1..=132 { counter.set_pin(VarId(var), None).unwrap(); }
-        eng.limits().refuse_nth_reserve(reserve);
+        eng.refuse_nth_reserve(reserve);
         let result = counter.model_count();
         eng.limits().grant_every_reserve();
         assert_eq!(counter.model_count().unwrap(), expected, "reserve {reserve}");
@@ -210,7 +210,7 @@ fn node_count_export_recovers_from_each_allocation_refusal() {
     let mut refusals = 0;
     let mut completed = false;
     for cut in 0..16 {
-        engine.limits().refuse_nth_reserve(cut);
+        engine.refuse_nth_reserve(cut);
         let result = engine.node_counts_u128(&f);
         engine.limits().grant_every_reserve();
         assert_eq!(engine.node_counts_u128(&f).unwrap(), expected);

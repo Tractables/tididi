@@ -29,7 +29,7 @@ fn wide_marks_recover_after_allocation_refusal() {
     let (v, node) = (f.output.vtree, f.output.local);
     for nth in 0..2 {
         let mut marks = PairMarks::new(&eng, &f).unwrap();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         assert_eq!(marks.mark_many(&eng, v, node, 65, [64]), Err(OperationError::OverBudget));
         eng.limits().grant_every_reserve();
         assert!(!marks.row(v, node, 65).contains(64));

@@ -129,7 +129,7 @@ fn embedding_retries_after_each_refused_reservation_without_changing_the_source(
     let mut refusals = 0;
     for cut in 0..256 {
         let engine = Engine::new();
-        engine.limits().refuse_nth_reserve(cut);
+        engine.refuse_nth_reserve(cut);
         let result = engine.embed(&f, &big, rename);
         engine.limits().grant_every_reserve();
         let (g, levels) = match result {

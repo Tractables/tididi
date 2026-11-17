@@ -281,7 +281,7 @@ fn every_overlay_refusal_leaves_the_engine_reusable() {
                     let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
                     Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
                 } else {
-                    eng.limits().refuse_nth_reserve(cut as u32);
+                    eng.refuse_nth_reserve(cut as u32);
                     None
                 };
                 let outcome = operation(&eng, f.clone(), g.clone());

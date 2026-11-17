@@ -23,7 +23,7 @@ fn weighted_reads_recover_from_budget_and_allocator_refusals() {
             assert_eq!(engine.weighted_value(&f).unwrap_err(), OperationError::OverBudget);
         }
         for n in [0, 1] {
-            engine.limits().refuse_nth_reserve(n);
+            engine.refuse_nth_reserve(n);
             assert_eq!(engine.weighted_value(&f).unwrap_err(), OperationError::OverBudget);
             engine.limits().grant_every_reserve();
         }

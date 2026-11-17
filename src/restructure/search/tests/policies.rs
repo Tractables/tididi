@@ -354,7 +354,7 @@ fn refusals_in_a_multistart_keep_the_function() {
     let mut nth = 0;
     loop {
         let mut tdd = start.clone();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let outcome = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config(restarts));
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();

@@ -97,7 +97,7 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     let mut reached_success = false;
     for nth in 0..512 {
         let eng = Engine::new();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         match exists_leaves_structural(&eng, f.clone(), &[leaf], ReductionPlan::default()) {
             Ok(result) => { assert_canonical(&result); reached_success = true; break; }
             Err(error) => assert_eq!(error, OperationError::OverBudget),

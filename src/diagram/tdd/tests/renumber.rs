@@ -257,7 +257,7 @@ fn a_refused_allocation_leaves_the_operand_intact() {
     let mut completed = false;
     for nth in 0..4096 {
         let eng = Engine::new();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let result = eng.renumber_top_down(&f);
         eng.limits().grant_every_reserve();
         assert_eq!(pairs_by_node(&f), before, "reservation {nth} changed the operand");

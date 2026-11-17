@@ -270,19 +270,23 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     );
     assert_eq!(refused.unwrap_err(), OperationError::OverBudget);
     let mut refusals = 0;
-    for cut in 0..200u32 {
+    for cut in 0.. {
         let eng = Engine::new();
         Tdd::builder(&eng, &vtree).unwrap().abandon(&eng);
         eng.limits().refuse_nth_reserve(cut);
-        match eng.from_cubes(&vtree, &vars, &packed) {
-            Ok(f) => assert_canonical(&f),
+        let built = eng.from_cubes(&vtree, &vars, &packed);
+        eng.limits().grant_every_reserve();
+        match built {
+            Ok(f) => {
+                assert_canonical(&f);
+                break;
+            }
             Err(e) => {
                 assert_eq!(e, OperationError::OverBudget, "cut {cut}");
                 assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
                 refusals += 1;
             }
         }
-        eng.limits().grant_every_reserve();
     }
     assert!(refusals > 0, "no reservation was refused across the sweep");
 }

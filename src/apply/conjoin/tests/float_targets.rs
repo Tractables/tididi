@@ -250,7 +250,7 @@ fn every_refused_reserve_leaves_the_walk_repeatable() {
     let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
     let mut refusals = 0;
     for n in 0.. {
-        eng.limits().refuse_nth_reserve(n);
+        eng.refuse_nth_reserve(n);
         let outcome = eng.and_marginalizing(f.clone(), g.clone(), &targets);
         let fired = !eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();

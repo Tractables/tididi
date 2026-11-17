@@ -145,7 +145,7 @@ fn a_refused_widening_is_an_error() {
     let eng = Engine::new();
     let mut col = FloatCol::with_capacity(&eng, 4).unwrap();
     col.push(&eng, value(1, 0, false)).unwrap();
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     let refused = col.push(&eng, value(1, 4000, false));
     eng.limits().grant_every_reserve();
     assert!(refused.is_err());

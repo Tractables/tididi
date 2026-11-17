@@ -139,7 +139,7 @@ fn the_rebuild_recovers_after_each_refused_reservation() {
     let mut reached_success = false;
     for nth in 0..256 {
         let eng = Engine::new();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         // Masking out every pair of the output empties the diagram.
         let marks = all_live_but_the_output_pairs(&Engine::new(), &f);
         match marks.rebuild(&eng, f.clone()) {

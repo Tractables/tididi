@@ -235,7 +235,7 @@ fn every_refusal_or_stop_keeps_a_move_retryable() {
                     let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
                     Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
                 } else {
-                    eng.limits().refuse_nth_reserve(cut as u32);
+                    eng.refuse_nth_reserve(cut as u32);
                     None
                 };
                 let outcome = eng.restructure_to(&mut f, &target, usize::MAX);

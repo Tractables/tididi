@@ -98,7 +98,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
     let mut partial = false;
     for reserve in 0..2048 {
         let mut f = original.clone();
-        eng.limits().refuse_nth_reserve(reserve);
+        eng.refuse_nth_reserve(reserve);
         let result = eng.marginalize_levels(&mut f, &targets);
         eng.limits().grant_every_reserve();
         if reserve == 0 {

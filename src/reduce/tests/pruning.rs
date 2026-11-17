@@ -38,7 +38,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     tdd.minimize().unwrap();
     tdd.dirty.set_loose(None);
     let (size_before, mc_before) = (tdd.pair_count(), tdd.model_count().unwrap());
-    eng.limits().refuse_nth_reserve(0);
+    eng.refuse_nth_reserve(0);
     let refused = prune_unreachable(eng, &mut tdd, PruneScope::Whole);
     eng.limits().grant_every_reserve();
     assert!(refused.is_err(), "the armed injection must refuse the scratch reservation");
@@ -800,7 +800,7 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
                 let eng = &crate::Engine::new();
                 let (mut tdd, v, _) = two_decisions(eng, implicit, below);
                 let d = tdd.levels[v.idx()].implicit().cloned();
-                eng.limits().refuse_nth_reserve(refused);
+                eng.refuse_nth_reserve(refused);
                 let scope = if below { PruneScope::BelowRoot } else { PruneScope::Whole };
                 let pruned = prune_unreachable(eng, &mut tdd, scope);
                 eng.limits().grant_every_reserve();
@@ -824,7 +824,7 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
                 let (mut tdd, v, _) = two_decisions(eng, implicit, false);
                 let (left_v, _) = tdd.vtree.children(v);
                 tdd.levels[left_v.idx()].set_counts_state(vec![1, 1, 2], None);
-                eng.limits().refuse_nth_reserve(refused);
+                eng.refuse_nth_reserve(refused);
                 let pruned = prune_unreachable(eng, &mut tdd, PruneScope::Whole);
                 eng.limits().grant_every_reserve();
                 if pruned.is_ok() {

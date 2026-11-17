@@ -299,7 +299,7 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
             let mut got = original.clone();
             {
                 let mut batch = eng.maintain(&mut got).unwrap();
-                eng.limits().refuse_nth_reserve(cut);
+                eng.refuse_nth_reserve(cut);
                 let result = apply_update(&mut batch, &model, insert);
                 eng.limits().grant_every_reserve();
                 match result {
@@ -391,7 +391,7 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
             let mut f = original.clone();
             {
                 let mut batch = eng.maintain(&mut f).unwrap();
-                eng.limits().refuse_nth_reserve(cut);
+                eng.refuse_nth_reserve(cut);
                 let outcome = apply_update(&mut batch, &model, insert);
                 eng.limits().grant_every_reserve();
                 match outcome {

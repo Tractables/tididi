@@ -2,6 +2,16 @@
 
 use super::*;
 
+impl crate::Engine {
+    /// Arm [`Limits::refuse_nth_reserve`] on cold pools. A buffer an earlier
+    /// attempt parked skips the reserves that would grow it, so a loop over
+    /// `n` on warm pools never refuses the points past it.
+    pub(crate) fn refuse_nth_reserve(&self, n: u32) {
+        self.clear_scratch();
+        self.limits().refuse_nth_reserve(n);
+    }
+}
+
 impl Limits {
     /// Arm the allocation-failure injection to refuse the `(n+1)`-th reserve
     /// this `Limits` is asked for: the next `n` are granted, the one after is

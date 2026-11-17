@@ -119,7 +119,7 @@ fn projected_counts_recover_from_each_allocation_failure() {
     let mut completed = false;
     for cut in 0..512 {
         let engine = Engine::new();
-        engine.limits().refuse_nth_reserve(cut);
+        engine.refuse_nth_reserve(cut);
         let result = engine.projected_model_count(&f, &selected);
         engine.limits().grant_every_reserve();
         assert_canonical(&f);

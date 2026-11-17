@@ -28,7 +28,7 @@ fn refused_promotion_preserves_the_narrow_column_and_retries() {
         let mut col = QueryCounts::try_with_width(&eng, 2).unwrap();
         col.set(&eng, 0, Count::Fast(17)).unwrap();
         col.set(&eng, 1, Count::Fast(23)).unwrap();
-        eng.limits().refuse_nth_reserve(nth);
+        eng.refuse_nth_reserve(nth);
         let result = col.set(&eng, 0, Count::Big(big.clone()));
         eng.limits().grant_every_reserve();
         if result.is_err() {

@@ -218,7 +218,7 @@ fn a_refused_conjunction_gives_f_the_levels_moved_from_it_back() {
                     let config = LimitConfig::none().with_sparse_route(SPARSE);
                     let _scope = eng.limits().scope(if arm == "work" { config.with_stop_rules(stop) } else { config });
                     if arm == "reserve" {
-                        eng.limits().refuse_nth_reserve(n as u32);
+                        eng.refuse_nth_reserve(n as u32);
                     }
                     eng.and_restoring(f.clone(), g.clone())
                 };

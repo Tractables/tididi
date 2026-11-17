@@ -424,7 +424,7 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
         let mut finished = false;
         for n in 0..4096 {
             let eng = Engine::new();
-            eng.limits().refuse_nth_reserve(n);
+            eng.refuse_nth_reserve(n);
             match exercise(&eng, op, &f, &g) {
                 Ok(()) => {
                     finished = true;
@@ -579,7 +579,7 @@ fn substitution_refusals_leave_replacements_usable() {
     for cut in 0..2000 {
         let eng = Engine::new();
         let input = f.clone();
-        eng.limits().refuse_nth_reserve(cut);
+        eng.refuse_nth_reserve(cut);
         let result = eng.substitute(input, &replacements);
         eng.limits().grant_every_reserve();
         assert_eq!(format!("{g:?} {h:?}"), before, "reservation {cut}");

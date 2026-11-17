@@ -61,7 +61,7 @@ fn algebra_evaluation_recovers_from_every_buffer_refusal() {
     }
     let mut completed = false;
     for reserve in 0..128 {
-        eng.limits().refuse_nth_reserve(reserve);
+        eng.refuse_nth_reserve(reserve);
         let result = eng.evaluate(&f, &algebra);
         eng.limits().grant_every_reserve();
         assert_eq!(eng.evaluate(&f, &algebra).unwrap(), expected);
