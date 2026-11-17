@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{EmbedError, RestructureError, TransportRefused};
+use super::{EmbedError, RehomeRefused, RestructureError, TransportRefused};
 
 use crate::Engine;
 use crate::build::constant_without_leaf;
@@ -116,7 +116,7 @@ impl Engine {
     /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
     /// let f = engine.clause(&own, [1, 3])?;
     /// let other = Home::new(Vtree::linear(4));
-    /// let g = engine.rehome(&f, &other, 0)?;
+    /// let g = engine.rehome(&f, &other, 0).map_err(|r| r.error)?;
     /// assert!(g.vtree().home().is_some_and(|h| std::sync::Arc::ptr_eq(h.vtree(), other.vtree())));
     /// assert_eq!(engine.model_count(&g)?, 12u32.into());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -124,27 +124,43 @@ impl Engine {
     ///
     /// # Errors
     ///
+    /// Each with the diagram ([`RehomeRefused`]):
     /// [`RestructureError::Variables`] for a variable of `f` with no leaf in
     /// `home`; with `bound` 0, [`RestructureError::Bound`] naming the node of
     /// `f`'s vtree with no image in the projection; otherwise those of
     /// [`Engine::restructure_to`], and [`RestructureError::Operation`] for a
     /// summed-out level.
-    pub fn rehome<'a>(&self, f: impl Into<Cow<'a, Tdd>>, home: &Home, bound: usize) -> Result<Tdd, RestructureError> {
-        let refused = match self.transport(f, home, |v| v) {
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub fn rehome<'a>(&self, f: impl Into<Cow<'a, Tdd>>, home: &Home, bound: usize) -> Result<Tdd, RehomeRefused<'a>> {
+        let TransportRefused { error, tdd } = match self.transport(f, home, |v| v) {
             Ok(moved) => return Ok(moved),
             Err(refused) => refused,
         };
-        match refused.error {
-            EmbedError::NotIsomorphic { source } if bound == 0 => Err(RestructureError::Bound { pivot: source }),
-            EmbedError::NotIsomorphic { .. } => {
-                let mut moved = crate::apply::extend::into_owned(self, refused.tdd)?;
-                let vars: Vec<VarId> = moved.vtree().leaf_bottomup().map(|(_, var)| var).collect();
-                let target = Vtree::projection(home, vars).expect("the transport found every variable in the home");
-                self.restructure_to(&mut moved, &target, bound)?;
-                Ok(moved)
-            }
-            EmbedError::VariableOutOfRange { variable, .. } => Err(RestructureError::Variables { variable }),
-            error => Err(crate::apply::extend::operation_error(error).into()),
+        let error = match error {
+            EmbedError::NotIsomorphic { source } if bound == 0 => RestructureError::Bound { pivot: source },
+            EmbedError::NotIsomorphic { .. } => return self.restructure_onto(tdd, home, bound),
+            EmbedError::VariableOutOfRange { variable, .. } => RestructureError::Variables { variable },
+            error => crate::apply::extend::operation_error(error).into(),
+        };
+        Err(RehomeRefused { error, tdd })
+    }
+
+    /// The general case of [`rehome`](Self::rehome): `f` restructured onto
+    /// the projection of `home` on its variables.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    fn restructure_onto<'a>(&self, f: Cow<'a, Tdd>, home: &Home, bound: usize) -> Result<Tdd, RehomeRefused<'a>> {
+        let vars: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+        let target = Vtree::projection(home, vars).expect("the transport found every variable in the home");
+        let mut moved = match f {
+            Cow::Owned(f) => f,
+            Cow::Borrowed(g) => match g.try_clone_on(self) {
+                Ok(copy) => copy,
+                Err(e) => return Err(RehomeRefused { error: e.into(), tdd: Cow::Borrowed(g) }),
+            },
+        };
+        match self.restructure_to(&mut moved, &target, bound) {
+            Ok(_) => Ok(moved),
+            Err(error) => Err(RehomeRefused { error, tdd: Cow::Owned(moved) }),
         }
     }
 }
@@ -159,6 +175,26 @@ pub(super) fn seat_on_lifted_home(eng: &Engine, f: &mut Tdd) {
     let route = Route::find(&Limits::new(), f, &home, |v| v).expect("the lifted home has the moved tree's shape");
     debug_assert!(route.mirrored.is_empty());
     route.seat(eng, f);
+}
+
+/// Members `which` of `members`, whose levels are on `own`, a projection
+/// that rotations and swaps moved as `home` was lifted from it, seated level
+/// for level on one projection of `home` on `own`'s leaves.
+pub(super) fn seat_group(eng: &Engine, members: &mut [&mut Tdd], which: &[usize], own: Vtree, home: &Home) {
+    let own = Arc::new(own);
+    let vars: Vec<VarId> = own.leaf_bottomup().map(|(_, var)| var).collect();
+    let into = match vars.is_empty() {
+        true => Vtree::empty_projection(home),
+        false => Vtree::projection(home, vars.iter().copied()).expect("a home has its projections' leaves"),
+    };
+    let lim = Limits::new();
+    for &i in which {
+        let f = &mut *members[i];
+        f.vtree = Arc::clone(&own);
+        let route = Route::along(&lim, f, Arc::clone(&into), &vars).expect("the home has the moved tree's shape");
+        debug_assert!(route.mirrored.is_empty());
+        route.seat(eng, f);
+    }
 }
 
 /// Where each level of the diagram goes, with every allocation the move
@@ -178,9 +214,8 @@ impl Route {
     fn find(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
         f.require_structure()?;
         let source = f.vtree();
-        let empty = Self { into: Arc::clone(source), to: Vec::new(), mirrored: Vec::new(), levels: Vec::new(), columns: Vec::new() };
         if source.num_nodes() == 0 {
-            return Ok(Self { into: Vtree::empty_projection(home), ..empty });
+            return Self::along(lim, f, Vtree::empty_projection(home), &[]);
         }
         let mut images = Vec::new();
         lim.reserve_exact(&mut images, source.num_leaves() as usize)?;
@@ -200,14 +235,24 @@ impl Route {
             let shared = images.windows(2).find(|w| w[0] == w[1]).expect("fewer leaves than images");
             return Err(VtreeError::OverlappingVariable(shared[0]).into());
         }
+        let route = Self::along(lim, f, into, &images);
+        lim.discard(images);
+        route
+    }
 
-        let mut route = Self { into, ..empty };
+    /// The route of `f` onto `into`, a projection whose leaves are
+    /// `images`, the images of `f`'s leaves in bottom-up order.
+    fn along(lim: &Limits, f: &Tdd, into: Arc<Vtree>, images: &[VarId]) -> Result<Self, EmbedError> {
+        let source = f.vtree();
+        let mut route = Self { into, to: Vec::new(), mirrored: Vec::new(), levels: Vec::new(), columns: Vec::new() };
         let n = source.num_nodes();
+        if n == 0 {
+            return Ok(route);
+        }
         lim.try_resize(&mut route.to, n, VtreeIdx(0))?;
-        for ((leaf, _), &image) in source.leaf_bottomup().zip(&images) {
+        for ((leaf, _), &image) in source.leaf_bottomup().zip(images) {
             route.to[leaf.idx()] = route.into.leaf_of(image).expect("a projected leaf");
         }
-        lim.discard(images);
         let mut gate = lim.gate();
         for &s in source.internal_bottomup_slice() {
             gate.poll(1)?;

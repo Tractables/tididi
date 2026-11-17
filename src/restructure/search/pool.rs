@@ -15,6 +15,7 @@
 //! that order: at a node with children `A` and `(B, C)` the plain left
 //! rotation groups `A` with `B`, the crossed one `A` with `C`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::Engine;
@@ -26,9 +27,10 @@ use crate::restructure::relevel::{
     RotationStep, rebuild_levels, score_levels, score_levels_crossed_too,
 };
 use crate::restructure::scratch::{ProbeTables, RestructureScratch};
+use crate::restructure::transport::seat_group;
 use crate::vtree::rng::Lcg;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
-use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, RotationKind, VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::RotationMove;
 use super::probe::{Preimage, Preimages, pivot_pairs};
@@ -294,18 +296,32 @@ impl Engine {
     /// Apply `mv` to every member, show the change to `accept`, and keep it
     /// for all members or for none.
     ///
-    /// The members must share one vtree allocation. A kept move leaves them
-    /// sharing a new one, the rotated tree; a declined or abandoned one leaves
-    /// every member and the old allocation as they were. A move that does not
-    /// apply at its pivot, a member with summed-out levels, or a member whose
-    /// rebuild would pass `bound` pairs abandons the move and returns
-    /// `Ok(false)` without calling `accept`. An empty pool keeps nothing.
-    /// Each member's two levels are rebuilt before `accept` is asked, and put
-    /// back if it declines. The copy of the tree charges its nodes to the
-    /// work clock, and each member rebuilt the pairs of its two old and two
-    /// new levels and the fixed cost of a rebuild. A member whose two levels
-    /// hold a pair each, or none, holds as many after the move: it is charged
-    /// its pairs and one, and rebuilt only once the move is kept.
+    /// The members share one vtree allocation or are on projections of one
+    /// home ([`Vtree::projection`], the home's root among them or not), and
+    /// `mv`'s pivot is a node of the home (of the shared vtree when that is
+    /// not a projection). The move is made on the projection of the home on the members'
+    /// variables, the *union*, at the node standing for the pivot; a pivot
+    /// with no node there, or one that is a leaf, does not apply. A member
+    /// with leaves under all three subtrees the move turns has two levels
+    /// rebuilt; any other keeps its levels, and shows `accept` none
+    /// before or after.
+    ///
+    /// A kept move on a vtree that is not a projection leaves the members
+    /// sharing a new allocation, the rotated tree. Otherwise it ends on a new
+    /// home: the old one with the union's new shape, every member on the
+    /// projection of the new home on its own variables, the home's root for
+    /// members that were on the old root, so counts stay over the home's
+    /// variables. A declined or abandoned move leaves every member and every
+    /// allocation as they were. A move that does not apply, a member with
+    /// summed-out levels, or a member whose rebuild would pass `bound` pairs
+    /// abandons the move and returns `Ok(false)` without calling `accept`. An
+    /// empty pool keeps nothing. Each member's two levels are rebuilt before
+    /// `accept` is asked, and put back if it declines. The copy of the trees
+    /// charges their nodes to the work clock, and each member rebuilt the
+    /// pairs of its two old and two new levels and the fixed cost of a
+    /// rebuild. A member whose two levels hold a pair each, or none, holds as
+    /// many after the move: it is charged its pairs and one, and rebuilt only
+    /// once the move is kept.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -313,9 +329,9 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] when the members do not share one
-    /// vtree allocation, [`OperationError::LevelNotInVtree`] for an invalid
-    /// pivot, [`OperationError::OverBudget`] for refused storage, or
+    /// [`OperationError::VtreeMismatch`] when the members neither share one
+    /// vtree allocation nor one home, [`OperationError::LevelNotInVtree`] for
+    /// an invalid pivot, [`OperationError::OverBudget`] for refused storage, or
     /// [`OperationError::Stopped`] for cancellation. An error leaves every
     /// member as it was; storage refused once `accept` has kept the move
     /// does too.
@@ -330,29 +346,48 @@ impl Engine {
         if members.is_empty() {
             return Ok(false);
         }
-        let shared = shared_vtree(members)?;
-        if mv.rotation.pivot.idx() >= shared.num_nodes() {
-            return Err(OperationError::LevelNotInVtree(mv.rotation.pivot));
+        let (mut tree, mut groups) = pool_tree(members)?;
+        let pivot = mv.rotation.pivot;
+        if pivot.idx() >= tree.home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
+            return Err(OperationError::LevelNotInVtree(pivot));
         }
         if members.iter().any(|m| m.has_marginal_level()) {
             return Ok(false);
         }
-        let mut tree = Vtree::clone(&shared);
+        let Some(pivot) = tree.node_at_home(pivot) else {
+            return Ok(false);
+        };
+        let mv = PoolMove {
+            rotation: RotationMove { pivot, ..mv.rotation },
+            ..mv
+        };
         let Some(pending) = move_in_place(&mut tree, mv) else {
             return Ok(false);
         };
-        let info = pending.commit(&mut tree);
+        let info = pending.commit_in_probe(&mut tree);
+        let (mut touched, mut own) = (Vec::new(), Vec::new());
+        let mut copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
+        match groups.as_mut() {
+            None => touched.extend((0..members.len()).map(|i| (i, info))),
+            Some(groups) => {
+                groups.touch(&info, mv, &mut touched, &mut own);
+                groups.settle(&mut own, true, mv.crossed);
+                copy = copy.saturating_add(groups.nodes() as u64);
+            }
+        }
         let mut scratch = self.scratch.restructure.checkout(self);
-        let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        let step = RotationStep {
-            info: &info,
+        let moved = Touched {
+            at: &touched,
             dir: mv.rotation.kind,
             crossed: mv.crossed,
             max_pairs: bound,
         };
-        let kept = probe(self, members, step, copy, &mut scratch, accept)?;
+        let kept = probe(self, members, moved, copy, &mut scratch, accept)?;
         if kept {
-            install(members, tree);
+            if let Some(groups) = groups.as_mut() {
+                groups.kept(&tree, &info, mv.crossed, members, None);
+            }
+            end_on_home(self, members, tree, groups);
         }
         Ok(kept)
     }
@@ -370,8 +405,15 @@ impl Engine {
     /// with summed-out levels the search keeps no move: each move is counted
     /// as probed and refused at no charge.
     ///
-    /// The members keep their functions and end up sharing one vtree
-    /// allocation, a new one if any move was kept. Stops are polled once per
+    /// The members are as [`rotate_pool_if`](Self::rotate_pool_if) takes
+    /// them, and the descent runs on their union: a probe reads and rebuilds
+    /// only the members with leaves under all three subtrees its move turns.
+    /// The members keep their functions. A search that kept no move leaves
+    /// every member's vtree allocation as it was. One that kept a move ends as
+    /// a kept [`rotate_pool_if`](Self::rotate_pool_if) does, once: the
+    /// members share a new allocation, or they are on projections of one new
+    /// home, which [`Vtree::home`] of any member's vtree returns, the
+    /// union's shape lifted into the old home. Stops are polled once per
     /// pivot and within each probe; an error keeps the moves kept so far and
     /// returns without the closing reduction. A probe scores the move
     /// member by member and stops once the scores refuse it, and charges
@@ -394,39 +436,42 @@ impl Engine {
         if members.is_empty() {
             return Ok(stats);
         }
-        shared_vtree(members)?;
+        // The union and the groups' trees, moved in place as moves are kept.
+        // The members keep their allocations until the descent ends, which
+        // seats them on these if it kept a move: their levels follow the
+        // moves, and nothing in a probe reads a member's tree.
+        let (mut tree, mut groups) = pool_tree(members)?;
         let start = self.limits().work_units();
-        let result = self.pool_search_from(members, config, start, &mut stats);
+        let mut changed = false;
+        let pool = (&mut tree, &mut groups, &mut changed);
+        let result = self.pool_search_from(members, config, start, &mut stats, pool);
+        if changed {
+            end_on_home(self, members, tree, groups);
+        }
+        let result = result.and_then(|()| {
+            stats.pairs_after = self.reduce_members(members)?;
+            Ok(())
+        });
         stats.work_units = self.limits().work_units() - start;
         result.map(|()| stats)
     }
 
-    /// [`pool_search`](Self::pool_search) on a pool that shares one vtree,
-    /// its work counted from the clock's `start`.
+    /// The opening reduction and the descent of
+    /// [`pool_search`](Self::pool_search) on the pool's union `tree` and
+    /// `groups`, its work counted from the clock's `start`; `changed` set once
+    /// a move is kept for good.
     fn pool_search_from(
         &self,
         members: &mut [&mut Tdd],
         config: &PoolSearchConfig,
         start: u64,
         stats: &mut PoolSearchStats,
+        (tree, groups, changed): (&mut Vtree, &mut Option<Groups>, &mut bool),
     ) -> Result<(), OperationError> {
         stats.pairs_before = self.reduce_members(members)?;
         let mut scratch = self.scratch.restructure.checkout(self);
-        // The members' tree, moved in place as moves are kept. The members
-        // keep the old allocation until the descent ends, which hands them
-        // this one if it kept a move: their levels follow the moves, and
-        // nothing in a probe reads a member's tree.
-        let mut tree = Vtree::clone(&members[0].vtree);
-        let mut changed = false;
-        let result = PoolDescent::new(self, &mut tree, config, start, &mut scratch, stats, members)
-            .and_then(|mut descent| descent.run(members, &mut changed));
-        if changed {
-            tree.reshaped();
-            install(members, tree);
-        }
-        result?;
-        stats.pairs_after = self.reduce_members(members)?;
-        Ok(())
+        PoolDescent::new(self, tree, groups, config, start, &mut scratch, stats, members)
+            .and_then(|mut descent| descent.run(members, changed))
     }
 
     /// Reduce every member; their live pairs after.
@@ -441,20 +486,28 @@ impl Engine {
 /// State shared across the descent of [`Engine::pool_search`] and its restarts.
 struct PoolDescent<'a> {
     eng: &'a Engine,
+    /// The union, moved in place.
     tree: &'a mut Vtree,
+    groups: &'a mut Option<Groups>,
     config: &'a PoolSearchConfig,
     until: u64,
     scratch: &'a mut RestructureScratch,
     stats: &'a mut PoolSearchStats,
     known: Known,
     crossed_scores: Transient<'a, Vec<Option<Option<usize>>>>,
+    /// The probe under way's [`Touched`] members, and its moves on the
+    /// groups' trees.
+    touched: Vec<(usize, RotationInfo)>,
+    own: Vec<(usize, PendingTopo)>,
     marginal: bool,
 }
 
 impl<'l> PoolDescent<'l> {
+    #[expect(clippy::too_many_arguments, reason = "the descent's state, borrowed from the search")]
     fn new(
         eng: &'l Engine,
         tree: &'l mut Vtree,
+        groups: &'l mut Option<Groups>,
         config: &'l PoolSearchConfig,
         start: u64,
         scratch: &'l mut RestructureScratch,
@@ -477,12 +530,15 @@ impl<'l> PoolDescent<'l> {
         Ok(PoolDescent {
             eng,
             tree,
+            groups,
             config,
             until,
             scratch,
             stats,
             known,
             crossed_scores,
+            touched: Vec::with_capacity(members.len()),
+            own: Vec::new(),
             marginal,
         })
     }
@@ -509,7 +565,7 @@ impl<'l> PoolDescent<'l> {
         let mut result = Ok(());
         while self.stats.restarts < restarts.count && lim.work_units() < self.until {
             self.stats.restarts += 1;
-            let mut undo = match Undo::begin(lim, members, self.tree, &self.known) {
+            let mut undo = match Undo::begin(lim, members, self.tree, &self.known, self.groups) {
                 Ok(undo) => undo,
                 // A restart is an improvement the search may go without.
                 Err(OperationError::OverBudget) => break,
@@ -527,7 +583,7 @@ impl<'l> PoolDescent<'l> {
                 *changed |= self.stats.accepts > accepts;
                 drop(undo);
             } else {
-                undo.revert(members, self.tree, &mut self.known);
+                undo.revert(members, self.tree, &mut self.known, self.groups);
                 self.stats.accepts = accepts;
             }
             match outcome {
@@ -676,17 +732,24 @@ impl Known {
     }
 }
 
-/// What a restart needs to put the pool back as it began: the tree, what
+/// What a restart needs to put the pool back as it began: the trees, what
 /// the descent knew, each member's header, and the first level each kept
 /// move replaced at each node.
+///
+/// The members of a group are rebuilt and mirrored together, so what is
+/// known of their levels is kept by *slot*, a node of a group's tree.
 struct Undo<'a> {
     tree: Vtree,
     known: Known,
+    groups: Option<Groups>,
     /// Each member's header and the levels as the restart found them, room
-    /// for one per member and node reserved up front.
+    /// for one per member and node of its tree reserved up front.
     pre: Preimages<'a>,
-    /// Whether the level of every member at each node is in `pre`.
+    /// By slot: whether the levels of the group's members there are in `pre`.
     filed: Vec<bool>,
+    /// By slot: whether the levels there were mirrored an odd number of
+    /// times before they were filed.
+    flipped: Vec<bool>,
     /// The members' live pairs when the restart began.
     pairs: usize,
 }
@@ -697,40 +760,70 @@ impl<'a> Undo<'a> {
         members: &mut [&mut Tdd],
         tree: &Vtree,
         known: &Known,
+        groups: &Option<Groups>,
     ) -> Result<Undo<'a>, OperationError> {
-        let nodes = tree.num_nodes();
-        let mut pre = Preimages::new(lim, members.len(), members.len().saturating_mul(nodes))?;
+        let levels = members.iter().map(|m| m.vtree.num_nodes()).fold(0usize, usize::saturating_add);
+        let mut pre = Preimages::new(lim, members.len(), levels)?;
         for (i, m) in members.iter_mut().enumerate() {
             pre.file_header(i, m, true);
         }
+        let slots = groups.as_ref().map_or(tree.num_nodes(), |g| g.slots);
         Ok(Undo {
             tree: tree.clone(),
             known: known.clone(),
+            groups: groups.clone(),
             pre,
-            filed: vec![false; nodes],
+            filed: vec![false; slots],
+            flipped: if groups.is_some() { vec![false; slots] } else { Vec::new() },
             pairs: live_pairs(members),
         })
     }
 
-    /// File the levels a kept move at `v` and `w` replaced; only the first
-    /// replaced at a node is kept.
-    fn file(&mut self, v: VtreeIdx, w: VtreeIdx, mut replaced: Transient<'a, Vec<Preimage<'a>>>) {
-        let (first_v, first_w) = (!self.filed[v.idx()], !self.filed[w.idx()]);
+    /// The slot of member `i`'s node `t`.
+    fn slot(&self, i: usize, t: VtreeIdx) -> usize {
+        self.groups.as_ref().map_or(0, |g| g.groups[g.of[i]].base) + t.idx()
+    }
+
+    /// File the levels a kept move replaced; only the first replaced at a
+    /// slot is kept.
+    fn file(&mut self, mut replaced: Transient<'a, Vec<Preimage<'a>>>) {
+        let start = self.pre.levels.len();
         for p in replaced.drain(..) {
-            if (p.node == v && first_v) || (p.node == w && first_w) {
+            if !self.filed[self.slot(p.diagram, p.node)] {
                 self.pre.levels.push(p);
             }
         }
-        self.filed[v.idx()] = true;
-        self.filed[w.idx()] = true;
+        for j in start..self.pre.levels.len() {
+            let slot = self.slot(self.pre.levels[j].diagram, self.pre.levels[j].node);
+            self.filed[slot] = true;
+        }
     }
 
-    /// Put every member, the tree and what the descent knew back as the
+    /// Record that the levels at `slot` were mirrored.
+    fn flip(&mut self, slot: usize) {
+        if !self.filed[slot] {
+            self.flipped[slot] ^= true;
+        }
+    }
+
+    /// Put every member, the trees and what the descent knew back as the
     /// restart found them.
-    fn revert(self, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known) {
-        self.pre.put_back(members);
-        *tree = self.tree;
-        *known = self.known;
+    fn revert(self, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known, groups: &mut Option<Groups>) {
+        let Undo { tree: t, known: k, groups: g, pre, flipped, .. } = self;
+        pre.put_back_then(members, |members| {
+            let Some(g) = &g else { return };
+            for group in &g.groups {
+                let nodes = group.tree.as_ref().map_or(t.num_nodes(), Vtree::num_nodes);
+                for node in (0..nodes).filter(|&n| flipped[group.base + n]) {
+                    for &i in &group.members {
+                        mirror_level(&mut *members[i], VtreeIdx(node as u32));
+                    }
+                }
+            }
+        });
+        *tree = t;
+        *known = k;
+        *groups = g;
     }
 }
 
@@ -866,50 +959,36 @@ impl<'l> PoolDescent<'l> {
         mv: PoolMove,
         twin: TwinMode,
         slack: usize,
-        undo: Option<&mut Undo<'l>>,
+        mut undo: Option<&mut Undo<'l>>,
     ) -> Result<bool, OperationError> {
+        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, own, .. } = self;
+        let eng: &'l Engine = eng;
         let twin = match twin {
             TwinMode::Alone => Twin::Alone,
-            TwinMode::Fill => Twin::Fill(&mut self.crossed_scores),
-            TwinMode::Given => Twin::Given(&self.crossed_scores),
+            TwinMode::Fill => Twin::Fill(crossed_scores),
+            TwinMode::Given => Twin::Given(crossed_scores),
         };
-        probe_in_place(
-            self.eng,
-            members,
-            self.tree,
-            (mv, self.config.max_inner_pairs, slack),
-            self.scratch,
-            twin,
-            undo,
-        )
-    }
-}
-
-/// One probe of the descent or of a restart's random moves: `mv` made on
-/// `tree` in place and kept when the members' live pairs end below their
-/// total plus `slack`, else undone. A kept move's replaced levels go to
-/// `undo` when given.
-fn probe_in_place<'l>(
-    eng: &'l Engine,
-    members: &mut [&mut Tdd],
-    tree: &mut Vtree,
-    (mv, bound, slack): (PoolMove, usize, usize),
-    scratch: &mut RestructureScratch,
-    twin: Twin<'_>,
-    undo: Option<&mut Undo<'l>>,
-) -> Result<bool, OperationError> {
-    let Some(pending) = move_in_place(tree, mv) else {
-        return Ok(false);
-    };
-    let info = pending.info();
-    let step = RotationStep {
-        info: &info,
-        dir: mv.rotation.kind,
-        crossed: mv.crossed,
-        max_pairs: bound,
-    };
-    match probe_scored(eng, members, step, scratch, twin, slack, undo) {
-        Ok(true) => {
+        let Some(pending) = move_in_place(tree, mv) else {
+            return Ok(false);
+        };
+        let info = pending.info();
+        touched.clear();
+        match groups.as_mut() {
+            None => touched.extend((0..members.len()).map(|i| (i, info))),
+            Some(groups) => groups.touch(&info, mv, touched, own),
+        }
+        let moved = Touched {
+            at: touched,
+            dir: mv.rotation.kind,
+            crossed: mv.crossed,
+            max_pairs: config.max_inner_pairs,
+        };
+        let outcome = probe_scored(eng, members, moved, scratch, twin, slack, undo.as_deref_mut());
+        let kept = matches!(outcome, Ok(true));
+        if let Some(groups) = groups.as_mut() {
+            groups.settle(own, kept, mv.crossed);
+        }
+        if kept {
             // The bottom-up order's repair moves the promoted node past the
             // subtree it now needs below it, and every node between.
             let misplaced = match mv.rotation.kind {
@@ -921,15 +1000,16 @@ fn probe_in_place<'l>(
                 .saturating_sub(tree.topo_pos(info.w_idx));
             eng.limits().charge_work(u64::from(moved));
             pending.commit_in_probe(tree);
-            Ok(true)
-        }
-        outcome => {
+            if let Some(groups) = groups.as_mut() {
+                groups.kept(tree, &info, mv.crossed, members, undo);
+            }
+        } else {
             pending.revert(tree);
             if mv.crossed {
                 tree.swap_children_in_probe(info.w_idx);
             }
-            outcome
         }
+        outcome
     }
 }
 
@@ -969,21 +1049,316 @@ fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
     rotate_pointers(tree, pivot, kind)
 }
 
-/// Hand every member `tree`, one allocation for all.
-fn install(members: &mut [&mut Tdd], tree: Vtree) {
-    let tree = Arc::new(tree);
-    for m in members.iter_mut() {
-        m.vtree = Arc::clone(&tree);
+/// The tree a search over `members` moves, a private copy: their shared
+/// tree, or the union of their projections, with their groups.
+fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationError> {
+    let first = &members[0].vtree;
+    if members.iter().all(|m| Arc::ptr_eq(&m.vtree, first)) {
+        return Ok((Vtree::clone(first), None));
+    }
+    let home_of = |v: &Arc<Vtree>| v.home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
+    if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
+        return Err(OperationError::VtreeMismatch);
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    let mut index = HashMap::new();
+    let mut of = Vec::with_capacity(members.len());
+    let mut root = None;
+    for (i, m) in members.iter().enumerate() {
+        let g = *index.entry(Arc::as_ptr(&m.vtree)).or_insert_with(|| {
+            groups.push(Group {
+                members: Vec::new(),
+                tree: Some(Vtree::clone(&m.vtree)),
+                union_of: Vec::new(),
+                base: 0,
+            });
+            groups.len() - 1
+        });
+        if m.vtree.home().is_none() {
+            root = Some(g);
+        }
+        groups[g].members.push(i);
+        of.push(g);
+    }
+    let union = match root {
+        Some(g) => groups[g].tree.take().expect("a group has its tree"),
+        None => {
+            let home = first.home().expect("a projection has a home");
+            let vars: Vec<VarId> = groups
+                .iter()
+                .filter_map(|g| g.tree.as_ref())
+                .flat_map(|t| t.leaf_bottomup().map(|(_, var)| var))
+                .collect();
+            match vars.is_empty() {
+                true => Vtree::clone(&Vtree::empty_projection(home)),
+                false => Arc::unwrap_or_clone(Vtree::projection(home, vars).expect("a home has its projections' leaves")),
+            }
+        }
+    };
+    let mut at = vec![Vec::new(); union.num_nodes()];
+    let mut slots = 0;
+    for (g, group) in groups.iter_mut().enumerate() {
+        group.base = slots;
+        let Some(tree) = &group.tree else {
+            slots += union.num_nodes();
+            for &u in union.internal_bottomup_slice() {
+                at[u.idx()].push((g, u));
+            }
+            continue;
+        };
+        slots += tree.num_nodes();
+        group.union_of = (0..tree.num_nodes() as u32)
+            .map(|t| union.node_at_home(tree.home_node(VtreeIdx(t))).expect("the union has every own node"))
+            .collect();
+        for &t in tree.internal_bottomup_slice() {
+            at[group.union_of[t.idx()].idx()].push((g, t));
+        }
+    }
+    let seen = vec![0; groups.len()];
+    Ok((union, Some(Groups { groups, of, at, seen, slots })))
+}
+
+/// Members on more than one vtree, the members on each in a group.
+///
+/// Each own node of a group's tree stands at the node of the union over the
+/// same leaves, and the group's tree has the union's shape there: a move at
+/// the union's `v` promoting `w` is the same move on the trees of the groups
+/// with own nodes at both, and leaves every other tree as it is, its own
+/// node at `v` or `w` standing afterwards where the union has its leaves
+/// under both children.
+#[derive(Clone)]
+struct Groups {
+    groups: Vec<Group>,
+    /// By member: its group.
+    of: Vec<usize>,
+    /// By node of the union: each group with an own node there, and that
+    /// node.
+    at: Vec<Vec<(usize, VtreeIdx)>>,
+    /// By group: where a move being made has its own nodes, 1 for `v` and 2
+    /// for `w`; 0 between moves.
+    seen: Vec<u8>,
+    /// The slots of [`Undo`], one per node of each group's tree.
+    slots: usize,
+}
+
+#[derive(Clone)]
+struct Group {
+    members: Vec<usize>,
+    /// The group's tree, `None` for the home's root, which is the union.
+    tree: Option<Vtree>,
+    /// By node of the tree: the node of the union over the same leaves.
+    union_of: Vec<VtreeIdx>,
+    /// The first of the group's slots.
+    base: usize,
+}
+
+impl Groups {
+    /// The nodes of the groups' own trees.
+    fn nodes(&self) -> usize {
+        self.groups.iter().filter_map(|g| g.tree.as_ref()).map(Vtree::num_nodes).sum()
+    }
+
+    /// Make `mv`, made on the union as `info`, on the tree of each group
+    /// with own nodes at both of its nodes, and list in `touched` the
+    /// group's members with the rotation on their tree; the moves made on
+    /// the groups' trees in `own`, for [`settle`](Self::settle).
+    fn touch(
+        &mut self,
+        info: &RotationInfo,
+        mv: PoolMove,
+        touched: &mut Vec<(usize, RotationInfo)>,
+        own: &mut Vec<(usize, PendingTopo)>,
+    ) {
+        let Groups { groups, at, seen, .. } = self;
+        let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+        for &(g, _) in &at[w] {
+            seen[g] = 2;
+        }
+        for &(g, t) in &at[v] {
+            if seen[g] != 2 {
+                continue;
+            }
+            let group = &mut groups[g];
+            let moved = match &mut group.tree {
+                None => *info,
+                Some(tree) => {
+                    let rotation = RotationMove { pivot: t, kind: mv.rotation.kind };
+                    let pending = move_in_place(tree, PoolMove { rotation, ..mv })
+                        .expect("a tree with own nodes at both ends of a move moves with it");
+                    let moved = pending.info();
+                    own.push((g, pending));
+                    moved
+                }
+            };
+            touched.extend(group.members.iter().map(|&i| (i, moved)));
+        }
+        for &(g, _) in &at[w] {
+            seen[g] = 0;
+        }
+    }
+
+    /// Commit the moves `touch` made on the groups' trees if `kept`, else
+    /// take them back.
+    fn settle(&mut self, own: &mut Vec<(usize, PendingTopo)>, kept: bool, crossed: bool) {
+        for (g, pending) in own.drain(..) {
+            let tree = self.groups[g].tree.as_mut().expect("a moved group has its tree");
+            if kept {
+                pending.commit_in_probe(tree);
+            } else {
+                let w = pending.info().w_idx;
+                pending.revert(tree);
+                if crossed {
+                    tree.swap_children_in_probe(w);
+                }
+            }
+        }
+    }
+
+    /// After `mv`, made on `union` as `info`, was kept: each group with an
+    /// own node at one of its two nodes stands there where the union now has
+    /// that node's leaves under both children. The node of a group at `w`
+    /// alone is mirrored when the move crossed `w`'s children, with each
+    /// member's level there, and the mirror recorded in `undo`.
+    fn kept(
+        &mut self,
+        union: &Vtree,
+        info: &RotationInfo,
+        crossed: bool,
+        members: &mut [&mut Tdd],
+        mut undo: Option<&mut Undo<'_>>,
+    ) {
+        let Groups { groups, at, seen, .. } = self;
+        let (v, w) = (info.v_idx, info.w_idx);
+        let (from_v, from_w) = (std::mem::take(&mut at[v.idx()]), std::mem::take(&mut at[w.idx()]));
+        for &(g, _) in &from_v {
+            seen[g] |= 1;
+        }
+        for &(g, _) in &from_w {
+            seen[g] |= 2;
+        }
+        for (from, entries) in [(v, &from_v), (w, &from_w)] {
+            for &(g, t) in entries {
+                if seen[g] == 3 {
+                    at[from.idx()].push((g, t));
+                    continue;
+                }
+                let group = &mut groups[g];
+                let tree = group.tree.as_mut().expect("the union has own nodes at both ends of every move");
+                let (l, r) = tree.children(t);
+                let under_w = |u: VtreeIdx| child_toward(union, u, v) == w;
+                let to = if under_w(group.union_of[l.idx()]) && under_w(group.union_of[r.idx()]) { w } else { v };
+                group.union_of[t.idx()] = to;
+                at[to.idx()].push((g, t));
+                if crossed && from == w {
+                    tree.swap_children_in_probe(t);
+                    for &i in &group.members {
+                        mirror_level(&mut *members[i], t);
+                    }
+                    if let Some(undo) = undo.as_deref_mut() {
+                        undo.flip(group.base + t.idx());
+                    }
+                }
+                debug_assert_eq!(
+                    child_toward(union, group.union_of[tree.children(t).0.idx()], to),
+                    union.children(to).0
+                );
+            }
+        }
+        for &(g, _) in from_v.iter().chain(&from_w) {
+            seen[g] = 0;
+        }
     }
 }
 
-/// The members' one vtree allocation, or the mismatch error.
-fn shared_vtree(members: &[&mut Tdd]) -> Result<Arc<Vtree>, OperationError> {
-    let shared = Arc::clone(&members[0].vtree);
-    if members.iter().any(|m| !Arc::ptr_eq(&m.vtree, &shared)) {
-        return Err(OperationError::VtreeMismatch);
+/// The child of `top` that `u`, a node below it, is under.
+fn child_toward(tree: &Vtree, mut u: VtreeIdx, top: VtreeIdx) -> VtreeIdx {
+    loop {
+        let parent = tree.node(u).parent().expect("a node below `top`");
+        if parent == top {
+            return u;
+        }
+        u = parent;
     }
-    Ok(shared)
+}
+
+/// Exchange the two sides of `m`'s level at `t`, a node of its tree whose
+/// children were exchanged.
+fn mirror_level(m: &mut Tdd, t: VtreeIdx) {
+    let (canonical, closed) = (m.levels.is_canonical(m.output), m.levels.is_closed());
+    m.levels[t.idx()].swap_sides();
+    m.levels.mark_changed(t);
+    m.close_marked_levels(closed);
+    if canonical {
+        m.levels.certify(m.output);
+    }
+}
+
+/// The end of a search on `union` and `groups` that kept a move: the members
+/// on one allocation of the union, or seated on projections of the home the
+/// union's moves imply.
+fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Option<Groups>) {
+    if let Some(home) = union.lifted_home() {
+        match groups {
+            None => {
+                let all: Vec<usize> = (0..members.len()).collect();
+                seat_group(eng, members, &all, union, &home);
+            }
+            Some(groups) => {
+                for group in groups.groups {
+                    let tree = group.tree.expect("a union with a home is no group's tree");
+                    seat_group(eng, members, &group.members, tree, &home);
+                }
+            }
+        }
+        return;
+    }
+    let root = Arc::new(union);
+    let Some(groups) = groups else {
+        for m in members.iter_mut() {
+            m.vtree = Arc::clone(&root);
+        }
+        return;
+    };
+    let home = Home::new(Arc::clone(&root));
+    for group in groups.groups {
+        match group.tree {
+            Some(tree) => seat_group(eng, members, &group.members, tree, &home),
+            None => {
+                for &i in &group.members {
+                    members[i].vtree = Arc::clone(&root);
+                }
+            }
+        }
+    }
+}
+
+/// A move as each member it touches sees it: `at` holds each such member's
+/// index and the rotation made on its tree.
+#[derive(Clone, Copy)]
+struct Touched<'t> {
+    at: &'t [(usize, RotationInfo)],
+    dir: RotationKind,
+    crossed: bool,
+    max_pairs: usize,
+}
+
+impl<'t> Touched<'t> {
+    fn len(&self) -> usize {
+        self.at.len()
+    }
+
+    fn member(&self, k: usize) -> usize {
+        self.at[k].0
+    }
+
+    fn step(&self, k: usize) -> RotationStep<'t> {
+        RotationStep {
+            info: &self.at[k].1,
+            dir: self.dir,
+            crossed: self.crossed,
+            max_pairs: self.max_pairs,
+        }
+    }
 }
 
 /// Whether a member whose two levels at a move hold `outer` and `inner`
@@ -1016,35 +1391,36 @@ fn rebuild_member(
     Ok(Some(pivot_pairs(m, step.info)))
 }
 
-/// Rebuild at `step` each member `pick` names, stopping on the first refusal
-/// or error, what each needs to be put back filed in `pre`: the outcome for
-/// [`settle`].
+/// Rebuild each touched member `pick` names, by its index in `moved`,
+/// stopping on the first refusal or error, what each needs to be put back
+/// filed in `pre`: the outcome for [`settle`].
 fn rebuild_other_members(
     lim: &Limits,
     members: &mut [&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     scratch: &mut RestructureScratch,
     pre: &mut Preimages<'_>,
     pick: impl Fn(usize) -> bool,
     mut on_rebuilt: impl FnMut(usize, usize) -> Result<(), OperationError>,
 ) -> Result<bool, OperationError> {
-    for (i, m) in members.iter_mut().enumerate() {
-        if !pick(i) {
+    for k in 0..moved.len() {
+        if !pick(k) {
             continue;
         }
-        let Some(pairs) = rebuild_member(lim, i, m, step, pre, scratch)? else {
+        let i = moved.member(k);
+        let Some(pairs) = rebuild_member(lim, i, &mut *members[i], moved.step(k), pre, scratch)? else {
             return Ok(false);
         };
-        on_rebuilt(i, pairs)?;
+        on_rebuilt(k, pairs)?;
     }
     Ok(true)
 }
 
-/// The members' two levels at `step` rebuilt, the change shown to `accept`,
-/// and the move kept for all members or put back for all; `extra` units
-/// charged for the move itself. The members' tree is the caller's: a kept
-/// move leaves their levels on the tree `step.info` was taken from and their
-/// pointers on the old one.
+/// The two levels of each member `moved` touches rebuilt, the change shown
+/// to `accept`, and the move kept for all members or put back for all;
+/// `extra` units charged for the move itself. The members' trees are the
+/// caller's: a kept move leaves their levels on the trees the rotations were
+/// made on and their pointers on the old ones.
 ///
 /// A member that keeps its pairs ([`keeps_its_pairs`]) is charged its pairs
 /// and one, and rebuilt only once the move is kept. A member rebuilt is
@@ -1055,13 +1431,12 @@ fn rebuild_other_members(
 fn probe(
     eng: &Engine,
     members: &mut [&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     extra: u64,
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     let mut gate = lim.gate();
     gate.poll(extra)?;
     let mut before = Transient::new(lim, Vec::new());
@@ -1069,26 +1444,31 @@ fn probe(
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
     let mut deferred = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut deferred, members.len())?;
-    for m in members.iter() {
-        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, step.max_pairs));
+    lim.reserve_exact(&mut deferred, moved.len())?;
+    before.resize(members.len(), 0);
+    after.resize(members.len(), 0);
+    for (k, &(i, info)) in moved.at.iter().enumerate() {
+        let m = &members[i];
+        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
+        let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, moved.max_pairs));
         if keeps {
             gate.poll(old as u64 + 1)?;
         }
-        before.push(old);
-        after.push(old);
+        before[i] = old;
+        after[i] = old;
         deferred.push(keeps);
+        debug_assert_eq!(deferred.len(), k + 1);
     }
-    let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
+    let mut pre = Preimages::new(lim, moved.len(), 2 * moved.len())?;
     let rebuilt = rebuild_other_members(
         lim,
         members,
-        step,
+        moved,
         scratch,
         &mut pre,
-        |i| !deferred[i],
-        |i, pairs| {
+        |k| !deferred[k],
+        |k, pairs| {
+            let i = moved.member(k);
             after[i] = pairs;
             gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
         },
@@ -1109,17 +1489,18 @@ fn probe(
             && rebuild_other_members(
                 lim,
                 members,
-                step,
+                moved,
                 scratch,
                 &mut pre,
-                |i| deferred[i],
-                |i, pairs| {
+                |k| deferred[k],
+                |k, pairs| {
+                    let i = moved.member(k);
                     debug_assert_eq!(pairs, before[i], "a member that keeps its pairs");
                     gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
                 },
             )?)
     });
-    settle(members, step.info, pre, outcome, None)
+    settle(members, pre, outcome, None)
 }
 
 /// [`probe`] for a move kept exactly when it leaves the members' total below
@@ -1143,7 +1524,7 @@ fn probe(
 fn probe_scored<'l>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     scratch: &mut RestructureScratch,
     twin: Twin<'_>,
     slack: usize,
@@ -1154,59 +1535,61 @@ fn probe_scored<'l>(
     // over few members, which fresh tables would each allocate.
     let mut tables = std::mem::take(&mut scratch.probe);
     tables.clear();
-    let kept = probe_scored_with(eng, members, step, scratch, &mut tables, twin, slack, undo);
+    let kept = probe_scored_with(eng, members, moved, scratch, &mut tables, twin, slack, undo);
     scratch.probe = tables;
     kept
 }
 
-/// [`probe_scored`] in `tables`.
+/// [`probe_scored`] in `tables`, which, like the scores of `twin`, are by
+/// index in `moved`.
 #[expect(clippy::too_many_arguments, reason = "probe_scored's arguments and its tables")]
 fn probe_scored_with<'l>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     scratch: &mut RestructureScratch,
     tables: &mut ProbeTables,
     mut twin: Twin<'_>,
     slack: usize,
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
-    let info = step.info;
     debug_assert!(match twin {
         Twin::Alone => true,
-        Twin::Fill(_) => !step.crossed,
-        Twin::Given(_) => step.crossed,
+        Twin::Fill(_) => !moved.crossed,
+        Twin::Given(_) => moved.crossed,
     });
     let lim = eng.limits();
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
-    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+    let n = moved.len();
     let ProbeTables { before, after, scored, floors, order } = tables;
-    lim.reserve_exact(before, members.len())?;
+    lim.reserve_exact(before, n)?;
     // A member that keeps its pairs is not scored, and a scored member ends
     // with at least a pair for each of its outer nodes.
-    lim.reserve_exact(scored, members.len())?;
-    lim.reserve_exact(floors, members.len())?;
-    for m in members.iter() {
-        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
+    lim.reserve_exact(scored, n)?;
+    lim.reserve_exact(floors, n)?;
+    for &(i, info) in moved.at {
+        let m = &members[i];
+        let ((outer, owners), inner) =
+            (pairs_and_owners(&m.levels[info.v_idx.idx()]), m.levels[info.w_idx.idx()].live_pairs());
         let old = outer + inner;
         before.push(old);
-        let scores = !keeps_its_pairs(outer, inner, step.max_pairs);
+        let scores = !keeps_its_pairs(outer, inner, moved.max_pairs);
         scored.push(scores);
         floors.push(if scores { owners } else { old });
     }
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
-    lim.reserve_exact(after, members.len())?;
+    lim.reserve_exact(after, n)?;
     after.extend_from_slice(before);
     // The largest members first: a move they refuse is refused with less
     // of the pool read.
-    lim.reserve_exact(order, members.len())?;
-    order.extend(0..members.len());
-    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
+    lim.reserve_exact(order, n)?;
+    order.extend(0..n);
+    order.sort_by_key(|&k| std::cmp::Reverse(before[k]));
     if let Twin::Fill(slots) = &mut twin {
-        slots.resize(members.len(), None);
+        slots.resize(n, None);
     }
     // The floors of the members still to score, and the pairs of those
     // scored, of the move and of its crossing where it is scored too.
@@ -1214,7 +1597,7 @@ fn probe_scored_with<'l>(
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
     let cap = |sum: usize, rest: usize| limit.saturating_sub(sum + rest);
     for (at, &i) in order.iter().enumerate() {
-        let m = &members[i];
+        let (m, step) = (&members[moved.member(i)], moved.step(i));
         rest -= floors[i];
         let old = before[i];
         if !scored[i] {
@@ -1235,7 +1618,7 @@ fn probe_scored_with<'l>(
                 let [plain, crossed] = score_levels_crossed_too(
                     lim,
                     m,
-                    info,
+                    step.info,
                     step.dir,
                     score,
                     step.max_pairs,
@@ -1257,7 +1640,7 @@ fn probe_scored_with<'l>(
                 gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
             }
             #[cfg(debug_assertions)]
-            debug_check_refusal(lim, members, step, limit, scratch)?;
+            debug_check_refusal(lim, members, moved, limit, scratch)?;
             gate.flush()?;
             lim.check_stop()?;
             return Ok(false);
@@ -1270,16 +1653,16 @@ fn probe_scored_with<'l>(
     // the search refuses.
     if sum >= limit {
         #[cfg(debug_assertions)]
-        debug_check_scores(lim, members, step, after, scratch)?;
+        debug_check_scores(lim, members, moved, after, scratch)?;
         gate.flush()?;
         lim.check_stop()?;
         return Ok(false);
     }
-    let mut pre = Preimages::new(lim, members.len(), 2 * members.len())?;
+    let mut pre = Preimages::new(lim, n, 2 * n)?;
     let outcome = rebuild_other_members(
         lim,
         members,
-        step,
+        moved,
         scratch,
         &mut pre,
         |_| true,
@@ -1300,7 +1683,7 @@ fn probe_scored_with<'l>(
         lim.check_stop()?;
         Ok(kept && after.iter().sum::<usize>() < limit)
     });
-    settle(members, info, pre, outcome, undo)
+    settle(members, pre, outcome, undo)
 }
 
 /// A level's live pairs and the nodes that hold them.
@@ -1329,7 +1712,8 @@ enum Twin<'s> {
     Alone,
     /// The move is plain and its crossing is still to be probed: each
     /// member's score of the crossing taken with the move's, filed at the
-    /// member's index, `None` for a member not scored or not reached.
+    /// member's index among those touched, `None` for a member not scored
+    /// or not reached.
     Fill(&'s mut Vec<Option<Option<usize>>>),
     /// The move is the crossing of a plain move refused just before, on the
     /// same levels, which filed these scores.
@@ -1338,12 +1722,11 @@ enum Twin<'s> {
 
 /// The end of a probe's rebuilds, `pre` holding what each member rebuilt
 /// needs to be put back: where `outcome` keeps the move, every member's two
-/// rebuilt levels kept ([`Preimages::keep`]) and the levels they replaced
-/// filed with `undo` when given; otherwise every member rebuilt put back as
-/// it was. Returns `outcome`.
+/// rebuilt levels kept ([`Preimages::keep_rebuilt`]) and the levels they
+/// replaced filed with `undo` when given; otherwise every member rebuilt put
+/// back as it was. Returns `outcome`.
 fn settle<'a>(
     members: &mut [&mut Tdd],
-    info: &RotationInfo,
     pre: Preimages<'a>,
     outcome: Result<bool, OperationError>,
     undo: Option<&mut Undo<'a>>,
@@ -1352,25 +1735,26 @@ fn settle<'a>(
         pre.put_back(members);
         return outcome;
     }
-    let replaced = pre.keep(members, &[info.v_idx, info.w_idx]);
+    let replaced = pre.keep_rebuilt(members);
     if let Some(undo) = undo {
-        undo.file(info.v_idx, info.w_idx, replaced);
+        undo.file(replaced);
     }
     Ok(true)
 }
 
-/// A debug build's check of a move its scores refused: every member's
-/// preparation gives at least its score.
+/// A debug build's check of a move its scores refused: every touched
+/// member's preparation gives at least its score.
 #[cfg(debug_assertions)]
 fn debug_check_scores(
     lim: &Limits,
     members: &[&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     scores: &[usize],
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
-    for (m, &score) in members.iter().zip(scores) {
+    for (k, &score) in scores.iter().enumerate() {
+        let (m, step) = (&members[moved.member(k)], moved.step(k));
+        let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
         if keeps_its_pairs(m.levels[v].live_pairs(), m.levels[w].live_pairs(), step.max_pairs) {
             continue;
         }
@@ -1394,13 +1778,14 @@ fn debug_check_scores(
 fn debug_check_refusal(
     lim: &Limits,
     members: &[&mut Tdd],
-    step: RotationStep<'_>,
+    moved: Touched<'_>,
     total: usize,
     scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
-    let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
     let mut pairs = 0usize;
-    for m in members {
+    for k in 0..moved.len() {
+        let (m, step) = (&members[moved.member(k)], moved.step(k));
+        let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
         let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
         if keeps_its_pairs(outer, inner, step.max_pairs) {
             pairs += outer + inner;
