@@ -61,10 +61,6 @@ pub(crate) struct ClauseWork {
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
     t3_buf: Vec<ChildPair>,
-    /// Disjunction only: the `cd_map` slot of the accumulator's output node
-    /// and the one extra pair naming the cube, appended to that node's `c_t`
-    /// pair list. `None` for a conjunction; see [`cube`].
-    output_cube_pair: Option<(usize, ChildPair)>,
 }
 
 impl Buffers for ClauseWork {
@@ -90,7 +86,6 @@ impl PooledScratch for ClauseWork {
         self.dfs_stack.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
-        self.output_cube_pair = None;
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -337,27 +332,35 @@ fn rebuild_along_spine(
     } else {
         None
     };
-    for i in 0..work.spine_internal.len() {
-        let t = work.spine_internal[i];
+    let mut tables = ClauseTables {
+        cd_map: &mut work.cd_map,
+        level_base: &work.level_base,
+        need_dt: &work.need_dt,
+        on_spine: &work.on_spine,
+        t3_buf: &mut work.t3_buf,
+        dt_pairs: &mut work.dt_pairs,
+        output_cube_pair: None,
+    };
+    for &t in work.spine_internal.iter() {
         // The `cd_map` block of a level is sized at its width before the
         // rebuild, which is also the range the chain reads back.
         let old_width = levels[t.idx()].slot_count();
         if let Some(chain) = chain.as_ref() {
             // The output level is last in the bottom-up order, so the chain
             // is complete below it and the cube joins the output node here.
-            work.output_cube_pair = (t == out_vtree).then(|| {
+            tables.output_cube_pair = (t == out_vtree).then(|| {
                 (
-                    work.level_base[t.idx()] + out_local_in.idx(),
+                    tables.level_base[t.idx()] + out_local_in.idx(),
                     chain.pair_at(vtree, t),
                 )
             });
         }
-        rebuild_spine_level(eng, t, vtree, &mut levels, work)?;
+        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
         if let Some(chain) = chain.as_mut()
             && t != out_vtree
         {
-            let base = work.level_base[t.idx()];
-            let lanes = &work.cd_map[base..base + old_width];
+            let base = tables.level_base[t.idx()];
+            let lanes = &tables.cd_map[base..base + old_width];
             chain.close_level(eng, t, vtree, &mut levels[t.idx()], lanes)?;
         }
         out_nodes += levels[t.idx()].slot_count() as u64;
