@@ -133,6 +133,34 @@ impl Partition<'_> {
         Ok(())
     }
 
+    /// A wide parent node of a stored level, split after the narrow ones by
+    /// its pairs that name a node not alone ([`Self::pairs_not_alone`]),
+    /// as a parent node of that many pairs is. By then most nodes have
+    /// left the partition, and most pairs of a wide parent node name such
+    /// nodes: leaving them out costs a few instructions a pair, a split
+    /// several times more. Out of line, so that the narrow parent nodes'
+    /// loop compiles as it would alone.
+    #[inline(never)]
+    pub(super) fn split_late(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        wide: &mut Wide<'_>,
+        live: &mut Vec<ChildPair>,
+    ) -> Result<(), OperationError> {
+        let pairs = self.pairs_not_alone(lim, pairs, side, live)?;
+        match pairs.len() {
+            0 => {}
+            1 => self.leave(split_pair(&pairs[0], side).0),
+            2 => self.split_two(pairs, side),
+            3 | 4 if self.split_few(pairs, side) => {}
+            n if n <= super::SMALL_PAIRS => self.split_small(pairs, side),
+            _ => self.split_wide(lim, pairs, side, wide)?,
+        }
+        Ok(())
+    }
+
     /// A wide parent node split by how many siblings it pairs each node
     /// with, its degree there, where no parent node repeats a pair (math
     /// §4.24). The degrees certify that the nodes' sibling sets there are

@@ -2,7 +2,7 @@ use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 use crate::limits::Limits;
 
 use super::merge::GroupPlan;
-use crate::diagram::EncodedNode;
+use crate::diagram::{ChildPair, EncodedNode};
 
 // Arena growth here goes through `limits`' `try_push` / `try_resize`, the one
 // budget-charged implementation; a raw `try_reserve_exact(1)` would bypass the
@@ -257,6 +257,9 @@ pub(crate) struct ContractScratch {
     /// Per class a wide parent node of few siblings meets with two codes or
     /// more, its members counted by code, then each code's class.
     pub(super) refine_rows: Vec<u32>,
+    /// One wide parent node's pairs that name a node not alone in the
+    /// refinement's partition.
+    pub(super) refine_live: Vec<ChildPair>,
     /// Per degree, the nodes of that degree there; zero between parent
     /// nodes.
     pub(super) refine_reach: Vec<u32>,
@@ -395,6 +398,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_seen);
         visit(&mut self.refine_code);
         visit(&mut self.refine_rows);
+        visit(&mut self.refine_live);
         visit(&mut self.refine_reach);
         visit(&mut self.refine_touched);
         visit(&mut self.flat_groups);

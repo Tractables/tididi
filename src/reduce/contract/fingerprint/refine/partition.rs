@@ -159,6 +159,44 @@ impl Partition<'_> {
         }
     }
 
+    /// The pairs of `pairs` that name on `side` a node not alone, in order:
+    /// `pairs` itself where every one does, else a copy in `live`. A parent
+    /// node splits the partition as these pairs do.
+    pub(super) fn pairs_not_alone<'p>(
+        &self,
+        lim: &Limits,
+        pairs: &'p [ChildPair],
+        side: ChildSide,
+        live: &'p mut Vec<ChildPair>,
+    ) -> Result<&'p [ChildPair], OperationError> {
+        match side {
+            ChildSide::Left => self.keep_not_alone(lim, pairs, live, |pair| pair.left.0),
+            ChildSide::Right => self.keep_not_alone(lim, pairs, live, |pair| pair.right.0),
+        }
+    }
+
+    #[inline(always)]
+    fn keep_not_alone<'p>(
+        &self,
+        lim: &Limits,
+        pairs: &'p [ChildPair],
+        live: &'p mut Vec<ChildPair>,
+        node: impl Fn(&ChildPair) -> u32,
+    ) -> Result<&'p [ChildPair], OperationError> {
+        let alone = |pair: &ChildPair| {
+            let (w, b) = bits::at(node(pair));
+            self.bits[w][1] & b != 0
+        };
+        let Some(first) = pairs.iter().position(alone) else {
+            return Ok(pairs);
+        };
+        live.clear();
+        lim.reserve_exact(live, pairs.len() - 1)?;
+        live.extend_from_slice(&pairs[..first]);
+        live.extend(pairs[first + 1..].iter().filter(|pair| !alone(pair)));
+        Ok(live)
+    }
+
     /// Whether a node of class `c` can still have a twin.
     #[inline]
     pub(super) fn can_twin(&self, c: u32) -> bool {
