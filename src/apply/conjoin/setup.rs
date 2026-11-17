@@ -3,7 +3,7 @@
 //! product-list allocation, bundled into `ApplyRun` by `apply_and_setup` for
 //! the driver to sweep with.
 
-use crate::apply::conjoin::held::Held;
+use crate::apply::conjoin::held::{Held, Here};
 use super::marginal_plan::EntryMarginality;
 use super::price::{combinations_bound, over_floor};
 use super::products::Products;
@@ -423,21 +423,17 @@ impl ApplyRun<'_, '_> {
     /// This level's marginality, in the two senses [`route_level`](super::route::route_level) needs.
     pub(super) fn level_marginal(
         &self,
-        f: &Held<'_>,
-        g: &Held<'_>,
+        here: Operands<Here<'_>>,
         shape: LevelShape,
         targets: VtreeMask<'_>,
     ) -> LevelMarg {
         let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
-        let now = |i: usize| self.levels[i].is_marginal();
-        let any = |i: usize| {
-            self.levels[i].is_marginal() || f.level(i).is_marginal() || g.level(i).is_marginal()
-        };
+        let (left_now, right_now) = (self.levels[left_idx].is_marginal(), self.levels[right_idx].is_marginal());
         LevelMarg {
-            left_now: now(left_idx),
-            right_now: now(right_idx),
-            left_any: any(left_idx),
-            right_any: any(right_idx),
+            left_now,
+            right_now,
+            left_any: left_now || here.f.left.is_marginal() || here.g.left.is_marginal(),
+            right_any: right_now || here.f.right.is_marginal() || here.g.right.is_marginal(),
             is_target: targets.contains(t_idx),
         }
     }

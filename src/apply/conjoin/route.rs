@@ -1,6 +1,5 @@
 //! Choosing how a level is walked and how its output arrays grow.
 
-use crate::apply::conjoin::held::Held;
 use super::*;
 
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and
@@ -196,8 +195,7 @@ impl Route {
     /// commit and leaf marginalization both produce such levels.
     pub(super) fn validate(
         self,
-        f: &Held<'_>,
-        g: &Held<'_>,
+        here: Operands<Here<'_>>,
         shape: LevelShape,
         marginal: &LevelMarg,
         run: &ApplyRun,
@@ -205,8 +203,9 @@ impl Route {
         let LevelShape { t, left, right, .. } = shape;
         let (left_idx, right_idx) = (left.idx(), right.idx());
         let ApplyRun { f_identity, g_identity, .. } = run;
-        let left_marginal = f.level(t).is_marginal();
-        let right_marginal = g.level(t).is_marginal();
+        let Operands { f, g } = here;
+        let left_marginal = f.t.is_marginal();
+        let right_marginal = g.t.is_marginal();
         let left_identity_at_t = f_identity[left_idx] && f_identity[right_idx];
         let right_identity_at_t = g_identity[left_idx] && g_identity[right_idx];
         let violation = (left_marginal && !right_marginal && !right_identity_at_t)
@@ -220,8 +219,8 @@ impl Route {
             let t_idx = t.idx();
             cheap_assert!(
                 !marginal.left_now && !marginal.right_now
-                    && !marginal_wide(f.level(left_idx)) && !marginal_wide(f.level(right_idx))
-                    && !marginal_wide(g.level(left_idx)) && !marginal_wide(g.level(right_idx)),
+                    && !marginal_wide(f.left) && !marginal_wide(f.right)
+                    && !marginal_wide(g.left) && !marginal_wide(g.right),
                 "a structural product-grid route was chosen for a level with a \
                  non-empty marginal child (t_idx={t_idx} l={left_idx} r={right_idx})"
             );

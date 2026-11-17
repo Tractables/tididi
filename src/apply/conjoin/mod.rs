@@ -58,7 +58,7 @@ use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Complete, Ma
 // An operand as the sweep holds it, owned or borrowed.
 mod held;
 mod view;
-use held::Held;
+use held::{Held, Here};
 use view::View;
 
 // Identity/constant-true detection and the per-level identity fast paths.

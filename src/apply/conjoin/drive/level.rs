@@ -356,8 +356,7 @@ fn materialize_children_and_grid(
 #[inline(always)]
 pub(super) fn open_level_arenas(
     lim: &crate::limits::Limits,
-    f: &Held<'_>,
-    g: &Held<'_>,
+    (f_t, g_t): (&TddLevel, &TddLevel),
     shape: LevelShape,
     level: &mut TddLevel,
     route: Route,
@@ -374,7 +373,7 @@ pub(super) fn open_level_arenas(
         lim.begin_level(None);
         return Ok(());
     }
-    let (t, left_width, right_width) = (shape.t, shape.f.here, shape.g.here);
+    let (left_width, right_width) = (shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
     // `left_width * right_width` is an exact bound.
     let nodes_reserve = left_width
@@ -388,7 +387,7 @@ pub(super) fn open_level_arenas(
     // nodes, which seeded nothing and left the arena to double from empty.
     // Used twice — once to pick the growth mode, once to size the pairs
     // arena — computed once so the two can never disagree.
-    let pair_bound = emit_pair_bound(f.level(t), g.level(t));
+    let pair_bound = emit_pair_bound(f_t, g_t);
     lim.begin_level(Some(pair_bound));
     // Seed `level.pairs` at that bound instead of letting it double from
     // empty on every level; the emit's own `try_push_pair_into` choke
@@ -547,16 +546,13 @@ fn run_row_loop(
 fn build_level_prefilter_masks(
     eng: &Engine,
     run: &mut ApplyRun,
-    g: &Held<'_>,
+    right_level: &TddLevel,
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
     (lookups, pairs): (PlainLookups, bool),
 ) -> Result<(), OperationError> {
-    let LevelShape {
-        t, f: fw, g: gw, ..
-    } = shape;
-    let right_level = g.level(t);
+    let LevelShape { f: fw, g: gw, .. } = shape;
     build_side_masks::<false>(
         eng,
         (right_level, gw.here),
@@ -821,12 +817,12 @@ fn complete_level_size(
 pub(super) fn build_level_dense(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &Held<'_>,
-    g: &Held<'_>,
+    here: Operands<Here<'_>>,
     level: LevelBuild,
     sweep: &mut Sweep<'_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
+    let (f_t, g_t) = (here.f.t, here.g.t);
     let LevelBuild { shape, route, plan, settles } = level;
     let LevelShape {
         t,
@@ -889,7 +885,7 @@ pub(super) fn build_level_dense(
         && route == Route::Dense
         && !super::super::pair_rows_forced_off()
         && liveness::pairs_fit(
-            g.level(t),
+            g_t,
             gw.here,
             Sides {
                 left: gw.left,
@@ -916,8 +912,8 @@ pub(super) fn build_level_dense(
         && !crate::diagram::stored_levels_forced()
         && let Some((product, work)) = super::compose::plan_sums(
             lim,
-            f.level(t),
-            g.level(t),
+            f_t,
+            g_t,
             shape,
             sides,
             complete,
@@ -930,7 +926,7 @@ pub(super) fn build_level_dense(
             .levels
             .get_disjoint_mut([ti, li, ri])
             .expect("a vtree node and its two children are distinct level indices");
-        open_level_arenas(lim, f, g, shape, level, route)?;
+        open_level_arenas(lim, (f_t, g_t), shape, level, route)?;
         let env = StreamEnv {
             left_idx: li,
             right_idx: ri,
@@ -973,7 +969,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, (lookups, pairs))?;
+        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pairs))?;
     }
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route. Under bounded-precision weights a level of the
@@ -989,15 +985,15 @@ pub(super) fn build_level_dense(
     {
         None
     } else if matches!(lookups, PlainLookups::Complete { .. }) {
-        super::compose::plan(lim, f.level(t), g.level(t), shape, grouped)
+        super::compose::plan(lim, f_t, g_t, shape, grouped)
     } else if route == Route::MarginalChild
         && !grid_lookups_forced()
         && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
     {
         super::compose::plan_marginal(
             lim,
-            f.level(t),
-            g.level(t),
+            f_t,
+            g_t,
             shape,
             sides,
             complete,
@@ -1021,7 +1017,7 @@ pub(super) fn build_level_dense(
     'routes: {
         if let Some(product) = composed {
             let level = &mut run.levels[ti];
-            open_level_arenas(lim, f, g, shape, level, route)?;
+            open_level_arenas(lim, (f_t, g_t), shape, level, route)?;
             // The capacity the reservation of the level's arenas starts
             // from, which the meter is charged from. The description is
             // written without the reservation, which it would drop: its
@@ -1037,7 +1033,7 @@ pub(super) fn build_level_dense(
             let (work, meter, doublings) =
                 super::compose::charges((fw.here, gw.here), &product, charged);
             if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
-                let size = complete_level_size(f.level(t), g.level(t))?;
+                let size = complete_level_size(f_t, g_t)?;
                 let cells = fw.here * gw.here;
                 run.products
                     .arena
@@ -1058,7 +1054,7 @@ pub(super) fn build_level_dense(
             // A level of the marginal-child route reads its sides from their
             // grids and grows its arenas as the row loop writes them.
             opened = Some(if plain {
-                Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?)
+                Some(reserve_complete_level(lim, f_t, g_t, level)?)
             } else {
                 None
             });
@@ -1075,11 +1071,11 @@ pub(super) fn build_level_dense(
             .expect("a vtree node and its two children are distinct level indices");
         let (left_level, right_level) = (&*left_level, &*right_level);
 
-        let right_cols = column_table_pays(f.level(t), g.level(t), fw.here, gw.here, grouped)
+        let right_cols = column_table_pays(f_t, g_t, fw.here, gw.here, grouped)
             .then(|| {
                 RightColumns::build(
                     eng,
-                    g.level(t),
+                    g_t,
                     gw.here,
                     sides.left.view,
                     sides.right.view,
@@ -1101,20 +1097,20 @@ pub(super) fn build_level_dense(
             Some(Some(charged)) => lookups = PlainLookups::Complete { charged },
             Some(None) => note_lookups(lookups),
             None => {
-                open_level_arenas(lim, f, g, shape, level, route)?;
+                open_level_arenas(lim, (f_t, g_t), shape, level, route)?;
                 if let PlainLookups::Complete { charged }
                 | PlainLookups::CompleteLeft { charged }
                 | PlainLookups::CompleteRight { charged } = &mut lookups
                 {
-                    *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+                    *charged = reserve_complete_level(lim, f_t, g_t, level)?;
                 }
                 note_lookups(lookups);
             }
         }
 
         let rows = RowLoop {
-            f_level: f.level(t),
-            g_level: g.level(t),
+            f_level: f_t,
+            g_level: g_t,
             children: Sides {
                 left: left_level,
                 right: right_level,

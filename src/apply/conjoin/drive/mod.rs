@@ -162,12 +162,13 @@ fn build_level(
     if !taken {
         // One decision per level, taken before any of the level's storage
         // is touched: the marginal plan and the two gates read only metadata.
-        let marginal = run.level_marginal(f, g, shape, sweep.targets);
-        let plan = plan_marginal_level(f, g, shape, run, &marginal);
+        let here = Operands { f: f.here(shape), g: g.here(shape) };
+        let marginal = run.level_marginal(here, shape, sweep.targets);
+        let plan = plan_marginal_level(here, shape, run, &marginal);
         let mut route = route_level(
             &plan,
             &marginal,
-            run.sparse_gate(shape, f.level(t), g.level(t)),
+            run.sparse_gate(shape, here.f.t, here.g.t),
         );
         // A level taken from the sparse-marginal route meters its pairs as
         // that route does, which returns before the per-level tail: what it
@@ -176,11 +177,11 @@ fn build_level(
         // flight for the rest of the conjunction and could trip a pair floor
         // the sparse-marginal route does not.
         let mut settles = true;
-        if describes_marginal_child(eng, run, (f, g), sweep, shape, (&plan, &marginal), route) {
+        if describes_marginal_child(eng, run, here, sweep, shape, (&plan, &marginal), route) {
             settles = route != Route::SparseMarg || taken_levels_settled_forced();
             route = Route::MarginalChild;
         }
-        route.validate(f, g, shape, &marginal, run)?;
+        route.validate(here, shape, &marginal, run)?;
         note_route(t, route);
 
         match route {
@@ -195,17 +196,17 @@ fn build_level(
             // Claims no grid of its own: the parent that densifies its
             // product list prices that grid.
             Route::SparseMarg => {
-                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan, settles }, sweep)?
+                build_level_dense(eng, run, here, LevelBuild { shape, route, plan, settles }, sweep)?
             }
             _ => {
                 // Priced before its grid is claimed: a level that cannot fit
                 // is refused here, named, rather than grown into the budget.
-                let priced = price_dense_level(eng.limits(), run, f, g, shape, route)?;
-                refuse_past_cap(eng.limits(), run, (f, g), shape, route, before)?;
+                let priced = price_dense_level(eng.limits(), run, here, shape, route)?;
+                refuse_past_cap(eng.limits(), run, here, shape, route, before)?;
                 #[cfg(debug_assertions)]
-                let predicted = super::price::complete_level(run, (f, g), shape, route)
+                let predicted = super::price::complete_level(run, here, shape, route)
                     .map(|level| (level, eng.limits().mark()));
-                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan, settles }, sweep)?;
+                build_level_dense(eng, run, here, LevelBuild { shape, route, plan, settles }, sweep)?;
                 #[cfg(debug_assertions)]
                 if let Some((level, mark)) = predicted {
                     let built = run.levels[t.idx()].slot_count() as u128;
@@ -249,13 +250,13 @@ fn build_level(
 fn describes_marginal_child(
     eng: &Engine,
     run: &ApplyRun,
-    (f, g): (&Held<'_>, &Held<'_>),
+    here: Operands<Here<'_>>,
     sweep: &Sweep<'_>,
     shape: LevelShape,
     (plan, marginal): (&MarginalPlan, &LevelMarg),
     route: Route,
 ) -> bool {
-    let (t, li, ri) = (shape.t, shape.left.idx(), shape.right.idx());
+    let (li, ri) = (shape.left.idx(), shape.right.idx());
     if !matches!(route, Route::Sparse | Route::SparseMarg)
         || !(marginal.left_any || marginal.right_any)
         || marginal.is_target
@@ -278,8 +279,8 @@ fn describes_marginal_child(
         && !plan.sides.right.is_passthrough();
     compose::plan_marginal(
         eng.limits(),
-        f.level(t),
-        g.level(t),
+        here.f.t,
+        here.g.t,
         shape,
         plan.sides,
         complete,

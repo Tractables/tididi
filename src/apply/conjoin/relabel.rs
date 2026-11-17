@@ -136,7 +136,7 @@ pub(super) fn take_relabel_level(
         (None, Some(pair)) => (false, pair),
         (None, None) => return Ok(false),
     };
-    let marginal = run.level_marginal(f, g, shape, sweep.targets);
+    let marginal = run.level_marginal(Operands { f: f.here(shape), g: g.here(shape) }, shape, sweep.targets);
     if marginal.is_target {
         return Ok(false);
     }

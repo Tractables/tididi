@@ -45,7 +45,7 @@ fn every_emitting_route_arms_the_growth_mode() {
     for route in [Route::MarginalChild, Route::PlainDense, Route::Dense, Route::SparseMarg] {
         let _op = eng.limits().begin_operation();
         let mut level = TddLevel::new();
-        open_level_arenas(eng.limits(), &crate::apply::conjoin::held::Held::reading(&f), &crate::apply::conjoin::held::Held::reading(&g), shape, &mut level, route).unwrap();
+        open_level_arenas(eng.limits(), (&f.levels[shape.t.idx()], &g.levels[shape.t.idx()]), shape, &mut level, route).unwrap();
         assert!(eng.limits().bounded_growth(), "{route:?} emits pairs and must arm bounded growth");
         assert!(level.pairs.capacity() > 0 && level.node_capacity() > 0, "{route:?} must seed both arenas");
     }
@@ -58,7 +58,7 @@ fn the_streaming_routes_open_nothing() {
     for marginal_children in [false, true] {
         let _op = eng.limits().begin_operation();
         let mut level = TddLevel::new();
-        open_level_arenas(eng.limits(), &crate::apply::conjoin::held::Held::reading(&f), &crate::apply::conjoin::held::Held::reading(&g), shape, &mut level, Route::Stream { marginal_children }).unwrap();
+        open_level_arenas(eng.limits(), (&f.levels[shape.t.idx()], &g.levels[shape.t.idx()]), shape, &mut level, Route::Stream { marginal_children }).unwrap();
         assert!(!eng.limits().bounded_growth(), "a streaming level never emits into the pair arena");
         assert_eq!(level.pairs.capacity(), 0);
         assert_eq!(level.node_capacity(), 0);

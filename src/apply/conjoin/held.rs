@@ -19,6 +19,7 @@ use crate::limits::{Limits, OperationError};
 use crate::restructure::placement::push_free_level;
 use crate::vtree::{Vtree, VtreeIdx};
 
+use super::setup::LevelShape;
 use super::view::View;
 
 enum Hold<'a> {
@@ -85,6 +86,21 @@ impl Held<'_> {
         }
     }
 
+    /// The operand's levels at the sweep's level `shape.t` and its two
+    /// children.
+    #[inline]
+    pub(super) fn here(&self, shape: LevelShape) -> Here<'_> {
+        let (t, left, right) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
+        let tdd = self.tdd();
+        match &self.view {
+            None => {
+                let levels = &tdd.levels;
+                Here { t: &levels[t], left: &levels[left], right: &levels[right] }
+            }
+            Some(view) => Here { t: view.level(tdd, t), left: view.level(tdd, left), right: view.level(tdd, right) },
+        }
+    }
+
     /// The sweep's vtree.
     #[inline]
     pub(crate) fn vtree(&self) -> &Arc<Vtree> {
@@ -128,18 +144,29 @@ impl Held<'_> {
         }
     }
 
-    /// The level at `t` where the sweep may change it: an owned operand's,
-    /// or one its view built. `None` at a free node of a view.
+    /// Call `each` on the levels at `ts` where the sweep may change them:
+    /// an owned operand's, or ones its view built.
     #[inline]
-    pub(crate) fn level_mut(&mut self, t: usize) -> Option<&mut TddLevel> {
-        let own = match self.view.as_deref_mut().map(|view| view.held_mut(t)) {
-            None => t,
-            Some(Ok(built)) => return built,
-            Some(Err(own)) => own,
-        };
-        match &mut self.tdd {
-            Hold::Owned(tdd) => Some(&mut tdd.levels[own]),
-            Hold::Borrowed(_) => None,
+    pub(crate) fn each_level_mut(&mut self, ts: [usize; 2], mut each: impl FnMut(&mut TddLevel)) {
+        match (self.view.as_deref_mut(), &mut self.tdd) {
+            (None, Hold::Owned(tdd)) => {
+                // One mutable access to the levels: each forgets the
+                // diagram's summary.
+                let levels = &mut *tdd.levels;
+                for t in ts {
+                    each(&mut levels[t]);
+                }
+            }
+            (None, Hold::Borrowed(_)) => {}
+            (Some(view), tdd) => {
+                for t in ts {
+                    match (view.held_mut(t), &mut *tdd) {
+                        (Ok(Some(built)), _) => each(built),
+                        (Err(own), Hold::Owned(tdd)) => each(&mut tdd.levels[own]),
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 
@@ -233,6 +260,15 @@ impl Held<'_> {
             std::mem::swap(out, &mut tdd.levels[own]);
         }
     }
+}
+
+/// One operand's levels at a level of the sweep and its two children
+/// ([`Held::here`]).
+#[derive(Clone, Copy)]
+pub(super) struct Here<'a> {
+    pub(super) t: &'a TddLevel,
+    pub(super) left: &'a TddLevel,
+    pub(super) right: &'a TddLevel,
 }
 
 /// A node of the sweep's vtree, by index or by id.

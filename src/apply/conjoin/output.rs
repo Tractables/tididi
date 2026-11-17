@@ -12,14 +12,8 @@ use super::*;
 /// `marginal_counts`, so `is_marginal()` stays accurate.
 pub(super) fn drop_dead_children(f: &mut Held<'_>, g: &mut Held<'_>, shape: LevelShape) {
     let (li, ri) = (shape.left.idx(), shape.right.idx());
-    for t in [li, ri] {
-        if let Some(level) = f.level_mut(t) {
-            drop_dead_operand_level(level);
-        }
-        if let Some(level) = g.level_mut(t) {
-            drop_dead_operand_level(level);
-        }
-    }
+    f.each_level_mut([li, ri], drop_dead_operand_level);
+    g.each_level_mut([li, ri], drop_dead_operand_level);
 }
 
 /// Drop the `nodes`, `pairs` and `ranges` arenas of one operand level.
