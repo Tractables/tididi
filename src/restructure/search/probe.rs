@@ -343,7 +343,7 @@ impl DiagramHeader {
 
 /// A level a rotation replaced at `node` of diagram `diagram`.
 pub(super) struct Preimage<'a> {
-    diagram: usize,
+    pub(super) diagram: usize,
     pub(super) node: VtreeIdx,
     level: Transient<'a, TddLevel>,
 }
@@ -407,14 +407,34 @@ impl<'a> Preimages<'a> {
         levels
     }
 
+    /// [`keep`](Self::keep) for diagrams that each rebuilt two levels, filed
+    /// in turn after the diagram's header.
+    pub(super) fn keep_rebuilt(self, diagrams: &mut [&mut Tdd]) -> Transient<'a, Vec<Preimage<'a>>> {
+        let Preimages { mut headers, levels, .. } = self;
+        debug_assert_eq!(levels.len(), 2 * headers.len());
+        for ((i, header), pair) in headers.drain(..).zip(levels.chunks_exact(2)) {
+            let changed = [pair[0].node, pair[1].node];
+            diagrams[i].close_changed_levels(&changed);
+            diagrams[i].dirty.merge_under_kept(header.dirty, &changed);
+        }
+        levels
+    }
+
     /// Put every filed level and header back, the levels that replaced them
     /// discarded.
     pub(super) fn put_back(self, diagrams: &mut [&mut Tdd]) {
+        self.put_back_then(diagrams, |_| {});
+    }
+
+    /// [`put_back`](Self::put_back), with `then` run on the diagrams between
+    /// the levels and the headers.
+    pub(super) fn put_back_then(self, diagrams: &mut [&mut Tdd], then: impl FnOnce(&mut [&mut Tdd])) {
         let Preimages { lim, mut headers, mut levels } = self;
         for p in levels.drain(..) {
             let rebuilt = std::mem::replace(&mut diagrams[p.diagram].levels[p.node.idx()], p.level.keep());
             lim.discard(rebuilt);
         }
+        then(diagrams);
         for (i, header) in headers.drain(..) {
             header.restore(diagrams[i]);
         }

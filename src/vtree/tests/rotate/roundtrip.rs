@@ -143,7 +143,7 @@ fn right_rotate_works_immediately_on_balanced() {
 /// valid bottom-up order satisfying the root-last property.
 fn check_fixup_equivalence(mut vtree: Vtree, v: VtreeIdx, kind: RotationKind) {
     let mut via_rebuild = vtree.clone();
-    let info_a = rotate_pointers(&mut vtree, v, kind).expect("applicable").commit(&mut vtree);
+    let info_a = crate::test_helpers::rotate(&mut vtree, v, kind).expect("applicable");
     assert_invariants(&vtree);
 
     let info_b = rotate_pointers(&mut via_rebuild, v, kind).expect("applicable").abandon();

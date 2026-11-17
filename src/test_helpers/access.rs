@@ -74,13 +74,20 @@ pub(crate) fn stopping_engine() -> Engine {
 /// reverts the pending order itself; this whole-rotation form is what the
 /// tests are written against.
 pub(crate) fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_pointers(vtree, v, RotationKind::Left)?.commit(vtree))
+    rotate(vtree, v, RotationKind::Left)
+}
+
+/// Rotate at `v` in direction `kind` and repair the bottom-up order.
+pub(crate) fn rotate(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<RotationInfo> {
+    let pending = rotate_pointers(vtree, v, kind)?;
+    vtree.reshaped();
+    Some(pending.commit_in_probe(vtree))
 }
 
 /// Right-rotate the vtree at node `v`, promoting `v`'s left child, and repair
 /// the bottom-up order. `None` if `v` or its left child is a leaf.
 pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
-    Some(rotate_pointers(vtree, v, RotationKind::Right)?.commit(vtree))
+    rotate(vtree, v, RotationKind::Right)
 }
 
 /// Re-home a diagram that depends only on variables under one child of its

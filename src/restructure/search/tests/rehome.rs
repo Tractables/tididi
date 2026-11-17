@@ -198,7 +198,10 @@ fn a_diagram_in_two_parts_rehomes_without_rotating() {
         let rehomed = match three {
             false => eng.rehome(&g, &lifted, 0).unwrap(),
             true => {
-                assert!(matches!(eng.rehome(&g, &lifted, 0), Err(RestructureError::Bound { .. })));
+                let refused = eng.rehome(g.clone(), &lifted, 0).unwrap_err();
+                assert!(matches!(refused.error, RestructureError::Bound { .. }));
+                assert!(matches!(refused.tdd, std::borrow::Cow::Owned(_)));
+                assert!(eng.equivalent(&refused.tdd, &g).unwrap());
                 eng.rehome(&g, &lifted, usize::MAX).unwrap()
             }
         };

@@ -328,7 +328,15 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
             let mut scratch = crate::restructure::scratch::RestructureScratch::default();
-            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, (mv, usize::MAX, 0), &mut scratch, super::Twin::Alone, None)).unwrap();
+            let kept = with_members(&mut members, |refs| {
+                let pending = super::move_in_place(&mut tree, mv).expect("the move applied before");
+                let touched: Vec<_> = (0..refs.len()).map(|i| (i, info)).collect();
+                let moved = super::Touched { at: &touched, dir: mv.rotation.kind, crossed: mv.crossed, max_pairs: usize::MAX };
+                let kept = super::probe_scored(&eng, refs, moved, &mut scratch, super::Twin::Alone, 0, None);
+                pending.revert(&mut tree);
+                kept
+            })
+            .unwrap();
             if kept {
                 continue;
             }
@@ -1041,3 +1049,6 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     assert!(accepted > 0);
     assert_eq!(hash, PINNED, "hash {hash:#x} over {accepted} kept moves");
 }
+
+#[path = "pool/home.rs"]
+mod home;

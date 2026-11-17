@@ -144,6 +144,18 @@ pub struct TransportRefused<'a> {
     pub tdd: std::borrow::Cow<'a, crate::Tdd>,
 }
 
+/// A rehome [`Engine::rehome`](crate::Engine::rehome) refused, with the
+/// diagram: as it was given, or, when the restructure onto the projection
+/// failed, an owned copy that denotes the same function on a vtree between
+/// its own and the projection.
+#[derive(Debug)]
+pub struct RehomeRefused<'a> {
+    /// Why the rehome was refused.
+    pub error: RestructureError,
+    /// The diagram.
+    pub tdd: std::borrow::Cow<'a, crate::Tdd>,
+}
+
 impl std::fmt::Display for EmbedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

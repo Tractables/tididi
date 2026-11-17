@@ -118,13 +118,10 @@ fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes()
 #[test]
 fn sparse_assignments_on_rotated_trees_match_enumeration() {
     use crate::diagram::Literal;
-    use crate::vtree::{RotationKind, rotate::rotate_pointers};
     let vars = [VarId(20), VarId(3), VarId(72), VarId(9)];
     let mut rotated = Vtree::balanced_over(&vars).unwrap();
     let root = rotated.root();
-    rotate_pointers(&mut rotated, root, RotationKind::Left)
-        .unwrap()
-        .commit(&mut rotated);
+    crate::test_helpers::rotate_left(&mut rotated, root).unwrap();
     for tree in [
         Vtree::balanced_over(&vars).unwrap(),
         Vtree::linear_from_order(&vars).unwrap(),

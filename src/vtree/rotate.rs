@@ -97,7 +97,7 @@ pub(crate) struct RotationInfo {
 ///
 /// Handed out by the pointer-only rotations, which relink nodes without
 /// touching the order. Every path out of that state goes through this token:
-/// [`commit`](Self::commit) repairs the order for the rotated tree,
+/// [`commit_in_probe`](Self::commit_in_probe) repairs the order for the rotated tree,
 /// [`revert`](Self::revert) puts the pointers back so the order that is still
 /// in place is the right one again. It is `#[must_use]` and
 /// debug-asserts if dropped unsettled; a caller that can unwind must own a
@@ -120,16 +120,10 @@ impl PendingTopo {
         self.info
     }
 
-    /// Keep the rotation: repair the bottom-up order for the new shape.
-    pub(crate) fn commit(self, vtree: &mut Vtree) -> RotationInfo {
-        vtree.reshaped();
-        self.commit_in_probe(vtree)
-    }
-
-    /// [`commit`](Self::commit) without [`Vtree::reshaped`], which the
-    /// caller owes once it keeps the tree, unless it seats the diagram on a
-    /// lifted home instead. The probe loop pays for any call that may write
-    /// the vtree.
+    /// Keep the rotation: repair the bottom-up order for the new shape. The
+    /// caller owes [`Vtree::reshaped`] once it keeps the tree, unless it
+    /// seats the diagram on a lifted home instead; the probe loop pays for
+    /// any call that may write the vtree.
     pub(crate) fn commit_in_probe(mut self, vtree: &mut Vtree) -> RotationInfo {
         vtree.fixup_topo_after_rotate(&self.info, self.kind);
         self.settled = true;
