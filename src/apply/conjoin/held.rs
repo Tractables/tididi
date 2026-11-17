@@ -1,5 +1,6 @@
 //! An operand as the conjunction sweep holds it: owned, or borrowed from
-//! the caller.
+//! the caller, and read on the sweep's vtree as it is or through a
+//! [`View`].
 //!
 //! The sweep takes some of an operand's levels into its result: a level an
 //! identity fast path or the relabelling route carries, the levels of a
@@ -7,68 +8,182 @@
 //! own. An owned operand's level is moved there, and its levels are dropped
 //! once read; a borrowed operand's is copied, and nothing of it is dropped
 //! or changed. Both build the same diagram for the same work: a copy charges
-//! the memory budget but not the work clock, as a move charges neither.
+//! the memory budget but not the work clock, as a move charges neither. A
+//! level a view built is the view's, and moves as an owned one does.
 
-use std::borrow::Borrow;
-use std::ops::Deref;
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Limits, OperationError};
+use crate::restructure::placement::push_free_level;
+use crate::vtree::{Vtree, VtreeIdx};
 
-/// An operand of the sweep, owned or borrowed. Reads go through `Deref`.
-pub(crate) enum Held<'a> {
+use super::view::View;
+
+enum Hold<'a> {
     Owned(&'a mut Tdd),
     Borrowed(&'a Tdd),
 }
 
-impl Deref for Held<'_> {
-    type Target = Tdd;
-    #[inline]
-    fn deref(&self) -> &Tdd {
-        match self {
-            Held::Owned(tdd) => tdd,
-            Held::Borrowed(tdd) => tdd,
-        }
-    }
-}
-
-impl Borrow<Tdd> for Held<'_> {
-    #[inline]
-    fn borrow(&self) -> &Tdd {
-        self
-    }
+/// An operand of the sweep, owned or borrowed, its levels indexed by the
+/// nodes of the sweep's vtree.
+pub(crate) struct Held<'a> {
+    tdd: Hold<'a>,
+    view: Option<&'a mut View>,
 }
 
 impl<'s> Held<'s> {
     /// The sweep's hold on an operand the caller gave owned or borrowed:
-    /// an owned one through `tdd`, a borrowed one through its borrow.
+    /// an owned one through `tdd`, a borrowed one through its borrow; on the
+    /// vtree of `view` where there is one, else on its own.
     #[inline]
-    pub(crate) fn of(tdd: &'s mut std::borrow::Cow<'_, Tdd>) -> Self {
-        match tdd {
-            std::borrow::Cow::Owned(tdd) => Held::Owned(tdd),
-            std::borrow::Cow::Borrowed(tdd) => Held::Borrowed(tdd),
-        }
+    pub(crate) fn of(tdd: &'s mut Cow<'_, Tdd>, view: Option<&'s mut View>) -> Self {
+        let tdd = match tdd {
+            Cow::Owned(tdd) => Hold::Owned(tdd),
+            Cow::Borrowed(tdd) => Hold::Borrowed(tdd),
+        };
+        Held { tdd, view }
+    }
+
+    /// A borrowed operand on its own vtree.
+    #[inline]
+    pub(crate) fn reading(tdd: &'s Tdd) -> Self {
+        Held { tdd: Hold::Borrowed(tdd), view: None }
+    }
+
+    /// An owned operand on its own vtree.
+    #[inline]
+    pub(crate) fn owning(tdd: &'s mut Tdd) -> Self {
+        Held { tdd: Hold::Owned(tdd), view: None }
     }
 }
 
 impl Held<'_> {
+    /// The operand as the caller gave it, its levels on its own vtree.
+    #[inline]
+    pub(crate) fn tdd(&self) -> &Tdd {
+        match &self.tdd {
+            Hold::Owned(tdd) => tdd,
+            Hold::Borrowed(tdd) => tdd,
+        }
+    }
+
+    /// Whether the operand is read through a view.
+    #[inline]
+    pub(crate) fn is_viewed(&self) -> bool {
+        self.view.is_some()
+    }
+
+    /// The operand's level at node `t` of the sweep's vtree.
+    #[inline]
+    pub(crate) fn level(&self, t: impl LevelAt) -> &TddLevel {
+        let t = t.at();
+        match &self.view {
+            None => &self.tdd().levels[t],
+            Some(view) => view.level(self.tdd(), t),
+        }
+    }
+
+    /// The sweep's vtree.
+    #[inline]
+    pub(crate) fn vtree(&self) -> &Arc<Vtree> {
+        match &self.view {
+            None => &self.tdd().vtree,
+            Some(view) => view.vtree(),
+        }
+    }
+
+    /// The operand's output on the sweep's vtree.
+    #[inline]
+    pub(crate) fn output(&self) -> TddNodeId {
+        match &self.view {
+            None => self.tdd().output,
+            Some(view) => view.output(),
+        }
+    }
+
+    /// The operand's worklists on the sweep's vtree.
+    #[inline]
+    pub(crate) fn dirty(&self) -> &Dirty {
+        match &self.view {
+            None => &self.tdd().dirty,
+            Some(view) => view.dirty(),
+        }
+    }
+
     /// Whether the operand is the caller's, which the sweep only reads.
     #[inline]
     pub(crate) fn is_borrowed(&self) -> bool {
-        matches!(self, Held::Borrowed(_))
+        matches!(self.tdd, Hold::Borrowed(_))
     }
 
-    /// The operand, where the sweep may change it.
+    /// The operand, where the sweep may change it, its levels on its own
+    /// vtree.
     #[inline]
     pub(crate) fn owned(&mut self) -> Option<&mut Tdd> {
-        match self {
-            Held::Owned(tdd) => Some(tdd),
-            Held::Borrowed(_) => None,
+        match &mut self.tdd {
+            Hold::Owned(tdd) => Some(tdd),
+            Hold::Borrowed(_) => None,
+        }
+    }
+
+    /// The level at `t` where the sweep may change it: an owned operand's,
+    /// or one its view built. `None` at a free node of a view.
+    #[inline]
+    pub(crate) fn level_mut(&mut self, t: usize) -> Option<&mut TddLevel> {
+        let own = match self.view.as_deref_mut().map(|view| view.held_mut(t)) {
+            None => t,
+            Some(Ok(built)) => return built,
+            Some(Err(own)) => own,
+        };
+        match &mut self.tdd {
+            Hold::Owned(tdd) => Some(&mut tdd.levels[own]),
+            Hold::Borrowed(_) => None,
+        }
+    }
+
+    /// Swap the stored nodes and pair arena of the level at `t` with
+    /// `level`'s ([`crate::diagram::LevelStorage::swap_arenas`]) where the
+    /// sweep may change it, and say whether it did.
+    #[inline]
+    pub(crate) fn swap_arenas(&mut self, t: usize, level: &mut TddLevel) -> bool {
+        let own = match self.view.as_deref_mut().map(|view| view.held_mut(t)) {
+            None => t,
+            Some(Ok(Some(built))) => {
+                std::mem::swap(&mut built.nodes, &mut level.nodes);
+                std::mem::swap(&mut built.pairs, &mut level.pairs);
+                return true;
+            }
+            Some(Ok(None)) => return false,
+            Some(Err(own)) => own,
+        };
+        match &mut self.tdd {
+            Hold::Owned(tdd) => {
+                tdd.levels.swap_arenas(own, level);
+                true
+            }
+            Hold::Borrowed(_) => false,
+        }
+    }
+
+    /// Make the operand's level at the free node `t` the level it stands
+    /// for, where an owned operand on its own vtree holds it empty; a view
+    /// builds it when it is carried.
+    #[inline]
+    pub(crate) fn build_free(&mut self, t: VtreeIdx) {
+        if self.view.is_none()
+            && let Hold::Owned(tdd) = &mut self.tdd
+        {
+            let vtree = Arc::clone(&tdd.vtree);
+            push_free_level(&mut tdd.levels[t.idx()], &vtree, t);
         }
     }
 
     /// Put the operand's level `t` into `out`: moved where the operand is
-    /// owned, leaving it what `out` held, and copied where it is borrowed.
+    /// owned or the view built it, leaving it what `out` held, copied where
+    /// the operand is borrowed, and built at a free node of a view, where
+    /// `out` is empty.
     ///
     /// # Errors
     ///
@@ -76,20 +191,65 @@ impl Held<'_> {
     /// then as it was.
     #[inline]
     pub(crate) fn carry(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
-        match self {
-            Held::Owned(tdd) => std::mem::swap(out, &mut tdd.levels[t]),
-            Held::Borrowed(tdd) => tdd.levels[t].try_clone_over(lim, 0, 0, out)?,
+        let own = match self.view.as_deref_mut() {
+            None => t,
+            Some(view) => match view.held_mut(t) {
+                Ok(Some(built)) => {
+                    std::mem::swap(out, built);
+                    return Ok(());
+                }
+                Ok(None) => {
+                    view.build_free(t, out);
+                    return Ok(());
+                }
+                Err(own) => own,
+            },
+        };
+        match &mut self.tdd {
+            Hold::Owned(tdd) => std::mem::swap(out, &mut tdd.levels[own]),
+            Hold::Borrowed(tdd) => tdd.levels[own].try_clone_over(lim, 0, 0, out)?,
         }
         Ok(())
     }
 
     /// Undo [`carry`](Self::carry) for a refused sweep that gives its
-    /// operands back: the owned operand takes its level back from `out`; a
-    /// borrowed one was only copied, and keeps what it has.
+    /// operands back: the owned operand, or the view, takes its level back
+    /// from `out`; a borrowed one was only copied, and keeps what it has.
     #[inline]
     pub(crate) fn uncarry(&mut self, t: usize, out: &mut TddLevel) {
-        if let Held::Owned(tdd) = self {
-            std::mem::swap(out, &mut tdd.levels[t]);
+        let own = match self.view.as_deref_mut().map(|view| view.held_mut(t)) {
+            None => t,
+            Some(Ok(Some(built))) => {
+                std::mem::swap(out, built);
+                return;
+            }
+            Some(Ok(None)) => {
+                *out = TddLevel::new();
+                return;
+            }
+            Some(Err(own)) => own,
+        };
+        if let Hold::Owned(tdd) = &mut self.tdd {
+            std::mem::swap(out, &mut tdd.levels[own]);
         }
+    }
+}
+
+/// A node of the sweep's vtree, by index or by id.
+pub(crate) trait LevelAt {
+    fn at(self) -> usize;
+}
+
+impl LevelAt for usize {
+    #[inline]
+    fn at(self) -> usize {
+        self
+    }
+}
+
+impl LevelAt for VtreeIdx {
+    #[inline]
+    fn at(self) -> usize {
+        self.idx()
     }
 }

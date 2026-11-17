@@ -36,11 +36,11 @@ pub(crate) fn init_leaf_identity(
     buf: &mut Vec<bool>,
     tdd: &Tdd,
 ) -> Result<(), OperationError> {
-    let vtree = tdd.vtree();
+    let vtree = &tdd.vtree;
     init_leaf_identity_over(
         eng,
         buf,
-        tdd,
+        &Held::reading(tdd),
         vtree.internal_bottomup_slice(),
         &[],
         vtree.leaf_bottomup_slice(),
@@ -55,7 +55,7 @@ pub(crate) fn init_leaf_identity(
 pub(super) fn init_leaf_identity_over(
     eng: &Engine,
     buf: &mut Vec<bool>,
-    tdd: &Tdd,
+    tdd: &Held<'_>,
     scanned: &[VtreeIdx],
     unscanned: &[VtreeIdx],
     leaves: &[VtreeIdx],
@@ -78,7 +78,7 @@ pub(super) fn init_leaf_identity_over(
     let mut has_any_marginal = false;
     for &t in scanned {
         let (left, right) = vtree.children(t);
-        if tdd.levels[t.idx()].is_marginal() {
+        if tdd.level(t.idx()).is_marginal() {
             has_any_marginal = true;
         }
         let left_leaf = left.idx() < leaves;
@@ -93,7 +93,7 @@ pub(super) fn init_leaf_identity_over(
         if !want[0] && !want[1] {
             continue;
         }
-        let level = &tdd.levels[t.idx()];
+        let level = &tdd.level(t.idx());
         // Marginal levels have no structural pairs to scan — they're handled by
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
@@ -139,7 +139,7 @@ pub(super) fn init_leaf_identity_over(
         let mut stack = eng.scratch.apply.marginal_stack.checkout(eng);
         stack.clear();
         for (t, _, _) in vtree.internal_bottomup() {
-            let level = &tdd.levels[t.idx()];
+            let level = &tdd.level(t.idx());
             if !level.is_marginal() {
                 continue;
             }
@@ -147,7 +147,7 @@ pub(super) fn init_leaf_identity_over(
             // the level has no parent). Children of a marginal level reach
             // their leaves through the top-down recursion below.
             if let Some(p) = vtree.node(t).parent()
-                && tdd.levels[p.idx()].is_marginal()
+                && tdd.level(p.idx()).is_marginal()
             {
                 continue;
             }
@@ -165,7 +165,7 @@ pub(super) fn init_leaf_identity_over(
                         // invariant — but a child may itself be CT, in which
                         // case its leaf descendants stay identity.
                         for &child in [left, right] {
-                            let child_lvl = &tdd.levels[child.idx()];
+                            let child_lvl = &tdd.level(child.idx());
                             if !(child_lvl.is_marginal()
                                 && level_marginal_is_constant_true(child_lvl, subvars[child.idx()]))
                             {
@@ -293,7 +293,6 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
 
     carrier.carry(eng.limits(), t_idx, &mut levels[t_idx])?;
     run.lists.carry(t_idx, F_IS_CARRIER, false);
-    let carrier_levels = &carrier.levels;
 
     // When a source-marginal child remains marginal in the output, re-resolve the
     // swapped-in carrier level's marginal refs into the output child
@@ -301,13 +300,13 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     // needs before rewriting anything, so `OverBudget` here aborts the apply with
     // the swapped-in level untouched — never half-remapped.
     for (child_idx, side) in [(left_idx, ChildSide::Left), (right_idx, ChildSide::Right)] {
-        if carrier_levels[child_idx].is_marginal() && levels[child_idx].is_marginal() {
+        if carrier.level(child_idx).is_marginal() && levels[child_idx].is_marginal() {
             diagram::resolve_swapped_marginal_side(
                 eng,
                 levels,
                 t_idx,
                 child_idx,
-                &carrier_levels[child_idx],
+                carrier.level(child_idx),
                 side,
             )?;
         }
@@ -348,7 +347,7 @@ pub(super) fn publish_identity_level(products: &mut Products, t_idx: usize, widt
 /// vacuously the identity for the ancestors' own fast paths. Flagging it keeps
 /// an already-marginal ancestor from falling through to the dense route, which
 /// would read pairs out of an empty level.
-fn try_zero_width_marginal(f: &Tdd, g: &Tdd, shape: LevelShape, run: &mut ApplyRun) -> bool {
+fn try_zero_width_marginal(f: &Held<'_>, g: &Held<'_>, shape: LevelShape, run: &mut ApplyRun) -> bool {
     let LevelShape {
         t, f: fw, g: gw, ..
     } = shape;
@@ -414,8 +413,8 @@ pub(super) fn take_level_fast_path(
     // be equal.
     let both_marginal_w1 = left_width == 1
         && right_width == 1
-        && f.levels[t_idx].is_marginal()
-        && g.levels[t_idx].is_marginal()
+        && f.level(t_idx).is_marginal()
+        && g.level(t_idx).is_marginal()
         && f_identity[left_idx]
         && f_identity[right_idx]
         && g_identity[left_idx]
@@ -424,8 +423,8 @@ pub(super) fn take_level_fast_path(
     if both_marginal_w1 {
         let mass = |level: &TddLevel| level.count_column().map(|c| c.get(0).to_count());
         debug_assert_eq!(
-            mass(&f.levels[t_idx]),
-            mass(&g.levels[t_idx]),
+            mass(f.level(t_idx)),
+            mass(g.level(t_idx)),
             "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
              masses — absorbing one side would be unsound"
         );
@@ -433,17 +432,14 @@ pub(super) fn take_level_fast_path(
     if right_width == 1
         && g_identity[left_idx]
         && g_identity[right_idx]
-        && (!g.levels[t_idx].is_marginal() || both_marginal_w1)
-        && !(!f.levels[t_idx].is_marginal()
+        && (!g.level(t_idx).is_marginal() || both_marginal_w1)
+        && !(!f.level(t_idx).is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP1: f is the carrier, g is the identity operand. A free level
         // carried is built first: the level it stands for.
         if cone.free_in_f(t_idx) {
-            let f = f
-                .owned()
-                .expect("only a placed operand, which is owned, has free levels");
-            crate::restructure::placement::push_free_level(&mut f.levels[t_idx], &f.vtree, shape.t);
+            f.build_free(shape.t);
         }
         apply_identity_fast_path::<true>(eng, shape, f, run)?;
         return Ok(true);
@@ -456,16 +452,13 @@ pub(super) fn take_level_fast_path(
     if left_width == 1
         && f_identity[left_idx]
         && f_identity[right_idx]
-        && !f.levels[t_idx].is_marginal()
-        && !(!g.levels[t_idx].is_marginal()
+        && !f.level(t_idx).is_marginal()
+        && !(!g.level(t_idx).is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.
         if cone.free_in_g(t_idx) {
-            let g = g
-                .owned()
-                .expect("only a placed operand, which is owned, has free levels");
-            crate::restructure::placement::push_free_level(&mut g.levels[t_idx], &g.vtree, shape.t);
+            g.build_free(shape.t);
         }
         apply_identity_fast_path::<false>(eng, shape, g, run)?;
         return Ok(true);

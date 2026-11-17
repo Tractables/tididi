@@ -3,6 +3,7 @@
 //! marginal-child and streaming levels ([`build_level_dense`]), and the root
 //! a count folds instead of building ([`count_sparse_root`]).
 
+use crate::apply::conjoin::held::Held;
 use super::Sweep;
 use crate::Engine;
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
@@ -35,7 +36,7 @@ pub(super) fn run_sparse_level(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Held<'_>,
-    g: &Tdd,
+    g: &Held<'_>,
     shape: LevelShape,
     plan: &MarginalPlan,
 ) -> Result<(), OperationError> {
@@ -49,7 +50,7 @@ pub(super) fn run_sparse_level(
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let passthrough = Passthrough::of(plan.sides);
     let carried = |side| passthrough.is_some_and(|p| p.side == side);
-    let complete = complete_side(run, &f.vtree, shape, passthrough);
+    let complete = complete_side(run, f.vtree(), shape, passthrough);
     let unlisted = |side| carried(side) || complete.is_some_and(|c| c.side == side);
     // Ensure the joined children have product lists for the scatter pipeline.
     if !unlisted(ChildSide::Left) {
@@ -183,16 +184,16 @@ pub(super) fn complete_side(
 /// weight or target changes what the one product's count is.
 pub(super) fn counts_root(
     sweep: &Sweep<'_>,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     plan: &MarginalPlan,
 ) -> bool {
     let t = shape.t;
     sweep.count_root
         && t == sweep.vtree.root()
-        && f.output.vtree == t
-        && g.output.vtree == t
+        && f.output().vtree == t
+        && g.output().vtree == t
         && shape.f.here == 1
         && shape.g.here == 1
         && Passthrough::of(plan.sides).is_none()
@@ -210,8 +211,8 @@ pub(super) fn counts_root(
 pub(super) fn count_sparse_root(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     sweep: &Sweep<'_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
@@ -355,8 +356,8 @@ fn materialize_children_and_grid(
 #[inline(always)]
 pub(super) fn open_level_arenas(
     lim: &crate::limits::Limits,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     level: &mut TddLevel,
     route: Route,
@@ -546,7 +547,7 @@ fn run_row_loop(
 fn build_level_prefilter_masks(
     eng: &Engine,
     run: &mut ApplyRun,
-    g: &Tdd,
+    g: &Held<'_>,
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
@@ -820,8 +821,8 @@ fn complete_level_size(
 pub(super) fn build_level_dense(
     eng: &Engine,
     run: &mut ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     level: LevelBuild,
     sweep: &mut Sweep<'_>,
 ) -> Result<(), OperationError> {

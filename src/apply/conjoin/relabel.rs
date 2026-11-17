@@ -20,6 +20,7 @@
 //! subtree then costs the levels of that subtree; every level above it is
 //! moved, whatever its size.
 
+use crate::apply::conjoin::held::Held;
 use super::identity::publish_identity_level;
 use super::*;
 
@@ -73,11 +74,11 @@ impl<'a> SideMap<'a> {
 /// pair, and nothing otherwise: nothing on a level of other than one slot
 /// (`width`), on a marginal level, whose one slot is a value and no node,
 /// or on a level that holds no node.
-pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair> {
+pub(super) fn single_pair(tdd: &Held<'_>, t: usize, width: usize) -> Option<ChildPair> {
     if width != 1 {
         return None;
     }
-    let level = &tdd.levels[t];
+    let level = &tdd.level(t);
     if level.is_marginal() || level.nodes().len() != 1 || level.pair_count_at(0) != 1 {
         return None;
     }
@@ -121,8 +122,8 @@ pub(super) fn take_relabel_level(
         || sweep.ws.is_some()
         || sweep.targets.contains(ti)
         || (sweep.count_root && t == sweep.vtree.root())
-        || f.levels[ti].is_marginal()
-        || g.levels[ti].is_marginal()
+        || f.level(ti).is_marginal()
+        || g.level(ti).is_marginal()
     {
         return Ok(false);
     }
@@ -211,9 +212,9 @@ pub(super) fn take_relabel_level(
 
     let mut map = pools.relabel_map.checkout(eng);
     let carrier = if carrier_f {
-        &f.levels[ti]
+        &f.level(ti)
     } else {
-        &g.levels[ti]
+        &g.level(ti)
     };
     let pairs = relabel_level(eng, carrier, &mut run.levels[ti], width, &lm, &rm, &mut map)?;
     // A plain conjunction's seat closes the level as it stands.

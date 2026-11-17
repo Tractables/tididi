@@ -242,44 +242,77 @@ pub(crate) fn remap_refs_into_all(
         let (left, right) = tdd.vtree.children(parent);
         Sides { left: tdd.levels[left.idx()].child_decoder(), right: tdd.levels[right.idx()].child_decoder() }
     };
-    let side_map = |moving: bool, view: ChildDecoder| move |x: i64| match moving {
-        true => remap_word(view, remap, x),
-        false => x,
-    };
     let mut planned: Vec<Option<PlannedMove>> = Vec::new();
     lim.reserve_exact(&mut planned, parents.len())?;
     for &(parent, moving) in &parents {
-        let level = &tdd.levels[parent.idx()];
-        let view = views(tdd, parent);
-        planned.push(match level.pairs.implicit() {
-            Some(_) => Some(level.plan_moves(
-                lim,
-                moving,
-                side_map(moving.left, view.left),
-                side_map(moving.right, view.right),
-            )?),
-            None => None,
-        });
+        planned.push(plan_sides_remap(lim, &tdd.levels[parent.idx()], moving, views(tdd, parent), remap)?);
     }
     for (&(parent, moving), planned) in parents.iter().zip(planned) {
         let view = views(tdd, parent);
-        let level = &mut tdd.levels[parent.idx()];
-        match planned {
-            Some(planned) => level.finish_moves(planned, side_map(moving.left, view.left), side_map(moving.right, view.right)),
-            None => {
-                for (side, moving, view) in [(ChildSide::Left, moving.left, view.left), (ChildSide::Right, moving.right, view.right)] {
-                    if moving {
-                        rewrite_stored_side(level, side, |r| *r = view.remap(EncodedChildRef::from_raw(*r), remap).0);
-                    }
-                }
-            }
-        }
+        finish_sides_remap(&mut tdd.levels[parent.idx()], planned, moving, view, remap);
         tdd.levels.mark_changed(parent);
     }
     if children.contains(&tdd.output.vtree) && (tdd.output.local.0 as usize) < remap.len() {
         tdd.output.local = NodeIdx(remap[tdd.output.local.idx()]);
     }
     Ok(())
+}
+
+/// The first half of renaming, through `remap`, the children `level` reads
+/// on the `moving` sides, each read through its child's decoder in
+/// `views`: an implicit level's moves planned and reserved, `None` for a
+/// stored level, which [`finish_sides_remap`] rewrites in place.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when a reservation is refused.
+pub(crate) fn plan_sides_remap(
+    lim: &Limits,
+    level: &TddLevel,
+    moving: Sides<bool>,
+    views: Sides<ChildDecoder>,
+    remap: &[u32],
+) -> Result<Option<PlannedMove>, OperationError> {
+    match level.pairs.implicit() {
+        Some(_) => Ok(Some(level.plan_moves(
+            lim,
+            moving,
+            side_map(moving.left, views.left, remap),
+            side_map(moving.right, views.right, remap),
+        )?)),
+        None => Ok(None),
+    }
+}
+
+/// The second half of [`plan_sides_remap`], which planned `planned`.
+pub(crate) fn finish_sides_remap(
+    level: &mut TddLevel,
+    planned: Option<PlannedMove>,
+    moving: Sides<bool>,
+    views: Sides<ChildDecoder>,
+    remap: &[u32],
+) {
+    match planned {
+        Some(planned) => level.finish_moves(
+            planned,
+            side_map(moving.left, views.left, remap),
+            side_map(moving.right, views.right, remap),
+        ),
+        None => {
+            for (side, moving, view) in [(ChildSide::Left, moving.left, views.left), (ChildSide::Right, moving.right, views.right)] {
+                if moving {
+                    rewrite_stored_side(level, side, |r| *r = view.remap(EncodedChildRef::from_raw(*r), remap).0);
+                }
+            }
+        }
+    }
+}
+
+fn side_map(moving: bool, view: ChildDecoder, remap: &[u32]) -> impl Fn(i64) -> i64 + '_ {
+    move |x: i64| match moving {
+        true => remap_word(view, remap, x),
+        false => x,
+    }
 }
 
 /// The word a parent's side `x` names once remapped, as an implicit level's

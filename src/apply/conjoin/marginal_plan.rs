@@ -3,7 +3,8 @@
 //! [`Sides<T>`] holds the symmetric plans for the two children. Liveness masks
 //! are populated only after the selected route materializes its child grids.
 
-use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
+use crate::apply::conjoin::held::Held;
+use crate::diagram::{ChildDecoder, ChildSide, Sides, TddLevel};
 use super::OperationError;
 use crate::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_reach, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
@@ -116,8 +117,8 @@ pub(super) struct MarginalPlan {
 /// the entry snapshot lets the test see a child that was marginal at entry
 /// but has since been stolen into the output by an identity swap.
 fn carrier(
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     t_idx: usize,
     child_idx: usize,
     side: ChildSide,
@@ -140,10 +141,10 @@ fn carrier(
     // mid-loop cascade, and reads stale-false in the cells where the child
     // marginalizes mid-loop.
     // (1) is one read and (2) up to three, so (1) is tested first.
-    let marginal_ref = |op: &Tdd, carrier: Carrier| {
-        op.levels[child_idx].is_marginal()
+    let marginal_ref = |op: &Held<'_>, carrier: Carrier| {
+        op.level(child_idx).is_marginal()
             || entry.was_marginal(carrier, child_idx)
-            || op.levels[t_idx].has_value_refs(side)
+            || op.level(t_idx).has_value_refs(side)
     };
     if g_identity[child_idx] && marginal_ref(f, Carrier::F) {
         return Some(Carrier::F);
@@ -169,13 +170,13 @@ fn carrier(
 ///
 /// The check is a debug assertion and is compiled out of a release build.
 fn debug_assert_no_marginal_products(
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     passthrough: Sides<bool>,
 ) {
     let t_idx = shape.t.idx();
-    let both_marginal = |child_idx: usize| f.levels[child_idx].is_marginal() && g.levels[child_idx].is_marginal();
+    let both_marginal = |child_idx: usize| f.level(child_idx).is_marginal() && g.level(child_idx).is_marginal();
     debug_assert!(
         !both_marginal(shape.left.idx()) || passthrough.left,
         "marginal×marginal product at left child {} (vtree {t_idx}): both operands carry \
@@ -204,8 +205,8 @@ fn debug_assert_no_marginal_products(
 /// operand to the output, and the remaining parent references still use that
 /// child's marginal encoding.
 pub(super) fn plan_marginal_level(
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     shape: LevelShape,
     run: &ApplyRun,
     marginal: &LevelMarg,

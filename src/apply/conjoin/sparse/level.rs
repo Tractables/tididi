@@ -69,17 +69,17 @@ pub(crate) struct Complete {
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     (shape, pl): (LevelShape, Sides<&[ProductEntry]>),
     collect: Collect<'_, '_>,
     (passthrough, complete): (Option<Passthrough>, Option<Complete>),
 ) -> Result<Made, OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
-    let (f_level, g_level) = (&f.levels[t_idx], &g.levels[t_idx]);
+    let (f_level, g_level) = (&f.level(t_idx), &g.level(t_idx));
     let leaves = Sides {
-        left: f.vtree.node(shape.left).is_leaf(),
-        right: f.vtree.node(shape.right).is_leaf(),
+        left: f.vtree().node(shape.left).is_leaf(),
+        right: f.vtree().node(shape.right).is_leaf(),
     };
     let inner = match (passthrough, complete) {
         (Some(p), _) => Some((p.side, Inner::Carried(p.carrier))),
@@ -239,7 +239,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 pub(crate) fn apply_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    (f, g): (&mut Held<'_>, &Tdd),
+    (f, g): (&mut Held<'_>, &Held<'_>),
     (levels, marginal): (&mut [TddLevel], bool),
     (lists, cells): (ProductLists<'_>, Sides<CellLookup<'_>>),
     thresholds: SparseThresholds,
@@ -257,8 +257,8 @@ pub(crate) fn apply_sparse_level(
 
     seed_output(
         eng,
-        &f.levels[t_idx],
-        &g.levels[t_idx],
+        f.level(t_idx),
+        g.level(t_idx),
         &mut levels[t_idx],
         pl_output,
     )?;
@@ -317,8 +317,8 @@ pub(crate) fn apply_sparse_level(
     // so it is withheld where pair lists may be multisets. A complete side
     // has no list to walk through: the probe reads it only directly.
     let joined = passthrough.is_none()
-        && !f.vtree.node(shape.left).is_leaf()
-        && !f.vtree.node(shape.right).is_leaf();
+        && !f.vtree().node(shape.left).is_leaf()
+        && !f.vtree().node(shape.right).is_leaf();
     if joined {
         let listed = Sides {
             left: complete.is_none_or(|c| c.side != ChildSide::Left),
@@ -408,22 +408,22 @@ fn take_f_level(f: &mut Held<'_>, level: &mut TddLevel, t_idx: usize, made: Made
     if made != Made::F {
         return made;
     }
-    match f.owned() {
-        // The level's nodes and arena are f's, kept within the room the
-        // level's own had, which the copy would have filled; f's level
-        // holds none while the caller may give them back.
-        Some(f) => {
-            let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
-            (level.nodes, level.pairs) = Default::default();
-            f.levels.swap_arenas(t_idx, level);
+    // The level's nodes and arena are f's, kept within the room the
+    // level's own had, which the copy would have filled; f's level
+    // holds none while the caller may give them back.
+    let room = (level.nodes.stored_mut().capacity(), level.pairs.capacity());
+    let own = (std::mem::take(&mut level.nodes), std::mem::take(&mut level.pairs));
+    match f.swap_arenas(t_idx, level) {
+        true => {
             level.nodes.stored_mut().shrink_to(room.0);
             level.pairs.stored_mut().shrink_to(room.1);
             Made::F
         }
         // A borrowed f's are copied into the level's room, which holds
         // them, as the walk's writes of them would have.
-        None => {
-            let stored = f.levels[t_idx]
+        false => {
+            (level.nodes, level.pairs) = own;
+            let stored = f.level(t_idx)
                 .stored()
                 .expect("a level the walk made f's is stored");
             level.pairs.stored_mut().extend_from_slice(stored.arena());
@@ -482,7 +482,7 @@ fn seed_output(
 pub(crate) fn count_sparse_level(
     eng: &Engine,
     shape: LevelShape,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
     passthrough: Option<Passthrough>,
@@ -528,15 +528,15 @@ fn assert_no_marginal_children(
     t_idx: usize,
     left: VtreeIdx,
     right: VtreeIdx,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     levels: &[TddLevel],
     passthrough: Option<Passthrough>,
 ) {
     let carried = |side| passthrough.is_some_and(|p| p.side == side);
     let marginal = |c: VtreeIdx| {
-        f.levels[c.idx()].is_marginal()
-            || g.levels[c.idx()].is_marginal()
+        f.level(c.idx()).is_marginal()
+            || g.level(c.idx()).is_marginal()
             || levels[c.idx()].is_marginal()
     };
     cheap_assert!(

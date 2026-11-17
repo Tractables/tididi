@@ -248,7 +248,7 @@ mod tag;
 
 pub(crate) use refs::{
     boundary_marginal_levels, boundary_marginal_levels_into,
-    finish_refs_remap, for_each_side_ref_mut, plan_refs_remap, remap_refs_into, remap_refs_into_all, rewrite_stored_side, ChildSide, Sides,
+    finish_refs_remap, for_each_side_ref_mut, plan_refs_remap, remap_refs_into, remap_refs_into_all, rewrite_stored_side, plan_sides_remap, finish_sides_remap, ChildSide, Sides,
 };
 pub(crate) use swap::resolve_swapped_marginal_side;
 pub(crate) use tag::{inline_small_marginal_refs, inline_small_marginal_refs_in};

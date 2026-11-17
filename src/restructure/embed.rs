@@ -559,7 +559,7 @@ pub(crate) struct Plan {
     pub(crate) covered_by: Vec<Option<VtreeIdx>>,
     /// The internal destination nodes with renamed variables on one side
     /// only, each after the nodes under it.
-    pass_throughs: Vec<VtreeIdx>,
+    pub(crate) pass_throughs: Vec<VtreeIdx>,
     /// The destination node each source node maps to.
     pub(crate) embedding: Embedding,
     /// Whether children may be matched swapped.
@@ -666,7 +666,7 @@ impl Plan {
     ///
     /// The buffers come from the engine's [`PlanPool`], and a refused
     /// build parks them back there.
-    pub(super) fn build(
+    pub(crate) fn build(
         eng: &Engine,
         source: &Vtree,
         into: &Vtree,
@@ -939,7 +939,6 @@ pub(crate) fn place<'a>(
     free: Free,
     mirror: bool,
 ) -> Result<(Tdd, Plan), (EmbedError, std::borrow::Cow<'a, Tdd>)> {
-    use std::borrow::Cow;
     if let Err(e) = tdd.require_structure() {
         return Err((e.into(), tdd));
     }
@@ -947,21 +946,40 @@ pub(crate) fn place<'a>(
         Ok(plan) => plan,
         Err(error) => return Err((error, tdd)),
     };
+    match place_by(eng, tdd, into, &plan, free) {
+        Ok(result) => Ok((result, plan)),
+        Err(refused) => {
+            plan.recycle(eng);
+            Err(refused)
+        }
+    }
+}
+
+/// [`place`] by a `plan` built for `tdd`, a structural diagram.
+#[expect(
+    clippy::result_large_err,
+    reason = "the refusal hands back what it was given"
+)]
+pub(crate) fn place_by<'a>(
+    eng: &Engine,
+    tdd: std::borrow::Cow<'a, Tdd>,
+    into: &Arc<Vtree>,
+    plan: &Plan,
+    free: Free,
+) -> Result<Tdd, (EmbedError, std::borrow::Cow<'a, Tdd>)> {
+    use std::borrow::Cow;
     if tdd.is_zero() {
-        return Ok((crate::build::constant_zero(eng, into), plan));
+        return Ok(crate::build::constant_zero(eng, into));
     }
     let placed = match tdd {
         Cow::Borrowed(source) if source.weights.is_some() => match source.try_clone_on(eng) {
-            Ok(copy) => assemble_moving(eng, Cow::Owned(copy), into, &plan, free)
+            Ok(copy) => assemble_moving(eng, Cow::Owned(copy), into, plan, free)
                 .map_err(|(e, _)| (e, Cow::Borrowed(source))),
             Err(e) => Err((e, Cow::Borrowed(source))),
         },
-        tdd => assemble_moving(eng, tdd, into, &plan, free),
+        tdd => assemble_moving(eng, tdd, into, plan, free),
     };
-    match placed {
-        Ok(result) => Ok((result, plan)),
-        Err((e, tdd)) => Err((e.into(), tdd)),
-    }
+    placed.map_err(|(e, tdd)| (e.into(), tdd))
 }
 
 /// Whether the ancestor path from `node` meets `target` before `stop`, for a
@@ -1218,7 +1236,7 @@ fn build_embedded_levels(
         // A refused join is undone with the placement by the caller.
         if !into.node(carried).is_leaf() {
             placement.pass_through(t, free_side)?;
-        } else if let Some(top) = literal_chain(into, plan, placement, output_local, t) {
+        } else if let Some(top) = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t) {
             literal_tops.push(top);
             placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])?;
         } else {
@@ -1247,7 +1265,7 @@ fn build_embedded_levels(
 /// foot, whose slots the chain carries one for one; a chain over a leaf
 /// holds `One`, which the image reads, or `Pos` and `Neg`, of which it may
 /// read one.
-fn moved_loose(
+pub(crate) fn moved_loose(
     source: &Vtree,
     into: &Vtree,
     plan: &Plan,
@@ -1290,10 +1308,10 @@ fn moved_loose(
 /// when the chain reaches the root, names the leaf as `Pos`/`Neg`; `None`
 /// when it names it as `One`. Determinism makes the first reference the
 /// level's form.
-fn literal_chain(
+pub(crate) fn literal_chain(
     into: &Vtree,
     plan: &Plan,
-    placement: &MovePlacement<'_>,
+    first_ref: impl Fn(VtreeIdx, ChildSide) -> Option<NodeIdx>,
     output: NodeIdx,
     t: VtreeIdx,
 ) -> Option<VtreeIdx> {
@@ -1302,7 +1320,7 @@ fn literal_chain(
         match into.node(top).parent() {
             Some(p) if plan.covered_by[p.idx()].is_none() => top = p,
             Some(p) => {
-                let named = placement.first_ref(p, ChildSide::of(into, p, top))?;
+                let named = first_ref(p, ChildSide::of(into, p, top))?;
                 return (named != ONE_LEAF_IDX).then_some(top);
             }
             None => return (output != ONE_LEAF_IDX).then_some(top),

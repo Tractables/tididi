@@ -42,6 +42,7 @@
 //! candidate and each node's pairs under one `g` parent, takes `f`'s level
 //! instead ([`settle_f`]).
 
+use crate::apply::conjoin::held::Held;
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::Sides;
@@ -328,7 +329,7 @@ fn plan(
 pub(super) fn probe_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    (f, g): (&Tdd, &Tdd),
+    (f, g): (&Held<'_>, &Held<'_>),
     shape: LevelShape,
     (pl, listed, cells): (Sides<&[ProductEntry]>, Sides<bool>, Sides<CellLookup<'_>>),
     multisets: bool,
@@ -338,7 +339,7 @@ pub(super) fn probe_level(
         return Ok(None);
     }
     let t = shape.t.idx();
-    let (f_level, g_level) = (&f.levels[t], &g.levels[t]);
+    let (f_level, g_level) = (&f.level(t), &g.level(t));
     // The buffers leave the workspace for the level, so the emit can borrow
     // it, and go back on every outcome, so what they hold stays charged to
     // the pool that will release it.

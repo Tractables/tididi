@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::restructure::EmbedError;
-use crate::restructure::embed::{place, Free, Plan};
+use crate::restructure::embed::{place, place_by, Free, Plan};
 use crate::restructure::placement::push_free_level;
 use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
@@ -57,7 +57,9 @@ use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Complete, Ma
 
 // An operand as the sweep holds it, owned or borrowed.
 mod held;
+mod view;
 use held::Held;
+use view::View;
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -146,12 +148,25 @@ fn same_levels(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
 /// The levels are compared from the last index down, the internal levels
 /// before the leaves, where operands that differ usually differ first.
 fn same_structure(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
+    f.output == g.output
+        && same_structure_by(&f.vtree, |t| &f.levels[t], |t| &g.levels[t], f.levels.len().min(g.levels.len()), free)
+}
+
+/// [`same_structure`] of the operands whose level at node `t` of `vtree`
+/// is `f_level(t)` and `g_level(t)`, on the first `len` nodes, their
+/// outputs being the same.
+fn same_structure_by<'a>(
+    vtree: &Vtree,
+    f_level: impl Fn(usize) -> &'a TddLevel,
+    g_level: impl Fn(usize) -> &'a TddLevel,
+    len: usize,
+    free: Operands<VtreeMask<'_>>,
+) -> bool {
     // `ranges` too: equal nodes+pairs with a differently-arranged `ranges` table
     // is a different function.
     let same = |l1: &TddLevel, l2: &TddLevel| l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.ranges == l2.ranges;
-    let vtree = &f.vtree;
     let same_at = |t: usize| {
-        let (l1, l2) = (&f.levels[t], &g.levels[t]);
+        let (l1, l2) = (f_level(t), g_level(t));
         let at = VtreeIdx(t as u32);
         let internal = !vtree.node(at).is_leaf();
         match (internal && free.f.contains(t), internal && free.g.contains(t)) {
@@ -168,7 +183,29 @@ fn same_structure(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
             }
         }
     };
-    f.output == g.output && (0..f.levels.len().min(g.levels.len())).rev().all(same_at)
+    (0..len).rev().all(same_at)
+}
+
+/// Whether `f` and `g`, of which one at most is read through its view in
+/// `views`, are the same diagram on the sweep's vtree ([`same_structure`]).
+fn same_viewed<'a>(f: &'a Tdd, g: &'a Tdd, views: Operands<Option<&'a View>>, free: Operands<VtreeMask<'_>>) -> bool {
+    match (views.f, views.g) {
+        (None, None) => same_structure(f, g, free),
+        (Some(view), None) | (None, Some(view)) => {
+            let (viewed, other) = if views.f.is_some() { (f, g) } else { (g, f) };
+            if view.output() != other.output {
+                return false;
+            }
+            let viewed_level = |t: usize| view.level(viewed, t);
+            let other_level = |t: usize| &other.levels[t];
+            let len = other.levels.len();
+            match views.f.is_some() {
+                true => same_structure_by(view.vtree(), viewed_level, other_level, len, free),
+                false => same_structure_by(view.vtree(), other_level, viewed_level, len, free),
+            }
+        }
+        (Some(_), Some(_)) => false,
+    }
 }
 
 /// Build the free levels ([`ApplyRun::cone`]) of `tdd` that are still empty,
@@ -248,9 +285,15 @@ fn prepare_owned_weights(f: &mut Cow<'_, Tdd>, g: &mut Cow<'_, Tdd>) -> Result<(
 /// track operands by side.
 ///
 /// `widths` holds each operand's [`Tdd::max_width`].
-fn narrower_right<T: Borrow<Tdd>>(f: &mut T, g: &mut T, free: &mut Operands<VtreeMask<'_>>, widths: Operands<usize>) -> bool {
+fn narrower_right<T: Borrow<Tdd>>(
+    f: &mut T,
+    g: &mut T,
+    free: &mut Operands<VtreeMask<'_>>,
+    widths: Operands<usize>,
+    vtree: Option<&Vtree>,
+) -> bool {
     let width = |d: &Tdd, free: VtreeMask<'_>, built: usize| match built {
-        0 => usize::from(!free.is_empty() && d.vtree.internal_bottomup().any(|(t, _, _)| free.contains(t.idx()))),
+        0 => usize::from(!free.is_empty() && vtree.unwrap_or(&d.vtree).internal_bottomup().any(|(t, _, _)| free.contains(t.idx()))),
         built => built,
     };
     let swap = width((*g).borrow(), free.g, widths.g) > width((*f).borrow(), free.f, widths.f);
@@ -270,7 +313,7 @@ pub(crate) fn conjoin_checked(
     targets: VtreeMask<'_>,
 ) -> Result<Tdd, OperationError> {
     let widths = Operands { f: f.max_width(), g: g.max_width() };
-    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
+    narrower_right(&mut f, &mut g, &mut Operands::default(), widths, None);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
     // explicit level, not pointer identity, and it declines on any marginal
     // level — see `is_self_conjunction`, where the soundness of both choices
@@ -297,7 +340,7 @@ fn conjoin_cow<'a>(
         operands => operands,
     };
     let widths = Operands { f: f.max_width(), g: g.max_width() };
-    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
+    narrower_right(&mut f, &mut g, &mut Operands::default(), widths, None);
     if is_self_conjunction(&f, &g) {
         // f ∧ f = f, as two owned operands return it: f itself where owned,
         // a copy of it where borrowed.
@@ -309,7 +352,7 @@ fn conjoin_cow<'a>(
         recycle(eng, g);
         return Ok(out);
     }
-    let result = drive::apply_and_either(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), targets);
+    let result = drive::apply_and_either(eng, &mut Held::of(&mut f, None), &mut Held::of(&mut g, None), targets);
     recycle(eng, f);
     recycle(eng, g);
     result
@@ -427,6 +470,7 @@ fn conjoin_kept<'a>(
     mut f: Cow<'a, Tdd>,
     mut g: Cow<'a, Tdd>,
     mut free: Operands<VtreeMask<'_>>,
+    mut views: Operands<Option<&mut View>>,
 ) -> Result<Tdd, AndRefused<'a>> {
     // Whether a level is marginal, and the widest level, in one pass.
     let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
@@ -434,33 +478,56 @@ fn conjoin_kept<'a>(
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
+        debug_assert!(views.f.is_none() && views.g.is_none(), "a viewed operand is plain");
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
         return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
     }
-    let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
+    let vtree = views.f.as_deref().or(views.g.as_deref()).map(|view| Arc::clone(view.vtree()));
+    let width = |own: usize, view: &Option<&mut View>| own.max(view.as_deref().map_or(0, View::built_width));
+    let widths = Operands { f: width(f_width, &views.f), g: width(g_width, &views.g) };
+    let swapped = narrower_right(&mut f, &mut g, &mut free, widths, vtree.as_deref());
+    if swapped {
+        std::mem::swap(&mut views.f, &mut views.g);
+    }
+    // A viewed operand was not placed, and has no free level of its own.
+    let placed_free = Operands {
+        f: if views.f.is_some() { VtreeMask::default() } else { free.f },
+        g: if views.g.is_some() { VtreeMask::default() } else { free.g },
+    };
     let give_back = |error, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
-        fill_free_cow(&mut f, free.f);
-        fill_free_cow(&mut g, free.g);
+        fill_free_cow(&mut f, placed_free.f);
+        fill_free_cow(&mut g, placed_free.g);
         if swapped {
             std::mem::swap(&mut f, &mut g);
         }
         AndRefused { error, f, g }
     };
-    if same_structure(&f, &g, free) {
+    if same_viewed(&f, &g, Operands { f: views.f.as_deref(), g: views.g.as_deref() }, free) {
         // f ∧ f = f, as two owned operands return it: f itself where owned,
-        // its free levels built, a copy of it where borrowed.
-        let out = match f {
+        // its free levels built, a copy of it where borrowed; g where f is
+        // viewed, and g is not.
+        let (keep, drop, keep_free) = match views.f.is_some() {
+            false => (f, g, free.f),
+            true => (g, f, free.g),
+        };
+        let out = match keep {
             Cow::Owned(mut out) => {
-                fill_free(&mut out, free.f);
+                fill_free(&mut out, keep_free);
                 out
             }
             Cow::Borrowed(borrowed) => match borrowed.try_clone_on(eng) {
                 Ok(out) => out,
-                Err(error) => return Err(give_back(error, Cow::Borrowed(borrowed), g)),
+                Err(error) => {
+                    let (f, g) = match views.f.is_some() {
+                        false => (Cow::Borrowed(borrowed), drop),
+                        true => (drop, Cow::Borrowed(borrowed)),
+                    };
+                    return Err(give_back(error, f, g));
+                }
             },
         };
-        recycle(eng, g);
+        recycle(eng, drop);
         return Ok(out);
     }
     // A refusal puts an owned operand's levels back as they were, through
@@ -471,8 +538,12 @@ fn conjoin_kept<'a>(
         Cow::Owned(tdd) if free.is_empty() => Some(tdd.levels.known()),
         _ => None,
     };
-    let (f_known, g_known) = (known(&f, free.f), known(&g, free.g));
-    match drive::apply_and_restoring(eng, &mut Held::of(&mut f), &mut Held::of(&mut g), free) {
+    let (f_known, g_known) = (known(&f, placed_free.f), known(&g, placed_free.g));
+    let conjoined = {
+        let (mut f, mut g) = (Held::of(&mut f, views.f), Held::of(&mut g, views.g));
+        drive::apply_and_restoring(eng, &mut f, &mut g, free)
+    };
+    match conjoined {
         Ok(out) => {
             recycle(eng, f);
             recycle(eng, g);
@@ -494,15 +565,19 @@ fn reinstate_known(tdd: &mut Cow<'_, Tdd>, known: Option<diagram::Known>) {
     }
 }
 
-/// An operand [`place_onto`] placed, with the plan it was placed by, or why
-/// it was refused, with the operand as it was given.
-type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>), (EmbedError, Cow<'a, Tdd>)>;
+/// An operand [`place_onto`] placed, or to be viewed, with the plan it was
+/// placed or is to be viewed by, or why it was refused, with the operand as
+/// it was given.
+type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>, bool), (EmbedError, Cow<'a, Tdd>)>;
 
-/// Place `tdd` on `into` for [`Engine::and_onto`](crate::Engine::and_onto),
-/// free levels left empty, with the plan it was placed by; as it is, with no
-/// plan, when it is on `into` already. A borrowed operand not on `into` is
-/// copied into the placement ([`place`]). `begun` says whether a phase of
-/// the operation has begun, and is set. With `mirror`, up to mirrors
+/// Make `tdd` an operand on `into` for
+/// [`Engine::and_onto`](crate::Engine::and_onto), with the plan that embeds
+/// it: as it is, with no plan, when it is on `into` already; with
+/// `viewing`, left as it is for a [`View`] where it is structural,
+/// unweighted, not false and not `mirror`ed, which the flag says; placed
+/// otherwise, free levels left empty, a borrowed one copied into the
+/// placement ([`place`]). `begun` says whether a phase of the operation has
+/// begun, and is set. With `mirror`, up to mirrors
 /// ([`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored)).
 /// Refused, the operand comes back as it was given.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
@@ -512,16 +587,31 @@ fn place_onto<'a>(
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     begun: &mut bool,
-    mirror: bool,
+    (mirror, viewing): (bool, bool),
 ) -> Placed<'a> {
     if Arc::ptr_eq(tdd.vtree(), into) {
-        return Ok((tdd, None));
+        return Ok((tdd, None, false));
     }
     if let Err(error) = begin_phase(eng, *begun) {
         return Err((error.into(), tdd));
     }
     *begun = true;
-    place(eng, tdd, into, map, Free::Leave, mirror).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan)))
+    if viewing && !mirror && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
+        return match Plan::build(eng, tdd.vtree(), into, map, false) {
+            Ok(plan) => Ok((tdd, Some(plan), true)),
+            Err(error) => Err((error, tdd)),
+        };
+    }
+    place(eng, tdd, into, map, Free::Leave, mirror).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
+}
+
+/// The view of `tdd` by `plan` where `viewed`, charging the work clock
+/// one unit a pass-through level, as a placement does.
+fn view_of(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: Option<&Plan>, viewed: bool) -> Result<Option<View>, OperationError> {
+    match plan {
+        Some(plan) if viewed => View::build(eng, tdd, into, plan).map(Some),
+        _ => Ok(None),
+    }
 }
 
 /// [`Engine::and_onto`](crate::Engine::and_onto), and with `mirror`
@@ -536,6 +626,19 @@ fn conjoin_onto<'a>(
     into: &Arc<Vtree>,
     mirror: bool,
 ) -> Result<Tdd, AndOntoRefused<'a>> {
+    conjoin_onto_as(eng, (f, f_map), (g, g_map), into, (mirror, true))
+}
+
+/// [`conjoin_onto`], reading its plain operands through views where
+/// `viewing` and placing every operand not on `into` otherwise.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+pub(crate) fn conjoin_onto_as<'a>(
+    eng: &Engine,
+    (f, f_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
+    (g, g_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
+    into: &Arc<Vtree>,
+    (mirror, viewing): (bool, bool),
+) -> Result<Tdd, AndOntoRefused<'a>> {
     let _op = match eng.limits().enter() {
         Ok(op) => op,
         Err(error) => return Err(AndOntoRefused { error: error.into(), f, g }),
@@ -549,28 +652,64 @@ fn conjoin_onto<'a>(
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
     let mut begun = false;
-    let (f, f_plan) = match place_onto(eng, f, into, f_map, &mut begun, mirror) {
+    let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, (mirror, viewing)) {
         Ok(placed) => placed,
         Err((error, f)) => return Err(AndOntoRefused { error, f, g }),
     };
     let free_f = free_levels(&f, f_plan.as_ref());
-    let (g, g_plan) = match place_onto(eng, g, into, g_map, &mut begun, mirror) {
+    // The free levels a placement left empty, which a refusal builds.
+    let placed_f = if f_viewed { VtreeMask::default() } else { free_f };
+    // A refusal drops the plans rather than parking them.
+    let refuse_f = |error: EmbedError, f: Cow<'a, Tdd>, g| {
+        let mut f = f;
+        fill_free_cow(&mut f, placed_f);
+        Err(AndOntoRefused { error, f: back(f, f_given), g })
+    };
+    let (g, g_plan, g_viewed) = match place_onto(eng, g, into, g_map, &mut begun, (mirror, viewing)) {
         Ok(placed) => placed,
-        Err((error, g)) => {
-            let mut f = f;
-            fill_free_cow(&mut f, free_f);
-            return Err(AndOntoRefused { error, f: back(f, f_given), g });
-        }
+        Err((error, g)) => return refuse_f(error, f, g),
     };
     let free = Operands { f: free_f, g: free_levels(&g, g_plan.as_ref()) };
-    let (mut f, mut g) = (f, g);
-    if let Err(error) = begin_phase(eng, begun) {
-        fill_free_cow(&mut f, free.f);
-        fill_free_cow(&mut g, free.g);
-        return Err(AndOntoRefused { error: error.into(), f: back(f, f_given), g: back(g, g_given) });
+    let placed_g = if g_viewed { VtreeMask::default() } else { free.g };
+    let refuse = |error: EmbedError, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
+        fill_free_cow(&mut f, placed_f);
+        fill_free_cow(&mut g, placed_g);
+        Err(AndOntoRefused { error, f: back(f, f_given), g: back(g, g_given) })
+    };
+    // f ∧ f = f, placed as a conjunction of placed operands returns it.
+    if let (Some(fp), Some(gp)) = (&f_plan, &g_plan)
+        && f_viewed
+        && g_viewed
+        && fp.embedding.levels == gp.embedding.levels
+        && same_levels(&f, &g, Operands::default())
+    {
+        if let Err(error) = eng.limits().gate().poll_each(gp.pass_throughs.len() as u64) {
+            return refuse(error.into(), f, g);
+        }
+        let fp = f_plan.expect("viewed");
+        let placed = place_by(eng, f, into, &fp, Free::Leave).map(|mut out| {
+            fill_free(&mut out, VtreeMask::new(Some(&fp.free)));
+            out
+        });
+        fp.recycle(eng);
+        if let Some(gp) = g_plan {
+            gp.recycle(eng);
+        }
+        return placed.map_err(|(error, f)| AndOntoRefused { error, f: back(f, f_given), g });
     }
-    let conjoined = conjoin_kept(eng, f, g, free)
-        .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) });
+    let mut f_view = match view_of(eng, &f, into, f_plan.as_ref(), f_viewed) {
+        Ok(view) => view,
+        Err(error) => return refuse(error.into(), f, g),
+    };
+    let mut g_view = match view_of(eng, &g, into, g_plan.as_ref(), g_viewed) {
+        Ok(view) => view,
+        Err(error) => return refuse(error.into(), f, g),
+    };
+    let conjoined = match begin_phase(eng, begun) {
+        Err(error) => refuse(error.into(), f, g),
+        Ok(()) => conjoin_kept(eng, f, g, free, Operands { f: f_view.as_mut(), g: g_view.as_mut() })
+            .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
+    };
     for plan in [f_plan, g_plan].into_iter().flatten() {
         plan.recycle(eng);
     }
@@ -664,7 +803,7 @@ impl crate::Engine {
         if let Err(error) = crate::apply::check_vtree(&f, &g) {
             return Err(AndRefused { error, f, g });
         }
-        conjoin_kept(self, f, g, Operands::default())
+        conjoin_kept(self, f, g, Operands::default(), Operands::default())
     }
 
     /// [`Engine::and_restoring`] of `f` and `g` placed on `into` as
@@ -1035,8 +1174,8 @@ fn collapse_target_subtrees(
     };
     let is_marginal = |u: VtreeIdx| f.level(u).is_marginal() || g.level(u).is_marginal();
     let relabels = |u: VtreeIdx| {
-        single_pair(f, u.idx(), f.level(u).slot_count()).is_some()
-            || single_pair(g, u.idx(), g.level(u).slot_count()).is_some()
+        single_pair(&Held::reading(f), u.idx(), f.level(u).slot_count()).is_some()
+            || single_pair(&Held::reading(g), u.idx(), g.level(u).slot_count()).is_some()
     };
 
     let mut flags: Vec<u8> = Vec::new();

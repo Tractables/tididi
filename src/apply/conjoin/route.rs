@@ -1,5 +1,6 @@
 //! Choosing how a level is walked and how its output arrays grow.
 
+use crate::apply::conjoin::held::Held;
 use super::*;
 
 /// Byte ceiling on each of the two per-level exact reserves (`level.nodes` and
@@ -195,8 +196,8 @@ impl Route {
     /// commit and leaf marginalization both produce such levels.
     pub(super) fn validate(
         self,
-        f: &Tdd,
-        g: &Tdd,
+        f: &Held<'_>,
+        g: &Held<'_>,
         shape: LevelShape,
         marginal: &LevelMarg,
         run: &ApplyRun,
@@ -219,8 +220,8 @@ impl Route {
             let t_idx = t.idx();
             cheap_assert!(
                 !marginal.left_now && !marginal.right_now
-                    && !marginal_wide(&f.levels[left_idx]) && !marginal_wide(&f.levels[right_idx])
-                    && !marginal_wide(&g.levels[left_idx]) && !marginal_wide(&g.levels[right_idx]),
+                    && !marginal_wide(f.level(left_idx)) && !marginal_wide(f.level(right_idx))
+                    && !marginal_wide(g.level(left_idx)) && !marginal_wide(g.level(right_idx)),
                 "a structural product-grid route was chosen for a level with a \
                  non-empty marginal child (t_idx={t_idx} l={left_idx} r={right_idx})"
             );

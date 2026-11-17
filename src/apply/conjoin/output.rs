@@ -1,5 +1,6 @@
 //! Writing a finished level of the output diagram.
 
+use crate::apply::conjoin::held::Held;
 use super::*;
 
 /// Drop the arenas of a level's operand children before the level's own
@@ -11,9 +12,13 @@ use super::*;
 /// `marginal_counts`, so `is_marginal()` stays accurate.
 pub(super) fn drop_dead_children(f: &mut Held<'_>, g: &mut Held<'_>, shape: LevelShape) {
     let (li, ri) = (shape.left.idx(), shape.right.idx());
-    for operand in [f.owned(), g.owned()].into_iter().flatten() {
-        drop_dead_operand_level(&mut operand.levels[li]);
-        drop_dead_operand_level(&mut operand.levels[ri]);
+    for t in [li, ri] {
+        if let Some(level) = f.level_mut(t) {
+            drop_dead_operand_level(level);
+        }
+        if let Some(level) = g.level_mut(t) {
+            drop_dead_operand_level(level);
+        }
     }
 }
 
@@ -146,13 +151,13 @@ pub(super) fn finalize_level(
 /// branch reads a cell no producer wrote; the width test below rejects the
 /// index in that case, so a `Some` always names an existing slot.
 pub(super) fn compute_apply_output(
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
 ) -> Option<NodeIdx> {
-    let out_ti = f.output.vtree.idx();
-    let out_local = run.products.lookup(out_ti, f.output.local.0, g.output.local.0,
+    let out_ti = f.output().vtree.idx();
+    let out_local = run.products.lookup(out_ti, f.output().local.0, g.output().local.0,
         run.g_widths[out_ti], run.g_identity[out_ti], run.f_identity[out_ti])?;
     // Mirror the later passes' indexing exactly: effective width is
     // `LEAF_WIDTH` for a leaf root and the level's own width otherwise — the

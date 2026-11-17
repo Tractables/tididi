@@ -4,9 +4,10 @@
 //! the built levels owed the twin contraction ([`split_built`]), and the
 //! built levels pair fusion would find nothing at ([`fused_built_levels`]).
 
+use crate::apply::conjoin::held::Held;
 use super::super::setup::{ApplyRun, Operands, VtreeMask};
 use super::region::carried_from_f;
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::TddLevel;
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The internal levels below the root of a plain conjunction's result that
@@ -209,8 +210,8 @@ pub(super) fn loose_levels(
 /// operands' levels at `t` are dropped only when its parent is built.
 pub(super) fn note_operand_level(
     run: &mut ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     vtree: &Vtree,
     t: VtreeIdx,
 ) {
@@ -287,8 +288,8 @@ fn same_pairs(a: &TddLevel, b: &TddLevel) -> bool {
 pub(super) fn fused_built_levels(
     vtree: &Vtree,
     run: &ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
+    f: &Held<'_>,
+    g: &Held<'_>,
     targets: VtreeMask<'_>,
 ) -> Vec<VtreeIdx> {
     use super::super::marginal_plan::Carrier;
@@ -317,7 +318,7 @@ pub(super) fn fused_built_levels(
                 None => return false,
             };
             identity[m.idx()]
-                && carrier.dirty.is_fused(t.0)
+                && carrier.dirty().is_fused(t.0)
                 && !vtree.node(c).is_leaf()
                 && !targets.contains(c.idx())
                 && !entry.either(c.idx())

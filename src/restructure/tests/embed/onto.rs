@@ -310,8 +310,10 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
                 let at = (Arc::ptr_eq(refused.f.vtree(), &into), Arc::ptr_eq(refused.g.vtree(), &into));
                 if no_earlier {
                     let old = old.err().unwrap_or_else(|| panic!("refused at {n}, where the embeddings and conjunction are not"));
+                    // A plain operand is read where it is and comes back as
+                    // given, so only a mirrored one shows its phase.
                     let phase = |(f, g): Placed| u8::from(f) + u8::from(g);
-                    assert!(phase(old) <= phase(at), "refused at {n}: before the embeddings and conjunction are");
+                    assert!(!mirror || phase(old) <= phase(at), "refused at {n}: before the embeddings and conjunction are");
                 }
                 seen.push(at);
             }
@@ -319,6 +321,15 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
         assert!(n < 100_000, "never granted");
     }
     seen
+}
+
+/// Where a refused `and_onto` leaves the operands: placed, with `mirror`, as
+/// each placement is reached; as given otherwise, as views leave them.
+fn phases(mirror: bool) -> &'static [Placed] {
+    match mirror {
+        true => &[(false, false), (true, false), (true, true)],
+        false => &[(false, false)],
+    }
 }
 
 #[test]
@@ -332,8 +343,9 @@ fn every_refused_reserve_gives_the_operands_back() {
             false,
             mirror,
         );
-        for phase in [(false, false), (true, false), (true, true)] {
-            assert!(seen.contains(&phase), "no reserve refused with the operands at {phase:?}, mirror {mirror}");
+        assert_eq!(seen.contains(&(true, false)), mirror, "a plain operand comes back as given, mirror {mirror}");
+        for phase in phases(mirror) {
+            assert!(seen.contains(phase), "no reserve refused with the operands at {phase:?}, mirror {mirror}");
         }
     }
 }
@@ -350,8 +362,8 @@ fn every_stop_gives_the_operands_back_no_earlier_than_the_embeddings_and_conjunc
             true,
             mirror,
         );
-        for phase in [(false, false), (true, false), (true, true)] {
-            assert!(seen.contains(&phase), "no stop with the operands at {phase:?}, mirror {mirror}");
+        for phase in phases(mirror) {
+            assert!(seen.contains(phase), "no stop with the operands at {phase:?}, mirror {mirror}");
         }
     }
 }
