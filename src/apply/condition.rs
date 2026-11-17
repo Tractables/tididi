@@ -29,10 +29,14 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     let _op = lim.enter()?;
     let mut gate = lim.gate();
     let mut targets = Vec::new();
+    // Variables of the home with no leaf here leave `f` as it is, unless the
+    // assignment names one in both polarities.
+    let mut absent = Vec::new();
     for literal in assignment {
         let literal = literal.try_into().map_err(Into::into)?;
         gate.poll(1)?;
         if f.vtree.home_has(literal.var) {
+            lim.try_push(&mut absent, (literal.var, literal.sign))?;
             continue;
         }
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
@@ -40,7 +44,9 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     }
     gate.flush()?;
     targets.sort_unstable_by_key(|&(leaf, _)| leaf);
-    let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
+    absent.sort_unstable_by_key(|&(var, _)| var);
+    let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1)
+        || absent.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
     if contradictory {
         return constant_like(eng, &f, false);
     }
