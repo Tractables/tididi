@@ -150,6 +150,7 @@ impl Engine {
         for t in vtree.bottomup() {
             gate.poll(1)?;
             match *vtree.node(t) {
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("substitute"),
                 VtreeNode::Leaf { var, .. } => {
                     let replacement =
                         by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));

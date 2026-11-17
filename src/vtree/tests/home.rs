@@ -165,7 +165,7 @@ fn equal_leaf_sets_give_equal_layouts() {
             assert_eq!(other.nodes, direct.nodes);
             assert!(Arc::ptr_eq(direct.home().unwrap().vtree(), tree));
             assert_eq!(other.validate(), Ok(()));
-            assert!(matches!(Vtree::leaf_sets(&other, &own), Some(LeafSets::AInB | LeafSets::Equal(_))));
+            assert!(matches!(Vtree::leaf_sets(&other, &own), Ok(LeafSets::AInB | LeafSets::Equal(_))));
         }
     });
 }
@@ -191,12 +191,12 @@ fn leaf_sets_compare_and_unite() {
         if matches!(got, LeafSets::Equal(_)) {
             assert_eq!(vars.len(), other.len());
         }
-        assert!(matches!(Vtree::leaf_sets(&a, tree), Some(LeafSets::AInB)));
-        assert!(matches!(Vtree::leaf_sets(tree, &b), Some(LeafSets::BInA)));
-        assert!(matches!(Vtree::leaf_sets(tree, tree), Some(LeafSets::Equal(_))));
+        assert!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)));
+        assert!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)));
+        assert!(matches!(Vtree::leaf_sets(tree, tree), Ok(LeafSets::Equal(_))));
         let stranger = Arc::new((**tree).clone());
-        assert!(Vtree::leaf_sets(&a, &stranger).is_none());
-        assert!(Vtree::leaf_sets(&stranger, tree).is_none());
+        assert!(Vtree::leaf_sets(&a, &stranger).is_err_and(|e| e == crate::OperationError::VtreeMismatch));
+        assert!(Vtree::leaf_sets(&stranger, tree).is_err_and(|e| e == crate::OperationError::VtreeMismatch));
     });
 }
 

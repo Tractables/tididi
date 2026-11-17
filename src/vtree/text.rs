@@ -100,6 +100,7 @@ impl Vtree {
         for idx in self.bottomup() {
             let id = self.topo_pos(idx);
             match self.node(idx) {
+                VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("the vtree text format"),
                 VtreeNode::Leaf { var, .. } => {
                     out.push_str(&format!("L {} {}\n", id, var.0));
                 }

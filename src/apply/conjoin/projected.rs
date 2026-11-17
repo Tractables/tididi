@@ -20,7 +20,7 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
         return conjoin_constant(eng, f, g);
     }
-    let into = match Vtree::leaf_sets(f.vtree(), g.vtree()).ok_or(OperationError::VtreeMismatch)? {
+    let into = match Vtree::leaf_sets(f.vtree(), g.vtree())? {
         LeafSets::Equal(same) => {
             reseat_either(eng, &mut f, &mut g, &same)?;
             prepare_owned_weights(&mut f, &mut g)?;
@@ -44,7 +44,7 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
 /// `f ∧ g` where one operand is a constant on the empty projection: false,
 /// or the other operand.
 fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    Vtree::leaf_sets(f.vtree(), g.vtree()).ok_or(OperationError::VtreeMismatch)?;
+    Vtree::leaf_sets(f.vtree(), g.vtree())?;
     let (constant, other) = match f.vtree().num_nodes() {
         0 => (f, g),
         _ => (g, f),

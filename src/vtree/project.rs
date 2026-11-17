@@ -44,6 +44,7 @@ impl Vtree {
         // visited before their parent even after rotations.
         for t in self.bottomup() {
             match &self.nodes[t.idx()] {
+                VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("Vtree::project_to_vars"),
                 VtreeNode::Leaf { var, .. } => {
                     if let Some(local) = local_of(*var) {
                         new_of[t.idx()] = Some(push_leaf(&mut nodes, local));

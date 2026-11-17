@@ -533,6 +533,7 @@ fn eval_label(l: NodeIdx, x: bool) -> bool {
 
 fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
     match *t.vtree.node(v) {
+        VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the evaluation oracle"),
         VtreeNode::Leaf { var, .. } => eval_label(local, asn[var.idx()]),
         VtreeNode::Internal { left, right, .. } => {
             if local == ZERO {

@@ -57,7 +57,7 @@ pub(super) struct TopoOrder {
     pos: Vec<u32>,
     /// `order` filtered to internal nodes.
     internal: Vec<VtreeIdx>,
-    /// `order` filtered to leaves.
+    /// `order` filtered to variable leaves.
     leaves: Vec<VtreeIdx>,
 }
 
@@ -80,15 +80,20 @@ impl TopoOrder {
 
     /// The order as it stands for a freshly built tree whose node list is
     /// already in bottom-up layout: position is index.
-    /// The leaves are the first `num_leaves` nodes, as the reindex lays
-    /// them out, so each list is a range of indices.
+    /// The variable leaves are the first `num_leaves` nodes, then the
+    /// regions, then the internal nodes, as the reindex lays them out, so
+    /// each list is a range of indices.
     pub(super) fn identity(nodes: &[VtreeNode], num_leaves: u32) -> Self {
         let n = nodes.len() as u32;
-        debug_assert!(nodes.iter().enumerate().all(|(i, t)| t.is_leaf() == (i < num_leaves as usize)));
+        let childless = n.div_ceil(2);
+        debug_assert!(nodes.iter().enumerate().all(|(i, t)| {
+            let i = i as u32;
+            (i < num_leaves, i < childless) == (t.is_leaf() && !t.is_region(), t.is_leaf())
+        }));
         TopoOrder {
             order: (0..n).map(VtreeIdx).collect(),
             pos: (0..n).collect(),
-            internal: (num_leaves..n).map(VtreeIdx).collect(),
+            internal: (childless..n).map(VtreeIdx).collect(),
             leaves: (0..num_leaves).map(VtreeIdx).collect(),
         }
     }
@@ -164,7 +169,7 @@ impl TopoOrder {
                 }
             seen[t.idx()] = true;
         }
-        let leaves = self.order.iter().copied().filter(|t| nodes[t.idx()].is_leaf());
+        let leaves = self.order.iter().copied().filter(|t| nodes[t.idx()].is_leaf() && !nodes[t.idx()].is_region());
         let internal = self.order.iter().copied().filter(|t| !nodes[t.idx()].is_leaf());
         if !leaves.eq(self.leaves.iter().copied()) || !internal.eq(self.internal.iter().copied()) {
             return Err("leaf/internal views disagree with the bottom-up order".into());
@@ -190,7 +195,8 @@ impl Vtree {
         self.topo.all().iter().copied()
     }
 
-    /// Bottom-up traversal of the leaves, each with its variable.
+    /// Bottom-up traversal of the variable leaves, each with its variable;
+    /// regions are not among them.
     pub fn leaf_bottomup(
         &self,
     ) -> impl DoubleEndedIterator<Item = (VtreeIdx, VarId)> + ExactSizeIterator + '_ {

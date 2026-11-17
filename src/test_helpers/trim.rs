@@ -60,6 +60,7 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
     for t in vtree.bottomup() {
         kept[t.idx()] = match *vtree.node(t) {
             VtreeNode::Internal { left, right, .. } => kept[left.idx()] || kept[right.idx()],
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the trim oracle"),
             VtreeNode::Leaf { parent, .. } => {
                 let named = match parent {
                     None => f.output.local,
@@ -136,6 +137,7 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
         let classes = f.reference_slot_count(top[t.idx()]);
         end_of[top[t.idx()].idx()] = t;
         match *vtree.node(t) {
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the trim oracle"),
             VtreeNode::Leaf { .. } => {
                 let mut held = vec![0u8; classes];
                 for (j, &c) in class[t.idx()].iter().enumerate() {

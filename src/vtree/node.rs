@@ -6,7 +6,8 @@ use super::{VarId, VtreeIdx};
 /// A node in the vtree (variable tree).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VtreeNode {
-    /// A leaf holding a single variable.
+    /// A leaf holding a single variable, or a region: see
+    /// [`is_region`](VtreeNode::is_region).
     Leaf {
         /// The variable at this leaf.
         var: VarId,
@@ -24,6 +25,10 @@ pub enum VtreeNode {
     },
 }
 
+/// The variable of a region's leaf. No variable has this id, so no
+/// constructor accepts it.
+pub(crate) const REGION_VAR: VarId = VarId(0);
+
 impl VtreeNode {
     /// This node's parent index, or `None` if it is the root.
     pub fn parent(&self) -> Option<VtreeIdx> {
@@ -33,10 +38,25 @@ impl VtreeNode {
         }
     }
 
-    /// Whether this node is a leaf.
+    /// Whether this node is a leaf: a variable's leaf or a region.
     pub fn is_leaf(&self) -> bool {
         matches!(self, VtreeNode::Leaf { .. })
     }
+
+    /// Whether this node is a region: a leaf of a projection standing for a
+    /// set of variables of its home that a diagram has summed out, its
+    /// extent. No variable has it as its leaf, and [`Vtree::num_leaves`]
+    /// does not count it.
+    pub fn is_region(&self) -> bool {
+        matches!(self, VtreeNode::Leaf { var, .. } if *var == REGION_VAR)
+    }
+}
+
+/// The arm of an operation that does not take a vtree with a region.
+#[cold]
+#[track_caller]
+pub(crate) fn region_unsupported(operation: &str) -> ! {
+    panic!("{operation} does not take a vtree with a region")
 }
 
 /// A binary tree grouping the Boolean variables of a diagram.
@@ -147,8 +167,9 @@ impl Vtree {
         self
     }
 
-    /// Number of leaf nodes. Since nodes are stored leaves-first, indices
-    /// `0..num_leaves()` are leaves and `num_leaves()..n` are internal nodes.
+    /// Number of variable leaves. Nodes are stored leaves first, so indices
+    /// `0..num_leaves()` are variable leaves; a projection's regions follow
+    /// them, and the internal nodes come last.
     #[inline]
     pub fn num_leaves(&self) -> u32 {
         self.leaf_count
@@ -276,11 +297,15 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `idx` refers to an internal node.
+    /// Panics if `idx` refers to an internal node, and in debug builds if it
+    /// refers to a region, which has no variable.
     #[inline]
     pub fn leaf_var(&self, idx: VtreeIdx) -> VarId {
         match &self.nodes[idx.idx()] {
-            VtreeNode::Leaf { var, .. } => *var,
+            VtreeNode::Leaf { var, .. } => {
+                debug_assert!(*var != REGION_VAR, "leaf_var() called on a region");
+                *var
+            }
             VtreeNode::Internal { .. } => panic!("leaf_var() called on internal node"),
         }
     }

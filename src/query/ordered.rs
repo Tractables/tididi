@@ -375,6 +375,7 @@ impl<'a> KeyLayout<'a> {
                     stack.push(right);
                     stack.push(left);
                 }
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("an ordered query"),
                 VtreeNode::Leaf { var, .. } => {
                     if role[var.0 as usize].is_none() {
                         continue;
@@ -395,6 +396,7 @@ impl<'a> KeyLayout<'a> {
         let mut held = vec![0u32; vtree.num_nodes()];
         for t in vtree.bottomup() {
             held[t.idx()] = match *vtree.node(t) {
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("an ordered query"),
                 VtreeNode::Leaf { var, .. } => u32::from(is_key[var.0 as usize]),
                 VtreeNode::Internal { left, right, .. } => held[left.idx()] + held[right.idx()],
             };

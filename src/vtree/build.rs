@@ -96,6 +96,7 @@ pub(super) fn append_subtree(nodes: &mut Vec<VtreeNode>, sub: &Vtree, var: impl 
     let offset = nodes.len() as u32;
     for node in &sub.nodes {
         match *node {
+            VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("joining vtrees"),
             VtreeNode::Leaf { var: local, .. } => {
                 push_leaf(nodes, var(local));
             }
@@ -325,7 +326,7 @@ impl Vtree {
             VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
         };
         let reindexed = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
-            reindex(root, n, num_vars, shape)
+            reindex(root, (n, 0), num_vars, shape)
         } else {
             None
         };
@@ -374,13 +375,19 @@ impl Vtree {
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn from_in_order(vars: &[VarId], depths: &[u32], num_vars: u32) -> Result<Self, VtreeError> {
-        Self::from_in_order_with_map(vars, depths, num_vars).map(|(vtree, _)| vtree)
+        Self::from_in_order_with_map(vars, depths, num_vars, &[]).map(|(vtree, _)| vtree)
     }
 
     /// [`Vtree::from_in_order`], with the map from in-order position to
     /// node: leaf `i` is entry `2i`, and the node between leaves `i` and
-    /// `i + 1` is entry `2i + 1`.
-    pub(super) fn from_in_order_with_map(vars: &[VarId], depths: &[u32], num_vars: u32) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
+    /// `i + 1` is entry `2i + 1`. The positions in `regions`, ascending, are
+    /// regions, and their entries of `vars` are ignored.
+    pub(super) fn from_in_order_with_map(
+        vars: &[VarId],
+        depths: &[u32],
+        num_vars: u32,
+        regions: &[u32],
+    ) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
         let k = vars.len();
         if k == 0 {
             return Err(VtreeError::Invalid("a vtree needs at least one variable".to_string()));
@@ -423,7 +430,18 @@ impl Vtree {
             let t = t.idx();
             if t.is_multiple_of(2) { Shape::Leaf(vars[t / 2]) } else { Shape::Internal(kids[t - 1], kids[t]) }
         };
-        match reindex(root, n, num_vars, shape) {
+        // Its own instance of the reindex, so that a tree without regions
+        // runs no region test.
+        let built = if regions.is_empty() {
+            reindex(root, (n, 0), num_vars, shape)
+        } else {
+            let shape = |t: VtreeIdx| match shape(t) {
+                Shape::Leaf(_) if regions.binary_search(&(t.0 / 2)).is_ok() => Shape::Region,
+                other => other,
+            };
+            reindex(root, (n, regions.len() as u32), num_vars, shape)
+        };
+        match built {
             Some(built) => Ok(built),
             None => {
                 let mut variables = vec![false; num_vars as usize];
@@ -571,6 +589,7 @@ const REACHED: VtreeIdx = VtreeIdx(u32::MAX);
 #[derive(Clone, Copy)]
 enum Shape {
     Leaf(VarId),
+    Region,
     Internal(VtreeIdx, VtreeIdx),
 }
 
@@ -579,11 +598,17 @@ enum Shape {
 /// permutation; `None` where it is not one tree whose leaves carry distinct
 /// variables in `1..=num_vars`. `root` names one of the `n` nodes, and
 /// `num_vars` has passed [`check_var_space`].
-fn reindex(root: VtreeIdx, n: usize, num_vars: u32, shape: impl Fn(VtreeIdx) -> Shape) -> Option<(Vtree, Vec<VtreeIdx>)> {
+fn reindex(
+    root: VtreeIdx,
+    (n, regions): (usize, u32),
+    num_vars: u32,
+    shape: impl Fn(VtreeIdx) -> Shape,
+) -> Option<(Vtree, Vec<VtreeIdx>)> {
     let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
     let mut old_to_new = vec![VtreeIdx(0); n];
     let (order, starts) = levels_from_root(root, n, &shape, (&mut var_to_leaf, &mut old_to_new))?;
-    let (nodes, leaf_count) = relabel_leaves_then_internals((&order, &starts), n, &shape, (&mut var_to_leaf, &mut old_to_new));
+    let (nodes, leaf_count) =
+        relabel_leaves_then_internals((&order, &starts), (n, regions), &shape, (&mut var_to_leaf, &mut old_to_new));
     // After the reindex, the node array is laid out so that idx ==
     // bottom-up topological position, so the identity order is correct.
     let topo = crate::vtree::topo::TopoOrder::identity(&nodes, leaf_count);
@@ -645,6 +670,7 @@ fn levels_from_root(
                         return None;
                     }
                 }
+                Shape::Region => {}
             }
             at += 1;
         }
@@ -653,25 +679,26 @@ fn levels_from_root(
     (order.len() == n).then_some((order, starts))
 }
 
-/// Rebuild the node list with the leaves first, then the internal nodes,
-/// each group in bottom-up level order and left to right within a level.
-/// This puts leaves at `0..num_leaves` and internals above them while
-/// preserving `child.idx() < parent.idx()` for every edge. Returns the new
-/// nodes and the leaf count, and writes the `old_to_new` permutation and the
-/// leaves' entries of `var_to_leaf`.
+/// Rebuild the node list with the variable leaves first, then the `regions`
+/// regions, then the internal nodes, each group in bottom-up level order and
+/// left to right within a level. This puts leaves at `0..num_leaves` and
+/// internals above them while preserving `child.idx() < parent.idx()` for
+/// every edge. Returns the new nodes and the leaf count, and writes the
+/// `old_to_new` permutation and the leaves' entries of `var_to_leaf`.
 ///
-/// The tree is binary over every node, so it has one leaf more than it has
-/// internal nodes, and one walk up the levels places both groups: a node's
-/// children sit a level below it and are placed before it.
+/// The tree is binary over every node, so it has one childless node more
+/// than it has internal nodes, and one walk up the levels places every
+/// group: a node's children sit a level below it and are placed before it.
 fn relabel_leaves_then_internals(
     (order, starts): (&[VtreeIdx], &[usize]),
-    n: usize,
+    (n, regions): (usize, u32),
     shape: impl Fn(VtreeIdx) -> Shape,
     (var_to_leaf, old_to_new): (&mut [VtreeIdx], &mut [VtreeIdx]),
 ) -> (Vec<VtreeNode>, u32) {
-    let num_leaves = n.div_ceil(2) as u32;
+    let childless = n.div_ceil(2) as u32;
+    let num_leaves = childless - regions;
     let mut new_nodes = vec![VtreeNode::Leaf { var: VarId(0), parent: None }; n];
-    let (mut next_leaf, mut next_internal) = (0, num_leaves);
+    let (mut next_leaf, mut next_region, mut next_internal) = (0, num_leaves, childless);
     for level in starts.windows(2).rev().map(|w| &order[w[0]..w[1]]) {
         for &old_idx in level {
             match shape(old_idx) {
@@ -681,6 +708,11 @@ fn relabel_leaves_then_internals(
                     old_to_new[old_idx.idx()] = new_idx;
                     new_nodes[new_idx.idx()] = VtreeNode::Leaf { var, parent: None };
                     var_to_leaf[var.idx()] = new_idx;
+                }
+                Shape::Region => {
+                    old_to_new[old_idx.idx()] = VtreeIdx(next_region);
+                    new_nodes[next_region as usize] = VtreeNode::Leaf { var: super::REGION_VAR, parent: None };
+                    next_region += 1;
                 }
                 Shape::Internal(left, right) => {
                     let (new_left, new_right) = (old_to_new[left.idx()], old_to_new[right.idx()]);
@@ -698,6 +730,6 @@ fn relabel_leaves_then_internals(
             }
         }
     }
-    debug_assert_eq!((next_leaf, next_internal as usize), (num_leaves, n));
+    debug_assert_eq!((next_leaf, next_region, next_internal as usize), (num_leaves, childless, n));
     (new_nodes, num_leaves)
 }
