@@ -594,7 +594,7 @@ fn reindex(root: VtreeIdx, n: usize, num_vars: u32, shape: impl Fn(VtreeIdx) -> 
         var_to_leaf,
         leaf_count,
         topo,
-        home: super::home::HomeCell::none(),
+        home: None,
     };
     debug_assert_eq!(vtree.validate(), Ok(()));
     Some((vtree, old_to_new))

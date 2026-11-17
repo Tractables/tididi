@@ -117,7 +117,12 @@ pub struct Vtree {
     /// change after a rotation. See [`TopoOrder`] for the properties it
     /// maintains.
     pub(super) topo: TopoOrder,
-    pub(super) home: super::home::HomeCell,
+    /// A projection's link to its home. No `Cell`, atomic, `OnceLock` or
+    /// `Mutex` may sit in a `Vtree`'s own bytes: a type with interior
+    /// mutability is not `Freeze`, so `&Vtree` arguments lose `noalias
+    /// readonly` and hot loops reload vtree fields (0.4% of a consumer's
+    /// instructions). A home's index is therefore kept in its context.
+    pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
 }
 
 impl Vtree {

@@ -40,6 +40,7 @@ mod topo;
 mod validate;
 
 pub(crate) use build::check_var_space;
+pub(crate) use home::HomeIndexes;
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
 pub use topo::RotationKind;
