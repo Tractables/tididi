@@ -500,8 +500,7 @@ impl<'a> Walk<'a> {
             // `self` per node reloads it, at a cost that varies with `Walk`'s
             // layout.
             let mut next = 0;
-            while let Some(o) = self.marks.keep[v.idx()][next..].iter().position(|&k| k) {
-                let a = next + o;
+            while let Some(a) = next_set(&self.marks.keep[v.idx()], next) {
                 next = a + 1;
                 self.poll.poll(1)?;
                 self.marks.alive[v.idx()][a] = true;
@@ -1818,6 +1817,25 @@ fn groups(
         }
     }
     Ok(Groups { offsets, entries })
+}
+
+/// The first `true` in `row` at or after `from`. Past a short run it skips
+/// whole blocks by an OR over each, which vectorizes where a search for
+/// the first `true` does not: most keep rows are all `false`.
+fn next_set(row: &[bool], from: usize) -> Option<usize> {
+    let rest = &row[from..];
+    let head = rest.len().min(16);
+    if let Some(o) = rest[..head].iter().position(|&k| k) {
+        return Some(from + o);
+    }
+    let mut at = from + head;
+    for block in rest[head..].chunks(64) {
+        if block.iter().fold(false, |any, &k| any | k) {
+            return block.iter().position(|&k| k).map(|o| at + o);
+        }
+        at += block.len();
+    }
+    None
 }
 
 /// What [`Walk::join_both`] does with side `o` of level `u` as the outer
