@@ -122,6 +122,7 @@ pub(super) fn refine_context_groups(
         refine_seen,
         refine_code,
         refine_rows,
+        refine_live,
         flat_groups,
         group_starts,
         unnamed,
@@ -226,7 +227,8 @@ pub(super) fn refine_context_groups(
             if part.twinable == 0 {
                 break;
             }
-            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
+            let pairs = stored.of_idx(w as u32 as usize);
+            part.split_late(lim, pairs, side, &mut wide, refine_live)?;
         }
     }
     // A node leaves the first class once a parent node names it, so a
