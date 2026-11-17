@@ -66,7 +66,7 @@ pub enum PinSemantics {
 /// An unpinned free variable contributes two assignments; a literal contributes
 /// one. A disagreeing pin contributes zero, and an agreeing pin contributes one
 /// for evidence or two for cofactoring over the unchanged variable universe.
-pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSemantics) -> u128 {
+pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSemantics) -> u64 {
     let agreeing = match convention {
         PinSemantics::Cofactor => 2,
         PinSemantics::Evidence => 1,
@@ -84,8 +84,8 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
         // Already free of the variable, so the pin only decides whether the
         // variable is still counted.
         LeafLabel::One => agreeing,
-        LeafLabel::Pos => u128::from(v) * agreeing,
-        LeafLabel::Neg => u128::from(!v) * agreeing,
+        LeafLabel::Pos => u64::from(v) * agreeing,
+        LeafLabel::Neg => u64::from(!v) * agreeing,
     }
 }
 

@@ -205,6 +205,26 @@ impl CountVec {
         }
     }
 
+    /// Overwrite the first `N` slots with values that fit `u64`.
+    #[inline(always)]
+    pub(crate) fn set_u64_prefix<const N: usize>(&mut self, values: [u64; N]) {
+        if self.big.is_some() {
+            self.clear_big_prefix(N);
+        }
+        for (slot, v) in self.fast[..N].iter_mut().zip(values) {
+            *slot = u128::from(v);
+        }
+    }
+
+    #[inline(never)]
+    fn clear_big_prefix(&mut self, n: usize) {
+        for i in 0..n {
+            if self.fast[i] == COUNT_OVERFLOW {
+                self.clear_big(i);
+            }
+        }
+    }
+
     #[inline(never)]
     fn clear_big(&mut self, i: usize) {
         if let Some(big) = self.big.as_mut() {

@@ -224,16 +224,18 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
         Ok(())
     }
 
-    fn leaf(&self, leaf: VtreeIdx, var: VarId, mut label: LeafLabel) -> S::Value {
-        if let Some(pin) = self.pins.get(leaf.idx()).and_then(|pin| pin.value) {
-            let observed = if pin { LeafLabel::Pos } else { LeafLabel::Neg };
-            if label == LeafLabel::One { label = observed; }
-            else if label != observed { return self.algebra.zero(); }
+    fn seed_leaf(&self, _eng: &Engine, col: &mut Vec<S::Value>, leaf: VtreeIdx, var: VarId) -> Result<(), OperationError> {
+        let pin = self.pins.get(leaf.idx()).and_then(|pin| pin.value);
+        for (i, slot) in col.iter_mut().enumerate().take(LEAF_WIDTH) {
+            let mut label = LeafLabel::from_idx(i);
+            if let Some(pin) = pin {
+                let observed = if pin { LeafLabel::Pos } else { LeafLabel::Neg };
+                if label == LeafLabel::One { label = observed; }
+                else if label != observed { *slot = self.algebra.zero(); continue; }
+            }
+            *slot = self.algebra.leaf(var, label);
         }
-        match label {
-            LeafLabel::Zero => self.algebra.zero(),
-            _ => self.algebra.leaf(var, label),
-        }
+        Ok(())
     }
 
     /// Each stored count `n` as the algebra's `count(n)`. A marginal level

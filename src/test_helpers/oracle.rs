@@ -179,9 +179,12 @@ impl LevelFold for BigCounts<'_> {
         Ok(())
     }
 
-    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> BigUint {
+    fn seed_leaf(&self, _eng: &Engine, col: &mut Vec<BigUint>, _leaf: VtreeIdx, var: VarId) -> Result<(), crate::OperationError> {
         let pin = self.pins.get(var.idx()).copied().flatten();
-        BigUint::from(leaf_seed(label, pin, self.convention))
+        for (i, slot) in col.iter_mut().enumerate() {
+            *slot = BigUint::from(leaf_seed(LeafLabel::from_idx(i), pin, self.convention));
+        }
+        Ok(())
     }
 
     /// A marginal level's counts are pin-independent: they were summed out before

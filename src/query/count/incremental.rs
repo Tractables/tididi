@@ -3,7 +3,7 @@
 use crate::Engine;
 use std::borrow::Borrow;
 use std::sync::Arc;
-use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, TddLevel, ValueRef};
+use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
@@ -67,13 +67,18 @@ impl LevelFold for OverflowingCounts<'_> {
         }
     }
 
+    #[inline(always)]
     fn set(&self, eng: &Engine, col: &mut CountVec, i: usize, v: Count) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }
 
-    fn leaf(&self, leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> Count {
+    #[inline(always)]
+    fn seed_leaf(&self, _eng: &Engine, col: &mut CountVec, leaf: VtreeIdx, _var: VarId) -> Result<(), OperationError> {
         let pin = self.pins.get(leaf.idx()).and_then(|pin| pin.value);
-        Count::from_u128(leaf_seed(label, pin, self.convention))
+        col.set_u64_prefix(std::array::from_fn::<_, LEAF_WIDTH, _>(|i| {
+            leaf_seed(LeafLabel::from_idx(i), pin, self.convention)
+        }));
+        Ok(())
     }
 
     /// A marginal level's counts are pin-independent — summed out before any pin

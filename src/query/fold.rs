@@ -11,7 +11,7 @@
 //! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
-use crate::diagram::{LeafLabel, PairsIter, ChildDecoder, Tdd, TddLevel, LEAF_WIDTH};
+use crate::diagram::{PairsIter, ChildDecoder, Tdd, TddLevel};
 #[cfg(any(test, feature = "testing"))]
 use crate::diagram::{EncodedChildRef, ChildRef, ValueRef};
 use crate::Engine;
@@ -66,10 +66,9 @@ pub(crate) trait LevelFold {
         *col = Self::Col::default();
     }
 
-    /// The value of `label` at vtree leaf `leaf` for variable `var`. `LeafLabel::Zero` never
-    /// reaches a stored leaf slot, but the seed loop passes it, so an
-    /// implementation must answer for it.
-    fn leaf(&self, leaf: VtreeIdx, var: VarId, label: LeafLabel) -> Self::Value;
+    /// Store the [`LEAF_WIDTH`](crate::diagram::LEAF_WIDTH) slots of vtree leaf `leaf`, for variable
+    /// `var`, slot `i` holding `LeafLabel::from_idx(i)`'s value.
+    fn seed_leaf(&self, eng: &Engine, col: &mut Self::Col, leaf: VtreeIdx, var: VarId) -> Result<(), OperationError>;
 
     /// Fill `col` from a marginal level's stored values rather than folding it.
     /// A marginal level has no pairs to fold, so its stored column already is
@@ -169,13 +168,7 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     let ti = t.idx();
     gate.poll(1)?;
     let (l, r) = match *tdd.vtree.node(t) {
-        VtreeNode::Leaf { var, .. } => {
-            for i in 0..LEAF_WIDTH {
-                let v = f.leaf(t, var, LeafLabel::from_idx(i));
-                f.set(eng, &mut cols[ti], i, v)?;
-            }
-            return Ok(());
-        }
+        VtreeNode::Leaf { var, .. } => return f.seed_leaf(eng, &mut cols[ti], t, var),
         VtreeNode::Internal { left, right, .. } => (left.idx(), right.idx()),
     };
     let level = &tdd.levels[ti];
