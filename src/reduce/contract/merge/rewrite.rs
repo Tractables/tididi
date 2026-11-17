@@ -4,7 +4,6 @@ use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildPair, NodeIdx, StoreRoom, Tdd, TddLevel};
-use crate::limits::Limits;
 
 use super::super::scratch::MergeRemap;
 
@@ -41,14 +40,13 @@ pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize)
 /// `final_remap` indexes directly.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
-/// mutated anything (`room`, an implicit parent's, through `lim`).
+/// mutated anything (`room`, the stored arena of an implicit parent).
 ///
 /// `ordered` says the parent is known to hold its ranges in node order,
 /// which is then not read again. Returns whether the parent is left so,
 /// and its live pairs, counted as they are written: the merge leaves them
 /// for the close.
 pub(super) fn rewrite_parent(
-    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
@@ -61,21 +59,8 @@ pub(super) fn rewrite_parent(
     // per-iteration saturating add buys nothing.
     let mut dead_acc = 0usize;
     let parent_level = &mut tdd.levels[parent.idx()];
-    // An implicit parent's pairs are read off the description through the
-    // same filter, and the level is built stored where one changes.
-    if let Some(described) = parent_level.implicit().map(|d| d.pairs()) {
-        debug_assert!(room.is_some(), "an implicit parent's room is reserved");
-        let mut dropped = 0usize;
-        parent_level
-            .rewrite_described_in(lim, room, false, |_, _, _, pair| {
-                let (pair, kept) = canonical_pair_on(pair, t1_side, &remap.final_remap);
-                dropped += usize::from(!kept);
-                kept.then_some(pair)
-            })
-            .expect("an implicit parent is rewritten in its room");
-        // Built stored at its description's places, in node order: its
-        // arena is left as the stored route below leaves it.
-        return (parent_level.compact_in_node_order(), described - dropped);
+    if parent_level.implicit().is_some() {
+        parent_level.store_moved(room.expect("an implicit parent's room is reserved"), |_| true, |l| l, |r| r);
     }
     // Where the arena holds the ranges in node order, each node's kept pairs
     // move down to a write cursor as they are rewritten, which leaves the

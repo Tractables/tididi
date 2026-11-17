@@ -97,9 +97,8 @@ fn empty_ranged_node(level: &TddLevel, i: usize) -> bool {
 /// Both of conditioning's rewrites and the care restriction's are this pass
 /// under a different predicate.
 ///
-/// An implicit level is rewritten from its description and built stored
-/// where a pair changes ([`TddLevel::rewrite_described`]), in room taken
-/// from `lim`.
+/// An implicit level is stored first ([`TddLevel::store_if_implicit`]), in
+/// room taken from `lim`.
 ///
 /// # Errors
 ///
@@ -133,15 +132,7 @@ pub(super) fn rewrite_live_level_pairs(
     if n_nodes == 0 {
         return Ok(false);
     }
-    if level.pairs.implicit().is_some() {
-        // A described level is rewritten as a whole: a node's liveness is
-        // asked once per pair.
-        let emptied = level.rewrite_described(lim, true, |i, k, count, pair| {
-            if node_live(i) { rewrite_pair(i, k, count, pair) } else { None }
-        })?;
-        level.compact_pairs_if_stale();
-        return Ok(emptied);
-    }
+    level.store_if_implicit(lim)?;
 
     let mut emptied = false;
     let mut dead = 0usize;

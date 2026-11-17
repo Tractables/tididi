@@ -1043,9 +1043,9 @@ static REDESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// The count [`stored_moved`] reads.
 static STORED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The pairs of implicit levels that a renumbering of their child levels
-/// left not affine as numbered, or that a change rewrote in place, which
-/// were stored, over the whole process.
+/// The pairs of implicit levels stored because a renumbering of their child
+/// levels left them not affine as numbered or because a pass changes them
+/// in place, over the whole process.
 pub fn stored_moved() -> u64 {
     STORED.load(std::sync::atomic::Ordering::Relaxed)
 }

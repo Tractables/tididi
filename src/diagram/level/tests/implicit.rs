@@ -337,12 +337,10 @@ fn a_one_pair_level_closes_and_is_stored_back() {
     }
 }
 
-/// A rewrite of an implicit level of one pair a node builds it stored as
-/// the in-place rewrite leaves a stored one: a node whose pair changed holds
-/// the new pair inline, one whose pair was dropped the empty placeholder,
-/// and the arena no pair; a node's only pair is not removed.
+/// Removing a node's only pair from an implicit level of one pair a node
+/// leaves the level as it is.
 #[test]
-fn a_one_pair_level_is_rewritten_inline() {
+fn a_one_pair_level_keeps_a_nodes_only_pair() {
     let pairs = affine_of(&[], &[(16, (1, 0)), (8, (0, 1))]);
     let mut level = level_of(&pairs);
     level.close();
@@ -351,29 +349,6 @@ fn a_one_pair_level_is_rewritten_inline() {
     let lim = Limits::new();
     assert!(!level.remove_pair_from_node(&lim, 3, only).unwrap());
     assert!(level.implicit().is_some(), "a node's only pair stays");
-    let moved = |p: ChildPair| pair(i64::from(p.left.raw()) + 1000, i64::from(p.right.raw()));
-    let emptied = level.rewrite_described(&lim, true, |i, _, _, p| match i % 5 {
-        0 => None,
-        1 => Some(moved(p)),
-        _ => Some(p),
-    }).unwrap();
-    assert!(emptied);
-    let empty = level.encode_multi(0, 0);
-    let want: Vec<EncodedNode> = pairs
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let p = pair(p[0].0, p[0].1);
-            match i % 5 {
-                0 => empty,
-                1 => EncodedNode::inline(moved(p)),
-                _ => EncodedNode::inline(p),
-            }
-        })
-        .collect();
-    assert!(level.pairs.implicit().is_none());
-    assert_eq!(level.nodes.stored(), &want[..]);
-    assert!(level.pairs.is_empty() && level.dead_pairs == 0);
 }
 
 /// A level of one pair a node, its pairs inline, fits the description of
@@ -1241,21 +1216,15 @@ fn a_refused_room_leaves_the_description() {
     assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
 }
 
-/// A rewrite that changes a pair of a level held as the description of its
-/// pairs, refused the room the level is built stored in, leaves it as it
-/// was; one that changes nothing asks for no room.
+/// A pair removal from a level held as the description of its pairs,
+/// refused the room the level is stored in, leaves it as it was.
 #[test]
-fn a_refused_rewrite_leaves_the_description() {
+fn a_refused_removal_leaves_the_description() {
     let pairs = affine_of(&[(4, (1, 0))], &[(16, (4, 0)), (8, (0, 1))]);
     let mut level = level_of(&pairs);
     level.close();
     let d = level.implicit().expect("an affine level closes").clone();
     let lim = Limits::new();
-    lim.refuse_nth_reserve(0);
-    assert_eq!(level.rewrite_described(&lim, true, |_, _, _, p| Some(p)), Ok(false), "an identity rewrite");
-    assert_eq!(level.implicit(), Some(&d));
-    assert_eq!(level.rewrite_described(&lim, true, |i, r, _, p| (i != 5 || r != 2).then_some(p)), Err(OperationError::OverBudget));
-    assert_eq!(level.implicit(), Some(&d));
     lim.refuse_nth_reserve(0);
     let dropped = level.pairs_vec(7)[1];
     assert_eq!(level.remove_pair_from_node(&lim, 7, dropped), Err(OperationError::OverBudget));

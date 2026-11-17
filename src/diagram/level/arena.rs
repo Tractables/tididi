@@ -288,37 +288,6 @@ impl TddLevel {
         true
     }
 
-    /// Move every node's pairs down to the start of the arena, in node order,
-    /// where [`ranges_in_node_order`](Self::ranges_in_node_order) holds: the
-    /// arena is left with the live pairs only, as a rewrite that moves them
-    /// as it goes leaves it. Returns whether it moved them; a level out of
-    /// node order, or implicit, is left as it is.
-    pub(crate) fn compact_in_node_order(&mut self) -> bool {
-        if self.pairs.stored().is_none() || !self.ranges_in_node_order() {
-            return false;
-        }
-        let mut cursor = 0usize;
-        for i in 0..self.nodes().len() {
-            let Some(range) = self.arena_range(self.node(i).kind()) else {
-                continue;
-            };
-            if range.is_empty() {
-                continue;
-            }
-            if range.start != cursor {
-                let len = range.len();
-                self.pairs.stored_mut().copy_within(range, cursor);
-                self.set_multi_start(i, cursor);
-                cursor += len;
-            } else {
-                cursor = range.end;
-            }
-        }
-        self.pairs.stored_mut().truncate(cursor);
-        self.dead_pairs = 0;
-        true
-    }
-
     /// Rewrite a multi-pair node's arena start, handling both encodings.
     /// Companion of [`set_pair_len`](Self::set_pair_len); the passes that move
     /// pairs down the arena need it, and only ever to *lower* a start.
@@ -698,9 +667,8 @@ impl TddLevel {
     /// Panics if the node does not hold `pair`; a caller reaches this through
     /// the level's own pair list.
     ///
-    /// On an implicit level of two pairs a node or more, the level without
-    /// the pair is built from the description and closed
-    /// ([`rewrite_described`](Self::rewrite_described)), its room taken from
+    /// An implicit level of two pairs a node or more is stored first
+    /// ([`store_if_implicit`](Self::store_if_implicit)), its room taken from
     /// `lim`; one of one pair a node is left as it is.
     ///
     /// # Errors
@@ -713,14 +681,7 @@ impl TddLevel {
                 assert!(self.pairs_iter_of_idx(idx).any(|p| p == pair), "remove_pair_from_node: node {idx} does not hold {pair:?}");
                 return Ok(false);
             }
-            let mut found = false;
-            self.rewrite_described(lim, false, |i, _, _, p| {
-                let drop = i == idx && p == pair && !found;
-                found |= drop;
-                (!drop).then_some(p)
-            })?;
-            assert!(found, "remove_pair_from_node: node {idx} does not hold {pair:?}");
-            return Ok(true);
+            self.store_if_implicit(lim)?;
         }
         let stored = self.stored().expect("a pair is removed from a stored level");
         let at = stored.of_idx(idx).iter().position(|p| *p == pair)
