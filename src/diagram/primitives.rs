@@ -401,14 +401,6 @@ impl<'a> PairsIter<'a> {
     pub(super) fn described(places: super::level::Places<'a>) -> Self {
         PairsIter { stored: [].iter(), described: places }
     }
-
-    /// The pairs still to come, as one slice, when they are stored; `None`
-    /// on an implicit level's node, whose pairs are generated, while any
-    /// are to come.
-    #[inline]
-    pub(crate) fn as_slice(&self) -> Option<&[ChildPair]> {
-        (self.described.len() == 0).then_some(self.stored.as_slice())
-    }
 }
 
 impl std::fmt::Debug for PairsIter<'_> {

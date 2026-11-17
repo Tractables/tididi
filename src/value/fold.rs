@@ -99,7 +99,7 @@ impl IntFold {
     /// Two accumulators, so consecutive pairs do not wait on one carry chain,
     /// and no branch on a zero count: under the certificate a zero product
     /// costs what any other does.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn fold_structural_u64(pairs: &[ChildPair], left: &[u128], right: &[u128]) -> Option<u128> {
         // Many diagrams hold most of their nodes with one pair.
         if let [p] = pairs {
@@ -153,68 +153,6 @@ impl IntFold {
             prefetch_node_inputs(&stored, i, left, right);
             Self::fold_structural_u64(stored.of_idx(i), left, right)
         })
-    }
-
-    /// [`Self::fill_structural_u64`] into a column of `u64` counts whose
-    /// children's columns are `u64` too: fills the nodes `range` while each
-    /// total fits `u64`, and returns the first node it did not fill. An
-    /// implicit level's nodes are summed off their generated pairs
-    /// ([`Self::fill_described_narrow`]).
-    pub(crate) fn fill_structural_narrow(
-        level: &TddLevel,
-        left: &[u64],
-        right: &[u64],
-        col: &mut [u64],
-        range: std::ops::Range<usize>,
-    ) -> usize {
-        let Some(stored) = level.stored() else {
-            return Self::fill_described_narrow(level, left, right, col, range);
-        };
-        for i in range.clone() {
-            prefetch_node_inputs(&stored, i, left, right);
-            let total = match stored.of_idx(i) {
-                [p] => Some(left[p.left.0 as usize] as u128 * right[p.right.0 as usize] as u128),
-                pairs => Self::fold_structural_by(pairs.iter().copied(),
-                    |k| left[k.0 as usize] as u128, |k| right[k.0 as usize] as u128),
-            };
-            match total {
-                Some(total) if total <= u64::MAX as u128 => col[i] = total as u64,
-                _ => return i,
-            }
-        }
-        range.end
-    }
-
-    /// [`Self::fill_structural_narrow`] on an implicit level, its pairs
-    /// generated a run of nodes at a time as [`Self::fill_described_u64`]
-    /// generates them.
-    #[inline(never)]
-    fn fill_described_narrow(
-        level: &TddLevel,
-        left: &[u64],
-        right: &[u64],
-        col: &mut [u64],
-        range: std::ops::Range<usize>,
-    ) -> usize {
-        let Pairs::Implicit(d) = level.pair_view() else {
-            return range.start;
-        };
-        let k = d.pairs_per_node();
-        if k == 0 {
-            return range.start;
-        }
-        let mut chunks = NodeChunks::new(d, range.clone());
-        let mut buf = Vec::new();
-        while let Some(start) = chunks.fill(&mut buf) {
-            for i in start..start + buf.len() / k {
-                let pairs = buf[(i - start) * k..][..k].iter().copied();
-                match Self::fold_structural_by(pairs, |x| left[x.0 as usize] as u128, |x| right[x.0 as usize] as u128) {
-                    Some(total) if total <= u64::MAX as u128 => col[i] = total as u64,
-                    _ => return i,
-                }
-            }
-        }
-        range.end
     }
 
     /// [`Self::fill_structural_u64`] on an implicit level: the pairs of the

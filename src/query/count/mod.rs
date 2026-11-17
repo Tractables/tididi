@@ -5,7 +5,6 @@
 //! occurs.
 
 mod incremental;
-mod column;
 mod prepared;
 
 use crate::Engine;
@@ -182,7 +181,7 @@ impl Engine {
 
     /// The model count's fold with no pin storage, keeping every column.
     fn count_columns(&self, tdd: &Tdd, gate: &mut PollGate) -> Result<Vec<CountVec>, OperationError> {
-        let mut cache = QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::All)?;
+        let mut cache = QueryCache::new(self, tdd, CountQuery::new(PinSemantics::Cofactor), 0, Retention::All)?;
         cache.refresh(self, tdd, gate)?;
         Ok(cache.into_columns())
     }
@@ -191,7 +190,7 @@ impl Engine {
     /// levels `counts` keeps a column for, a copy of which stands in for the
     /// fold of each one's subtree; the output's level keeps none.
     fn model_count_from_kept(&self, tdd: &Tdd, counts: &LevelCounts) -> Result<BigUint, OperationError> {
-        CountQuery::<CountVec>::admit(tdd)?;
+        CountQuery::admit(tdd)?;
         let lim = self.limits();
         let vtree = &tdd.vtree;
         let n = vtree.num_nodes();
@@ -215,7 +214,7 @@ impl Engine {
             above[left.idx()] = covered;
             above[right.idx()] = covered;
         }
-        let query = CountQuery::<CountVec>::new(PinSemantics::Cofactor);
+        let query = CountQuery::new(PinSemantics::Cofactor);
         let mut gate = lim.gate();
         fold_bottom_up_from(&query.fold(&[]), self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
         gate.finish()?;
@@ -249,6 +248,6 @@ impl Engine {
         }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
-        QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
+        QueryCache::new(self, tdd, CountQuery::new(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
     }
 }

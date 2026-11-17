@@ -1,10 +1,9 @@
 //! Immutable compact reads for a retained counter.
 
-use super::column::CountColumn;
 use crate::diagram::{ChildPair, EncodedChildRef, StoredPairs};
 use crate::limits::{Charged, Limits, PollGate, Transient};
 use crate::query::cache::PinState;
-use crate::value::{Count, IntFold};
+use crate::value::{Count, CountVec, IntFold};
 use crate::vtree::VtreeIdx;
 use crate::{Engine, OperationError, Tdd};
 
@@ -401,11 +400,11 @@ impl Prepared {
         Ok(result.keep())
     }
 
-    pub(super) fn fold_level<C: CountColumn>(
+    pub(super) fn fold_level(
         &self,
         eng: &Engine,
         tdd: &Tdd,
-        cols: &mut [C],
+        cols: &mut [CountVec],
         t: VtreeIdx,
         pins: &[PinState],
         gate: &mut PollGate,
@@ -472,15 +471,17 @@ impl<P: Copy + Into<u64>> Iterator for Inputs<'_, P> {
 }
 
 impl Packed {
-    fn fold<N: Copy + Into<u64>, P: Copy + Into<u64>, C: CountColumn>(
+    fn fold<N: Copy + Into<u64>, P: Copy + Into<u64>>(
         &self,
         eng: &Engine,
         (nodes, pairs): (&[N], &[P]),
-        (left, right): (&C, &C),
-        out: &mut C,
+        (left, right): (&CountVec, &CountVec),
+        out: &mut CountVec,
         bad: u64,
         gate: &mut PollGate,
     ) -> Result<(), OperationError> {
+        let (l, r) = (left.as_count_ref(), right.as_count_ref());
+        let fast = l.all_u64() && r.all_u64();
         let batch = eng.limits().reduce_poll_stride().clamp(1, 256) as usize;
         for (chunk, nodes) in nodes.chunks(batch).enumerate() {
             gate.poll(nodes.len() as u64)?;
@@ -505,7 +506,12 @@ impl Packed {
                             left: self.layout.left,
                         }
                     };
-                    match C::fold_structural(inputs.clone(), left, right) {
+                    let total = if fast {
+                        IntFold::fold_structural_by(inputs.clone(),
+                            |k| l.fast_slice()[k.raw() as usize] as u64 as u128,
+                            |k| r.fast_slice()[k.raw() as usize] as u64 as u128)
+                    } else { None };
+                    match total {
                         Some(total) => Count::from_u128(total),
                         None => IntFold::fold(
                             inputs,

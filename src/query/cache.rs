@@ -226,10 +226,11 @@ impl<Q: CachedQuery> QueryCache<Q> {
             for &level in &observations.changed { fold_level::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, level, gate)?; }
         } else {
             let retention = observations.retention;
+            let fold = self.query.fold(&observations.pins);
             if retention == Retention::Frontier {
-                for col in self.cols.iter_mut() { *col = Q::Col::default(); }
+                for col in self.cols.iter_mut() { fold.release(eng, col); }
             }
-            fold_bottom_up::<_, PREPARED>(&self.query.fold(&observations.pins), eng, tdd, &mut self.cols, retention, gate)?;
+            fold_bottom_up::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, retention, gate)?;
         }
         observations.clear_changed();
         observations.evaluated = true;
