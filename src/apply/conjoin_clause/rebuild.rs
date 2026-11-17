@@ -21,6 +21,11 @@ pub(super) struct ClauseTables<'a> {
     /// and the one extra pair naming the cube, appended to that node's `c_t`
     /// pair list. `None` for a conjunction; see [`cube`](super::cube).
     pub(super) output_cube_pair: Option<(usize, ChildPair)>,
+    /// The emptied arenas of the spine level rebuilt last, which the next
+    /// one builds its output in where they fit: a walk over small levels
+    /// allocates no arena per level.
+    pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
+    pub(super) spare_pairs: &'a mut Vec<ChildPair>,
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a
@@ -94,6 +99,14 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     Ok(written)
 }
 
+/// Whether a spare arena of `capacity` serves a reserve of `need`: it holds
+/// at most twice what a fresh reserve allocates, which is at least four
+/// entries (`Vec`'s smallest allocation of 8-byte elements), so a level keeps
+/// no more slack than a reserve's growth leaves.
+fn fits_reserve(capacity: usize, need: usize) -> bool {
+    capacity <= 2 * need.max(4)
+}
+
 /// Rebuild one spine level as the conjunction of the accumulator's level with
 /// the clause, filling this level's `cd_map` block.
 pub(super) fn rebuild_spine_level(
@@ -118,12 +131,15 @@ pub(super) fn rebuild_spine_level(
 
     // `old` holds the accumulator's pairs for this level; the emptied
     // `levels[t_idx]` receives the conjoined output.
-    let old = std::mem::take(&mut levels[t_idx]);
+    let mut old = std::mem::take(&mut levels[t_idx]);
     let k = old.slot_count();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
+    if fits_reserve(tables.spare_nodes.capacity(), node_cap) {
+        std::mem::swap(level.nodes.stored_mut(), tables.spare_nodes);
+    }
     lim.reserve(level.nodes.stored_mut(), node_cap)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
     // both-relevant node, plus 1 d_t pair when `compute_dt`. The input pairs
@@ -146,6 +162,12 @@ pub(super) fn rebuild_spine_level(
     } else {
         inputs.saturating_mul(pair_mult.min(2))
     };
+    // An empty input pair arena is not read, so it is the output's.
+    if old.pairs.is_empty() && old.pairs.implicit().is_none() {
+        std::mem::swap(level.pairs.stored_mut(), old.pairs.stored_mut());
+    } else if fits_reserve(tables.spare_pairs.capacity(), first_reserve) {
+        std::mem::swap(level.pairs.stored_mut(), tables.spare_pairs);
+    }
     lim.reserve(level.pairs.stored_mut(), first_reserve)?;
     let ctx = SpineCtx {
         left_grid_base,
@@ -173,9 +195,11 @@ pub(super) fn rebuild_spine_level(
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
-    // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
-    // the two are not resident together at the peak.
     let old_value_ref_sides = old.value_ref_sides;
+    // A spare the level did not take is freed with `old`.
+    old.clear();
+    std::mem::swap(old.nodes.stored_mut(), tables.spare_nodes);
+    std::mem::swap(old.pairs.stored_mut(), tables.spare_pairs);
     drop(old);
     // Trim the slack the per-node top-up growth left behind.
     level.shrink_arrays();

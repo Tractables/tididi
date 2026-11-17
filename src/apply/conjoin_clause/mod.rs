@@ -296,6 +296,8 @@ fn rebuild_along_spine(
         t3_buf: &mut work.t3_buf,
         dt_pairs: &mut work.dt_pairs,
         output_cube_pair: None,
+        spare_nodes: &mut Vec::new(),
+        spare_pairs: &mut Vec::new(),
     };
     for &t in work.spine_internal.iter() {
         // The `cd_map` block of a level is sized at its width before the
