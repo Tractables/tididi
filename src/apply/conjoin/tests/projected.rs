@@ -6,7 +6,6 @@ use crate::Engine;
 use crate::test_helpers::{assert_canonical, rotate_left, rotate_right};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{VarId, Vtree};
-use num_bigint::BigUint;
 
 fn rotated_home(n: u32, seed: u64) -> Arc<Vtree> {
     let mut vtree = Vtree::random(n, seed);
@@ -76,12 +75,6 @@ fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     eng.embed(f, home, |v| v).unwrap().0
 }
 
-/// The models of `f` over its home's variables.
-fn home_count(eng: &Engine, f: &Tdd) -> BigUint {
-    let home = f.vtree().home().map_or(f.vtree().num_leaves(), |home| home.num_leaves());
-    eng.model_count(f).unwrap() << (home - f.vtree().num_leaves())
-}
-
 #[test]
 fn and_on_projections_is_and_on_the_home() {
     let eng = Engine::new();
@@ -101,11 +94,11 @@ fn and_on_projections_is_and_on_the_home() {
             for mut h in results {
                 assert!(Arc::ptr_eq(h.vtree().home().unwrap(), &home));
                 assert_eq!(h.vtree().num_leaves(), union.num_leaves(), "seed {seed}");
-                assert_eq!(home_count(&eng, &h), eng.model_count(&expected).unwrap(), "seed {seed}");
+                assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
                 assert_canonical(&h);
-                assert_eq!(home_count(&eng, &h), eng.model_count(&expected).unwrap(), "seed {seed}");
+                assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
             }
             // The operands are intact.
             assert_eq!(f.vtree().num_leaves() as usize, {
@@ -147,7 +140,7 @@ fn and_clause_extends_to_the_clause_variables() {
                 for &l in &lits {
                     assert!(h.vtree().leaf_of(VarId(l.unsigned_abs())).is_some());
                 }
-                assert_eq!(home_count(&eng, &h), eng.model_count(&expected).unwrap(), "seed {seed}");
+                assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
             }
         }
@@ -173,7 +166,7 @@ fn absent_variables_leave_the_operand() {
         OperationError::VariableNotInVtree(VarId(7))
     );
     let g = eng.exists_vars(f.clone(), &[VarId(1), VarId(2)]).unwrap();
-    assert_eq!(eng.model_count(&g).unwrap(), 4u32.into());
+    assert_eq!(eng.model_count(&g).unwrap(), 64u32.into());
 }
 
 #[test]

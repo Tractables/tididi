@@ -92,8 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut sum = 0u64;
     for f in &results {
-        let leaves = f.vtree().num_leaves();
-        let scaled = (eng.model_count(f)? << 20u32) >> leaves;
+        let scaled = (eng.model_count(f)? << 20u32) >> n;
         sum += u64::try_from(scaled)?;
     }
     println!("n {n} mode {} clauses {count} diagrams {} sum {sum}", args[2], results.len());

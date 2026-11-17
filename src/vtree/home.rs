@@ -153,8 +153,8 @@ impl Vtree {
     /// leaf sets; [`Engine::and_clause`](crate::Engine::and_clause) first
     /// moves the diagram onto the projection that adds the clause's
     /// variables; quantifying or conditioning a variable of the home with no
-    /// leaf here returns the diagram. A model count counts the projection's
-    /// variables only.
+    /// leaf here returns the diagram. Model counts and evaluations are over
+    /// the home's variables.
     ///
     /// # Errors
     ///
