@@ -1028,6 +1028,7 @@ fn move_slot(kind: RotationKind, crossed: bool) -> usize {
 /// Make `mv` on `tree`, its children swapped first if crossed, with the
 /// bottom-up order's repair owed; `None`, the tree untouched, where the move
 /// does not apply. A crossed move that is reverted owes the swap back.
+#[inline(always)]
 fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
     let RotationMove { pivot, kind } = mv.rotation;
     let VtreeNode::Internal { left, right, .. } = *tree.node(pivot) else {

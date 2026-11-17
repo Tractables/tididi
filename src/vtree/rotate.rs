@@ -243,6 +243,7 @@ impl Vtree {
 /// left as it was before the rotation, which is why this is reachable only
 /// through [`PendingTopo::revert`] (and the round-trip oracle in the rotation
 /// tests).
+#[inline(always)]
 fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
     let v_parent = vtree.nodes[v_idx.idx()].parent();
