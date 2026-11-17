@@ -494,3 +494,24 @@ fn wide_pass_throughs_build_the_levels_their_joins_build() {
     }
     assert!(all > 0 && described == all, "{described} of {all} wide pass-throughs held as descriptions");
 }
+
+/// A diagram that owes its leaf contraction and no inner one, as
+/// [`ReductionPlan::Contract`](crate::reduce::ReductionPlan::Contract)
+/// leaves it, minimizes to the canonical diagram once moved. Where a leaf
+/// lands beside a free variable, its two literals are two nodes of the
+/// pass-through over it, and a leaf twin of the source is an inner twin of
+/// the result.
+#[test]
+fn a_moved_leaf_twin_is_contracted() {
+    use crate::reduce::ReductionPlan;
+    let eng = Engine::new();
+    let small = Arc::new(Vtree::linear(2));
+    // x1 beside x2 and a free x3.
+    let into = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n").unwrap());
+    // (x1 ∨ x2) ∧ x1 pairs x1 with both literals of x2 until a leaf
+    // contraction merges them.
+    let mut f = eng.and(eng.clause(&small, [1, 2]).unwrap(), eng.clause(&small, [1]).unwrap()).unwrap();
+    assert_eq!(f.pair_count(), 2);
+    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+    check_against_copy(&eng, &f, &into, |v| v, "a leaf twin under a pass-through");
+}
