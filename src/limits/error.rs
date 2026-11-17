@@ -46,6 +46,10 @@ pub enum OperationError {
     /// weights or a summed-out level, which move with it only between
     /// diagrams of one vtree.
     WeightsAcrossProjections,
+    /// The diagram is on a projection that lacks variables of its home, and
+    /// the column algebra values no assignment to them
+    /// ([`ColumnAlgebra::free`](crate::diagram::ColumnAlgebra::free)).
+    FreeVariables,
     /// A [`PairIndex`](crate::diagram::PairIndex) was built from another
     /// diagram than the operand it is read with, or from that diagram
     /// before it changed. Building the index again from the operand is
@@ -161,6 +165,9 @@ impl std::fmt::Display for OperationError {
             OperationError::VtreeMismatch => f.write_str("operands must share one vtree or one home vtree"),
             OperationError::WeightsAcrossProjections => {
                 f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
+            }
+            OperationError::FreeVariables => {
+                f.write_str("the column algebra values no assignment to the home variables the diagram's projection lacks")
             }
             OperationError::IndexMismatch => f.write_str("the pair index was built from another diagram than its operand"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),

@@ -155,6 +155,16 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
             CountRead::Big(value) => value.clone(),
         }
     }
+
+    /// The own count times two for each home variable the projection lacks,
+    /// one for a pinned one under evidence.
+    fn over_home(&self, own: Option<BigUint>, tdd: &Tdd, free: &[(VarId, bool)]) -> BigUint {
+        let pinned = match self.convention {
+            PinSemantics::Evidence => free.len() as u32,
+            PinSemantics::Cofactor => 0,
+        };
+        own.unwrap_or_else(|| 1u32.into()) << (tdd.vtree.free_leaves() - pinned)
+    }
 }
 
 /// Resolve one child ref of a pinned counter to a count read.
@@ -555,7 +565,8 @@ impl<D: Borrow<Tdd>> Counter<D> {
     ///
     /// `Some(value)` pins the variable and `None` removes its pin. A variable
     /// absent from the function's support can still be pinned if the vtree
-    /// carries it. Repeating a pin leaves the cached counts valid.
+    /// carries it, and on a projection so can a variable of its home, which
+    /// counts as on the home. Repeating a pin leaves the cached counts valid.
     ///
     /// # Errors
     ///
@@ -689,15 +700,8 @@ impl<D: Borrow<Tdd>> Counter<D> {
         context.run(|eng| self.count_on(eng))
     }
 
-    /// The count over the home: the own count, times two for each home leaf
-    /// the diagram's vtree does not have.
     fn count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
-        let tdd = self.tdd.borrow();
-        let own = if tdd.is_one() { 1u32.into() } else { self.cache.read(eng, tdd)? };
-        Ok(match tdd.vtree.free_leaves() {
-            0 => own,
-            free => own << free,
-        })
+        self.cache.read(eng, self.tdd.borrow())
     }
 
     /// Count once for every assignment of `vars`, under the other pins.
@@ -762,7 +766,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
             let observations = &self.cache.observations;
             for (pin, &var) in before.iter_mut().zip(vars) {
                 let leaf = observations.validate_pin(tdd, var)?;
-                *pin = (var, observations.pins[leaf.idx()].value);
+                *pin = (var, observations.pin_of(leaf, var));
             }
             lim.try_resize(&mut table, 1usize << vars.len(), BigUint::ZERO)?;
         }
@@ -779,18 +783,12 @@ impl<D: Borrow<Tdd>> Counter<D> {
                     *value = Some((assignment >> bit) & 1 == 1);
                 }
                 self.cache.observations.set_pins(tdd, &pins[..changed])?;
-                *count = if tdd.is_one() { 1u32.into() } else { self.cache.read(eng, tdd)? };
+                *count = self.cache.read(eng, tdd)?;
             }
             Ok(())
         })();
         self.cache.observations.set_pins(tdd, before).expect("the listed variables were validated");
-        let free = tdd.vtree.free_leaves();
-        counted.map(|()| {
-            if free > 0 {
-                table.iter_mut().for_each(|count| *count <<= free);
-            }
-            table
-        })
+        counted.map(|()| table)
     }
 
     /// The unchanged circuit, available for read-only queries.

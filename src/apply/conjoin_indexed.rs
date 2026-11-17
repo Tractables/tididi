@@ -780,7 +780,9 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
         cols[t.idx()] = col;
     }
     gate.flush()?;
-    Ok((std::mem::take(&mut cols[at.idx()]), work))
+    let mut col = std::mem::take(&mut cols[at.idx()]);
+    crate::query::free_factor(algebra, at, &vtree.free_vars_under(at), &mut col)?;
+    Ok((col, work))
 }
 
 impl Engine {
@@ -912,7 +914,10 @@ impl Engine {
     ///
     /// [`OperationError::LevelNotInVtree`] for an `at` outside the vtree,
     /// [`OperationError::InertOption`] for an `at` that is a leaf or for a
-    /// weighted operand, and [`and_indexed`](Self::and_indexed)'s errors.
+    /// weighted operand, [`OperationError::FreeVariables`] on a projection
+    /// lacking variables under `at`'s node in the home that the algebra does
+    /// not value ([`ColumnAlgebra::free`]), and
+    /// [`and_indexed`](Self::and_indexed)'s errors.
     ///
     /// # Panics
     ///

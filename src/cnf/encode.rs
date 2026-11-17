@@ -154,7 +154,7 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
     let lim = eng.limits();
     let vtree = &*f.vtree;
     let mut reachable = f.slot_table(lim, false)?;
-    if !f.is_zero() {
+    if !f.is_zero() && !f.is_one() {
         reachable[f.output.vtree.idx()][f.output.local.idx()] = true;
         f.propagate_reachability(&mut reachable);
     }

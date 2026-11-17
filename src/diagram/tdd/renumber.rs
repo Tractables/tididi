@@ -52,7 +52,7 @@ impl Engine {
     pub fn renumber_top_down(&self, f: &Tdd) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        if f.is_zero() {
+        if f.is_zero() || f.is_one() {
             return f.try_clone_on(self);
         }
         let numbering = number(self, f)?;

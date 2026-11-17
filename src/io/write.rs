@@ -106,7 +106,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
     push_format_header(&mut buf);
 
-    if tdd.is_zero() {
+    if tdd.is_zero() || tdd.is_one() {
         push_problem_line(&mut buf, tdd, None);
         w.write_all(&buf)?;
         return Ok(());
@@ -151,6 +151,7 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c Readers accept only explicitly supported format versions.\n\
           c Output is node (out_vtree, out_local); out_vtree is the vtree root.\n\
           c For false, out_local is ZERO and no L or I records follow.\n\
+          c On a vtree with no node, true is ONE.\n\
           c Vtree IDs match Vtree::to_text(); readers match structure, not memory indices.\n\
           c Otherwise every leaf has one L record; var is one-based.\n\
           c Each I record is OR_k(left_k AND right_k), with deterministic pairs.\n\
@@ -162,8 +163,8 @@ fn push_format_header(buf: &mut Vec<u8>) {
     );
 }
 
-/// The `p tdd` line. `out_local` is `None` for the unsatisfiable diagram, which
-/// writes the `ZERO` token in its place and ends the file.
+/// The `p tdd` line. `out_local` is `None` for a constant, which writes the
+/// `ZERO` or `ONE` token in its place and ends the file.
 fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.extend_from_slice(b"p tdd ");
     push_num(buf, TDD_FORMAT_VERSION);
@@ -172,12 +173,13 @@ fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.push(b' ');
     push_num(buf, tdd.vtree.num_nodes());
     buf.push(b' ');
-    push_num(buf, tdd.vtree.topo_pos(tdd.output.vtree));
+    push_num(buf, if tdd.vtree.num_nodes() == 0 { 0 } else { tdd.vtree.topo_pos(tdd.output.vtree) });
     match out_local {
         Some(local) => {
             buf.push(b' ');
             push_num(buf, local);
         }
+        None if tdd.is_one() => buf.extend_from_slice(b" ONE"),
         None => buf.extend_from_slice(b" ZERO"),
     }
     buf.push(b'\n');

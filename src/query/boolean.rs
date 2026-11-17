@@ -79,10 +79,12 @@ impl Engine {
         f.require_structure()?;
         let mut result = Vec::new();
         let mut gate = lim.gate();
-        // False implies both signs, including variables absent from its support.
-        for t in f.vtree().bottomup() {
+        // False implies both signs, including variables absent from its
+        // support and the home variables a projection lacks.
+        let vtree = f.vtree().home().unwrap_or(f.vtree());
+        for t in vtree.bottomup() {
             gate.poll(1)?;
-            if let VtreeNode::Leaf { var, .. } = *f.vtree().node(t) {
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(t) {
                 lim.try_push(&mut result, Literal::neg(var))?;
                 lim.try_push(&mut result, Literal::pos(var))?;
             }
@@ -144,6 +146,9 @@ impl Engine {
         f.require_structure()?;
         if f.is_zero() {
             return Ok(None);
+        }
+        if f.is_one() {
+            return Ok(Some(Vec::new()));
         }
         let mut pending = Vec::new();
         let mut result = Vec::new();

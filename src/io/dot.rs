@@ -164,6 +164,9 @@ pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     if f.is_zero() {
         return Ok("graph tdd {\n    rankdir=TB;\n    label=\"UNSAT\";\n}\n".to_string());
     }
+    if f.is_one() {
+        return Ok("graph tdd {\n    rankdir=TB;\n    label=\"TRUE\";\n}\n".to_string());
+    }
 
     let reachable = f.reachable_nodes();
     let mut dot = String::new();

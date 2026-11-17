@@ -6,4 +6,6 @@ mod canonical;
 
 mod pairs;
 
+mod projections;
+
 mod summaries;

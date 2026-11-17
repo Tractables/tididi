@@ -60,7 +60,7 @@ impl Tdd {
     /// stored node.
     pub fn reachable_nodes(&self) -> Vec<Vec<bool>> {
         let mut reachable = self.empty_reach_matrix();
-        if self.is_zero() {
+        if self.is_zero() || self.is_one() {
             return reachable;
         }
         reachable[self.output.vtree.idx()][self.output.local.idx()] = true;

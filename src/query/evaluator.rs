@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::sync::Arc;
 
 use crate::{Engine, Tdd, OperationError, LiteralInput};
-use crate::diagram::EvalAlgebra;
+use crate::diagram::{EvalAlgebra, LeafLabel};
 use crate::vtree::VarId;
 use crate::value::Retention;
 use super::cache::{BoundState, CachedQuery, PinState, QueryCache};
@@ -80,6 +80,16 @@ impl<S: EvalAlgebra> CachedQuery for S {
     fn output(&self, col: &Vec<S::Value>, i: usize) -> S::Value {
         col[i].clone()
     }
+
+    fn over_home(&self, own: Option<S::Value>, tdd: &Tdd, free: &[(VarId, bool)]) -> S::Value {
+        let unpinned: Vec<VarId> = tdd.vtree.free_vars().into_iter().filter(|&v| free.iter().all(|&(p, _)| p != v)).collect();
+        let pinned = free.iter().map(|&(var, value)| self.leaf(var, if value { LeafLabel::Pos } else { LeafLabel::Neg }));
+        let value = pinned.chain(self.free(&unpinned)).fold(own, |acc, v| Some(match acc {
+            Some(acc) => self.mul(&acc, &v),
+            None => v,
+        }));
+        value.expect("a home has a leaf")
+    }
 }
 
 impl<S: EvalAlgebra, D: Borrow<Tdd>> std::fmt::Debug for Evaluation<S, D> {
@@ -124,8 +134,10 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
 
     /// Set or clear a variable's observation; updates take effect on the next read.
     ///
-    /// An absent variable returns [`OperationError::VariableNotInVtree`] without
-    /// changing observations or cached values. Repeating an observation does no work.
+    /// A variable of a projection's home is observed as on the home. A
+    /// variable absent from the home returns
+    /// [`OperationError::VariableNotInVtree`] without changing observations
+    /// or cached values. Repeating an observation does no work.
     pub fn set_pin(&mut self, var: VarId, value: Option<bool>) -> Result<(), OperationError> {
         self.cache.observations.set_pin(self.tdd.borrow(), var, value)
     }

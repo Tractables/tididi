@@ -319,6 +319,30 @@ pub trait ColumnAlgebra {
     fn count(&self, _t: VtreeIdx, _slot: usize, _n: &BigUint, _col: &mut Self::Column) -> bool {
         false
     }
+
+    /// Multiply every slot of `col`, the column of vtree node `t`, by the
+    /// value of every assignment to `vars`, variables of the home vtree a
+    /// diagram on a projection does not have ([`EvalAlgebra::free`]), and
+    /// return `true`.
+    ///
+    /// Evaluation on a projection calls it once, when the projection lacks
+    /// some home variables it covers:
+    /// [`Tdd::evaluate_columns`](crate::Tdd::evaluate_columns) on the column
+    /// it reads the output from, with every one of them;
+    /// [`Tdd::evaluate_columns_at`](crate::Tdd::evaluate_columns_at) and
+    /// [`Engine::sum_indexed`](crate::Engine::sum_indexed) on the column they
+    /// return, with those under the home node of `at`
+    /// ([`Vtree::home_node`](crate::Vtree::home_node)). On a vtree with no
+    /// node ([`Vtree::empty_projection`](crate::Vtree::empty_projection)),
+    /// `evaluate_columns` of the constant true writes the column of the
+    /// home's leaf of the first variable with [`leaf`](Self::leaf), calls
+    /// this with the other variables, and reads its `One` slot. `false`
+    /// makes the evaluation return
+    /// [`OperationError::FreeVariables`](crate::OperationError::FreeVariables);
+    /// the default writes nothing and returns `false`.
+    fn free(&self, _t: VtreeIdx, _vars: &[VarId], _col: &mut Self::Column) -> bool {
+        false
+    }
 }
 
 /// The pairs of one node as the slots of their children:

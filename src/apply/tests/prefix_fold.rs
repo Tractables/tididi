@@ -1011,3 +1011,56 @@ fn operands_the_fold_cannot_read_are_refused() {
         Err(PrefixFoldError::Operation(OperationError::MarginalLevel(_)))
     ));
 }
+
+#[test]
+fn operands_on_projections_fold_as_on_their_home() {
+    let eng = Engine::new();
+    for (nk, m, nv) in [(1, 3, 2), (2, 2, 3), (0, 3, 2)] {
+        let blocks = Blocks::new(nk, m, nv, 6);
+        let all = blocks.all_vars();
+        let (order, value_vars, code_vars) = (
+            Blocks::vars(&blocks.order),
+            Blocks::vars(&blocks.values),
+            Blocks::vars(&blocks.codes),
+        );
+        for shape in SHAPES {
+            let (vtree, into) = blocks.vtrees(shape);
+            for seed in 1..=3u64 {
+                let mut rng = Lcg::new(seed * 7919 + u64::from(nk * 100 + m * 10 + nv));
+                let (points, values) = random(&mut rng, &blocks, 2 + seed);
+                let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
+                let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
+                let a = eng.from_models(&vtree, &all[..nk as usize + m as usize], &a_rows).unwrap();
+                let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
+                let (mut ta, mut tb) = (a.clone(), b.clone());
+                ta.trim().unwrap();
+                tb.trim().unwrap();
+                assert!(ta.vtree().free_leaves() >= nv);
+                let coding = |folds: &[u64]| {
+                    let sorted: BTreeSet<u64> = folds.iter().copied().collect();
+                    let rank: BTreeMap<u64, u64> = sorted.iter().enumerate().map(|(i, &f)| (f, i as u64)).collect();
+                    coded(&into, &code_vars, folds.iter().map(|f| rank[f]).collect())
+                };
+                for range in RANGES {
+                    let fold = |p: &Tdd, v: &Tdd| {
+                        (
+                            eng.prefix_fold(p, v, &order, &value_vars, range, &Sum, coding),
+                            eng.prefix_fold(p, v, &order, &value_vars, range, &Count, coding),
+                        )
+                    };
+                    let (sum, count) = fold(&a, &b);
+                    let (sum, count) = (sum.unwrap(), count.unwrap());
+                    for (p, v, what) in [(&ta, &tb, "both"), (&ta, &b, "points"), (&a, &tb, "values")] {
+                        let what = format!("{shape:?} k{nk} e{m} v{nv} seed {seed} {range:?} {what} on a projection");
+                        let (s, c) = fold(p, v);
+                        let (s, c) = (s.unwrap_or_else(|e| panic!("{what}: sum {e:?}")), c.unwrap_or_else(|e| panic!("{what}: count {e:?}")));
+                        assert!(eng.equivalent(&s, &sum).unwrap(), "{what}: sum");
+                        assert!(eng.equivalent(&c, &count).unwrap(), "{what}: count");
+                        assert_canonical(&s);
+                        assert_canonical(&c);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -752,6 +752,10 @@ impl Plan {
         } = self;
         lim.try_resize(free, into.num_nodes(), true)?;
         lim.try_resize(embedding, source.num_nodes(), into.root())?;
+        if source.num_nodes() == 0 {
+            lim.try_resize(&mut self.covered_by, into.num_nodes(), None)?;
+            return Ok(());
+        }
         let mut gate = lim.gate();
         for (leaf, var) in source.leaf_bottomup() {
             gate.poll(1)?;
@@ -947,8 +951,11 @@ pub(crate) fn place<'a>(
         Ok(plan) => plan,
         Err(error) => return Err((error, tdd)),
     };
-    if tdd.is_zero() {
-        return Ok((crate::build::constant_zero(eng, into), plan));
+    if tdd.is_zero() || tdd.is_one() {
+        return match crate::build::constant_on(eng, into, tdd.is_one()) {
+            Ok(constant) => Ok((constant, plan)),
+            Err(e) => Err((e.into(), tdd)),
+        };
     }
     let placed = match tdd {
         Cow::Borrowed(source) if source.weights.is_some() => match source.try_clone_on(eng) {
@@ -984,8 +991,8 @@ fn lies_under(into: &Vtree, mut node: VtreeIdx, target: VtreeIdx, stop: VtreeIdx
 /// Fill the destination's levels, then drop the pass-through nodes no copied
 /// level names.
 fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Tdd, EmbedError> {
-    if tdd.is_zero() {
-        return Ok(crate::build::constant_zero(eng, into));
+    if tdd.is_zero() || tdd.is_one() {
+        return Ok(crate::build::constant_on(eng, into, tdd.is_one())?);
     }
     let mut placement = CopyPlacement::new(eng, into)?;
     let mut gate = eng.limits().gate();

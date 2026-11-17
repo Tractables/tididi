@@ -28,7 +28,9 @@
 //! The `p` line comes before node records. Writers emit version `1`;
 //! `out_vtree` is the vtree root and `out_local` is its output node's local index.
 //! For the false diagram, `out_local` is the token `ZERO` and no node records
-//! follow. A nonfalse diagram declares every vtree leaf once with an `L` line,
+//! follow. On a vtree with no node
+//! ([`Vtree::empty_projection`](crate::Vtree::empty_projection)) the counts
+//! and `out_vtree` are `0`, `out_local` is `ZERO` or, for true, `ONE`. A nonfalse diagram declares every vtree leaf once with an `L` line,
 //! where `var` is a one-based variable number. Vtree IDs are file-local labels
 //! in `0..num_vtree_nodes`. The writer uses the same labels as [`Vtree::to_text`](crate::Vtree::to_text);
 //! the reader matches leaf variables and child relationships to the supplied
@@ -75,7 +77,8 @@
 //!    for an internal node and `v` for the leaf of variable `v`. This sequence
 //!    determines the tree.
 //! 2. The output: `0` for the false diagram, which ends the body; otherwise one
-//!    more than the output's local index in the root level.
+//!    more than the output's local index in the root level. On a vtree with
+//!    no node, `1` is the true diagram and ends the body.
 //! 3. One section per internal vtree node, in the same postorder, so a level
 //!    comes after both of its children: its node count, the count of its nodes
 //!    with more than one pair, its pair count and the byte length of its
