@@ -1744,6 +1744,7 @@ fn probe_scored_with<'l, 't>(
 }
 
 /// A level's live pairs and the nodes that hold them.
+#[inline(always)]
 fn pairs_and_owners(level: &TddLevel) -> (usize, usize) {
     match level.implicit() {
         Some(d) => (

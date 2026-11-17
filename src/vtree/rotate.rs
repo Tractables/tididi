@@ -132,6 +132,7 @@ impl PendingTopo {
 
     /// Drop the rotation: put the links back, which makes the untouched order
     /// correct again.
+    #[inline(always)]
     pub(crate) fn revert(mut self, vtree: &mut Vtree) {
         unrotate_pointers(vtree, &self.info, self.kind);
         self.settled = true;
@@ -186,6 +187,12 @@ fn internal_with(kind: RotationKind, promoted: VtreeIdx, other: VtreeIdx, parent
 /// through restructure, minimize and size, none of which read the order, and
 /// usually reverts it. The returned token is `#[must_use]` and debug-asserts on
 /// drop, so the order can only be left stale by a caller that says so.
+///
+/// Forced inline with [`PendingTopo::revert`]: a pool search makes and
+/// undoes one per probe, and once the callers outside the probe loop
+/// outnumber it, LLVM stops inlining both there, which costs more than
+/// their own instructions.
+#[inline(always)]
 pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
     let VtreeNode::Internal { left, right, parent: v_parent } = vtree.nodes[v.idx()] else {
         return None;
