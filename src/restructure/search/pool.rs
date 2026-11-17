@@ -956,57 +956,89 @@ impl<'l> PoolDescent<'l> {
         mv: PoolMove,
         twin: TwinMode,
         slack: usize,
-        mut undo: Option<&mut Undo<'l>>,
+        undo: Option<&mut Undo<'l>>,
     ) -> Result<bool, OperationError> {
-        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, own, .. } = self;
+        if self.groups.is_some() {
+            return self.probe_on_projections(members, mv, twin, slack, undo);
+        }
+        let PoolDescent { eng, tree, config, scratch, crossed_scores, .. } = self;
         let eng: &'l Engine = eng;
-        let twin = match twin {
-            TwinMode::Alone => Twin::Alone,
-            TwinMode::Fill => Twin::Fill(crossed_scores),
-            TwinMode::Given => Twin::Given(crossed_scores),
-        };
         let Some(pending) = move_in_place(tree, mv) else {
             return Ok(false);
         };
         let info = pending.info();
-        let bound = config.max_inner_pairs;
-        let outcome = match groups.as_mut() {
-            None => {
-                let every = Every { members: members.len(), info: &info };
-                probe_scored(eng, members, Touched::new(every, mv, bound), scratch, twin, slack, undo.as_deref_mut())
-            }
-            Some(groups) => {
-                touched.clear();
-                groups.touch(&info, mv, touched, own);
-                let listed = Touched::new(Listed(touched), mv, bound);
-                let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
-                groups.settle(own, matches!(outcome, Ok(true)), mv.crossed);
-                outcome
-            }
+        let every = Touched::new(Every { members: members.len(), info: &info }, mv, config.max_inner_pairs);
+        let outcome = probe_scored(eng, members, every, scratch, twin.with(crossed_scores), slack, undo);
+        end_move(eng, tree, pending, mv, matches!(outcome, Ok(true)));
+        outcome
+    }
+
+    /// [`probe_in_place`](Self::probe_in_place) with the members on several
+    /// projections.
+    // Out of line so that the probe on one shared tree compiles as it did
+    // before projections.
+    #[inline(never)]
+    fn probe_on_projections(
+        &mut self,
+        members: &mut [&mut Tdd],
+        mv: PoolMove,
+        twin: TwinMode,
+        slack: usize,
+        mut undo: Option<&mut Undo<'l>>,
+    ) -> Result<bool, OperationError> {
+        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, own, .. } = self;
+        let eng: &'l Engine = eng;
+        let groups = groups.as_mut().expect("a probe on projections has groups");
+        let Some(pending) = move_in_place(tree, mv) else {
+            return Ok(false);
         };
+        let info = pending.info();
+        touched.clear();
+        groups.touch(&info, mv, touched, own);
+        let listed = Touched::new(Listed(touched), mv, config.max_inner_pairs);
+        let twin = twin.with(crossed_scores);
+        let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
         let kept = matches!(outcome, Ok(true));
+        groups.settle(own, kept, mv.crossed);
+        end_move(eng, tree, pending, mv, kept);
         if kept {
-            // The bottom-up order's repair moves the promoted node past the
-            // subtree it now needs below it, and every node between.
-            let misplaced = match mv.rotation.kind {
-                RotationKind::Left => info.a_idx,
-                RotationKind::Right => info.c_idx,
-            };
-            let moved = tree
-                .topo_pos(misplaced)
-                .saturating_sub(tree.topo_pos(info.w_idx));
-            eng.limits().charge_work(u64::from(moved));
-            pending.commit_in_probe(tree);
-            if let Some(groups) = groups.as_mut() {
-                groups.kept(tree, &info, mv.crossed, members, undo);
-            }
-        } else {
-            pending.revert(tree);
-            if mv.crossed {
-                tree.swap_children_in_probe(info.w_idx);
-            }
+            groups.kept(tree, &info, mv.crossed, members, undo);
         }
         outcome
+    }
+}
+
+impl TwinMode {
+    fn with(self, crossed_scores: &mut Vec<Option<Option<usize>>>) -> Twin<'_> {
+        match self {
+            TwinMode::Alone => Twin::Alone,
+            TwinMode::Fill => Twin::Fill(crossed_scores),
+            TwinMode::Given => Twin::Given(crossed_scores),
+        }
+    }
+}
+
+/// Commit `pending`, the move `mv` made on `tree` by [`move_in_place`], if
+/// `kept`, else take it back.
+fn end_move(eng: &Engine, tree: &mut Vtree, pending: PendingTopo, mv: PoolMove, kept: bool) {
+    let info = pending.info();
+    if kept {
+        // The bottom-up order's repair moves the promoted node past the
+        // subtree it now needs below it, and every node between.
+        let misplaced = match mv.rotation.kind {
+            RotationKind::Left => info.a_idx,
+            RotationKind::Right => info.c_idx,
+        };
+        let moved = tree
+            .topo_pos(misplaced)
+            .saturating_sub(tree.topo_pos(info.w_idx));
+        eng.limits().charge_work(u64::from(moved));
+        pending.commit_in_probe(tree);
+    } else {
+        pending.revert(tree);
+        if mv.crossed {
+            tree.swap_children_in_probe(info.w_idx);
+        }
     }
 }
 
