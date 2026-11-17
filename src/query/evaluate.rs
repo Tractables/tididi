@@ -73,10 +73,22 @@ impl Engine {
         let mut gate = lim.gate();
         let result = if tdd.is_zero() {
             algebra.zero()
+        } else if tdd.is_one() {
+            let free = tdd.vtree.free_vars();
+            let home = tdd.vtree.home().expect("a vtree with no node is a projection");
+            let h = home.leaf_of(free[0]).expect("a home leaf");
+            let mut col = algebra.column(h, LEAF_WIDTH);
+            for i in 0..LEAF_WIDTH {
+                algebra.leaf(h, free[0], LeafLabel::from_idx(i), &mut col);
+            }
+            free_factor(algebra, h, &free[1..], &mut col)?;
+            algebra.read(h, col, LeafLabel::One as usize)
         } else {
             let keep = tdd.output.vtree;
             let mut cols = fold_columns_under(self, algebra, tdd, tdd.vtree.root(), keep, &mut gate)?;
-            algebra.read(keep, std::mem::take(&mut cols[keep.idx()]), tdd.output.local.idx())
+            let mut col = std::mem::take(&mut cols[keep.idx()]);
+            free_factor(algebra, keep, &tdd.vtree.free_vars(), &mut col)?;
+            algebra.read(keep, col, tdd.output.local.idx())
         };
         gate.finish()?;
         Ok(result)
@@ -102,7 +114,10 @@ impl Engine {
         let mut cols = Vec::new();
         lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
         fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
-        let result = std::mem::take(&mut cols[at.idx()]);
+        let mut result = std::mem::take(&mut cols[at.idx()]);
+        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under(at)) {
+            result.iter_mut().for_each(|v| *v = algebra.mul(v, &free));
+        }
         gate.finish()?;
         Ok(result)
     }
@@ -115,6 +130,14 @@ impl Engine {
     /// [`OperationError::LevelNotInVtree`] for an `at` outside the diagram's
     /// vtree.
     pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
+        let mut result = self.own_columns_at(tdd, at, algebra)?;
+        free_factor(algebra, at, &tdd.vtree.free_vars_under(at), &mut result)?;
+        Ok(result)
+    }
+
+    /// [`evaluate_columns_at`](Self::evaluate_columns_at) over the variables
+    /// of `at`'s subtree in the diagram's own vtree.
+    pub(crate) fn own_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         if at.idx() >= tdd.vtree.num_nodes() {
@@ -353,6 +376,12 @@ fn inline_counts(tdd: &Tdd, t: VtreeIdx, root: VtreeIdx) -> Vec<u32> {
     counts.sort_unstable();
     counts.dedup();
     counts
+}
+
+/// Multiply `col`, the column of `t`, by every assignment to `vars` when
+/// there are any.
+pub(crate) fn free_factor<A: ColumnAlgebra>(algebra: &A, t: VtreeIdx, vars: &[VarId], col: &mut A::Column) -> Result<(), OperationError> {
+    if vars.is_empty() || algebra.free(t, vars, col) { Ok(()) } else { Err(OperationError::VariableNotInVtree(vars[0])) }
 }
 
 /// [`Engine::evaluate_columns`]'s walk over the levels under `root`, `keep`

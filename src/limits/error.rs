@@ -69,7 +69,10 @@ pub enum OperationError {
     /// structural projection, and care rebuilding check the cap against
     /// emitted nodes; compound operations propagate it.
     OutputCap,
-    /// The operation names a variable the operand's vtree does not carry.
+    /// The operation names a variable the operand's vtree does not carry,
+    /// or, on a projection, needs a value for a home variable the
+    /// projection lacks that the column algebra does not give
+    /// ([`ColumnAlgebra::free`](crate::diagram::ColumnAlgebra::free)).
     /// Validation timing is stated on the operation; a consumed operand is
     /// not returned on error.
     VariableNotInVtree(crate::vtree::VarId),

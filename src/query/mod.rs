@@ -33,6 +33,7 @@ mod column_layout;
 mod columns;
 mod ordered;
 pub use columns::{ModelColumns, MAX_COLUMN_BITS};
+pub(crate) use evaluate::free_factor;
 pub use evaluator::{Evaluation, Evaluator, OwnedEvaluator, BoundEvaluation, BoundEvaluator};
 
 pub use count::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, Retention, PinSemantics, MAX_COUNT_TABLE_VARS};

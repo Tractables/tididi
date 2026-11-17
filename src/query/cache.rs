@@ -18,6 +18,9 @@ pub(crate) struct PinState {
 pub(crate) struct Observations {
     pub(crate) pins: Vec<PinState>,
     pub(crate) changed: Vec<VtreeIdx>,
+    /// Pins on home variables a projection does not have, which change no
+    /// column, only the factor a read applies.
+    pub(crate) free: Vec<(VarId, bool)>,
     pub(crate) retention: Retention,
     pub(crate) evaluated: bool,
 }
@@ -28,12 +31,12 @@ impl Observations {
         eng.limits().try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
         if pin_slots != 0 && retention == Retention::All { eng.limits().reserve_exact(&mut changed, pin_slots)?; }
-        Ok(Self { pins, changed, retention, evaluated: false })
+        Ok(Self { pins, changed, free: Vec::new(), retention, evaluated: false })
     }
 
     pub(crate) fn set_pin(&mut self, tdd: &Tdd, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
         let leaf = self.validate_pin(tdd, var)?;
-        self.set_leaf_pin(leaf, val);
+        self.set_any_pin(leaf, var, val);
         Ok(())
     }
 
@@ -56,8 +59,7 @@ impl Observations {
         for pin in pins.clone() { self.validate_pin(tdd, pin?.0)?; }
         for pin in pins {
             let (var, val) = pin.expect("validated pin");
-            let leaf = tdd.vtree.leaf_of(var).expect("validated pin variable");
-            self.set_leaf_pin(leaf, val);
+            self.set_any_pin(tdd.vtree.leaf_of(var), var, val);
         }
         Ok(())
     }
@@ -66,18 +68,41 @@ impl Observations {
         for leaf in 0..self.pins.len() {
             if self.pins[leaf].value.is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
         }
+        self.free.clear();
     }
 
-    /// Resolve a variable to its structural leaf without changing counter state.
-    pub(crate) fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<VtreeIdx, OperationError> {
-        let leaf = tdd.vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+    /// The pin on `var`, a validated variable.
+    pub(crate) fn pin_of(&self, leaf: Option<VtreeIdx>, var: VarId) -> Option<bool> {
+        match leaf {
+            Some(leaf) => self.pins[leaf.idx()].value,
+            None => self.free.iter().find(|&&(v, _)| v == var).map(|&(_, value)| value),
+        }
+    }
+
+    fn set_any_pin(&mut self, leaf: Option<VtreeIdx>, var: VarId, val: Option<bool>) {
+        let Some(leaf) = leaf else {
+            self.free.retain(|&(v, _)| v != var);
+            if let Some(value) = val {
+                self.free.push((var, value));
+            }
+            return;
+        };
+        self.set_leaf_pin(leaf, val);
+    }
+
+    /// Resolve a variable to its structural leaf without changing counter
+    /// state; `None` for a home variable a projection does not have.
+    pub(crate) fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<Option<VtreeIdx>, OperationError> {
+        let Some(leaf) = tdd.vtree.leaf_of(var) else {
+            return if tdd.vtree.home_has(var) { Ok(None) } else { Err(OperationError::VariableNotInVtree(var)) };
+        };
         // An implicit integer leaf can remain below a marginal parent.
         for level in std::iter::once(leaf).chain(tdd.vtree.node(leaf).parent()) {
             if tdd.levels[level.idx()].is_marginal() {
                 return Err(OperationError::MarginalLevel(level));
             }
         }
-        Ok(leaf)
+        Ok(Some(leaf))
     }
 
     /// Update a validated leaf's pin and record its deferred refresh once.
@@ -155,6 +180,10 @@ pub(crate) trait CachedQuery {
     fn false_value(&self) -> Self::Output;
     /// Read the output node's value from its level's column.
     fn output(&self, col: &Self::Col, i: usize) -> Self::Output;
+    /// The value over the home of a diagram on a projection whose own value
+    /// is `own`, `None` for the constant true on a vtree with no node, under
+    /// `free`, the pins on home variables the projection does not have.
+    fn over_home(&self, own: Option<Self::Output>, tdd: &Tdd, free: &[(VarId, bool)]) -> Self::Output;
 }
 
 /// The columns and observations a retained query keeps between reads.
@@ -186,14 +215,27 @@ impl<Q: CachedQuery> QueryCache<Q> {
     /// Refresh pending observations and return the output node's value under
     /// `eng`'s limits. Stops are checked even for a cached or constant answer.
     pub(super) fn read(&mut self, eng: &Engine, tdd: &Tdd) -> Result<Q::Output, OperationError> {
+        Ok(match self.read_own(eng, tdd)? {
+            Some(own) if tdd.is_zero() || tdd.vtree.free_leaves() == 0 => own,
+            own => self.query.over_home(own, tdd, &self.observations.free),
+        })
+    }
+
+    /// [`read`](Self::read) over the diagram's own vtree; `None` for the
+    /// constant true on a vtree with no node.
+    pub(super) fn read_own(&mut self, eng: &Engine, tdd: &Tdd) -> Result<Option<Q::Output>, OperationError> {
         let lim = eng.limits();
         let _op = lim.enter()?;
         let result = (|| {
             let mut gate = lim.gate();
-            let value = if tdd.is_zero() { self.query.false_value() } else {
+            let value = if tdd.is_zero() {
+                Some(self.query.false_value())
+            } else if tdd.is_one() {
+                None
+            } else {
                 self.refresh(eng, tdd, &mut gate)?;
                 let out = tdd.output;
-                self.query.output(&self.cols[out.vtree.idx()], out.local.idx())
+                Some(self.query.output(&self.cols[out.vtree.idx()], out.local.idx()))
             };
             gate.finish()?;
             Ok(value)
@@ -208,7 +250,7 @@ impl<Q: CachedQuery> QueryCache<Q> {
     /// The cache is marked invalid before the fold runs user arithmetic, so an
     /// error or unwinding cannot leave partly refreshed columns as cached answers.
     pub(super) fn refresh(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<(), OperationError> {
-        if self.observations.evaluated && self.observations.changed.is_empty() { return Ok(()); }
+        if self.observations.evaluated && self.observations.changed.is_empty() || tdd.vtree.num_nodes() == 0 { return Ok(()); }
         if self.query.uses_prepared_reads() {
             self.refresh_with::<true>(eng, tdd, gate)
         } else {

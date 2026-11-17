@@ -109,7 +109,7 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
             }
             Some(kind @ ("L" | "I")) => {
                 let h = header.as_ref().ok_or_else(|| malformed(n, "node record before the problem line"))?;
-                if h.out_local.is_none() { return Err(malformed(n, "node record after a ZERO output")); }
+                if h.out_local.is_none() { return Err(malformed(n, "node record after a ZERO or ONE output")); }
                 if kind == "L" {
                     read_leaf_line(&mut tok, vtree, &mut levels, n)?;
                 } else {
@@ -153,6 +153,8 @@ struct ProblemLine {
     num_vtree_nodes: usize,
     out_vtree: VtreeIdx,
     out_local: Option<u32>,
+    /// The `ONE` token: true on a vtree with no node.
+    one: bool,
     line: usize,
 }
 
@@ -221,8 +223,13 @@ fn parse_problem_line<'a>(
     let num_leaves = next_u32(tok, "leaf count", line)?;
     let num_vtree_nodes = next_u32(tok, "vtree node count", line)? as usize;
     let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
+    let mut one = false;
     let out_local = match tok.next() {
         Some("ZERO") => None,
+        Some("ONE") => {
+            one = true;
+            None
+        }
         Some(t) => {
             let local = t.parse().map_err(|_| malformed(line, format!("output local index: {t:?}")))?;
             if local == u32::MAX { return Err(malformed(line, "a zero output must use the ZERO token")); }
@@ -231,7 +238,7 @@ fn parse_problem_line<'a>(
         None => return Err(malformed(line, "missing output local index")),
     };
     end_of_record(tok, line)?;
-    Ok(ProblemLine { num_leaves, num_vtree_nodes, out_vtree, out_local, line })
+    Ok(ProblemLine { num_leaves, num_vtree_nodes, out_vtree, out_local, one, line })
 }
 
 /// Reject fields after a fixed-length record.
@@ -314,6 +321,15 @@ fn build_diagram(
     mut stored: Vec<FileLevel>,
     vtree: &Arc<Vtree>,
 ) -> Result<Tdd, IoError> {
+    if vtree.num_nodes() == 0 {
+        return match (h.out_vtree.0, h.out_local) {
+            (0, None) => Ok(crate::build::constant_without_leaf(vtree, h.one)),
+            _ => Err(malformed(h.line, "a vtree with no node holds only ZERO or ONE at node 0")),
+        };
+    }
+    if h.one {
+        return Err(malformed(h.line, "ONE names the true diagram of a vtree with no node"));
+    }
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     if h.out_vtree.idx() >= stored.len() {
         return Err(malformed(h.line, "output vtree node is outside the declared range"));

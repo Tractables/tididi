@@ -87,7 +87,7 @@ impl Engine {
             }
         }
         gate.flush()?;
-        if f.is_zero() {
+        if f.is_zero() || f.is_one() {
             self.minimize(&mut f)?;
             return Ok(f);
         }

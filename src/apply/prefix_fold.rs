@@ -358,7 +358,7 @@ impl Engine {
         }
         // A count reads how many models each node of the value root holds.
         let counts = match counted {
-            true => Some(self.evaluate_columns_at(values, layout.value_root, &ModelCounts)?),
+            true => Some(self.own_columns_at(values, layout.value_root, &ModelCounts)?),
             false => None,
         };
         let mut fold = Fold {

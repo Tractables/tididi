@@ -906,11 +906,15 @@ impl Tdd {
     /// The constant-false diagram evaluates to [`ColumnAlgebra::zero`]. The
     /// borrowed diagram is unchanged. A marginal level's slots are written by
     /// [`ColumnAlgebra::count`], as [`evaluate`](Self::evaluate) reads them.
+    /// On a projection the value is over the home's variables:
+    /// [`ColumnAlgebra::free`] values the variables the projection lacks.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::MarginalLevel`] for a marginal level the
-    /// algebra values no count of, or one summed under weights, or
+    /// algebra values no count of, or one summed under weights,
+    /// [`OperationError::VariableNotInVtree`] on a projection whose free
+    /// variables the algebra does not value, or
     /// [`OperationError::OverBudget`] if the table of columns is refused.
     ///
     /// # Panics
@@ -960,7 +964,9 @@ impl Tdd {
     /// combining the values with them reads the pairs that name each slot,
     /// and values a count a pair carries inline itself. A marginal level is
     /// read as [`evaluate`](Self::evaluate) reads it. The borrowed diagram is
-    /// unchanged.
+    /// unchanged. On a projection the subtree is that of `at`'s node in the
+    /// home, its variables the projection lacks valued by
+    /// [`EvalAlgebra::free`](crate::diagram::EvalAlgebra::free).
     ///
     /// # Errors
     ///
@@ -989,8 +995,8 @@ impl Tdd {
     ///     fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }
     /// }
     ///
-    /// // (x1 ∨ x2) ∧ x3 on ((x1 x2) x3): the left child's nodes split the
-    /// // assignments of x1, x2 by what they leave of the function.
+    /// // (x1 ∨ x2) ∧ x3 on (x1 (x2 x3)): the right child's nodes split the
+    /// // assignments of x2, x3 by what they leave of the function.
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
     /// let (left, right) = vtree.children(vtree.root());
@@ -1010,15 +1016,18 @@ impl Tdd {
     /// the level's column as [`evaluate_columns`](Self::evaluate_columns)
     /// writes it, under the same laws, with the levels under `at` folded and
     /// none above it, and no slot for the counts `at`'s parent carries
-    /// inline. The borrowed diagram is unchanged.
+    /// inline. The borrowed diagram is unchanged. On a projection
+    /// [`ColumnAlgebra::free`] values the variables under `at`'s node in the
+    /// home that the projection lacks.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
     /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for a
     /// marginal level the algebra values no count of, or one summed under
-    /// weights, or [`OperationError::OverBudget`] if the table of columns is
-    /// refused.
+    /// weights, [`OperationError::VariableNotInVtree`] when the algebra does not
+    /// value those variables, or [`OperationError::OverBudget`] if the table
+    /// of columns is refused.
     ///
     /// # Panics
     ///
@@ -1045,7 +1054,7 @@ impl Tdd {
     ///     fn read(&self, _: VtreeIdx, col: Vec<u128>, slot: usize) -> u128 { col[slot] }
     /// }
     ///
-    /// // (x1 ∨ x2) ∧ x3 on ((x1 x2) x3): the children's columns, combined
+    /// // (x1 ∨ x2) ∧ x3 on (x1 (x2 x3)): the children's columns, combined
     /// // through the output's pairs, give the model count.
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;

@@ -56,7 +56,9 @@ impl Engine {
     /// # Errors
     ///
     /// Each with `f` as it was given: [`EmbedError::NotIsomorphic`] naming
-    /// the node of `f`'s vtree whose image is not one node of the projection;
+    /// the node of `f`'s vtree whose image is not one node of the projection
+    /// ([`transport_projection`](Self::transport_projection) checks the
+    /// vtrees alone);
     /// [`EmbedError::VariableOutOfRange`] for an image that is not a leaf of
     /// `home`; [`EmbedError::Vtree`] with [`VtreeError::OverlappingVariable`]
     /// when two variables share an image; [`EmbedError::DestinationWeights`]
@@ -90,6 +92,102 @@ impl Engine {
         route.seat(self, &mut moved);
         Ok(moved)
     }
+
+    /// The vtree [`transport`](Self::transport) would put a diagram on
+    /// `vtree` onto under `map`: [`Vtree::projection`] of `home` on the
+    /// renamed variables, found from the vtrees alone, so a caller can test
+    /// a stored diagram's shape before loading it.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::restructure::EmbedError;
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let home = Arc::new(Vtree::balanced(8));
+    /// let pair = Vtree::balanced(2);
+    /// let onto = engine.transport_projection(&pair, &home, |v| VarId(v.0 + 4))?;
+    /// assert_eq!(onto.num_leaves(), 2);
+    /// // (x1 (x2 x3)) onto x1, x3 and x5, whose projection is ((x1 x3) x5).
+    /// let three = Vtree::balanced(3);
+    /// let skew = |v: VarId| [VarId(1), VarId(3), VarId(5)][v.0 as usize - 1];
+    /// assert!(matches!(engine.transport_projection(&three, &home, skew), Err(EmbedError::NotIsomorphic { .. })));
+    /// # Ok::<(), EmbedError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`transport`](Self::transport)'s refusals that depend on the vtrees:
+    /// [`EmbedError::NotIsomorphic`], [`EmbedError::VariableOutOfRange`],
+    /// [`EmbedError::Vtree`] with [`VtreeError::OverlappingVariable`], and
+    /// [`EmbedError::Operation`] for a refused allocation or an armed stop.
+    /// `transport` may still refuse a diagram on `vtree` for its weights or a
+    /// summed-out level.
+    pub fn transport_projection(
+        &self,
+        vtree: &Vtree,
+        home: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<Arc<Vtree>, EmbedError> {
+        let _op = self.limits().enter()?;
+        Ok(Shape::find(self, vtree, home, map)?.into)
+    }
+}
+
+/// The image of each node of a vtree in the projection of a home on its
+/// renamed leaves.
+struct Shape {
+    into: Arc<Vtree>,
+    to: Vec<VtreeIdx>,
+    /// The nodes whose images have their children the other way round.
+    mirrored: Vec<VtreeIdx>,
+}
+
+impl Shape {
+    fn find(eng: &Engine, source: &Vtree, home: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
+        let lim = eng.limits();
+        if source.num_nodes() == 0 {
+            return Ok(Self { into: Vtree::empty_projection(home), to: Vec::new(), mirrored: Vec::new() });
+        }
+        let mut images = Vec::new();
+        lim.reserve_exact(&mut images, source.num_leaves() as usize)?;
+        for (_, var) in source.leaf_bottomup() {
+            let image = map(var);
+            if home.leaf_of(image).is_none() {
+                return Err(EmbedError::VariableOutOfRange { variable: image, num_vars: home.num_vars() });
+            }
+            images.push(image);
+        }
+        let into = Vtree::projection(home, images.iter().copied())?;
+        if into.num_leaves() != source.num_leaves() {
+            images.sort_unstable();
+            let shared = images.windows(2).find(|w| w[0] == w[1]).expect("fewer leaves than images");
+            return Err(VtreeError::OverlappingVariable(shared[0]).into());
+        }
+        let mut shape = Self { into, to: Vec::new(), mirrored: Vec::new() };
+        lim.try_resize(&mut shape.to, source.num_nodes(), VtreeIdx(0))?;
+        for ((leaf, _), &image) in source.leaf_bottomup().zip(&images) {
+            shape.to[leaf.idx()] = shape.into.leaf_of(image).expect("a projected leaf");
+        }
+        lim.discard(images);
+        let mut gate = lim.gate();
+        for &s in source.internal_bottomup_slice() {
+            gate.poll(1)?;
+            let (left, right) = source.children(s);
+            let (l, r) = (shape.to[left.idx()], shape.to[right.idx()]);
+            let into = &shape.into;
+            let Some(d) = into.node(l).parent().filter(|&d| into.node(r).parent() == Some(d)) else {
+                return Err(EmbedError::NotIsomorphic { source: s });
+            };
+            if into.children(d).0 != l {
+                lim.try_push(&mut shape.mirrored, s)?;
+            }
+            shape.to[s.idx()] = d;
+        }
+        gate.flush()?;
+        Ok(shape)
+    }
 }
 
 /// Where each level of the diagram goes, with every allocation the move
@@ -110,51 +208,15 @@ impl Route {
         f.require_structure()?;
         let lim = eng.limits();
         let source = f.vtree();
-        let empty = Self { into: Arc::clone(source), to: Vec::new(), mirrored: Vec::new(), levels: Vec::new(), columns: Vec::new() };
+        let Shape { into, to, mirrored } = Shape::find(eng, source, home, &map)?;
+        let mut route = Self { into, to, mirrored, levels: Vec::new(), columns: Vec::new() };
         if source.num_nodes() == 0 {
-            return Ok(Self { into: Vtree::empty_projection(home), ..empty });
-        }
-        let mut images = Vec::new();
-        lim.reserve_exact(&mut images, source.num_leaves() as usize)?;
-        for (_, var) in source.leaf_bottomup() {
-            let image = map(var);
-            if home.leaf_of(image).is_none() {
-                return Err(EmbedError::VariableOutOfRange { variable: image, num_vars: home.num_vars() });
-            }
-            images.push(image);
+            return Ok(route);
         }
         if let Some(store) = &f.weights {
-            store.check_variables(images.iter().copied()).map_err(EmbedError::DestinationWeights)?;
+            store.check_variables(source.leaf_bottomup().map(|(_, var)| map(var))).map_err(EmbedError::DestinationWeights)?;
         }
-        let into = Vtree::projection(home, images.iter().copied())?;
-        if into.num_leaves() != source.num_leaves() {
-            images.sort_unstable();
-            let shared = images.windows(2).find(|w| w[0] == w[1]).expect("fewer leaves than images");
-            return Err(VtreeError::OverlappingVariable(shared[0]).into());
-        }
-
-        let mut route = Self { into, ..empty };
         let n = source.num_nodes();
-        lim.try_resize(&mut route.to, n, VtreeIdx(0))?;
-        for ((leaf, _), &image) in source.leaf_bottomup().zip(&images) {
-            route.to[leaf.idx()] = route.into.leaf_of(image).expect("a projected leaf");
-        }
-        lim.discard(images);
-        let mut gate = lim.gate();
-        for &s in source.internal_bottomup_slice() {
-            gate.poll(1)?;
-            let (left, right) = source.children(s);
-            let (l, r) = (route.to[left.idx()], route.to[right.idx()]);
-            let into = &route.into;
-            let Some(d) = into.node(l).parent().filter(|&d| into.node(r).parent() == Some(d)) else {
-                return Err(EmbedError::NotIsomorphic { source: s });
-            };
-            if into.children(d).0 != l {
-                lim.try_push(&mut route.mirrored, s)?;
-            }
-            route.to[s.idx()] = d;
-        }
-        gate.flush()?;
         lim.try_resize(&mut route.levels, n, TddLevel::default())?;
         if f.levels.counts().is_some() {
             lim.try_resize(&mut route.columns, n, None)?;

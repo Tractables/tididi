@@ -341,6 +341,9 @@ pub(super) fn xxh64(data: &[u8]) -> u64 {
 /// reader holding the same tree under different numberings agree on it.
 pub(super) fn postorder(vtree: &Vtree) -> Vec<VtreeIdx> {
     let mut out = Vec::with_capacity(vtree.num_nodes());
+    if vtree.num_nodes() == 0 {
+        return out;
+    }
     let mut stack = vec![(vtree.root(), false)];
     while let Some((t, expanded)) = stack.pop() {
         match *vtree.node(t) {
@@ -392,6 +395,9 @@ fn encode(tdd: &Tdd) -> Vec<u8> {
     }
     if tdd.is_zero() {
         push_varint(&mut out, 0);
+    } else if tdd.is_one() {
+        // No root level for the output to index: 1 is true.
+        push_varint(&mut out, 1);
     } else {
         let remap = encode_levels(tdd, &order, &mut out, &mut [0; 3]);
         if with_counts {
@@ -805,6 +811,12 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
 
     let root = vtree.root();
     let output = body.varint("output")?;
+    if vtree.num_nodes() == 0 {
+        if output > 1 || body.left() != 0 {
+            return Err(malformed("a vtree with no node holds only a constant"));
+        }
+        return Ok(crate::build::constant_without_leaf(vtree, output == 1));
+    }
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
     let mut width = vec![LEAF_WIDTH; vtree.num_nodes()];
     if output != 0 {

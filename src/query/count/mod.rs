@@ -288,6 +288,8 @@ impl Engine {
         }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
-        QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
+        QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::Frontier)?
+            .read_own(self, tdd)
+            .map(|own| own.expect("the constant true is counted above"))
     }
 }

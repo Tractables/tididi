@@ -290,6 +290,17 @@ impl Vtree {
         free
     }
 
+    /// The variables of the home leaves under own node `t`'s home node that
+    /// this vtree does not have; none on a root.
+    pub(crate) fn free_vars_under(&self, t: VtreeIdx) -> Vec<VarId> {
+        let Some(home) = self.home().filter(|_| self.free_leaves() > 0) else { return Vec::new() };
+        home.subtree(self.home_node(t))
+            .filter(|&h| home.node(h).is_leaf())
+            .map(|h| home.leaf_var(h))
+            .filter(|&var| self.leaf_of(var).is_none())
+            .collect()
+    }
+
     /// The home this vtree is a projection of; `None` on a root vtree.
     pub fn home(&self) -> Option<&Arc<Vtree>> {
         self.home.as_deref().map(|link| &link.home)
