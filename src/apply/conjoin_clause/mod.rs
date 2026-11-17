@@ -98,7 +98,7 @@ impl PooledScratch for ClauseWork {
 enum Normalized {
     /// A variable named in both polarities: the clause is true.
     Tautology,
-    /// One literal per variable, in first-occurrence order, with its leaf.
+    /// One literal per variable, with its leaf, in leaf order.
     Clause(Vec<(Literal, VtreeIdx)>),
 }
 
@@ -121,48 +121,26 @@ fn normalize<L: crate::LiteralInput>(
     let mut gate = lim.gate();
     // Every literal is resolved before a tautology is answered, so an absent
     // variable errors whatever else the clause says.
-    let mut resolved: Vec<(Literal, VtreeIdx)> = Vec::new();
-    lim.reserve_exact(&mut resolved, lits.len())?;
+    let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
+    lim.reserve_exact(&mut clause, lits.len())?;
     for &lit in lits {
         gate.poll(1)?;
         let lit = lit.literal()?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        resolved.push((lit, leaf));
+        clause.push((if negate { lit.negated() } else { lit }, leaf));
     }
     gate.flush()?;
-    // A literal is kept where its leaf first occurs; a later one of the other
-    // sign makes the clause true. The first occurrence is found by sorting
-    // the literals' positions by leaf. An array over the vtree, which it used
-    // before, cost a pass over the whole vtree per clause, which is most of
-    // the clause's cost where it touches few levels of a large vtree.
-    let mut first: Vec<u32> = Vec::new();
-    lim.try_resize(&mut first, lits.len(), 0)?;
-    let mut order: Vec<(usize, u32)> = Vec::new();
-    lim.reserve_exact(&mut order, lits.len())?;
-    order.extend(
-        resolved
-            .iter()
-            .enumerate()
-            .map(|(i, &(_, leaf))| (leaf.idx(), i as u32)),
-    );
-    order.sort_unstable();
-    let mut run_start = 0;
-    for j in 0..order.len() {
-        if order[j].0 != order[run_start].0 {
-            run_start = j;
-        }
-        first[order[j].1 as usize] = order[run_start].1;
-    }
-    let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
+    // Sorted by leaf, a variable's literals are adjacent: one is kept, and
+    // two of opposite sign make the clause true. An array over the vtree
+    // cost a pass over the whole vtree per clause, which is most of the
+    // clause's cost where it touches few levels of a large vtree.
+    clause.sort_unstable_by_key(|&(_, leaf)| leaf.idx());
     let mut tautology = false;
-    for (i, &(lit, leaf)) in resolved.iter().enumerate() {
-        let f = first[i] as usize;
-        if f == i {
-            lim.try_push(&mut clause, (if negate { lit.negated() } else { lit }, leaf))?;
-        } else {
-            tautology |= resolved[f].0.sign != lit.sign;
-        }
-    }
+    clause.dedup_by(|later, kept| {
+        let same = later.1 == kept.1;
+        tautology |= same && later.0.sign != kept.0.sign;
+        same
+    });
     Ok(if tautology {
         Normalized::Tautology
     } else {
