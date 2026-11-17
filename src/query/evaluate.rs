@@ -32,6 +32,8 @@ impl Engine {
         let mut gate = lim.gate();
         let result = if tdd.is_zero() {
             algebra.zero()
+        } else if tdd.is_one() {
+            algebra.free(&tdd.vtree.free_vars()).expect("a home has a leaf")
         } else {
             let root = tdd.vtree.root();
             let fold = Evaluate::counting(algebra, tdd, root)?;
@@ -39,7 +41,14 @@ impl Engine {
             let mut cols = Vec::new();
             lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
             fold_bottom_up_from(&fold, self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
-            cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
+            let own = cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx());
+            match tdd.vtree.free_leaves() {
+                0 => own,
+                _ => match algebra.free(&tdd.vtree.free_vars()) {
+                    Some(free) => algebra.mul(&own, &free),
+                    None => own,
+                },
+            }
         };
         gate.finish()?;
         Ok(result)
@@ -133,7 +142,18 @@ impl Engine {
         let _op = self.limits().enter()?;
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
         let mut gate = self.limits().gate();
-        let value = weighted_output_value(self, tdd, ws, &mut gate)?;
+        let mut value = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
+        if tdd.vtree.free_leaves() > 0 && !tdd.is_zero() {
+            for var in tdd.vtree.free_vars() {
+                gate.poll(1)?;
+                let one = ws.leaf_val(var, LeafLabel::One);
+                value = Some(match value {
+                    Some(v) => v.mul(&one),
+                    None => one,
+                });
+            }
+        }
+        let value = value.expect("a home has a leaf");
         gate.finish()?;
         Ok(Some(value))
     }

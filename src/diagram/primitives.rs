@@ -44,6 +44,13 @@ pub(crate) const RESERVED_BIT: u32 = 1 << 31;
 /// that a side can hold, which is the test `NodeIdx::is_reserved` makes.
 pub const ZERO: NodeIdx = NodeIdx(u32::MAX);
 
+/// Sentinel index for the constant-true function on a vtree with no node,
+/// [`Vtree::empty_projection`](crate::vtree::Vtree::empty_projection).
+///
+/// Appears only in [`Tdd::output`](super::Tdd::output)
+/// ([`Tdd::is_one`](super::Tdd::is_one)), never in a stored pair.
+pub const TRUE: NodeIdx = NodeIdx(u32::MAX - 1);
+
 /// A node of the diagram: its level (a vtree node) and its index in that level.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct TddNodeId {

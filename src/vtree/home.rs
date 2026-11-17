@@ -7,8 +7,9 @@
 //! the home's size; the one table sized by the home is the home's
 //! [`HomeIndex`], built once and shared by all its projections.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 /// In-order positions in a root vtree, and lowest common ancestors of its
@@ -189,6 +190,92 @@ impl Vtree {
         ranks.sort_unstable();
         ranks.dedup();
         Ok(Arc::new(Self::project_ranks(root, index, ranks)))
+    }
+
+    /// The projection of `home` on no leaf, the vtree of a constant: no node,
+    /// so [`root`](Self::root) names none, and the home's variables.
+    ///
+    /// Not cached in the home: the home holds no reference to its
+    /// projections, and this one would hold the home.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::Vtree;
+    ///
+    /// let home = Arc::new(Vtree::balanced(5));
+    /// let empty = Vtree::empty_projection(&home);
+    /// assert_eq!(empty.num_nodes(), 0);
+    /// assert!(Tdd::one(&empty).is_one());
+    /// assert_eq!(Tdd::one(&empty).model_count().unwrap(), 32u32.into());
+    /// ```
+    pub fn empty_projection(home: &Arc<Vtree>) -> Arc<Vtree> {
+        let root = home.home().unwrap_or(home);
+        let link = HomeLink {
+            home: Arc::clone(root),
+            index: root.home_index(),
+            ranks: Vec::new(),
+            node_of: Vec::new(),
+            in_order: Vec::new(),
+        };
+        Arc::new(Vtree {
+            context: Arc::clone(&root.context),
+            nodes: Vec::new(),
+            root: VtreeIdx(0),
+            var_to_leaf: Vec::new(),
+            id_space: root.num_vars(),
+            leaf_count: 0,
+            topo: TopoOrder::default(),
+            home: Some(Arc::new(link)),
+            home_index: OnceLock::new(),
+        })
+    }
+
+    /// The topmost own node at or under home node `h`, `None` when no own leaf
+    /// is under `h`; on a root vtree, `h` itself when it is a node.
+    /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
+    /// of the home's size.
+    pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
+        let Some(link) = &self.home else {
+            return (h.idx() < self.nodes.len()).then_some(h);
+        };
+        let (index, ranks) = (&*link.index, &link.ranks);
+        let gap = *index.slot.get(h.idx())?;
+        if link.home.node(h).is_leaf() {
+            return self.node_at_home(h);
+        }
+        // The home leaves under `h` are a range of ranks around its gap, so
+        // the own leaves under it are a range of own leaves.
+        let under = |r: u32| {
+            if r <= gap { index.ancestor_gap(r, gap + 1) == gap } else { index.ancestor_gap(gap, r) == gap }
+        };
+        let split = ranks.partition_point(|&r| r <= gap);
+        let first = ranks[..split].partition_point(|&r| !under(r));
+        let end = split + ranks[split..].partition_point(|&r| under(r));
+        match end - first {
+            0 => None,
+            1 => Some(link.in_order[2 * first]),
+            _ => self.node_at_home(index.gap_node[index.ancestor_gap(ranks[first], ranks[end - 1]) as usize]),
+        }
+    }
+
+    /// The number of home leaves this vtree does not have; 0 on a root.
+    pub(crate) fn free_leaves(&self) -> u32 {
+        self.home.as_ref().map_or(0, |link| link.home.num_leaves() - self.leaf_count)
+    }
+
+    /// The variables of the home leaves this vtree does not have, left to
+    /// right; none on a root.
+    pub(crate) fn free_vars(&self) -> Vec<VarId> {
+        let Some(link) = &self.home else { return Vec::new() };
+        let mut own = link.ranks.iter().copied().peekable();
+        let mut free = Vec::with_capacity(self.free_leaves() as usize);
+        for (rank, &leaf) in link.index.leaf_at.iter().enumerate() {
+            if own.next_if_eq(&(rank as u32)).is_none() {
+                free.push(link.home.leaf_var(leaf));
+            }
+        }
+        free
     }
 
     /// The home this vtree is a projection of; `None` on a root vtree.

@@ -1129,6 +1129,41 @@ impl Tdd {
         self.context_arc().run(|eng| eng.minimize(self))
     }
 
+    /// Move the diagram onto the projection of its vtree's home on the leaves
+    /// its pairs name by a literal, and return whether it moved.
+    ///
+    /// A leaf every pair names as true leaves with its level, and so does
+    /// every node above it with no other leaf under it; a constant ends on
+    /// [`Vtree::empty_projection`](crate::vtree::Vtree::empty_projection).
+    /// The function and its counts over the home are kept. After
+    /// [`minimize`](Self::minimize) the leaves left are the
+    /// [`support`](Self::support). Time and memory linear in the diagram.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::MarginalLevel`] for a diagram with a marginal level,
+    /// [`OperationError::OverBudget`] when the new levels are refused, and
+    /// [`OperationError::Stopped`] on cancellation; the diagram then denotes
+    /// the same function, trimmed or not.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let home = Arc::new(Vtree::balanced(4));
+    /// let mut f = Tdd::clause(&home, [1, 2])?.condition_var(VarId(1), false)?;
+    /// let count = f.model_count()?;
+    /// assert!(f.trim()?);
+    /// assert_eq!(f.vtree().num_leaves(), 1);
+    /// assert_eq!(f.model_count()?, count);
+    /// assert!(!f.trim()?);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn trim(&mut self) -> Result<bool, OperationError> {
+        self.context_arc().run(|eng| eng.trim(self))
+    }
+
     /// Run the reduction passes selected by `plan`, preserving function and count.
     ///
     /// A partial plan need not establish canonical form; [`minimize`](Self::minimize)

@@ -383,8 +383,7 @@ impl<D: Borrow<Tdd>> BoundCounter<'_, D> {
     /// Returns [`OperationError::Stopped`] for an armed stop or
     /// [`OperationError::OverBudget`] when a buffer reservation is refused.
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
-        let counter = self.counter.get_mut();
-        counter.cache.read(self.engine, counter.tdd.borrow())
+        self.counter.get_mut().count_on(self.engine)
     }
 
     /// Count every assignment of `vars` with [`ModelCounter::count_table`]
@@ -686,8 +685,19 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// [`OperationError::OverBudget`] for a refused scratch or overflow-table
     /// reservation, or [`OperationError::Stopped`] for an armed stop.
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
+        let context = Arc::clone(self.tdd.borrow().context());
+        context.run(|eng| self.count_on(eng))
+    }
+
+    /// The count over the home: the own count, times two for each home leaf
+    /// the diagram's vtree does not have.
+    fn count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
         let tdd = self.tdd.borrow();
-        tdd.context().run(|eng| self.cache.read(eng, tdd))
+        let own = if tdd.is_one() { 1u32.into() } else { self.cache.read(eng, tdd)? };
+        Ok(match tdd.vtree.free_leaves() {
+            0 => own,
+            free => own << free,
+        })
     }
 
     /// Count once for every assignment of `vars`, under the other pins.
@@ -769,12 +779,18 @@ impl<D: Borrow<Tdd>> Counter<D> {
                     *value = Some((assignment >> bit) & 1 == 1);
                 }
                 self.cache.observations.set_pins(tdd, &pins[..changed])?;
-                *count = self.cache.read(eng, tdd)?;
+                *count = if tdd.is_one() { 1u32.into() } else { self.cache.read(eng, tdd)? };
             }
             Ok(())
         })();
         self.cache.observations.set_pins(tdd, before).expect("the listed variables were validated");
-        counted.map(|()| table)
+        let free = tdd.vtree.free_leaves();
+        counted.map(|()| {
+            if free > 0 {
+                table.iter_mut().for_each(|count| *count <<= free);
+            }
+            table
+        })
     }
 
     /// The unchanged circuit, available for read-only queries.

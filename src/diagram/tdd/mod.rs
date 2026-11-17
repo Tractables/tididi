@@ -25,7 +25,7 @@ use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
-use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
+use super::primitives::{LEAF_WIDTH, TddNodeId, TRUE, ZERO};
 
 /// A Boolean function represented by a Tree Decision Diagram.
 ///
@@ -393,6 +393,14 @@ impl Tdd {
     /// variables as [`Tdd::is_sat`] does.
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
+    }
+
+    /// Whether the output is the [`TRUE`] sentinel: the
+    /// constant-true function on a vtree with no node
+    /// ([`Vtree::empty_projection`]). A diagram with levels may denote true
+    /// too; [`trim`](Self::trim) turns one into this constant.
+    pub fn is_one(&self) -> bool {
+        self.output.local == TRUE
     }
 
     /// True if any level of the diagram is marginal, in which case a pair list

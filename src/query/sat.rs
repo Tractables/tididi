@@ -13,6 +13,7 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         if f.is_zero() { return Ok(false); }
+        if f.is_one() { return Ok(true); }
         let out_vtree = f.output.vtree;
         let out_level = &f.levels[out_vtree.idx()];
         if out_level.is_weight_marginal() {

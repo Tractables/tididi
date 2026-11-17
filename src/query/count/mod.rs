@@ -99,6 +99,32 @@ impl Engine {
     /// remains unchanged on success and error. Big-integer arithmetic allocations
     /// are outside the best-effort byte budget, as with [`Tdd::model_count`].
     pub fn projected_model_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
+        let Some(home) = tdd.vtree.home() else {
+            return self.projected_own_count(tdd, vars);
+        };
+        let _op = self.limits().enter()?;
+        let mut gate = self.limits().gate();
+        let (mut own, mut free) = (Vec::new(), Vec::new());
+        for &var in vars {
+            gate.poll(1)?;
+            home.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+            let to = if tdd.vtree.leaf_of(var).is_some() { &mut own } else { &mut free };
+            self.limits().try_push(to, var)?;
+        }
+        gate.flush()?;
+        free.sort_unstable();
+        free.dedup();
+        let count = if tdd.vtree.num_nodes() == 0 {
+            u32::from(tdd.is_one()).into()
+        } else {
+            self.projected_own_count(tdd, &own)?
+        };
+        Ok(count << free.len())
+    }
+
+    /// [`projected_model_count`](Self::projected_model_count) over the
+    /// leaves of the diagram's own vtree, `vars` among them.
+    fn projected_own_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
@@ -128,11 +154,11 @@ impl Engine {
             }
         }
         gate.flush()?;
-        if eliminated.is_empty() { return self.model_count(tdd); }
+        if eliminated.is_empty() { return self.own_model_count(tdd); }
         let mut copy = tdd.try_clone_on(self)?;
         copy.weights = None;
         let projected = self.exists_vars(copy, &eliminated)?;
-        Ok(self.model_count(&projected)? >> eliminated.len())
+        Ok(self.own_model_count(&projected)? >> eliminated.len())
     }
 
     /// Run [`Tdd::node_counts_u128`] under this engine's allocation and stop limits.
@@ -236,8 +262,16 @@ impl Engine {
     /// Buffer growth is charged to the best-effort byte budget; allocations inside
     /// big-integer arithmetic are outside that budget. The input is unchanged.
     pub fn model_count(&self, tdd: &Tdd) -> Result<BigUint, OperationError> {
+        let free = tdd.vtree.free_leaves();
+        let own = self.own_model_count(tdd)?;
+        Ok(if free == 0 { own } else { own << free })
+    }
+
+    /// The model count over the leaves of the diagram's own vtree.
+    fn own_model_count(&self, tdd: &Tdd) -> Result<BigUint, OperationError> {
         let _op = self.limits().enter()?;
         if tdd.is_zero() { return Ok(BigUint::ZERO); }
+        if tdd.is_one() { return Ok(1u32.into()); }
         if let Some(counts) = tdd.levels.counts() {
             // Counts kept with the diagram hold the output's already, or
             // those of levels the fold can start from.

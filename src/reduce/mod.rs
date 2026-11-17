@@ -9,6 +9,7 @@ pub(crate) mod prune;
 pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
+mod trim;
 pub(crate) use driver::restore_marginal_invariants;
 
 use crate::execution::pool::{Drain, Pool, Pools};
@@ -120,6 +121,9 @@ impl Engine {
         plan: ReductionPlan<'_>,
         scope: PruneScope,
     ) -> Result<(), OperationError> {
+        if f.vtree.num_nodes() == 0 {
+            return Ok(());
+        }
         driver::Reduction::new(self, f).run(plan, scope)
     }
 
