@@ -31,3 +31,7 @@ smallvec = { version = "1", features = ["union"] }
 # The crate's own tests, examples and doctests build against it as a consumer
 # would, so this is how they reach `test_helpers`.
 tididi = { path = ".", features = ["testing"] }
+
+[[bench]]
+name = "projected_and"
+harness = false

@@ -10,8 +10,10 @@
 //! which both modes agree on.
 //!
 //! ```text
-//! cargo run --release --example projected_and -- <n> <projected|smooth> [clauses]
+//! cargo bench --bench projected_and -- <n> <projected|smooth> [clauses]
 //! ```
+//!
+//! Without arguments, as `cargo test` runs it: `64 projected 40`.
 
 use std::sync::Arc;
 
@@ -19,15 +21,18 @@ use tididi::vtree::{VarId, Vtree};
 use tididi::{Engine, Tdd};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with("--")).collect();
+    if args.is_empty() {
+        args = ["64", "projected", "40"].map(String::from).to_vec();
+    }
     let usage = "usage: projected_and <n> <projected|smooth> [clauses]";
-    let n: u32 = args.get(1).ok_or(usage)?.parse()?;
-    let projected = match args.get(2).map(String::as_str) {
+    let n: u32 = args.first().ok_or(usage)?.parse()?;
+    let projected = match args.get(1).map(String::as_str) {
         Some("projected") => true,
         Some("smooth") => false,
         _ => return Err(usage.into()),
     };
-    let count: usize = args.get(3).map_or(Ok(1000), |c| c.parse())?;
+    let count: usize = args.get(2).map_or(Ok(1000), |c| c.parse())?;
     if n < 3 {
         return Err("n must be at least 3".into());
     }
@@ -95,6 +100,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scaled = (eng.model_count(f)? << 20u32) >> n;
         sum += u64::try_from(scaled)?;
     }
-    println!("n {n} mode {} clauses {count} diagrams {} sum {sum}", args[2], results.len());
+    println!("n {n} mode {} clauses {count} diagrams {} sum {sum}", args[1], results.len());
     Ok(())
 }
