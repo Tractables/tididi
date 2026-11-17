@@ -22,14 +22,14 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
             unconditional: Some(crate::limits::StopAt::WorkUnits(3)),
             after_pairs: None,
         }));
-        let result = build_clause_spine(eng.limits(), &vtree, &clause, &mut w.on_spine, &mut w.spine_internal, &mut w.dfs_stack);
+        let result = build_clause_spine(eng.limits(), &vtree, &clause, &mut w.on_spine, &mut w.spine_internal);
         assert_eq!(result, Err(OperationError::Stopped));
         assert!(w.on_spine.iter().any(|&flag| flag));
     }
     let mut work = take(&eng, &pool, vtree.num_nodes()).unwrap();
     let w = &mut *work;
     assert!(w.on_spine.iter().all(|&flag| !flag));
-    build_clause_spine(eng.limits(), &vtree, &clause, &mut w.on_spine, &mut w.spine_internal, &mut w.dfs_stack).unwrap();
+    build_clause_spine(eng.limits(), &vtree, &clause, &mut w.on_spine, &mut w.spine_internal).unwrap();
     let mut expected = vec![false; vtree.num_nodes()];
     for (_, leaf) in clause {
         let mut current = Some(leaf);

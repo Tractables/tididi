@@ -71,16 +71,14 @@ impl MarkBuffer {
 }
 
 /// Build the clause spine: mark every ancestor (inclusive) of each clause
-/// leaf in `on_spine`, then collect the spine's internal levels bottom-up
-/// (post-order) into `spine_internal`. `spine_internal` and `dfs_stack` start
-/// empty.
+/// leaf in `on_spine`, and list the spine's internal levels children first in
+/// `spine_internal`, which starts empty.
 pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
     clause: &[(Literal, VtreeIdx)],
     on_spine: &mut MarkBuffer,
     spine_internal: &mut Vec<VtreeIdx>,
-    dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
     let mut gate = lim.gate();
     for &(_, leaf) in clause {
@@ -90,34 +88,19 @@ pub(super) fn build_clause_spine(
             if !on_spine.mark(cur) {
                 break;
             }
+            if !vtree.node(cur).is_leaf() {
+                lim.try_push(spine_internal, cur)?;
+            }
             match vtree.node(cur).parent() {
                 Some(p) => cur = p,
                 None => break,
             }
         }
     }
-
-    // The marked set is ancestor-closed, so it is a connected subtree
-    // containing the root; the DFS descends only into marked children.
-    let root = vtree.root();
-    if on_spine[root.idx()] && !vtree.node(root).is_leaf() {
-        lim.try_push(dfs_stack, (root, false))?;
-    }
-    while let Some((t, processed)) = dfs_stack.pop() {
-        gate.poll(1)?;
-        if processed {
-            lim.try_push(spine_internal, t)?;
-        } else {
-            lim.try_push(dfs_stack, (t, true))?;
-            let (l, r) = vtree.children(t);
-            if on_spine[l.idx()] && !vtree.node(l).is_leaf() {
-                lim.try_push(dfs_stack, (l, false))?;
-            }
-            if on_spine[r.idx()] && !vtree.node(r).is_leaf() {
-                lim.try_push(dfs_stack, (r, false))?;
-            }
-        }
-    }
+    vtree.sort_bottom_up(spine_internal);
+    // Two units a level, what the order walk this sort replaced charged, so
+    // work budgets callers tuned against it stay where they were.
+    gate.poll(2 * spine_internal.len() as u64)?;
     gate.flush()
 }
 

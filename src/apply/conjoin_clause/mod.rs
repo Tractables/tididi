@@ -52,10 +52,8 @@ pub(crate) struct ClauseWork {
     on_spine: MarkBuffer,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
     need_dt: MarkBuffer,
-    /// Spine internal nodes in bottom-up (post-order) order.
+    /// Spine internal nodes, children first.
     spine_internal: Vec<VtreeIdx>,
-    /// Work stack for the post-order spine walk (node, processed?).
-    dfs_stack: Vec<(VtreeIdx, bool)>,
     /// The `d_t` pairs of the node being rebuilt.
     dt_pairs: Vec<ChildPair>,
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
@@ -70,7 +68,6 @@ impl Buffers for ClauseWork {
         self.on_spine.buffers(visit);
         self.need_dt.buffers(visit);
         visit(&mut self.spine_internal);
-        visit(&mut self.dfs_stack);
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
     }
@@ -83,7 +80,6 @@ impl PooledScratch for ClauseWork {
         self.on_spine.debug_assert_clear();
         self.need_dt.debug_assert_clear();
         self.spine_internal.clear();
-        self.dfs_stack.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
     }
@@ -287,14 +283,7 @@ fn rebuild_along_spine(
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     work.on_spine.cover(lim, num_nodes)?;
-    build_clause_spine(
-        lim,
-        vtree,
-        clause,
-        &mut work.on_spine,
-        &mut work.spine_internal,
-        &mut work.dfs_stack,
-    )?;
+    build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
     work.need_dt.cover(lim, num_nodes)?;
     propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
 
