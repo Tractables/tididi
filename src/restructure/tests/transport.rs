@@ -21,7 +21,6 @@ fn renamed_mirrored(vtree: &Vtree, rename: &[VarId], num_vars: u32, rng: &mut Lc
         copy_of[t.idx()] = VtreeIdx(nodes.len() as u32);
         nodes.push(match *vtree.node(t) {
             VtreeNode::Leaf { var, .. } => VtreeNode::Leaf { var: rename[var.idx()], parent: None },
-            VtreeNode::Region { .. } => unreachable!("no region here"),
             VtreeNode::Internal { left, right, .. } => {
                 let (left, right) = if rng.coin() { (right, left) } else { (left, right) };
                 VtreeNode::Internal { left: copy_of[left.idx()], right: copy_of[right.idx()], parent: None }

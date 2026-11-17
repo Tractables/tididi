@@ -159,7 +159,7 @@ pub(super) fn init_leaf_identity_over(
             stack.push(t);
             while let Some(node) = stack.pop() {
                 match vtree.node(node) {
-                    crate::vtree::VtreeNode::Leaf { .. } | crate::vtree::VtreeNode::Region { .. } => buf[node.idx()] = false,
+                    crate::vtree::VtreeNode::Leaf { .. } => buf[node.idx()] = false,
                     crate::vtree::VtreeNode::Internal { left, right, .. } => {
                         // Children of a marginal level are marginal by the
                         // invariant — but a child may itself be CT, in which

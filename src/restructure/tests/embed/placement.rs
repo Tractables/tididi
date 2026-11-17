@@ -17,7 +17,6 @@ pub(super) fn renamed_shape(
     for t in vtree.bottomup() {
         copy_of[t.idx()] = VtreeIdx(nodes.len() as u32);
         nodes.push(match *vtree.node(t) {
-            VtreeNode::Region { .. } => unreachable!("no region here"),
             VtreeNode::Leaf { var, .. } => VtreeNode::Leaf {
                 var: rename(var),
                 parent: None,

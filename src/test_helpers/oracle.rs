@@ -376,7 +376,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
         for vi in 0..vtree.num_nodes() {
             let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
                 VtreeNode::Internal { left, right, .. } => (left, right),
-                _ => continue,
+                VtreeNode::Leaf { .. } => continue,
             };
             let side = if left == leaf {
                 ChildSide::Left
@@ -427,7 +427,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
     for vi in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
-            _ => continue,
+            VtreeNode::Leaf { .. } => continue,
         };
         let lvar = match *vtree.node(left) {
             VtreeNode::Leaf { var, .. } => Some(var.idx()),
@@ -533,8 +533,8 @@ fn eval_label(l: NodeIdx, x: bool) -> bool {
 
 fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
     match *t.vtree.node(v) {
+        VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the evaluation oracle"),
         VtreeNode::Leaf { var, .. } => eval_label(local, asn[var.idx()]),
-        VtreeNode::Region { .. } => crate::vtree::region_unsupported("the evaluation oracle"),
         VtreeNode::Internal { left, right, .. } => {
             if local == ZERO {
                 return false;

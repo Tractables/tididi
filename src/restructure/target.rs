@@ -222,19 +222,19 @@ impl Mover<'_, '_> {
         lim.try_resize(&mut tsize, self.target.num_nodes(), 0)?;
         for t in self.target.bottomup() {
             tsize[t.idx()] = match self.target.node(t) {
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Leaf { .. } => 1,
-                VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Internal { left, right, .. } => tsize[left.idx()] + tsize[right.idx()],
             };
         }
         for &t in order.iter().rev() {
             lim.check_stop()?;
             counts[t.idx()] = match self.tdd.vtree.node(t) {
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Leaf { var, .. } => {
                     tl[t.idx()] = self.target.leaf_of(*var).expect("same variables");
                     (u32::from(self.target.in_subtree(tl[t.idx()], target)), 1)
                 }
-                VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Internal { left, right, .. } => {
                     tl[t.idx()] = self.target.lca(tl[left.idx()], tl[right.idx()]);
                     let (l, r) = (counts[left.idx()], counts[right.idx()]);
@@ -411,8 +411,8 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
 fn first_leaf(vtree: &Vtree, mut t: VtreeIdx) -> VarId {
     loop {
         match vtree.node(t) {
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("restructuring"),
             VtreeNode::Leaf { var, .. } => return *var,
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
             VtreeNode::Internal { left, .. } => t = *left,
         }
     }

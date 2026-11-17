@@ -50,7 +50,7 @@ fn assert_invariants(vtree: &Vtree) {
     for &t in vtree.bottomup_slice() {
         let pos = vtree.topo_pos(t);
         let m = match vtree.node(t) {
-            VtreeNode::Leaf { .. } | VtreeNode::Region { .. } => pos,
+            VtreeNode::Leaf { .. } => pos,
             VtreeNode::Internal { left, right, .. } => {
                 pos.max(subtree_max[left.idx()]).max(subtree_max[right.idx()])
             }

@@ -129,7 +129,7 @@ fn level_touches(
     let mut level_touch: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_nodes];
     for t in vtree.bottomup() {
         level_touch[t.idx()] = match vtree.node(t) {
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("a column query"),
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("a column query"),
             VtreeNode::Leaf { var, .. } => match role[var.0 as usize] {
                 Some((j, bit)) => vec![(j, 1u32 << bit)],
                 None => Vec::new(),
@@ -168,8 +168,8 @@ fn is_lexicographic(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) 
     let mut stack = vec![vtree.root()];
     while let Some(t) = stack.pop() {
         match *vtree.node(t) {
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("a column query"),
             VtreeNode::Leaf { var, .. } => in_order.extend(role[var.0 as usize]),
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("a column query"),
             VtreeNode::Internal { left, right, .. } => stack.extend([right, left]),
         }
     }
@@ -369,7 +369,7 @@ impl Engine {
         for t in vtree.bottomup() {
             gate.poll(1)?;
             match *vtree.node(t) {
-                VtreeNode::Region { .. } => crate::vtree::region_unsupported("a column query"),
+                VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("a column query"),
                 VtreeNode::Leaf { var, .. } => {
                     table.push_leaf_level(lim, t, var, role[var.0 as usize], &mut gid[t.idx()])?;
                 }

@@ -66,7 +66,6 @@ pub(super) fn set_parent(nodes: &mut [VtreeNode], child: VtreeIdx, parent: Vtree
     match &mut nodes[child.idx()] {
         VtreeNode::Leaf { parent: p, .. } => *p = Some(parent),
         VtreeNode::Internal { parent: p, .. } => *p = Some(parent),
-        VtreeNode::Region { parent: p } => *p = Some(parent),
     }
 }
 
@@ -97,10 +96,10 @@ pub(super) fn append_subtree(nodes: &mut Vec<VtreeNode>, sub: &Vtree, var: impl 
     let offset = nodes.len() as u32;
     for node in &sub.nodes {
         match *node {
+            VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("joining vtrees"),
             VtreeNode::Leaf { var: local, .. } => {
                 push_leaf(nodes, var(local));
             }
-            VtreeNode::Region { .. } => super::region_unsupported("joining vtrees"),
             VtreeNode::Internal { left, right, .. } => {
                 push_internal(nodes, VtreeIdx(left.0 + offset), VtreeIdx(right.0 + offset));
             }
@@ -322,11 +321,9 @@ impl Vtree {
         // refuses one, the full check, which reads the whole list, names what
         // is wrong. Both refuse the same lists.
         let n = old_nodes.len();
-        // A region reads as a leaf of no variable, which the walk refuses.
         let shape = |t: VtreeIdx| match old_nodes[t.idx()] {
-            VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
             VtreeNode::Leaf { var, .. } => Shape::Leaf(var),
-            VtreeNode::Region { .. } => Shape::Leaf(VarId(0)),
+            VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
         };
         let reindexed = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
             reindex(root, (n, 0), num_vars, shape)
@@ -526,7 +523,6 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     for node in nodes {
         match *node {
             VtreeNode::Leaf { var, .. } => check_leaf_var(var, &mut variables)?,
-            VtreeNode::Region { .. } => return Err(VtreeError::Invalid("a region is a node of a projection".to_string())),
             VtreeNode::Internal { left, right, .. } => {
                 for child in [left, right] {
                     if child.idx() >= n {
@@ -715,7 +711,7 @@ fn relabel_leaves_then_internals(
                 }
                 Shape::Region => {
                     old_to_new[old_idx.idx()] = VtreeIdx(next_region);
-                    new_nodes[next_region as usize] = VtreeNode::Region { parent: None };
+                    new_nodes[next_region as usize] = VtreeNode::Leaf { var: super::REGION_VAR, parent: None };
                     next_region += 1;
                 }
                 Shape::Internal(left, right) => {

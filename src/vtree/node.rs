@@ -4,9 +4,10 @@ use super::topo::TopoOrder;
 use super::{VarId, VtreeIdx};
 
 /// A node in the vtree (variable tree).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VtreeNode {
-    /// A leaf holding a single variable.
+    /// A leaf holding a single variable, or a region: see
+    /// [`is_region`](VtreeNode::is_region).
     Leaf {
         /// The variable at this leaf.
         var: VarId,
@@ -22,14 +23,11 @@ pub enum VtreeNode {
         /// Parent node index, or `None` at the root.
         parent: Option<VtreeIdx>,
     },
-    /// A childless node of a projection standing for a set of variables of
-    /// its home that a diagram has summed out: its extent. No variable has
-    /// it as its leaf, and [`Vtree::num_leaves`] does not count it.
-    Region {
-        /// Parent node index, or `None` at the root.
-        parent: Option<VtreeIdx>,
-    },
 }
+
+/// The variable of a region's leaf. No variable has this id, so no
+/// constructor accepts it.
+pub(crate) const REGION_VAR: VarId = VarId(0);
 
 impl VtreeNode {
     /// This node's parent index, or `None` if it is the root.
@@ -37,18 +35,20 @@ impl VtreeNode {
         match self {
             VtreeNode::Leaf { parent, .. } => *parent,
             VtreeNode::Internal { parent, .. } => *parent,
-            VtreeNode::Region { parent } => *parent,
         }
     }
 
-    /// Whether this node has no children: a variable's leaf or a region.
+    /// Whether this node is a leaf: a variable's leaf or a region.
     pub fn is_leaf(&self) -> bool {
-        !matches!(self, VtreeNode::Internal { .. })
+        matches!(self, VtreeNode::Leaf { .. })
     }
 
-    /// Whether this node is a [`Region`](VtreeNode::Region).
+    /// Whether this node is a region: a leaf of a projection standing for a
+    /// set of variables of its home that a diagram has summed out, its
+    /// extent. No variable has it as its leaf, and [`Vtree::num_leaves`]
+    /// does not count it.
     pub fn is_region(&self) -> bool {
-        matches!(self, VtreeNode::Region { .. })
+        matches!(self, VtreeNode::Leaf { var, .. } if *var == REGION_VAR)
     }
 }
 
@@ -230,12 +230,12 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `idx` refers to a leaf or a region.
+    /// Panics if `idx` refers to a leaf node.
     #[inline]
     pub fn children(&self, idx: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
         match &self.nodes[idx.idx()] {
             VtreeNode::Internal { left, right, .. } => (*left, *right),
-            _ => panic!("children() called on leaf node"),
+            VtreeNode::Leaf { .. } => panic!("children() called on leaf node"),
         }
     }
 
@@ -281,7 +281,6 @@ impl Vtree {
                         return false;
                     }
                 }
-                (VtreeNode::Region { .. }, VtreeNode::Region { .. }) => {}
                 (VtreeNode::Internal { .. }, VtreeNode::Internal { .. }) => {
                     let (a_left, a_right) = self.children(a);
                     let (b_left, b_right) = other.children(b);
@@ -298,13 +297,16 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `idx` refers to an internal node or a region.
+    /// Panics if `idx` refers to an internal node, and in debug builds if it
+    /// refers to a region, which has no variable.
     #[inline]
     pub fn leaf_var(&self, idx: VtreeIdx) -> VarId {
         match &self.nodes[idx.idx()] {
-            VtreeNode::Leaf { var, .. } => *var,
+            VtreeNode::Leaf { var, .. } => {
+                debug_assert!(*var != REGION_VAR, "leaf_var() called on a region");
+                *var
+            }
             VtreeNode::Internal { .. } => panic!("leaf_var() called on internal node"),
-            VtreeNode::Region { .. } => panic!("leaf_var() called on a region"),
         }
     }
 

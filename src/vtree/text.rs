@@ -74,7 +74,7 @@ impl Vtree {
 
         let num_vars = nodes.iter().filter_map(|node| match node {
             VtreeNode::Leaf { var, .. } => Some(var.0),
-            _ => None,
+            VtreeNode::Internal { .. } => None,
         }).max().unwrap_or(0);
         let root = VtreeIdx(last_id as u32);
         Self::from_nodes(nodes, root, num_vars).map_err(|e| match e {
@@ -100,10 +100,10 @@ impl Vtree {
         for idx in self.bottomup() {
             let id = self.topo_pos(idx);
             match self.node(idx) {
+                VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("the vtree text format"),
                 VtreeNode::Leaf { var, .. } => {
                     out.push_str(&format!("L {} {}\n", id, var.0));
                 }
-                VtreeNode::Region { .. } => super::region_unsupported("the vtree text format"),
                 VtreeNode::Internal { left, right, .. } => {
                     out.push_str(&format!(
                         "I {} {} {}\n",

@@ -88,7 +88,7 @@ impl TopoOrder {
         let childless = n.div_ceil(2);
         debug_assert!(nodes.iter().enumerate().all(|(i, t)| {
             let i = i as u32;
-            (i < num_leaves, i < childless) == (matches!(t, VtreeNode::Leaf { .. }), t.is_leaf())
+            (i < num_leaves, i < childless) == (t.is_leaf() && !t.is_region(), t.is_leaf())
         }));
         TopoOrder {
             order: (0..n).map(VtreeIdx).collect(),
@@ -169,7 +169,7 @@ impl TopoOrder {
                 }
             seen[t.idx()] = true;
         }
-        let leaves = self.order.iter().copied().filter(|t| matches!(nodes[t.idx()], VtreeNode::Leaf { .. }));
+        let leaves = self.order.iter().copied().filter(|t| nodes[t.idx()].is_leaf() && !nodes[t.idx()].is_region());
         let internal = self.order.iter().copied().filter(|t| !nodes[t.idx()].is_leaf());
         if !leaves.eq(self.leaves.iter().copied()) || !internal.eq(self.internal.iter().copied()) {
             return Err("leaf/internal views disagree with the bottom-up order".into());

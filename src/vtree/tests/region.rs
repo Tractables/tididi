@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::vtree::home::{LeafSets, Region};
+use crate::vtree::REGION_VAR;
 use crate::vtree::rng::Lcg;
 use crate::OperationError;
 
@@ -75,6 +76,7 @@ fn a_projection_with_extents_holds() {
 }
 
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "leaf_var refuses a region in debug builds only")]
 #[should_panic(expected = "region")]
 fn a_region_has_no_variable() {
     let home = Home::new(Vtree::balanced(4));
@@ -180,6 +182,10 @@ fn random_regions_hold_and_count() {
         let roles = random_roles(n, &mut rng);
         let (own, anchors) = build(&home, &roles, &mut rng);
         assert_eq!(own.validate(), Ok(()), "seed {seed}");
+        let leaves: Vec<VarId> = own.leaf_bottomup().map(|(_, var)| var).collect();
+        assert_eq!(leaves.len(), own.num_leaves() as usize, "seed {seed}");
+        assert!(leaves.iter().all(|&var| var != REGION_VAR && roles[var.idx()] == Role::Leaf), "seed {seed}");
+        assert_eq!(own.nodes.iter().filter(|node| node.is_region()).count(), anchors.len(), "seed {seed}");
         let free: Vec<VarId> = {
             let mut free: Vec<u32> = (1..=n).filter(|&v| roles[v as usize - 1] == Role::Free).collect();
             free.sort_by_key(|&v| home.rank(VarId(v)));

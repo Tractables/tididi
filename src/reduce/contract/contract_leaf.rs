@@ -78,7 +78,7 @@ const NO_HINT: u32 = u32::MAX;
 fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx, refused: &mut [u32]) -> Result<bool, OperationError> {
     let (left, right) = match *vtree.node(vi) {
         VtreeNode::Internal { left, right, .. } => (left, right),
-        _ => return Ok(false),
+        VtreeNode::Leaf { .. } => return Ok(false),
     };
     let mut changed = false;
     if vtree.node(left).is_leaf() {

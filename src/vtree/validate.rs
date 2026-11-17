@@ -90,7 +90,8 @@ impl Vtree {
     }
 
     /// Distinct variables inside the id space, each inverted by `leaf_of`, and
-    /// a leaf count that matches [`Vtree::num_leaves`].
+    /// a leaf count that matches [`Vtree::num_leaves`]; regions are not
+    /// leaves here.
     fn validate_leaves(&self) -> Result<(), VtreeError> {
         let mut leaf_count = 0u32;
         let num_vars = self.num_vars();
@@ -100,6 +101,9 @@ impl Vtree {
         }
         for (i, node) in self.nodes.iter().enumerate() {
             if let VtreeNode::Leaf { var, .. } = node {
+                if *var == super::REGION_VAR {
+                    continue;
+                }
                 leaf_count += 1;
                 if var.0 == 0 || var.0 > num_vars {
                     return invalid(format!("leaf {i} carries variable {} outside the id space {num_vars}", var.0));

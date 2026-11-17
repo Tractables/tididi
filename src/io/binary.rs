@@ -386,8 +386,8 @@ fn encode(tdd: &Tdd) -> Vec<u8> {
     push_varint(&mut out, vtree.num_nodes() as u64);
     for &t in &order {
         match *vtree.node(t) {
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the binary format"),
             VtreeNode::Leaf { var, .. } => push_varint(&mut out, u64::from(var.0)),
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("the binary format"),
             VtreeNode::Internal { .. } => push_varint(&mut out, 0),
         }
     }
@@ -783,8 +783,8 @@ fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx
     for (k, &t) in order.iter().enumerate() {
         let token = body.varint("vtree node")?;
         let expected = match *vtree.node(t) {
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the binary format"),
             VtreeNode::Leaf { var, .. } => u64::from(var.0),
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("the binary format"),
             VtreeNode::Internal { .. } => 0,
         };
         if token != expected {

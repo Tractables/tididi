@@ -60,7 +60,7 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
     for t in vtree.bottomup() {
         kept[t.idx()] = match *vtree.node(t) {
             VtreeNode::Internal { left, right, .. } => kept[left.idx()] || kept[right.idx()],
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("the trim oracle"),
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the trim oracle"),
             VtreeNode::Leaf { parent, .. } => {
                 let named = match parent {
                     None => f.output.local,
@@ -88,7 +88,7 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
     };
     let both = |t: VtreeIdx| match *vtree.node(t) {
         VtreeNode::Internal { left, right, .. } => kept[left.idx()] && kept[right.idx()],
-        _ => true,
+        VtreeNode::Leaf { .. } => true,
     };
 
     // Top-down: the class of each node of a kept level is the node of the
@@ -137,7 +137,7 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
         let classes = f.reference_slot_count(top[t.idx()]);
         end_of[top[t.idx()].idx()] = t;
         match *vtree.node(t) {
-            VtreeNode::Region { .. } => crate::vtree::region_unsupported("the trim oracle"),
+            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the trim oracle"),
             VtreeNode::Leaf { .. } => {
                 let mut held = vec![0u8; classes];
                 for (j, &c) in class[t.idx()].iter().enumerate() {

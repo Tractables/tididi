@@ -42,7 +42,7 @@ impl HomeIndex {
         let mut stack = vec![(home.root(), 0u32, false)];
         while let Some((t, depth, left_done)) = stack.pop() {
             match *home.node(t) {
-                VtreeNode::Leaf { .. } | VtreeNode::Region { .. } => {
+                VtreeNode::Leaf { .. } => {
                     slot[t.idx()] = leaf_at.len() as u32;
                     leaf_at.push(t);
                 }
@@ -95,8 +95,8 @@ impl HomeIndex {
 
     fn depth_of(&self, home: &Vtree, h: VtreeIdx) -> u32 {
         match home.node(h) {
+            VtreeNode::Leaf { .. } => u32::MAX,
             VtreeNode::Internal { .. } => self.gap_depth[self.slot[h.idx()] as usize],
-            _ => u32::MAX,
         }
     }
 }
@@ -219,7 +219,8 @@ pub(crate) struct HomeLink {
     pub(super) regions: Vec<Region>,
 }
 
-/// The home variables a [`VtreeNode::Region`] stands for, and where it sits.
+/// The home variables a region ([`VtreeNode::is_region`]) stands for, and
+/// where it sits.
 ///
 /// The anchor, `ranks[at]`, is a rank of the extent: the leftmost at
 /// creation, and afterwards it moves only as a variable leaf's rank does.
@@ -635,6 +636,13 @@ impl Vtree {
             node_of[t.idx()] = h;
             if let VtreeNode::Leaf { var, .. } = &mut own.nodes[t.idx()] {
                 *var = root.leaf_var(h);
+            }
+        }
+        // The loop above gave a region its anchor's variable, so that a tree
+        // without regions runs no test there.
+        for region in &regions {
+            if let VtreeNode::Leaf { var, .. } = &mut own.nodes[in_order[2 * region.at as usize].idx()] {
+                *var = super::REGION_VAR;
             }
         }
         for (i, &g) in gaps.iter().enumerate() {

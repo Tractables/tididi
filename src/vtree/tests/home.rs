@@ -70,7 +70,6 @@ fn home_node_is_the_ancestor_in_the_home() {
             let h = own.home_node(t);
             match *own.node(t) {
                 VtreeNode::Leaf { var, .. } => assert_eq!(tree.leaf_of(var), Some(h)),
-                VtreeNode::Region { .. } => unreachable!("a root vtree has no region"),
                 VtreeNode::Internal { left, right, .. } => {
                     assert_eq!(tree.lca(own.home_node(left), own.home_node(right)), h);
                 }

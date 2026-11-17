@@ -28,7 +28,6 @@ fn mirror_image(home: &Vtree) -> Vtree {
         copy_of[t.idx()] = VtreeIdx(nodes.len() as u32);
         nodes.push(match *home.node(t) {
             VtreeNode::Leaf { var, .. } => VtreeNode::Leaf { var, parent: None },
-            VtreeNode::Region { .. } => unreachable!("a root vtree has no region"),
             VtreeNode::Internal { left, right, .. } => {
                 VtreeNode::Internal { left: copy_of[right.idx()], right: copy_of[left.idx()], parent: None }
             }
