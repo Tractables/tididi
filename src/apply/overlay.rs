@@ -172,7 +172,7 @@ impl Pieces {
 /// Determinism keeps a level to one form per leaf child, so the first
 /// reference decides it. A level with no pairs names nothing and does not
 /// constrain the output's form.
-fn names_one(level: &TddLevel, left: bool) -> bool {
+pub(super) fn names_one(level: &TddLevel, left: bool) -> bool {
     level
         .internal_inputs_iter()
         .flat_map(|(_, pairs)| pairs)

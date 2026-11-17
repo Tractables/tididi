@@ -11,10 +11,6 @@
 //! bottom-up walk carry both branches of the clause at once: a level's output
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
 //! side by side in `cd_map`. The whole module is written in terms of this pair.
-//!
-//! The same walk disjoins a cube: `¬M` is a clause whose `d_t` is `M_t`, so
-//! [`cube`] rides the lanes this one already carries. See that module for the
-//! derivation.
 
 use crate::Engine;
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
@@ -34,9 +30,6 @@ mod pairs;
 use pairs::*;
 mod rebuild;
 use rebuild::*;
-mod cube;
-pub(crate) use cube::disjoin_cube_on;
-use cube::CubeChain;
 
 /// The working set of one clause walk, pooled by the engine between calls.
 #[derive(Default)]
@@ -95,28 +88,24 @@ impl PooledScratch for ClauseWork {
 
 /// A clause's literals resolved to their vtree leaves, one per variable. The
 /// walk indexes one `cd_map` column per literal, which is what needs this.
-enum Normalized {
-    /// A variable named in both polarities: the clause is true.
+pub(crate) enum Normalized {
+    /// A variable named in both polarities: as a clause true, as a cube false.
     Tautology,
     /// One literal per variable, with its leaf, in leaf order.
     Clause(Vec<(Literal, VtreeIdx)>),
 }
 
-/// Convert `lits`, resolve them against `vtree` and drop the repeats. With
-/// `negate` each literal is complemented first, which turns a cube into the
-/// clause the walk carries: a cube naming a variable in both polarities is
-/// false, and its negation a tautology.
+/// Convert `lits`, resolve them against `vtree` and drop the repeats.
 ///
 /// # Errors
 ///
 /// Per literal in order, [`OperationError::InvalidLiteral`] for integer zero,
 /// then [`OperationError::VariableNotInVtree`] for a variable the vtree
 /// lacks, whatever else the clause says; and the limits' errors.
-fn normalize<L: crate::LiteralInput>(
+pub(crate) fn normalize<L: crate::LiteralInput>(
     lim: &Limits,
     vtree: &Vtree,
     lits: &[L],
-    negate: bool,
 ) -> Result<Normalized, OperationError> {
     let mut gate = lim.gate();
     // Every literal is resolved before a tautology is answered, so an absent
@@ -127,7 +116,7 @@ fn normalize<L: crate::LiteralInput>(
         gate.poll(1)?;
         let lit = lit.literal()?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        clause.push((if negate { lit.negated() } else { lit }, leaf));
+        clause.push((lit, leaf));
     }
     gate.flush()?;
     // Sorted by leaf, a variable's literals are adjacent: one is kept, and
@@ -148,30 +137,26 @@ fn normalize<L: crate::LiteralInput>(
     })
 }
 
-/// The shared bottom-up walk: conjoin the clause `lits` into `f`, or — with
-/// `disjoin` — disjoin the cube `lits`, by carrying the [`CubeChain`]
-/// alongside. `f` is consumed on every outcome; a level array it no longer
-/// needs goes back to the engine's pool.
+/// Conjoin the clause `lits` into `f`. `f` is consumed on every outcome; a
+/// level array it no longer needs goes back to the engine's pool.
 fn spine_walk<L: crate::LiteralInput>(
     eng: &Engine,
     mut f: Tdd,
     lits: &[L],
-    disjoin: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
     let vtree = Arc::clone(&f.vtree);
-    let clause = match normalize(lim, &vtree, lits, disjoin)? {
+    let clause = match normalize(lim, &vtree, lits)? {
         // A variable named in both polarities satisfies the clause whatever
-        // its value, and the cube it negates is false: the identity in both
-        // modes, so the accumulator is the answer as it stands, worklists
+        // its value: the accumulator is the answer as it stands, worklists
         // included.
         Normalized::Tautology => return Ok(f),
         Normalized::Clause(clause) => clause,
     };
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
-    if !disjoin && clause.is_empty() {
+    if clause.is_empty() {
         let out = crate::build::constant_like(eng, &f, false)?;
         diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
         return Ok(out);
@@ -184,40 +169,14 @@ fn spine_walk<L: crate::LiteralInput>(
     }
     gate.flush()?;
 
-    if !disjoin {
-        // `⊥ ∧ c = ⊥`: the accumulator is the answer as it stands, worklists
-        // included.
-        if f.is_zero() {
-            return Ok(f);
-        }
-        // The rebuild takes `f`'s levels for the output; on an error they are
-        // dropped with the partial result, so `f` owns nothing worth recycling.
-        return rebuild_along_spine(eng, &mut f, &clause, false);
+    // `⊥ ∧ c = ⊥`: the accumulator is the answer as it stands, worklists
+    // included.
+    if f.is_zero() {
+        return Ok(f);
     }
-
-    // The empty cube is true, and `⊥ ∨ M` is the cube itself: both are the
-    // cube built on its own, with the accumulator's marginal values.
-    if clause.is_empty() || f.is_zero() {
-        let mut out = eng.cube(&vtree, clause.iter().map(|&(lit, _)| lit.negated()))?;
-        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
-        return Ok(out);
-    }
-
-    // The chain needs a node at every level, which the two lanes supply only
-    // where the cube constrains the subtree; see the `cube` module. A
-    // one-variable vtree has no internal level to hang the chain on, and an
-    // output below the root leaves levels the walk would not reach. Those
-    // cubes take the overlay disjunction.
-    let root = vtree.root();
-    if clause.len() != vtree.num_leaves() as usize
-        || f.output.vtree != root
-        || vtree.node(root).is_leaf()
-    {
-        let cube = eng.cube(&vtree, clause.iter().map(|&(lit, _)| lit.negated()))?;
-        return eng.or(f, cube);
-    }
-
-    rebuild_along_spine(eng, &mut f, &clause, true)
+    // The rebuild takes `f`'s levels for the output; on an error they are
+    // dropped with the partial result, so `f` owns nothing worth recycling.
+    rebuild_along_spine(eng, &mut f, &clause)
 }
 
 /// Rebuild every level on the clause's spine, moving `f`'s levels into the
@@ -227,7 +186,6 @@ fn rebuild_along_spine(
     eng: &Engine,
     f: &mut Tdd,
     clause: &[(Literal, VtreeIdx)],
-    disjoin: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let vtree = &f.vtree;
@@ -274,11 +232,6 @@ fn rebuild_along_spine(
     // written before any parent reads them. The stop axis and the output cap
     // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
-    let mut chain = if disjoin {
-        Some(CubeChain::new(lim, vtree, clause)?)
-    } else {
-        None
-    };
     let mut tables = ClauseTables {
         cd_map: &mut work.cd_map,
         level_base: &work.level_base,
@@ -286,32 +239,11 @@ fn rebuild_along_spine(
         on_spine: &work.on_spine,
         t3_buf: &mut work.t3_buf,
         dt_pairs: &mut work.dt_pairs,
-        output_cube_pair: None,
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
     };
     for &t in work.spine_internal.iter() {
-        // The `cd_map` block of a level is sized at its width before the
-        // rebuild, which is also the range the chain reads back.
-        let old_width = levels[t.idx()].slot_count();
-        if let Some(chain) = chain.as_ref() {
-            // The output level is last in the bottom-up order, so the chain
-            // is complete below it and the cube joins the output node here.
-            tables.output_cube_pair = (t == out_vtree).then(|| {
-                (
-                    tables.level_base[t.idx()] + out_local_in.idx(),
-                    chain.pair_at(vtree, t),
-                )
-            });
-        }
         rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
-        if let Some(chain) = chain.as_mut()
-            && t != out_vtree
-        {
-            let base = tables.level_base[t.idx()];
-            let lanes = &tables.cd_map[base..base + old_width];
-            chain.close_level(eng, t, vtree, &mut levels[t.idx()], lanes)?;
-        }
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
@@ -355,7 +287,7 @@ fn rebuild_along_spine(
         crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
             &out,
             Some(&recorded),
-            if disjoin { "or_cube" } else { "and_clause" },
+            "and_clause",
         );
     }
     Ok(out)
@@ -372,7 +304,7 @@ pub(crate) fn conjoin_clause_on<L: crate::LiteralInput>(
     f: Tdd,
     clause: &[L],
 ) -> Result<Tdd, OperationError> {
-    spine_walk(eng, f, clause, false)
+    spine_walk(eng, f, clause)
 }
 
 impl Tdd {
@@ -454,27 +386,6 @@ impl crate::Engine {
         clause: &[L],
     ) -> Result<Tdd, OperationError> {
         conjoin_clause_on(self, f, clause)
-    }
-
-    /// Run [`Tdd::or_cube`](crate::Tdd::or_cube) using this batch's scratch and resource limits.
-    /// Borrow a slice of signed integers or typed literals. A cube naming
-    /// every variable is disjoined by the walk of
-    /// [`and_clause`](Self::and_clause) and checks the limits as it does; any
-    /// other cube by [`or`](Self::or) with the built cube, which checks its
-    /// own.
-    ///
-    /// # Errors
-    ///
-    /// Returns the linked operation's errors; cancellation, allocation refusal and
-    /// the output-node cap return [`OperationError::Stopped`],
-    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
-    ///
-    pub fn or_cube<L: crate::LiteralInput>(
-        &self,
-        f: Tdd,
-        cube: &[L],
-    ) -> Result<Tdd, OperationError> {
-        disjoin_cube_on(self, f, cube)
     }
 }
 

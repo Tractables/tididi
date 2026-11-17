@@ -24,6 +24,7 @@ pub(crate) mod conjoin_clause;
 mod conjoin_in_place;
 pub(crate) mod conjoin_indexed;
 pub(crate) mod disjoin;
+pub(crate) mod disjoin_cube;
 pub(crate) mod overlay;
 pub(crate) mod negate;
 pub(crate) mod condition;

@@ -4,12 +4,12 @@ use super::*;
 
 /// The [`ClauseWork`] fields a spine level's rebuild uses, borrowed apart.
 ///
-/// The per-node loops must not read `cd_map` or `output_cube_pair` through
+/// The per-node loops must not read `cd_map` through
 /// `&mut ClauseWork`: a pair buffer's push that grows calls out of line with
 /// a pointer into the working set, after which the compiler reloads every
 /// field it reads through it, per node and per pair (about 2% more
 /// instructions on a workload of large clause conjunctions). Held here,
-/// the slice and the cube pair stay out of the buffers' reach.
+/// the slice stays out of the buffers' reach.
 pub(super) struct ClauseTables<'a> {
     pub(super) cd_map: &'a mut [[u32; 2]],
     pub(super) level_base: &'a [usize],
@@ -17,10 +17,6 @@ pub(super) struct ClauseTables<'a> {
     pub(super) on_spine: &'a [bool],
     pub(super) t3_buf: &'a mut Vec<ChildPair>,
     pub(super) dt_pairs: &'a mut Vec<ChildPair>,
-    /// Disjunction only: the `cd_map` slot of the accumulator's output node
-    /// and the one extra pair naming the cube, appended to that node's `c_t`
-    /// pair list. `None` for a conjunction; see [`cube`](super::cube).
-    pub(super) output_cube_pair: Option<(usize, ChildPair)>,
     /// The emptied arenas of the spine level rebuilt last, which the next
     /// one builds its output in where they fit: a walk over small levels
     /// allocates no arena per level.
@@ -50,17 +46,9 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     slot: usize,
     tables: &mut ClauseTables<'_>,
 ) -> Result<usize, OperationError> {
-    // The cube pair of a disjunction, if this is the node that carries it.
-    let cube_pair = tables
-        .output_cube_pair
-        .and_then(|(s, p)| (s == slot).then_some(p));
     // Reserve this node's whole worst case before emitting any of it, so
     // the direct c_t pushes stay infallible `Vec::push`es.
-    reserve_pairs_for_emit(
-        eng,
-        level,
-        ctx.pair_mult * inputs.len() + usize::from(cube_pair.is_some()),
-    )?;
+    reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
     let ct_start = level.pairs.stored_len();
     if DT {
         tables.dt_pairs.clear();
@@ -73,15 +61,6 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         build_both_rel_pairs::<DT>(eng, inputs, ctx, level, tables)?;
     } else {
         build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, tables)?;
-    }
-    if let Some(pair) = cube_pair {
-        // `c_t` emits only the (c,c), (c,d) and (d,c) cells, so the cube's
-        // (d,d) cell is free and the union stays disjoint. Its child indices
-        // are the cube chain's, unrelated to the accumulator's order, so the
-        // node's pair list is re-sorted.
-        let pairs = level.pairs.stored_mut();
-        pairs.push(pair);
-        sort_pairs(&mut pairs[ct_start..]);
     }
     let written = level.pairs.stored_len() - ct_start + if DT { tables.dt_pairs.len() } else { 0 };
     let ct = emit_from(eng, level, ct_start)?;
@@ -154,8 +133,7 @@ pub(super) fn rebuild_spine_level(
     // keeps the input count.
     let inputs = in_pairs.saturating_add(k);
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
-    // One more for a disjunction's cube pair, which this level may carry.
-    let worst = inputs.saturating_mul(pair_mult).saturating_add(1);
+    let worst = inputs.saturating_mul(pair_mult);
     lim.begin_level(Some(worst as u128));
     let first_reserve = if lim.bounded_growth() {
         inputs
@@ -244,8 +222,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             }
             (None, _) => old.described_read_next(&mut cursor, i, &mut buf),
         };
-        let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
-        if inputs.is_empty() && !carries_cube {
+        if inputs.is_empty() {
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
             tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];

@@ -104,8 +104,8 @@ impl Tdd {
     ///
     /// The dual of [`and_clause`](Self::and_clause), and the way to add one
     /// model to a diagram: a cube naming every variable of the vtree is a
-    /// single assignment, and disjoining it rebuilds the levels on that
-    /// assignment's path instead of complementing the operand.
+    /// single assignment. Each node is split by the cube's one node at its
+    /// level, so a single assignment adds at most one node a level.
     ///
     /// Accepts arrays, slices and vectors of signed, one-based integers or typed
     /// [`Literal`] values. Collect an iterator into a vector before passing it.
@@ -116,10 +116,8 @@ impl Tdd {
     /// true. The result counts correctly but may need
     /// [`minimize`](Self::minimize) to establish canonical form.
     ///
-    /// A cube that leaves a variable free is built and disjoined by
-    /// [`or`](crate::or) instead: over a free subtree the cube is that
-    /// subtree's constant-true function, which a diagram whose nodes are
-    /// disjoint but not exhaustive does not hold as a node.
+    /// Over a subtree the cube leaves free it is true, and the result holds
+    /// the part of that subtree's assignments no node of the operand covers.
     ///
     /// # Errors
     ///
