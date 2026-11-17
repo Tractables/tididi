@@ -11,7 +11,7 @@
 //! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
-use crate::diagram::{PairsIter, ChildDecoder, Tdd, TddLevel};
+use crate::diagram::{PairsIter, ChildDecoder, Tdd, TddLevel, LEAF_WIDTH};
 #[cfg(any(test, feature = "testing"))]
 use crate::diagram::{EncodedChildRef, ChildRef, ValueRef};
 use crate::Engine;
@@ -66,7 +66,7 @@ pub(crate) trait LevelFold {
         *col = Self::Col::default();
     }
 
-    /// Store the [`LEAF_WIDTH`](crate::diagram::LEAF_WIDTH) slots of vtree leaf `leaf`, for variable
+    /// Store the [`LEAF_WIDTH`] slots of vtree leaf `leaf`, for variable
     /// `var`, slot `i` holding `LeafLabel::from_idx(i)`'s value.
     fn seed_leaf(&self, eng: &Engine, col: &mut Self::Col, leaf: VtreeIdx, var: VarId) -> Result<(), OperationError>;
 
@@ -154,9 +154,11 @@ pub(crate) trait PairAlgebra: LevelFold {
 /// Compute one level's column: seed it if it is a leaf, copy it if it is
 /// marginal, fold it otherwise.
 ///
-/// The children's columns must already be complete — the walk order is the
-/// caller's to keep. Integer folds charge node slots in bounded batches; other
-/// algebras charge pair visits at node boundaries.
+/// The column is allocated at the level's reference slot count unless it
+/// already has that width, so a column kept from an earlier pass is reused
+/// and overwritten. The children's columns must already be complete — the
+/// walk order is the caller's to keep. Integer folds charge node slots in
+/// bounded batches; other algebras charge pair visits at node boundaries.
 pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     f: &F,
     eng: &Engine,
@@ -168,10 +170,15 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     let ti = t.idx();
     gate.poll(1)?;
     let (l, r) = match *tdd.vtree.node(t) {
-        VtreeNode::Leaf { var, .. } => return f.seed_leaf(eng, &mut cols[ti], t, var),
+        VtreeNode::Leaf { var, .. } => {
+            fit(f, eng, &mut cols[ti], LEAF_WIDTH)?;
+            return f.seed_leaf(eng, &mut cols[ti], t, var);
+        }
         VtreeNode::Internal { left, right, .. } => (left.idx(), right.idx()),
     };
     let level = &tdd.levels[ti];
+    let width = level.slot_count();
+    fit(f, eng, &mut cols[ti], width)?;
     if level.is_marginal() {
         return f.marginal_column(eng, tdd, t, &mut cols[ti]);
     }
@@ -180,7 +187,8 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     let [col, l, r] = cols.get_disjoint_mut([ti, l, r]).expect("a vtree node is neither of its children");
     let left = Side { col: &*l, view: left_view };
     let right = Side { col: &*r, view: right_view };
-    let n = level.nodes().len();
+    // A structural level has a slot a node.
+    let n = width;
     let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { n };
     let mut start = 0;
     while start < n {
@@ -210,15 +218,21 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     Ok(())
 }
 
+#[inline(always)]
+fn fit<F: LevelFold>(f: &F, eng: &Engine, col: &mut F::Col, width: usize) -> Result<(), OperationError> {
+    if col.width() != width {
+        *col = f.alloc(eng, width)?;
+    }
+    Ok(())
+}
+
 /// The whole walk: every level of the diagram, children before parents.
 ///
 /// Under [`Retention::Frontier`] a child's column is released as soon as
 /// its parent's is complete; the output level is exempt, being the one column
 /// read afterwards. See [`walk_bottom_up`] for the order and the frontier.
 ///
-/// Before a level is written, its column is allocated at the level's
-/// reference slot count unless it already has that width, so a column kept
-/// from an earlier pass is reused and overwritten. `gate` is the caller's
+/// Columns are allocated as [`fold_level`] says. `gate` is the caller's
 /// stop-axis gate: the walk is cut at amortized node boundaries and the caller
 /// gets the error.
 ///
@@ -289,13 +303,7 @@ pub(crate) fn fold_held<F: LevelFold, const PREPARED: bool>(
         root,
         cols,
         |_, i| held.get(i).copied().unwrap_or(false),
-        |cols, t| {
-            let width = tdd.reference_slot_count(t);
-            if cols[t.idx()].width() != width {
-                cols[t.idx()] = f.alloc(eng, width)?;
-            }
-            fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate)
-        },
+        |cols, t| fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate),
         |cols, i| f.release(eng, &mut cols[i]),
         retain.frontier(keep),
     )
