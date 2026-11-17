@@ -31,6 +31,7 @@ fn vars_under(vtree: &Vtree, node: VtreeIdx) -> BTreeSet<u32> {
     let mut out = BTreeSet::new();
     fn rec(vtree: &Vtree, node: VtreeIdx, out: &mut BTreeSet<u32>) {
         match *vtree.node(node) {
+            VtreeNode::Region { .. } => unreachable!("no region here"),
             VtreeNode::Leaf { var, .. } => {
                 out.insert(var.0);
             }

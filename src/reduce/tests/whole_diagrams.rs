@@ -281,7 +281,7 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
     for level_idx in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(level_idx as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
+            _ => continue,
         };
         for (_, pairs) in tdd.levels()[level_idx].internal_inputs_iter() {
             for pair in pairs {

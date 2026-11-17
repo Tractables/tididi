@@ -116,8 +116,8 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
     if Arc::ptr_eq(&f.vtree, into) {
         return Ok(Cow::Borrowed(f));
     }
-    match Vtree::leaf_sets(&f.vtree, into) {
-        Some(LeafSets::Equal | LeafSets::AInB) if into.num_nodes() != 0 => {}
+    match Vtree::leaf_sets(&f.vtree, into)? {
+        LeafSets::Equal | LeafSets::AInB if into.num_nodes() != 0 => {}
         _ => return Err(OperationError::VtreeMismatch),
     }
     check_movable(f, into)?;
@@ -167,7 +167,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
     let Some((first, rest)) = operands.split_first() else { return Ok(operands) };
     let mut into = Arc::clone(&first.vtree);
     for g in rest {
-        match Vtree::leaf_sets(&into, &g.vtree).ok_or(OperationError::VtreeMismatch)? {
+        match Vtree::leaf_sets(&into, &g.vtree)? {
             LeafSets::Equal | LeafSets::BInA => {}
             LeafSets::AInB => into = Arc::clone(&g.vtree),
             LeafSets::Union(union) => into = union,

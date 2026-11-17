@@ -214,6 +214,7 @@ fn a_crossed_move_changes_the_order_of_the_leaves() {
         while let Some(n) = stack.pop() {
             match *vt.node(n) {
                 crate::vtree::VtreeNode::Leaf { var, .. } => out.push(var.0),
+                crate::vtree::VtreeNode::Region { .. } => unreachable!("no region here"),
                 crate::vtree::VtreeNode::Internal { left, right, .. } => {
                     stack.push(right);
                     stack.push(left);

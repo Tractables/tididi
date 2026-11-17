@@ -44,6 +44,7 @@ pub use home::Home;
 pub(crate) use home::LeafSets;
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
+pub(crate) use node::region_unsupported;
 pub use topo::RotationKind;
 
 

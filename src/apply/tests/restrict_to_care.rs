@@ -598,6 +598,7 @@ fn holds(t: &Tdd, v: crate::vtree::VtreeIdx, l: crate::diagram::NodeIdx, asn: &[
         return false;
     }
     match *t.vtree.node(v) {
+        VtreeNode::Region { .. } => unreachable!("no region here"),
         VtreeNode::Leaf { var, .. } => {
             l == ONE_LEAF_IDX || (l == POS_LEAF_IDX && asn[var.idx()]) || (l == NEG_LEAF_IDX && !asn[var.idx()])
         }

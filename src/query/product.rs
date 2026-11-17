@@ -414,6 +414,7 @@ fn shape<'a>(lim: &'a Limits, tdd: &Tdd) -> Result<Shape<'a>, OperationError> {
         pure[t.idx()] = !marginal[t.idx()]
             && match vtree.node(t) {
                 VtreeNode::Leaf { .. } => true,
+                VtreeNode::Region { .. } => false,
                 VtreeNode::Internal { left, right, .. } => pure[left.idx()] && pure[right.idx()],
             };
     }

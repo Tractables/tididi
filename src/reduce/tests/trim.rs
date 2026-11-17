@@ -248,6 +248,7 @@ fn built_diagram(home: &Arc<Vtree>, dropped: &[bool], rng: &mut Lcg) -> Tdd {
     let mut refs: Vec<Vec<NodeIdx>> = vec![Vec::new(); home.num_nodes()];
     for t in home.bottomup() {
         let (l, r) = match *home.node(t) {
+            crate::vtree::VtreeNode::Region { .. } => unreachable!("a home has no region"),
             crate::vtree::VtreeNode::Leaf { .. } => {
                 refs[t.idx()] = if dropped[t.idx()] { vec![ONE_LEAF_IDX] } else { vec![POS_LEAF_IDX, NEG_LEAF_IDX] };
                 continue;

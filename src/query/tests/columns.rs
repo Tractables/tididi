@@ -204,6 +204,7 @@ fn malformed_columns_are_refused() {
 fn vars_below(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
     match *vtree.node(t) {
         VtreeNode::Leaf { var, .. } => vec![var],
+        VtreeNode::Region { .. } => unreachable!("no region here"),
         VtreeNode::Internal { left, right, .. } => {
             let mut vars = vars_below(vtree, left);
             vars.extend(vars_below(vtree, right));

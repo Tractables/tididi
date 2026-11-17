@@ -332,6 +332,7 @@ fn assert_projection_wellformed(proj: &Vtree, num_local: u32) {
     for (i, node) in proj.nodes.iter().enumerate() {
         match node {
             VtreeNode::Leaf { .. } => assert!(i < n_leaves, "leaf at {i}, num_leaves={n_leaves}"),
+            VtreeNode::Region { .. } => unreachable!("a root vtree has no region"),
             VtreeNode::Internal { left, right, .. } => {
                 assert!(i >= n_leaves, "internal at {i}, num_leaves={n_leaves}");
                 assert_ne!(left, right, "internal node {i} has a duplicated child");
@@ -839,6 +840,7 @@ fn graft_mapping_preserves_rotated_nodes_and_shared_context() {
     for (i, node) in source.nodes.iter().enumerate() {
         match *node {
             VtreeNode::Leaf { var, .. } => assert_eq!(grafted.leaf_var(map[i]), VarId(var.0 + 2)),
+            VtreeNode::Region { .. } => unreachable!("a root vtree has no region"),
             VtreeNode::Internal { left, right, .. } => {
                 assert_eq!(grafted.children(map[i]), (map[left.idx()], map[right.idx()]));
             }

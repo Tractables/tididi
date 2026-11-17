@@ -375,6 +375,7 @@ impl<'a> KeyLayout<'a> {
                     stack.push(right);
                     stack.push(left);
                 }
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("an ordered query"),
                 VtreeNode::Leaf { var, .. } => {
                     if role[var.0 as usize].is_none() {
                         continue;
@@ -396,6 +397,7 @@ impl<'a> KeyLayout<'a> {
         for t in vtree.bottomup() {
             held[t.idx()] = match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => u32::from(is_key[var.0 as usize]),
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("an ordered query"),
                 VtreeNode::Internal { left, right, .. } => held[left.idx()] + held[right.idx()],
             };
         }
@@ -519,6 +521,7 @@ impl<'a> Streams<'a> {
     fn least(&mut self, t: VtreeIdx, n: u32) -> u128 {
         let vtree = self.layout.vtree;
         let (left, right) = match *vtree.node(t) {
+            VtreeNode::Region { .. } => crate::vtree::region_unsupported("an ordered query"),
             VtreeNode::Leaf { var, .. } => {
                 let label = LeafLabel::from_idx(n as usize);
                 return self
@@ -636,6 +639,7 @@ impl<'a> Streams<'a> {
     ) -> Result<(), OperationError> {
         let vtree = self.layout.vtree;
         let (left, right) = match *vtree.node(t) {
+            VtreeNode::Region { .. } => crate::vtree::region_unsupported("an ordered query"),
             VtreeNode::Leaf { var, .. } => {
                 if !stream.open {
                     stream.open = true;
@@ -787,6 +791,7 @@ impl Walk<'_> {
             }
             let Cell { t, n, next } = self.cells[list as usize];
             match *vtree.node(t) {
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("an ordered query"),
                 VtreeNode::Leaf { var, .. } => {
                     let label = LeafLabel::from_idx(n as usize);
                     match (self.role[var.0 as usize], label) {

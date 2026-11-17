@@ -19,6 +19,7 @@ pub(super) fn mirrored_shape(
         copy_of[t.idx()] = VtreeIdx(nodes.len() as u32);
         nodes.push(match *vtree.node(t) {
             VtreeNode::Leaf { var, .. } => VtreeNode::Leaf { var: rename(var), parent: None },
+            VtreeNode::Region { .. } => unreachable!("no region here"),
             VtreeNode::Internal { left, right, .. } => {
                 let (left, right) = match swap(t) {
                     true => (right, left),

@@ -223,6 +223,7 @@ impl Mover<'_, '_> {
         for t in self.target.bottomup() {
             tsize[t.idx()] = match self.target.node(t) {
                 VtreeNode::Leaf { .. } => 1,
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Internal { left, right, .. } => tsize[left.idx()] + tsize[right.idx()],
             };
         }
@@ -233,6 +234,7 @@ impl Mover<'_, '_> {
                     tl[t.idx()] = self.target.leaf_of(*var).expect("same variables");
                     (u32::from(self.target.in_subtree(tl[t.idx()], target)), 1)
                 }
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
                 VtreeNode::Internal { left, right, .. } => {
                     tl[t.idx()] = self.target.lca(tl[left.idx()], tl[right.idx()]);
                     let (l, r) = (counts[left.idx()], counts[right.idx()]);
@@ -410,6 +412,7 @@ fn first_leaf(vtree: &Vtree, mut t: VtreeIdx) -> VarId {
     loop {
         match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => return *var,
+            VtreeNode::Region { .. } => crate::vtree::region_unsupported("restructuring"),
             VtreeNode::Internal { left, .. } => t = *left,
         }
     }

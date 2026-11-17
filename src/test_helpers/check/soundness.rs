@@ -47,7 +47,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     for vi in 0..n {
         let (left, right) = match *vtree.node(VtreeIdx(vi as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
+            _ => continue,
         };
         let level = &tdd.levels[vi];
         if level.slot_count() == 0 { continue; }

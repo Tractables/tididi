@@ -49,6 +49,7 @@ impl Vtree {
                         new_of[t.idx()] = Some(push_leaf(&mut nodes, local));
                     }
                 }
+                VtreeNode::Region { .. } => super::region_unsupported("Vtree::project_to_vars"),
                 VtreeNode::Internal { left, right, .. } => {
                     new_of[t.idx()] = match (new_of[left.idx()], new_of[right.idx()]) {
                         (Some(l), Some(r)) => Some(push_internal(&mut nodes, l, r)),

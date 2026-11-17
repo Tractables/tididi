@@ -152,6 +152,7 @@ impl Engine {
         while let Some(id) = pending.pop() {
             gate.poll(1)?;
             match *f.vtree().node(id.vtree) {
+                VtreeNode::Region { .. } => crate::vtree::region_unsupported("a Boolean query"),
                 VtreeNode::Leaf { var, .. } => {
                     lim.try_push(&mut result, Literal::new(var, id.local == POS_LEAF_IDX))?
                 }
@@ -196,6 +197,7 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
     for t in f.vtree().bottomup() {
         gate.poll(1)?;
         match *f.vtree().node(t) {
+            VtreeNode::Region { .. } => crate::vtree::region_unsupported("a Boolean query"),
             VtreeNode::Leaf { .. } => {
                 for side in &mut keys {
                     lim.reserve_exact(&mut side[t.idx()], 3)?;

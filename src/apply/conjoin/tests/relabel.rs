@@ -19,6 +19,7 @@ pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
     while let Some(n) = stack.pop() {
         match vtree.node(n) {
             VtreeNode::Leaf { var, .. } => vars.push(var.0),
+            VtreeNode::Region { .. } => unreachable!("no region here"),
             VtreeNode::Internal { left, right, .. } => stack.extend([*left, *right]),
         }
     }
