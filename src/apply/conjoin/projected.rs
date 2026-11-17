@@ -12,7 +12,7 @@ use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty,
 use crate::limits::OperationError;
 use crate::apply::extend;
 use crate::build::constant_without_leaf;
-use crate::vtree::{LeafSets, Vtree, VtreeIdx};
+use crate::vtree::{LeafSets, SameLayout, Vtree, VtreeIdx};
 use crate::Engine;
 
 /// [`Engine::and`] of operands on different vtree allocations.
@@ -21,8 +21,8 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
         return conjoin_constant(eng, f, g);
     }
     let into = match Vtree::leaf_sets(f.vtree(), g.vtree()).ok_or(OperationError::VtreeMismatch)? {
-        LeafSets::Equal => {
-            reseat_either(eng, &mut f, &mut g)?;
+        LeafSets::Equal(same) => {
+            reseat_either(eng, &mut f, &mut g, &same)?;
             prepare_owned_weights(&mut f, &mut g)?;
             return conjoin_cow(eng, f, g, VtreeMask::default());
         }
@@ -57,18 +57,16 @@ fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Td
 
 /// Put one operand on the other's vtree, of the same layout: an owned one is
 /// reseated, else a copy of `g` is.
-fn reseat_either<'a>(eng: &Engine, f: &mut Cow<'a, Tdd>, g: &mut Cow<'a, Tdd>) -> Result<(), OperationError> {
-    let (from, onto) = match (matches!(f, Cow::Owned(_)), matches!(g, Cow::Owned(_))) {
-        (_, true) => (g, Arc::clone(f.vtree())),
-        (true, false) => (f, Arc::clone(g.vtree())),
+fn reseat_either<'a>(eng: &Engine, f: &mut Cow<'a, Tdd>, g: &mut Cow<'a, Tdd>, same: &SameLayout) -> Result<(), OperationError> {
+    let from = match (matches!(f, Cow::Owned(_)), matches!(g, Cow::Owned(_))) {
+        (_, true) => g,
+        (true, false) => f,
         (false, false) => {
             *g = Cow::Owned(g.try_clone_on(eng)?);
-            (g, Arc::clone(f.vtree()))
+            g
         }
     };
-    // Safety: equal leaf sets of one home give the same layout, node for
-    // node, with the same variable ids.
-    unsafe { from.to_mut().reseat_vtree_unchecked(&onto) };
+    from.to_mut().reseat(same);
     Ok(())
 }
 

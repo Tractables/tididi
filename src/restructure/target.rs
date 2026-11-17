@@ -327,6 +327,7 @@ impl Mover<'_, '_> {
         if !probe_moves(self.eng, self.tdd, &moves, &mut rule, &mut self.scratch, self.bound)? {
             return Err(RestructureError::Bound { pivot: v });
         }
+        Arc::make_mut(&mut self.tdd.vtree).reshaped();
         self.stats.rotations += 1;
         self.pairs = (self.pairs as i64 + rule.delta) as usize;
         self.stats.peak_pairs = self.stats.peak_pairs.max(self.pairs);

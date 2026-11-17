@@ -126,9 +126,10 @@ impl PendingTopo {
         self.commit_in_probe(vtree)
     }
 
-    /// [`commit`](Self::commit) inside a descent, which calls
-    /// [`Vtree::reshaped`] once when it keeps the tree. The probe loop pays
-    /// for any call that may write the vtree.
+    /// [`commit`](Self::commit) without [`Vtree::reshaped`], which the
+    /// caller owes once it keeps the tree, unless it seats the diagram on a
+    /// lifted home instead. The probe loop pays for any call that may write
+    /// the vtree.
     pub(crate) fn commit_in_probe(mut self, vtree: &mut Vtree) -> RotationInfo {
         vtree.fixup_topo_after_rotate(&self.info, self.kind);
         self.settled = true;

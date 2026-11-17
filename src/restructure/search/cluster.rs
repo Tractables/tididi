@@ -211,7 +211,7 @@ impl Engine {
         // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
         // shared Arc until the caller reseats them — sound
         // because rotations only change indices inside subtree(root).
-        let mut search = super::SearchTree::new(tdd);
+        let mut search = super::SearchTree::new(eng, tdd);
 
         let mut scratch = eng.scratch.restructure.checkout(eng);
         let mut rule = ClusterRule { bound_mult };

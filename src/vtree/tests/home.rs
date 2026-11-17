@@ -165,7 +165,7 @@ fn equal_leaf_sets_give_equal_layouts() {
             assert_eq!(other.nodes, direct.nodes);
             assert!(Arc::ptr_eq(direct.home().unwrap().vtree(), tree));
             assert_eq!(other.validate(), Ok(()));
-            assert!(matches!(Vtree::leaf_sets(&other, &own), Some(LeafSets::AInB | LeafSets::Equal)));
+            assert!(matches!(Vtree::leaf_sets(&other, &own), Some(LeafSets::AInB | LeafSets::Equal(_))));
         }
     });
 }
@@ -178,7 +178,7 @@ fn leaf_sets_compare_and_unite() {
         let (in_a, in_b) = (|v: &VarId| vars.contains(v), |v: &VarId| other.contains(v));
         let got = Vtree::leaf_sets(&a, &b).unwrap();
         match got {
-            LeafSets::Equal => assert_eq!(a.nodes, b.nodes),
+            LeafSets::Equal(_) => assert_eq!(a.nodes, b.nodes),
             LeafSets::AInB => assert!(vars.iter().all(in_b) && !other.iter().all(in_a)),
             LeafSets::BInA => assert!(other.iter().all(in_a) && !vars.iter().all(in_b)),
             LeafSets::Union(ref union) => {
@@ -188,12 +188,12 @@ fn leaf_sets_compare_and_unite() {
                 assert_eq!(union.validate(), Ok(()));
             }
         }
-        if matches!(got, LeafSets::Equal) {
+        if matches!(got, LeafSets::Equal(_)) {
             assert_eq!(vars.len(), other.len());
         }
         assert!(matches!(Vtree::leaf_sets(&a, tree), Some(LeafSets::AInB)));
         assert!(matches!(Vtree::leaf_sets(tree, &b), Some(LeafSets::BInA)));
-        assert!(matches!(Vtree::leaf_sets(tree, tree), Some(LeafSets::Equal)));
+        assert!(matches!(Vtree::leaf_sets(tree, tree), Some(LeafSets::Equal(_))));
         let stranger = Arc::new((**tree).clone());
         assert!(Vtree::leaf_sets(&a, &stranger).is_none());
         assert!(Vtree::leaf_sets(&stranger, tree).is_none());
