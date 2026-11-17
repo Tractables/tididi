@@ -8,8 +8,8 @@
 //! Besides the joins on both children or on one ([`Walk::join_both`],
 //! [`Walk::join_one`]), a level where `care` holds one node of few pairs is
 //! joined pair by pair in storage order ([`Walk::join_spine`]), and one
-//! whose `f` nodes have one live product each at its children by looking
-//! each `f` pair's partners up ([`Walk::join_paired`], [`Walk::join_keyed`]).
+//! whose `f` nodes have one live product each at both children by looking
+//! each `f` pair's partners up ([`Walk::join_paired`]).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -626,27 +626,19 @@ impl<'a> Walk<'a> {
             let found = self.join_spine(u, lc, rc)?;
             return Ok(Products::Listed(listed(eng, nodes, &found)?));
         }
-        if !sides.contains(&Side::Lazy) {
-            let one = [0, 1].map(|k| sides[k] == Side::Listed && self.one_product_each(kids[k]));
-            let found = if one[0] && one[1] {
-                #[cfg(test)]
-                crate::test_helpers::note_restrict_path(3);
-                Some(self.join_paired(u, kids)?)
-            } else if let Some(k) = (0..2).find(|&k| one[k]) {
-                self.join_keyed(u, kids, k, sides[1 - k], cap)?
+        let one = |k: usize| sides[k] == Side::Listed && self.one_product_each(kids[k]);
+        if one(0) && one(1) {
+            #[cfg(test)]
+            crate::test_helpers::note_restrict_path(3);
+            let found = self.join_paired(u, kids)?;
+            // Found in `f`'s node and pair order: ascending already where
+            // `care` holds one node here.
+            let found = if care.levels[u.idx()].nodes().len() == 1 {
+                found
             } else {
-                None
+                sort_found(eng, nodes, found)?
             };
-            if let Some(found) = found {
-                // Found in `f`'s node and pair order: ascending already where
-                // `care` holds one node here.
-                let found = if care.levels[u.idx()].nodes().len() == 1 {
-                    found
-                } else {
-                    sort_found(eng, nodes, found)?
-                };
-                return Ok(Products::Listed(listed(eng, nodes, &found)?));
-            }
+            return Ok(Products::Listed(listed(eng, nodes, &found)?));
         }
         let joinable = |k: Side| matches!(k, Side::Listed | Side::Leaf);
         let found = if joinable(sides[0]) && joinable(sides[1]) {
@@ -910,76 +902,6 @@ impl<'a> Walk<'a> {
         self.restore(kids[0], l0);
         self.restore(kids[1], l1);
         Ok(found)
-    }
-
-    /// Join level `u`'s pairs where every `f` node at listed child `kids[k]`
-    /// has at most one live product and the other child is no such listing:
-    /// an `f` pair's child at `kids[k]` names the one `care` node it can meet
-    /// there, and `care`'s pairs with that child are its only partners, each
-    /// tested on the other child as [`Self::join_one`] tests it. `f`'s pairs
-    /// are read in storage order, once to count the partners and once to
-    /// test them; `None`, and nothing tested, when the partners exceed `cap`.
-    fn join_keyed(
-        &mut self,
-        u: VtreeIdx,
-        kids: [VtreeIdx; 2],
-        k: usize,
-        other_kind: Side,
-        cap: u64,
-    ) -> Result<Option<Found>, Halt> {
-        let (eng, f, care) = (self.eng, self.f, self.care);
-        let (ck, other) = (kids[k], kids[1 - k]);
-        let live = self.take(ck);
-        let cg = groups(eng, care, u, k, ck)?;
-        let level = &f.levels[u.idx()];
-        let partners = |p: ChildPair| {
-            let x = node_of(p, k);
-            if x == ZERO {
-                None
-            } else {
-                live.of(x.0).first().map(|&(_, y)| y)
-            }
-        };
-        let mut est = 0u64;
-        for a in 0..level.nodes().len() {
-            for p in level.pairs_iter_of_idx(a) {
-                if let Some(y) = partners(p) {
-                    est += cg.of(y).len() as u64;
-                }
-            }
-        }
-        if est > cap {
-            self.restore(ck, live);
-            return Ok(None);
-        }
-        #[cfg(test)]
-        crate::test_helpers::note_restrict_path(4);
-        let mut found = Vec::new();
-        for a in 0..level.nodes().len() {
-            let mut probes = 0u64;
-            for (i, p) in level.pairs_iter_of_idx(a).enumerate() {
-                probes += 1;
-                let Some(y) = partners(p) else { continue };
-                let cands = cg.of(y);
-                if cands.is_empty() {
-                    continue;
-                }
-                let fo = decode(f, other, side_of(p, 1 - k));
-                if other_kind == Side::CareMarginal && !self.live(other, fo, None)? {
-                    continue;
-                }
-                for &(b, j, cside) in cands {
-                    probes += 1;
-                    if self.other_live(other, other_kind, fo, cside)? {
-                        eng.limits()
-                            .try_push(&mut found, (a as u32, b, i as u32, j))?;
-                    }
-                }
-            }
-            self.spend_many(probes)?;
-        }
-        self.restore(ck, live);
-        Ok(Some(found))
     }
 
     /// Join level `u`'s pairs on the live products of child `kids[s]`, listed

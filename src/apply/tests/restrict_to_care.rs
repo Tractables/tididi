@@ -990,7 +990,7 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
 }
 
 /// The walk's two ways to its marks and its joins of a spine and by the
-/// products of both children or of one, each taken by the cases above: a
+/// products of both children, each taken by the cases above: a
 /// care rooted at or under the operand with one node a level down to what
 /// it reads is marked off the listings without the descent from the root,
 /// any other by the descent, and every way keeps exactly the pairs models
@@ -1003,13 +1003,12 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     care_on_one_subtree_keeps_exactly_the_pairs_models_use();
     care_rooted_lower_keeps_exactly_the_pairs_models_use();
     let after = restrict_paths();
-    let [listings, descents, spines, paired, keyed] = [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
-    eprintln!("restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired, {keyed} keyed");
+    let [listings, descents, spines, paired] = [0, 1, 2, 3].map(|k| after[k] - before[k]);
+    eprintln!("restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired");
     assert!(listings >= 100, "too few walks marked off the listings: {listings}");
     assert!(descents >= 100, "too few walks marked by the descent: {descents}");
     assert!(spines >= 100, "too few levels joined as a spine: {spines}");
     assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
-    assert!(keyed >= 100, "too few levels joined by one child's products: {keyed}");
 }
 
 /// Each reservation of a restriction refused in turn, on implicit levels,
