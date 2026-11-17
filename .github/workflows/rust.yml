@@ -104,7 +104,7 @@ jobs:
       # The last commit since the newest tag that broke the public API on
       # purpose, so the check keeps catching breaks after it; empty compares
       # with the tag. Each release commit empties it.
-      BREAKING_BASE: 5c26e0e718b5d59cb7f0301f64df100ea3ba3402
+      BREAKING_BASE: 34b9c2520ee84ee70b1ed25c0f25482178546b68
     steps:
     - uses: actions/checkout@v4
       with:
