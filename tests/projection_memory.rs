@@ -52,12 +52,13 @@ fn clause_on_a_projection_of_a_million_leaves() {
     COUNTING.store(true, Ordering::Relaxed);
     let own = Vtree::projection(&home, vars).unwrap();
     let f = Tdd::clause(&own, vars.map(Literal::pos)).unwrap();
-    let count = f.model_count().unwrap();
     COUNTING.store(false, Ordering::Relaxed);
+    // The count is over the home, an integer of about N bits.
+    let count = f.model_count().unwrap();
 
     assert_eq!(f.vtree().num_nodes(), 2 * k - 1);
     assert_eq!(f.vtree().num_vars(), N);
-    assert_eq!(count, ((1u32 << k) - 1).into());
+    assert_eq!(count, num_bigint::BigUint::from((1u32 << k) - 1) << (N as usize - k));
     let largest = LARGEST.load(Ordering::Relaxed);
     assert!(largest < N as usize / 16, "an allocation of {largest} bytes");
 }

@@ -19,8 +19,10 @@ mod rotation;
 pub(crate) mod signature;
 mod soundness;
 mod structure;
+mod trimmed;
 
 pub use canonicity::check_canonicity;
+pub use trimmed::check_trimmed;
 pub use implicit::{check_implicit_levels, check_left_pairs_taken};
 pub use rotation::assert_rotation_locality;
 pub use soundness::check_determinism;

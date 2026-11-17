@@ -14,12 +14,18 @@ pub(crate) mod models;
 ///
 /// The output points at the `ZERO` sentinel, so no node is stored.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    if vtree.num_nodes() == 0 {
+        return constant_without_leaf(vtree, false);
+    }
     seat_canonical(eng, vtree, diagram::take_levels(eng, vtree.num_nodes()), TddNodeId { vtree: vtree.root(), local: ZERO })
 }
 
 /// The constant-true diagram over `vtree`, built outside the limits: the empty
 /// cube, one node per internal level.
 pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    if vtree.num_nodes() == 0 {
+        return constant_without_leaf(vtree, true);
+    }
     let levels = cube_levels(eng, vtree, |_| ONE_LEAF_IDX, false).expect("an untracked build cannot be refused");
     seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local: ONE_LEAF_IDX })
 }
@@ -27,12 +33,29 @@ pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
 /// A constant over `vtree`, built under the engine's limits.
 pub(crate) fn constant_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) -> Result<Tdd, OperationError> {
     eng.limits().check_stop()?;
+    if vtree.num_nodes() == 0 {
+        return Ok(constant_without_leaf(vtree, value));
+    }
     let (levels, local) = if value {
         (cube_levels(eng, vtree, |_| ONE_LEAF_IDX, true)?, ONE_LEAF_IDX)
     } else {
         (diagram::try_take_levels(eng, vtree.num_nodes())?, ZERO)
     };
     Ok(seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local }))
+}
+
+/// A constant on a vtree with no node ([`Vtree::empty_projection`]): no
+/// level, and the output a sentinel.
+pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
+    debug_assert_eq!(vtree.num_nodes(), 0);
+    let local = if value { TRUE } else { ZERO };
+    Tdd {
+        vtree: Arc::clone(vtree),
+        levels: Vec::new().into(),
+        output: TddNodeId { vtree: vtree.root(), local },
+        dirty: Default::default(),
+        weights: None,
+    }
 }
 
 /// A constant with the operand's vtree and weight configuration, without its

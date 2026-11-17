@@ -177,6 +177,16 @@ pub trait EvalAlgebra {
     fn count(&self, _n: &BigUint) -> Option<Self::Value> {
         None
     }
+
+    /// The value of every assignment to `vars`, variables of the home vtree a
+    /// diagram on a projection does not have: the product of their `One`
+    /// leaves, `None` for no variable. An algebra with a cheaper product may
+    /// override it; the result must equal the default's.
+    fn free(&self, vars: &[VarId]) -> Option<Self::Value> {
+        let (&first, rest) = vars.split_first()?;
+        let one = |var| self.leaf(var, LeafLabel::One);
+        Some(rest.iter().fold(one(first), |acc, &var| self.mul(&acc, &one(var))))
+    }
 }
 
 /// Evaluate a diagram into storage the algebra owns, one column per level.
