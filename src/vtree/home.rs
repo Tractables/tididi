@@ -10,6 +10,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use super::build::in_order_tree;
 use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 use crate::OperationError;
@@ -26,11 +27,23 @@ pub(crate) struct HomeIndex {
     pub(super) slot: Vec<u32>,
     pub(super) leaf_at: Vec<VtreeIdx>,
     pub(super) gap_node: Vec<VtreeIdx>,
-    pub(super) gap_depth: Vec<u32>,
-    /// A segment tree over the gaps, leaves at `gaps..2 * gaps`; each entry
-    /// is the shallowest gap of its range.
-    shallowest: Vec<u32>,
+    /// By gap: `depth << 32 | gap`, so that the least word of a range of gaps
+    /// is its shallowest gap's.
+    gap_word: Vec<u64>,
+    /// By gap `g`, bit `t`: whether gap `s + t` of `g`'s block, which starts
+    /// at `s`, is at or before `g` and has a smaller word than every gap after
+    /// it up to `g`. The least word of gaps `lo..=g` within a block is so at
+    /// the lowest bit of `in_block[g]` that is not before `lo`.
+    in_block: Vec<u32>,
+    /// Row `j`, from `j * blocks`: the least word of blocks `i..i + 2^j` of
+    /// [`GAP_BLOCK`] gaps, for each block `i` where they fit.
+    block_least: Vec<u64>,
+    blocks: usize,
 }
+
+/// The gaps per block of [`HomeIndex`]'s range minimum, the bits of an
+/// [`HomeIndex::in_block`] mask.
+const GAP_BLOCK: usize = 32;
 
 impl HomeIndex {
     fn new(home: &Vtree) -> Self {
@@ -38,7 +51,7 @@ impl HomeIndex {
         let gaps = n.saturating_sub(1);
         let mut slot = vec![0; home.num_nodes()];
         let (mut leaf_at, mut gap_node, mut gap_depth) =
-            (Vec::with_capacity(n), Vec::with_capacity(gaps), Vec::with_capacity(gaps));
+            (Vec::with_capacity(n), Vec::with_capacity(gaps), Vec::<u32>::with_capacity(gaps));
         let mut stack = vec![(home.root(), 0u32, false)];
         while let Some((t, depth, left_done)) = stack.pop() {
             match *home.node(t) {
@@ -58,44 +71,72 @@ impl HomeIndex {
                 }
             }
         }
-        let mut shallowest = vec![0; 2 * gaps];
-        for g in 0..gaps {
-            shallowest[gaps + g] = g as u32;
+        let gap_word: Vec<u64> = gap_depth.iter().enumerate().map(|(g, &depth)| u64::from(depth) << 32 | g as u64).collect();
+        let blocks = gaps.div_ceil(GAP_BLOCK);
+        let mut block_least: Vec<u64> =
+            gap_word.chunks(GAP_BLOCK).map(|chunk| chunk.iter().copied().fold(u64::MAX, u64::min)).collect();
+        let mut width = 1;
+        while 2 * width <= blocks {
+            let row = block_least.len() - blocks;
+            for i in 0..blocks {
+                let least = match i + 2 * width <= blocks {
+                    true => block_least[row + i].min(block_least[row + i + width]),
+                    false => u64::MAX,
+                };
+                block_least.push(least);
+            }
+            width *= 2;
         }
-        for i in (1..gaps).rev() {
-            shallowest[i] = Self::shallower(&gap_depth, shallowest[2 * i], shallowest[2 * i + 1]);
+        let mut in_block = vec![0u32; gaps];
+        for (b, words) in gap_word.chunks(GAP_BLOCK).enumerate() {
+            let mut mask = 0u32;
+            for (t, &word) in words.iter().enumerate() {
+                while mask != 0 && words[mask.ilog2() as usize] > word {
+                    mask &= !(1 << mask.ilog2());
+                }
+                mask |= 1 << t;
+                in_block[b * GAP_BLOCK + t] = mask;
+            }
         }
-        HomeIndex { slot, leaf_at, gap_node, gap_depth, shallowest }
+        HomeIndex { slot, leaf_at, gap_node, gap_word, in_block, block_least, blocks }
     }
 
-    fn shallower(depth: &[u32], a: u32, b: u32) -> u32 {
-        if depth[b as usize] < depth[a as usize] { b } else { a }
+    /// The least word of gaps `lo..=last`, which lie in one block.
+    fn least_in_block(&self, lo: usize, last: usize) -> u64 {
+        let start = last - last % GAP_BLOCK;
+        let mask = self.in_block[last] & (u32::MAX << (lo - start));
+        self.gap_word[start + mask.trailing_zeros() as usize]
+    }
+
+    pub(super) fn gap_depth(&self, g: u32) -> u32 {
+        (self.gap_word[g as usize] >> 32) as u32
     }
 
     /// The gap of the lowest common ancestor of the leaves of ranks `a < b`.
     pub(super) fn ancestor_gap(&self, a: u32, b: u32) -> u32 {
         debug_assert!(a < b);
-        let gaps = self.gap_node.len();
-        let (mut lo, mut hi) = (a as usize + gaps, b as usize + gaps);
-        let mut best = a;
-        while lo < hi {
-            if lo & 1 == 1 {
-                best = Self::shallower(&self.gap_depth, best, self.shallowest[lo]);
-                lo += 1;
+        let (lo, end) = (a as usize, b as usize - 1);
+        let (first, last) = (lo / GAP_BLOCK, end / GAP_BLOCK);
+        let least = if first == last {
+            self.least_in_block(lo, end)
+        } else {
+            let ends = self.least_in_block(lo, (first + 1) * GAP_BLOCK - 1).min(self.least_in_block(last * GAP_BLOCK, end));
+            match last - first {
+                1 => ends,
+                span => {
+                    let (i, j) = (first + 1, last);
+                    let row = (span - 1).ilog2() as usize;
+                    let at = row * self.blocks;
+                    ends.min(self.block_least[at + i]).min(self.block_least[at + j - (1 << row)])
+                }
             }
-            if hi & 1 == 1 {
-                hi -= 1;
-                best = Self::shallower(&self.gap_depth, best, self.shallowest[hi]);
-            }
-            lo /= 2;
-            hi /= 2;
-        }
-        best
+        };
+        least as u32
     }
 
     fn depth_of(&self, home: &Vtree, h: VtreeIdx) -> u32 {
         match home.node(h) {
-            VtreeNode::Internal { .. } => self.gap_depth[self.slot[h.idx()] as usize],
+            VtreeNode::Internal { .. } => self.gap_depth(self.slot[h.idx()]),
             _ => u32::MAX,
         }
     }
@@ -251,6 +292,11 @@ impl HomeLink {
             return None;
         }
         Some(self.in_order[2 * i])
+    }
+
+    /// The home gap at which childless nodes `i - 1` and `i` meet.
+    fn gap_before(&self, i: usize) -> u32 {
+        self.home.index().slot[self.node_of[self.in_order[2 * i - 1].idx()].idx()]
     }
 
     /// The region whose extent holds every rank of `lo..hi`.
@@ -516,7 +562,125 @@ impl Vtree {
             (false, false) => LeafSets::Equal,
             (false, true) => LeafSets::AInB,
             (true, false) => LeafSets::BInA,
-            (true, true) => LeafSets::Union(Arc::new(Self::project_ranks(&la.home, union, Vec::new()))),
+            (true, true) => LeafSets::Union(Arc::new(Self::union_of(la, lb, union))),
+        })
+    }
+
+    /// The projection on `union`, the merged ranks of `la` and `lb`. Two
+    /// neighbours in the union that are neighbours in an operand meet where
+    /// they do there; only neighbours from different operands are looked up.
+    fn union_of(la: &HomeLink, lb: &HomeLink, union: Vec<u32>) -> Vtree {
+        let index = la.home.index();
+        let (ra, rb) = (&la.ranks, &lb.ranks);
+        let mut gaps = Vec::with_capacity(union.len() - 1);
+        let (mut i, mut j) = (0, 0);
+        let (mut last_a, mut last_b) = (false, false);
+        for (u, &r) in union.iter().enumerate() {
+            let (in_a, in_b) = (ra.get(i) == Some(&r), rb.get(j) == Some(&r));
+            if u > 0 {
+                gaps.push(match (last_a && in_a, last_b && in_b) {
+                    (true, _) => la.gap_before(i),
+                    (_, true) => lb.gap_before(j),
+                    _ => index.ancestor_gap(union[u - 1], r),
+                });
+            }
+            i += usize::from(in_a);
+            j += usize::from(in_b);
+            (last_a, last_b) = (in_a, in_b);
+        }
+        let own = Self::link_projection(&la.home, union, gaps, Vec::new());
+        debug_assert_eq!(own.validate(), Ok(()));
+        own
+    }
+
+    /// The projection of `home` on the variable leaves of this vtree for which
+    /// `keep` holds and on its regions; this vtree itself when that is all of
+    /// them. Linear in this vtree's size, with no lookup in the home but its
+    /// depths.
+    ///
+    /// # Errors
+    ///
+    /// [`VtreeError::Invalid`] if this vtree is not on `home`, or if `keep`
+    /// holds for no leaf and there is no region.
+    ///
+    /// ```
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(8));
+    /// let own = Vtree::projection(&home, [VarId(1), VarId(4), VarId(6)])?;
+    /// let sub = own.sub_projection(&home, |leaf| own.leaf_var(leaf) != VarId(4))?;
+    /// assert!(sub.same_tree(&*Vtree::projection(&home, [VarId(1), VarId(6)])?));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
+    /// ```
+    pub fn sub_projection(self: &Arc<Self>, home: &Home, mut keep: impl FnMut(VtreeIdx) -> bool) -> Result<Arc<Vtree>, VtreeError> {
+        if !self.is_on(home) {
+            return Err(VtreeError::Invalid("a sub-projection is taken on the vtree's own home".to_string()));
+        }
+        let index = home.index();
+        let (k, link) = match self.home.as_deref() {
+            Some(link) => (link.ranks.len(), Some(link)),
+            None => (index.leaf_at.len(), None),
+        };
+        let (mut ranks, mut gaps, mut regions) = (Vec::new(), Vec::new(), Vec::new());
+        let mut least = u64::MAX;
+        for i in 0..k {
+            let (rank, leaf, gap) = match link {
+                Some(link) => (link.ranks[i], link.in_order[2 * i], (i > 0).then(|| link.gap_before(i))),
+                None => (i as u32, index.leaf_at[i], (i > 0).then(|| i as u32 - 1)),
+            };
+            if let Some(g) = gap {
+                least = least.min(index.gap_word[g as usize]);
+            }
+            let region = link.and_then(|link| link.regions.get(regions.len()).filter(|region| region.at as usize == i));
+            if let Some(region) = region {
+                regions.push(Region { at: ranks.len() as u32, ..region.clone() });
+            } else if !keep(leaf) {
+                continue;
+            }
+            if !ranks.is_empty() {
+                gaps.push(least as u32);
+            }
+            ranks.push(rank);
+            least = u64::MAX;
+        }
+        if ranks.len() == k {
+            return Ok(Arc::clone(self));
+        }
+        if ranks.is_empty() {
+            return Err(VtreeError::Invalid("a projection needs at least one variable".to_string()));
+        }
+        let own = Self::link_projection(home, ranks, gaps, regions);
+        debug_assert_eq!(own.validate(), Ok(()));
+        Ok(Arc::new(own))
+    }
+
+    /// The projection of the common home of `a` and `b` on both leaf sets:
+    /// `a` or `b` itself when it holds the other's leaves (the home when
+    /// either is the home), else a new projection, the one
+    /// [`Vtree::projection`] gives on the union of their variables.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::VtreeMismatch`] when their homes differ (a root vtree
+    /// is its own home).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(8));
+    /// let a = Vtree::projection(&home, [VarId(1), VarId(5)])?;
+    /// let b = Vtree::projection(&home, [VarId(2), VarId(5)])?;
+    /// let both = Vtree::union(&a, &b).unwrap();
+    /// assert!(both.same_tree(&*Vtree::projection(&home, [VarId(1), VarId(2), VarId(5)])?));
+    /// assert!(Arc::ptr_eq(&Vtree::union(&a, &a).unwrap(), &a));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
+    /// ```
+    pub fn union(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<Arc<Vtree>, OperationError> {
+        Ok(match Self::leaf_sets(a, b)? {
+            LeafSets::Equal | LeafSets::BInA => Arc::clone(a),
+            LeafSets::AInB => Arc::clone(b),
+            LeafSets::Union(union) => union,
         })
     }
 
@@ -612,38 +776,43 @@ impl Vtree {
         own
     }
 
-    /// [`Vtree::project_ranks`] unchecked. The tree is built on local ids
-    /// `1..=k`, so that nothing is sized by the home's id space, and then
-    /// takes the home's ids.
+    /// [`Vtree::project_ranks`] unchecked.
     pub(super) fn build_projection(home: &Home, ranks: Vec<u32>, regions: Vec<Region>) -> Vtree {
+        let index = home.index();
+        let gaps = ranks.windows(2).map(|w| index.ancestor_gap(w[0], w[1])).collect();
+        Self::link_projection(home, ranks, gaps, regions)
+    }
+
+    /// The projection of `home` on `ranks`, unchecked, where `gaps[i]` is the
+    /// home gap at which `ranks[i]` and `ranks[i + 1]` meet.
+    fn link_projection(home: &Home, ranks: Vec<u32>, gaps: Vec<u32>, regions: Vec<Region>) -> Vtree {
         let (root, index) = (home.vtree(), home.index());
         let k = ranks.len();
-        let (gaps, depths): (Vec<u32>, Vec<u32>) = ranks
-            .windows(2)
-            .map(|w| {
-                let g = index.ancestor_gap(w[0], w[1]);
-                (g, index.gap_depth[g as usize])
-            })
-            .unzip();
-        let local: Vec<VarId> = (1..=k as u32).map(VarId).collect();
         let at: Vec<u32> = regions.iter().map(|region| region.at).collect();
-        let (mut own, in_order) =
-            Self::from_in_order_with_map(&local, &depths, k as u32, &at).expect("k distinct local ids and k - 1 depths");
+        let (nodes, own_root, in_order) = in_order_tree(
+            k,
+            |i| index.gap_depth(gaps[i]),
+            &at,
+            |i| root.leaf_var(index.leaf_at[ranks[i] as usize]),
+        );
         let mut node_of = vec![VtreeIdx(0); in_order.len()];
         for (i, &rank) in ranks.iter().enumerate() {
-            let (t, h) = (in_order[2 * i], index.leaf_at[rank as usize]);
-            node_of[t.idx()] = h;
-            if let VtreeNode::Leaf { var, .. } = &mut own.nodes[t.idx()] {
-                *var = root.leaf_var(h);
-            }
+            node_of[in_order[2 * i].idx()] = index.leaf_at[rank as usize];
         }
         for (i, &g) in gaps.iter().enumerate() {
             node_of[in_order[2 * i + 1].idx()] = index.gap_node[g as usize];
         }
-        own.var_to_leaf = Vec::new();
-        own.context = Arc::clone(&root.context);
-        own.home = Some(Arc::new(HomeLink { home: home.clone(), ranks, node_of, in_order, regions }));
-        own
+        let leaf_count = (k - regions.len()) as u32;
+        let topo = TopoOrder::identity(&nodes, leaf_count);
+        Vtree {
+            context: Arc::clone(&root.context),
+            nodes,
+            root: own_root,
+            var_to_leaf: Vec::new(),
+            leaf_count,
+            topo,
+            home: Some(Arc::new(HomeLink { home: home.clone(), ranks, node_of, in_order, regions })),
+        }
     }
 
     /// Kept out of line so that [`Vtree::leaf_of`] on a root vtree stays as

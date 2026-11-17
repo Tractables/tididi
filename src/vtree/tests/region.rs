@@ -234,3 +234,33 @@ fn random_leaf_sets_refuse_exactly_the_overlaps() {
         }
     }
 }
+
+#[test]
+fn a_sub_projection_keeps_the_regions() {
+    for seed in 0..80u64 {
+        let mut rng = Lcg::new(seed ^ 0x5b_9e0c);
+        let n = 2 + rng.below(40) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let roles = random_roles(n, &mut rng);
+        let (own, anchors) = build(&home, &roles, &mut rng);
+        let own = Arc::new(own);
+        let keep: Vec<bool> = (0..own.num_nodes()).map(|_| rng.coin()).collect();
+        let kept: Vec<u32> = own.leaf_bottomup().filter(|&(t, _)| keep[t.idx()]).map(|(_, v)| v.0).collect();
+        let sub = own.sub_projection(&home, |t| keep[t.idx()]);
+        if anchors.is_empty() && kept.is_empty() {
+            assert!(sub.is_err(), "seed {seed}");
+            continue;
+        }
+        let sub = sub.unwrap();
+        if kept.len() == own.num_leaves() as usize {
+            assert!(Arc::ptr_eq(&sub, &own), "seed {seed}");
+            continue;
+        }
+        let extents: Vec<Vec<u32>> = (0..3)
+            .map(|j| (1..=n).filter(|&v| roles[v as usize - 1] == Role::Region(j)).collect::<Vec<_>>())
+            .filter(|e| !e.is_empty())
+            .collect();
+        let regions: Vec<(&[u32], u32)> = extents.iter().zip(&anchors).map(|(e, &a)| (e.as_slice(), a)).collect();
+        super::projection::assert_same(&sub, &with_regions(&home, &kept, &regions), &format!("seed {seed}"));
+    }
+}
