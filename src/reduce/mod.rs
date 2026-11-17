@@ -59,6 +59,10 @@ impl Default for ReductionPlan<'_> {
 }
 
 /// Whether eligible content-twin scans run and retain their adaptive schedule.
+///
+/// With a marginal level, a scan merges nodes that no later rewrite splits,
+/// so the form a diagram built by successive conjunctions reaches depends on
+/// where scans ran between them.
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub enum ContentTwinPolicy<'a> {

@@ -1132,7 +1132,10 @@ impl Tdd {
     ///
     /// A partial plan need not establish canonical form; [`minimize`](Self::minimize)
     /// runs the full default plan. Marginal levels remain marginal. The plan selects
-    /// pruning, contraction, or a full pass with its content-twin policy.
+    /// pruning, contraction, or a full pass with its content-twin policy. With a
+    /// marginal level, the result of a full pass depends on where content-twin
+    /// scans ran between the conjunctions that built the diagram
+    /// ([`ContentTwinPolicy`](crate::reduce::ContentTwinPolicy)).
     ///
     /// # Errors
     ///
