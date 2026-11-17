@@ -532,3 +532,50 @@ fn a_grouped_sum_reads_only_the_keys_of_f() {
     let (least, most) = (*seen.iter().min().unwrap(), *seen.iter().max().unwrap());
     assert!(4 * most <= 5 * least, "{seen:?}");
 }
+
+/// `and_indexed`, and `and` beside it, refused at each reserve in turn on
+/// stored and on implicit levels: each refusal answers `OverBudget` with
+/// the operands and the index as they were, the engine conjoins after it,
+/// and every granted attempt, those whose refused reserve was best-effort
+/// included, is the conjunction.
+#[test]
+fn every_refused_reserve_of_an_indexed_conjunction_leaves_the_operands() {
+    use crate::test_helpers::{stored_levels, with_floor, LOW_FLOOR};
+    let sweep = |levels: &str| {
+        let mut rng = Lcg::new(0x0001_d5ed_2026_1116);
+        let mut absorbed = 0;
+        for nvars in [5u32, 7] {
+            for (shape, vtree) in vtree_shapes(nvars).into_iter().take(3) {
+                let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
+                let set = local_set(&vtree, &mut rng);
+                let g = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                for (what, a, b) in [("any", &f, &g), ("g a set", &f, &set)] {
+                    let at = format!("{levels}, {shape} n={nvars} {what}");
+                    let index = PairIndex::new(b).unwrap();
+                    let counts = (a.model_count().unwrap(), b.model_count().unwrap());
+                    let eng = Engine::new();
+                    let swept = eng.sweep_reserves(
+                        &crate::OperationError::OverBudget,
+                        || {
+                            let out = eng.and_indexed(a, b, &index);
+                            assert_eq!((a.model_count().unwrap(), b.model_count().unwrap()), counts, "{at}");
+                            out
+                        },
+                        |got, n| agrees(a, b, &got, nvars, &format!("{at}, {n}")),
+                    );
+                    absorbed += swept.absorbed;
+                    let swept = eng.sweep_reserves(
+                        &crate::OperationError::OverBudget,
+                        || eng.and(a.clone(), b.clone()),
+                        |got, n| agrees(a, b, &got, nvars, &format!("{at}, and, {n}")),
+                    );
+                    absorbed += swept.absorbed;
+                    assert_eq!((a.model_count().unwrap(), b.model_count().unwrap()), counts, "{at}");
+                }
+            }
+        }
+        absorbed
+    };
+    let absorbed = with_floor(LOW_FLOOR, || sweep("implicit")) + stored_levels(|| sweep("stored"));
+    eprintln!("absorbed refusals: {absorbed}");
+}

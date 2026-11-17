@@ -296,3 +296,33 @@ fn count_levels_past_the_list_cap_are_refused() {
     assert!(refused > 0, "no cap refused the sum");
     assert_sum(&sum, &f, &g, n, "under the list caps");
 }
+
+/// A sum refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operands as they were given, the engine adds
+/// after it, and every granted attempt is the sum.
+#[test]
+fn every_refused_reserve_of_a_sum_leaves_the_operands() {
+    let mut rng = Lcg::new(6);
+    let mut refused = 0;
+    for n in [4u32, 6] {
+        for (name, vtree) in vtree_shapes(n).into_iter().take(3) {
+            let eng = Engine::new();
+            let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+            eng.marginalize_levels(&mut f, &targets(&mut rng, &vtree)).unwrap();
+            eng.minimize(&mut f).unwrap();
+            let before = format!("{f:?}");
+            refused += eng
+                .sweep_reserves(
+                    &crate::OperationError::OverBudget,
+                    || {
+                        let out = eng.add(f.clone(), f.clone());
+                        assert_eq!(format!("{f:?}"), before, "{name}");
+                        out
+                    },
+                    |sum, at| assert_sum(&sum, &f, &f, n, &format!("{name}, {at}")),
+                )
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no sum refused");
+}

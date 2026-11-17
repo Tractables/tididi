@@ -392,3 +392,36 @@ mod weighted {
         ));
     }
 }
+
+/// A projection refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operand's model count as given, the engine
+/// projects after it, and every granted attempt is the projection.
+#[test]
+fn every_refused_reserve_of_a_projection_leaves_the_operand() {
+    let mut refused = 0;
+    for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (3..=6).contains(n)).take(4) {
+        let vtree = vtree_shapes(num_vars).into_iter().next().unwrap().1;
+        let f = compile_clauses(&vtree, &clauses);
+        let count = f.model_count().unwrap();
+        for keep in patterns(&vtree) {
+            let local_of = |v: VarId| keep.iter().position(|&k| k == v).map(|i| VarId(i as u32 + 1));
+            let want = f.project_to_vars(local_of, keep.len() as u32).unwrap();
+            let eng = Engine::new();
+            refused += eng
+                .sweep_reserves(
+                    &EmbedError::Operation(OperationError::OverBudget),
+                    || {
+                        let out = eng.project_to_vars(&f, local_of, keep.len() as u32);
+                        assert_eq!(f.model_count().unwrap(), count, "keep {keep:?}");
+                        out
+                    },
+                    |g, at| {
+                        assert_canonical(&g);
+                        assert_eq!(format!("{:?}", g.levels), format!("{:?}", want.levels), "keep {keep:?}, {at}");
+                    },
+                )
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no projection refused");
+}

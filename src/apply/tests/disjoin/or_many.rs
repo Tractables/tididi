@@ -126,3 +126,38 @@ fn two_operands_must_share_a_vtree() {
     let other = Tdd::cube(&vtree(4), [2]).expect("a cube");
     assert!(matches!(eng.or(one, other), Err(OperationError::VtreeMismatch)));
 }
+
+/// `or_many` and `nor_many` refused at each reserve in turn: each refusal
+/// answers `OverBudget` with the operands' model counts as given, the
+/// engine disjoins after it, and every granted attempt is the disjunction.
+#[test]
+fn every_refused_reserve_of_a_disjunction_leaves_the_operands() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x0d15_7017);
+    let vtree = vtree(6);
+    let operands: Vec<Tdd> =
+        (0..5).map(|_| compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 6, CnfShape { clauses: 4, width: 3 }))).collect();
+    let counts = || operands.iter().map(|t| t.model_count().unwrap()).collect::<Vec<_>>();
+    let given = counts();
+    let mut refused = 0;
+    for nor in [false, true] {
+        let disjoin = |eng: &crate::Engine| if nor { eng.nor_many(operands.clone()) } else { eng.or_many(operands.clone()) };
+        let want = disjoin(&eng).unwrap();
+        refused += eng
+            .sweep_reserves(
+                &OperationError::OverBudget,
+                || {
+                    let out = disjoin(&eng);
+                    assert_eq!(counts(), given, "nor {nor}");
+                    out
+                },
+                |got, at| {
+                    assert_canonical(&got);
+                    assert!(got.equivalent(&want).unwrap(), "nor {nor}, {at}");
+                },
+            )
+            .refused;
+    }
+    assert!(refused > 0, "no disjunction refused");
+}

@@ -10,6 +10,54 @@ impl crate::Engine {
         self.clear_scratch();
         self.limits().refuse_nth_reserve(n);
     }
+
+    /// Run `op` with its first reserve refused, then its second, and on,
+    /// until an attempt is granted with the refusal still pending. A
+    /// refused attempt must answer `refusal`, and `op` then runs unarmed on
+    /// this engine and must be granted. `check` sees every granted result,
+    /// the attempts that absorbed their refusal included.
+    pub(crate) fn sweep_reserves<T, E: PartialEq + std::fmt::Debug>(
+        &self,
+        refusal: &E,
+        mut op: impl FnMut() -> Result<T, E>,
+        mut check: impl FnMut(T, &str),
+    ) -> Swept {
+        let mut swept = Swept { refused: 0, absorbed: 0 };
+        for n in 0u32.. {
+            self.refuse_nth_reserve(n);
+            let outcome = op();
+            let pending = self.limits().refusal_pending();
+            self.limits().grant_every_reserve();
+            let at = format!("reserve {n}");
+            match outcome {
+                Ok(granted) => {
+                    check(granted, &at);
+                    if pending {
+                        break;
+                    }
+                    swept.absorbed += 1;
+                }
+                Err(e) => {
+                    assert_eq!(&e, refusal, "{at}");
+                    swept.refused += 1;
+                    match op() {
+                        Ok(granted) => check(granted, &format!("{at}, run again")),
+                        Err(e) => panic!("{at}: refused again unarmed with {e:?}"),
+                    }
+                }
+            }
+            assert!(n < 1 << 20, "never granted");
+        }
+        swept
+    }
+}
+
+/// What [`Engine::sweep_reserves`](crate::Engine::sweep_reserves) met.
+pub(crate) struct Swept {
+    /// Attempts that answered the refusal.
+    pub(crate) refused: u32,
+    /// Attempts granted although their reserve was refused.
+    pub(crate) absorbed: u32,
 }
 
 impl Limits {

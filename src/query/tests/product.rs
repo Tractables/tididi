@@ -241,3 +241,35 @@ fn refusals_and_the_false_diagram() {
     }
 }
 
+
+/// A product count refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operands as given, the engine counts after it,
+/// and every granted attempt is the count.
+#[test]
+fn every_refused_reserve_of_a_product_count_leaves_the_operands() {
+    let mut rng = Lcg::new(4);
+    let mut refused = 0;
+    for n in [4u32, 6] {
+        for (name, vtree) in vtree_shapes(n).into_iter().take(3) {
+            let eng = Engine::new();
+            let shape = CnfShape { clauses: n as usize, width: 3 };
+            let targets = draw_targets(&mut rng, &vtree);
+            let l = summed(&eng, &vtree, &rand_cnf(&mut rng, n, shape), &targets);
+            let r = summed(&eng, &vtree, &rand_cnf(&mut rng, n, shape), &targets);
+            let want = eng.marginal_product_count(&l, &r).unwrap();
+            let before = format!("{l:?} {r:?}");
+            refused += eng
+                .sweep_reserves(
+                    &OperationError::OverBudget,
+                    || {
+                        let out = eng.marginal_product_count(&l, &r);
+                        assert_eq!(format!("{l:?} {r:?}"), before, "{name}");
+                        out
+                    },
+                    |got, at| assert_eq!(got, want, "{name}, {at}"),
+                )
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no product count refused");
+}

@@ -107,3 +107,44 @@ fn the_root_is_refused_as_a_key() {
     let g = eng.project_to_subtree(&f, deep).unwrap();
     assert_eq!(eng.model_count(&g).unwrap(), 2u32.into());
 }
+
+/// A distinct count and a subtree projection refused at each reserve in
+/// turn: each refusal answers `OverBudget` with the operand's model count
+/// as given, the engine runs after it, and every granted attempt is the
+/// unrefused result.
+#[test]
+fn every_refused_reserve_of_a_distinct_count_leaves_the_operand() {
+    use crate::OperationError;
+    let refusal = DistinctError::Operation(OperationError::OverBudget);
+    let mut refused = 0;
+    for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (3..=6).contains(n)).take(4) {
+        let vtree = vtree_shapes(num_vars).into_iter().next().unwrap().1;
+        let f = compile_clauses(&vtree, &clauses);
+        let count = f.model_count().unwrap();
+        for key in keys(&vtree) {
+            for m in [None, Some(1u64), Some(2)] {
+                let run = |eng: &Engine| match m {
+                    Some(m) => eng.at_least_distinct(&f, key, m),
+                    None => eng.project_to_subtree(&f, key),
+                };
+                let want = run(&Engine::new()).unwrap();
+                let eng = Engine::new();
+                refused += eng
+                    .sweep_reserves(
+                        &refusal,
+                        || {
+                            let out = run(&eng);
+                            assert_eq!(f.model_count().unwrap(), count, "key {key:?} m {m:?}");
+                            out
+                        },
+                        |g, at| {
+                            assert_canonical(&g);
+                            assert_eq!(format!("{:?}", g.levels), format!("{:?}", want.levels), "key {key:?} m {m:?}, {at}");
+                        },
+                    )
+                    .refused;
+            }
+        }
+    }
+    assert!(refused > 0, "no distinct count refused");
+}

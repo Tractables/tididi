@@ -1011,3 +1011,54 @@ fn operands_the_fold_cannot_read_are_refused() {
         Err(PrefixFoldError::Operation(OperationError::MarginalLevel(_)))
     ));
 }
+
+/// A fold refused at each reserve in turn: each refusal answers
+/// `OverBudget` with the operands' model counts as given, the engine folds
+/// after it, and every granted attempt is the fold.
+#[test]
+fn every_refused_reserve_of_a_fold_leaves_the_operands() {
+    let blocks = Blocks::new(2, 3, 2, 6);
+    let all = blocks.all_vars();
+    let nk = blocks.keys.len();
+    let (order, value_vars, code_vars) = (
+        Blocks::vars(&blocks.order),
+        Blocks::vars(&blocks.values),
+        Blocks::vars(&blocks.codes),
+    );
+    let mut rng = Lcg::new(0x11a7_f01d_2026_1116);
+    let mut refused = 0;
+    for shape in SHAPES {
+        let (vtree, into) = blocks.vtrees(shape);
+        let (points, values) = random(&mut rng, &blocks, 3);
+        let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
+        let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
+        let a = Engine::new().from_models(&vtree, &all[..nk + blocks.order.len()], &a_rows).unwrap();
+        let b = Engine::new().from_models(&vtree, &all, &b_rows).unwrap();
+        let counts = (a.model_count().unwrap(), b.model_count().unwrap());
+        for range in RANGES {
+            let eng = Engine::new();
+            let fold = || {
+                let coding = |folds: &[u64]| {
+                    let sorted: BTreeSet<u64> = folds.iter().copied().collect();
+                    let rank: BTreeMap<u64, u64> =
+                        sorted.iter().enumerate().map(|(i, &f)| (f, i as u64)).collect();
+                    coded(&into, &code_vars, folds.iter().map(|f| rank[f]).collect())
+                };
+                let out = eng.prefix_fold(&a, &b, &order, &value_vars, range, &Sum, coding).map_err(|e| match e {
+                    PrefixFoldError::Operation(e) => e,
+                    e => panic!("{shape:?} {range:?}: {e}"),
+                });
+                assert_eq!((a.model_count().unwrap(), b.model_count().unwrap()), counts, "{shape:?} {range:?}");
+                out
+            };
+            let want = fold().unwrap();
+            refused += eng
+                .sweep_reserves(&OperationError::OverBudget, fold, |got, at| {
+                    assert_canonical(&got);
+                    assert!(eng.equivalent(&got, &want).unwrap(), "{shape:?} {range:?}, {at}: a different fold");
+                })
+                .refused;
+        }
+    }
+    assert!(refused > 0, "no fold refused");
+}
