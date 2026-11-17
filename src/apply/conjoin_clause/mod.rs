@@ -36,7 +36,7 @@ mod rebuild;
 use rebuild::*;
 mod cube;
 pub(crate) use cube::disjoin_cube_on;
-use cube::{CubeChain, disjoin_cube_by_complement};
+use cube::CubeChain;
 
 /// The working set of one clause walk, pooled by the engine between calls.
 #[derive(Default)]
@@ -185,7 +185,14 @@ fn spine_walk<L: crate::LiteralInput>(
     gate.flush()?;
 
     if !disjoin {
-        return conjoin_normalized(eng, f, &clause);
+        // `⊥ ∧ c = ⊥`: the accumulator is the answer as it stands, worklists
+        // included.
+        if f.is_zero() {
+            return Ok(f);
+        }
+        // The rebuild takes `f`'s levels for the output; on an error they are
+        // dropped with the partial result, so `f` owns nothing worth recycling.
+        return rebuild_along_spine(eng, &mut f, &clause, false);
     }
 
     // The empty cube is true, and `⊥ ∨ M` is the cube itself: both are the
@@ -199,34 +206,18 @@ fn spine_walk<L: crate::LiteralInput>(
     // The chain needs a node at every level, which the two lanes supply only
     // where the cube constrains the subtree; see the `cube` module. A
     // one-variable vtree has no internal level to hang the chain on, and an
-    // output below the root leaves levels the walk would not reach.
+    // output below the root leaves levels the walk would not reach. Those
+    // cubes take the overlay disjunction.
     let root = vtree.root();
     if clause.len() != vtree.num_leaves() as usize
         || f.output.vtree != root
         || vtree.node(root).is_leaf()
     {
-        return disjoin_cube_by_complement(eng, f, &clause);
+        let cube = eng.cube(&vtree, clause.iter().map(|&(lit, _)| lit.negated()))?;
+        return eng.or(f, cube);
     }
 
     rebuild_along_spine(eng, &mut f, &clause, true)
-}
-
-/// Conjoin a normalized, non-empty clause into `f`, which has structure at
-/// every leaf of it.
-fn conjoin_normalized(
-    eng: &Engine,
-    mut f: Tdd,
-    clause: &[(Literal, VtreeIdx)],
-) -> Result<Tdd, OperationError> {
-    // `⊥ ∧ c = ⊥`: the accumulator is the answer as it stands, worklists
-    // included.
-    if f.is_zero() {
-        return Ok(f);
-    }
-
-    // The rebuild takes `f`'s levels for the output; on an error they are
-    // dropped with the partial result, so `f` owns nothing worth recycling.
-    rebuild_along_spine(eng, &mut f, clause, false)
 }
 
 /// Rebuild every level on the clause's spine, moving `f`'s levels into the
@@ -469,8 +460,8 @@ impl crate::Engine {
     /// Borrow a slice of signed integers or typed literals. A cube naming
     /// every variable is disjoined by the walk of
     /// [`and_clause`](Self::and_clause) and checks the limits as it does; any
-    /// other cube by a negation, a clause conjunction and a negation, each
-    /// checking its own.
+    /// other cube by [`or`](Self::or) with the built cube, which checks its
+    /// own.
     ///
     /// # Errors
     ///

@@ -116,10 +116,10 @@ impl Tdd {
     /// true. The result counts correctly but may need
     /// [`minimize`](Self::minimize) to establish canonical form.
     ///
-    /// A cube that leaves a variable free is disjoined by complementation
-    /// instead, at the cost of two make-full passes: over a free subtree the
-    /// cube is that subtree's constant-true function, which a diagram whose
-    /// nodes are disjoint but not exhaustive does not hold as a node.
+    /// A cube that leaves a variable free is built and disjoined by
+    /// [`or`](crate::or) instead: over a free subtree the cube is that
+    /// subtree's constant-true function, which a diagram whose nodes are
+    /// disjoint but not exhaustive does not hold as a node.
     ///
     /// # Errors
     ///

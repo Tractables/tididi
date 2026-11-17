@@ -27,12 +27,11 @@
 //! the chain adds at most one node and one pair per level. A cube that leaves a
 //! variable free has `M_t = ⊤` over the free subtrees, which is not a node of a
 //! diagram whose nodes are disjoint but not exhaustive; expressing it needs the
-//! free subtrees made full, so those cubes take the complement route instead.
+//! free subtrees made full, so those cubes go to the overlay disjunction
+//! ([`or`](crate::or)) instead.
 
 use super::*;
 
-use crate::apply::negate::negate_on;
-use crate::reduce::ReductionPlan;
 
 /// The cube's node at each level, built bottom-up beside the spine walk.
 pub(super) struct CubeChain {
@@ -126,23 +125,6 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
     cube: &[L],
 ) -> Result<Tdd, OperationError> {
     spine_walk(eng, f, cube, true)
-}
-
-/// `f ∨ M` as `¬(¬f ∧ ¬M)`, the route for a cube the spine walk's chain
-/// cannot name. Its two complements make levels full, which the overlay
-/// disjunction ([`or`](crate::or)) never does. `clause` is `¬M` normalized and non-empty, and `f` has
-/// structure at its leaves. The result is minimized.
-pub(super) fn disjoin_cube_by_complement(
-    eng: &Engine,
-    f: Tdd,
-    clause: &[(Literal, VtreeIdx)],
-) -> Result<Tdd, OperationError> {
-    f.require_structure()?;
-    let not_f = negate_on(eng, f)?;
-    let mut rest = conjoin_normalized(eng, not_f, clause)?;
-    eng.reduce(&mut rest, ReductionPlan::default())?;
-    // `rest` is minimized, so its complement needs only a prune.
-    eng.negate(rest)
 }
 
 #[cfg(test)]
