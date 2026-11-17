@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::filled;
 use super::layout::Layout;
-use super::split::{Decomposition, Plan};
+use super::plan::{Decomposition, Plan};
 use crate::Engine;
 use crate::diagram::{Assembly, ChildPair, NodeIdx, ONE_LEAF_IDX, Tdd, TddNodeId};
 use crate::limits::{Limits, OperationError};

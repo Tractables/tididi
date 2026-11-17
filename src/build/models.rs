@@ -24,6 +24,7 @@ mod columns;
 mod cubes;
 mod rows;
 mod split;
+mod plan;
 mod emit;
 pub(crate) mod layout;
 pub use columns::RowSelection;

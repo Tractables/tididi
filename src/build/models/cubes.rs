@@ -41,7 +41,8 @@ use crate::vtree::{VarId, Vtree};
 use super::filled;
 use super::layout::Layout;
 use super::rows::{extract, index_bits, words_per_row};
-use super::split::{Decomposition, Plan, dedup_tail};
+use super::plan::{Decomposition, Emitted, plan, sorted_triples};
+use super::split::dedup_tail;
 use crate::sort::Radix;
 
 impl Tdd {
@@ -140,7 +141,14 @@ impl Engine {
         }
         let mut scratch = Scratch::default();
         let root = root_pieces(lim, &mut scratch, vars.len(), &layout, cubes, w)?;
-        let mut plans = plan(lim, &mut scratch, vtree, &layout, root)?;
+        let mut plans = plan(
+            lim,
+            vtree,
+            &layout,
+            root,
+            |pieces| leaf_nodes(lim, pieces),
+            |pieces, widths| split(lim, &mut scratch, pieces, widths),
+        )?;
         scratch.discard(lim);
         super::emit::fill(self, vtree, &layout, &mut plans)
     }
@@ -205,6 +213,8 @@ struct Scratch {
     radix: Radix,
     /// One-word sort keys.
     keys: Vec<u64>,
+    /// Two-word sort keys.
+    wide: Vec<u128>,
 }
 
 impl Scratch {
@@ -212,6 +222,7 @@ impl Scratch {
     fn discard(self, lim: &Limits) {
         self.radix.discard(lim);
         lim.discard(self.keys);
+        lim.discard(self.wide);
     }
 }
 
@@ -381,44 +392,6 @@ fn distinct(
     Ok((firsts, ids))
 }
 
-/// The plan of every split vtree node, from the pieces of the node over
-/// every constrained variable, indexed by vtree node.
-fn plan(
-    lim: &Limits,
-    s: &mut Scratch,
-    vtree: &Vtree,
-    layout: &Layout,
-    root: Pieces,
-) -> Result<Vec<Option<Plan>>, OperationError> {
-    let mut plans: Vec<Option<Plan>> = Vec::new();
-    lim.reserve_exact(&mut plans, vtree.num_nodes())?;
-    plans.resize_with(vtree.num_nodes(), || None);
-    let mut pending = Vec::new();
-    lim.try_push(&mut pending, (layout.split_node(vtree, vtree.root()), root))?;
-    let mut planned = 0u64;
-    while let Some((t, pieces)) = pending.pop() {
-        lim.check_stop()?;
-        if vtree.node(t).is_leaf() {
-            plans[t.idx()] = Some(Plan::Leaf(leaf_nodes(lim, &pieces)?));
-            lim.discard(pieces);
-            continue;
-        }
-        let (high, low) = vtree.children(t);
-        let widths = (
-            layout.count[low.idx()] as usize,
-            layout.count[high.idx()] as usize,
-        );
-        let (split, low_pieces, high_pieces) = split(lim, s, &pieces, widths)?;
-        planned += split.atoms() as u64;
-        lim.check_output_cap(planned)?;
-        lim.discard(pieces);
-        plans[t.idx()] = Some(Plan::Branch(split));
-        lim.try_push(&mut pending, (layout.split_node(vtree, low), low_pieces))?;
-        lim.try_push(&mut pending, (layout.split_node(vtree, high), high_pieces))?;
-    }
-    Ok(plans)
-}
-
 /// A leaf's atoms as the leaf nodes that stand for them: a free piece is
 /// the true node, and a fixed piece the literal of its value, unless both
 /// values share an atom.
@@ -520,25 +493,23 @@ fn split(
     } else {
         (fine_atoms, coarse_atoms)
     };
-    let pairs = sets.iter().enumerate().flat_map(|(a, set)| {
-        let fine_atom = &fine_atom;
-        set.iter().map(move |&item| {
-            let (f, atom) = ((item >> 32) as usize, item as u32);
-            let (h, l) = if high_coarse {
-                (a as u32, fine_atom[f])
-            } else {
-                (fine_atom[f], a as u32)
-            };
-            [atom, h, l]
-        })
-    });
-    let triples = sorted_triples(
-        lim,
-        s,
-        sets.items.len(),
-        [parent.atoms, high_atoms, low_atoms],
-        pairs,
-    )?;
+    // A coarse atom's set at a time: the coarse side's atoms ascend.
+    let each = |emit: &mut dyn FnMut([u32; 3])| {
+        for (a, set) in sets.iter().enumerate() {
+            for &item in set {
+                let (f, atom) = ((item >> 32) as usize, item as u32);
+                let (h, l) = if high_coarse {
+                    (a as u32, fine_atom[f])
+                } else {
+                    (fine_atom[f], a as u32)
+                };
+                emit([atom, h, l]);
+            }
+        }
+    };
+    let emitted = if high_coarse { Emitted::ByMid } else { Emitted::ByLast };
+    let atoms = (parent.atoms, high_atoms, low_atoms);
+    let triples = sorted_triples(lim, &mut s.radix, &mut s.keys, &mut s.wide, atoms, emitted, each)?;
 
     let (high_atom, low_atom) = match high_coarse {
         true => (coarse_atom, fine_atom),
@@ -560,53 +531,6 @@ fn split(
         triples,
     };
     Ok((split, low_pieces, high_pieces))
-}
-
-/// The `count` triples `each` lists, `[atom, high atom, low atom]` below
-/// `atoms` apiece, sorted and once each: packed into one word and radix
-/// sorted where the three fit, else into two.
-fn sorted_triples(
-    lim: &Limits,
-    s: &mut Scratch,
-    count: usize,
-    atoms: [u32; 3],
-    each: impl Iterator<Item = [u32; 3]>,
-) -> Result<Vec<[u32; 3]>, OperationError> {
-    let bits = atoms.map(|a| index_bits(a as usize) as usize);
-    let mut triples = Vec::new();
-    let mut gate = lim.gate();
-    gate.poll(count as u64)?;
-    if bits.iter().sum::<usize>() <= 64 {
-        let (mid, low) = (bits[1] + bits[2], bits[2]);
-        let keys = &mut s.keys;
-        keys.clear();
-        lim.reserve_exact(keys, count)?;
-        keys.extend(each.map(|[a, h, l]| (a as u64) << mid | (h as u64) << low | l as u64));
-        s.radix.sort(lim, keys, 0, mid + bits[0])?;
-        keys.dedup();
-        lim.reserve_exact(&mut triples, keys.len())?;
-        triples.extend(keys.iter().map(|&k| {
-            [
-                (k >> mid) as u32,
-                ((k >> low) & lower_bits(0, bits[1])) as u32,
-                (k & lower_bits(0, low)) as u32,
-            ]
-        }));
-    } else {
-        let mut keys: Vec<u128> = Vec::new();
-        lim.reserve_exact(&mut keys, count)?;
-        keys.extend(each.map(|[a, h, l]| (a as u128) << 64 | (h as u128) << 32 | l as u128));
-        keys.sort_unstable();
-        keys.dedup();
-        lim.reserve_exact(&mut triples, keys.len())?;
-        triples.extend(
-            keys.iter()
-                .map(|&k| [(k >> 64) as u32, (k >> 32) as u32, k as u32]),
-        );
-        lim.discard(keys);
-    }
-    gate.flush()?;
-    Ok(triples)
 }
 
 /// Lists of items, one after another.
@@ -673,63 +597,21 @@ fn coarse_atoms(
     incidence: usize,
 ) -> Result<(Vec<u32>, Lists), OperationError> {
     let n = parent.len();
-    // Each coarse piece's (fine part, atom) pairs, ascending, once each:
-    // packed into one word and radix sorted where the three fit.
-    let bits = [
-        coarse.pieces.len(),
-        fine.starts.len() - 1,
-        parent.atoms as usize,
-    ]
-    .map(|c| index_bits(c) as usize);
+    // Each coarse piece's (fine part, atom) pairs, ascending, once each.
     let mut gate = lim.gate();
     gate.poll(incidence as u64)?;
-    let lists = if bits.iter().sum::<usize>() <= 64 {
-        let (piece, part) = (bits[1] + bits[2], bits[2]);
-        let keys = &mut s.keys;
-        keys.clear();
-        lim.reserve_exact(keys, incidence)?;
+    let each = |emit: &mut dyn FnMut([u32; 3])| {
         for e in 0..n {
-            let pair = (fine.part_of[e] as u64) << part | parent.atom[e] as u64;
-            keys.extend(
-                coarse
-                    .cover(coarse.part_of[e])
-                    .iter()
-                    .map(|&c| (c as u64) << piece | pair),
-            );
+            for &c in coarse.cover(coarse.part_of[e]) {
+                emit([c, fine.part_of[e], parent.atom[e]]);
+            }
         }
-        s.radix.sort(lim, keys, 0, piece + bits[0])?;
-        keys.dedup();
-        let (atom_mask, part_mask) = (lower_bits(0, part), lower_bits(0, bits[1]));
-        let entries = keys.iter().map(|&k| {
-            (
-                (k >> piece) as u32,
-                ((k >> part) & part_mask) << 32 | (k & atom_mask),
-            )
-        });
-        Lists::gather(lim, coarse.pieces.len(), keys.len(), entries)?
-    } else {
-        let mut entries: Vec<u128> = Vec::new();
-        lim.reserve_exact(&mut entries, incidence)?;
-        for e in 0..n {
-            let pair = (fine.part_of[e] as u128) << 32 | parent.atom[e] as u128;
-            entries.extend(
-                coarse
-                    .cover(coarse.part_of[e])
-                    .iter()
-                    .map(|&c| (c as u128) << 64 | pair),
-            );
-        }
-        entries.sort_unstable();
-        entries.dedup();
-        let lists = Lists::gather(
-            lim,
-            coarse.pieces.len(),
-            entries.len(),
-            entries.iter().map(|&g| ((g >> 64) as u32, g as u64)),
-        )?;
-        lim.discard(entries);
-        lists
     };
+    let atoms = (coarse.pieces.len() as u32, (fine.starts.len() - 1) as u32, parent.atoms);
+    let incidences = sorted_triples(lim, &mut s.radix, &mut s.keys, &mut s.wide, atoms, Emitted::Unordered, each)?;
+    let entries = incidences.iter().map(|&[c, part, atom]| (c, u64::from(part) << 32 | u64::from(atom)));
+    let lists = Lists::gather(lim, coarse.pieces.len(), incidences.len(), entries)?;
+    lim.discard(incidences);
     let (list_id, firsts) = number_lists(lim, &lists)?;
     gate.flush()?;
     let expanded = expand_coarse_lists(lim, &lists, &firsts, fine)?;
