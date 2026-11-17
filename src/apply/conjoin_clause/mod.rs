@@ -131,34 +131,27 @@ fn normalize<L: crate::LiteralInput>(
     }
     gate.flush()?;
     // A literal is kept where its leaf first occurs; a later one of the other
-    // sign makes the clause true. A clause of a few literals finds the first
-    // occurrence by scanning the literals before it, a longer one by sorting
-    // its positions by leaf. An array over the vtree, which it used before,
-    // cost a pass over the whole vtree per clause, which is most of the
-    // clause's cost where it touches few levels of a large vtree.
+    // sign makes the clause true. The first occurrence is found by sorting
+    // the literals' positions by leaf. An array over the vtree, which it used
+    // before, cost a pass over the whole vtree per clause, which is most of
+    // the clause's cost where it touches few levels of a large vtree.
     let mut first: Vec<u32> = Vec::new();
     lim.try_resize(&mut first, lits.len(), 0)?;
-    if lits.len() <= SCAN_REPEATS_UP_TO {
-        for i in 0..lits.len() {
-            first[i] = (0..i).find(|&j| resolved[j].1 == resolved[i].1).unwrap_or(i) as u32;
+    let mut order: Vec<(usize, u32)> = Vec::new();
+    lim.reserve_exact(&mut order, lits.len())?;
+    order.extend(
+        resolved
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, leaf))| (leaf.idx(), i as u32)),
+    );
+    order.sort_unstable();
+    let mut run_start = 0;
+    for j in 0..order.len() {
+        if order[j].0 != order[run_start].0 {
+            run_start = j;
         }
-    } else {
-        let mut order: Vec<(usize, u32)> = Vec::new();
-        lim.reserve_exact(&mut order, lits.len())?;
-        order.extend(
-            resolved
-                .iter()
-                .enumerate()
-                .map(|(i, &(_, leaf))| (leaf.idx(), i as u32)),
-        );
-        order.sort_unstable();
-        let mut run_start = 0;
-        for j in 0..order.len() {
-            if order[j].0 != order[run_start].0 {
-                run_start = j;
-            }
-            first[order[j].1 as usize] = order[run_start].1;
-        }
+        first[order[j].1 as usize] = order[run_start].1;
     }
     let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
     let mut tautology = false;
@@ -176,10 +169,6 @@ fn normalize<L: crate::LiteralInput>(
         Normalized::Clause(clause)
     })
 }
-
-/// The longest clause whose repeated literals [`normalize`] finds by
-/// scanning the literals before each rather than by sorting them.
-const SCAN_REPEATS_UP_TO: usize = 16;
 
 /// The shared bottom-up walk: conjoin the clause `lits` into `f`, or — with
 /// `disjoin` — disjoin the cube `lits`, by carrying the [`CubeChain`]
