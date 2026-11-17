@@ -90,6 +90,7 @@ mod price;
 mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
+mod projected;
 use output::*;
 mod drive;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
@@ -211,7 +212,9 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 /// [`Engine::and`] after its entry, for operands each owned or borrowed
 /// ([`conjoin_cow`]).
 fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    crate::apply::check_vtree(&f, &g)?;
+    if !Arc::ptr_eq(f.vtree(), g.vtree()) {
+        return projected::conjoin_projections(eng, f, g);
+    }
     prepare_owned_weights(&mut f, &mut g)?;
     conjoin_cow(eng, f, g, VtreeMask::default())
 }
@@ -325,9 +328,14 @@ fn conjoin_recycling(
     result.map(Conjoined::diagram)
 }
 
-/// Return the conjunction of two diagrams sharing the same vtree allocation.
+/// Return the conjunction of two diagrams sharing the same vtree allocation,
+/// or on two projections of one home ([`Vtree::projection`]).
 ///
-/// Uses the shared vtree's execution context automatically.
+/// Uses the shared vtree's execution context automatically. The result of
+/// operands on two projections lives on the larger operand's vtree when its
+/// leaves hold the other's, and on the projection of both leaf sets
+/// otherwise; an operand with a summed-out level is refused there
+/// ([`OperationError::MarginalLevel`]), as [`Engine::and_onto`] refuses it.
 ///
 /// Each operand is a [`Tdd`], consumed on success and on error, or a
 /// `&Tdd`, read in place and left as it is. Where the result takes a level
@@ -364,7 +372,8 @@ fn conjoin_recycling(
 ///
 /// # Errors
 ///
-/// [`OperationError::VtreeMismatch`] for different vtree allocations,
+/// [`OperationError::VtreeMismatch`] for different vtree allocations that
+/// are not projections of one home,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// [`OperationError::MarginalLevel`] when a structural operand constrains
 /// variables the other has summed out, or [`OperationError::IndexOverflow`]

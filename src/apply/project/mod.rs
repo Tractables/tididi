@@ -38,9 +38,12 @@ pub(super) fn quantification_targets(eng: &Engine, vtree: &Vtree, vars: &[VarId]
     let mut gate = lim.gate();
     let mut targets = Vec::new();
     for &var in vars {
+        gate.poll(1)?;
+        if vtree.home_has(var) {
+            continue;
+        }
         let leaf = vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         lim.try_push(&mut targets, leaf)?;
-        gate.poll(1)?;
     }
     targets.sort_unstable();
     targets.dedup();

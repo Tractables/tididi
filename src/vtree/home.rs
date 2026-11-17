@@ -122,7 +122,6 @@ impl HomeLink {
 
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code, reason = "binary operations across projections will read it"))]
 pub(crate) enum LeafSets {
     /// The same leaf set and the same layout.
     Equal,
@@ -146,6 +145,15 @@ impl Vtree {
     /// variables count once. Costs time in the number of variables times the
     /// logarithm of the home's size; the first projection of a home also builds
     /// an index over the home, in time and memory linear in the home.
+    ///
+    /// A diagram on a projection does not depend on the home's other
+    /// variables. [`Engine::and`](crate::Engine::and) of diagrams on two
+    /// projections of one home returns a diagram on a projection holding both
+    /// leaf sets; [`Engine::and_clause`](crate::Engine::and_clause) first
+    /// moves the diagram onto the projection that adds the clause's
+    /// variables; quantifying or conditioning a variable of the home with no
+    /// leaf here returns the diagram. A model count counts the projection's
+    /// variables only.
     ///
     /// # Errors
     ///
@@ -227,7 +235,6 @@ impl Vtree {
 
     /// How the leaf sets of `a` and `b` compare; `None` when their homes
     /// differ (a root vtree is its own home).
-    #[cfg_attr(not(test), expect(dead_code, reason = "binary operations across projections will call it"))]
     pub(crate) fn leaf_sets(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Option<LeafSets> {
         let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.home().unwrap_or(v));
         if root_of(a) != root_of(b) {
@@ -256,6 +263,38 @@ impl Vtree {
             (true, false) => LeafSets::BInA,
             (true, true) => LeafSets::Union(Arc::new(Self::project_ranks(&la.home, Arc::clone(&la.index), union))),
         })
+    }
+
+    /// Whether `var` has no leaf here but one in the home: a variable a
+    /// diagram on this vtree does not depend on.
+    pub(crate) fn home_has(&self, var: VarId) -> bool {
+        self.home().is_some_and(|home| home.leaf_of(var).is_some()) && self.leaf_of(var).is_none()
+    }
+
+    /// For a projection `u` whose root has, as its two children, the
+    /// projections of `a`'s and `b`'s leaf sets: by own node of `a` and of
+    /// `b`, the node of `u` standing for it, and whether `a` is on the left.
+    pub(crate) fn split_at_root(u: &Vtree, a: &Vtree, b: &Vtree) -> Option<(Vec<VtreeIdx>, Vec<VtreeIdx>, bool)> {
+        let (lu, la, lb) = (u.home.as_ref()?, a.home.as_ref()?, b.home.as_ref()?);
+        if u.node(u.root()).is_leaf() {
+            return None;
+        }
+        let (l, r) = u.children(u.root());
+        let (ha, hb) = (a.home_node(a.root()), b.home_node(b.root()));
+        let a_left = match (lu.node_of[l.idx()], lu.node_of[r.idx()]) {
+            (hl, hr) if hl == ha && hr == hb => true,
+            (hl, hr) if hl == hb && hr == ha => false,
+            _ => return None,
+        };
+        let map = |link: &HomeLink, offset: usize| -> Vec<VtreeIdx> {
+            let mut map = vec![VtreeIdx(0); link.in_order.len()];
+            for (j, &t) in link.in_order.iter().enumerate() {
+                map[t.idx()] = lu.in_order[offset + j];
+            }
+            map
+        };
+        let (a_offset, b_offset) = if a_left { (0, la.in_order.len() + 1) } else { (lb.in_order.len() + 1, 0) };
+        Some((map(la, a_offset), map(lb, b_offset), a_left))
     }
 
     pub(super) fn home_index(&self) -> Arc<HomeIndex> {

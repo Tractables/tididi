@@ -176,12 +176,13 @@ const SCAN_REPEATS_UP_TO: usize = 16;
 /// needs goes back to the engine's pool.
 fn spine_walk(
     eng: &Engine,
-    mut f: Tdd,
+    f: Tdd,
     lits: &[Literal],
     disjoin: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
+    let mut f = extend_to(eng, f, lits)?;
     let vtree = Arc::clone(&f.vtree);
     let clause = match normalize(lim, &vtree, lits, disjoin)? {
         // A variable named in both polarities satisfies the clause whatever
@@ -231,6 +232,29 @@ fn spine_walk(
     }
 
     rebuild_along_spine(eng, &mut f, &clause, true)
+}
+
+/// `f` on the projection of its home on its own leaves and those of `lits`,
+/// when a literal's variable has a leaf in the home and none in `f`'s
+/// vtree. Its levels move to their images, no node or pair copied.
+fn extend_to(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationError> {
+    let Some(home) = f.vtree.home() else { return Ok(f) };
+    if !lits.iter().any(|lit| f.vtree.home_has(lit.var)) {
+        return Ok(f);
+    }
+    let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
+    let added = lits.iter().map(|lit| lit.var).filter(|&var| home.leaf_of(var).is_some());
+    let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
+    match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build, false) {
+        Ok((extended, plan)) => {
+            plan.recycle(eng);
+            Ok(extended)
+        }
+        Err(refused) => Err(match refused.error {
+            crate::restructure::EmbedError::Operation(error) => error,
+            _ => OperationError::VtreeMismatch,
+        }),
+    }
 }
 
 /// Conjoin a normalized, non-empty clause into `f`, which has structure at
