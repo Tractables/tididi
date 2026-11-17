@@ -25,7 +25,7 @@ use crate::restructure::relevel::{Prepared, prepare_levels};
 use crate::restructure::relevel::{
     RotationStep, rebuild_levels, score_levels, score_levels_crossed_too,
 };
-use crate::restructure::scratch::RestructureScratch;
+use crate::restructure::scratch::{ProbeTables, RestructureScratch};
 use crate::vtree::rng::Lcg;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -1144,6 +1144,28 @@ fn probe_scored<'l>(
     members: &mut [&mut Tdd],
     step: RotationStep<'_>,
     scratch: &mut RestructureScratch,
+    twin: Twin<'_>,
+    slack: usize,
+    undo: Option<&mut Undo<'l>>,
+) -> Result<bool, OperationError> {
+    // The tables leave the scratch, whose rest the scores and the rebuilds
+    // read, and go back however the probe ends: a search makes many probes
+    // over few members, which fresh tables would each allocate.
+    let mut tables = std::mem::take(&mut scratch.probe);
+    tables.clear();
+    let kept = probe_scored_with(eng, members, step, scratch, &mut tables, twin, slack, undo);
+    scratch.probe = tables;
+    kept
+}
+
+/// [`probe_scored`] in `tables`.
+#[expect(clippy::too_many_arguments, reason = "probe_scored's arguments and its tables")]
+fn probe_scored_with<'l>(
+    eng: &'l Engine,
+    members: &mut [&mut Tdd],
+    step: RotationStep<'_>,
+    scratch: &mut RestructureScratch,
+    tables: &mut ProbeTables,
     mut twin: Twin<'_>,
     slack: usize,
     undo: Option<&mut Undo<'l>>,
@@ -1158,14 +1180,12 @@ fn probe_scored<'l>(
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let mut before = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut before, members.len())?;
+    let ProbeTables { before, after, scored, floors, order } = tables;
+    lim.reserve_exact(before, members.len())?;
     // A member that keeps its pairs is not scored, and a scored member ends
     // with at least a pair for each of its outer nodes.
-    let mut scored = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut scored, members.len())?;
-    let mut floors = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut floors, members.len())?;
+    lim.reserve_exact(scored, members.len())?;
+    lim.reserve_exact(floors, members.len())?;
     for m in members.iter() {
         let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
         let old = outer + inner;
@@ -1177,13 +1197,11 @@ fn probe_scored<'l>(
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
     let limit = total.saturating_add(slack);
-    let mut after = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut after, members.len())?;
-    after.extend_from_slice(&before);
+    lim.reserve_exact(after, members.len())?;
+    after.extend_from_slice(before);
     // The largest members first: a move they refuse is refused with less
     // of the pool read.
-    let mut order = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut order, members.len())?;
+    lim.reserve_exact(order, members.len())?;
     order.extend(0..members.len());
     order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
     if let Twin::Fill(slots) = &mut twin {
@@ -1251,7 +1269,7 @@ fn probe_scored<'l>(
     // the search refuses.
     if sum >= limit {
         #[cfg(debug_assertions)]
-        debug_check_scores(lim, members, step, &after, scratch)?;
+        debug_check_scores(lim, members, step, after, scratch)?;
         gate.flush()?;
         lim.check_stop()?;
         return Ok(false);
