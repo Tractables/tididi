@@ -31,6 +31,15 @@ impl Column for CountVec {
     fn width(&self) -> usize { self.len() }
 }
 
+#[inline(never)]
+fn release_column(eng: &Engine, col: &mut CountVec) {
+    if col.len() > crate::diagram::LEAF_WIDTH {
+        eng.limits().discard(std::mem::take(col));
+    } else {
+        col.zero(eng);
+    }
+}
+
 impl LevelFold for OverflowingCounts<'_> {
     const NODE_WORK: bool = true;
     type Value = Count;
@@ -47,11 +56,14 @@ impl LevelFold for OverflowingCounts<'_> {
     /// counts of thousands of digits each, and a fold keeping those holds
     /// them all. Values within u64 stay, as zeroing them on every release
     /// costs a Frontier counter 7%.
+    ///
+    /// Inline, the work out of line: a Frontier pass releases a column per
+    /// vtree node, most of them kept as they are, and the call alone cost a
+    /// counter 5% of its instructions.
+    #[inline(always)]
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
-        if col.len() > crate::diagram::LEAF_WIDTH {
-            eng.limits().discard(std::mem::take(col));
-        } else if !col.as_count_ref().all_u64() {
-            col.zero(eng);
+        if col.len() > crate::diagram::LEAF_WIDTH || !col.as_count_ref().all_u64() {
+            release_column(eng, col);
         }
     }
 
