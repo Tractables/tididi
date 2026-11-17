@@ -227,9 +227,11 @@ impl<Q: CachedQuery> QueryCache<Q> {
         } else {
             let retention = observations.retention;
             let fold = self.query.fold(&observations.pins);
-            if retention == Retention::Frontier {
-                for col in self.cols.iter_mut() { fold.release(eng, col); }
-            }
+            // Overwriting a column keeps its cleared u64 certificate and
+            // releasing it resets it. The walk releases every column it reads
+            // but the output's, released here so that one stored overflow does
+            // not keep the output's parent off the fast path for good.
+            if retention == Retention::Frontier { fold.release(eng, &mut self.cols[tdd.output.vtree.idx()]); }
             fold_bottom_up::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, retention, gate)?;
         }
         observations.clear_changed();
