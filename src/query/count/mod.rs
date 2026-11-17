@@ -9,7 +9,7 @@ mod column;
 mod prepared;
 
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{OperationError, PollGate};
 use super::cache::{CachedQuery, QueryCache};
 use super::fold::fold_bottom_up_from;
 use incremental::CountQuery;
@@ -21,7 +21,7 @@ use num_bigint::BigUint;
 use std::sync::Arc;
 
 use crate::diagram::{LeafLabel, LevelCounts, Tdd};
-use crate::value::{CountRead, CountVec};
+use crate::value::CountVec;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
@@ -104,9 +104,11 @@ impl Engine {
         tdd.require_structure()?;
         let vtree = tdd.vtree();
         let mut gate = lim.gate();
+        let mut selected = Vec::new();
+        lim.try_resize(&mut selected, vtree.num_nodes(), false)?;
         for &var in vars {
             gate.poll(1)?;
-            vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+            selected[vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?.idx()] = true;
         }
         gate.flush()?;
         let satisfiable = self.is_sat(tdd)?;
@@ -114,12 +116,6 @@ impl Engine {
             return Ok(u32::from(satisfiable).into());
         }
 
-        let mut selected = Vec::new();
-        lim.try_resize(&mut selected, vtree.num_nodes(), false)?;
-        for &var in vars {
-            gate.poll(1)?;
-            selected[vtree.leaf_of(var).expect("validated variable").idx()] = true;
-        }
         let mut eliminated = Vec::new();
         for level in vtree.bottomup() {
             gate.poll(1)?;
@@ -141,12 +137,9 @@ impl Engine {
     pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        // The shared counter fold with no pin storage, keeping every column;
-        // the fast half of each column holds the saturated counts.
-        let mut cache = QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::All)?;
         let mut gate = lim.gate();
-        cache.refresh(self, tdd, &mut gate)?;
-        let columns = cache.into_columns();
+        // The fast half of each column holds the saturated counts.
+        let columns = self.count_columns(tdd, &mut gate)?;
         let mut counts = Vec::new();
         lim.reserve_exact(&mut counts, columns.len())?;
         for column in columns {
@@ -173,12 +166,10 @@ impl Engine {
         let vtree = Arc::clone(&tdd.vtree);
         let mut counts = LevelCounts::none(self, vtree.num_nodes())?;
         if !tdd.is_zero() {
-            // The model count's fold, keeping every column.
-            let mut cache = QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::All)?;
             let mut gate = lim.gate();
-            cache.refresh(self, tdd, &mut gate)?;
+            let columns = self.count_columns(tdd, &mut gate)?;
             gate.flush()?;
-            for (i, column) in cache.into_columns().into_iter().enumerate() {
+            for (i, column) in columns.into_iter().enumerate() {
                 let t = VtreeIdx(i as u32);
                 if !vtree.node(t).is_leaf() && !tdd.levels[i].is_marginal() {
                     counts.set(t, Arc::new(column));
@@ -187,6 +178,13 @@ impl Engine {
         }
         tdd.levels.keep_counts(counts);
         Ok(())
+    }
+
+    /// The model count's fold with no pin storage, keeping every column.
+    fn count_columns(&self, tdd: &Tdd, gate: &mut PollGate) -> Result<Vec<CountVec>, OperationError> {
+        let mut cache = QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::All)?;
+        cache.refresh(self, tdd, gate)?;
+        Ok(cache.into_columns())
     }
 
     /// [`model_count`](Self::model_count)'s fold started from the topmost
@@ -243,10 +241,7 @@ impl Engine {
             // those of levels the fold can start from.
             if let Some(column) = counts.column(tdd.output.vtree) {
                 self.limits().check_stop()?;
-                return Ok(match column.get(tdd.output.local.idx()) {
-                    CountRead::Fast(value) => BigUint::from(value),
-                    CountRead::Big(value) => value.clone(),
-                });
+                return Ok(column.get(tdd.output.local.idx()).to_biguint());
             }
             if counts.any() {
                 return self.model_count_from_kept(tdd, counts);

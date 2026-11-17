@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::limits::{LimitConfig, StopAt, StopRules};
+use crate::value::CountRead;
 use crate::test_helpers::*;
 use crate::vtree::Vtree;
 

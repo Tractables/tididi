@@ -83,6 +83,13 @@ impl<'a> CountRead<'a> {
             CountRead::Big(b) => Count::Big(b.clone()),
         }
     }
+
+    pub(crate) fn to_biguint(&self) -> BigUint {
+        match *self {
+            CountRead::Fast(c) => BigUint::from(c),
+            CountRead::Big(b) => b.clone(),
+        }
+    }
 }
 
 /// The count column: a `width`-indexed sequence of [`Count`] values, stored as

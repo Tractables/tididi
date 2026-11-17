@@ -200,10 +200,7 @@ impl Arith for BigUint {
         BigUint::from(c)
     }
     fn stored(read: CountRead<'_>) -> Result<Self, Halt> {
-        Ok(match read {
-            CountRead::Fast(c) => BigUint::from(c),
-            CountRead::Big(b) => b.clone(),
-        })
+        Ok(read.to_biguint())
     }
     fn plus(&mut self, other: &Self) -> Result<(), Halt> {
         *self += other;
