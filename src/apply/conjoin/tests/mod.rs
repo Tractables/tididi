@@ -19,6 +19,7 @@ mod owed;
 mod pair_rows;
 mod relabel;
 mod probe;
+mod projected;
 mod reach_columns;
 mod restoring;
 mod self_conjunction;

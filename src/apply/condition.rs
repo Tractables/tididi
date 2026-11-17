@@ -31,9 +31,12 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     let mut targets = Vec::new();
     for literal in assignment {
         let literal = literal.try_into().map_err(Into::into)?;
+        gate.poll(1)?;
+        if f.vtree.home_has(literal.var) {
+            continue;
+        }
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
         lim.try_push(&mut targets, (leaf, literal.sign))?;
-        gate.poll(1)?;
     }
     gate.flush()?;
     targets.sort_unstable_by_key(|&(leaf, _)| leaf);
