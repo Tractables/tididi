@@ -521,43 +521,6 @@ impl TddLevel {
         Ok(idx)
     }
 
-    /// [`push_node`](Self::push_node) for a node whose `len` pairs come from
-    /// `pairs`, written straight into the pair arena rather than gathered in
-    /// a list of their own and copied: the node over every constrained
-    /// variable of a large table has a pair per row. `pairs` yields exactly
-    /// `len` pairs, and `len` is at least one.
-    ///
-    /// # Errors
-    ///
-    /// As [`push_node`](Self::push_node).
-    pub(crate) fn push_node_from<G: ArenaGrowth>(
-        &mut self, growth: &G, len: usize, mut pairs: impl Iterator<Item = ChildPair>,
-    ) -> Result<NodeIdx, OperationError> {
-        debug_assert!(len >= 1, "a node has a pair");
-        if len == 1 {
-            let pair = pairs.next().expect("one pair");
-            debug_assert!(pairs.next().is_none(), "one pair");
-            return self.push_node(growth, &[pair]);
-        }
-        let idx = self.ensure_node_slot(growth)?;
-        let arena = self.pairs.stored_mut();
-        let start = arena.len();
-        if arena.capacity() - start < len {
-            growth.grow(arena, len)?;
-        }
-        arena.extend(pairs.take(len));
-        assert_eq!(arena.len() - start, len, "push_node_from: the pairs number `len`");
-        let node = match self.try_encode_multi(growth, start, len) {
-            Ok(node) => node,
-            Err(refused) => {
-                self.pairs.truncate(start);
-                return Err(refused);
-            }
-        };
-        self.nodes.stored_mut().push(node);
-        Ok(idx)
-    }
-
     /// Give the node at `idx` the non-empty pair list `pairs` in place of its
     /// own, appended at the arena's tail; its old range is noted dead.
     ///

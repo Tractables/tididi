@@ -290,18 +290,6 @@ impl Emit<'_> {
                         ends[high - 1] as usize
                     }..ends[high] as usize]
                 };
-                if ascending(l) && ascending(r) {
-                    // Already in order: written into the level as they are read.
-                    let highs = l.iter().enumerate().flat_map(|(high, &node)| {
-                        group(high)
-                            .iter()
-                            .map(move |&low| ChildPair::new(node, r[low as usize]))
-                    });
-                    let local = assembly.push_from(eng, t, lows.len(), highs)?;
-                    lim.discard(ends);
-                    lim.discard(lows);
-                    return filled(lim, 1, local);
-                }
                 let order = stored_order(lim, l.iter().map(|&node| u64::from(node.0)))?;
                 pair_list.clear();
                 lim.reserve_exact(pair_list, lows.len())?;
