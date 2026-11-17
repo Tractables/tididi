@@ -485,10 +485,11 @@ impl Dirty {
         }
     }
 
-    /// Owe the inner pass at every level the leaf pass is owed at.
-    pub(crate) fn leaf_owes_inner(&mut self) {
+    /// Owe the inner pass at every level `at` picks of those the leaf pass
+    /// is owed at.
+    pub(crate) fn leaf_owes_inner(&mut self, at: impl Fn(u32) -> bool) {
         let [inner, leaf, _] = &mut self.lists;
-        inner.extend_from_slice(leaf);
+        inner.extend(leaf.iter().copied().filter(|&t| at(t)));
     }
 
     /// Room in every list for `n` more levels, for a rewrite about to

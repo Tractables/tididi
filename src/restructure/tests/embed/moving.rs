@@ -165,7 +165,7 @@ fn owe_work(eng: &Engine, f: &mut Tdd) {
 /// every refusal hands the diagram back unchanged, stored and known as it
 /// was given ([`known`]), until one is granted, and that the granted one
 /// owes the reduction passes what the diagram owed, at the images, and the
-/// inner pass wherever the leaf pass, for the pass-through over a leaf.
+/// inner pass where the leaf pass, over the pass-through over a leaf.
 ///
 /// With `mirror`, onto the destination with some children swapped, by
 /// `embed_moving_mirrored`; with `counts`, the diagram keeping level counts;
@@ -209,8 +209,18 @@ fn refuse_at_every_point(
                 assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
                 let mut owed = f.dirty.clone();
                 owed.take_loose();
-                owed.leaf_owes_inner();
                 owed.remap(&embedding.levels);
+                let image_leaf = |c| big.node(c).is_leaf() && embedding.levels.contains(&c);
+                let pass_through_over_leaf = |c| {
+                    !big.node(c).is_leaf() && !embedding.levels.contains(&c) && {
+                        let (left, right) = big.children(c);
+                        image_leaf(left) || image_leaf(right)
+                    }
+                };
+                owed.leaf_owes_inner(|t| {
+                    let (left, right) = big.children(crate::vtree::VtreeIdx(t));
+                    pass_through_over_leaf(left) || pass_through_over_leaf(right)
+                });
                 owed.dedup_above(big.num_nodes());
                 let mut carried = out.dirty.clone();
                 carried.take_loose();

@@ -1133,23 +1133,26 @@ fn assemble_moving<'a>(
     // owes the contraction passes what it owed in `tdd`, at its image. A
     // leaf read through a literal chain is the exception: its two literals
     // are two nodes of a pass-through level, so a leaf twin over it is an
-    // inner twin, which only the inner pass contracts. Where there are
-    // chains, the inner pass is owed wherever the leaf pass is. New
-    // pass-through nodes have distinct child identities,
+    // inner twin, which only the inner pass contracts: the inner pass is
+    // owed where the leaf pass is, over a chain. New pass-through nodes have
+    // distinct child identities,
     // and free levels have one node, so neither introduces twins. A later
     // child contraction queues its parents. The lists are bounded as a seat
     // bounds an assembly's.
-    if chains {
-        carried.leaf_owes_inner();
-    }
     let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
+    if chains {
+        literal_tops.sort_unstable();
+        carried.leaf_owes_inner(|t| {
+            let (left, right) = into.children(VtreeIdx(t));
+            literal_tops.binary_search(&left).is_ok() || literal_tops.binary_search(&right).is_ok()
+        });
+    }
     carried.dedup_above(into.num_nodes());
     debug_assert!(result.dirty.is_empty(), "a seat that rebuilt nothing owes nothing");
     result.dirty = carried;
     if let Some(mut loose) = loose {
         loose.sort_unstable();
-        literal_tops.sort_unstable();
         moved_loose(tdd.vtree(), into, plan, &loose, &literal_tops, &mut listed);
         result.dirty.set_loose(Some(listed));
     }
