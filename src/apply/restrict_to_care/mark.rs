@@ -630,14 +630,12 @@ impl<'a> Walk<'a> {
         if one(0) && one(1) {
             #[cfg(test)]
             crate::test_helpers::note_restrict_path(3);
-            let found = self.join_paired(u, kids)?;
+            let mut found = self.join_paired(u, kids)?;
             // Found in `f`'s node and pair order: ascending already where
             // `care` holds one node here.
-            let found = if care.levels[u.idx()].nodes().len() == 1 {
-                found
-            } else {
-                sort_found(eng, nodes, found)?
-            };
+            if care.levels[u.idx()].nodes().len() > 1 {
+                found.sort_unstable();
+            }
             return Ok(Products::Listed(listed(eng, nodes, &found)?));
         }
         let joinable = |k: Side| matches!(k, Side::Listed | Side::Leaf);
@@ -649,8 +647,8 @@ impl<'a> Walk<'a> {
             None
         };
         Ok(match found {
-            Some(found) => {
-                let found = sort_found(eng, nodes, found)?;
+            Some(mut found) => {
+                found.sort_unstable();
                 Products::Listed(listed(eng, nodes, &found)?)
             }
             None => Products::Lazy(FxHashMap::default()),
@@ -681,8 +679,8 @@ impl<'a> Walk<'a> {
     /// there, the `care` pairs whose child there is live with it are gathered
     /// by their inner child, and each `f` pair under it meets those whose
     /// inner child is live with its own. Every pair of pairs found is live,
-    /// so the work is the gathering and the lookups; the outer child is the
-    /// one where those cost less. `None` when even that exceeds `cap`.
+    /// so the work is the gathering and the lookups. The outer child is the
+    /// left one. `None` when the work would exceed `cap`.
     fn join_both(
         &mut self,
         u: VtreeIdx,
@@ -691,18 +689,9 @@ impl<'a> Walk<'a> {
     ) -> Result<Option<Found>, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let lives = [self.take(kids[0]), self.take(kids[1])];
-        // Each orientation costed off `f`'s pairs in place, and `f`'s pairs
-        // grouped only by the outer child the cheaper one picks.
-        let mut best: Option<(usize, Groups, u64)> = None;
-        for o in 0..2 {
-            let cg = groups(eng, care, u, o, kids[o])?;
-            let cost = join_cost(eng, f, u, o, &lives[o], &lives[1 - o], &cg)?;
-            if best.as_ref().is_none_or(|b| cost < b.2) {
-                best = Some((o, cg, cost));
-            }
-        }
-        let (o, cg, cost) = best.expect("two orientations were costed");
-        if cost > cap {
+        let o = 0;
+        let cg = groups(eng, care, u, o, kids[o])?;
+        if join_cost(eng, f, u, o, &lives[o], &lives[1 - o], &cg)? > cap {
             let [l0, l1] = lives;
             self.restore(kids[0], l0);
             self.restore(kids[1], l1);
@@ -1687,23 +1676,14 @@ impl<'a> Walk<'a> {
 fn listed_candidates(below: &Listed, index: &[(u32, u32)], x: u32, cands: &mut Vec<u32>) {
     cands.clear();
     let partners = below.of(x);
-    if partners.len().saturating_mul(8) < index.len() {
-        for &(_, y) in partners {
-            let lo = index.partition_point(|e| e.0 < y);
-            cands.extend(index[lo..].iter().take_while(|e| e.0 == y).map(|e| e.1));
-        }
-    } else if index.len().saturating_mul(8) < partners.len() {
-        cands.extend(index.iter().filter(|e| below.contains(x, e.0)).map(|e| e.1));
-    } else {
-        let (mut m, mut n) = (0, 0);
-        while m < partners.len() && n < index.len() {
-            match partners[m].1.cmp(&index[n].0) {
-                std::cmp::Ordering::Less => m += 1,
-                std::cmp::Ordering::Greater => n += 1,
-                std::cmp::Ordering::Equal => {
-                    cands.push(index[n].1);
-                    n += 1;
-                }
+    let (mut m, mut n) = (0, 0);
+    while m < partners.len() && n < index.len() {
+        match partners[m].1.cmp(&index[n].0) {
+            std::cmp::Ordering::Less => m += 1,
+            std::cmp::Ordering::Greater => n += 1,
+            std::cmp::Ordering::Equal => {
+                cands.push(index[n].1);
+                n += 1;
             }
         }
     }
@@ -1915,38 +1895,6 @@ fn listed(
         offsets,
         combos,
     })
-}
-
-/// `found` ascending: counted out by `f` node, each node's few entries
-/// then sorted, where one sort of the whole would pay its logarithm.
-fn sort_found(eng: &Engine, nodes: usize, found: Found) -> Result<Found, OperationError> {
-    let lim = eng.limits();
-    if found.len() < 2 {
-        return Ok(found);
-    }
-    let mut offsets = Vec::new();
-    lim.try_resize(&mut offsets, nodes + 1, 0u32)?;
-    for e in &found {
-        offsets[e.0 as usize + 1] += 1;
-    }
-    for a in 0..nodes {
-        offsets[a + 1] += offsets[a];
-    }
-    let mut out = Vec::new();
-    lim.try_resize(&mut out, found.len(), (0u32, 0u32, 0u32, 0u32))?;
-    let mut cursor = Transient::new(lim, lim.try_to_vec(&offsets)?);
-    for e in found {
-        let at = &mut cursor[e.0 as usize];
-        out[*at as usize] = e;
-        *at += 1;
-    }
-    for a in 0..nodes {
-        let run = &mut out[offsets[a] as usize..offsets[a + 1] as usize];
-        if run.len() > 1 {
-            run.sort_unstable();
-        }
-    }
-    Ok(out)
 }
 
 /// Side `s` of a pair: `0` the left, `1` the right.
