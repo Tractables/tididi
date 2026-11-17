@@ -266,7 +266,7 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
         ] {
             let f = weighted(f, 2, arithmetic);
             let care = weighted(care, 7, Arithmetic::ExactRational);
-            let mut result = eng.restrict_to_care(f, care).unwrap().into_tdd();
+            let mut result = eng.restrict_to_care(f, &care).unwrap().into_tdd();
             result.minimize().unwrap();
             assert_canonical(&result);
             assert_weighted_int(&eng, &result, expected);
@@ -289,7 +289,7 @@ fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
     assert_canonical(&f);
     let care = Tdd::clause(&tree, [3]).unwrap();
     assert_canonical(&care);
-    let outcome = eng.restrict_to_care(f, care).unwrap();
+    let outcome = eng.restrict_to_care(f, &care).unwrap();
     assert!(matches!(outcome, RestrictionOutcome::Shrunk(_)));
     let mut result = outcome.into_tdd();
     result.minimize().unwrap();

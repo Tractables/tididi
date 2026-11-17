@@ -128,13 +128,14 @@ struct Marking {
 }
 
 impl crate::Engine {
-    /// Restrict to a borrowed care diagram, abandoning an expensive discovery.
+    /// [`Self::restrict_to_care`] with an allowance, abandoning an expensive
+    /// discovery.
     ///
     /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].
-    /// The care diagram is neither copied nor reduced. `max_pair_visits`
-    /// bounds the product-pair probes of the bottom-up joins, of the
-    /// decisions made when asked, of the walk above the lower operand root
-    /// and of the walk down; marks read off the joins' listings take none.
+    /// `max_pair_visits` bounds the product-pair probes of the bottom-up
+    /// joins, of the decisions made when asked, of the walk above the lower
+    /// operand root and of the walk down; marks read off the joins' listings
+    /// take none.
     /// Exhausting it returns [`RestrictionOutcome::Unchanged`] with the
     /// original operand intact. Zero skips the optional restriction.
     ///
@@ -156,24 +157,17 @@ impl crate::Engine {
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
-    /// Reduces `care` in full first, which [`Self::restrict_to_care_bounded`]
-    /// does not.
-    ///
     /// # Errors
     ///
     /// Returns the linked operation's errors; cancellation, allocation refusal and
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
-    pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+    pub fn restrict_to_care(&self, f: Tdd, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, &care)?;
+        crate::apply::check_vtree(&f, care)?;
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
-        // Sound for any representation of `care` whose nodes each have a
-        // model (invariant 2), which the walk assumes of both operands; the
-        // reduced one gives the walk fewer pairs.
-        self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
-        restrict_prepared(self, f, &care, u64::MAX)
+        restrict_prepared(self, f, care, u64::MAX)
     }
 }

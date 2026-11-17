@@ -502,8 +502,8 @@ care-set restriction yet.
 
 ### Instances
 
-- [Rust walkthrough](examples/care.md) <!-- reviewed: f9a294b9042848bffb0324d9f4ac30012f16dec28cf787c28e0c186718e05dd5 -->
-- [Rust program](../examples/care.rs) <!-- reviewed: 9a1bf5d9f30981a960eb4b67fce5a675b6d6af75c342a2c197383dfcd0ba2d57 -->
+- [Rust walkthrough](examples/care.md) <!-- reviewed: 780214d27a91687da0e76d6f0485a2eff87265a95e61189621347078d8687d61 -->
+- [Rust program](../examples/care.rs) <!-- reviewed: 5a767f47fd2cbca49113ef21e87f3aa42970510c945b1496d30e46cf3cb8e4c1 -->
 
 ## Keeping values
 

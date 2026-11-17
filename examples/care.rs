@@ -11,7 +11,7 @@ fn main() -> Result<(), tididi::OperationError> {
     let care = !remote | local;
     println!("Original backup choices: {}", rule.model_count()?);
 
-    let mut simplified = rule.clone().restrict_to_care(care.clone())?.into_tdd();
+    let mut simplified = rule.clone().restrict_to_care(&care)?.into_tdd();
     simplified.minimize()?;
     println!("Pairs before: {}; after: {}", rule.pair_count(), simplified.pair_count());
 

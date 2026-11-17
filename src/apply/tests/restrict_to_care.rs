@@ -25,7 +25,7 @@ fn restrict_single_variable_reports_contradictions() {
                 assert_canonical(&f);
                 assert_canonical(care);
                 let live = [false, true].into_iter().any(|x| eval(&f, &[x]) && eval(care, &[x]));
-                let result = f.clone().restrict_to_care(care.clone()).unwrap();
+                let result = f.clone().restrict_to_care(care).unwrap();
                 if !f.is_zero() && !live {
                     assert!(matches!(result, RestrictionOutcome::Unsatisfiable(_)));
                 } else {
@@ -53,7 +53,7 @@ fn restrict_tautological_care_is_identity() {
                            &clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]))),
                      x2);
     let c = constant_one(&eng, &vtree);
-    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
     assert!(equiv_nf(&g, &f), "f.restrict_to_care(⊤).unwrap() must equal f");
     assert_restrict_ok(&f, &c, 3);
 }
@@ -66,7 +66,7 @@ fn restrict_false_care_is_empty() {
     let f = apply_or(clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)])),
                      clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
     let c = constant_zero(&eng, &vtree);
-    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
     assert!(count_is_zero(&g), "f.restrict_to_care(⊥).unwrap() must be ⊥ (f∧⊥ = ∅)");
     crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-false-care");
 }
@@ -77,7 +77,7 @@ fn restrict_of_false_is_false() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_zero(&eng, &vtree);
     let c = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
     assert!(count_is_zero(&g), "(⊥).restrict_to_care(c).unwrap() must be ⊥");
     crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-of-false");
 }
@@ -107,7 +107,7 @@ fn restrict_cube_care_shrinks_or_holds() {
     let c = x0.clone();
     assert_restrict_ok(&f, &c, 3);
     // The restricted function must agree with x1 on the care set.
-    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
     assert!(equiv(&and2(&g, &c), &and2(&x1, &c)));
 }
 
@@ -136,7 +136,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
     let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let c = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
     assert_restrict_ok(&f, &c, 2);
-    let g = match (f.clone()).restrict_to_care(c.clone()).unwrap() {
+    let g = match (f.clone()).restrict_to_care(&c).unwrap() {
         crate::apply::RestrictionOutcome::Shrunk(g) => g,
         crate::apply::RestrictionOutcome::Unchanged(_) => {
             panic!("pair-granular restrict_to_care must shrink: pair 2 is dead under care")
@@ -237,7 +237,7 @@ fn restrict_differing_root_containment_difftest() {
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
     // and g never larger than f. Apply-free (shares no machinery with `restrict_to_care`).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
-        let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+        let g = (f.clone()).restrict_to_care(c).unwrap().into_tdd();
         assert_sound_on_truth_table(f, c, &g, nvars);
         assert!(reachable_pairs(&g) <= reachable_pairs(f), "restrict_to_care grew beyond f");
         g
@@ -301,7 +301,7 @@ fn products_past_the_list_cap_are_refused() {
             let c = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
             let (got, n) = eng
                 .limits()
-                .through_caps(Limits::pin_list_cap, || eng.restrict_to_care(f.clone(), c.clone()));
+                .through_caps(Limits::pin_list_cap, || eng.restrict_to_care(f.clone(), &c));
             assert_sound_on_truth_table(&f, &c, &got.into_tdd(), nvars);
             refused += n;
         }
@@ -337,7 +337,7 @@ fn brute_force_randomized_multi_vtree() -> Vec<Tdd> {
             }
             // Track the shrink count to keep the "levers inert" guard meaningful.
             let fp = reachable_pairs(&f);
-            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+            let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
             assert_sound_on_truth_table(&f, &c, &g, nvars);
             let mut gm = g.clone();
             gm.minimize().unwrap();
@@ -393,7 +393,7 @@ fn output_is_orphan_free() -> Vec<Tdd> {
             // reduce's own compactness contract, not the builder's.
             f.minimize().unwrap();
             c.minimize().unwrap();
-            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+            let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
             // exhaustive truth-table soundness (apply-free)
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
@@ -467,7 +467,7 @@ fn differing_root_randomized() -> Vec<Tdd> {
     };
     let all_vars: Vec<u32> = (1..=nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {
-        let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+        let g = (f.clone()).restrict_to_care(c).unwrap().into_tdd();
         assert_sound_on_truth_table(f, c, &g, nvars);
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
         assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
@@ -526,7 +526,7 @@ fn raw_output_is_apply_safe() -> Vec<Tdd> {
                 continue;
             }
             // (A) raw `restrict_to_care` output must be a valid diagram.
-            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+            let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
             check_all_fast(&g, "restrict_to_care-raw");
             // (B) the lever's path: conjoin raw g with another member, minimize.
             if other.is_zero() || g.is_zero() {
@@ -566,7 +566,7 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     // With nothing armed the care set shrinks `f`, so the rebuild runs.
     assert!(
         matches!(
-            eng.restrict_to_care(f.clone(), x0.clone()),
+            eng.restrict_to_care(f.clone(), &x0),
             Ok(crate::apply::RestrictionOutcome::Shrunk(_))
         ),
         "fixture must reach the rebuild",
@@ -575,7 +575,7 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     let mut refusals = 0;
     for nth in 0.. {
         eng.refuse_nth_reserve(nth);
-        let outcome = eng.restrict_to_care(f.clone(), x0.clone());
+        let outcome = eng.restrict_to_care(f.clone(), &x0);
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         match outcome {
@@ -667,7 +667,7 @@ fn keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
                     continue;
                 }
-                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
                 let used = trace_used_pairs(&f, &c, &g, nvars);
                 assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
                 if used < reachable_pairs(&f) {
@@ -729,7 +729,7 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
                     continue;
                 }
-                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
                 check_all_fast(&g, "restrict_to_care-one-subtree");
                 let used = trace_used_pairs(&f, &c, &g, nvars);
                 assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
@@ -806,7 +806,7 @@ fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 if f.is_zero() || f.output.vtree != vtree.root() {
                     continue;
                 }
-                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
                 assert_canonical(&g);
                 let used = trace_used_pairs(&f, &c, &g, nvars);
                 assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
@@ -876,7 +876,7 @@ fn care_rooted_above_f_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 if count_is_zero(&c) || r == u || vtree.lca(r, u) != r {
                     continue;
                 }
-                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
                 let used = trace_used_pairs(&f, &c, &g, nvars);
                 assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
                 if used < reachable_pairs(&f) {
@@ -960,7 +960,7 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
                 if f.is_zero() || f.levels[f.output.vtree.idx()].is_marginal() {
                     continue;
                 }
-                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
                 if holds_u {
                     assert_eq!(reachable_pairs(&g), reachable_pairs(&f), "a care under a summed-out level pruned f");
                     assert_eq!(g.model_count().unwrap(), f.model_count().unwrap());
@@ -1051,7 +1051,7 @@ fn refuse_each_reservation(f: &Tdd, c: &Tdd, nvars: u32, at: &str) -> u32 {
     let mut refused = 0;
     for nth in 0.. {
         eng.refuse_nth_reserve(nth);
-        let outcome = eng.restrict_to_care(f.clone(), c.clone());
+        let outcome = eng.restrict_to_care(f.clone(), c);
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         match outcome {

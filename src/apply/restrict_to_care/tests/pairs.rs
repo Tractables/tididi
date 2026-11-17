@@ -54,7 +54,7 @@ fn restriction_of_a_wide_relation_preserves_exact_models() {
     let eng = Engine::new();
     let expected = eng.and(f.clone(), c.clone()).unwrap();
     assert_canonical(&expected);
-    let mut g = eng.restrict_to_care(f.clone(), c.clone()).unwrap().into_tdd();
+    let mut g = eng.restrict_to_care(f.clone(), &c).unwrap().into_tdd();
     eng.minimize(&mut g).unwrap();
     assert_canonical(&g);
     assert!(g.pair_count() < f.pair_count());

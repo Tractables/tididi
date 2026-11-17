@@ -134,7 +134,7 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
 
         // TRUE marginal care on both sides (disjoint regions ⇒ supported conjoin).
         let before = (and2(&fm, &care)).model_count().unwrap();
-        let g = (fm.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
+        let g = (fm.clone()).restrict_to_care(&care).unwrap().into_tdd();
         let after = (and2(&g, &care)).model_count().unwrap();
         if before != after {
             violations += 1;
@@ -317,11 +317,11 @@ fn restrict_marginal_care_same_regions(
         let care_proj = (care0).clone().exists_vars(&region_vars).unwrap();
 
         let before = (and2(&fm, &care_proj)).model_count().unwrap();
-        let g = (fm.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
+        let g = (fm.clone()).restrict_to_care(&care).unwrap().into_tdd();
         let after = (and2(&g, &care_proj)).model_count().unwrap();
         assert_eq!(before, after, "restrict_to_care changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
-        let g_proj = (fm.clone()).restrict_to_care(care_proj.clone()).unwrap().into_tdd();
+        let g_proj = (fm.clone()).restrict_to_care(&care_proj).unwrap().into_tdd();
         assert_eq!(
             normalized_levels(&g),
             normalized_levels(&g_proj),
@@ -431,7 +431,7 @@ fn marginal_f() -> Vec<Tdd> {
             continue;
         }
         let prod_f = and2(&f, &care);
-        let g = (f.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
+        let g = (f.clone()).restrict_to_care(&care).unwrap().into_tdd();
         if reachable_pairs(&g) < reachable_pairs(&f) {
             pruned += 1;
         }

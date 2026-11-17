@@ -9,6 +9,9 @@ Breaking changes:
   the filtered product under that constraint and is canonical.
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
+- `Tdd::restrict_to_care` and `Engine::restrict_to_care` borrow `care` and
+  no longer reduce it first. The walk's cost follows `care` as written, so
+  reduce an unreduced care before the call.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
   `Quantification::Fused` (the default) or `Quantification::Product`.
 - `Tdd::embed_mirrored`, `EmbeddingPlan::new_mirrored`,

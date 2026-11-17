@@ -420,7 +420,10 @@ impl Tdd {
     /// The result `g` is no larger than this function `f` and satisfies
     /// `g ∧ care == f ∧ care`; outside the care set its value is unspecified.
     /// Both operands must share a vtree allocation, but their output levels may
-    /// differ. Both are consumed on success and error.
+    /// differ. This function is consumed on success and error; `care` is
+    /// borrowed and left as it is. The walk visits the products of this
+    /// function's pairs with `care`'s, so its cost follows `care` as written:
+    /// a caller holding an unreduced `care` may reduce it first.
     ///
     /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
     /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
@@ -443,11 +446,11 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let care = literal(&vtree, 1)?;
-    /// let g = f.clone().restrict_to_care(care.clone())?.into_tdd();
+    /// let g = f.clone().restrict_to_care(&care)?.into_tdd();
     /// assert!(and(g, care.clone())?.equivalent(&and(f, care)?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn restrict_to_care(self, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+    pub fn restrict_to_care(self, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
         self.context_arc().run(|eng| eng.restrict_to_care(self, care))
     }
 
