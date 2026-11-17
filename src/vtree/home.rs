@@ -305,8 +305,9 @@ impl Vtree {
         self.home.as_deref()?.leaf_of(var)
     }
 
-    /// Called by every change of shape: a root's index goes stale, and a
-    /// projection becomes a root with a dense leaf table.
+    /// Called by every kept change of shape (a reverted rotation probe
+    /// restores the shape the index and the link describe): a root's index
+    /// goes stale, and a projection becomes a root with a dense leaf table.
     pub(super) fn reshaped(&mut self) {
         self.home_index.take();
         if self.home.take().is_some() {

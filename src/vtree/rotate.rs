@@ -122,6 +122,7 @@ impl PendingTopo {
 
     /// Keep the rotation: repair the bottom-up order for the new shape.
     pub(crate) fn commit(mut self, vtree: &mut Vtree) -> RotationInfo {
+        vtree.reshaped();
         vtree.fixup_topo_after_rotate(&self.info, self.kind);
         self.settled = true;
         self.info
@@ -193,7 +194,6 @@ pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind
     };
     let (y, z) = promoted_first(kind, left, right);
 
-    vtree.reshaped();
     vtree.nodes[v.idx()] = internal_with(kind, y, w, v_parent);
     vtree.nodes[w.idx()] = internal_with(kind, z, x, Some(v));
     set_parent(&mut vtree.nodes, x, w);
