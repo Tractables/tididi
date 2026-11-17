@@ -42,7 +42,7 @@ pub(super) fn extract(src: &[u64], start: usize, width: usize, dst: &mut [u64]) 
 ///
 /// The order is numeric, the highest bit first, which is the order the split
 /// reads a node's values in: the rows are the values of the lowest node over
-/// every constrained variable, grouped by its right child's part. One-word
+/// every constrained variable, grouped by its left child's part. One-word
 /// rows already in leaf order, ascending strictly and clear past the last
 /// variable are those values as they stand, and are borrowed, not copied.
 pub(super) fn distinct_rows<'a>(
@@ -253,7 +253,7 @@ pub(super) fn sorted_distinct(
 fn ordered_low_bits(layout: &Layout, packed: &[u64]) -> usize {
     let mut below = 64;
     loop {
-        // The widest leading subtree narrower than the last one tried.
+        // The widest trailing subtree narrower than the last one tried.
         let widest = (0..layout.lo.len())
             .filter(|&t| layout.lo[t] == 0 && layout.count[t] > 0 && layout.count[t] < below)
             .map(|t| layout.count[t])

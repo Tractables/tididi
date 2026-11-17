@@ -142,7 +142,9 @@ fn table_len(columns: &[&[VarId]], codes: &[&[u32]], rows: RowSelection<'_>) -> 
     }
     let len = codes.first().map_or(0, |c| c.len());
     if codes.len() != columns.len() {
-        return Err(OperationError::RaggedColumns { column: codes.len().min(columns.len()), len: 0, expected: len });
+        let column = codes.len().min(columns.len());
+        let held = codes.get(column).map_or(0, |c| c.len());
+        return Err(OperationError::RaggedColumns { column, len: held, expected: len });
     }
     if let Some(column) = codes.iter().position(|c| c.len() != len) {
         return Err(OperationError::RaggedColumns { column, len: codes[column].len(), expected: len });
