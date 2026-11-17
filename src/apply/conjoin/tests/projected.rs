@@ -175,3 +175,30 @@ fn absent_variables_leave_the_operand() {
     let g = eng.exists_vars(f.clone(), &[VarId(1), VarId(2)]).unwrap();
     assert_eq!(eng.model_count(&g).unwrap(), 4u32.into());
 }
+
+#[test]
+fn reductions_and_counts_run_on_projections() {
+    use crate::reduce::{ContentTwinPolicy, ReductionPlan};
+    let eng = Engine::new();
+    for seed in 0..10u64 {
+        let home = rotated_home(8 + seed as u32, seed);
+        let mut rng = Lcg::new(seed ^ 0x1234_5678);
+        for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
+            let (f, g) = (cnf_on(&eng, &home, &fv, &mut rng), cnf_on(&eng, &home, &gv, &mut rng));
+            let h = eng.and(&f, &g).unwrap();
+            let expected = on_home(&eng, &h, &home);
+            for plan in [
+                ReductionPlan::Prune,
+                ReductionPlan::Contract,
+                ReductionPlan::Full(ContentTwinPolicy::Skip),
+                ReductionPlan::default(),
+            ] {
+                let mut r = h.clone();
+                eng.reduce(&mut r, plan).unwrap();
+                assert!(Arc::ptr_eq(r.vtree(), h.vtree()));
+                assert_eq!(eng.model_count(&r).unwrap(), eng.model_count(&h).unwrap(), "seed {seed}");
+                assert!(eng.equivalent(&on_home(&eng, &r, &home), &expected).unwrap(), "seed {seed}");
+            }
+        }
+    }
+}

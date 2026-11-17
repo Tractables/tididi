@@ -146,6 +146,15 @@ impl Vtree {
     /// logarithm of the home's size; the first projection of a home also builds
     /// an index over the home, in time and memory linear in the home.
     ///
+    /// A diagram on a projection does not depend on the home's other
+    /// variables. [`Engine::and`](crate::Engine::and) of diagrams on two
+    /// projections of one home returns a diagram on a projection holding both
+    /// leaf sets; [`Engine::and_clause`](crate::Engine::and_clause) first
+    /// moves the diagram onto the projection that adds the clause's
+    /// variables; quantifying or conditioning a variable of the home with no
+    /// leaf here returns the diagram. A model count counts the projection's
+    /// variables only.
+    ///
     /// # Errors
     ///
     /// [`VtreeError::Invalid`] if `vars` is empty or names a variable with no
