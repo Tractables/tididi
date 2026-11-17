@@ -284,6 +284,7 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
     for n in 0.. {
         let scope = arm(&eng, n);
         let outcome = onto(&eng, f.clone(), same, g.clone(), same, &into, mirror);
+        let pending = scope.is_some() || eng.limits().refusal_pending();
         drop(scope);
         eng.limits().grant_every_reserve();
         let old = {
@@ -299,7 +300,10 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, n
         match outcome {
             Ok(out) => {
                 assert!(same_storage(&out, &expected), "granted at {n}: a different diagram");
-                break;
+                if pending {
+                    break;
+                }
+                continue;
             }
             Err(refused) => {
                 let reference = |got: &Tdd, given: &Tdd, on: &Tdd| match Arc::ptr_eq(got.vtree(), &into) {

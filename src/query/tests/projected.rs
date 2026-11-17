@@ -121,15 +121,18 @@ fn projected_counts_recover_from_each_allocation_failure() {
         let engine = Engine::new();
         engine.refuse_nth_reserve(cut);
         let result = engine.projected_model_count(&f, &selected);
+        let pending = engine.limits().refusal_pending();
         engine.limits().grant_every_reserve();
         assert_canonical(&f);
         assert_eq!(engine.projected_model_count(&f, &selected).unwrap(), 4u32.into());
         match result {
             Ok(count) => {
                 assert_eq!(count, 4u32.into());
-                assert!(cut > 10, "exercise the compound query beyond its selection buffer");
-                completed = true;
-                break;
+                if pending {
+                    assert!(cut > 10, "exercise the compound query beyond its selection buffer");
+                    completed = true;
+                    break;
+                }
             }
             Err(error) => assert_eq!(error, OperationError::OverBudget, "reserve {cut}"),
         }

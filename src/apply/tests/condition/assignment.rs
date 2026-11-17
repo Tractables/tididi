@@ -253,10 +253,11 @@ fn conditioning_recovers_from_each_reservation_refusal() {
                 let engine = Engine::new();
                 engine.refuse_nth_reserve(cut);
                 let result = engine.condition(f.clone(), [-5, last]);
+                let pending = engine.limits().refusal_pending();
                 engine.limits().grant_every_reserve();
                 let g = match result {
                     Ok(g) => {
-                        completed = true;
+                        completed = pending;
                         g
                     }
                     Err(error) => {

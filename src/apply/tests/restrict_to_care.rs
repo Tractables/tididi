@@ -576,13 +576,15 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     for nth in 0.. {
         eng.refuse_nth_reserve(nth);
         let outcome = eng.restrict_to_care(f.clone(), x0.clone());
+        let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         match outcome {
             Err(e) => {
                 refusals += 1;
                 assert_eq!(e, crate::limits::OperationError::OverBudget);
             }
-            Ok(crate::apply::RestrictionOutcome::Shrunk(_)) => break,
+            Ok(crate::apply::RestrictionOutcome::Shrunk(_)) if pending => break,
+            Ok(crate::apply::RestrictionOutcome::Shrunk(_)) => {}
             Ok(_) => panic!("a refused prune must not read as a finished restriction"),
         }
     }

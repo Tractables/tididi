@@ -98,8 +98,14 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     for nth in 0..512 {
         let eng = Engine::new();
         eng.refuse_nth_reserve(nth);
-        match exists_leaves_structural(&eng, f.clone(), &[leaf], ReductionPlan::default()) {
-            Ok(result) => { assert_canonical(&result); reached_success = true; break; }
+        let outcome = exists_leaves_structural(&eng, f.clone(), &[leaf], ReductionPlan::default());
+        let pending = eng.limits().refusal_pending();
+        match outcome {
+            Ok(result) => {
+                assert_canonical(&result);
+                assert_eq!(result.model_count().unwrap(), 30u32.into());
+                if pending { reached_success = true; break; }
+            }
             Err(error) => assert_eq!(error, OperationError::OverBudget),
         }
         eng.limits().grant_every_reserve();

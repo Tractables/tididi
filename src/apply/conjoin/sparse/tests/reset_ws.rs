@@ -76,12 +76,18 @@ fn a_level_refused_mid_scatter_leaves_the_workspace_clean_for_the_next_conjuncti
     for cut in 0.. {
         eng.refuse_nth_reserve(cut);
         let result = eng.and(f.clone(), g.clone());
+        let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         let recovered = eng.and(f.clone(), g.clone()).unwrap();
         assert_eq!(recovered.model_count().unwrap(), reference.model_count().unwrap());
         assert!(recovered.equivalent(&reference).unwrap());
         match result {
-            Ok(_) => break,
+            Ok(granted) => {
+                assert!(granted.equivalent(&reference).unwrap());
+                if pending {
+                    break;
+                }
+            }
             Err(_) => refusals += 1,
         }
     }

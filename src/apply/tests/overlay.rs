@@ -286,13 +286,16 @@ fn every_overlay_refusal_leaves_the_engine_reusable() {
                 };
                 let outcome = operation(&eng, f.clone(), g.clone());
                 drop(scope);
+                let pending = stopping || eng.limits().refusal_pending();
                 eng.limits().grant_every_reserve();
                 match outcome {
                     Ok(got) => {
                         assert_canonical(&got);
                         assert!(got.equivalent(&expected).unwrap());
-                        completed = true;
-                        break;
+                        if pending {
+                            completed = true;
+                            break;
+                        }
                     }
                     Err(OperationError::OverBudget | OperationError::Stopped) => refusals += 1,
                     other => panic!("unexpected overlay result: {other:?}"),

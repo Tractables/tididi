@@ -211,7 +211,6 @@ fn a_refused_conjunction_gives_f_the_levels_moved_from_it_back() {
             for n in 0u64.. {
                 // A fresh engine each time, so that both arms meet the
                 // same reserves: a pooled scratch reserves on its first use.
-                #[expect(clippy::result_large_err, reason = "the refusal hands back the operands")]
                 let attempt = || {
                     let eng = Engine::new();
                     let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + n)), after_pairs: None };
@@ -220,15 +219,18 @@ fn a_refused_conjunction_gives_f_the_levels_moved_from_it_back() {
                     if arm == "reserve" {
                         eng.refuse_nth_reserve(n as u32);
                     }
-                    eng.and_restoring(f.clone(), g.clone())
+                    let outcome = eng.and_restoring(f.clone(), g.clone());
+                    (outcome, arm == "work" || eng.limits().refusal_pending())
                 };
                 let lent = lent_levels();
-                let outcome = attempt();
+                let (outcome, pending) = attempt();
                 let moved = lent_levels() > lent;
-                match (outcome, no_lend(attempt)) {
+                match (outcome, no_lend(attempt).0) {
                     (Ok(out), Ok(_)) => {
                         assert!(eng.equivalent(&out, &expected).unwrap(), "{what}: granted at {arm} {n}, a different function");
-                        break;
+                        if pending {
+                            break;
+                        }
                     }
                     (Err(refused), Err(oracle)) => {
                         assert!(
