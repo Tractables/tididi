@@ -75,18 +75,6 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
 }
 
 #[test]
-fn a_clause_reuses_the_single_node_input_arena() {
-    let tree = Arc::new(Vtree::balanced(8));
-    let input = Tdd::one(&tree);
-    assert_canonical(&input);
-    let nodes = input.level(tree.root()).nodes.stored().as_ptr();
-    let result = Engine::new().and_clause(input, &[crate::Literal::try_from(1).unwrap()]).unwrap();
-    assert_canonical(&result);
-    assert_eq!(result.model_count().unwrap(), 128u32.into());
-    assert_eq!(result.level(tree.root()).nodes.stored().as_ptr(), nodes);
-}
-
-#[test]
 fn a_clause_reuses_empty_input_pair_capacity() {
     let tree = Arc::new(Vtree::balanced(8));
     let eng = Engine::new();

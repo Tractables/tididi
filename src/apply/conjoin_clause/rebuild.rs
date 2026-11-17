@@ -29,14 +29,13 @@ pub(super) struct ClauseTables<'a> {
 /// input, most of them outgrew the arena at a node and reallocated it.
 const RESERVE_WHOLE_LEVEL_UP_TO: usize = 4096;
 
-/// The child-map offsets, worst-case output pairs per input pair and
-/// accumulator node count for a spine level.
+/// The child-map offsets and worst-case output pairs per input pair for a
+/// spine level.
 #[derive(Clone, Copy)]
 pub(super) struct SpineCtx {
     pub(super) left_grid_base: usize,
     pub(super) right_grid_base: usize,
     pub(super) pair_mult: usize,
-    pub(super) nodes: usize,
 }
 
 /// Conjoin one accumulator node with the clause's virtual `c_t` (and `d_t`
@@ -129,19 +128,6 @@ pub(super) fn rebuild_spine_level(
     let k = old.slot_count();
     let in_pairs = old.pairs.len();
     let level = &mut levels[t_idx];
-    // Tiny levels keep their input descriptors on the stack so the output can
-    // reuse the node arena. A larger level's stored nodes are read in place,
-    // and an implicit level's, which it does not store, by index.
-    let mut inline_nodes = [EncodedNode { a: 0, b: 0 }; 4];
-    let nodes = if k <= inline_nodes.len() {
-        for (slot, node) in inline_nodes.iter_mut().zip(old.nodes()) {
-            *slot = node;
-        }
-        level.nodes = old.take_nodes();
-        &inline_nodes[..k]
-    } else {
-        old.nodes.stored()
-    };
     // An empty input pair arena has no borrowed pairs and can retain
     // emission capacity; a described one, of one-pair nodes, holds none.
     if old.pairs.is_empty() && old.pairs.implicit().is_none() {
@@ -179,26 +165,25 @@ pub(super) fn rebuild_spine_level(
         left_grid_base,
         right_grid_base,
         pair_mult,
-        nodes: k,
     };
     match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
-            rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
         }
         (true, true, false) => {
-            rebuild_nodes::<true, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, false>(eng, &old, ctx, level, base, tables)?
         }
         (true, false, true) => {
-            rebuild_nodes::<true, false, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, true>(eng, &old, ctx, level, base, tables)?
         }
         (true, false, false) => {
-            rebuild_nodes::<true, false, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, false>(eng, &old, ctx, level, base, tables)?
         }
         (false, true, true) => {
-            rebuild_nodes::<false, true, true>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, true>(eng, &old, ctx, level, base, tables)?
         }
         (false, true, false) => {
-            rebuild_nodes::<false, true, false>(eng, &old, nodes, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
@@ -220,27 +205,26 @@ pub(super) fn rebuild_spine_level(
 
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
-/// `nodes` are the words of `old`'s `ctx.nodes` nodes where they are at
-/// hand, none where `old` implies them. Each node charges the work clock a
-/// unit for each pair it reads and each pair it writes.
+/// Each node charges the work clock a unit for each pair it reads and each
+/// pair it writes.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
     old: &TddLevel,
-    nodes: &[EncodedNode],
     ctx: SpineCtx,
     level: &mut TddLevel,
     base: usize,
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
+    // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
-    // follow none that is stored, in order off the description. The one
-    // call site keeps `conjoin_node_with_clause` inlined here.
+    // follow none that is stored, in order off the description.
+    let nodes = old.nodes.stored();
     let stored = old.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
     let mut gate = eng.limits().gate();
-    for i in 0..ctx.nodes {
+    for i in 0..old.slot_count() {
         let inputs: &[ChildPair] = match (nodes.get(i), stored) {
             (Some(node), Some(s)) => s.of(node),
             (Some(node), None) => {
