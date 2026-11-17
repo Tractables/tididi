@@ -180,6 +180,11 @@ impl CountVec {
     }
 
     /// Overwrite slot `i` (pre-sized fill; see [`Self::try_with_width`]).
+    ///
+    /// Inline, the side table's work out of line: a count fold sets every
+    /// leaf slot on every pass, and the call cost a pinned counter 8% of its
+    /// instructions.
+    #[inline(always)]
     pub(crate) fn set(&mut self, eng: &Engine, i: usize, c: Count) -> Result<(), OperationError> {
         match c {
             Count::Fast(v) => {
@@ -190,22 +195,30 @@ impl CountVec {
                 // A slot that stops overflowing must lose its side-table entry,
                 // or the sentinel ⇔ entry invariant breaks; only a Big→Fast
                 // transition touches the table.
-                if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
-                    && let Some(big) = self.big.as_mut() {
-                        big.take(i);
-                    }
-                if v > u64::MAX as u128 {
-                    self.all_u64 = false;
+                if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW {
+                    self.clear_big(i);
                 }
+                self.all_u64 &= v <= u64::MAX as u128;
+                Ok(())
             }
-            Count::Big(b) => {
-                self.big
-                    .get_or_insert_with(CountOverflow::default)
-                    .try_insert(eng, i, b)?;
-                self.fast[i] = COUNT_OVERFLOW;
-                self.all_u64 = false;
-            }
+            Count::Big(b) => self.set_big(eng, i, b),
         }
+    }
+
+    #[inline(never)]
+    fn clear_big(&mut self, i: usize) {
+        if let Some(big) = self.big.as_mut() {
+            big.take(i);
+        }
+    }
+
+    #[inline(never)]
+    fn set_big(&mut self, eng: &Engine, i: usize, b: BigUint) -> Result<(), OperationError> {
+        self.big
+            .get_or_insert_with(CountOverflow::default)
+            .try_insert(eng, i, b)?;
+        self.fast[i] = COUNT_OVERFLOW;
+        self.all_u64 = false;
         Ok(())
     }
 
