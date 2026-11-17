@@ -197,6 +197,9 @@ fn refuse_at_every_point(
     };
     let mut refusals = 0;
     for n in 0.. {
+        // Each attempt on cold pools: a buffer an earlier attempt grew skips
+        // a reserve, and the points past it would never be refused.
+        let eng = Engine::new();
         let scope = arm(&eng, n);
         let outcome = match mirror {
             true => eng.embed_moving_mirrored(f.clone(), &big, map),
@@ -228,6 +231,8 @@ fn refuse_at_every_point(
                 break;
             }
             Err(refused) => {
+                let count = |t: &Tdd| Engine::new().model_count(t).map_err(|e| format!("{e:?}"));
+                assert_eq!(count(&refused.tdd), count(&f), "refused at {n}: another model count");
                 assert!(same_storage(&refused.tdd, &f), "refused at {n}: the diagram changed");
                 assert_eq!(known(&refused.tdd), known(&f), "refused at {n}: the diagram known otherwise");
                 refusals += 1;
