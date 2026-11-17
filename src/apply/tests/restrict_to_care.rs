@@ -1003,12 +1003,17 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     care_on_one_subtree_keeps_exactly_the_pairs_models_use();
     care_rooted_lower_keeps_exactly_the_pairs_models_use();
     let after = restrict_paths();
-    let [listings, descents, spines, paired] = [0, 1, 2, 3].map(|k| after[k] - before[k]);
-    eprintln!("restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired");
+    let [listings, descents, spines, paired, beside_top] =
+        [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
+    eprintln!(
+        "restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired, \
+         {beside_top} beside ⊤"
+    );
     assert!(listings >= 100, "too few walks marked off the listings: {listings}");
     assert!(descents >= 100, "too few walks marked by the descent: {descents}");
     assert!(spines >= 100, "too few levels joined as a spine: {spines}");
     assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
+    assert!(beside_top >= 1, "too few levels paired beside `⊤`: {beside_top}");
 }
 
 /// Each reservation of a restriction refused in turn, on implicit levels,

@@ -8,8 +8,9 @@
 //! Besides the joins on both children or on one ([`Walk::join_both`],
 //! [`Walk::join_one`]), a level where `care` holds one node of few pairs is
 //! joined pair by pair in storage order ([`Walk::join_spine`]), and one
-//! whose `f` nodes have one live product each at both children by looking
-//! each `f` pair's partners up ([`Walk::join_paired`]).
+//! whose `f` nodes have one live product each at both children (a child
+//! `care` reads as `⊤` gives each its product with `⊤`) by looking each `f`
+//! pair's partners up ([`Walk::join_paired`]).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -626,11 +627,15 @@ impl<'a> Walk<'a> {
             let found = self.join_spine(u, lc, rc)?;
             return Ok(Products::Listed(listed(eng, nodes, &found)?));
         }
-        let one = |k: usize| sides[k] == Side::Listed && self.one_product_each(kids[k]);
-        if one(0) && one(1) {
+        let single = |k: usize| match sides[k] {
+            Side::Listed => self.one_product_each(kids[k]),
+            Side::CareMarginal => true,
+            _ => false,
+        };
+        if sides.contains(&Side::Listed) && single(0) && single(1) {
             #[cfg(test)]
             crate::test_helpers::note_restrict_path(3);
-            let mut found = self.join_paired(u, kids)?;
+            let mut found = self.join_paired(u, kids, sides)?;
             // Found in `f`'s node and pair order: ascending already where
             // `care` holds one node here.
             if care.levels[u.idx()].nodes().len() > 1 {
@@ -849,22 +854,38 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// Join level `u`'s pairs where every `f` node at both listed children
-    /// has at most one live product: an `f` pair's two children name the
-    /// one `care` child on each side they can meet, so its partners are the
-    /// `care` pairs with exactly those two children, found by a search among
-    /// `care`'s pairs ordered by left child, then right. `f`'s pairs are read
-    /// once in storage order, nothing of them grouped or costed: the work is
-    /// a search an `f` pair and a sort of `care`'s pairs.
-    fn join_paired(&mut self, u: VtreeIdx, kids: [VtreeIdx; 2]) -> Result<Found, Halt> {
+    /// Join level `u`'s pairs where every `f` node at both children has at
+    /// most one live product, one child listed: an `f` pair's two children
+    /// name the one `care` child on each side they can meet, so its partners
+    /// are the `care` pairs with exactly those two children, found by a
+    /// search among `care`'s pairs grouped by their listed-side child and
+    /// ordered by the other. A [`Side::CareMarginal`] child names none: every
+    /// `care` pair not `ZERO` there is a partner. `f`'s pairs are read once in
+    /// storage order, nothing of them grouped or costed: the work is a search
+    /// an `f` pair and a sort of `care`'s pairs.
+    fn join_paired(
+        &mut self,
+        u: VtreeIdx,
+        kids: [VtreeIdx; 2],
+        sides: [Side; 2],
+    ) -> Result<Found, Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
-        let lives = [self.take(kids[0]), self.take(kids[1])];
+        let k = if sides[0] == Side::Listed { 0 } else { 1 };
+        let keyed = self.take(kids[k]);
+        let other = (sides[1 - k] == Side::Listed).then(|| self.take(kids[1 - k]));
+        let any_other = care.levels[kids[1 - k].idx()].is_marginal();
+        #[cfg(test)]
+        if other.is_none() {
+            crate::test_helpers::note_restrict_path(4);
+        }
         let node = |c: EncodedChildRef| ChildDecoder::structural().node(c);
-        let mut cg = groups(eng, care, u, 0, kids[0])?;
-        for y in 0..cg.offsets.len() - 1 {
-            let run = &mut cg.entries[cg.offsets[y] as usize..cg.offsets[y + 1] as usize];
-            if run.len() > 1 {
-                run.sort_unstable_by_key(|&(b, j, cin)| (node(cin).0, b, j));
+        let mut cg = groups(eng, care, u, k, kids[k])?;
+        if other.is_some() {
+            for y in 0..cg.offsets.len() - 1 {
+                let run = &mut cg.entries[cg.offsets[y] as usize..cg.offsets[y + 1] as usize];
+                if run.len() > 1 {
+                    run.sort_unstable_by_key(|&(b, j, cin)| (node(cin).0, b, j));
+                }
             }
         }
         let level = &f.levels[u.idx()];
@@ -872,24 +893,39 @@ impl<'a> Walk<'a> {
         for a in 0..level.nodes().len() {
             let mut i = 0u32;
             for p in level.pairs_iter_of_idx(a) {
-                let (x0, x1) = (node(p.left), node(p.right));
-                let ys = (x0 != ZERO && x1 != ZERO)
-                    .then(|| Some((lives[0].of(x0.0).first()?.1, lives[1].of(x1.0).first()?.1)))
+                let (xk, xo) = (node_of(p, k), node_of(p, 1 - k));
+                let yk = (xk != ZERO && xo != ZERO)
+                    .then(|| keyed.of(xk.0).first())
                     .flatten();
-                if let Some((y0, y1)) = ys {
-                    let run = cg.of(y0);
-                    let lo = run.partition_point(|e| node(e.2).0 < y1);
-                    for &(b, j, _) in run[lo..].iter().take_while(|e| node(e.2).0 == y1) {
-                        eng.limits().try_push(&mut found, (a as u32, b, i, j))?;
+                if let Some(&(_, yk)) = yk {
+                    let run = cg.of(yk);
+                    match &other {
+                        Some(l) => {
+                            if let Some(&(_, yo)) = l.of(xo.0).first() {
+                                let lo = run.partition_point(|e| node(e.2).0 < yo);
+                                let run = run[lo..].iter().take_while(|e| node(e.2).0 == yo);
+                                for &(b, j, _) in run {
+                                    eng.limits().try_push(&mut found, (a as u32, b, i, j))?;
+                                }
+                            }
+                        }
+                        None => {
+                            for &(b, j, cin) in run {
+                                if any_other || node(cin) != ZERO {
+                                    eng.limits().try_push(&mut found, (a as u32, b, i, j))?;
+                                }
+                            }
+                        }
                     }
                 }
                 i += 1;
             }
             self.spend_many(u64::from(i))?;
         }
-        let [l0, l1] = lives;
-        self.restore(kids[0], l0);
-        self.restore(kids[1], l1);
+        self.restore(kids[k], keyed);
+        if let Some(l) = other {
+            self.restore(kids[1 - k], l);
+        }
         Ok(found)
     }
 

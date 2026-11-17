@@ -109,14 +109,16 @@ pub(crate) fn reroot_to_child(t: &Tdd, child: ChildSide) -> Tdd {
 
 thread_local! {
     /// The care restriction's walks marked off the listings, its walks
-    /// marked by the descent, and its levels joined as a spine and by both
-    /// children's products, on this thread ([`note_restrict_path`]).
-    static RESTRICT_PATHS: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
+    /// marked by the descent, and its levels joined as a spine, by both
+    /// children's products and by one child's beside `⊤`, on this thread
+    /// ([`note_restrict_path`]).
+    static RESTRICT_PATHS: std::cell::Cell<[usize; 5]> = const { std::cell::Cell::new([0; 5]) };
 }
 
 /// Count one more of the care restriction's path `k` on this thread: `0` a
 /// walk marked off the listings, `1` one marked by the descent, `2` a level
-/// joined as a spine, `3` one joined by both children's products.
+/// joined as a spine, `3` one joined by both children's products, `4` one
+/// of those whose other child `care` reads as `⊤`.
 pub(crate) fn note_restrict_path(k: usize) {
     RESTRICT_PATHS.with(|c| {
         let mut n = c.get();
@@ -127,7 +129,7 @@ pub(crate) fn note_restrict_path(k: usize) {
 
 /// The care restriction's paths taken on this thread so far
 /// ([`note_restrict_path`]).
-pub(crate) fn restrict_paths() -> [usize; 4] {
+pub(crate) fn restrict_paths() -> [usize; 5] {
     RESTRICT_PATHS.with(std::cell::Cell::get)
 }
 
