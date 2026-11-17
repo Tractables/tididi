@@ -120,13 +120,6 @@ impl PendingTopo {
         self.info
     }
 
-    /// [`commit_in_probe`](Self::commit_in_probe) and [`Vtree::reshaped`].
-    #[cfg(test)]
-    pub(crate) fn commit(self, vtree: &mut Vtree) -> RotationInfo {
-        vtree.reshaped();
-        self.commit_in_probe(vtree)
-    }
-
     /// Keep the rotation: repair the bottom-up order for the new shape. The
     /// caller owes [`Vtree::reshaped`] once it keeps the tree, unless it
     /// seats the diagram on a lifted home instead; the probe loop pays for

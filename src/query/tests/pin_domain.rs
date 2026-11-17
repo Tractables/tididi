@@ -10,9 +10,7 @@ fn sparse_counts(retention: Retention) {
     let vars = [VarId(20), VarId(3), VarId(72)];
     let mut rotated = Vtree::balanced_over(&vars).unwrap();
     let root = rotated.root();
-    crate::vtree::rotate::rotate_pointers(&mut rotated, root, crate::vtree::RotationKind::Left)
-        .unwrap()
-        .commit(&mut rotated);
+    crate::test_helpers::rotate_left(&mut rotated, root).unwrap();
     for tree in [
         Vtree::balanced_over(&vars).unwrap(),
         Vtree::linear_from_order(&vars).unwrap(),
