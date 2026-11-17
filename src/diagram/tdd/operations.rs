@@ -1137,14 +1137,25 @@ impl Tdd {
     /// [`Vtree::empty_projection`](crate::vtree::Vtree::empty_projection).
     /// The function and its counts over the home are kept. After
     /// [`minimize`](Self::minimize) the leaves left are the
-    /// [`support`](Self::support). Time and memory linear in the diagram.
+    /// [`support`](Self::support).
+    ///
+    /// The kept levels move rather than being rebuilt. Under a dropped node,
+    /// the level below takes its numbering: a permutation of node words when
+    /// each of its nodes names one node there, a concatenation of pair lists
+    /// otherwise; above a dropped node whose other side ends at a leaf, one
+    /// side of the level's pairs is rewritten. So time goes by the vtree's
+    /// nodes, the widths of the levels that take another numbering and the
+    /// pairs merged or rewritten, not by the diagram. The reduction work the
+    /// diagram owes and its level counts
+    /// ([`attach_level_counts`](Self::attach_level_counts)) carry over; a
+    /// canonical diagram stays canonical when no node merged.
     ///
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`] for a diagram with a marginal level,
-    /// [`OperationError::OverBudget`] when the new levels are refused, and
-    /// [`OperationError::Stopped`] on cancellation; the diagram then denotes
-    /// the same function, trimmed or not.
+    /// [`OperationError::OverBudget`] when an allocation is refused, and
+    /// [`OperationError::Stopped`] on cancellation; the diagram is then as it
+    /// was.
     ///
     /// ```
     /// use std::sync::Arc;

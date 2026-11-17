@@ -587,10 +587,30 @@ impl Dirty {
     /// Rename every entry through `map`, old level index to new, for levels
     /// moved to other indices of another vtree.
     pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {
-        self.fused.clear();
+        self.remap_keeping(map, |_| false);
+    }
+
+    /// [`remap`](Self::remap), moving the fusion record of each level
+    /// `keeps` names to its new index; every other record is dropped.
+    pub(crate) fn remap_keeping(&mut self, map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) {
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
+            }
+        }
+        let fused = std::mem::take(&mut self.fused);
+        for (w, &word) in fused.iter().enumerate() {
+            let mut bits = word;
+            while bits != 0 {
+                let t = w * 64 + bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                if t < map.len() && keeps(t) {
+                    let to = map[t].idx();
+                    if to / 64 >= self.fused.len() {
+                        self.fused.resize(to / 64 + 1, 0);
+                    }
+                    self.fused[to / 64] |= 1 << (to % 64);
+                }
             }
         }
     }

@@ -228,3 +228,179 @@ fn counters_count_over_the_home() {
         assert_eq!(fc.count_table(&pinned).unwrap(), gc.count_table(&pinned).unwrap(), "seed {seed}, table");
     }
 }
+
+/// A deterministic diagram over `home` built level by level, its leaves in
+/// `dropped` named true: each internal level's nodes split a random subset
+/// of the pairs of its children's nodes, or, at random, hold the whole grid
+/// one pair a node in row order, which a seat describes.
+fn built_diagram(home: &Arc<Vtree>, dropped: &[bool], rng: &mut Lcg) -> Tdd {
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    let eng = Engine::new();
+    let mut b = Tdd::builder(&eng, home).unwrap();
+    let mut refs: Vec<Vec<NodeIdx>> = vec![Vec::new(); home.num_nodes()];
+    for t in home.bottomup() {
+        let (l, r) = match *home.node(t) {
+            crate::vtree::VtreeNode::Leaf { .. } => {
+                refs[t.idx()] = if dropped[t.idx()] { vec![ONE_LEAF_IDX] } else { vec![POS_LEAF_IDX, NEG_LEAF_IDX] };
+                continue;
+            }
+            crate::vtree::VtreeNode::Internal { left, right, .. } => (left, right),
+        };
+        let mut grid: Vec<ChildPair> =
+            refs[l.idx()].iter().flat_map(|&a| refs[r.idx()].iter().map(move |&c| ChildPair::new(a, c))).collect();
+        let mut nodes = Vec::new();
+        if grid.len() > 1 && rng.below(4) == 0 {
+            nodes.extend(grid.iter().map(|&p| vec![p]));
+        } else {
+            for i in (1..grid.len()).rev() {
+                grid.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            grid.truncate(1 + rng.below(grid.len().min(8) as u64) as usize);
+            let mut node = Vec::new();
+            for p in grid {
+                node.push(p);
+                if rng.below(3) == 0 {
+                    nodes.push(std::mem::take(&mut node));
+                }
+            }
+            if !node.is_empty() {
+                nodes.push(node);
+            }
+        }
+        refs[t.idx()] = nodes.iter().map(|pairs| b.push(&eng, t, pairs).unwrap()).collect();
+    }
+    let root = home.root();
+    let local = refs[root.idx()][rng.below(refs[root.idx()].len() as u64) as usize];
+    b.finish(TddNodeId { vtree: root, local }).unwrap()
+}
+
+fn leaf_vars(v: &Vtree) -> Vec<VarId> {
+    let mut vars: Vec<VarId> =
+        (0..v.num_nodes() as u32).map(VtreeIdx).filter(|&t| v.node(t).is_leaf()).map(|t| v.leaf_var(t)).collect();
+    vars.sort_unstable();
+    vars
+}
+
+fn column_values(column: &crate::value::CountVec) -> Vec<num_bigint::BigUint> {
+    use crate::value::CountRead;
+    (0..column.len())
+        .map(|i| match column.get(i) {
+            CountRead::Fast(v) => v.into(),
+            CountRead::Big(v) => v.clone(),
+        })
+        .collect()
+}
+
+/// A copy of `f` owing every reduction pass every level, as a fresh seat
+/// leaves a diagram.
+fn owing_everything(f: &Tdd) -> Tdd {
+    let mut copy = Tdd::from_levels_unchecked(Arc::clone(f.vtree()), f.levels().to_vec(), f.output());
+    copy.weights = f.weights.clone();
+    copy
+}
+
+/// One case of [`the_in_place_trim_is_the_rebuild`]: diagrams that dropped
+/// one leaf, several, one beside a leaf, that owed contraction, that kept
+/// level counts, and that stayed certified count in `seen`. Odd seeds build
+/// diagrams by hand, with nodes of several pairs over a dropped side.
+fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
+    use crate::test_helpers::{assert_canonical, assert_same_shape, trim_by_rebuild};
+    let mut rng = Lcg::new(seed.wrapping_mul(0x9e37_79b9) ^ 0x7121);
+    let n = 2 + rng.below(9) as u32;
+    let home = Arc::new(Vtree::random(n, seed));
+    let mut f = if seed.is_multiple_of(2) {
+        random_diagram(&home, n, &mut rng)
+    } else {
+        let dropped: Vec<bool> = (0..home.num_nodes()).map(|_| rng.below(3) == 0).collect();
+        built_diagram(&home, &dropped, &mut rng)
+    };
+    if rng.coin() {
+        f.attach_level_counts().unwrap();
+    }
+    let weighted = rng.below(4) == 0;
+    if weighted {
+        f.set_weights(weights(n, &mut rng)).unwrap();
+    }
+    let label = format!("seed {seed}, {n} variables");
+
+    let (mut g, mut h) = (f.clone(), f.clone());
+    let moved = g.trim().unwrap();
+    assert_eq!(moved, trim_by_rebuild(&mut h).unwrap(), "{label}: whether the diagram moved");
+    check_trimmed(&g, false).unwrap_or_else(|e| panic!("{label}: {e}"));
+    assert!(!g.clone().trim().unwrap(), "{label}: a second trim moved the diagram");
+    assert_eq!(leaf_vars(g.vtree()), leaf_vars(h.vtree()), "{label}: leaves kept");
+    assert_eq!(g.weights().is_some(), weighted, "{label}: weights carried");
+    if weighted {
+        let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
+        assert_eq!(value(&g), value(&f), "{label}: weighted value");
+    }
+    assert_eq!(g.is_zero(), h.is_zero(), "{label}: false");
+    assert_eq!(g.is_one(), h.is_one(), "{label}: true");
+    if g.vtree().num_nodes() > 0 {
+        let back = |t: &Tdd| t.embed(&home, |v| v).unwrap().0;
+        assert!(equiv(&back(&g), &back(&h)), "{label}: another function than the rebuild's");
+        assert!(equiv(&back(&g), &f), "{label}: another function");
+    }
+    if !moved {
+        return;
+    }
+
+    let dropped: Vec<VarId> = leaf_vars(f.vtree()).into_iter().filter(|v| !leaf_vars(g.vtree()).contains(v)).collect();
+    let beside_leaf = dropped.iter().any(|&v| {
+        let t = home.leaf_of(v).unwrap();
+        home.node(t).parent().is_some_and(|p| {
+            let (l, r) = home.children(p);
+            home.node(if l == t { r } else { l }).is_leaf()
+        })
+    });
+    seen[0] += usize::from(dropped.len() == 1);
+    seen[1] += usize::from(dropped.len() > 1);
+    seen[2] += usize::from(beside_leaf);
+    seen[3] += usize::from(!f.dirty.is_empty());
+
+    if let Some(kept) = g.levels.counts() {
+        seen[4] += 1;
+        let mut fresh = g.clone();
+        fresh.attach_level_counts().unwrap();
+        let fresh = fresh.levels.counts().unwrap();
+        for t in (0..g.vtree().num_nodes() as u32).map(VtreeIdx) {
+            if let Some(column) = kept.column(t) {
+                let want = fresh.column(t).expect("a fresh count of every internal level");
+                assert_eq!(column_values(column), column_values(want), "{label}: kept counts at {}", t.0);
+            }
+        }
+    }
+
+    let mut by_worklists = g.clone();
+    by_worklists.minimize().unwrap();
+    let mut by_fresh_pass = owing_everything(&g);
+    by_fresh_pass.minimize().unwrap();
+    let mut rebuilt = h.clone();
+    rebuilt.minimize().unwrap();
+    if g.vtree().num_nodes() > 0 {
+        assert_canonical(&by_worklists);
+        assert_same_shape(&by_worklists, &by_fresh_pass, &format!("{label}: the worklists against a fresh pass"));
+        assert_same_shape(&by_worklists, &rebuilt, &format!("{label}: against the rebuild"));
+    }
+    if g.levels.is_canonical(g.output) {
+        seen[5] += 1;
+        assert!(f.levels.is_canonical(f.output), "{label}: certified by the trim");
+        assert_canonical(&g);
+        assert_same_shape(&g, &by_fresh_pass, &format!("{label}: certified"));
+    }
+}
+
+#[test]
+fn the_in_place_trim_is_the_rebuild() {
+    use crate::test_helpers::{described_here, with_floor, LOW_FLOOR};
+    let mut seen = [0usize; 6];
+    let described = described_here();
+    for seed in 0..800u64 {
+        match seed % 4 {
+            3 => with_floor(LOW_FLOOR, || in_place_against_rebuild(seed, &mut seen)),
+            _ => in_place_against_rebuild(seed, &mut seen),
+        }
+    }
+    assert!(described_here() > described, "no level was implicit");
+    assert!(seen.iter().all(|&k| k >= 5), "cases seen: {seen:?}");
+}

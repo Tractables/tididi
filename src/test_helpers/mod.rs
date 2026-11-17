@@ -6,7 +6,8 @@
 //! it: the seeded `Lcg` / `rand_cnf` pair under a `CnfShape`, the
 //! enumeration oracles, the apply-free evaluator `eval`, canonicity by
 //! `assert_canonical`, structural equality by `assert_same_shape`, and
-//! `assert_restrict_ok`, and `ClauseStore`, which decides CNF encodings and
+//! `assert_restrict_ok`, `trim_by_rebuild`, the rebuild `Tdd::trim` is tested
+//! against, and `ClauseStore`, which decides CNF encodings and
 //! probes without a solver; `compile` turns a formula or a truth table into a
 //! diagram and holds the small constructors (`pair`, `rat`, `exact_weight`)
 //! hand-built fixtures need. Four modules are `cfg(test)` throughout:
@@ -46,6 +47,8 @@ mod r#gen;
 mod oracle;
 #[cfg(test)]
 mod toy;
+#[cfg(any(test, feature = "testing"))]
+mod trim;
 #[cfg(test)]
 mod implicit;
 
@@ -63,5 +66,7 @@ pub use r#gen::*;
 pub use oracle::*;
 #[cfg(test)]
 pub(crate) use toy::*;
+#[cfg(any(test, feature = "testing"))]
+pub use trim::trim_by_rebuild;
 #[cfg(test)]
 pub(crate) use implicit::*;

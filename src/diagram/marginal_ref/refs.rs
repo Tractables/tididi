@@ -99,7 +99,7 @@ pub(crate) fn for_each_side_ref_mut(
 
 /// [`for_each_side_ref_mut`] on a stored level, in place.
 #[inline]
-fn rewrite_stored_side(level: &mut TddLevel, side: ChildSide, mut f: impl FnMut(&mut u32)) {
+pub(crate) fn rewrite_stored_side(level: &mut TddLevel, side: ChildSide, mut f: impl FnMut(&mut u32)) {
     for ni in 0..level.nodes().len() {
         match level.arena_range(level.node(ni).kind()) {
             Some(range) => match side {
