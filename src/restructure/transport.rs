@@ -10,7 +10,7 @@ use crate::Engine;
 use crate::build::constant_without_leaf;
 use crate::diagram::{LevelCounts, Tdd, TddLevel, TddNodeId, return_levels};
 use crate::value::CountVec;
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 
 impl Engine {
     /// `f` with each variable renamed through `map`, on
@@ -38,16 +38,16 @@ impl Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
+    /// use tididi::vtree::{Home, VarId};
     ///
     /// let engine = Engine::new();
-    /// let home = Arc::new(Vtree::balanced(8));
+    /// let home = Home::new(Vtree::balanced(8));
     /// let own = Vtree::projection(&home, [VarId(1), VarId(2)])?;
     /// let f = engine.clause(&own, [1, -2])?;
     /// // x1 ∨ ¬x2 becomes x6 ∨ ¬x5; x6 is right of x5 in `home`.
     /// let g = engine.transport(&f, &home, |v| VarId(7 - v.0)).map_err(|r| r.error)?;
     /// assert_eq!(g.vtree().num_leaves(), 2);
-    /// assert!(Arc::ptr_eq(g.vtree().home().unwrap(), &home));
+    /// assert!(Arc::ptr_eq(g.vtree().home().unwrap().vtree(), home.vtree()));
     /// assert_eq!(engine.model_count(&g)?, 192u32.into()); // 3/4 of 2^8
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -68,7 +68,7 @@ impl Engine {
     pub fn transport<'a>(
         &self,
         f: impl Into<Cow<'a, Tdd>>,
-        home: &Arc<Vtree>,
+        home: &Home,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<Tdd, TransportRefused<'a>> {
         let f = f.into();
@@ -106,7 +106,7 @@ struct Route {
 }
 
 impl Route {
-    fn find(eng: &Engine, f: &Tdd, home: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
+    fn find(eng: &Engine, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
         f.require_structure()?;
         let lim = eng.limits();
         let source = f.vtree();
@@ -118,8 +118,8 @@ impl Route {
         lim.reserve_exact(&mut images, source.num_leaves() as usize)?;
         for (_, var) in source.leaf_bottomup() {
             let image = map(var);
-            if home.leaf_of(image).is_none() {
-                return Err(EmbedError::VariableOutOfRange { variable: image, num_vars: home.num_vars() });
+            if home.rank(image).is_none() {
+                return Err(EmbedError::VariableOutOfRange { variable: image, num_vars: home.vtree().num_vars() });
             }
             images.push(image);
         }

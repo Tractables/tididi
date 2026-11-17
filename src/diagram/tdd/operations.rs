@@ -1133,8 +1133,9 @@ impl Tdd {
         self.context_arc().run(|eng| eng.minimize(self))
     }
 
-    /// Move the diagram onto the projection of its vtree's home on the leaves
-    /// its pairs name by a literal, and return whether it moved.
+    /// Move the diagram onto the projection of `home` on the leaves its pairs
+    /// name by a literal, and return whether it moved. `home` is the
+    /// diagram's vtree's home, or the vtree itself when that is a root.
     ///
     /// A leaf every pair names as true leaves with its level, and so does
     /// every node above it with no other leaf under it; a constant ends on
@@ -1156,27 +1157,27 @@ impl Tdd {
     ///
     /// # Errors
     ///
+    /// [`OperationError::VtreeMismatch`] when `home` is not the diagram's,
     /// [`OperationError::MarginalLevel`] for a diagram with a marginal level,
     /// [`OperationError::OverBudget`] when an allocation is refused, and
     /// [`OperationError::Stopped`] on cancellation; the diagram is then as it
     /// was.
     ///
     /// ```
-    /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
+    /// use tididi::vtree::{Home, VarId};
     ///
-    /// let home = Arc::new(Vtree::balanced(4));
-    /// let mut f = Tdd::clause(&home, [1, 2])?.condition_var(VarId(1), false)?;
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let mut f = Tdd::clause(home.vtree(), [1, 2])?.condition_var(VarId(1), false)?;
     /// let count = f.model_count()?;
-    /// assert!(f.trim()?);
+    /// assert!(f.trim(&home)?);
     /// assert_eq!(f.vtree().num_leaves(), 1);
     /// assert_eq!(f.model_count()?, count);
-    /// assert!(!f.trim()?);
+    /// assert!(!f.trim(&home)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn trim(&mut self) -> Result<bool, OperationError> {
-        self.context_arc().run(|eng| eng.trim(self))
+    pub fn trim(&mut self, home: &crate::vtree::Home) -> Result<bool, OperationError> {
+        self.context_arc().run(|eng| eng.trim(self, home))
     }
 
     /// Run the reduction passes selected by `plan`, preserving function and count.

@@ -205,7 +205,7 @@ mod input {
         let lim = eng.limits();
         let _op = lim.enter()?;
         let mut literals = Vec::new();
-        let vtree = f.vtree().home().unwrap_or(f.vtree());
+        let vtree = f.vtree().home().map_or(f.vtree(), crate::vtree::Home::vtree);
         <i32 as Sealed>::collect(eng, vtree, input, &mut literals)?;
         op(eng, f, &literals)
     }

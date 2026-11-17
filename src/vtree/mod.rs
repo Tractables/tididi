@@ -40,6 +40,7 @@ mod topo;
 mod validate;
 
 pub(crate) use build::check_var_space;
+pub use home::Home;
 pub(crate) use home::LeafSets;
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};

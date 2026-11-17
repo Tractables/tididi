@@ -28,7 +28,7 @@ use crate::diagram::{
 };
 use crate::limits::OperationError;
 use crate::value::{Count, CountRead, CountVec};
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, Vtree, VtreeIdx, VtreeNode};
 
 /// A node of `e` that no node of its chain's top holds.
 const UNNAMED: u32 = u32::MAX;
@@ -45,10 +45,13 @@ impl Engine {
     /// # Errors
     ///
     /// As [`Tdd::trim`](crate::Tdd::trim).
-    pub fn trim(&self, f: &mut Tdd) -> Result<bool, OperationError> {
+    pub fn trim(&self, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
         f.require_structure()?;
-        trim(self, f)
+        if !f.vtree.is_on(home) {
+            return Err(OperationError::VtreeMismatch);
+        }
+        trim(self, f, home)
     }
 }
 
@@ -205,14 +208,14 @@ const SIDES: [ChildSide; 2] = [ChildSide::Left, ChildSide::Right];
 
 /// The trim, all of its allocations made before `f` changes, so that a
 /// refusal leaves `f` as it was.
-fn trim(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
+fn trim(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let vtree = Arc::clone(&f.vtree);
     if vtree.num_nodes() == 0 {
         return Ok(false);
     }
     if f.is_zero() {
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&vtree), false));
+        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), false));
         return Ok(true);
     }
     lim.check_stop()?;
@@ -221,7 +224,7 @@ fn trim(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
         if f.output.local != ONE_LEAF_IDX {
             return Ok(false);
         }
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&vtree), true));
+        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
         return Ok(true);
     }
     let shape = Shape::read(eng, f)?;
@@ -237,7 +240,7 @@ fn trim(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
         _ => Some(f.output.local),
     };
     let Some(local) = local else {
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&vtree), true));
+        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
         return Ok(true);
     };
 
@@ -257,7 +260,7 @@ fn trim(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
             Kind::True => unreachable!("a dropped subtree is not walked"),
         }
     }
-    let own = Vtree::projection(&vtree, vars.iter().copied()).expect("kept leaves of the diagram's vtree");
+    let own = Vtree::projection(home, vars.iter().copied()).expect("kept leaves of the diagram's vtree");
     lim.discard(vars);
     let m = own.num_nodes();
 

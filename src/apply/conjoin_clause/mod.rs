@@ -243,7 +243,7 @@ fn extend_to(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationErr
         return Ok(f);
     }
     let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
-    let added = lits.iter().map(|lit| lit.var).filter(|&var| home.leaf_of(var).is_some());
+    let added = lits.iter().map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
     let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
     match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build, false) {
         Ok((extended, plan)) => {

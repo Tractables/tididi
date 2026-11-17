@@ -15,20 +15,23 @@ use crate::Engine;
 use crate::build::constant_without_leaf;
 use crate::diagram::{ChildPair, NodeIdx, Tdd, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::OperationError;
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// [`Tdd::trim`] by a rebuild: the same function on the same projection.
 ///
 /// # Errors
 ///
 /// As [`Tdd::trim`].
-pub fn trim_by_rebuild(f: &mut Tdd) -> Result<bool, OperationError> {
+pub fn trim_by_rebuild(f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
     let context = Arc::clone(f.context());
     context.run(|eng| {
         let _op = eng.limits().enter()?;
         f.require_structure()?;
+        if !f.vtree().is_on(home) {
+            return Err(OperationError::VtreeMismatch);
+        }
         let mut changed = false;
-        while trim_once(eng, f)? {
+        while trim_once(eng, f, home)? {
             changed = true;
         }
         Ok(changed)
@@ -40,13 +43,13 @@ const UNNAMED: u32 = u32::MAX;
 
 /// One round: drop the leaves named `One` now. Merging may name a kept leaf
 /// `One`, for the next round.
-fn trim_once(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
+fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
     let vtree = Arc::clone(&f.vtree);
     if vtree.num_nodes() == 0 {
         return Ok(false);
     }
     if f.is_zero() {
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&vtree), false));
+        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), false));
         return Ok(true);
     }
     eng.limits().check_stop()?;
@@ -75,12 +78,12 @@ fn trim_once(eng: &Engine, f: &mut Tdd) -> Result<bool, OperationError> {
         return Ok(false);
     }
     if !kept[vtree.root().idx()] {
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&vtree), true));
+        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
         return Ok(true);
     }
     let own = {
         let vars = vtree.bottomup().filter(|&t| vtree.node(t).is_leaf() && kept[t.idx()]).map(|t| vtree.leaf_var(t));
-        Vtree::projection(&vtree, vars.collect::<Vec<VarId>>()).expect("kept leaves of the diagram's vtree")
+        Vtree::projection(home, vars.collect::<Vec<VarId>>()).expect("kept leaves of the diagram's vtree")
     };
     let both = |t: VtreeIdx| match *vtree.node(t) {
         VtreeNode::Internal { left, right, .. } => kept[left.idx()] && kept[right.idx()],

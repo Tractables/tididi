@@ -137,7 +137,8 @@ pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationErr
 #[cold]
 fn trim_result(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
     if result.weights.is_none() && !result.has_marginal_level() {
-        eng.trim(result)?;
+        let home = result.vtree.home().expect("a projection").clone();
+        eng.trim(result, &home)?;
     }
     Ok(())
 }
@@ -174,7 +175,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
     }
     if into.num_nodes() == 0 {
         let home = into.home().expect("a vtree with no node is a projection");
-        let (_, var) = home.leaf_bottomup().next().expect("a home has a leaf");
+        let (_, var) = home.vtree().leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }
     for f in &operands {

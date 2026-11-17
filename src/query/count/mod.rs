@@ -107,7 +107,7 @@ impl Engine {
         let (mut own, mut free) = (Vec::new(), Vec::new());
         for &var in vars {
             gate.poll(1)?;
-            home.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+            home.rank(var).ok_or(OperationError::VariableNotInVtree(var))?;
             let to = if tdd.vtree.leaf_of(var).is_some() { &mut own } else { &mut free };
             self.limits().try_push(to, var)?;
         }
