@@ -121,8 +121,15 @@ impl PendingTopo {
     }
 
     /// Keep the rotation: repair the bottom-up order for the new shape.
-    pub(crate) fn commit(mut self, vtree: &mut Vtree) -> RotationInfo {
+    pub(crate) fn commit(self, vtree: &mut Vtree) -> RotationInfo {
         vtree.reshaped();
+        self.commit_in_probe(vtree)
+    }
+
+    /// [`commit`](Self::commit) inside a descent, which calls
+    /// [`Vtree::reshaped`] once when it keeps the tree. The probe loop pays
+    /// for any call that may write the vtree.
+    pub(crate) fn commit_in_probe(mut self, vtree: &mut Vtree) -> RotationInfo {
         vtree.fixup_topo_after_rotate(&self.info, self.kind);
         self.settled = true;
         self.info
@@ -217,6 +224,12 @@ impl Vtree {
     /// read the other way round to keep its meaning.
     pub(crate) fn swap_children(&mut self, v: VtreeIdx) {
         self.reshaped();
+        self.swap_children_in_probe(v);
+    }
+
+    /// [`swap_children`](Self::swap_children) inside a descent's probe, as
+    /// [`PendingTopo::commit_in_probe`].
+    pub(crate) fn swap_children_in_probe(&mut self, v: VtreeIdx) {
         if let VtreeNode::Internal { left, right, .. } = &mut self.nodes[v.idx()] {
             std::mem::swap(left, right);
         }

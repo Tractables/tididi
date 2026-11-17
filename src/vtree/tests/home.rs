@@ -218,12 +218,15 @@ fn rotating_clears_the_home() {
     assert!(swapped.home().is_none());
     assert_eq!(swapped.validate(), Ok(()));
 
-    let mut moved = (*home).clone();
-    assert!(moved.home_index.get().is_some());
+    drop(own);
+    let index = home.home_index();
+    assert!(Arc::ptr_eq(&index, &home.home_index()));
+    let mut moved = Arc::clone(&home);
+    drop(home);
     let root = moved.root();
-    rotate_right(&mut moved, root).or_else(|| rotate_left(&mut moved, root)).unwrap();
-    assert!(moved.home_index.get().is_none());
-    let moved = Arc::new(moved);
+    let shape = Arc::make_mut(&mut moved);
+    rotate_right(shape, root).or_else(|| rotate_left(shape, root)).unwrap();
+    assert!(!Arc::ptr_eq(&index, &moved.home_index()));
     let again = Vtree::projection(&moved, [1, 3, 4, 8, 11].map(VarId)).unwrap();
     assert_eq!(again.validate(), Ok(()));
 }

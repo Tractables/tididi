@@ -421,6 +421,7 @@ impl Engine {
         let result = PoolDescent::new(self, &mut tree, config, start, &mut scratch, stats, members)
             .and_then(|mut descent| descent.run(members, &mut changed));
         if changed {
+            tree.reshaped();
             install(members, tree);
         }
         result?;
@@ -919,13 +920,13 @@ fn probe_in_place<'l>(
                 .topo_pos(misplaced)
                 .saturating_sub(tree.topo_pos(info.w_idx));
             eng.limits().charge_work(u64::from(moved));
-            pending.commit(tree);
+            pending.commit_in_probe(tree);
             Ok(true)
         }
         outcome => {
             pending.revert(tree);
             if mv.crossed {
-                tree.swap_children(info.w_idx);
+                tree.swap_children_in_probe(info.w_idx);
             }
             outcome
         }
@@ -963,7 +964,7 @@ fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
         return None;
     }
     if mv.crossed {
-        tree.swap_children(promoted);
+        tree.swap_children_in_probe(promoted);
     }
     rotate_pointers(tree, pivot, kind)
 }

@@ -106,9 +106,8 @@ pub struct Vtree {
     /// Maps a [`VarId`] to the index of the leaf carrying it. Entries for ids
     /// that carry no leaf are meaningless, which is why [`Vtree::leaf_of`] is
     /// documented for covered variables only.
+    /// Empty on a projection.
     pub(super) var_to_leaf: Vec<VtreeIdx>,
-    /// [`Vtree::num_vars`]: `var_to_leaf.len()`, or the home's on a projection.
-    pub(super) id_space: u32,
     /// Number of leaf nodes; smaller than `var_to_leaf.len()` when the variable
     /// numbering has gaps.
     pub(super) leaf_count: u32,
@@ -118,10 +117,13 @@ pub struct Vtree {
     /// change after a rotation. See [`TopoOrder`] for the properties it
     /// maintains.
     pub(super) topo: TopoOrder,
-    /// Set on a projection, whose `var_to_leaf` is empty.
+    /// A projection's link to its home. No `Cell`, atomic, `OnceLock` or
+    /// `Mutex` may sit in a `Vtree`'s own bytes: a type with interior
+    /// mutability is not `Freeze`, so `&Vtree` arguments lose `noalias
+    /// readonly` and hot loops reload vtree fields (0.4% of a consumer's
+    /// instructions). A home's index is therefore kept in a table by the
+    /// home's allocation.
     pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
-    /// Built on a root vtree at its first projection; a rotation clears it.
-    pub(super) home_index: std::sync::OnceLock<std::sync::Arc<super::home::HomeIndex>>,
 }
 
 impl Vtree {
@@ -192,7 +194,10 @@ impl Vtree {
     /// [`Vtree::from_nodes`] make it larger.
     #[inline]
     pub fn num_vars(&self) -> u32 {
-        self.id_space
+        match self.var_to_leaf.len() {
+            0 => self.projected_num_vars(),
+            n => n as u32,
+        }
     }
 
     /// Total number of vtree nodes (leaves + internals).

@@ -7,7 +7,8 @@
 //! the home's size; the one table sized by the home is the home's
 //! [`HomeIndex`], built once and shared by all its projections.
 
-use std::sync::{Arc, OnceLock};
+use std::ptr;
+use std::sync::{Arc, Mutex, Weak};
 
 use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
@@ -121,6 +122,18 @@ impl HomeLink {
     }
 }
 
+/// The index of each home, by the home's allocation. A rotation reaches a
+/// vtree in an `Arc` only through `Arc::make_mut`, which moves a vtree with
+/// weak references to a new allocation, so an entry never describes a changed
+/// shape. A dropped home's entry is freed at the next miss. Not a field of
+/// [`Context`](crate::Context): one that needs dropping cost a consumer that
+/// makes a context per vtree 0.03% of its instructions.
+static HOMES: Mutex<Vec<(Weak<Vtree>, Arc<HomeIndex>)>> = Mutex::new(Vec::new());
+
+fn cached_index(entries: &[(Weak<Vtree>, Arc<HomeIndex>)], home: &Arc<Vtree>) -> Option<Arc<HomeIndex>> {
+    entries.iter().find(|(h, _)| ptr::eq(h.as_ptr(), Arc::as_ptr(home))).map(|(_, index)| Arc::clone(index))
+}
+
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
 pub(crate) enum LeafSets {
@@ -224,11 +237,9 @@ impl Vtree {
             nodes: Vec::new(),
             root: VtreeIdx(0),
             var_to_leaf: Vec::new(),
-            id_space: root.num_vars(),
             leaf_count: 0,
             topo: TopoOrder::default(),
             home: Some(Arc::new(link)),
-            home_index: OnceLock::new(),
         })
     }
 
@@ -237,7 +248,7 @@ impl Vtree {
     /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
     /// of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.as_deref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (&*link.index, &link.ranks);
@@ -262,13 +273,13 @@ impl Vtree {
 
     /// The number of home leaves this vtree does not have; 0 on a root.
     pub(crate) fn free_leaves(&self) -> u32 {
-        self.home.as_ref().map_or(0, |link| link.home.num_leaves() - self.leaf_count)
+        self.home.as_deref().map_or(0, |link| link.home.num_leaves() - self.leaf_count)
     }
 
     /// The variables of the home leaves this vtree does not have, left to
     /// right; none on a root.
     pub(crate) fn free_vars(&self) -> Vec<VarId> {
-        let Some(link) = &self.home else { return Vec::new() };
+        let Some(link) = self.home.as_deref() else { return Vec::new() };
         let mut own = link.ranks.iter().copied().peekable();
         let mut free = Vec::with_capacity(self.free_leaves() as usize);
         for (rank, &leaf) in link.index.leaf_at.iter().enumerate() {
@@ -281,7 +292,7 @@ impl Vtree {
 
     /// The home this vtree is a projection of; `None` on a root vtree.
     pub fn home(&self) -> Option<&Arc<Vtree>> {
-        self.home.as_ref().map(|link| &link.home)
+        self.home.as_deref().map(|link| &link.home)
     }
 
     /// The node of [`Vtree::home`] that own node `t` stands for; `t` itself on
@@ -291,7 +302,7 @@ impl Vtree {
     ///
     /// Panics if `t` is not below [`num_nodes`](Self::num_nodes).
     pub fn home_node(&self, t: VtreeIdx) -> VtreeIdx {
-        match &self.home {
+        match self.home.as_deref() {
             None => {
                 assert!(t.idx() < self.nodes.len(), "home_node: {} is not a node", t.0);
                 t
@@ -304,7 +315,7 @@ impl Vtree {
     /// root vtree, `h` itself when it is a node. Logarithmic in
     /// [`num_leaves`](Self::num_leaves).
     pub fn node_at_home(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.as_deref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let slot = *link.index.slot.get(h.idx())?;
@@ -328,7 +339,7 @@ impl Vtree {
         if root_of(a) != root_of(b) {
             return None;
         }
-        let (la, lb) = match (&a.home, &b.home) {
+        let (la, lb) = match (a.home.as_deref(), b.home.as_deref()) {
             (None, None) => return Some(LeafSets::Equal),
             (Some(_), None) => return Some(LeafSets::AInB),
             (None, Some(_)) => return Some(LeafSets::BInA),
@@ -385,9 +396,19 @@ impl Vtree {
         Some((map(la, a_offset), map(lb, b_offset), a_left))
     }
 
-    pub(super) fn home_index(&self) -> Arc<HomeIndex> {
-        debug_assert!(self.home.is_none());
-        Arc::clone(self.home_index.get_or_init(|| Arc::new(HomeIndex::new(self))))
+    pub(super) fn home_index(self: &Arc<Self>) -> Arc<HomeIndex> {
+        let homes = || HOMES.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(index) = cached_index(&homes(), self) {
+            return index;
+        }
+        let index = Arc::new(HomeIndex::new(self));
+        let mut entries = homes();
+        if let Some(theirs) = cached_index(&entries, self) {
+            return theirs;
+        }
+        entries.retain(|(h, _)| h.strong_count() > 0);
+        entries.push((Arc::downgrade(self), Arc::clone(&index)));
+        index
     }
 
     /// The projection of root `home` on the leaves of `ranks`, ascending and
@@ -417,7 +438,6 @@ impl Vtree {
             node_of[in_order[2 * i + 1].idx()] = index.gap_node[g as usize];
         }
         own.var_to_leaf = Vec::new();
-        own.id_space = home.num_vars();
         own.context = Arc::clone(&home.context);
         own.home = Some(Arc::new(HomeLink { home: Arc::clone(home), index, ranks, node_of, in_order }));
         debug_assert_eq!(own.validate(), Ok(()));
@@ -432,17 +452,33 @@ impl Vtree {
         self.home.as_deref()?.leaf_of(var)
     }
 
+    /// [`Vtree::num_vars`] of a vtree with an empty leaf table, which only a
+    /// projection has.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn projected_num_vars(&self) -> u32 {
+        self.home.as_deref().map_or(0, |link| link.home.num_vars())
+    }
+
     /// Called by every kept change of shape (a reverted rotation probe
-    /// restores the shape the index and the link describe): a root's index
-    /// goes stale, and a projection becomes a root with a dense leaf table.
-    pub(super) fn reshaped(&mut self) {
-        self.home_index.take();
-        if self.home.take().is_some() {
-            self.var_to_leaf = vec![VtreeIdx(0); self.id_space as usize];
-            for (i, node) in self.nodes.iter().enumerate() {
-                if let VtreeNode::Leaf { var, .. } = node {
-                    self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
-                }
+    /// restores the shape the link describes): a projection becomes a root
+    /// with a dense leaf table. Inline, because a rotation search commits
+    /// rotations by the hundred thousand on vtrees that are not projections.
+    #[inline]
+    pub(crate) fn reshaped(&mut self) {
+        if self.home.is_some() {
+            self.leave_home();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn leave_home(&mut self) {
+        let Some(link) = self.home.take() else { return };
+        self.var_to_leaf = vec![VtreeIdx(0); link.home.num_vars() as usize];
+        for (i, node) in self.nodes.iter().enumerate() {
+            if let VtreeNode::Leaf { var, .. } = node {
+                self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
             }
         }
     }
@@ -453,13 +489,13 @@ impl Vtree {
     /// ancestor in the home of the leaves on either side of it, and a parent
     /// for a shallower home node than its child.
     pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
-        let Some(link) = &self.home else {
+        let Some(link) = self.home.as_deref() else {
             return Ok(());
         };
         let fail = |msg: String| Err(VtreeError::Invalid(format!("projection: {msg}")));
         let (home, index) = (&*link.home, &*link.index);
         let k = self.num_leaves() as usize;
-        if home.home.is_some() || link.ranks.len() != k || link.node_of.len() != self.nodes.len() {
+        if home.home().is_some() || link.ranks.len() != k || link.node_of.len() != self.nodes.len() {
             return fail("the link does not fit the tree".to_string());
         }
         if link.ranks.windows(2).any(|w| w[0] >= w[1]) || link.ranks.last().is_some_and(|&r| r >= home.num_leaves()) {
