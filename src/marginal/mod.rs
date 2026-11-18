@@ -184,15 +184,35 @@ pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, targets: &[VtreeIdx]) -> Re
     if levels.is_empty() {
         return Ok(());
     }
+    // The fold multiplies the factor of a target's free variables into its
+    // values, and only the closing trim takes them out of the free set: a
+    // refusal between the two would count them twice, so it puts the diagram
+    // back as it came.
+    let collapses = levels.iter().any(|&(t, _)| !f.vtree.node(t).is_leaf());
+    let backup = if collapses { Some(f.try_clone_on(eng)?) } else { None };
+    let summed = sum_out(eng, f, &home, levels, &free);
+    if summed.is_err()
+        && let Some(backup) = backup
+    {
+        let refused = std::mem::replace(f, backup);
+        crate::diagram::return_levels(eng, refused.levels.into_vec());
+    }
+    summed
+}
+
+/// The body of [`marginalize`] after its targets are chosen: fold each
+/// `levels[i]` scaled by the factor of `free[i]`, then collapse the internal
+/// ones into regions.
+fn sum_out(eng: &Engine, f: &mut Tdd, home: &crate::vtree::Home, levels: Vec<(VtreeIdx, VtreeIdx)>, free: &[Vec<VarId>]) -> Result<(), OperationError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     let own: Vec<VtreeIdx> = levels.iter().map(|&(t, _)| t).collect();
-    let folded = evaluate_scaled(eng, f, &own, &vtree, &free);
+    let folded = evaluate_scaled(eng, f, &own, &vtree, free);
     let restored = restore_marginal_invariants(eng, f, &own, &vtree);
     let mut collapse: Vec<_> =
         levels.into_iter().filter(|&(t, _)| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()).collect();
     collapse.sort_unstable();
     if !collapse.is_empty() {
-        trim(eng, f, &home, &collapse)?;
+        trim(eng, f, home, &collapse)?;
     }
     folded.and(restored)
 }
