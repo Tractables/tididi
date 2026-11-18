@@ -1230,8 +1230,10 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::LevelNotInVtree`] for an invalid target before
-    /// mutation. [`OperationError::OverBudget`] may leave a completed prefix whose
+    /// Returns [`OperationError::LevelNotInVtree`] for an invalid target and
+    /// [`OperationError::InertOption`] for a diagram on a projection, whose
+    /// sum-out is [`marginalize`](Self::marginalize), both before mutation.
+    /// [`OperationError::OverBudget`] may leave a completed prefix whose
     /// counts or weighted values remain readable and preserved. An unfinished
     /// column is discarded before installation; retrying finishes remaining levels
     /// and cleanup.
@@ -1252,37 +1254,39 @@ impl Tdd {
         self.context_arc().run(|eng| eng.marginalize_levels(self, levels))
     }
 
-    /// Sum out the variables under nodes of the home vtree.
+    /// Sum out the variables `summable` names.
     ///
-    /// Targets are nodes of [`Vtree::home`](crate::Vtree::home) of the
-    /// diagram's vtree; on a root vtree, this is
-    /// [`marginalize_levels`](Self::marginalize_levels). For each target
-    /// not under another, the diagram's own vtree loses the subtree standing
-    /// for it, which becomes one childless node, a region
+    /// Every internal node of the diagram's vtree whose variable leaves all
+    /// satisfy `summable` is summed out, a region or a summed-out leaf
+    /// counting as satisfied. On a projection
+    /// ([`Vtree::home`](crate::Vtree::home)), each such node not under
+    /// another becomes one childless node, a region
     /// ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region)), whose
-    /// level holds per node the count or weighted value of the target's
-    /// variables, the home variables the diagram does not use included. A
-    /// target under which the diagram uses one variable leaves that
-    /// variable's leaf, summed out, and the other variables free; one under
-    /// which it uses none, or already summed out, changes nothing. Counts
-    /// and evaluations equal those of [`marginalize_levels`](Self::marginalize_levels)
-    /// of the diagram placed on the home.
+    /// level holds per node the count or weighted value of the variables
+    /// summed there; on a root vtree its level is summed out as
+    /// [`marginalize_levels`](Self::marginalize_levels) does. A variable leaf
+    /// whose parent is not summed out stays as it is.
     ///
-    /// A diagram with no summed-out level is first trimmed
+    /// `summable(v)` must be true only if no diagram this one will meet has
+    /// `v` as a leaf: a later operand with a leaf in a region is refused
+    /// [`OperationError::MarginalLevel`]. It is asked at most once per
+    /// variable leaf, in no stated order. The home variables the diagram does
+    /// not use stay free, also under a summed node: counts and weighted values
+    /// equal those before the sum-out, and [`evaluate`](Self::evaluate)
+    /// applies its algebra to those variables, not the weights of the sum.
+    ///
+    /// A diagram on a projection with no summed-out level is first trimmed
     /// ([`trim`](Self::trim)).
     ///
     /// # Errors
     ///
-    /// [`OperationError::LevelNotInVtree`] for a target that is not a home
-    /// node, and [`OperationError::MarginalLevel`] for an internal summed-out
-    /// level that is not a region, as
-    /// [`marginalize_levels`](Self::marginalize_levels) leaves on a
-    /// projection; both before mutation. Refusals of allocation or a stop
-    /// are those of [`marginalize_levels`](Self::marginalize_levels); the
-    /// targets folded before one become regions.
+    /// [`OperationError::MarginalLevel`] for an internal summed-out level on
+    /// a projection that is not a region, before mutation. Refusals of
+    /// allocation or a stop are those of
+    /// [`marginalize_levels`](Self::marginalize_levels); counts and weighted
+    /// values stay as they were.
     ///
     /// ```
-    /// use std::sync::Arc;
     /// use tididi::Tdd;
     /// use tididi::vtree::{Home, VarId, Vtree};
     ///
@@ -1290,14 +1294,13 @@ impl Tdd {
     /// let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
     /// let mut f = Tdd::clause(&own, [1, 2, 3])?;
     /// let before = f.model_count()?;
-    /// let (left, _) = home.vtree().children(home.vtree().root());
-    /// f.marginalize(&[left])?;
+    /// f.marginalize(|v| v != VarId(3))?;
     /// assert_eq!(f.vtree().num_leaves(), 1);
     /// assert_eq!(f.model_count()?, before);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn marginalize(&mut self, targets: &[VtreeIdx]) -> Result<(), OperationError> {
-        self.context_arc().run(|eng| eng.marginalize(self, targets))
+    pub fn marginalize(&mut self, summable: impl Fn(VarId) -> bool) -> Result<(), OperationError> {
+        self.context_arc().run(|eng| eng.marginalize(self, summable))
     }
 
     /// Search nearby vtree shapes while preserving this function and its count.

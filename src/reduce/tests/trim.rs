@@ -432,7 +432,7 @@ fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: O
         f.set_weights(WeightStore::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap();
     }
     let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
-    f.marginalize_levels(&[leaf]).unwrap();
+    crate::marginal::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
     (f.clone(), f, home)
 }
 

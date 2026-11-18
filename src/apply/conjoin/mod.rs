@@ -982,10 +982,9 @@ impl crate::Engine {
     ///
     /// `targets` names vtree nodes; order and duplicates do not matter. Internal
     /// targets can be summed out during product construction; leaf targets are
-    /// handled afterward. Where an operand is on a projection, `targets` are
-    /// nodes of its home, summed out on the result as [`Engine::marginalize`]
-    /// sums them. The result preserves the conjunction's count, or its
-    /// fixed weighted value when weights are attached.
+    /// handled afterward. The result preserves the conjunction's count, or its
+    /// fixed weighted value when weights are attached. Operands on projections
+    /// take [`Engine::and_marginalizing_where`] instead.
     ///
     /// Every target's remaining structure is discarded, including after identity
     /// and self-conjunction shortcuts; the false diagram stays false. See
@@ -1028,9 +1027,10 @@ impl crate::Engine {
     /// # Errors
     ///
     /// The operand and resource errors of [`Engine::and`], plus
-    /// [`OperationError::LevelNotInVtree`] for an invalid target, checked before
-    /// product construction. An owned operand is consumed on every outcome,
-    /// and a borrowed one is left as it was.
+    /// [`OperationError::LevelNotInVtree`] for an invalid target and
+    /// [`OperationError::InertOption`] for an operand on a projection, checked
+    /// before product construction. An owned operand is consumed on every
+    /// outcome, and a borrowed one is left as it was.
     pub fn and_marginalizing<'f, 'g>(
         &self,
         f: impl Into<Cow<'f, Tdd>>,
@@ -1040,7 +1040,7 @@ impl crate::Engine {
         let (f, g) = (f.into(), g.into());
         let _op = self.limits().enter()?;
         if f.vtree().home().is_some() || g.vtree().home().is_some() {
-            return marginalizing_projections(self, f, g, targets);
+            return Err(targets_on_projection());
         }
         f.check_level_indices(targets)?;
         let [mut f, mut g] = extend::cows(self, [f, g])?;
@@ -1066,6 +1066,53 @@ impl crate::Engine {
             self.marginalize_levels(&mut out, targets)?;
         }
         extend::trimmed(self, out)
+    }
+
+    /// Conjoin two diagrams and sum out the variables `summable` names.
+    ///
+    /// Each operand is owned or borrowed, as [`and`] says. The conjunction is
+    /// built on the vtree holding both operands' leaves, and every internal
+    /// node of it whose variable leaves all satisfy `summable` is summed out
+    /// as the product is built, a region or a leaf summed out in an operand
+    /// counting as satisfied; the result is then what
+    /// [`Engine::marginalize`] gives on the conjunction, regions on a
+    /// projection included. A node over regions only is therefore always
+    /// summed into one. With no such node this is [`Engine::and`].
+    ///
+    /// `summable(v)` must be true only if no diagram the result will meet has
+    /// `v` as a leaf: the caller takes both operands out of its record of
+    /// who holds what before it asks. It is asked at most once per variable
+    /// leaf of the conjunction's vtree, in no stated order. A later operand
+    /// with a leaf in a region is refused [`OperationError::MarginalLevel`].
+    /// Home variables neither operand uses stay free, also under a summed
+    /// node, and [`Engine::evaluate`] applies its algebra to them.
+    ///
+    /// ```
+    /// use tididi::{Engine, Tdd};
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)])?, [1, 2])?;
+    /// let g = Tdd::clause(&Vtree::projection(&home, [VarId(2), VarId(3)])?, [-2, 3])?;
+    /// let summed = engine.and_marginalizing_where(&f, &g, |v| v != VarId(3))?;
+    /// assert_eq!(summed.vtree().num_leaves(), 1);
+    /// assert_eq!(summed.model_count()?, engine.and(&f, &g)?.model_count()?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The operand and resource errors of [`Engine::and`]. An owned operand
+    /// is consumed on every outcome, and a borrowed one is left as it was.
+    pub fn and_marginalizing_where<'f, 'g>(
+        &self,
+        f: impl Into<Cow<'f, Tdd>>,
+        g: impl Into<Cow<'g, Tdd>>,
+        summable: impl Fn(VarId) -> bool,
+    ) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
+        marginalizing_where(self, f.into(), g.into(), &summable)
     }
 
     /// Count the models of `f ∧ g` without keeping the conjunction.
@@ -1110,10 +1157,10 @@ impl crate::Engine {
         let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
         let targets = translated.as_deref().unwrap_or(targets);
         if f.weights.is_some() || g.weights.is_some() {
-            // On a projection, `and_marginalizing` takes home nodes; the free
-            // variables under one are counted either way.
-            let homes: Vec<VtreeIdx> = targets.iter().map(|&t| f.vtree().home_node(t)).collect();
-            let out = self.and_marginalizing(f, g, &homes)?;
+            let out = match f.vtree().home() {
+                Some(_) => self.and_marginalizing_where(f, g, |_| true)?,
+                None => self.and_marginalizing(f, g, targets)?,
+            };
             return self.model_count(&out);
         }
         crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
@@ -1148,66 +1195,55 @@ impl crate::Engine {
     }
 }
 
-/// [`Engine::and_marginalizing`] of operands on projections, `targets` home
-/// nodes: the conjunction on the union of the leaf sets, which sums out
-/// during the sweep each maximal target over an internal own node with no
-/// free variable under it, and then [`crate::marginal::marginalize`], which
-/// collapses those and sums out the rest.
 #[cold]
-fn marginalizing_projections(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
-    let home = f.vtree().home().or(g.vtree().home()).expect("an operand on a projection").clone();
-    if let Some(&h) = targets.iter().find(|h| h.idx() >= home.vtree().num_nodes()) {
-        return Err(OperationError::LevelNotInVtree(h));
-    }
-    if (f.has_marginal_level() || g.has_marginal_level()) && !Arc::ptr_eq(f.vtree(), g.vtree()) {
-        Vtree::leaf_sets(f.vtree(), g.vtree())?;
-        projected::check_summed_leaves(&f, &g)?;
-    }
-    if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
-        let mut out = projected::conjoin_constant(eng, f, g)?;
-        if !out.is_zero() {
-            crate::marginal::marginalize(eng, &mut out, targets)?;
+fn targets_on_projection() -> OperationError {
+    OperationError::InertOption { option: "targets", needs: "operands on a root vtree; on projections, `and_marginalizing_where`" }
+}
+
+/// [`Engine::and_marginalizing_where`]: the nodes
+/// [`finished`](crate::marginal::finished) names on the conjunction's vtree
+/// are the sweep's targets, and [`sum_out`](crate::marginal::sum_out)
+/// finishes them.
+fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable: &dyn Fn(VarId) -> bool) -> Result<Tdd, OperationError> {
+    let projected = f.vtree().home().is_some() || g.vtree().home().is_some();
+    if projected {
+        if (f.has_marginal_level() || g.has_marginal_level()) && !Arc::ptr_eq(f.vtree(), g.vtree()) {
+            Vtree::leaf_sets(f.vtree(), g.vtree())?;
+            projected::check_summed_leaves(&f, &g)?;
         }
-        return extend::trimmed(eng, out);
+        if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
+            let mut out = projected::conjoin_constant(eng, f, g)?;
+            if !out.is_zero() {
+                crate::marginal::marginalize(eng, &mut out, summable)?;
+            }
+            return extend::trimmed(eng, out);
+        }
     }
     let [mut f, mut g] = extend::cows(eng, [f, g])?;
-    projected::check_shared_regions(&f, &g)?;
+    if projected {
+        projected::check_shared_regions(&f, &g)?;
+    }
     prepare_owned_weights(&mut f, &mut g)?;
     let vtree = Arc::clone(f.vtree());
-    let mut ranges: Vec<_> = targets.iter().map(|&h| (home.rank_range(h), h)).collect();
-    ranges.sort_unstable_by_key(|(r, _)| (r.start, std::cmp::Reverse(r.end)));
-    let mut swept = Vec::new();
-    let mut end = None;
-    for (range, h) in ranges {
-        if end.is_some_and(|end| range.end <= end) {
-            continue;
-        }
-        end = Some(range.end);
-        if let Some(t) = vtree.own_at(h)
-            && !vtree.node(t).is_leaf()
-            && vtree.free_vars_under(h).is_empty()
-        {
-            swept.push((t, h));
-        }
-    }
-    let own: Vec<VtreeIdx> = swept.iter().map(|&(t, _)| t).collect();
-    let mut mask = target_mask(eng, &vtree, &own, true)?;
+    let summed = |t: VtreeIdx| f.level(t).is_marginal() || g.level(t).is_marginal();
+    let (mut mask, maximal) = crate::marginal::finished(eng, &vtree, summed, summable)?;
+    // A root summed in the sweep keeps one slot per product node; the fold
+    // after it merges equal values and renumbers the output.
+    mask[vtree.root().idx()] = false;
     let unweighted = f.weights.is_none() && g.weights.is_none();
     if unweighted {
         collapse_target_subtrees(eng, &vtree, &f, &g, &mut mask)?;
     }
-    let summed = match unweighted && !mask.contains(&true) {
-        true => VtreeMask::default(),
-        false => VtreeMask::new(Some(&mask)),
+    let summed = match mask.contains(&true) {
+        true => VtreeMask::new(Some(&mask)),
+        false => VtreeMask::default(),
     };
     let mut out = conjoin_cow(eng, f, g, summed)?;
-    if !out.is_zero() {
-        swept.retain(|&(t, _)| out.level(t).is_marginal());
-        swept.sort_unstable();
-        if !swept.is_empty() {
-            crate::reduce::trim(eng, &mut out, &home, &swept)?;
-        }
-        crate::marginal::marginalize(eng, &mut out, targets)?;
+    if !out.is_zero() && !maximal.is_empty() {
+        debug_assert!(Arc::ptr_eq(out.vtree(), &vtree), "the conjunction is on its operands' vtree");
+        #[cfg(test)]
+        tests::region::note_swept(maximal.iter().filter(|&&t| out.level(t).is_marginal()).count());
+        crate::marginal::sum_out(eng, &mut out, &maximal)?;
     }
     extend::trimmed(eng, out)
 }

@@ -198,7 +198,10 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
     let count = eng.model_count(&product).unwrap();
     assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "and_model_count {}", case.what);
     assert_eq!(eng.marginal_product_count(f, g).unwrap(), count, "marginal_product_count {}", case.what);
-    case.check_and("and_marginalizing", eng.and_marginalizing(f, g, &[]).unwrap(), &product);
+    case.check_and("and_marginalizing_where", eng.and_marginalizing_where(f, g, |_| false).unwrap(), &product);
+    if f.vtree().home().is_some() {
+        assert!(matches!(eng.and_marginalizing(f, g, &[]), Err(OperationError::InertOption { .. })), "{}", case.what);
+    }
     if f.vtree().num_nodes() != 0 {
         let t = VtreeIdx(rng.below(f.vtree().num_nodes() as u64) as u32);
         let at_home = f.vtree().home_node(t);
@@ -208,8 +211,10 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
             "and_model_count with a target {}",
             case.what
         );
-        let summed = eng.and_marginalizing(f, g, &[t]).unwrap();
-        assert_eq!(eng.model_count(&summed).unwrap(), count, "and_marginalizing with a target {}", case.what);
+        let home_vars: Vec<VarId> = home.leaf_bottomup().map(|(_, v)| v).collect();
+        let pick = home_vars[rng.below(home_vars.len() as u64) as usize];
+        let summed = eng.and_marginalizing_where(f, g, |v| v != pick).unwrap();
+        assert_eq!(eng.model_count(&summed).unwrap(), count, "and_marginalizing_where {}", case.what);
     }
 
     for (care, care_home) in [(g, &hg), (h, &hh)] {
@@ -297,7 +302,7 @@ fn summed_out_internal_levels_do_not_move() {
     let g = Tdd::clause(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap(), [4, -5]).unwrap();
     let mut summed = f.clone();
     let root = summed.vtree().root();
-    eng.marginalize_levels(&mut summed, &[root]).unwrap();
+    crate::marginal::marginalize_levels(&eng, &mut summed, &[root]).unwrap();
     assert!(summed.has_marginal_level());
     for result in [eng.or(summed.clone(), g.clone()), eng.and_not(g.clone(), summed.clone()), eng.add(summed.clone(), g.clone())] {
         assert!(matches!(result.unwrap_err(), OperationError::MarginalLevel(_)));

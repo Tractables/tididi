@@ -270,11 +270,11 @@ const SIDES: [ChildSide; 2] = [ChildSide::Left, ChildSide::Right];
 /// The trim, all of its allocations made before `f` changes, so that a
 /// refusal leaves `f` as it was.
 ///
-/// `collapse` pairs, by own node ascending, each internal marginal level of
-/// `f` that is not under another with the home node whose leaves its region
-/// stands for; such a level moves to a region anchored at the leftmost of
-/// them, and its subtree goes. A region stays, a marginal leaf stays.
-pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx, VtreeIdx)]) -> Result<bool, OperationError> {
+/// `collapse` lists, ascending, internal marginal levels of `f` not under
+/// another; each becomes the region [`Vtree::folded_region`] gives, and its
+/// subtree goes. Another internal marginal level is refused. A region stays,
+/// a marginal leaf stays.
+pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[VtreeIdx]) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let vtree = Arc::clone(&f.vtree);
     if vtree.num_nodes() == 0 {
@@ -329,9 +329,8 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
             Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
             Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
             Kind::Region => {
-                let i = collapse.binary_search_by_key(&t, |&(t, _)| t).map_err(|_| OperationError::MarginalLevel(t))?;
-                let under = home.rank_range(collapse[i].1);
-                lim.try_push(&mut regions, (under.start, Box::from([(under.start, under.end)])))?;
+                collapse.binary_search(&t).map_err(|_| OperationError::MarginalLevel(t))?;
+                lim.try_push(&mut regions, vtree.folded_region(t))?;
             }
             Kind::LeafChain(side) | Kind::LevelChain(side) => lim.try_push(&mut stack, child(&vtree, t, side))?,
             Kind::Both => {

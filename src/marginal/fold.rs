@@ -30,7 +30,7 @@ pub(crate) fn marginalize_batch(
         tdd.weights.is_none(),
         "the integer pass cannot run on a diagram carrying a weight store"
     );
-    marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &mut (), |_, _, _| Ok(()))
+    marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
 }
 
 /// Marginalize every target in order, then sum out the leaf targets.
@@ -52,16 +52,12 @@ pub(crate) fn marginalize_batch(
 /// Leaf targets come last: the integer end sweep keys off the pass-entry
 /// snapshot, so a leaf flipped marginal earlier would have its side
 /// re-resolved as bare slots and its inline references misread.
-///
-/// `scale(i, column, store)` runs on the column of each internal target
-/// `targets[i]` before it is installed.
 pub(super) fn marginalize_targets<K: MarginalDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
     store: &mut K::Store,
-    mut scale: impl FnMut(usize, &mut K::Col, &K::Store) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
     if targets.is_empty() {
         return Ok(());
@@ -74,13 +70,12 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     let mut poll = lim.gate();
 
     let mut cut = None;
-    for (i, &d) in targets.iter().enumerate() {
+    for &d in targets {
         if let Err(e) = poll.poll(tdd.levels[d.idx()].slot_count() as u64 + 1) {
             cut = Some(e);
             break;
         }
-        let scale = |col: &mut K::Col, store: &K::Store| scale(i, col, store);
-        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, (store, scale), &mut computed, &mut poll) {
+        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed, &mut poll) {
             cut = Some(e);
             break;
         }
@@ -107,7 +102,7 @@ fn marginalize_level<K: MarginalDomain>(
     tdd: &mut Tdd,
     d: VtreeIdx,
     vtree: &Vtree,
-    (store, scale): (&mut K::Store, impl FnOnce(&mut K::Col, &K::Store) -> Result<(), OperationError>),
+    store: &mut K::Store,
     computed: &mut [Option<K::Col>],
     poll: &mut PollGate<'_>,
 ) -> Result<(), OperationError> {
@@ -128,6 +123,5 @@ fn marginalize_level<K: MarginalDomain>(
         Retention::All,
         |units| poll.poll(units),
     )?;
-    scale(computed[d.idx()].as_mut().expect("the target's column"), store)?;
     cascade::<K, Tdd>(eng.limits(), tdd, vtree, d, computed, store)
 }

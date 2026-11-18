@@ -20,12 +20,10 @@ pub(crate) use fold::marginalize_batch;
 pub(crate) use leaf::canonicalize_weighted_leaf_refs;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 
-use num_bigint::BigUint;
-
-use crate::value::{Count, CountRead, CountVec, IntFold, WeightFold};
+use crate::value::WeightFold;
 use crate::limits::OperationError;
-use crate::diagram::{LeafLabel, Tdd, WeightStore, WeightValue};
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::diagram::Tdd;
+use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use crate::reduce::{restore_marginal_invariants, trim};
 
 /// Marginalize every structural level whose two children are both marginal,
@@ -81,14 +79,19 @@ impl Engine {
     /// stop refusals may leave a completed prefix; retrying finishes the remaining
     /// levels and cleanup while preserving the diagram's value.
     pub fn marginalize_levels(&self, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
+        if f.vtree.home().is_some() {
+            return Err(on_projection());
+        }
         marginalize_levels(self, f, levels)
     }
 
-    /// Sum out home nodes under this engine's resource limits.
+    /// Sum out the variables `summable` names, under this engine's resource
+    /// limits.
     ///
-    /// See [`Tdd::marginalize`] for target, arithmetic and form semantics.
-    pub fn marginalize(&self, f: &mut Tdd, targets: &[VtreeIdx]) -> Result<(), OperationError> {
-        marginalize(self, f, targets)
+    /// See [`Tdd::marginalize`] for what is summed and the contract of
+    /// `summable`.
+    pub fn marginalize(&self, f: &mut Tdd, summable: impl Fn(VarId) -> bool) -> Result<(), OperationError> {
+        marginalize(self, f, &summable)
     }
 }
 
@@ -101,100 +104,96 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
     restore_marginal_invariants(eng, f, levels, &vtree)
 }
 
+#[cold]
+fn on_projection() -> OperationError {
+    OperationError::InertOption { option: "levels", needs: "a diagram on a root vtree; on a projection, `marginalize`" }
+}
+
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
 /// targets are weight-marginal and carry no integer counts, so the integer
 /// batch may not run on them.
 fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    evaluate_scaled(eng, f, levels, vtree, &[])
-}
-
-/// [`evaluate_levels`], the values of internal target `levels[i]` multiplied
-/// by the factor of the variables `free[i]`, if `free` is not empty.
-fn evaluate_scaled(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree, free: &[Vec<VarId>]) -> Result<(), OperationError> {
     if let Some(mut ws) = f.weights.take() {
-        let scale = |i: usize, col: &mut Vec<WeightValue>, ws: &WeightStore| {
-            let factor = free.get(i).and_then(|vars| vars.iter().map(|&var| ws.leaf_val(var, LeafLabel::One)).reduce(|a, b| a.mul(&b)));
-            if let Some(factor) = factor {
-                col.iter_mut().for_each(|v| *v = v.mul(&factor));
-            }
-            Ok(())
-        };
-        let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws, scale);
+        let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws);
         f.weights = Some(ws);
         r
-    } else if free.is_empty() {
-        marginalize_batch(eng, f, levels, vtree)
     } else {
-        let scale = |i: usize, col: &mut CountVec, _: &()| {
-            let k = free[i].len() as u32;
-            for j in (0..col.len()).filter(|_| k > 0) {
-                let scaled = match col.get(j) {
-                    CountRead::Fast(v) if v.leading_zeros() >= k => Count::from_u128(v << k),
-                    CountRead::Fast(v) => Count::Big(BigUint::from(v) << k),
-                    CountRead::Big(v) => Count::Big(v << k),
-                };
-                col.set(eng, j, scaled)?;
-            }
-            Ok(())
-        };
-        fold::marginalize_targets::<IntFold>(eng, f, levels, vtree, &mut (), scale)
+        marginalize_batch(eng, f, levels, vtree)
     }
 }
 
-/// Sum out the home variables under each node of `targets`, nodes of the
-/// home of `f`'s vtree; on a root vtree, [`marginalize_levels`].
-///
-/// Per target not under another, `t` is the own node at it
-/// ([`Vtree::own_at`]): none, or a region, leaves `f` as it is, the
-/// variables already free or summed; a leaf is summed out where it is
-/// (the home's other variables under the target stay free); an internal
-/// node is folded, its values multiplied by the factor of the target's
-/// free variables, and becomes a region holding the target's leaves.
-pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, targets: &[VtreeIdx]) -> Result<(), OperationError> {
-    let Some(home) = f.vtree.home().cloned() else {
-        return marginalize_levels(eng, f, targets);
-    };
-    let _op = eng.limits().enter()?;
-    if let Some(&h) = targets.iter().find(|h| h.idx() >= home.vtree().num_nodes()) {
-        return Err(OperationError::LevelNotInVtree(h));
+/// The internal nodes of `vtree` whose childless nodes are all finished: a
+/// region, a leaf for which `summed` holds, or a variable leaf `summable`
+/// names. Returns them as a mask over `vtree`'s nodes and, ascending, the
+/// ones whose parent is not finished.
+pub(crate) fn finished(
+    eng: &Engine,
+    vtree: &Vtree,
+    summed: impl Fn(VtreeIdx) -> bool,
+    summable: &dyn Fn(VarId) -> bool,
+) -> Result<(Vec<bool>, Vec<VtreeIdx>), OperationError> {
+    let lim = eng.limits();
+    let mut fin = Vec::new();
+    lim.try_resize(&mut fin, vtree.num_nodes(), false)?;
+    for t in vtree.bottomup() {
+        fin[t.idx()] = match *vtree.node(t) {
+            VtreeNode::Internal { left, right, .. } => fin[left.idx()] && fin[right.idx()],
+            VtreeNode::Leaf { var, .. } => vtree.node(t).is_region() || summed(t) || summable(var),
+        };
     }
-    if !f.has_marginal_level() {
-        trim(eng, f, &home, &[])?;
-    } else if let Some(t) = f.vtree.bottomup().find(|&t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
-        return Err(OperationError::MarginalLevel(t));
-    }
-    let mut ranges: Vec<_> = targets.iter().map(|&h| (home.rank_range(h), h)).collect();
-    ranges.sort_unstable_by_key(|(r, _)| (r.start, std::cmp::Reverse(r.end)));
-    let mut levels = Vec::new();
-    let mut free = Vec::new();
-    let mut end = None;
-    for (range, h) in ranges {
-        if end.is_some_and(|end| range.end <= end) {
-            continue;
+    let mut maximal = Vec::new();
+    for t in vtree.internal_bottomup_slice().iter().copied() {
+        if fin[t.idx()] && vtree.node(t).parent().is_none_or(|p| !fin[p.idx()]) {
+            lim.try_push(&mut maximal, t)?;
         }
-        end = Some(range.end);
-        let Some(t) = f.vtree.own_at(h) else { continue };
-        let node = f.vtree.node(t);
-        if node.is_region() || f.levels[t.idx()].is_marginal() {
-            continue;
-        }
-        levels.push((t, h));
-        free.push(if node.is_leaf() { Vec::new() } else { f.vtree.free_vars_under(h) });
     }
-    if levels.is_empty() {
-        return Ok(());
+    maximal.sort_unstable();
+    for t in vtree.bottomup().filter(|&t| vtree.node(t).is_leaf()) {
+        fin[t.idx()] = false;
     }
+    Ok((fin, maximal))
+}
+
+/// Fold each of `maximal`, internal nodes of `f`'s vtree none under another,
+/// that is not summed out yet, restore the marginal invariants at all of
+/// them and, on a projection, make every one that is summed out a region.
+pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result<(), OperationError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
-    let own: Vec<VtreeIdx> = levels.iter().map(|&(t, _)| t).collect();
-    let folded = evaluate_scaled(eng, f, &own, &vtree, &free);
-    let restored = restore_marginal_invariants(eng, f, &own, &vtree);
-    let mut collapse: Vec<_> =
-        levels.into_iter().filter(|&(t, _)| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()).collect();
-    collapse.sort_unstable();
-    if !collapse.is_empty() {
-        trim(eng, f, &home, &collapse)?;
+    let mut levels = Vec::new();
+    eng.limits().reserve_exact(&mut levels, maximal.len())?;
+    levels.extend(maximal.iter().copied().filter(|&t| !f.levels[t.idx()].is_marginal()));
+    let folded = match levels.is_empty() {
+        true => Ok(()),
+        false => evaluate_levels(eng, f, &levels, &vtree),
+    };
+    let restored = restore_marginal_invariants(eng, f, maximal, &vtree);
+    if let Some(home) = vtree.home() {
+        levels.clear();
+        levels.extend(maximal.iter().copied().filter(|&t| f.levels[t.idx()].is_marginal()));
+        if !levels.is_empty() {
+            trim(eng, f, home, &levels)?;
+        }
     }
     folded.and(restored)
+}
+
+/// [`Engine::marginalize`]: the nodes [`finished`] names, summed out by
+/// [`sum_out`]; on a projection the diagram is trimmed first, and an internal
+/// summed-out level that is not a region is refused.
+pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, summable: &dyn Fn(VarId) -> bool) -> Result<(), OperationError> {
+    let _op = eng.limits().enter()?;
+    if let Some(home) = f.vtree.home().cloned() {
+        if !f.has_marginal_level() {
+            trim(eng, f, &home, &[])?;
+        } else if let Some(t) = f.vtree.bottomup().find(|&t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
+            return Err(OperationError::MarginalLevel(t));
+        }
+    }
+    if f.vtree.num_nodes() == 0 || f.is_zero() {
+        return Ok(());
+    }
+    let (_, maximal) = finished(eng, &f.vtree, |t| f.levels[t.idx()].is_marginal(), summable)?;
+    sum_out(eng, f, &maximal)
 }
 
 #[cfg(test)]

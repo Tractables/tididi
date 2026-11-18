@@ -371,22 +371,15 @@ impl Vtree {
     }
 
     /// The topmost own node at or under home node `h`, `None` when no own leaf
-    /// is under `h`; the region whose extent holds every home leaf under
-    /// `h`, if one does; on a root vtree, `h` itself when it is a node.
-    /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
-    /// of the home's size, and linear in the number of regions.
+    /// or region anchor is under `h`; on a root vtree, `h` itself when it is
+    /// a node. Logarithmic in [`num_leaves`](Self::num_leaves) times the
+    /// logarithm of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
         let Some(link) = self.home.as_deref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (link.home.index(), &link.ranks);
         let gap = *index.slot.get(h.idx())?;
-        if !link.regions.is_empty() {
-            let under = link.home.rank_range(h);
-            if let Some(region) = link.region_over(under.start, under.end) {
-                return Some(link.region_node(region));
-            }
-        }
         if link.home.vtree().node(h).is_leaf() {
             return self.node_at_home(h);
         }
@@ -607,19 +600,33 @@ impl Vtree {
         Some((map(la, a_offset), map(lb, b_offset), a_left))
     }
 
-    /// The home variables under home node `h` that this projection has
-    /// neither as a leaf nor in an extent, left to right.
-    pub(crate) fn free_vars_under(&self, h: VtreeIdx) -> Vec<VarId> {
+    /// The anchor rank and extent of the region that folding own node `t`
+    /// of this projection makes: the ranks of the variable leaves under `t`
+    /// and the extents of the regions under it, the anchor at the leftmost
+    /// childless node under `t`.
+    pub(crate) fn folded_region(&self, t: VtreeIdx) -> (u32, Extent) {
         let link = self.home.as_deref().expect("a projection");
-        let under = link.home.rank_range(h);
-        let mut own = link.ranks[link.ranks.partition_point(|&r| r < under.start)..].iter().copied().peekable();
-        let mut free = Vec::new();
-        for rank in under {
-            if own.next_if_eq(&rank).is_none() && !link.regions.iter().any(|region| region.covers(rank, rank + 1)) {
-                free.push(link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]));
+        let position = |u: VtreeIdx| link.ranks.binary_search(&link.home.index().slot[link.node_of[u.idx()].idx()]).expect("a position");
+        let mut intervals = Vec::new();
+        for u in self.subtree(t).filter(|&u| self.node(u).is_leaf()) {
+            match link.regions.binary_search_by_key(&(position(u) as u32), |region| region.at) {
+                Ok(j) => intervals.extend_from_slice(&link.regions[j].extent),
+                Err(_) => intervals.push((link.ranks[position(u)], link.ranks[position(u)] + 1)),
             }
         }
-        free
+        intervals.sort_unstable();
+        let mut extent: Vec<(u32, u32)> = Vec::with_capacity(intervals.len());
+        for (lo, hi) in intervals {
+            match extent.last_mut() {
+                Some(last) if last.1 == lo => last.1 = hi,
+                _ => extent.push((lo, hi)),
+            }
+        }
+        let mut leftmost = t;
+        while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
+            leftmost = left;
+        }
+        (link.ranks[position(leftmost)], extent.into_boxed_slice())
     }
 
     /// Whether this vtree has a region.
@@ -648,8 +655,8 @@ impl Vtree {
     }
 
     /// The projection of `home` on the leaves of `ranks` and on `regions`,
-    /// each an anchor rank and its extent, the anchor the leftmost rank of
-    /// a new extent; together not empty, the extents holding no other rank.
+    /// each an anchor rank and an extent holding it; together not empty, the
+    /// extents holding no other rank.
     pub(crate) fn project_regions(home: &Home, mut ranks: Vec<u32>, regions: Vec<(u32, Extent)>) -> Arc<Vtree> {
         ranks.extend(regions.iter().map(|&(anchor, _)| anchor));
         ranks.sort_unstable();
