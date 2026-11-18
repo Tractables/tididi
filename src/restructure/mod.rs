@@ -366,6 +366,30 @@ impl From<OperationError> for TagError {
     fn from(error: OperationError) -> Self { Self::Operation(error) }
 }
 
+/// The node [`Engine::at_least_distinct`](crate::Engine::at_least_distinct)
+/// and [`Engine::project_to_subtree`](crate::Engine::project_to_subtree)
+/// key on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DistinctKey<'a> {
+    /// A node of the diagram's [home](crate::Vtree::home), or of its vtree
+    /// on a root. Any index below the home's node count is a home node, so
+    /// an index of the diagram's own vtree is read as the home node with
+    /// that number, without an error.
+    Node(VtreeIdx),
+    /// The node whose leaves are exactly these variables, in any order: a
+    /// node of the home, or of the diagram's vtree on a root. The same
+    /// variables name the same node whichever vtree the diagram is on.
+    Vars(&'a [VarId]),
+}
+
+impl From<VtreeIdx> for DistinctKey<'_> {
+    fn from(node: VtreeIdx) -> Self { Self::Node(node) }
+}
+
+impl<'a> From<&'a [VarId]> for DistinctKey<'a> {
+    fn from(vars: &'a [VarId]) -> Self { Self::Vars(vars) }
+}
+
 /// Why the distinct values under a subtree could not be counted
 /// ([`Engine::at_least_distinct`](crate::Engine::at_least_distinct)).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +397,10 @@ impl From<OperationError> for TagError {
 pub enum DistinctError {
     /// The key is the vtree's root, which has no sibling to count.
     Root,
+    /// A [`DistinctKey::Vars`] whose variables, listed, are not exactly the
+    /// leaves of one node: empty, repeated, a variable with no leaf, or not
+    /// all of a subtree.
+    Key(Vec<VarId>),
     /// The result's vtree cannot keep the diagram's variable ids: with
     /// [`VtreeError::VariableSpaceTooLarge`], the id space is wider than a
     /// vtree of the key's subtree may declare.
@@ -387,6 +415,10 @@ impl std::fmt::Display for DistinctError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Root => write!(f, "the key is the vtree's root, which has no sibling to count"),
+            Self::Key(vars) => {
+                let vars: Vec<u32> = vars.iter().map(|v| v.0).collect();
+                write!(f, "variables {vars:?} are not the leaves of one vtree node")
+            }
             Self::Vtree(error) => write!(f, "the result's vtree: {error}"),
             Self::Operation(error) => write!(f, "counting distinct values: {error}"),
         }
@@ -398,7 +430,7 @@ impl std::error::Error for DistinctError {
         match self {
             Self::Operation(error) => Some(error),
             Self::Vtree(error) => Some(error),
-            Self::Root => None,
+            Self::Root | Self::Key(_) => None,
         }
     }
 }

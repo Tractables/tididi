@@ -32,6 +32,23 @@ Breaking changes:
   Before, a marginal level off the quantified variables' paths was
   accepted, and the count could be wrong: after a sum-out, merged nodes no
   longer tell which events their values came from.
+- On a diagram on a projection, `Engine::at_least_distinct` and
+  `Engine::project_to_subtree` take `key` as a node of the home, count over
+  every home variable under its sibling, and return a diagram on the
+  projection of the same home on the diagram's leaves under `key`. Both
+  take `key` as `impl Into<DistinctKey>`: a `VtreeIdx` as before, or the
+  variables under the node, which name the same node on a home and on a
+  projection of it; variables that are not exactly one node's leaves give
+  `DistinctError::Key`. `Engine::tag_level` into a vtree on a home returns a diagram on the
+  projection of that home on the tagged and code variables, the code
+  subtree on either side of its root. Diagrams on root vtrees are
+  unchanged.
+
+Added:
+
+- `Vtree::renamed`: a root vtree of the same shape with each leaf's
+  variable renamed.
+- `Vtree::is_on` is public.
 
 ## 0.2.0
 
