@@ -153,7 +153,7 @@ mod input {
             for &value in input {
                 gate.poll(1)?;
                 let literal = value.literal()?;
-                if vtree.leaf_of(literal.var).is_none() {
+                if vtree.leaf_of(literal.var).is_none() && !vtree.home_has(literal.var) {
                     return Err(OperationError::VariableNotInVtree(literal.var));
                 }
                 lim.try_push(out, literal)?;

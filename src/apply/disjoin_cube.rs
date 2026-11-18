@@ -347,6 +347,13 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
+    let mut out = disjoin_cube(eng, f, lits)?;
+    crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+    Ok(out)
+}
+
+fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
     let (mut f, cube) = extend_to(eng, f, lits)?;
     let vtree = Arc::clone(&f.vtree);
     let cube = match cube {

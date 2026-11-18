@@ -67,6 +67,7 @@ impl Engine {
 /// # Errors
 ///
 /// As [`Tdd::trim`]; `f` is then as it was.
+#[inline]
 pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
     let vtree = &f.vtree;
     if vtree.num_nodes() == 0 {

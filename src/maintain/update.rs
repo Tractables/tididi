@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{Literal, NodeIdx};
+use crate::diagram::{Literal, NodeIdx, ONE_LEAF_IDX};
 use crate::limits::OperationError;
 use crate::Engine;
 
@@ -57,6 +57,7 @@ impl Maintenance<'_> {
     /// Keep an operation scope around input preparation and the complete edit.
     fn update_on<L: crate::LiteralInput>(&mut self, eng: &Engine, model: &[L], edit: Edit) -> Result<(), OperationError> {
         let _op = eng.limits().enter()?;
+        self.retake_vtree(eng)?;
         let mut input = std::mem::take(&mut self.literals);
         input.clear();
         let outcome = L::collect(eng, &self.vtree, model, &mut input)
@@ -194,6 +195,24 @@ impl Maintenance<'_> {
         self.index = None;
         self.rebuilds += 1;
         self.misses += 1;
+        Ok(())
+    }
+
+    /// Take the vtree, `path` and `labels` again from the diagram, which the
+    /// last rebuild or false exit may have put on another projection of its
+    /// home.
+    fn retake_vtree(&mut self, eng: &Engine) -> Result<(), OperationError> {
+        if Arc::ptr_eq(&self.vtree, self.tdd.vtree()) {
+            return Ok(());
+        }
+        let lim = eng.limits();
+        let n = self.tdd.vtree().num_nodes();
+        let (mut path, mut labels) = (Vec::new(), Vec::new());
+        lim.try_resize(&mut path, n, FRESH)?;
+        lim.try_resize(&mut labels, n, ONE_LEAF_IDX.0)?;
+        self.vtree = Arc::clone(self.tdd.vtree());
+        self.path = path;
+        self.labels = labels;
         Ok(())
     }
 }

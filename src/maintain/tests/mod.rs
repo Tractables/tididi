@@ -464,3 +464,27 @@ fn a_long_run_of_edits_keeps_the_reduction_worklists_bounded() {
     f.minimize().expect("minimizing fits");
     assert_canonical(&f);
 }
+
+/// On a projection of a home, an update may name a home variable the
+/// diagram has no leaf for, and a rebuild or the false exit moves the diagram
+/// to another projection: the batch reads the moved diagram afterwards.
+#[test]
+fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
+    use crate::vtree::Home;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::join(&Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(), &Vtree::leaf(VarId(3))).unwrap());
+    let all = Arc::clone(home.vtree());
+    let on_home = |f: &Tdd| eng.embed(f, &all, |v| v).unwrap().0;
+    let mut f = eng.literal(&all, 2).unwrap();
+    f.trim(&home).unwrap();
+    let mut expected = on_home(&f);
+    let steps: [(&[i32], bool); 6] = [(&[1, 3], true), (&[1, -2, 3], true), (&[2], false), (&[1, 2, 3], true), (&[-1], true), (&[3], false)];
+    let mut batch = eng.maintain(&mut f).unwrap();
+    for (model, insert) in steps {
+        apply_update(&mut batch, model, insert).unwrap();
+        expected = rebuilt(&all, &expected, model, insert);
+        let got = batch.diagram();
+        assert!(got.vtree().is_on(&home) || got.vtree().num_nodes() == 0, "{model:?}");
+        assert!(eng.equivalent(&on_home(got), &expected).unwrap(), "{model:?} {insert}");
+    }
+}

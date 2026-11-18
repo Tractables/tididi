@@ -242,7 +242,8 @@ impl Maintenance<'_> {
         self.labels.fill(ONE_LEAF_IDX.0);
         let mut assigned = 0u32;
         for lit in model {
-            let leaf = self.vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+            // A home variable the diagram has no leaf for is the rebuild's.
+            let Some(leaf) = self.vtree.leaf_of(lit.var) else { return Ok(ModelShape::Partial) };
             let want = if lit.sign { POS_LEAF_IDX.0 } else { NEG_LEAF_IDX.0 };
             let slot = &mut self.labels[leaf.idx()];
             if *slot == ONE_LEAF_IDX.0 {
