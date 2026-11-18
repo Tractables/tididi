@@ -118,25 +118,36 @@ impl LevelStorage {
     }
 
     pub(crate) fn pair_count(&self) -> usize {
-        self.summary.pairs.read(|| (0..self.levels.len()).map(|t| self.live_pairs_at(t)).sum())
+        self.pair_count_known(false)
     }
 
-    /// The live pairs of level `t`, as [`pair_count`](Self::pair_count)
-    /// counts them: kept on the level once read while the levels are closed,
-    /// and on an open level read off what the level knows
-    /// ([`known_live_pairs`](TddLevel::known_live_pairs)) before its nodes.
+    /// [`pair_count`](Self::pair_count) read as
+    /// [`live_pairs_known`](Self::live_pairs_known) reads each level.
+    pub(crate) fn pair_count_known(&self, counted: bool) -> usize {
+        self.summary.pairs.read(|| (0..self.levels.len()).map(|t| self.live_pairs_known(t, counted)).sum())
+    }
+
+    /// [`live_pairs_known`](Self::live_pairs_known) where no kept count is
+    /// known to hold on an open level.
     pub(crate) fn live_pairs_at(&self, t: usize) -> usize {
+        self.live_pairs_known(t, false)
+    }
+
+    /// The live pairs of level `t`: kept on the level once read while the
+    /// levels are closed, and on an open level read off what the level knows
+    /// ([`known_live_pairs`](TddLevel::known_live_pairs)) before its nodes,
+    /// a count kept at the last close included where `counted`: the levels
+    /// were closed when the edits since began, and each of those edits forgot
+    /// the count of the level it changed. A debug build counts them again.
+    pub(crate) fn live_pairs_known(&self, t: usize, counted: bool) -> usize {
         let level = &self.levels[t];
-        if self.closed {
-            return level.live_pairs_closed();
-        }
-        match level.known_live_pairs(false) {
-            Some(n) => {
-                debug_assert_eq!(n, level.live_pairs(), "level {t}: a known count other than its live pairs");
-                n
-            }
-            None => level.live_pairs(),
-        }
+        let n = if self.closed {
+            level.live_pairs_closed()
+        } else {
+            level.known_live_pairs(counted).unwrap_or_else(|| level.live_pairs())
+        };
+        debug_assert_eq!(n, level.live_pairs(), "level {t}: a known count other than its live pairs");
+        n
     }
 
     pub(crate) fn is_canonical(&self, output: TddNodeId) -> bool {

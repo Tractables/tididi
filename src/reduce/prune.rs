@@ -358,6 +358,19 @@ pub(crate) fn prune_unreachable(
     tdd: &mut Tdd,
     scope: PruneScope,
 ) -> Result<(), OperationError> {
+    let counted = tdd.levels.is_closed();
+    prune_unreachable_counted(eng, tdd, scope, counted)
+}
+
+/// [`prune_unreachable`] inside a reduction, `counted` saying the levels
+/// were closed when it began, so that counts kept at that close hold on the
+/// levels its passes have not marked.
+pub(crate) fn prune_unreachable_counted(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    scope: PruneScope,
+    counted: bool,
+) -> Result<(), OperationError> {
     // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
         for level in &mut tdd.levels {
@@ -382,17 +395,17 @@ pub(crate) fn prune_unreachable(
         _ => None,
     };
     if below_root {
-        prune_walk(eng, tdd, None, Start::Output)?;
+        prune_walk(eng, tdd, None, Start::Output, counted)?;
     } else if let Some(seeds) = &seeded {
         let start = match seeds.root_clean {
             true => Start::Seeds(&seeds.seeds[..], &seeds.state[..], &seeds.top[..]),
             false => Start::Output,
         };
-        prune_walk(eng, tdd, Some(&seeds.state[..]), start)?;
+        prune_walk(eng, tdd, Some(&seeds.state[..]), start, counted)?;
         #[cfg(debug_assertions)]
         debug_assert_all_reached(tdd);
     } else {
-        prune_walk(eng, tdd, None, Start::Root)?;
+        prune_walk(eng, tdd, None, Start::Root, counted)?;
     }
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
@@ -1839,6 +1852,7 @@ pub(super) fn prune_walk(
     tdd: &mut Tdd,
     forced: Option<&[u8]>,
     start: Start<'_>,
+    counted: bool,
 ) -> Result<(), OperationError> {
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch {
@@ -1876,7 +1890,7 @@ pub(super) fn prune_walk(
         Start::Root => walk.slots = whole_slots,
         Start::Output => {}
     }
-    compact_visited(eng, tdd, marks, remap, visits, walk.remap_need)?;
+    compact_visited(eng, tdd, marks, remap, visits, walk.remap_need, counted)?;
 
     if let Some(base) = walk.output {
         tdd.output.local = NodeIdx(rank(&marks[base..], tdd.output.local.idx()));
@@ -2115,9 +2129,9 @@ fn compact_visited(
     remap: &mut Vec<u32>,
     visits: &[Visit],
     remap_need: usize,
+    counted: bool,
 ) -> Result<(), OperationError> {
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
-    let counted = tdd.levels.is_closed();
     // What the compaction does with the levels held as descriptions is
     // decided first.
     let mut plans = plan_levels(
@@ -2180,6 +2194,7 @@ pub(super) fn prune_complement(
     eng: &Engine,
     tdd: &mut Tdd,
     old: NodeIdx,
+    counted: bool,
 ) -> Result<(), OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
     debug_assert_ne!(old, tdd.output.local);
@@ -2248,7 +2263,6 @@ pub(super) fn prune_complement(
     // dropped and the nodes after it one slot down, and in a stored parent
     // the references past it one slot down.
     tdd.dirty.reserve_all(chain.len());
-    let counted = tdd.levels.is_closed();
     for j in (0..chain.len()).rev() {
         let [c, k, up] = chain[j];
         let c = VtreeIdx(c);

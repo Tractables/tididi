@@ -657,9 +657,11 @@ fn kept_below(pairs: usize, min_gain_permille: u32) -> usize {
 /// The draws a restart makes for each random move it is to keep.
 const KICK_DRAWS: usize = 50;
 
-/// The members' total live pairs.
+/// The members' total live pairs. The members enter the search reduced, so
+/// closed, and a move replaces the levels it rebuilds, which keep no count,
+/// or puts back the levels it replaced: a count kept on an open level holds.
 fn live_pairs(members: &[&mut Tdd]) -> usize {
-    members.iter().map(|m| m.pair_count()).sum()
+    members.iter().map(|m| m.levels.pair_count_known(true)).sum()
 }
 
 /// What a descent knows of the moves it refused, which holds while the

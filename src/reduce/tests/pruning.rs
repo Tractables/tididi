@@ -17,7 +17,8 @@ fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<
     let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
     let loose = settle_loose(eng, tdd, &loose)?;
     let seeds = Seeds::of(eng, tdd, &loose)?;
-    prune_walk(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
+    let counted = tdd.levels.is_closed();
+    prune_walk(eng, tdd, Some(&seeds.state[..]), Start::Output, counted)?;
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
 }
@@ -541,7 +542,8 @@ fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) ->
                 let walk_work = eng.limits().work_units() - start;
                 let mut moved = complement;
                 let start = eng.limits().work_units();
-                prune_complement(eng, &mut moved, old).unwrap();
+                let counted = moved.levels.is_closed();
+                prune_complement(eng, &mut moved, old, counted).unwrap();
                 assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the two prunes charged different work");
                 assert_eq!(layout(&moved), layout(&walked), "{what}: the two prunes left different diagrams");
                 assert_eq!(held(&moved), held(&walked), "{what}: the two prunes hold the levels otherwise");
