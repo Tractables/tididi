@@ -132,6 +132,7 @@ impl PendingTopo {
 
     /// Drop the rotation: put the links back, which makes the untouched order
     /// correct again.
+    // Forced for the pool probe, as `rotate_pointers` says.
     #[inline(always)]
     pub(crate) fn revert(mut self, vtree: &mut Vtree) {
         unrotate_pointers(vtree, &self.info, self.kind);
@@ -243,6 +244,7 @@ impl Vtree {
 /// left as it was before the rotation, which is why this is reachable only
 /// through [`PendingTopo::revert`] (and the round-trip oracle in the rotation
 /// tests).
+// Forced with `PendingTopo::revert`, which LLVM otherwise calls out of line.
 #[inline(always)]
 fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
