@@ -72,15 +72,15 @@ pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
 fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(64));
     let mut builder = Tdd::builder(eng, &vtree).unwrap();
+    let root = vtree.root();
     let mut labels = vec![[ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]; vtree.num_nodes()];
     for level in vtree.bottomup() {
-        if vtree.node(level).is_leaf() { continue; }
+        if vtree.node(level).is_leaf() || level == root { continue; }
         let (left, right) = vtree.children(level);
         labels[level.idx()] = std::array::from_fn(|label| {
             builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], labels[right.idx()][0])]).unwrap()
         });
     }
-    let root = vtree.root();
     let (left, source) = vtree.children(root);
     let output = builder.push(eng, root, &[
         ChildPair::new(labels[left.idx()][1], labels[source.idx()][0]),

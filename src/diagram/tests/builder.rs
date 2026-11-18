@@ -147,3 +147,66 @@ fn interning_recovers_after_an_index_update_is_refused() {
         assert_eq!(result.model_count().unwrap(), if multiple_pairs { 2u32.into() } else { 1u32.into() });
     }
 }
+
+/// Over ((x1,x2),x3), the inner level holds the nodes `inner` and the root the
+/// one node `root`; every pair on the right of the root names x3.
+fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, crate::diagram::TddBuilder, TddNodeId) {
+    let tree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
+    let (left, _) = tree.children(tree.root());
+    let mut b = Tdd::builder(eng, &tree).unwrap();
+    for pairs in inner {
+        b.push(eng, left, pairs).unwrap();
+    }
+    let pairs: Vec<_> = root.iter().map(|&i| ChildPair::new(crate::diagram::NodeIdx(i), POS_LEAF_IDX)).collect();
+    let out = b.push(eng, tree.root(), &pairs).unwrap();
+    let out = TddNodeId { vtree: tree.root(), local: out };
+    (tree, b, out)
+}
+
+/// A pair twice in one level, within a node or across two, denotes one event
+/// twice: negation and the count read it as two disjoint ones. The builder
+/// and both readers refuse it; distinct pairs over the same children pass.
+#[test]
+fn a_pair_repeated_in_a_level_is_refused() {
+    let eng = Engine::new();
+    let not1_and_2 = [ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)];
+    let one_and_2 = [ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)];
+    let twice = [not1_and_2[0], not1_and_2[0]];
+    let (_, b, out) = assemble(&eng, &[&not1_and_2, &one_and_2], &[0, 1]);
+    assert_eq!(b.finish(out).unwrap().model_count().unwrap(), 2u32.into());
+    let cases: [(&[&[ChildPair]], &[u32]); 3] = [
+        (&[&not1_and_2, &not1_and_2], &[1]),
+        (&[&not1_and_2, &not1_and_2], &[0, 1]),
+        (&[&twice], &[0]),
+    ];
+    let mut wrong = Vec::new();
+    for (inner, root) in cases {
+        let (tree, b, out) = assemble(&eng, inner, root);
+        match b.finish(out) {
+            Err(e) if e.to_string().contains("twice") => {}
+            Err(e) => wrong.push(format!("{inner:?} {root:?}: {e}")),
+            Ok(f) => wrong.push(format!("{inner:?} {root:?}: built, counts {}", f.model_count().unwrap())),
+        }
+        // The writers keep only reachable nodes, so the first case reaches
+        // the readers by hand below.
+        let (_, b, out) = assemble(&eng, inner, root);
+        let f = unsafe { b.finish_unchecked(out) };
+        let (mut text, mut binary) = (Vec::new(), Vec::new());
+        crate::io::write_tdd(&mut text, &f).unwrap();
+        crate::io::write_tdd_binary(&mut binary, &f).unwrap();
+        let read = [("text", crate::io::read_tdd(&mut text.as_slice(), &tree)), ("binary", crate::io::read_tdd_binary(&mut binary.as_slice(), &tree))];
+        let pruned = root.len() == 1 && inner.len() == 2;
+        for (format, r) in read {
+            if pruned != r.as_ref().is_ok() && !r.as_ref().is_err_and(|e| e.to_string().contains("twice")) {
+                wrong.push(format!("{inner:?} {root:?}: {format} reader {:?}", r.map(|g| g.model_count().unwrap())));
+            }
+        }
+    }
+    let text = "p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nL 3 3\nI 2 0 1 2 1\nI 2 0 1 2 1\nI 4 2 3 1 1\n";
+    let tree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
+    match crate::io::read_tdd(&mut text.as_bytes(), &tree) {
+        Err(e) if e.to_string().contains("twice") => {}
+        r => wrong.push(format!("first case by hand: text reader {:?}", r.map(|g| g.model_count().unwrap()))),
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

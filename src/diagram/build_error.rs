@@ -85,6 +85,15 @@ pub enum TddBuildError {
     IncompatibleWeights,
     /// `output` is not a node of the root level (nor the `ZERO` sentinel).
     BadOutput(TddNodeId),
+    /// A pair occurs twice in a level, within one node or across two, and no
+    /// level under it is marginal. The two copies denote one event, which no
+    /// deterministic diagram holds twice.
+    RepeatedPair {
+        /// The level holding the pair.
+        level: VtreeIdx,
+        /// The repeated pair.
+        pair: ChildPair,
+    },
 }
 
 impl std::fmt::Display for TddBuildError {
@@ -138,6 +147,13 @@ impl std::fmt::Display for TddBuildError {
                 "marginal level {} has structural child {}",
                 level.idx(),
                 child.idx()
+            ),
+            Self::RepeatedPair { level, pair } => write!(
+                f,
+                "level {} holds pair ({}, {}) twice",
+                level.idx(),
+                pair.left.0,
+                pair.right.0
             ),
             Self::BadOutput(id) => write!(
                 f,

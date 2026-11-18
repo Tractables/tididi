@@ -387,7 +387,9 @@ impl TddBuilder {
     /// unreachable nodes and uncontracted twins.
     /// [`minimize`](crate::Tdd::minimize) makes a valid TDD canonical.
     ///
-    /// Storage validity is checked in every build profile. Semantic determinism
+    /// Storage validity is checked in every build profile, and so is the one
+    /// part of determinism a level shows by itself: no pair occurs twice in a
+    /// level with no marginal level under it. The rest of semantic determinism
     /// remains the caller's responsibility, as described on [`TddBuilder`].
     ///
     /// # Errors
@@ -421,6 +423,7 @@ impl TddBuilder {
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
+        check_repeated_pairs(&self.vtree, &self.levels)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
     }
@@ -651,6 +654,33 @@ fn check_structural_level(
                     return Err(TddBuildError::ChildIndexOutOfRange { level: t, node: node_idx, pair, child });
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// No pair occurs twice in a structural level with no marginal level under it.
+/// Given the children's determinism, distinct pairs are disjoint, so this is
+/// determinism over the level's stored nodes. Above a marginal level a
+/// repeated pair is a multiplicity the content-twin merge leaves, and legal.
+fn check_repeated_pairs(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
+    let mut marginal_below = vec![false; vtree.num_nodes()];
+    let mut keys: Vec<u64> = Vec::new();
+    for (t, left, right) in vtree.internal_bottomup() {
+        let below = [left, right].iter().any(|c| levels[c.idx()].is_marginal() || marginal_below[c.idx()]);
+        marginal_below[t.idx()] = below;
+        let lvl = &levels[t.idx()];
+        if below || lvl.is_marginal() {
+            continue;
+        }
+        keys.clear();
+        for node in lvl.nodes().iter() {
+            keys.extend(lvl.pairs_iter_of(&node).map(|p| u64::from(p.left.raw()) << 32 | u64::from(p.right.raw())));
+        }
+        keys.sort_unstable();
+        if let Some(w) = keys.windows(2).find(|w| w[0] == w[1]) {
+            let pair = ChildPair::new(EncodedChildRef((w[0] >> 32) as u32), EncodedChildRef(w[0] as u32));
+            return Err(TddBuildError::RepeatedPair { level: t, pair });
         }
     }
     Ok(())
