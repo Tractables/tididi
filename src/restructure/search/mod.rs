@@ -131,7 +131,7 @@ impl<'a> SearchTree<'a> {
         scratch: &mut crate::restructure::scratch::RestructureScratch,
         bound: usize,
     ) -> Result<bool, OperationError> {
-        if self.tdd.vtree.home().is_some() && self.tdd.has_marginal_level() {
+        if self.tdd.vtree.link_home().is_some() && self.tdd.has_marginal_level() {
             return Ok(false);
         }
         let kept = probe::probe_moves(eng, self.tdd, moves, rule, scratch, bound)?;

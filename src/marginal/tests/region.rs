@@ -39,6 +39,12 @@ pub(crate) fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     eng.embed(f, home, |v| v).unwrap().0
 }
 
+/// `f` on a copy of `home`'s tree that is not a home, where the smooth API
+/// sums out by `home`'s node ids.
+pub(crate) fn on_root_copy(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+    on_home(eng, f, &Arc::new(Vtree::clone(home)))
+}
+
 pub(crate) fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
     let mut rat = || BigRational::new((1 + rng.below(6) as i64).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..n).map(|_| LiteralWeights { negative: rat(), positive: rat() }).collect();
@@ -158,7 +164,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
         };
         let arithmetic = modes[case as usize % modes.len()];
         let mut f = operand(&eng, &home, &used, &mut rng);
-        let mut g = on_home(&eng, &f, &home_vtree);
+        let mut g = on_root_copy(&eng, &f, &home_vtree);
         if let Some(arithmetic) = arithmetic {
             let w = weights(n, &mut rng);
             f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();

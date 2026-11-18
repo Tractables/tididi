@@ -111,7 +111,7 @@ impl Engine {
         let projected;
         let into = match into.home() {
             Some(home) => {
-                projected = tagged_projection(source, at, home, &map, code_vars).unwrap_or_else(|| Arc::clone(into));
+                projected = tagged_projection(source, at, &home, &map, code_vars).unwrap_or_else(|| Arc::clone(into));
                 &projected
             }
             None => into,
@@ -123,7 +123,7 @@ impl Engine {
         }
         let (mut left, mut right) = into.children(into.root());
         // On a home the projection's order decides the side of the code.
-        let swapped = into.home().is_some() && {
+        let swapped = into.on_home() && {
             let mut first = at;
             while !source.node(first).is_leaf() {
                 first = source.children(first).0;

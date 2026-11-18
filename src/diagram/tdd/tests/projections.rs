@@ -231,7 +231,7 @@ fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
 
 /// `g` on `home` when it is on a projection of it or on it.
 fn placed(g: &Tdd, home: &Arc<Vtree>) -> Option<Tdd> {
-    let on = |v: &Arc<Vtree>| Arc::ptr_eq(v.home().map(Home::vtree).unwrap_or(v), home);
+    let on = |v: &Arc<Vtree>| Arc::ptr_eq(v.link_home().map(Home::vtree).unwrap_or(v), home);
     on(g.vtree()).then(|| on_home(g, home))
 }
 
@@ -274,7 +274,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     // `project_over`, `project_to_vars` and the readers place on the
     // caller's vtree and may pad it.
     let closed = |x: &Tdd, y: &Tdd| {
-        if Vtree::home_of(x.vtree()).is_some() && !x.has_marginal_level() {
+        if x.vtree().on_home() && !x.has_marginal_level() {
             check_trimmed(x, false).unwrap_or_else(|e| panic!("not closed: {e}"));
         }
         equiv(x, y)
@@ -559,7 +559,7 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     assert_eq!(sum(&g, root), sum(&f, home_root));
     assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(4))));
 
-    let hm = g.vtree().home().unwrap();
+    let hm = &g.vtree().home().unwrap();
     let mut one = Tdd::one(&home);
     one.trim(hm).unwrap();
     assert_eq!(one.vtree().num_nodes(), 0);
@@ -596,7 +596,7 @@ fn diagrams_on_projections_are_written_and_read() {
     let (home, f, g) = x1_not_x3(&eng);
     let mut one = Tdd::one(&home);
     let mut zero = Tdd::zero(&home);
-    let hm = g.vtree().home().unwrap();
+    let hm = &g.vtree().home().unwrap();
     one.trim(hm).unwrap();
     zero.trim(hm).unwrap();
     let same_leaves = Vtree::projection(hm, [VarId(3), VarId(1)]).unwrap();

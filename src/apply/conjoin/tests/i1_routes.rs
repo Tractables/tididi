@@ -78,6 +78,6 @@ fn audit_i1_routes_operands_name_no_one() {
     for (case, f, g) in operands() {
         assert_eq!(reachable_true_labels(&f), Ok(None), "{case}");
         assert_eq!(reachable_true_labels(&g), Ok(None), "{case}");
-        assert!(f.vtree().num_nodes() == 0 || Arc::ptr_eq(f.vtree().home().map(Home::vtree).unwrap_or(f.vtree()), g.vtree().home().map(Home::vtree).unwrap_or(g.vtree())) || g.vtree().num_nodes() == 0, "{case}: one home");
+        assert!(f.vtree().num_nodes() == 0 || Arc::ptr_eq(f.vtree().link_home().map(Home::vtree).unwrap_or(f.vtree()), g.vtree().link_home().map(Home::vtree).unwrap_or(g.vtree())) || g.vtree().num_nodes() == 0, "{case}: one home");
     }
 }

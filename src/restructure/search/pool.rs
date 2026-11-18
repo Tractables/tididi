@@ -346,7 +346,7 @@ impl Engine {
         }
         let (mut tree, mut groups) = pool_tree(members)?;
         let pivot = mv.rotation.pivot;
-        if pivot.idx() >= tree.home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
+        if pivot.idx() >= tree.link_home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
             return Err(OperationError::LevelNotInVtree(pivot));
         }
         if members.iter().any(|m| m.has_marginal_level()) {
@@ -1099,7 +1099,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
     if members.iter().all(|m| Arc::ptr_eq(&m.vtree, first)) {
         return Ok((Vtree::clone(first), None));
     }
-    let home_of = |v: &Arc<Vtree>| v.home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
+    let home_of = |v: &Arc<Vtree>| v.link_home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
     if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
         return Err(OperationError::VtreeMismatch);
     }
@@ -1117,7 +1117,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
             });
             groups.len() - 1
         });
-        if m.vtree.home().is_none() {
+        if m.vtree.link_home().is_none() {
             root = Some(g);
         }
         groups[g].members.push(i);
@@ -1126,7 +1126,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
     let union = match root {
         Some(g) => groups[g].tree.take().expect("a group has its tree"),
         None => {
-            let home = first.home().expect("a projection has a home");
+            let home = first.link_home().expect("a projection has a home");
             let vars: Vec<VarId> = groups
                 .iter()
                 .filter_map(|g| g.tree.as_ref())

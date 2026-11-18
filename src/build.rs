@@ -14,7 +14,7 @@ pub(crate) mod models;
 /// home, or `vtree` itself off a home.
 fn constant_vtree(vtree: &Arc<Vtree>) -> std::borrow::Cow<'_, Arc<Vtree>> {
     match vtree.num_nodes() > 0 {
-        true => match Vtree::home_of(vtree) {
+        true => match vtree.home() {
             Some(home) => std::borrow::Cow::Owned(Vtree::empty_projection(&home)),
             None => std::borrow::Cow::Borrowed(vtree),
         },
@@ -285,7 +285,7 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        if let Some(home) = Vtree::home_of(vtree) {
+        if let Some(home) = vtree.home() {
             return cube_on_home(self, &home, literals);
         }
         let mut gate = lim.gate();

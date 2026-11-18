@@ -81,7 +81,7 @@ impl Engine {
         let mut gate = lim.gate();
         // False implies both signs, including variables absent from its
         // support and the home variables a projection lacks.
-        let vtree = f.vtree().home().map(Home::vtree).unwrap_or(f.vtree());
+        let vtree = f.vtree().link_home().map(Home::vtree).unwrap_or(f.vtree());
         for t in vtree.bottomup() {
             gate.poll(1)?;
             if let VtreeNode::Leaf { var, .. } = *vtree.node(t) {

@@ -207,12 +207,10 @@ impl Home {
     pub fn new(vtree: impl Into<Arc<Vtree>>) -> Self {
         let mut vtree = vtree.into();
         if let Some(home) = vtree.home() {
-            return home.clone();
+            return home;
         }
-        if vtree.index.0.is_none() {
-            let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share Home::vtree");
-            root.index = RootIndex(Some(Box::new(HomeIndex::new(root))));
-        }
+        let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share Home::vtree");
+        root.index = RootIndex(Some(Box::new(HomeIndex::new(root))));
         Home(vtree)
     }
 
@@ -525,7 +523,7 @@ impl Vtree {
     /// The variables of the home leaves under own node `t`'s home node that
     /// this vtree does not have; none on a root.
     pub(crate) fn free_vars_under(&self, t: VtreeIdx) -> Vec<VarId> {
-        let Some(home) = self.home().map(Home::vtree).filter(|_| self.free_leaves() > 0) else { return Vec::new() };
+        let Some(home) = self.link_home().map(Home::vtree).filter(|_| self.free_leaves() > 0) else { return Vec::new() };
         home.subtree(self.home_node(t))
             .filter(|&h| home.node(h).is_leaf())
             .map(|h| home.leaf_var(h))
@@ -533,9 +531,39 @@ impl Vtree {
             .collect()
     }
 
-    /// The home this vtree is a projection of; `None` on a root vtree, a
-    /// home's root included ([`Tdd::home`](crate::Tdd::home) gives that one).
-    pub fn home(&self) -> Option<&Home> {
+    /// The home this vtree is on: a projection's home, or this vtree when it
+    /// is a home's root, the projection of its home on every leaf; `None` on
+    /// a root vtree that is not a home.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
+    /// assert!(Arc::ptr_eq(own.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(home.vtree().home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::new(Vtree::balanced(4)).home().is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn home(self: &Arc<Self>) -> Option<Home> {
+        match self.link_home() {
+            Some(home) => Some(home.clone()),
+            None => self.is_home().then(|| Home(Arc::clone(self))),
+        }
+    }
+
+    /// Whether this vtree is on a home: [`home`](Self::home) without the
+    /// clone.
+    #[inline]
+    pub(crate) fn on_home(&self) -> bool {
+        self.home.is_some() || self.is_home()
+    }
+
+    /// The home of a projection that holds a link to it; `None` on a home's
+    /// root, whose leaves and nodes are the home's own.
+    #[inline]
+    pub(crate) fn link_home(&self) -> Option<&Home> {
         self.home.as_deref().map(|link| &link.home)
     }
 
@@ -580,7 +608,7 @@ impl Vtree {
     /// itself: whether its diagrams combine with those on `home`'s other
     /// projections.
     pub fn is_on(&self, home: &Home) -> bool {
-        match self.home() {
+        match self.link_home() {
             Some(own) => Arc::ptr_eq(own.vtree(), home.vtree()),
             None => std::ptr::eq(self, &**home.vtree()),
         }
@@ -595,7 +623,7 @@ impl Vtree {
     /// one whose extent holds a leaf of the other or meets one of its
     /// extents.
     pub(crate) fn leaf_sets(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<LeafSets, OperationError> {
-        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.home().map_or(v, Home::vtree));
+        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, Home::vtree));
         if root_of(a) != root_of(b) {
             return Err(OperationError::VtreeMismatch);
         }
@@ -886,15 +914,6 @@ impl Vtree {
     /// Whether this vtree is a home's root.
     pub(crate) fn is_home(&self) -> bool {
         self.index.0.is_some()
-    }
-
-    /// The home `vtree` is on: a projection's home, or `vtree` itself when
-    /// it is a home's root; `None` on a root that is not a home.
-    pub(crate) fn home_of(vtree: &Arc<Vtree>) -> Option<Home> {
-        match vtree.home() {
-            Some(home) => Some(home.clone()),
-            None => vtree.is_home().then(|| Home(Arc::clone(vtree))),
-        }
     }
 
     /// `vtree` to change in place, copied first when shared. A home's root

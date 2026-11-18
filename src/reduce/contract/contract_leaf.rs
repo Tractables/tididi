@@ -337,7 +337,7 @@ pub(crate) fn is_full_twin_side(tdd: &Tdd, parent: VtreeIdx, side: ChildSide) ->
 #[cfg(debug_assertions)]
 pub(crate) fn assert_no_full_twin_side(tdd: &Tdd) {
     let vtree = &tdd.vtree;
-    if vtree.home().is_none() && !vtree.is_home() || tdd.is_zero() || tdd.is_one() {
+    if !vtree.on_home() || tdd.is_zero() || tdd.is_one() {
         return;
     }
     for t in vtree.bottomup() {

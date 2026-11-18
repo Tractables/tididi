@@ -99,7 +99,7 @@ impl Engine {
     /// remains unchanged on success and error. Big-integer arithmetic allocations
     /// are outside the best-effort byte budget, as with [`Tdd::model_count`].
     pub fn projected_model_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
-        let Some(home) = tdd.vtree.home() else {
+        let Some(home) = tdd.vtree.link_home() else {
             return self.projected_own_count(tdd, vars);
         };
         let _op = self.limits().enter()?;

@@ -127,7 +127,7 @@ impl Engine {
         }
         let narrowed;
         let mut target = target;
-        if let Some(home) = Vtree::home_of(target)
+        if let Some(home) = target.home()
             && !Arc::ptr_eq(tdd.vtree(), target)
             && !tdd.has_marginal_level()
         {
@@ -148,7 +148,7 @@ impl Engine {
             *tdd = crate::build::constant_zero(self, target);
             return Ok(TransportStats::default());
         }
-        if tdd.vtree.home().is_some() {
+        if tdd.vtree.link_home().is_some() {
             return self.restructure_projection(tdd, target, bound);
         }
         self.move_to(tdd, target, bound)
@@ -201,7 +201,7 @@ impl Engine {
         bound: usize,
         structural: bool,
     ) -> Result<TransportStats, RestructureError> {
-        debug_assert!(tdd.vtree.home().is_none(), "a projection moves on its private twin");
+        debug_assert!(tdd.vtree.link_home().is_none(), "a projection moves on its private twin");
         let mut mover = Mover {
             eng: self,
             tdd,

@@ -126,7 +126,7 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
 /// `result` of an operation on projections, trimmed to the leaves it names.
 #[inline]
 pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationError> {
-    if result.vtree.home().is_some() || result.vtree.is_home() {
+    if result.vtree.on_home() {
         trim_result(eng, &mut result)?;
     }
     Ok(result)
@@ -134,7 +134,7 @@ pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationErr
 
 #[cold]
 fn trim_result(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    let home = Vtree::home_of(&result.vtree).expect("a vtree on a home");
+    let home = result.vtree.home().expect("a vtree on a home");
     crate::reduce::trim(eng, result, &home, None, &[])?;
     Ok(())
 }
@@ -170,7 +170,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
         }
     }
     if into.num_nodes() == 0 {
-        let home = into.home().expect("a vtree with no node is a projection");
+        let home = into.link_home().expect("a vtree with no node is a projection");
         let (_, var) = home.vtree().leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }

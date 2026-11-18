@@ -47,7 +47,7 @@ fn with_regions(home: &Home, leaves: &[u32], regions: &[(&[u32], u32)]) -> Vtree
 
 /// The region at `anchor`'s home leaf.
 fn region_at(own: &Vtree, anchor: u32) -> VtreeIdx {
-    let home = own.home().unwrap();
+    let home = own.link_home().unwrap();
     let t = own.node_at_home(home.vtree().leaf_of(VarId(anchor)).unwrap()).unwrap();
     assert!(own.node(t).is_region());
     t

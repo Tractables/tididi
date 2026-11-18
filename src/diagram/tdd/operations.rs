@@ -1251,8 +1251,9 @@ impl Tdd {
     /// # Errors
     ///
     /// Returns [`OperationError::LevelNotInVtree`] for an invalid target and
-    /// [`OperationError::InertOption`] for a diagram on a projection, whose
-    /// sum-out is [`marginalize`](Self::marginalize), both before mutation.
+    /// [`OperationError::InertOption`] for a diagram on a home (a projection
+    /// or a home's root), whose sum-out is [`marginalize`](Self::marginalize),
+    /// both before mutation.
     /// [`OperationError::OverBudget`] may leave a completed prefix whose
     /// counts or weighted values remain readable and preserved. An unfinished
     /// column is discarded before installation; retrying finishes remaining levels

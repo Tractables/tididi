@@ -712,7 +712,7 @@ pub(crate) fn conjoin_onto_as<'a>(
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
     // Off projections a summed-out operand is never placed, so it is on
     // `into` already, where the conjunction leaves this check to the caller.
-    if (f.vtree().home().is_some() || g.vtree().home().is_some())
+    if (f.vtree().on_home() || g.vtree().on_home())
         && !Arc::ptr_eq(f.vtree(), g.vtree())
         && let Err(error) = projected::check_summed_leaves_mapped(&f, &f_map, &g, &g_map)
     {
@@ -860,7 +860,7 @@ impl crate::Engine {
             Ok(op) => op,
             Err(error) => return Err(AndRefused { error, f, g }),
         };
-        if f.vtree().home().is_some() || g.vtree().home().is_some() {
+        if f.vtree().link_home().is_some() || g.vtree().link_home().is_some() {
             return projected::conjoin_projections(self, Cow::Borrowed(&*f), Cow::Borrowed(&*g))
                 .map_err(|error| AndRefused { error, f, g });
         }
@@ -982,8 +982,8 @@ impl crate::Engine {
     ///
     /// The operand and resource errors of [`Engine::and`], plus
     /// [`OperationError::LevelNotInVtree`] for an invalid target and
-    /// [`OperationError::InertOption`] for an operand on a projection, checked
-    /// before product construction. An owned operand is consumed on every
+    /// [`OperationError::InertOption`] for an operand on a home (a projection
+    /// or a home's root), checked before product construction. An owned operand is consumed on every
     /// outcome, and a borrowed one is left as it was.
     pub fn and_marginalizing<'f, 'g>(
         &self,
@@ -993,7 +993,7 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         let (f, g) = (f.into(), g.into());
         let _op = self.limits().enter()?;
-        if f.vtree().home().is_some() || g.vtree().home().is_some() {
+        if f.vtree().on_home() || g.vtree().on_home() {
             return Err(targets_on_projection());
         }
         f.check_level_indices(targets)?;
@@ -1116,9 +1116,9 @@ impl crate::Engine {
         let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
         let targets = translated.as_deref().unwrap_or(targets);
         if f.weights.is_some() || g.weights.is_some() {
-            let out = match f.vtree().home() {
-                Some(_) => self.and_marginalizing_where(f, g, |_| true)?,
-                None => self.and_marginalizing(f, g, targets)?,
+            let out = match f.vtree().on_home() {
+                true => self.and_marginalizing_where(f, g, |_| true)?,
+                false => self.and_marginalizing(f, g, targets)?,
             };
             return self.model_count(&out);
         }
@@ -1156,7 +1156,7 @@ impl crate::Engine {
 
 #[cold]
 fn targets_on_projection() -> OperationError {
-    OperationError::InertOption { option: "targets", needs: "operands on a root vtree; on projections, `and_marginalizing_where`" }
+    OperationError::InertOption { option: "targets", needs: "operands on a root vtree that is not a home; on a home, `and_marginalizing_where`" }
 }
 
 /// [`Engine::and_marginalizing_where`]: the nodes
@@ -1164,7 +1164,7 @@ fn targets_on_projection() -> OperationError {
 /// are the sweep's targets, and [`sum_out`](crate::marginal::sum_out)
 /// finishes them.
 fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable: &dyn Fn(VarId) -> bool) -> Result<Tdd, OperationError> {
-    let projected = f.vtree().home().is_some() || g.vtree().home().is_some();
+    let projected = f.vtree().on_home() || g.vtree().on_home();
     if projected {
         if (f.has_marginal_level() || g.has_marginal_level()) && !Arc::ptr_eq(f.vtree(), g.vtree()) {
             Vtree::leaf_sets(f.vtree(), g.vtree())?;
