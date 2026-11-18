@@ -422,9 +422,9 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        let tdd = self.finish_trusting_pairs(output)?;
-        check_repeated_pairs(&tdd.vtree, &tdd.levels)?;
-        Ok(tdd)
+        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())?;
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
+        Ok(self.seat(output, dirty, None))
     }
 
     /// [`finish`](Self::finish) without the repeated-pair check, for a
@@ -551,7 +551,22 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 /// # Errors
 ///
 /// The first violation found.
+#[inline]
 pub(crate) fn check_levels(
+    vtree: &Arc<Vtree>,
+    levels: &[TddLevel],
+    output: TddNodeId,
+    weights: Option<&WeightStore>,
+) -> Result<(), TddBuildError> {
+    check_storage::<false>(vtree, levels, output, weights)
+}
+
+/// [`check_levels`], and with `PAIRS` also no pair twice in a structural level
+/// with no marginal level under it, found in the same pass over the pairs.
+/// Given the children's determinism, distinct pairs are disjoint, so this is
+/// determinism over the level's stored nodes. Above a marginal level a
+/// repeated pair is a multiplicity the content-twin merge leaves, and legal.
+fn check_storage<const PAIRS: bool>(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
     output: TddNodeId,
@@ -570,11 +585,15 @@ pub(crate) fn check_levels(
         return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
     check_leaf_levels(vtree, levels)?;
+    let mut scan = PairScan::default();
+    if PAIRS {
+        scan.marginal_below.resize(n, false);
+    }
     for (t, left, right) in vtree.internal_bottomup() {
         if levels[t.idx()].is_marginal() {
             check_marginal_level(vtree, levels, t)?;
         } else {
-            check_structural_level(vtree, levels, t, left, right)?;
+            check_structural_level::<PAIRS>(vtree, levels, t, left, right, &mut scan)?;
         }
     }
     check_output(vtree, levels, output)
@@ -619,31 +638,32 @@ fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Resu
 }
 
 /// Every node of a structural level has a pair, and every pair side names
-/// an entry of its child level without the reserved bit.
-fn check_structural_level(
-    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
+/// an entry of its child level without the reserved bit; with `PAIRS`, no
+/// pair occurs twice when `scan` says the level is checked for that.
+fn check_structural_level<const PAIRS: bool>(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx, scan: &mut PairScan,
 ) -> Result<(), TddBuildError> {
     let lvl = &levels[t.idx()];
     let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
+    let scanned = PAIRS && scan.enter(levels, t, left, right);
     // Over structural children a side is a node index, and one below
     // `MAX_LIVE` has bit 31 clear, so one comparison a side checks both
     // rules. The loop below names the first violation where this pass finds
-    // one.
+    // one; a scanned level always takes this pass, as its children are
+    // structural, and the loop always finds one, as no level holds more than
+    // `MAX_LIVE` nodes.
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
-        // A stored level's nodes are read as slices of its arena, in a loop
-        // apart from an implicit level's generated pairs.
-        let all_fit = match lvl.stored() {
-            Some(stored) => stored.nodes().iter().all(|node| {
-                let pairs = stored.of(node);
-                !pairs.is_empty() && pairs.iter().all(fits)
-            }),
-            None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
+        let all_fit = if scanned {
+            scan.start(lb);
+            every_pair(lvl, |pair| fits(pair) && scan.count(pair))
+        } else {
+            every_pair(lvl, fits)
         };
         if all_fit {
-            return Ok(());
+            return if scanned { scan.find_repeat(lvl, t, lb, rb) } else { Ok(()) };
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -663,54 +683,83 @@ fn check_structural_level(
             }
         }
     }
+    debug_assert!(!scanned, "a scanned level failed the fast pass with no violation");
     Ok(())
 }
 
-/// No pair occurs twice in a structural level with no marginal level under it.
-/// Given the children's determinism, distinct pairs are disjoint, so this is
-/// determinism over the level's stored nodes. Above a marginal level a
-/// repeated pair is a multiplicity the content-twin merge leaves, and legal.
-///
-/// Needs `check_levels` first: the sides are then node indices below their
-/// child level's width, and the rights are bucketed by left side and marked.
-fn check_repeated_pairs(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
-    let mut marginal_below = vec![false; vtree.num_nodes()];
-    let (mut end, mut rights, mut seen) = (Vec::<usize>::new(), Vec::<u32>::new(), Vec::<u32>::new());
-    for (t, left, right) in vtree.internal_bottomup() {
-        let below = [left, right].iter().any(|c| levels[c.idx()].is_marginal() || marginal_below[c.idx()]);
-        marginal_below[t.idx()] = below;
-        let lvl = &levels[t.idx()];
-        if below || lvl.is_marginal() {
-            continue;
-        }
-        let lb = bound(vtree, levels, left);
-        end.clear();
-        end.resize(lb + 1, 0);
-        lvl.for_each_node_pair(|_, p| end[p.left.raw() as usize + 1] += 1);
-        for l in 1..=lb {
+/// Whether every node of `lvl` has a pair and `f` holds on every pair. A
+/// stored level's nodes are read as slices of its arena, in a loop apart from
+/// an implicit level's generated pairs.
+#[inline(always)]
+fn every_pair(lvl: &TddLevel, mut f: impl FnMut(&ChildPair) -> bool) -> bool {
+    match lvl.stored() {
+        Some(stored) => stored.nodes().iter().all(|node| {
+            let pairs = stored.of(node);
+            !pairs.is_empty() && pairs.iter().all(&mut f)
+        }),
+        None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| f(&pair))),
+    }
+}
+
+/// Buffers for finding a repeated pair, reused across levels: the level's
+/// rights bucketed by left side (a counting sort), then each bucket's rights
+/// marked in an array over the right child level, stamped with the left side.
+#[derive(Default)]
+struct PairScan {
+    marginal_below: Vec<bool>,
+    end: Vec<usize>,
+    rights: Vec<u32>,
+    seen: Vec<u32>,
+}
+
+impl PairScan {
+    /// Record whether a marginal level lies under `t`, and say whether `t`
+    /// is checked: it is when none does.
+    fn enter(&mut self, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> bool {
+        let below = [left, right].iter().any(|c| levels[c.idx()].is_marginal() || self.marginal_below[c.idx()]);
+        self.marginal_below[t.idx()] = below;
+        !below
+    }
+
+    fn start(&mut self, left_width: usize) {
+        self.end.clear();
+        self.end.resize(left_width + 1, 0);
+    }
+
+    #[inline(always)]
+    fn count(&mut self, pair: &ChildPair) -> bool {
+        self.end[pair.left.raw() as usize + 1] += 1;
+        true
+    }
+
+    /// After every pair of `lvl` was counted, with sides below `left_width`
+    /// and `right_width`.
+    fn find_repeat(&mut self, lvl: &TddLevel, t: VtreeIdx, left_width: usize, right_width: usize) -> Result<(), TddBuildError> {
+        let end = &mut self.end;
+        for l in 1..=left_width {
             end[l] += end[l - 1];
         }
-        rights.resize(end[lb], 0);
+        self.rights.resize(end[left_width], 0);
         lvl.for_each_node_pair(|_, p| {
             let at = &mut end[p.left.raw() as usize];
-            rights[*at] = p.right.raw();
+            self.rights[*at] = p.right.raw();
             *at += 1;
         });
-        seen.clear();
-        seen.resize(bound(vtree, levels, right), u32::MAX);
+        self.seen.clear();
+        self.seen.resize(right_width, u32::MAX);
         let mut from = 0;
-        for (l, &to) in end[..lb].iter().enumerate() {
-            for &r in &rights[from..to] {
-                if seen[r as usize] == l as u32 {
+        for (l, &to) in end[..left_width].iter().enumerate() {
+            for &r in &self.rights[from..to] {
+                if self.seen[r as usize] == l as u32 {
                     let pair = ChildPair::new(EncodedChildRef(l as u32), EncodedChildRef(r));
                     return Err(TddBuildError::RepeatedPair { level: t, pair });
                 }
-                seen[r as usize] = l as u32;
+                self.seen[r as usize] = l as u32;
             }
             from = to;
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// The output is a node of the root level, or `ZERO`.
