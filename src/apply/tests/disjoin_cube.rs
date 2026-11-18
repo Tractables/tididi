@@ -211,16 +211,48 @@ fn the_typed_and_integer_cubes_agree() {
 }
 
 /// A conjunction across projections can leave a node its output does not
-/// reach, with the levels not known to be pruned; the overlay reads every node
-/// of a level.
+/// reach; the overlay reads every node of a level.
 #[test]
 fn an_unreachable_node_does_not_join_the_fill() {
-    let home = crate::vtree::Home::new(Vtree::random(6, 101));
-    let x1 = Vtree::projection(&home, [VarId(1)]).unwrap();
-    let x3_x5 = Vtree::projection(&home, [VarId(3), VarId(5)]).unwrap();
-    let f = crate::and(Tdd::clause(&x1, [-1]).unwrap(), Tdd::clause(&x3_x5, [3, -3, -5]).unwrap()).unwrap();
-    let general = crate::or(f.clone(), Tdd::cube(&x1, [1]).unwrap()).unwrap();
-    let out = f.or_cube([1]).unwrap();
-    assert_partition(&out, "x1 or not x1");
-    assert_eq!(out.model_count().unwrap(), general.model_count().unwrap());
+    let mut rng = Lcg::new(0x0c0b);
+    let mut unreached = 0;
+    for seed in 0..200u64 {
+        let home = crate::vtree::Home::new(Vtree::random(6, seed));
+        let mut part = || -> Vec<VarId> { (1..=6).filter(|_| rng.below(3) == 0).map(VarId).collect() };
+        let (a, b) = (part(), part());
+        if a.is_empty() || b.is_empty() {
+            continue;
+        }
+        let mut cnf = |vars: &[VarId]| {
+            let vtree = Vtree::projection(&home, vars.iter().copied()).unwrap();
+            let mut clause = || -> Vec<i32> {
+                let mut lits = Vec::new();
+                for v in vars {
+                    match rng.below(3) {
+                        0 => lits.push(v.0 as i32),
+                        1 => lits.push(-(v.0 as i32)),
+                        _ => {}
+                    }
+                }
+                lits
+            };
+            let (c, d) = (clause(), clause());
+            crate::and(Tdd::clause(&vtree, c).unwrap(), Tdd::clause(&vtree, d).unwrap()).unwrap()
+        };
+        let f = crate::and(cnf(&a), cnf(&b)).unwrap();
+        if f.is_zero() || f.is_one() || f.vtree().num_nodes() == 1 {
+            continue;
+        }
+        let reach = f.reachable_nodes();
+        if !(0..f.vtree().num_nodes()).any(|t| !f.vtree().node(crate::vtree::VtreeIdx(t as u32)).is_leaf() && reach[t].contains(&false)) {
+            continue;
+        }
+        unreached += 1;
+        let lit = a[0].0 as i32;
+        let general = crate::or(f.clone(), Tdd::cube(f.vtree(), [lit]).unwrap()).unwrap();
+        let out = f.or_cube([lit]).unwrap();
+        assert_partition(&out, &format!("seed {seed}"));
+        assert_eq!(out.model_count().unwrap(), general.model_count().unwrap(), "seed {seed}");
+    }
+    assert!(unreached > 5, "{unreached} conjunctions hold a node they do not reach");
 }

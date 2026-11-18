@@ -1,4 +1,5 @@
-//! Structural checkers: vtree agreement and the absence of false nodes.
+//! Structural checkers: vtree agreement, the absence of false nodes and the
+//! known loose levels.
 
 use crate::diagram::{Tdd, ZERO};
 
@@ -126,6 +127,45 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
                     "vtree {:?} node {}: Internal with empty inputs — no real node \
                      should compute constant-false (use the `ZERO` sentinel instead)",
                     t, i
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check the loose levels a diagram knows
+/// ([`Dirty::loose`](crate::diagram::Dirty::loose)): each structural
+/// internal level below the root that they leave out has every node named
+/// by a pair of its parent level. A diagram that does not know them passes.
+///
+/// Cost: O(total pairs).
+pub fn check_loose_levels(tdd: &Tdd) -> Result<(), String> {
+    let Some(loose) = tdd.dirty.loose() else { return Ok(()) };
+    if tdd.is_zero() || tdd.is_one() {
+        return Ok(());
+    }
+    let vtree = &tdd.vtree;
+    for (p, left, right) in vtree.internal_bottomup() {
+        let level = &tdd.levels[p.idx()];
+        for (c, on_left) in [(left, true), (right, false)] {
+            if vtree.node(c).is_leaf() || tdd.levels[c.idx()].is_marginal() || loose.contains(&c.0) {
+                continue;
+            }
+            let decoder = tdd.levels[c.idx()].child_decoder();
+            let mut named = vec![false; tdd.levels[c.idx()].slot_count()];
+            for node in level.nodes().iter() {
+                for pair in level.pairs_iter_of(&node) {
+                    let side = if on_left { pair.left } else { pair.right };
+                    if let Some(i) = decoder.child(side).index() {
+                        named[i] = true;
+                    }
+                }
+            }
+            if let Some(i) = named.iter().position(|&n| !n) {
+                return Err(format!(
+                    "level {} is not listed loose, yet no pair of its parent {} names its node {i}",
+                    c.0, p.0
                 ));
             }
         }
