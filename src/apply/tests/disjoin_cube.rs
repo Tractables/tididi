@@ -209,3 +209,52 @@ fn the_typed_and_integer_cubes_agree() {
     from_typed.minimize().expect("minimizing fits");
     assert_same_shape(&from_integers, &from_typed, "typed and integer cubes");
 }
+
+/// `or_cube` on a one-leaf diagram an earlier call placed over a wider
+/// projection, whose root then holds the placement's literal chain beside the
+/// output: the result is a valid diagram, and minimized it is the home's
+/// disjunction placed on the result's vtree.
+#[test]
+fn a_cube_on_a_diagram_an_earlier_call_placed_is_valid_and_canonical() {
+    use crate::vtree::Home;
+    let eng = crate::Engine::new();
+    let home = Home::new(Vtree::balanced(3));
+    for x1 in [1, -1] {
+        let mut f = Tdd::clause(home.vtree(), [x1]).expect("a clause on the home");
+        f.trim(&home).expect("trim fits");
+        assert_eq!(f.vtree().num_leaves(), 1);
+        let g = eng.or_cube(f, &[2, -2]).expect("a false cube");
+        for cube in [vec![2], vec![3], vec![2, 3], vec![-2, 3]] {
+            let what = format!("f = {x1}, cube {cube:?}");
+            let mut got = eng.or_cube(g.clone(), &cube).expect("the disjunction fits");
+            crate::diagram::TddBuilder::from_levels(Arc::clone(&got.vtree), got.levels.to_vec(), got.weights.clone())
+                .check(got.output)
+                .unwrap_or_else(|e| panic!("{what}: the builder refuses the result: {e:?}"));
+            assert_partition(&got, &what);
+            let mut want = Tdd::clause(home.vtree(), [x1]).expect("a clause on the home");
+            want = eng.or_cube(want, &cube).expect("the disjunction fits");
+            want.trim(&home).expect("trim fits");
+            let (mut want, _) = eng.embed_moving(want, got.vtree(), |v| v).expect("the support is in the result's vtree");
+            want.minimize().expect("minimizing fits");
+            got.minimize().expect("minimizing fits");
+            assert_same_shape(&got, &want, &what);
+        }
+    }
+}
+
+/// A literal set naming a variable both ways is a false cube and a true
+/// clause: each returns its operand as it was, on the vtree it was on.
+#[test]
+fn a_cube_or_clause_naming_a_variable_both_ways_leaves_the_vtree() {
+    use crate::vtree::Home;
+    let eng = crate::Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let own = Vtree::projection(&home, [VarId(1), VarId(2)]).expect("a projection");
+    let f = Tdd::clause(&own, [1, -2]).expect("a clause on the projection");
+    let or = eng.or_cube(f.clone(), &[1, -1, 3]).expect("a false cube");
+    assert!(Arc::ptr_eq(or.vtree(), &own), "or_cube widens the vtree");
+    let and = eng.and_clause(f.clone(), &[1, -1, 3]).expect("a true clause");
+    assert!(Arc::ptr_eq(and.vtree(), &own), "and_clause widens the vtree");
+    assert_eq!(eng.or_cube(f.clone(), &[3, -3, 9]).err(), Some(OperationError::VariableNotInVtree(VarId(9))));
+    assert_eq!(eng.and_clause(f, &[3, -3, 0]).err(), Some(OperationError::InvalidLiteral(0)));
+}

@@ -102,7 +102,7 @@ pub(crate) enum Normalized {
 /// Per literal in order, [`OperationError::InvalidLiteral`] for integer zero,
 /// then [`OperationError::VariableNotInVtree`] for a variable the vtree
 /// lacks, whatever else the clause says; and the limits' errors.
-pub(crate) fn normalize<L: crate::LiteralInput>(
+fn normalize<L: crate::LiteralInput>(
     lim: &Limits,
     vtree: &Vtree,
     lits: &[L],
@@ -146,9 +146,8 @@ fn spine_walk<L: crate::LiteralInput>(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
-    let mut f = extend_to(eng, f, lits)?;
-    let vtree = Arc::clone(&f.vtree);
-    let clause = match normalize(lim, &vtree, lits)? {
+    let (mut f, clause) = extend_to(eng, f, lits)?;
+    let clause = match clause {
         // A variable named in both polarities satisfies the clause whatever
         // its value: the accumulator is the answer as it stands, worklists
         // included.
@@ -182,35 +181,82 @@ fn spine_walk<L: crate::LiteralInput>(
 
 /// `f` on the projection of its home on its own leaves and those of `lits`,
 /// when a literal's variable has a leaf in the home and none in `f`'s
-/// vtree. Its levels move to their images, no node or pair copied. A literal
-/// that does not convert is left to [`normalize`] to refuse.
-pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
-    let Some(home) = f.vtree.home() else { return Ok(f) };
-    if f.vtree.has_regions() {
-        return extend_with_regions(eng, f, lits);
-    }
-    let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
-    if !vars().any(|var| f.vtree.home_has(var)) {
-        return Ok(f);
-    }
-    let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
-    let added = vars().filter(|&var| home.rank(var).is_some());
-    let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
-    place_on(eng, f, &into)
+/// vtree, and `lits` [`normalize`]d against the vtree `f` ends on. Its levels
+/// move to their images, no node or pair copied. Literals naming a variable
+/// both ways leave `f` where it is: as a cube false and as a clause true, they
+/// add no variable to the answer.
+///
+/// # Errors
+///
+/// [`Vtree::leaf_sets`]' refusal of a variable inside an extent, the
+/// placement's, then [`normalize`]'s.
+pub(crate) fn extend_to<L: crate::LiteralInput>(
+    eng: &Engine,
+    f: Tdd,
+    lits: &[L],
+) -> Result<(Tdd, Normalized), OperationError> {
+    let lim = eng.limits();
+    let f = match widened(&f.vtree, lits)? {
+        None => f,
+        Some(_) if names_both_ways(lim, &f.vtree, lits)? => return Ok((f, Normalized::Tautology)),
+        Some(into) => place_on(eng, f, &into)?,
+    };
+    let clause = normalize(lim, &f.vtree, lits)?;
+    Ok((f, clause))
 }
 
-/// [`extend_to`] of `f` with regions: refused with
-/// [`OperationError::MarginalLevel`] where a literal's variable is inside
-/// an extent.
-#[cold]
-fn extend_with_regions<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
-    let home = f.vtree.home().expect("a vtree with a region is a projection");
-    let added = lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
-    let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
-    match Vtree::leaf_sets(&f.vtree, &lits)? {
-        crate::vtree::LeafSets::Union(into) => place_on(eng, f, &into),
-        _ => Ok(f),
+/// The projection [`extend_to`] places a diagram on `vtree` on, if any. A
+/// literal that does not convert is left to [`normalize`] to refuse.
+fn widened<L: crate::LiteralInput>(vtree: &Arc<Vtree>, lits: &[L]) -> Result<Option<Arc<Vtree>>, OperationError> {
+    let Some(home) = vtree.home() else { return Ok(None) };
+    let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
+    if vtree.has_regions() {
+        return widened_with_regions(vtree, vars());
     }
+    if !vars().any(|var| vtree.home_has(var)) {
+        return Ok(None);
+    }
+    let own = vtree.leaf_bottomup().map(|(_, var)| var);
+    let added = vars().filter(|&var| home.rank(var).is_some());
+    Ok(Some(Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home")))
+}
+
+/// [`widened`] for a vtree with regions, `vars` the literals' variables:
+/// refused with [`OperationError::MarginalLevel`] where one is inside an
+/// extent.
+#[cold]
+fn widened_with_regions(
+    vtree: &Arc<Vtree>,
+    vars: impl Iterator<Item = crate::vtree::VarId>,
+) -> Result<Option<Arc<Vtree>>, OperationError> {
+    let home = vtree.home().expect("a vtree with a region is a projection");
+    let added = vars.filter(|&var| home.rank(var).is_some());
+    let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
+    Ok(match Vtree::leaf_sets(vtree, &lits)? {
+        crate::vtree::LeafSets::Union(into) => Some(into),
+        _ => None,
+    })
+}
+
+/// Whether `lits` name a variable both ways, with [`normalize`]'s errors in
+/// its order, a variable resolved against `vtree` or its home.
+#[cold]
+fn names_both_ways<L: crate::LiteralInput>(lim: &Limits, vtree: &Vtree, lits: &[L]) -> Result<bool, OperationError> {
+    let home = vtree.home().expect("only a projection is widened");
+    let mut seen: Vec<Literal> = Vec::new();
+    lim.reserve_exact(&mut seen, lits.len())?;
+    let mut gate = lim.gate();
+    for &lit in lits {
+        gate.poll(1)?;
+        let lit = lit.literal()?;
+        if vtree.leaf_of(lit.var).is_none() && home.rank(lit.var).is_none() {
+            return Err(OperationError::VariableNotInVtree(lit.var));
+        }
+        seen.push(lit);
+    }
+    gate.flush()?;
+    seen.sort_unstable_by_key(|lit| lit.var.0);
+    Ok(seen.windows(2).any(|w| w[0].var == w[1].var && w[0].sign != w[1].sign))
 }
 
 /// `f` placed on `into`, a projection of its home holding its leaves.
