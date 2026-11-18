@@ -529,8 +529,10 @@ impl Vtree {
         (link.node_of[own.idx()] == h).then_some(own)
     }
 
-    /// Whether `home` is this vtree's home, or this vtree when it is a root.
-    pub(crate) fn is_on(&self, home: &Home) -> bool {
+    /// Whether this vtree is a projection of `home`, or is `home`'s vtree
+    /// itself: whether its diagrams combine with those on `home`'s other
+    /// projections.
+    pub fn is_on(&self, home: &Home) -> bool {
         match self.home() {
             Some(own) => Arc::ptr_eq(own.vtree(), home.vtree()),
             None => std::ptr::eq(self, &**home.vtree()),

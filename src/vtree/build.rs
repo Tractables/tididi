@@ -157,6 +157,37 @@ impl Vtree {
         Self::from_nodes(nodes, root, num_vars)
     }
 
+    /// A root vtree of this one's shape, each leaf's variable renamed
+    /// through `map`, in the id space `1..=num_vars`; a projection's copy
+    /// keeps no link to its home. `O(nodes)`.
+    ///
+    /// # Errors
+    ///
+    /// [`VtreeError::Invalid`] for a vtree with no node or with a region
+    /// leaf, which has no variable to rename;
+    /// [`VtreeError::OverlappingVariable`] if `map` sends two leaves to one
+    /// variable; the errors of [`Vtree::from_nodes`] for a renamed variable
+    /// outside `1..=num_vars`.
+    ///
+    /// ```
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(8));
+    /// let own = Vtree::projection(&home, [VarId(2), VarId(3), VarId(7)])?;
+    /// let copy = own.renamed(|v| VarId(v.0 + 10), 17)?;
+    /// assert!(copy.home().is_none());
+    /// assert_eq!(copy.leaf_var(copy.children(copy.root()).1), VarId(17));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
+    /// ```
+    pub fn renamed(&self, map: impl Fn(VarId) -> VarId, num_vars: u32) -> Result<Self, VtreeError> {
+        if self.nodes.is_empty() || self.nodes.iter().any(VtreeNode::is_region) {
+            return Err(VtreeError::Invalid("a vtree with no node or with a region has no shape to rename".to_string()));
+        }
+        let mut nodes = Vec::with_capacity(self.nodes.len());
+        let root = append_subtree(&mut nodes, self, map);
+        Ok(Self::from_nodes(nodes, root, num_vars)?.with_context(std::sync::Arc::clone(&self.context)))
+    }
+
     /// Build a balanced binary vtree over `num_vars` variables
     /// (`1..=num_vars`) in natural order — [`Vtree::balanced_over`] on
     /// `1, 2, …, n`.

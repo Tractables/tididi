@@ -27,6 +27,20 @@ Breaking changes:
   clone of it conjoined with a diagram on the same leaves gave a wrong
   function. `RotationProbe::before`, `after` and `live_pairs_delta` read
   the rebuilt levels.
+- On a diagram on a projection, `Engine::at_least_distinct` and
+  `Engine::project_to_subtree` take `key` as a node of the home, count over
+  every home variable under its sibling, and return a diagram on the
+  projection of the same home on the diagram's leaves under `key`.
+  `Engine::tag_level` into a vtree on a home returns a diagram on the
+  projection of that home on the tagged and code variables, the code
+  subtree on either side of its root. Diagrams on root vtrees are
+  unchanged.
+
+Added:
+
+- `Vtree::renamed`: a root vtree of the same shape with each leaf's
+  variable renamed.
+- `Vtree::is_on` is public.
 
 ## 0.2.0
 

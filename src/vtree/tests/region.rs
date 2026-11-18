@@ -292,3 +292,11 @@ fn a_sub_projection_keeps_the_regions() {
         super::projection::assert_same(&sub, &with_regions(&home, &kept, &regions), &format!("seed {seed}"));
     }
 }
+
+#[test]
+fn renaming_refuses_a_region_leaf() {
+    let home = Home::new(Vtree::balanced(6));
+    let own = with_regions(&home, &[1, 4], &[(&[2, 3], 2)]);
+    assert!(matches!(own.renamed(|v| v, 6), Err(VtreeError::Invalid(_))));
+    assert!(matches!(Vtree::empty_projection(&home).renamed(|v| v, 6), Err(VtreeError::Invalid(_))));
+}
