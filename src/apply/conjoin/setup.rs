@@ -3,7 +3,7 @@
 //! product-list allocation, bundled into `ApplyRun` by `apply_and_setup` for
 //! the driver to sweep with.
 
-use crate::apply::conjoin::held::{Held, Here};
+use crate::apply::conjoin::held::{Held, Here, Levels};
 use super::marginal_plan::EntryMarginality;
 use super::price::{combinations_bound, over_floor};
 use super::products::Products;
@@ -591,10 +591,10 @@ struct Snapshot {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a list cannot grow.
-fn survey<'r>(
+fn survey<'r, L: Levels + ?Sized>(
     eng: &Engine,
     vtree: &'r Vtree,
-    ops: Operands<&Held<'_>>,
+    ops: Operands<&L>,
     masks: Operands<VtreeMask<'r>>,
     min_grid: usize,
     (widths, marginal): (Operands<&mut [usize]>, Operands<&mut [bool]>),
@@ -630,7 +630,7 @@ fn survey<'r>(
     // The marginality of each level is kept from the first marginal one
     // on, the levels read before it being all clear.
     let mut level = |t: VtreeIdx, f_widths: &mut [usize], g_widths: &mut [usize]| {
-        let (fl, gl) = (&f.level(t.idx()), &g.level(t.idx()));
+        let (fl, gl) = (f.level_at(t.idx()), g.level_at(t.idx()));
         let (fm, gm) = (fl.is_marginal(), gl.is_marginal());
         if fm | gm && !any_entry_marginal {
             any_entry_marginal = true;
@@ -661,7 +661,7 @@ fn survey<'r>(
             cells(
                 w1,
                 w2,
-                combinations_bound(f.level(t.idx()), g.level(t.idx())),
+                combinations_bound(f.level_at(t.idx()), g.level_at(t.idx())),
             );
         }
         let cone = Cone {
@@ -706,11 +706,11 @@ fn survey<'r>(
         let (free_f, free_g) = (masks.f.contains(at), masks.g.contains(at));
         if free_f || free_g {
             debug_assert!(
-                !f.level(at).is_marginal() && !g.level(at).is_marginal(),
+                !f.level_at(at).is_marginal() && !g.level_at(at).is_marginal(),
                 "an operand with a free level has a marginal level at {at}",
             );
-            let w1 = if free_f { 1 } else { f.level(at).slot_count() };
-            let w2 = if free_g { 1 } else { g.level(at).slot_count() };
+            let w1 = if free_f { 1 } else { f.level_at(at).slot_count() };
+            let w2 = if free_g { 1 } else { g.level_at(at).slot_count() };
             f_widths[at] = w1;
             g_widths[at] = w2;
             free_nodes = free_nodes.saturating_add(cells(w1, w2, 0));
@@ -718,7 +718,7 @@ fn survey<'r>(
             continue;
         }
         let (w1, w2) = level(t, f_widths, g_widths);
-        cells(w1, w2, combinations_bound(f.level(at), g.level(at)));
+        cells(w1, w2, combinations_bound(f.level_at(at), g.level_at(at)));
         built.push(t);
         free_before.push(free_nodes);
         let (left, right) = vtree.children(t);
@@ -769,16 +769,16 @@ fn survey<'r>(
 ///
 /// A level whose children are not both marked or leaves is decided without
 /// reading it.
-pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&Held<'_>>, out: &mut [bool]) -> bool {
+pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&[TddLevel]>, out: &mut [bool]) -> bool {
     let leaves = vtree.num_leaf_nodes();
     let mut any = false;
     for &t in vtree.internal_bottomup_slice() {
         let (left, right) = vtree.children(t);
         let (left_leaf, right_leaf) = (left.idx() < leaves, right.idx() < leaves);
-        let true_node = |d: &Held<'_>| {
-            let level = &d.level(t.idx());
+        let true_node = |d: &[TddLevel]| {
+            let level = &d[t.idx()];
             let leaf_one = |leaf: VtreeIdx, side: EncodedChildRef| {
-                !d.level(leaf.idx()).is_marginal() && side == ONE_LEAF_IDX.into()
+                !d[leaf.idx()].is_marginal() && side == ONE_LEAF_IDX.into()
             };
             if level.is_marginal() || level.node_count() != 1 {
                 return false;
@@ -900,6 +900,16 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         }
         false => free,
     };
+    let out = (
+        Operands {
+            f: &mut f_widths[..],
+            g: &mut g_widths[..],
+        },
+        Operands {
+            f: &mut marginal.f[..num_nodes],
+            g: &mut marginal.g[..num_nodes],
+        },
+    );
     let (
         Snapshot {
             total_cells,
@@ -907,24 +917,10 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
             might_use_sparse,
         },
         cone,
-    ) = survey(
-        eng,
-        vtree,
-        ops,
-        free,
-        min_grid,
-        (
-            Operands {
-                f: f_widths,
-                g: g_widths,
-            },
-            Operands {
-                f: &mut marginal.f[..num_nodes],
-                g: &mut marginal.g[..num_nodes],
-            },
-        ),
-        cone,
-    )?;
+    ) = match (ops.f.own_levels(), ops.g.own_levels()) {
+        (Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
+        _ => survey(eng, vtree, ops, free, min_grid, out, cone)?,
+    };
     let cone = Cone {
         constant: found_free,
         ..cone

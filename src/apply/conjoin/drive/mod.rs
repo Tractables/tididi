@@ -494,7 +494,10 @@ fn apply_and_held(
         lim.try_resize(&mut scratch.constant, num_nodes, false)?;
         super::setup::mark_constant_true(
             &vtree,
-            Operands { f: &*f, g: &*g },
+            Operands {
+                f: f.own_levels().expect("free levels are found only on unviewed operands"),
+                g: g.own_levels().expect("free levels are found only on unviewed operands"),
+            },
             &mut scratch.constant[..num_nodes],
         )
     };

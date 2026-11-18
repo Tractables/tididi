@@ -76,6 +76,16 @@ impl Held<'_> {
         self.view.is_some()
     }
 
+    /// The operand's levels where it is read on its own vtree, `None`
+    /// through a view.
+    #[inline(always)]
+    pub(crate) fn own_levels(&self) -> Option<&[TddLevel]> {
+        match self.view {
+            None => Some(&self.tdd().levels),
+            Some(_) => None,
+        }
+    }
+
     /// The operand's level at node `t` of the sweep's vtree.
     #[inline(always)]
     pub(crate) fn level(&self, t: impl LevelAt) -> &TddLevel {
@@ -280,6 +290,27 @@ pub(super) struct Here<'a> {
     pub(super) t: &'a TddLevel,
     pub(super) left: &'a TddLevel,
     pub(super) right: &'a TddLevel,
+}
+
+/// An operand's levels by node of the sweep's vtree. A loop over many levels
+/// is instantiated on [`Held::own_levels`] where there is no view, so that it
+/// does not test for one at each level.
+pub(crate) trait Levels {
+    fn level_at(&self, t: usize) -> &TddLevel;
+}
+
+impl Levels for [TddLevel] {
+    #[inline(always)]
+    fn level_at(&self, t: usize) -> &TddLevel {
+        &self[t]
+    }
+}
+
+impl Levels for Held<'_> {
+    #[inline(always)]
+    fn level_at(&self, t: usize) -> &TddLevel {
+        self.level(t)
+    }
 }
 
 /// A node of the sweep's vtree, by index or by id.
