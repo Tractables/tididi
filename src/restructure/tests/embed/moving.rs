@@ -494,3 +494,63 @@ fn wide_pass_throughs_build_the_levels_their_joins_build() {
     }
     assert!(all > 0 && described == all, "{described} of {all} wide pass-throughs held as descriptions");
 }
+
+/// A region alone, moved under a new parent, has its small count inlined
+/// into the parent and its slot pruned; a refusal at any reserve or stop,
+/// before or after that, gives the region back with its count, as given.
+#[test]
+fn a_region_alone_moved_under_a_parent_comes_back_whole_from_every_refusal() {
+    use crate::vtree::Home;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let on = |vars: &[u32]| Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
+    let pair = [home.vtree().node(home.vtree().leaf_of(VarId(1)).unwrap()).parent().unwrap()];
+    let summed = crate::marginal::tests::region::under(&home, &pair);
+    let mut f = Tdd::clause(&on(&[1, 2]), [1, 2]).unwrap();
+    eng.marginalize(&mut f, &summed).unwrap();
+    assert!(f.vtree().node(f.vtree().root()).is_region());
+    let mut g = Tdd::clause(&on(&[1, 2, 3]), [1, 2, 3]).unwrap();
+    eng.marginalize(&mut g, &summed).unwrap();
+    let into = Arc::clone(g.vtree());
+    assert!(into.num_nodes() == 3 && into.regions().count() == 1);
+    // Listed loose levels make the embedding reserve room after the inlining.
+    f.dirty.set_loose(Some(vec![0]));
+    let as_given = |t: &Tdd| {
+        same_storage(t, &f)
+            && Arc::ptr_eq(t.vtree(), f.vtree())
+            && t.level(f.vtree().root()).marginal_counts() == f.level(f.vtree().root()).marginal_counts()
+            && known(t) == known(&f)
+    };
+    let mut refusals = 0;
+    for stop in [false, true] {
+        for n in 0.. {
+            let scope = match stop {
+                true => {
+                    let at = eng.limits().work_units() + n;
+                    let rule = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
+                    Some(eng.limits().scope(LimitConfig::none().with_stop_rules(rule)))
+                }
+                false => {
+                    eng.limits().refuse_nth_reserve(n as u32);
+                    None
+                }
+            };
+            let outcome = eng.embed_moving(f.clone(), &into, |v| v);
+            drop(scope);
+            eng.limits().grant_every_reserve();
+            match outcome {
+                Ok((out, _)) => {
+                    assert_eq!(out.model_count().unwrap(), f.model_count().unwrap(), "granted at {n}");
+                    break;
+                }
+                Err(refused) => {
+                    assert!(as_given(&refused.tdd), "refused at {n}, stop {stop}: the region changed");
+                    crate::test_helpers::check::check_all_fast(&refused.tdd, "refused");
+                    refusals += 1;
+                }
+            }
+            assert!(n < 10_000, "never granted");
+        }
+    }
+    assert!(refusals >= 2, "only {refusals} refusal points");
+}

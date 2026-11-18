@@ -1143,26 +1143,29 @@ fn assemble_moving<'a>(
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
+    // Room for the result's loose levels where `tdd`'s are known and some
+    // may be listed.
+    let mut listed = Vec::new();
+    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || !literal_tops.is_empty());
+    if listing && let Err(e) = eng.limits().reserve_exact(&mut listed, into.num_nodes()) {
+        return Err((e, unseat(eng, result, tdd, plan, known.take())));
+    }
     // A region at the root holds the output's count in a slot; under a
-    // parent a small count is an inline reference instead.
+    // parent a small count is an inline reference instead, and the slot is
+    // pruned from the moved level. No refusal that gives a moved diagram its
+    // levels back may follow; this one's leaves the region's store as it
+    // was, as the inlining writes only the new parent and the prune refuses
+    // before it touches a store.
     if tdd.vtree().num_nodes() == 1
         && let Err(e) = inline_root_region(eng, &tdd, into, &mut result)
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
-    // Room for the result's loose levels where `tdd`'s are known and some
-    // may be listed, then the worklists: a moved diagram's own, a borrowed
-    // one's copied.
-    let mut listed = Vec::new();
-    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || !literal_tops.is_empty());
-    let carried = match listing {
-        true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
-        false => Ok(()),
-    }
-    .and_then(|()| match &mut tdd {
+    // The worklists: a moved diagram's own, a borrowed one's copied.
+    let carried = match &mut tdd {
         Cow::Owned(moved) => Ok(moved.take_worklists()),
         Cow::Borrowed(source) => source.dirty.clone_on(eng),
-    });
+    };
     let mut carried = match carried {
         Ok(carried) => carried,
         Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
