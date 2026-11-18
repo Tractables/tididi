@@ -182,6 +182,39 @@ fn a_repeated_pair_is_found_among_many() {
     }
 }
 
+/// Over a balanced vtree of 16 variables whose root has two children 6561
+/// nodes wide, more possible pairs than the bit grid covers, a pair repeated
+/// in the root level is still refused and named.
+#[test]
+fn a_repeated_pair_is_found_between_wide_children() {
+    use crate::diagram::NodeIdx;
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(16));
+    let root = tree.root();
+    let build = |extra: Option<(u32, u32)>| {
+        let mut b = Tdd::builder(&eng, &tree).unwrap();
+        let mut width = vec![3u32; tree.num_nodes()];
+        for (t, l, r) in tree.internal_bottomup().filter(|&(t, _, _)| t != root) {
+            let (wl, wr) = (width[l.idx()], width[r.idx()]);
+            for i in 0..wl * wr {
+                b.push(&eng, t, &[ChildPair::new(NodeIdx(i / wr), NodeIdx(i % wr))]).unwrap();
+            }
+            width[t.idx()] = wl * wr;
+        }
+        let mut pairs: Vec<_> = (0..1000u32).map(|k| ChildPair::new(NodeIdx(k * 7 % 6561), NodeIdx(k * 13 % 6561))).collect();
+        pairs.extend(extra.map(|(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r))));
+        let out = b.push(&eng, root, &pairs).unwrap();
+        b.finish(TddNodeId { vtree: root, local: out })
+    };
+    assert!(build(None).is_ok());
+    match build(Some((700, 1300))) {
+        Err(crate::diagram::TddBuildError::RepeatedPair { level, pair }) => {
+            assert_eq!((level, pair), (root, ChildPair::new(NodeIdx(700), NodeIdx(1300))));
+        }
+        r => panic!("{:?}", r.map(|_| ())),
+    }
+}
+
 /// Over ((x1,x2),x3), the inner level holds the nodes `inner` and the root the
 /// one node `root`; every pair on the right of the root names x3.
 fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, crate::diagram::TddBuilder, TddNodeId) {

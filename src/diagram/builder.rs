@@ -685,6 +685,25 @@ fn check_structural_level<const PAIRS: bool>(
             if all_fit {
                 return repeat.map_or(Ok(()), |pair| Err(TddBuildError::RepeatedPair { level: t, pair }));
             }
+        } else if lb * rb <= GRID_BITS {
+            let grid = &mut scan.grid;
+            grid.clear();
+            grid.resize((lb * rb).div_ceil(64), 0);
+            let mut repeat = None;
+            let all_fit = every_pair(lvl, |pair| {
+                fits(pair) && {
+                    let at = pair.left.raw() as usize * rb + pair.right.raw() as usize;
+                    let (word, bit) = (&mut grid[at / 64], 1u64 << (at % 64));
+                    if *word & bit != 0 {
+                        repeat.get_or_insert(*pair);
+                    }
+                    *word |= bit;
+                    true
+                }
+            });
+            if all_fit {
+                return repeat.map_or(Ok(()), |pair| Err(TddBuildError::RepeatedPair { level: t, pair }));
+            }
         } else {
             scan.start(lb);
             if every_pair(lvl, |pair| fits(pair) && scan.count(pair)) {
@@ -735,10 +754,16 @@ struct PairScan {
     /// Empty until a level with a marginal level under it is met: the levels
     /// before it in bottom-up order have none.
     marginal_below: Vec<bool>,
+    grid: Vec<u64>,
     end: Vec<usize>,
     rights: Vec<u32>,
     seen: Vec<u32>,
 }
+
+/// Up to this many possible pairs, a level is checked with a bit per pair:
+/// 8 KiB, cleared per level for less than the counting sort's passes over
+/// both child levels.
+const GRID_BITS: usize = 1 << 16;
 
 impl PairScan {
     /// Record whether a marginal level lies under `t`, and say whether `t`
