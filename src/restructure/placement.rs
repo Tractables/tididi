@@ -403,10 +403,15 @@ impl<'a> MovePlacement<'a> {
     }
 
     /// Seat the chosen root reference and repair the boundaries introduced
-    /// here. Call [`check_weights`](Self::check_weights) first.
-    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
+    /// here, `literal_tops` the tops of the chains [`pass_over_leaf`](Self::pass_over_leaf)
+    /// built as `Pos` and `Neg`, whose readers name them as leaf labels
+    /// until then. Call [`check_weights`](Self::check_weights) first.
+    pub(super) fn finish(self, local: NodeIdx, literal_tops: &[VtreeIdx]) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let mut result = self.assembly.finish_changed(output, self.changed.to_close())?;
+        if !literal_tops.is_empty() {
+            crate::diagram::remap_refs_into_all(self.eng.limits(), &mut result, literal_tops, &[u32::MAX, 0, 1])?;
+        }
         if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
@@ -418,7 +423,8 @@ impl<'a> MovePlacement<'a> {
         }
         if self.contract {
             self.eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
-        } else if self.prune {
+        } else if self.prune || !literal_tops.is_empty() {
+            // A literal chain whose reader names one literal holds the other unread.
             prune(self.eng, &mut result)?;
         }
         Ok(result)

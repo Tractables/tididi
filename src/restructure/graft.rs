@@ -207,7 +207,7 @@ fn graft_impl(
         NodeIdx(0)
     };
     placement.check_weights().map_err(GraftError::DestinationWeights)?;
-    Ok((placement.finish(output_local)?, layout))
+    Ok((placement.finish(output_local, &[])?, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.

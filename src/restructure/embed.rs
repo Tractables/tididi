@@ -1028,17 +1028,35 @@ fn build_embedded_levels(
             // which a new parent between them does not take.
             return Err(OperationError::MarginalLevel(plan.covered_by(carried).unwrap_or(carried)));
         } else {
-            let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t);
-            match chain {
-                Chain::Literals(top) => literal_tops.push(top),
-                Chain::Output(_) => output = NodeIdx(0),
-                Chain::One => {}
-            }
-            placement.pass_over_leaf(t, free_side, chain.labels())?;
+            lift_leaf(into, plan, placement, t, free_side, output_local, &mut literal_tops, &mut output)?;
         }
     }
     gate.flush()?;
     Ok((literal_tops, output))
+}
+
+/// Lift the leaf child of the pass-through `t` in the one form its chain's
+/// reader names it ([`literal_chain`]), pushing a literal chain's top to
+/// `literal_tops` and setting `output` to the chain's node where the chain
+/// reaches the root.
+#[expect(clippy::too_many_arguments, reason = "both assemblies' state, passed as it is")]
+fn lift_leaf(
+    into: &Vtree,
+    plan: &Plan,
+    placement: &mut MovePlacement<'_>,
+    t: VtreeIdx,
+    free_side: ChildSide,
+    output_local: NodeIdx,
+    literal_tops: &mut Vec<VtreeIdx>,
+    output: &mut NodeIdx,
+) -> Result<(), OperationError> {
+    let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t);
+    match chain {
+        Chain::Literals(top) => literal_tops.push(top),
+        Chain::Output(_) => *output = NodeIdx(0),
+        Chain::One => {}
+    }
+    placement.pass_over_leaf(t, free_side, chain.labels())
 }
 
 /// The nearest ancestor of `t` that is the image of a source level, and the
@@ -1183,6 +1201,7 @@ fn assemble_marginal(
     placement.move_part(&mut source, &plan.embedding.levels);
     let (inside, boundaries) = marginal_boundaries(tdd, into, plan);
     let mut gate = eng.limits().gate();
+    let (mut literal_tops, mut output) = (Vec::new(), tdd.output().local);
     for t in into.bottomup() {
         if into.node(t).is_leaf() || plan.covered_by(t).is_some() {
             continue;
@@ -1195,15 +1214,17 @@ fn assemble_marginal(
         let (left, right) = into.children(t);
         if plan.is_free(t) {
             placement.join(t, placement.true_node(left), placement.true_node(right))?;
+            continue;
+        }
+        let (free_side, carried) = if plan.is_free(left) {
+            (ChildSide::Left, right)
         } else {
-            placement.pass_through(
-                t,
-                if plan.is_free(left) {
-                    ChildSide::Left
-                } else {
-                    ChildSide::Right
-                },
-            )?;
+            (ChildSide::Right, left)
+        };
+        if into.node(carried).is_var_leaf() && !placement.is_marginal(carried) {
+            lift_leaf(into, plan, &mut placement, t, free_side, tdd.output().local, &mut literal_tops, &mut output)?;
+        } else {
+            placement.pass_through(t, free_side)?;
         }
     }
     gate.flush()?;
@@ -1211,7 +1232,7 @@ fn assemble_marginal(
     placement
         .check_weights()
         .map_err(EmbedError::DestinationWeights)?;
-    Ok(placement.finish(tdd.output().local)?)
+    Ok(placement.finish(output, &literal_tops)?)
 }
 
 /// Find destination nodes strictly below the image of a marginal level and
