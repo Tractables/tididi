@@ -35,7 +35,7 @@ fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
 }
 
 fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], weights: Option<&WeightStore>) -> Tdd {
-    let mut f = Tdd::one(vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }

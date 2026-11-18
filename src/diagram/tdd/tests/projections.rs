@@ -167,8 +167,8 @@ fn weights(n: u32, rng: &mut Lcg) -> WeightStore {
 /// and minimization; one in six is a constant.
 fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
     match rng.below(12) {
-        0 => return Tdd::one(home),
-        1 => return Tdd::zero(home),
+        0 => return crate::test_helpers::padded(Tdd::one(home), home),
+        1 => return crate::test_helpers::padded(Tdd::zero(home), home),
         _ => {}
     }
     let mut f = rand_conj(home, n, 4, 3, false, rng);
@@ -184,7 +184,7 @@ fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
             }
         };
     }
-    f
+    crate::test_helpers::padded(f, home)
 }
 
 /// `g`, on a projection of `home`, placed on `home`.
@@ -496,7 +496,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
 fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
     let home = Arc::clone(Home::new(Vtree::balanced(4)).vtree());
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let f = eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap();
+    let f = crate::test_helpers::padded(eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap(), &home);
     let mut g = f.clone();
     assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
     assert_eq!(g.vtree().free_vars(), [VarId(2), VarId(4)]);

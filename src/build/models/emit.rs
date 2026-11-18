@@ -51,6 +51,8 @@ pub(super) fn fill(
         pair_list: Vec::new(),
     };
     let mut emitted = 0u64;
+    // The leaves whose only node is true, which every pair names true.
+    let mut seed = Vec::new();
 
     for t in vtree.bottomup() {
         lim.check_stop()?;
@@ -63,6 +65,9 @@ pub(super) fn fill(
                 Plan::Branch(split) => emit.store_level(t, split)?,
             },
         };
+        if leaf && finished.locals == [ONE_LEAF_IDX] {
+            lim.try_push(&mut seed, t)?;
+        }
         if !leaf {
             // A leaf level stores no node, so it emits none either.
             emitted += finished.locals.len() as u64;
@@ -88,12 +93,9 @@ pub(super) fn fill(
     };
     // The levels are canonical as built: seat them with nothing to reduce.
     let (levels, _) = emit.assembly.parts_mut();
-    Ok(crate::build::seat_canonical(
-        eng,
-        vtree,
-        std::mem::take(levels),
-        output,
-    ))
+    let mut tdd = crate::build::seat_canonical(eng, vtree, std::mem::take(levels), output);
+    crate::reduce::settle(eng, &mut tdd, &mut seed)?;
+    Ok(tdd)
 }
 
 /// The constrained child of an internal node whose other child constrains

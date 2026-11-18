@@ -232,7 +232,7 @@ impl Engine {
     /// the diagram's vtree as `plan`, `dropped` the variables it leaves out.
     fn project_along(&self, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, dropped: &[VarId]) -> Result<Tdd, EmbedError> {
         if tdd.is_zero() {
-            return Ok(crate::build::constant_zero(self, into));
+            return Ok(crate::build::constant_zero_padded(self, into));
         }
         let f = self.canonical_copy(tdd)?;
         // Quantify on a copy the limits are charged for where `f` is the
@@ -241,7 +241,7 @@ impl Engine {
             Cow::Borrowed(f) => f.try_clone_on(self)?,
             Cow::Owned(f) => f,
         };
-        let mut g = self.exists_vars(f, dropped)?;
+        let mut g = crate::apply::project::exists_vars_on(self, f, dropped, crate::reduce::ReductionPlan::default(), false)?;
         self.minimize_plain(&mut g)?;
         match splice(self, &g, into, plan)? {
             Some(result) => Ok(result),
@@ -313,7 +313,7 @@ fn check_kept_weights(
 /// are left behind.
 fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weights: WeightStore) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
-        let mut result = crate::build::constant_zero(eng, into);
+        let mut result = crate::build::constant_zero_padded(eng, into);
         result.weights = Some(weights);
         return Ok(result);
     }

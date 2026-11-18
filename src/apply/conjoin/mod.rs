@@ -643,7 +643,7 @@ fn place_onto<'a>(
     }
     *begun = true;
     if tdd.vtree().num_nodes() == 0 {
-        return match crate::build::constant_on(eng, into, tdd.is_one()) {
+        return match crate::build::constant_padded_on(eng, into, tdd.is_one()) {
             Ok(mut constant) => {
                 constant.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
                 Ok((Cow::Owned(constant), None, false))

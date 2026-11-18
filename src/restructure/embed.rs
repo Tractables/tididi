@@ -708,7 +708,7 @@ pub(crate) fn place_by<'a>(
     free: Free,
 ) -> Result<Tdd, (EmbedError, std::borrow::Cow<'a, Tdd>)> {
     if tdd.is_zero() || tdd.is_one() {
-        return match crate::build::constant_on(eng, into, tdd.is_one()) {
+        return match crate::build::constant_padded_on(eng, into, tdd.is_one()) {
             Ok(mut constant) => {
                 constant.weights = tdd.weights.as_ref().map(WeightStore::empty_like);
                 Ok(constant)
@@ -724,7 +724,7 @@ pub(crate) fn place_by<'a>(
 /// over a leaf that no level names.
 fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() || tdd.is_one() {
-        return Ok(crate::build::constant_on(eng, into, tdd.is_one())?);
+        return Ok(crate::build::constant_padded_on(eng, into, tdd.is_one())?);
     }
     let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build, false)
         .map_err(|(e, _)| e)?;
@@ -1141,7 +1141,7 @@ fn assemble_marginal(
     weights: WeightStore,
 ) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
-        let mut result = crate::build::constant_zero(eng, into);
+        let mut result = crate::build::constant_zero_padded(eng, into);
         result.weights = Some(weights.empty_like());
         return Ok(result);
     }

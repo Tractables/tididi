@@ -298,6 +298,8 @@ impl Engine {
             (f, g) = push_local_targets(self, f, g, &targets)?;
         }
         let product = self.and(f, g)?;
+        // The product's reduction can leave a target's leaf.
+        let targets = super::project::quantification_targets(self, product.vtree(), vars)?;
         if targets.is_empty() || product.is_zero() {
             // No sweep runs to reduce the product, so it is reduced here.
             let mut product = product;

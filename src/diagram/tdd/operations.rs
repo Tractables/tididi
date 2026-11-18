@@ -1184,13 +1184,15 @@ impl Tdd {
     /// use tididi::vtree::{Home, VarId};
     ///
     /// let home = Home::new(Vtree::balanced(4));
-    /// let mut f = Tdd::clause(home.vtree(), [1, 2])?.condition_var(VarId(1), false)?;
+    /// let x2 = Tdd::clause(home.vtree(), [1, 2])?.condition_var(VarId(1), false)?;
+    /// assert_eq!(x2.vtree().num_leaves(), 1);
+    /// let (mut f, _) = x2.embed(home.vtree(), |v| v)?;
     /// let count = f.model_count()?;
     /// assert!(f.trim(&home)?);
     /// assert_eq!(f.vtree().num_leaves(), 1);
     /// assert_eq!(f.model_count()?, count);
     /// assert!(!f.trim(&home)?);
-    /// # Ok::<(), tididi::OperationError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn trim(&mut self, home: &crate::vtree::Home) -> Result<bool, OperationError> {
         self.context_arc().run(|eng| eng.trim(self, home))

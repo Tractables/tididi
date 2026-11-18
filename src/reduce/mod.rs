@@ -11,7 +11,7 @@ pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
 mod trim;
 pub(crate) use driver::restore_marginal_invariants;
-pub(crate) use trim::trim;
+pub(crate) use trim::{settle, trim};
 
 use crate::execution::pool::{Drain, Pool, Pools};
 
@@ -134,6 +134,13 @@ impl Engine {
     /// boundary, where its count is still readable and preserved.
     pub fn reduce(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
         self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(&[]))
+    }
+
+    /// [`reduce`](Self::reduce) of a diagram whose every pair at the parent
+    /// of each leaf of `seed` names that leaf true: on a home with no
+    /// summed-out level, the result also leaves those leaves.
+    pub(crate) fn reduce_seeded(&self, f: &mut Tdd, plan: ReductionPlan<'_>, seed: &[crate::vtree::VtreeIdx]) -> Result<(), OperationError> {
+        self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(seed))
     }
 
     /// [`reduce`](Self::reduce) with the scope of its prune chosen by the

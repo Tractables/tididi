@@ -166,3 +166,18 @@ pub(crate) fn with_restrict_caps<R>(list: u64, grid: usize, f: impl FnOnce() -> 
     let _reset = Reset(RESTRICT_CAPS.with(|c| c.replace(Some((list, grid)))));
     f()
 }
+
+/// `f` on `vtree`, a vtree of its home holding its leaves, every leaf `f`
+/// lacks named true: a constructor's result as it was before constructors
+/// built on their own variables.
+pub(crate) fn padded(f: Tdd, vtree: &std::sync::Arc<Vtree>) -> Tdd {
+    if std::sync::Arc::ptr_eq(f.vtree(), vtree) {
+        return f;
+    }
+    let canonical = f.levels.is_canonical(f.output);
+    let mut padded = f.embed(vtree, |v| v).expect("a vtree of the same home holding the diagram's leaves").0;
+    if canonical {
+        Engine::new().minimize_plain(&mut padded).unwrap();
+    }
+    padded
+}

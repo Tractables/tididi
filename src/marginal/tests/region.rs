@@ -21,7 +21,7 @@ pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) 
         return if rng.below(4) == 0 { Tdd::zero(&empty) } else { Tdd::one(&empty) };
     }
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(&vtree), &vtree);
     for _ in 0..1 + rng.below(vars.len().min(12) as u64) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -36,9 +36,6 @@ pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) 
 }
 
 pub(crate) fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
-    if f.vtree().num_nodes() == 0 {
-        return if f.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
-    }
     eng.embed(f, home, |v| v).unwrap().0
 }
 

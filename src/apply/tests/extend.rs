@@ -291,7 +291,7 @@ fn constants_on_the_empty_projection() {
     assert!(excluded.is_one() && excluded.vtree().num_nodes() == 0, "x or not x is the constant");
     let contradiction = eng.and_not(lit.clone(), lit.clone()).unwrap();
     assert!(contradiction.is_zero() && contradiction.vtree().num_nodes() == 0, "x and not x is the constant");
-    assert!(Arc::ptr_eq(eng.and(&one, &lit).unwrap().vtree(), &x));
+    assert!(Arc::ptr_eq(eng.and(&one, &lit).unwrap().vtree(), lit.vtree()));
 }
 
 #[test]

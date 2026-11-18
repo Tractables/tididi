@@ -216,7 +216,7 @@ fn extend_with_regions<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L])
 /// `f` placed on `into`, a projection of its home holding its leaves.
 fn place_on(eng: &Engine, f: Tdd, into: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     if f.vtree.num_nodes() == 0 {
-        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        let mut constant = crate::build::constant_padded_on(eng, into, f.is_one())?;
         constant.weights = f.weights;
         return Ok(constant);
     }
@@ -363,7 +363,9 @@ impl Tdd {
     /// Integers are signed and one-based; typed [`Literal`] values also work.
     /// Repeated literals are ignored. Both polarities of a variable make the
     /// clause true; an empty clause is false. Unmentioned variables remain free.
-    /// Uses the execution context attached to the vtree.
+    /// On a home or a projection of one, the result is on the projection of
+    /// the clause's variables, and an empty clause on the home's empty
+    /// projection. Uses the execution context attached to the vtree.
     ///
     /// # Errors
     ///
