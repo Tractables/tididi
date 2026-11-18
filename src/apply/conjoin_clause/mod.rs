@@ -237,7 +237,7 @@ fn spine_walk(
 /// `f` on the projection of its home on its own leaves and those of `lits`,
 /// when a literal's variable has a leaf in the home and none in `f`'s
 /// vtree. Its levels move to their images, no node or pair copied.
-fn extend_to(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationError> {
+fn extend_to(eng: &Engine, mut f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationError> {
     let Some(home) = f.vtree.home() else { return Ok(f) };
     if !lits.iter().any(|lit| f.vtree.home_has(lit.var)) {
         return Ok(f);
@@ -245,8 +245,15 @@ fn extend_to(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationErr
     let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
     let added = lits.iter().map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
     let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
+    // Placement drops a store. A structural diagram's store has no column
+    // keyed by a level and the variables keep their names, so it carries
+    // over as it is.
+    let weights = f.weights.take();
     match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build) {
-        Ok((extended, _)) => Ok(extended),
+        Ok((mut extended, _)) => {
+            extended.weights = weights;
+            Ok(extended)
+        }
         Err(refused) => Err(match refused.error {
             crate::restructure::EmbedError::Operation(error) => error,
             _ => OperationError::VtreeMismatch,

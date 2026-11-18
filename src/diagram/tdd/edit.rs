@@ -1,6 +1,6 @@
 //! Coordinated edits to a diagram's levels and the references that use them.
 
-use crate::diagram::{ChildDecoder, MarginalStorage, TddLevel, finish_refs_remap, plan_refs_remap, remap_refs_into};
+use crate::diagram::{ChildDecoder, MarginalStorage, NodeIdx, TddLevel, finish_refs_remap, plan_refs_remap, remap_refs_into};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 use super::Tdd;
@@ -97,6 +97,12 @@ impl Tdd {
         install(&mut self.levels[v.idx()]);
         if let (Some(refs), Some(remap)) = (refs, remap) {
             finish_refs_remap(self, refs, remap);
+        }
+        if let (Some(remap), None) = (remap, parent)
+            && self.output.vtree == v
+            && !self.output.local.is_reserved()
+        {
+            self.output.local = NodeIdx(remap[self.output.local.idx()]);
         }
         Ok(())
     }

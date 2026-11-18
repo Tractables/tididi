@@ -700,10 +700,17 @@ fn check_structural_level(
     Ok(())
 }
 
-/// The output is a node of the root level, or `ZERO`.
+/// The output is a node of the root level, or `ZERO`; on a vtree with no
+/// node, `ZERO` or `TRUE`.
 fn check_output(vtree: &Vtree, levels: &[TddLevel], output: TddNodeId) -> Result<(), TddBuildError> {
-    use super::primitives::ZERO;
+    use super::primitives::{TRUE, ZERO};
     let root = vtree.root();
+    if vtree.num_nodes() == 0 {
+        return match output.vtree == root && (output.local == ZERO || output.local == TRUE) {
+            true => Ok(()),
+            false => Err(TddBuildError::BadOutput(output)),
+        };
+    }
     if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
         return Err(TddBuildError::BadOutput(output));
     }

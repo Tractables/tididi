@@ -133,3 +133,20 @@ fn finish_on_no_leaf_answers_or_refuses_an_output() {
         assert!(built.is_ok(), "finish panics on output {local:?} over a vtree with no node");
     }
 }
+
+#[test]
+fn negate_on_no_leaf_keeps_the_weights() {
+    use num_rational::BigRational;
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(2));
+    let one = |a: i64| BigRational::from_integer(a.into());
+    let literals: Vec<_> = (0..2).map(|_| LiteralWeights { negative: one(1), positive: one(2) }).collect();
+    let mut f = Tdd::one(&Vtree::empty_projection(&home));
+    f.set_weights(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)).unwrap();
+    let borrowed = eng.negate(&f).unwrap();
+    assert!(borrowed.weights().is_some(), "negate of a borrowed constant with no leaf drops its weights");
+    let owned = eng.negate(f).unwrap();
+    assert!(owned.weights().is_some(), "negate of an owned constant with no leaf drops its weights");
+    assert!(owned.is_zero());
+}

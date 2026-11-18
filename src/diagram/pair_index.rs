@@ -250,7 +250,8 @@ fn shape_of(g: &Tdd) -> u64 {
 /// Which nodes `g`'s output reaches, per level over its reference slots.
 fn reached(lim: &Limits, g: &Tdd) -> Result<Vec<Vec<bool>>, OperationError> {
     let mut reach = g.slot_table(lim, false)?;
-    if !g.is_zero() {
+    // Reserved: false, or true on a vtree with no node.
+    if !g.output().local.is_reserved() {
         reach[g.output().vtree.idx()][g.output().local.idx()] = true;
         g.propagate_reachability(&mut reach);
     }
