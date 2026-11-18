@@ -122,9 +122,21 @@ impl LevelStorage {
     }
 
     /// The live pairs of level `t`, as [`pair_count`](Self::pair_count)
-    /// counts them: kept on the level once read while the levels are closed.
+    /// counts them: kept on the level once read while the levels are closed,
+    /// and on an open level read off what the level knows
+    /// ([`known_live_pairs`](TddLevel::known_live_pairs)) before its nodes.
     pub(crate) fn live_pairs_at(&self, t: usize) -> usize {
-        if self.closed { self.levels[t].live_pairs_closed() } else { self.levels[t].live_pairs() }
+        let level = &self.levels[t];
+        if self.closed {
+            return level.live_pairs_closed();
+        }
+        match level.known_live_pairs(false) {
+            Some(n) => {
+                debug_assert_eq!(n, level.live_pairs(), "level {t}: a known count other than its live pairs");
+                n
+            }
+            None => level.live_pairs(),
+        }
     }
 
     pub(crate) fn is_canonical(&self, output: TddNodeId) -> bool {
