@@ -596,9 +596,6 @@ fn check_storage<const PAIRS: bool>(
     }
     check_leaf_levels(vtree, levels)?;
     let mut scan = PairScan::default();
-    if PAIRS {
-        scan.marginal_below.resize(n, false);
-    }
     for (t, left, right) in vtree.internal_bottomup() {
         if levels[t.idx()].is_marginal() {
             check_marginal_level(vtree, levels, t)?;
@@ -667,14 +664,32 @@ fn check_structural_level<const PAIRS: bool>(
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
-        let all_fit = if scanned {
-            scan.start(lb);
-            every_pair(lvl, |pair| fits(pair) && scan.count(pair))
+        if !scanned {
+            if every_pair(lvl, fits) {
+                return Ok(());
+            }
+        } else if lb * rb <= u64::BITS as usize {
+            // Every pair a bit of one word, `left * rb + right`: no buffer
+            // for the narrow levels most finishes consist of.
+            let (mut grid, mut repeat) = (0u64, None);
+            let all_fit = every_pair(lvl, |pair| {
+                fits(pair) && {
+                    let bit = 1u64 << (pair.left.raw() as usize * rb + pair.right.raw() as usize);
+                    if grid & bit != 0 {
+                        repeat.get_or_insert(*pair);
+                    }
+                    grid |= bit;
+                    true
+                }
+            });
+            if all_fit {
+                return repeat.map_or(Ok(()), |pair| Err(TddBuildError::RepeatedPair { level: t, pair }));
+            }
         } else {
-            every_pair(lvl, fits)
-        };
-        if all_fit {
-            return if scanned { scan.find_repeat(lvl, t, lb, rb) } else { Ok(()) };
+            scan.start(lb);
+            if every_pair(lvl, |pair| fits(pair) && scan.count(pair)) {
+                return scan.find_repeat(lvl, t, lb, rb);
+            }
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -717,6 +732,8 @@ fn every_pair(lvl: &TddLevel, mut f: impl FnMut(&ChildPair) -> bool) -> bool {
 /// marked in an array over the right child level, stamped with the left side.
 #[derive(Default)]
 struct PairScan {
+    /// Empty until a level with a marginal level under it is met: the levels
+    /// before it in bottom-up order have none.
     marginal_below: Vec<bool>,
     end: Vec<usize>,
     rights: Vec<u32>,
@@ -727,8 +744,15 @@ impl PairScan {
     /// Record whether a marginal level lies under `t`, and say whether `t`
     /// is checked: it is when none does.
     fn enter(&mut self, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> bool {
-        let below = [left, right].iter().any(|c| levels[c.idx()].is_marginal() || self.marginal_below[c.idx()]);
-        self.marginal_below[t.idx()] = below;
+        let below = [left, right]
+            .iter()
+            .any(|c| levels[c.idx()].is_marginal() || self.marginal_below.get(c.idx()) == Some(&true));
+        if below {
+            if self.marginal_below.is_empty() {
+                self.marginal_below.resize(levels.len(), false);
+            }
+            self.marginal_below[t.idx()] = true;
+        }
         !below
     }
 
