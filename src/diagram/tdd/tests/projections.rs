@@ -466,7 +466,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), closed);
     a.check(
         "transport_projection",
-        || eng.transport_projection(g.vtree(), &hm, |v| v).map(|v| v.num_leaves()),
+        || eng.transport_projection(&g, &hm, |v| v).map(|v| v.num_leaves()),
         || Ok(g.vtree().num_leaves()),
         PartialEq::eq,
     );
@@ -642,14 +642,14 @@ fn the_vtree_check_agrees_with_transport() {
         let target = if rng.coin() { &home } else { &wide };
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
         let target_home = Home::new(Arc::clone(target));
-        let checked = eng.transport_projection(source.vtree(), &target_home, map);
+        let checked = eng.transport_projection(&source, &target_home, map);
         match eng.transport(&source, &target_home, map, 0) {
             Ok((moved, _)) => {
                 accepted += 1;
                 let leaves = |v: &Vtree| v.leaf_bottomup().map(|(_, var)| var).collect::<Vec<_>>();
-                if !(source.is_zero() || source.is_one_leaf_one()) {
-                    assert_eq!(leaves(moved.vtree()), leaves(&checked.unwrap()), "seed {seed}");
-                }
+                let checked = checked.unwrap();
+                assert_eq!(moved.vtree().num_nodes(), checked.num_nodes(), "seed {seed}");
+                assert_eq!(leaves(moved.vtree()), leaves(&checked), "seed {seed}");
             }
             Err(refused) => assert_eq!(checked.unwrap_err(), refused.error, "seed {seed}"),
         }

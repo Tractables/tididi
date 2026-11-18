@@ -115,12 +115,7 @@ impl Engine {
             Ok(ranked) => ranked,
             Err(error) => return Err(TransportRefused { error, tdd: f }),
         };
-        let constant = (f.is_zero() || f.is_one_leaf_one()) && !f.vtree().has_regions();
-        let shape = Shape::along(lim, f.vtree(), &ranked).map(|shape| match constant {
-            true => Shape { into: Vtree::empty_projection(home), to: Vec::new(), mirrored: Vec::new() },
-            false => shape,
-        });
-        let route = match shape.and_then(|shape| Route::with_levels(lim, &f, shape)) {
+        let route = match Shape::of(lim, &f, home, &ranked).and_then(|shape| Route::with_levels(lim, &f, shape)) {
             Ok(route) => route,
             Err(TransportError::Bound { .. }) if bound > 0 && !f.vtree().has_regions() => return self.transport_rotating(f, home, ranked, bound),
             Err(error) => return Err(TransportRefused { error, tdd: f }),
@@ -137,26 +132,31 @@ impl Engine {
         Ok((moved, stats))
     }
 
-    /// The vtree [`transport`](Self::transport) with `bound` 0 would put a
-    /// diagram on `vtree` onto under `map`: [`Vtree::projection`] of `home`
-    /// on the renamed variables, found from the vtrees alone, so a caller can
-    /// test a stored diagram's shape before loading it.
+    /// The vtree [`transport`](Self::transport) with `bound` 0 would put `f`
+    /// onto under `map`: [`Vtree::projection`] of `home` on the renamed
+    /// variables, or [`Vtree::empty_projection`] of `home` for the constants
+    /// `transport` sends there. It reads `f`'s vtree and output, not its
+    /// levels.
     ///
     /// ```
-    /// use tididi::{Engine, Vtree};
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::restructure::TransportError;
     /// use tididi::vtree::{Home, VarId};
     ///
     /// let engine = Engine::new();
     /// let home = Home::new(Vtree::balanced(8));
-    /// let pair = Vtree::balanced(2);
-    /// let onto = engine.transport_projection(&pair, &home, |v| VarId(v.0 + 4))?;
+    /// let pair = Arc::new(Vtree::balanced(2));
+    /// let f = engine.clause(&pair, [1, -2])?;
+    /// let onto = engine.transport_projection(&f, &home, |v| VarId(v.0 + 4))?;
     /// assert_eq!(onto.num_leaves(), 2);
+    /// let none = engine.transport_projection(&Tdd::zero(&pair), &home, |v| VarId(v.0 + 4))?;
+    /// assert_eq!(none.num_nodes(), 0);
     /// // (x1 (x2 x3)) onto x1, x3 and x5, whose projection is ((x1 x3) x5).
-    /// let three = Vtree::balanced(3);
+    /// let three = engine.clause(&Arc::new(Vtree::balanced(3)), [1, 2, 3])?;
     /// let skew = |v: VarId| [VarId(1), VarId(3), VarId(5)][v.0 as usize - 1];
     /// assert!(matches!(engine.transport_projection(&three, &home, skew), Err(TransportError::Bound { .. })));
-    /// # Ok::<(), TransportError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
@@ -164,17 +164,17 @@ impl Engine {
     /// [`transport`](Self::transport)'s refusals that depend on the vtrees:
     /// [`TransportError::Variable`], [`TransportError::Overlap`],
     /// [`TransportError::Bound`], and [`TransportError::Operation`] for a
-    /// refused allocation or an armed stop. `transport` may still refuse a
-    /// diagram on `vtree` for its weights or a summed-out level.
+    /// refused allocation or an armed stop. `transport` may still refuse `f`
+    /// for its weights or a summed-out level.
     pub fn transport_projection(
         &self,
-        vtree: &Vtree,
+        f: &Tdd,
         home: &Home,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<Arc<Vtree>, TransportError> {
         let _op = self.limits().enter()?;
-        let ranked = Ranked::find(self.limits(), vtree, home, map)?;
-        Ok(Shape::along(self.limits(), vtree, &ranked)?.into)
+        let ranked = Ranked::find(self.limits(), f.vtree(), home, map)?;
+        Ok(Shape::of(self.limits(), f, home, &ranked)?.into)
     }
 
     /// The rotation path of [`transport`](Self::transport), on a copy of `f`
@@ -385,6 +385,17 @@ struct Shape {
 }
 
 impl Shape {
+    /// [`along`](Self::along) `f`'s vtree, the projection replaced by the
+    /// empty one for false and for true named `One` at a one-leaf root, which
+    /// refuse as `along` does.
+    fn of(lim: &Limits, f: &Tdd, home: &Home, ranked: &Ranked) -> Result<Self, TransportError> {
+        let shape = Self::along(lim, f.vtree(), ranked)?;
+        Ok(match (f.is_zero() || f.is_one_leaf_one()) && !f.vtree().has_regions() {
+            true => Self { into: Vtree::empty_projection(home), to: Vec::new(), mirrored: Vec::new() },
+            false => shape,
+        })
+    }
+
     /// The shape of `source` on `ranked`'s projection, or
     /// [`TransportError::Bound`] at the lowest node with no image.
     fn along(lim: &Limits, source: &Vtree, ranked: &Ranked) -> Result<Self, TransportError> {
