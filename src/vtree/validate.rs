@@ -11,8 +11,8 @@ impl Vtree {
     /// Check the representation invariants: exactly one parentless node and it
     /// is the root; every child's parent link names its parent and no node is
     /// the child of two nodes; the bottom-up order covers every node once with
-    /// children before parents (so there is no cycle) and its filtered views
-    /// agree with it; every variable sits on at most one leaf, within the id
+    /// children before parents (so there is no cycle), variable leaves first,
+    /// then regions, then internal nodes; every variable sits on at most one leaf, within the id
     /// space, with [`Vtree::leaf_of`] pointing at it;
     /// [`Vtree::num_leaves`] counts the leaves; and on a projection, each
     /// node stands for the node of [`Vtree::home`] the projection defines.

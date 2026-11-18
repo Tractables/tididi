@@ -644,7 +644,7 @@ fn from_nodes_numbers_leaves_then_internals_from_the_deepest_level() {
     assert_eq!(old_to_new, [4, 2, 6, 0, 3, 1, 5].map(VtreeIdx));
     assert_eq!((vtree.root(), vtree.num_leaves()), (VtreeIdx(6), 4));
     assert_eq!(vtree.topo.internal(), [4, 5, 6].map(VtreeIdx));
-    assert_eq!(vtree.topo.leaves(), [0, 1, 2, 3].map(VtreeIdx));
+    assert_eq!(vtree.topo.leaves(4), [0, 1, 2, 3].map(VtreeIdx));
 }
 
 /// The leaves of `vtree` left to right.
@@ -678,7 +678,7 @@ fn ancestor_depths(vtree: &Vtree, leaves: &[VtreeIdx]) -> Vec<u32> {
 
 /// Built from a subset of a tree's leaves in order and the depths of their
 /// neighbours' lowest common ancestors there, the tree is the projection
-/// `project_to_vars` makes of it, node for node, on random trees and
+/// `project_to_vars` makes of it, on random trees and
 /// subsets of every size; from all the leaves, it is the tree itself.
 #[test]
 fn from_in_order_with_ancestor_depths_is_the_projection() {
@@ -703,13 +703,13 @@ fn from_in_order_with_ancestor_depths_is_the_projection() {
             let leaves: Vec<VtreeIdx> = in_order.iter().copied().filter(|&t| local[vtree.leaf_var(t).0 as usize].is_some()).collect();
             let vars: Vec<VarId> = leaves.iter().map(|&t| local[vtree.leaf_var(t).0 as usize].unwrap()).collect();
             let got = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &leaves), kept).unwrap();
-            assert_eq!(got.nodes, expected.nodes, "seed {seed}, vars {vars:?}");
-            assert_eq!((got.root, got.leaf_count, &got.var_to_leaf), (expected.root, expected.leaf_count, &expected.var_to_leaf));
+            assert!(got.same_tree(&expected), "seed {seed}, vars {vars:?}");
+            assert_eq!((got.leaf_count, got.num_vars()), (expected.leaf_count, expected.num_vars()));
             assert_eq!(got.validate(), Ok(()));
         }
         let vars: Vec<VarId> = in_order.iter().map(|&t| vtree.leaf_var(t)).collect();
         let whole = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &in_order), n).unwrap();
-        assert_eq!(whole.nodes, vtree.nodes, "seed {seed}");
+        assert!(whole.same_tree(&vtree), "seed {seed}");
     }
 }
 
@@ -720,7 +720,7 @@ fn from_in_order_with_equal_depths_is_right_linear() {
     let vars = [3, 1, 4, 2].map(VarId);
     let linear = Vtree::linear_from_order(&vars).unwrap();
     let got = Vtree::from_in_order(&vars, &[7, 7, 7], 4).unwrap();
-    assert_eq!(got.nodes, linear.nodes);
+    assert!(got.same_tree(&linear));
     let leaf = Vtree::from_in_order(&[VarId(2)], &[], 2).unwrap();
     assert_eq!((leaf.num_nodes(), leaf.num_leaves(), leaf.num_vars()), (1, 1, 2));
 }

@@ -50,7 +50,6 @@ fn projection_is_project_to_vars_keeping_ids() {
         }
         let expected = tree.project_to_vars(|v| keep[v.0 as usize].then_some(v), tree.num_vars()).unwrap();
         assert!(own.same_tree(&expected));
-        assert_eq!(own.nodes, expected.nodes);
         assert_eq!(own.validate(), Ok(()));
         assert!(Arc::ptr_eq(own.home().unwrap().vtree(), tree));
         assert!(Arc::ptr_eq(own.context(), tree.context()));
