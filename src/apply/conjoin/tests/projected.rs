@@ -280,3 +280,83 @@ fn and_onto_the_root_is_and_on_a_bare_root() {
         }
     }
 }
+
+/// The nodes of each structural internal level the output does not reach.
+fn unreached(t: &Tdd) -> Vec<(u32, usize)> {
+    if t.is_zero() || t.is_one() {
+        return Vec::new();
+    }
+    let reach = t.reachable_nodes();
+    (0..t.vtree().num_nodes() as u32)
+        .map(VtreeIdx)
+        .filter(|&v| !t.vtree().node(v).is_leaf() && !t.levels[v.idx()].is_marginal())
+        .map(|v| (v.0, reach[v.idx()].iter().filter(|&&r| !r).count()))
+        .filter(|&(_, dead)| dead > 0)
+        .collect()
+}
+
+/// A literal placed under a pass-through chain to the root holds the
+/// output's literal alone there.
+#[test]
+fn and_with_a_literal_keeps_only_reached_nodes() {
+    let eng = Engine::new();
+    let hm = Home::new(Vtree::random(6, 101));
+    let x1 = Vtree::projection(&hm, [VarId(1)]).unwrap();
+    let x3_x5 = Vtree::projection(&hm, [VarId(3), VarId(5)]).unwrap();
+    let literal = Tdd::clause(&x1, [-1]).unwrap();
+    let mut reduced = literal.clone();
+    eng.minimize(&mut reduced).unwrap();
+    for f in [literal, reduced] {
+        let h = crate::and(f, Tdd::clause(&x3_x5, [3, -3, -5]).unwrap()).unwrap();
+        assert_eq!(unreached(&h), [], "{:?}", h.dirty.loose());
+    }
+}
+
+/// A diagram over `vars`: now and then a literal or a padded true on one
+/// of them, which a pass-through chain reads, else a random CNF; minimized
+/// one time in three.
+fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
+    let one = Vtree::projection(home, [vars[0]]).unwrap();
+    let mut f = match rng.below(6) {
+        0 => Tdd::clause(&one, [if rng.coin() { vars[0].0 as i32 } else { -(vars[0].0 as i32) }]).unwrap(),
+        1 => crate::test_helpers::padded(Tdd::one(&one), &one),
+        _ => cnf_on(eng, home, vars, rng),
+    };
+    if rng.below(3) == 0 {
+        eng.minimize(&mut f).unwrap();
+    }
+    f
+}
+
+/// `and` across projections, each operand owned or borrowed, lists every
+/// level that may hold a node no pair of its parent names, where it knows
+/// its loose levels, and reaches every node where it lists none.
+#[test]
+fn and_across_projections_lists_its_loose_levels() {
+    use crate::test_helpers::check::check_loose_levels;
+    let eng = Engine::new();
+    let (mut known, mut unreached_known) = (0, 0);
+    for seed in 0..60u64 {
+        let hm = Home::new(rotated_home(2 + (seed % 10) as u32, seed));
+        let home = Arc::clone(hm.vtree());
+        let mut rng = Lcg::new(seed ^ 0x3c6e_f372);
+        for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
+            let (f, g) = (operand(&eng, &hm, &fv, &mut rng), operand(&eng, &hm, &gv, &mut rng));
+            let results = [
+                eng.and(&f, &g).unwrap(),
+                eng.and(f.clone(), &g).unwrap(),
+                eng.and(&f, g.clone()).unwrap(),
+                eng.and(f.clone(), g.clone()).unwrap(),
+            ];
+            for h in results {
+                let at = format!("seed {seed}: {fv:?} and {gv:?}");
+                check_loose_levels(&h).unwrap_or_else(|e| panic!("{at}: {e}"));
+                let Some(loose) = h.dirty.loose() else { continue };
+                known += 1;
+                unreached_known += usize::from(!unreached(&h).is_empty());
+                assert!(!loose.is_empty() || unreached(&h).is_empty(), "{at}: {:?} unreached, none listed", unreached(&h));
+            }
+        }
+    }
+    assert!(known > 100 && unreached_known > 5, "{known} results know their loose levels, {unreached_known} of them hold a node they do not reach");
+}

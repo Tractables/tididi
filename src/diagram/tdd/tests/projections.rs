@@ -76,6 +76,7 @@ struct Tally {
     refused: BTreeMap<String, usize>,
     differs: Vec<String>,
     panics: Vec<String>,
+    unreached: usize,
 }
 
 #[derive(Default)]
@@ -86,6 +87,24 @@ struct Audit {
 
 static PANIC_AT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
+/// Whether `t` holds a node its output does not reach, where its known
+/// loose levels allow one ([`check_loose_levels`](crate::test_helpers::check::check_loose_levels)).
+fn unreached(t: &Tdd) -> Result<bool, String> {
+    crate::test_helpers::check::check_loose_levels(t)?;
+    if t.is_zero() || t.is_one() {
+        return Ok(false);
+    }
+    let reach = t.reachable_nodes();
+    let vtree = t.vtree();
+    let any = (0..vtree.num_nodes())
+        .filter(|&v| !vtree.node(VtreeIdx(v as u32)).is_leaf() && !t.levels[v].is_marginal())
+        .any(|v| reach[v].iter().any(|&r| !r));
+    match t.dirty.loose() {
+        Some([]) if any => Err("a node the output does not reach, and no level listed loose".into()),
+        _ => Ok(any),
+    }
+}
+
 fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
     let text = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string())).unwrap_or_default();
     format!("{text} at {}", PANIC_AT.lock().unwrap())
@@ -94,7 +113,7 @@ fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
 impl Audit {
     /// Run `on_projection` and `on_home`; equal results under `same`, or
     /// both refused, count as agreement.
-    fn check<T, E: Debug>(
+    fn check<T: 'static, E: Debug>(
         &mut self,
         name: &'static str,
         on_projection: impl FnOnce() -> Result<T, E>,
@@ -111,6 +130,14 @@ impl Audit {
             Ok(expected) => expected,
             Err(e) => return tally.panics.push(format!("{case}: on the home: {}", panic_text(&*e))),
         };
+        if let Ok(g) = &got
+            && let Some(t) = (g as &dyn std::any::Any).downcast_ref::<Tdd>()
+        {
+            match unreached(t) {
+                Ok(any) => tally.unreached += usize::from(any),
+                Err(e) => return tally.differs.push(format!("{case}: {e}")),
+            }
+        }
         match (got, expected) {
             (Ok(g), Ok(f)) => {
                 let agree = match catch_unwind(AssertUnwindSafe(|| same(&g, &f))) {
@@ -130,7 +157,7 @@ impl Audit {
     }
 
     /// A call with nothing to compare: it answers or refuses, and does not panic.
-    fn runs<T, E: Debug>(&mut self, name: &'static str, call: impl FnOnce() -> Result<T, E>) {
+    fn runs<T: 'static, E: Debug>(&mut self, name: &'static str, call: impl FnOnce() -> Result<T, E>) {
         self.check(name, || call().map(drop), || Ok::<(), E>(()), |_, _| true);
     }
 
@@ -140,6 +167,9 @@ impl Audit {
             out += &format!("{name}: {} same", t.same);
             for (e, n) in &t.refused {
                 out += &format!(", {n} refused {e}");
+            }
+            if t.unreached > 0 {
+                out += &format!(", {} hold a node they do not reach", t.unreached);
             }
             if !t.differs.is_empty() {
                 out += &format!(", {} DIFFER (first {})", t.differs.len(), t.differs[0]);

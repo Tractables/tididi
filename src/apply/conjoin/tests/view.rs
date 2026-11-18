@@ -45,6 +45,15 @@ fn operand(eng: &Engine, rng: &mut Lcg, u: &Arc<Vtree>) -> (Tdd, Vec<VarId>) {
     (f, map)
 }
 
+/// `t` placed on `u` by `map`, free levels built.
+fn placed_on(eng: &Engine, t: &Tdd, map: &[VarId], u: &Arc<Vtree>) -> Tdd {
+    if Arc::ptr_eq(t.vtree(), u) {
+        return t.clone();
+    }
+    let plan = crate::restructure::embed::Plan::build(eng, t.vtree(), u, |v| map[v.0 as usize - 1], false).unwrap();
+    place_by(eng, Cow::Borrowed(t), u, &plan, crate::restructure::embed::Free::Build).map_err(|e| e.0).unwrap()
+}
+
 fn given(t: &Tdd, borrowed: bool) -> Cow<'_, Tdd> {
     match borrowed {
         true => Cow::Borrowed(t),
@@ -158,20 +167,25 @@ fn views_conjoin_onto_as_placed_operands_do() {
         let (g, g_map) = operand(&eng, &mut rng, &u);
         let c: Case<'_> = ((&f, &f_map), (&g, &g_map), &u);
         viewed += usize::from(!Arc::ptr_eq(f.vtree(), &u)) + usize::from(!Arc::ptr_eq(g.vtree(), &u));
+        // Placed operands that are one diagram return `f` placed; two views
+        // are not compared, and conjoin.
+        let self_conjunction = same_storage(&placed_on(&eng, &f, &f_map, &u), &placed_on(&eng, &g, &g_map, &u));
         for borrow in BORROWS {
             let at = format!("case {case}, borrowing {borrow:?}");
             let (placed, placed_work) = run(c, borrow, false, Limit::None);
             let (got, work) = run(c, borrow, true, Limit::None);
             let (placed, got) = (placed.map_err(|r| r.error).unwrap(), got.map_err(|r| r.error).unwrap());
             assert!(same_storage(&got, &placed), "{at}: a different diagram");
-            assert_eq!(format!("{:?}", got.dirty), format!("{:?}", placed.dirty), "{at}: worklists");
-            assert_eq!(work, placed_work, "{at}: work");
+            if !self_conjunction {
+                assert_eq!(format!("{:?}", got.dirty), format!("{:?}", placed.dirty), "{at}: worklists");
+                assert_eq!(work, placed_work, "{at}: work");
+            }
             // Stopped at each unit of work, refused where the placed form is,
             // each operand handed back as it was given.
             for n in 0..=work {
                 let (got, _) = run(c, borrow, true, Limit::StopAfter(n));
                 let (placed, _) = run(c, borrow, false, Limit::StopAfter(n));
-                assert_eq!(got.is_err(), placed.is_err(), "{at}: stopped at {n}, refused unlike the placed form");
+                assert!(self_conjunction || got.is_err() == placed.is_err(), "{at}: stopped at {n}, refused unlike the placed form");
                 if let Err(r) = got {
                     refusals += 1;
                     assert!(handed_back(&r, c, borrow), "{at}: stopped at {n}, an operand changed");
@@ -188,3 +202,4 @@ fn views_conjoin_onto_as_placed_operands_do() {
     assert!(viewed > 120, "only {viewed} viewed operands");
     assert!(refusals > 2000, "only {refusals} refusals");
 }
+

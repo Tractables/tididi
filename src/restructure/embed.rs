@@ -813,9 +813,9 @@ fn assemble_moving<'a>(
     // call, so anything that reorders a mirrored level's pairs belongs on
     // the seated result, past the last refusal.
     placement.mirror(plan);
-    let mut literal_tops =
+    let (mut literal_tops, output) =
         match build_embedded_levels(eng, into, plan, free, tdd.output().local, &mut placement) {
-            Ok(tops) => tops,
+            Ok(built) => built,
             Err(e) => return Err(refuse(e, placement, tdd)),
         };
     let chains = !literal_tops.is_empty();
@@ -841,7 +841,7 @@ fn assemble_moving<'a>(
     };
     // Seated owing nothing: `tdd` keeps its worklists until the last
     // refusal is behind, which leaves nothing to put back.
-    let mut result = match placement.seat(tdd.output().local, crate::diagram::Dirty::default()) {
+    let mut result = match placement.seat(output, crate::diagram::Dirty::default()) {
         Ok(result) => result,
         Err((e, placement)) => return Err(refuse(e, placement, tdd)),
     };
@@ -969,7 +969,8 @@ fn unseat<'a>(
 
 /// Mark mirrored images as changed and build the free and pass-through levels
 /// of `plan` into `placement`, returning the tops of the pass-through chains
-/// over a leaf read as `Pos`/`Neg` whose readers must be renumbered once seated.
+/// over a leaf read as `Pos`/`Neg` whose readers must be renumbered once
+/// seated, and the output's index once a chain reaching the root holds it.
 fn build_embedded_levels(
     eng: &Engine,
     into: &Vtree,
@@ -977,9 +978,10 @@ fn build_embedded_levels(
     free: Free,
     output_local: NodeIdx,
     placement: &mut MovePlacement<'_>,
-) -> Result<Vec<VtreeIdx>, OperationError> {
+) -> Result<(Vec<VtreeIdx>, NodeIdx), OperationError> {
     let mut gate = eng.limits().gate();
     let mut literal_tops = Vec::new();
+    let mut output = output_local;
     // A mirrored image was changed in place by `placement.mirror`, and its
     // seat closes it.
     if plan.mirrors {
@@ -1025,15 +1027,18 @@ fn build_embedded_levels(
             // A summed variable's values live in its parent's references,
             // which a new parent between them does not take.
             return Err(OperationError::MarginalLevel(plan.covered_by(carried).unwrap_or(carried)));
-        } else if let Some(top) = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t) {
-            literal_tops.push(top);
-            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])?;
         } else {
-            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX])?;
+            let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t);
+            match chain {
+                Chain::Literals(top) => literal_tops.push(top),
+                Chain::Output(_) => output = NodeIdx(0),
+                Chain::One => {}
+            }
+            placement.pass_over_leaf(t, free_side, chain.labels())?;
         }
     }
     gate.flush()?;
-    Ok(literal_tops)
+    Ok((literal_tops, output))
 }
 
 /// The nearest ancestor of `t` that is the image of a source level, and the
@@ -1104,27 +1109,53 @@ pub(crate) fn moved_loose(
     }
 }
 
-/// For a pass-through over a leaf at `t`, the top of the chain of
-/// pass-throughs it starts when the level above that chain, or the output
-/// when the chain reaches the root, names the leaf as `Pos`/`Neg`; `None`
-/// when it names it as `One`. Determinism makes the first reference the
-/// level's form.
+/// How the chain of pass-throughs over a leaf that `t` is on reads the leaf.
+pub(crate) enum Chain {
+    /// As `One`: the chain has one node a level.
+    One,
+    /// As `Pos` and `Neg`, read by the level above the chain, the top given:
+    /// the chain has the two as its nodes 0 and 1, and its reader is
+    /// renumbered.
+    Literals(VtreeIdx),
+    /// As the output's literal, the chain reaching the root: the chain has
+    /// that literal alone, as its node 0, which the output names.
+    Output(NodeIdx),
+}
+
+impl Chain {
+    /// The leaf labels the chain holds, in node order.
+    pub(crate) fn labels(&self) -> &[NodeIdx] {
+        match self {
+            Chain::One => &[ONE_LEAF_IDX],
+            Chain::Literals(_) => &[POS_LEAF_IDX, NEG_LEAF_IDX],
+            Chain::Output(label) => std::slice::from_ref(label),
+        }
+    }
+}
+
+/// How the chain of pass-throughs a pass-through over a leaf at `t` starts
+/// reads the leaf: as the level above the chain names it, or as the output
+/// does when the chain reaches the root. Determinism makes the first
+/// reference the level's form.
 pub(crate) fn literal_chain(
     into: &Vtree,
     plan: &Plan,
     first_ref: impl Fn(VtreeIdx, ChildSide) -> Option<NodeIdx>,
     output: NodeIdx,
     t: VtreeIdx,
-) -> Option<VtreeIdx> {
+) -> Chain {
     let mut top = t;
     loop {
         match into.node(top).parent() {
             Some(p) if plan.covered_by(p).is_none() => top = p,
             Some(p) => {
-                let named = first_ref(p, ChildSide::of(into, p, top))?;
-                return (named != ONE_LEAF_IDX).then_some(top);
+                return match first_ref(p, ChildSide::of(into, p, top)) {
+                    Some(named) if named != ONE_LEAF_IDX => Chain::Literals(top),
+                    _ => Chain::One,
+                };
             }
-            None => return (output != ONE_LEAF_IDX).then_some(top),
+            None if output == POS_LEAF_IDX || output == NEG_LEAF_IDX => return Chain::Output(output),
+            None => return Chain::One,
         }
     }
 }
