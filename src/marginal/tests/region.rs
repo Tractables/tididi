@@ -191,3 +191,55 @@ fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
     assert_eq!(f.marginalize(&[home.vtree().root()]), Err(OperationError::MarginalLevel(left)));
     assert_eq!(f.marginalize(&[VtreeIdx(99)]), Err(OperationError::LevelNotInVtree(VtreeIdx(99))));
 }
+
+/// Home `(m, (((x, u), z), y))` and `f = (m ∨ x) ∧ (x ∨ z) ∧ y` on the
+/// projection without `u`. With `m` summed in place and `y` conditioned, the
+/// sum over `((x, u), z)` folds `u`'s factor into the values before its
+/// closing trim refuses; the diagram used to keep the factor and `u` free.
+#[test]
+fn a_refused_marginalize_leaves_the_count_as_it_was() {
+    let leaf = |v: u32| Vtree::leaf(VarId(v));
+    let join = |a: &Vtree, b: &Vtree| Vtree::join(a, b).unwrap();
+    let xuz = join(&join(&leaf(2), &leaf(3)), &leaf(4));
+    let home = Home::new(join(&leaf(1), &join(&xuz, &leaf(5))));
+    let own = Vtree::projection(&home, [1, 2, 4, 5].map(VarId)).unwrap();
+    let mut f = Tdd::one(&own);
+    for clause in [&[1, 2][..], &[2, 4], &[5]] {
+        f = f.and_clause(clause).unwrap();
+    }
+    let hv = home.vtree();
+    f.marginalize(&[hv.leaf_of(VarId(1)).unwrap()]).unwrap();
+    let mut f = f.condition_var(VarId(5), true).unwrap();
+    let before = f.model_count().unwrap();
+    let h = hv.node(hv.node(hv.leaf_of(VarId(2)).unwrap()).parent().unwrap()).parent().unwrap();
+    let _ = f.marginalize(&[h]);
+    assert_eq!(f.model_count().unwrap(), before);
+}
+
+/// A refusal at any reserve of a sum-out that builds a region leaves the
+/// count as it was.
+#[test]
+fn every_refused_reserve_of_a_region_sum_out_leaves_the_count() {
+    let home = Home::new(Vtree::balanced(6));
+    let own = Vtree::projection(&home, [1, 2, 4, 5].map(VarId)).unwrap();
+    let mut f = Tdd::one(&own);
+    for clause in [[1, -2], [2, 4], [-4, 5]] {
+        f = f.and_clause(clause).unwrap();
+    }
+    let before = f.model_count().unwrap();
+    let (mut refused, mut built) = (0, false);
+    for cut in 0.. {
+        let eng = Engine::new();
+        let mut g = f.clone();
+        eng.limits().refuse_nth_reserve(cut);
+        let result = eng.marginalize(&mut g, &[home.vtree().root()]);
+        let pending = eng.limits().refusal_pending();
+        refused += usize::from(result.is_err());
+        built |= result.is_ok() && count_regions(&g) > 0;
+        assert_eq!(g.model_count().unwrap(), before, "refused at reserve {cut}: {result:?}");
+        if result.is_ok() && pending {
+            break;
+        }
+    }
+    assert!(built && refused > 0, "{refused} refusals");
+}
