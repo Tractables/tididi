@@ -62,8 +62,7 @@ fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
     let not_x1 = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [-1]).unwrap();
-    let root = home.vtree().root();
-    let summed = eng.and_marginalizing(Tdd::one(home.vtree()), &not_x1, &[root]).unwrap();
+    let summed = eng.and_marginalizing_where(Tdd::one(home.vtree()), &not_x1, |_| true).unwrap();
     let count = catch_unwind(AssertUnwindSafe(|| summed.model_count().unwrap()));
     assert_eq!(count.ok(), Some(BigUint::from(2u32)), "the count of not x1 over two variables, its root summed out");
 }

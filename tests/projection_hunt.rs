@@ -62,7 +62,10 @@ impl Log {
             "rehome refused under a bound",
             "and_marginalizing some levels",
         ];
-        if known.iter().any(|k| what.starts_with(k)) {
+        // Levels and targets name nodes of a root vtree only; on a projection
+        // `marginalize` and `and_marginalizing_where` sum out.
+        let by_name = what.contains(": refused InertOption { option: \"levels\"") || what.contains(": refused InertOption { option: \"targets\"");
+        if by_name || known.iter().any(|k| what.starts_with(k)) {
             return;
         }
         let case = self.case.clone();
