@@ -4,6 +4,7 @@ use crate::limits::{Charged, Transient};
 use crate::reduce::ReductionPlan;
 use crate::vtree::{VarId, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
+use std::borrow::Cow;
 
 /// A composition owns one result until its last consumer can take the storage.
 /// Earlier consumers get fallible copies; no scratch survives the operation.
@@ -188,7 +189,7 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let [mut condition, mut then_branch, mut else_branch] =
-            super::extend::owned(self, [condition, then_branch, else_branch])?;
+            super::extend::on_one(self, [condition, then_branch, else_branch].map(Cow::Owned))?.map(Cow::into_owned);
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
@@ -207,7 +208,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let [mut f, mut g] = super::extend::owned(self, [f, g])?;
+        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
@@ -280,7 +281,7 @@ impl Engine {
         plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let [mut f, mut g] = super::extend::owned(self, [f, g])?;
+        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;

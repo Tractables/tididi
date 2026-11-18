@@ -6,6 +6,7 @@
 //! running maximum or a rank, computed by one walk down both diagrams
 //! rather than by joining the second with itself.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -340,7 +341,7 @@ impl Engine {
     ) -> Result<Tdd, PrefixFoldError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        let [points, values] = crate::apply::extend::borrowed(self, [points, values])?;
+        let [points, values] = crate::apply::extend::on_one(self, [Cow::Borrowed(points), Cow::Borrowed(values)])?;
         let (points, values) = (&*points, &*values);
         let vtree = points.vtree();
         let counted = monoid.count(1).is_some();

@@ -23,8 +23,7 @@ fn on_one_vtree<'t>(first: &Tdd, rest: impl IntoIterator<Item = &'t Tdd>) -> boo
     rest.into_iter().all(|g| Arc::ptr_eq(&first.vtree, &g.vtree)) && first.vtree.num_nodes() != 0
 }
 
-/// Whether `operands` need [`borrowed`] or [`owned`] before a kernel reads
-/// them.
+/// Whether `operands` need [`on_one`] before a kernel reads them.
 #[inline]
 pub(crate) fn needed<const N: usize>(operands: [&Tdd; N]) -> bool {
     match operands.split_first() {
@@ -33,67 +32,18 @@ pub(crate) fn needed<const N: usize>(operands: [&Tdd; N]) -> bool {
     }
 }
 
-/// `operands`, owned, on one vtree.
+/// `operands`, an array or a `Vec`, on one vtree: each one already there as
+/// it is, the others placed. An owned operand stays owned.
 #[inline]
-pub(crate) fn owned<const N: usize>(eng: &Engine, operands: [Tdd; N]) -> Result<[Tdd; N], OperationError> {
-    match operands.split_first() {
-        Some((first, rest)) if !on_one_vtree(first, rest) => {
-            let extended = extend(eng, operands.into_iter().map(Cow::Owned).collect())?;
-            Ok(array(extended.into_iter().map(Cow::into_owned).collect()))
-        }
-        _ => Ok(operands),
-    }
-}
-
-/// `operands`, borrowed, on one vtree: each one already there as it is, the
-/// others placed.
-#[inline]
-pub(crate) fn borrowed<'a, const N: usize>(eng: &Engine, operands: [&'a Tdd; N]) -> Result<[Cow<'a, Tdd>; N], OperationError> {
-    match operands.split_first() {
-        Some((first, rest)) if !on_one_vtree(first, rest.iter().copied()) => {
-            Ok(array(extend(eng, operands.into_iter().map(Cow::Borrowed).collect())?))
-        }
-        _ => Ok(operands.map(Cow::Borrowed)),
-    }
-}
-
-/// Owned or borrowed `operands` on one vtree.
-#[inline]
-pub(crate) fn cows<'a, const N: usize>(eng: &Engine, operands: [Cow<'a, Tdd>; N]) -> Result<[Cow<'a, Tdd>; N], OperationError> {
-    match operands.split_first() {
+pub(crate) fn on_one<'a, O>(eng: &Engine, operands: O) -> Result<O, OperationError>
+where
+    O: AsRef<[Cow<'a, Tdd>]> + IntoIterator<Item = Cow<'a, Tdd>> + TryFrom<Vec<Cow<'a, Tdd>>>,
+{
+    match operands.as_ref().split_first() {
         Some((first, rest)) if !on_one_vtree(first, rest.iter().map(|g| &**g)) => {
-            Ok(array(extend(eng, operands.into_iter().collect())?))
+            let extended = extend(eng, operands.into_iter().collect())?;
+            Ok(O::try_from(extended).unwrap_or_else(|_| unreachable!("one item per operand")))
         }
-        _ => Ok(operands),
-    }
-}
-
-/// An owned operand and a borrowed one on one vtree.
-#[inline]
-pub(crate) fn owned_borrowed<'a>(eng: &Engine, f: Tdd, g: &'a Tdd) -> Result<(Tdd, Cow<'a, Tdd>), OperationError> {
-    if !needed([&f, g]) {
-        return Ok((f, Cow::Borrowed(g)));
-    }
-    let [f, g] = array(extend(eng, vec![Cow::Owned(f), Cow::Borrowed(g)])?);
-    Ok((f.into_owned(), g))
-}
-
-/// The variadic [`owned`].
-#[inline]
-pub(crate) fn owned_vec(eng: &Engine, operands: Vec<Tdd>) -> Result<Vec<Tdd>, OperationError> {
-    match operands.split_first() {
-        Some((first, rest)) if !on_one_vtree(first, rest) => {
-            let extended = extend(eng, operands.into_iter().map(Cow::Owned).collect())?;
-            Ok(extended.into_iter().map(Cow::into_owned).collect())
-        }
-        _ => Ok(operands),
-    }
-}
-
-/// `operands`, a diagram and the diagrams it reads, on one vtree.
-pub(crate) fn mixed<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, Tdd>>, OperationError> {
-    match operands.split_first() {
-        Some((first, rest)) if !on_one_vtree(first, rest.iter().map(|g| &**g)) => extend(eng, operands),
         _ => Ok(operands),
     }
 }
@@ -104,10 +54,6 @@ pub(crate) fn into_owned(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operation
         Cow::Borrowed(f) => f.try_clone_on(eng),
         Cow::Owned(f) => Ok(f),
     }
-}
-
-fn array<T, const N: usize>(items: Vec<T>) -> [T; N] {
-    items.try_into().unwrap_or_else(|_| unreachable!("one item per operand"))
 }
 
 /// `f` placed on `into`, which holds its leaf set: for an operand read with

@@ -3,6 +3,7 @@
 use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
 use crate::vtree::{Home, VarId, VtreeIdx, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
+use std::borrow::Cow;
 use rustc_hash::FxHashMap;
 
 impl Engine {
@@ -15,7 +16,7 @@ impl Engine {
     /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        let [f, g] = crate::apply::extend::borrowed(self, [f, g])?;
+        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         f.require_structure()?;
         g.require_structure()?;
         if f.is_zero() || g.is_zero() {
@@ -39,7 +40,7 @@ impl Engine {
     /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        let [f, g] = crate::apply::extend::borrowed(self, [f, g])?;
+        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         f.require_structure()?;
         g.require_structure()?;
         if f.is_zero() || std::ptr::eq(&*f, &*g) {

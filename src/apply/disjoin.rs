@@ -6,6 +6,8 @@
 //! [`or_many`] folds the same operation in a balanced tree. [`nor_many`]
 //! conjoins the operands' complements, without constructing their union.
 
+use std::borrow::Cow;
+
 use crate::Engine;
 use crate::diagram::Tdd;
 use crate::limits::{Charged, OperationError};
@@ -236,8 +238,8 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let operands = crate::apply::extend::owned_vec(self, operands)?;
-        let (live, a_false_one) = live_operands(operands)?;
+        let operands = crate::apply::extend::on_one(self, operands.into_iter().map(Cow::Owned).collect::<Vec<_>>())?;
+        let (live, a_false_one) = live_operands(operands.into_iter().map(Cow::into_owned).collect())?;
         if live.is_empty() {
             // Every operand is false, so every complement is true.
             let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
@@ -272,7 +274,8 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let operands = crate::apply::extend::owned_vec(self, operands)?;
+        let operands = crate::apply::extend::on_one(self, operands.into_iter().map(Cow::Owned).collect::<Vec<_>>())?;
+        let operands = operands.into_iter().map(Cow::into_owned).collect();
         crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)
     }
 }

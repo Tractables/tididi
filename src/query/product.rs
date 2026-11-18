@@ -27,6 +27,8 @@
 //! are joined, so a level with a summed-out child costs its pairs, not the
 //! product of its children's widths.
 
+use std::borrow::Cow;
+
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
@@ -126,7 +128,7 @@ impl Engine {
     pub fn marginal_product_count(&self, l: &Tdd, r: &Tdd) -> Result<BigUint, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        let [l, r] = crate::apply::extend::borrowed(self, [l, r])?;
+        let [l, r] = crate::apply::extend::on_one(self, [Cow::Borrowed(l), Cow::Borrowed(r)])?;
         let (l, r) = (&*l, &*r);
         if l.weights.is_some()
             || r.weights.is_some()
