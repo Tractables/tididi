@@ -124,11 +124,18 @@ impl LevelStorage {
     /// [`pair_count`](Self::pair_count) read as
     /// [`live_pairs_known`](Self::live_pairs_known) reads each level.
     pub(crate) fn pair_count_known(&self, counted: bool) -> usize {
-        self.summary.pairs.read(|| (0..self.levels.len()).map(|t| self.live_pairs_known(t, counted)).sum())
+        self.summary.pairs.read(|| {
+            if self.closed {
+                self.levels.iter().map(TddLevel::live_pairs_closed).sum()
+            } else {
+                self.levels.iter().map(|level| level.known_live_pairs(counted).unwrap_or_else(|| level.live_pairs())).sum()
+            }
+        })
     }
 
     /// [`live_pairs_known`](Self::live_pairs_known) where no kept count is
     /// known to hold on an open level.
+    #[inline]
     pub(crate) fn live_pairs_at(&self, t: usize) -> usize {
         self.live_pairs_known(t, false)
     }
@@ -139,6 +146,7 @@ impl LevelStorage {
     /// a count kept at the last close included where `counted`: the levels
     /// were closed when the edits since began, and each of those edits forgot
     /// the count of the level it changed. A debug build counts them again.
+    #[inline]
     pub(crate) fn live_pairs_known(&self, t: usize, counted: bool) -> usize {
         let level = &self.levels[t];
         let n = if self.closed {
