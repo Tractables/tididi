@@ -4,7 +4,7 @@ use crate::{Engine, Tdd, OperationError};
 use crate::diagram::{NodeIdx, Pass, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
-use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable, prune_unreachable_counted};
+use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
 use super::contract::pair_fusion::fuse_pairs_at_parents;
@@ -53,7 +53,7 @@ impl<'a> Reduction<'a> {
                 return Ok(());
             }
             ReductionPlan::Prune => {
-                prune_unreachable_counted(self.eng, self.tdd, scope, self.counted)?;
+                prune_unreachable(self.eng, self.tdd, scope, self.counted)?;
                 prune_value_slots(self.eng, self.tdd)?;
                 self.tdd.close_marked_levels(self.counted);
                 return Ok(());
@@ -69,7 +69,7 @@ impl<'a> Reduction<'a> {
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
-        prune_unreachable_counted(self.eng, self.tdd, scope, self.counted)?;
+        prune_unreachable(self.eng, self.tdd, scope, self.counted)?;
         #[cfg(debug_assertions)]
         self.assert_marginal_flags(&marginal_before, "prune");
         self.contract()?;
@@ -139,7 +139,7 @@ impl<'a> Reduction<'a> {
             Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
                 prune_complement(self.eng, self.tdd, old, self.counted)?;
             }
-            _ => prune_unreachable_counted(self.eng, self.tdd, PruneScope::BelowRoot, self.counted)?,
+            _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot, self.counted)?,
         }
         if shrink {
             for level in &mut self.tdd.levels {
@@ -186,7 +186,7 @@ impl<'a> Reduction<'a> {
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
             let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
             if merged == 0 { break; }
-            prune_unreachable_counted(self.eng, self.tdd, PruneScope::Whole, self.counted)?;
+            prune_unreachable(self.eng, self.tdd, PruneScope::Whole, self.counted)?;
             self.contract()?;
             // A value merge at a marginal level may make its parents' nodes
             // equal: those boundaries are scanned again.

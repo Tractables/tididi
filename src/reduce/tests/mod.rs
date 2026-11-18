@@ -2,6 +2,11 @@
 
 use super::*;
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
+/// The prune outside a reduction, the levels' closed flag read at the call.
+fn prune_unreachable(eng: &Engine, tdd: &mut crate::Tdd, scope: super::prune::PruneScope) -> Result<(), OperationError> {
+    let counted = tdd.levels.is_closed();
+    super::prune::prune_unreachable(eng, tdd, scope, counted)
+}
 fn canonicalize_content_twins(eng: &Engine, tdd: &mut crate::Tdd) -> Result<(), OperationError> {
     super::driver::Reduction::new(eng, tdd).content_twins()
 }

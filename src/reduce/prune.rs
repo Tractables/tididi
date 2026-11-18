@@ -346,6 +346,10 @@ pub(crate) enum PruneScope {
 /// below it is named by a surviving node of its parent level. The prune
 /// leaves no level loose.
 ///
+/// `counted` says the levels were closed when the reduction began, so
+/// that counts kept at that close hold on the levels its passes have not
+/// marked.
+///
 /// # Errors
 ///
 /// Returns `Err(OperationError::OverBudget)` if a reservation of the marks,
@@ -354,18 +358,6 @@ pub(crate) enum PruneScope {
 /// ([`settle_loose`]). Every one comes before any mutation of `tdd`, so
 /// the diagram is then untouched.
 pub(crate) fn prune_unreachable(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    scope: PruneScope,
-) -> Result<(), OperationError> {
-    let counted = tdd.levels.is_closed();
-    prune_unreachable_counted(eng, tdd, scope, counted)
-}
-
-/// [`prune_unreachable`] inside a reduction, `counted` saying the levels
-/// were closed when it began, so that counts kept at that close hold on the
-/// levels its passes have not marked.
-pub(crate) fn prune_unreachable_counted(
     eng: &Engine,
     tdd: &mut Tdd,
     scope: PruneScope,

@@ -4,9 +4,10 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
+use super::prune_unreachable;
 use crate::vtree::Vtree;
 
 /// `prune_unreachable` of a diagram that knows its loose levels, walked
