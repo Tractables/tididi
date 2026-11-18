@@ -1039,26 +1039,28 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
     if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
         return Err(OperationError::VtreeMismatch);
     }
-    let is_union = |v: &Vtree| shared || v.home().is_none();
+    let group = |members: Vec<usize>, kids| Group { members, kids, union_of: Vec::new(), base: 0 };
     let mut groups: Vec<Group> = Vec::new();
-    let mut index = HashMap::new();
     let mut of = Vec::with_capacity(members.len());
     let mut root = None;
-    for (i, m) in members.iter().enumerate() {
-        let g = *index.entry(Arc::as_ptr(&m.vtree)).or_insert_with(|| {
-            groups.push(Group {
-                members: Vec::new(),
-                kids: (!is_union(&m.vtree)).then(|| children_table(&m.vtree)),
-                union_of: Vec::new(),
-                base: 0,
+    if shared {
+        groups.push(group((0..members.len()).collect(), None));
+        of.resize(members.len(), 0);
+        root = Some(0);
+    } else {
+        let mut index = HashMap::new();
+        for (i, m) in members.iter().enumerate() {
+            let union = m.vtree.home().is_none();
+            let g = *index.entry(Arc::as_ptr(&m.vtree)).or_insert_with(|| {
+                groups.push(group(Vec::new(), (!union).then(|| children_table(&m.vtree))));
+                groups.len() - 1
             });
-            groups.len() - 1
-        });
-        if is_union(&m.vtree) {
-            root = Some(i);
+            if union {
+                root = Some(i);
+            }
+            groups[g].members.push(i);
+            of.push(g);
         }
-        groups[g].members.push(i);
-        of.push(g);
     }
     let tree_of = |group: &Group| &members[group.members[0]].vtree;
     let union = match root {
@@ -1073,15 +1075,13 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
             }
         }
     };
-    let mut at = vec![Vec::new(); union.num_nodes()];
+    let mut lists = Lists { head: vec![NONE; union.num_nodes()], at: Vec::new() };
+    let mut tail = vec![NONE; union.num_nodes()];
     let mut slots = 0;
     for (g, group) in groups.iter_mut().enumerate() {
         group.base = slots;
         if group.kids.is_none() {
             slots += union.num_nodes();
-            for &u in union.internal_bottomup_slice() {
-                at[u.idx()].push((g, u));
-            }
             continue;
         }
         let tree = &members[group.members[0]].vtree;
@@ -1090,11 +1090,59 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
             .map(|t| union.node_at_home(tree.home_node(VtreeIdx(t))).expect("the union has every own node"))
             .collect();
         for &t in tree.internal_bottomup_slice() {
-            at[group.union_of[t.idx()].idx()].push((g, t));
+            let u = group.union_of[t.idx()];
+            lists.append(&mut tail[u.idx()], u, g, t);
         }
     }
     let seen = vec![0; groups.len()];
-    Ok((union, Groups { groups, of, at, seen, slots }))
+    let on_union = groups.iter().position(|g| g.kids.is_none());
+    Ok((union, Groups { groups, of, on_union, lists, seen, slots }))
+}
+
+/// No entry: the end of a list in [`Lists`].
+const NONE: u32 = u32::MAX;
+
+/// By node of the union, the groups on projections with an own node there and
+/// that node, as lists linked through one buffer: a kept move relinks entries
+/// between its two nodes and allocates nothing.
+#[derive(Clone)]
+struct Lists {
+    /// By node of the union: its first entry in `at`.
+    head: Vec<u32>,
+    at: Vec<At>,
+}
+
+#[derive(Clone, Copy)]
+struct At {
+    group: u32,
+    own: VtreeIdx,
+    next: u32,
+}
+
+impl Lists {
+    /// The entries at union node `u`.
+    fn of(&self, u: VtreeIdx) -> impl Iterator<Item = At> + '_ {
+        std::iter::successors(self.at.get(self.head[u.idx()] as usize).copied(), |e| {
+            self.at.get(e.next as usize).copied()
+        })
+    }
+
+    /// Add group `g`'s own node `own` last at `u`, whose last entry is `tail`.
+    fn append(&mut self, tail: &mut u32, u: VtreeIdx, g: usize, own: VtreeIdx) {
+        let e = self.at.len() as u32;
+        self.at.push(At { group: g as u32, own, next: NONE });
+        self.link(tail, u, e);
+    }
+
+    /// Put entry `e` last at `u`, whose last entry is `tail`.
+    fn link(&mut self, tail: &mut u32, u: VtreeIdx, e: u32) {
+        self.at[e as usize].next = NONE;
+        match *tail {
+            NONE => self.head[u.idx()] = e,
+            last => self.at[last as usize].next = e,
+        }
+        *tail = e;
+    }
 }
 
 /// The members of a pool by vtree, the members on each in a group; members
@@ -1112,9 +1160,10 @@ struct Groups {
     groups: Vec<Group>,
     /// By member: its group.
     of: Vec<usize>,
-    /// By node of the union: each group with an own node there, and that
-    /// node.
-    at: Vec<Vec<(usize, VtreeIdx)>>,
+    /// The group on the union's tree, which every move touches and
+    /// [`Lists`] leaves out.
+    on_union: Option<usize>,
+    lists: Lists,
     /// By group: where a move being made has its own nodes, 1 for `v` and 2
     /// for `w`; 0 between moves.
     seen: Vec<u8>,
@@ -1144,24 +1193,24 @@ impl Groups {
     /// nodes of `mv`, made on the union as `info`, with the rotation `mv` is
     /// on their own nodes.
     fn touch(&mut self, info: &RotationInfo, mv: PoolMove, touched: &mut Vec<(usize, RotationInfo)>) {
-        let Groups { groups, at, seen, .. } = self;
-        let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-        for &(g, _) in &at[w] {
-            seen[g] = 2;
+        let Groups { groups, on_union, lists, seen, .. } = self;
+        if let Some(g) = *on_union {
+            touched.extend(groups[g].members.iter().map(|&i| (i, *info)));
         }
-        for &(g, t) in &at[v] {
-            if seen[g] != 2 {
+        for e in lists.of(info.w_idx) {
+            seen[e.group as usize] = 2;
+        }
+        for At { group: g, own: t, .. } in lists.of(info.v_idx) {
+            if seen[g as usize] != 2 {
                 continue;
             }
-            let group = &groups[g];
-            let moved = match &group.kids {
-                None => *info,
-                Some(kids) => rotated(kids, t, mv).0,
-            };
+            let group = &groups[g as usize];
+            let kids = group.kids.as_ref().expect("the group on the union is not listed");
+            let moved = rotated(kids, t, mv).0;
             touched.extend(group.members.iter().map(|&i| (i, moved)));
         }
-        for &(g, _) in &at[w] {
-            seen[g] = 0;
+        for e in lists.of(info.w_idx) {
+            seen[e.group as usize] = 0;
         }
     }
 
@@ -1179,52 +1228,58 @@ impl Groups {
         members: &mut [&mut Tdd],
         mut undo: Option<&mut Undo<'_>>,
     ) {
-        let Groups { groups, at, seen, .. } = self;
+        let Groups { groups, lists, seen, .. } = self;
         let (v, w) = (info.v_idx, info.w_idx);
-        let (from_v, from_w) = (std::mem::take(&mut at[v.idx()]), std::mem::take(&mut at[w.idx()]));
-        for &(g, _) in &from_v {
-            seen[g] |= 1;
-        }
-        for &(g, _) in &from_w {
-            seen[g] |= 2;
-        }
-        for (from, entries) in [(v, &from_v), (w, &from_w)] {
-            for &(g, t) in entries {
-                let group = &mut groups[g];
-                if seen[g] == 3 {
-                    if let Some(kids) = &mut group.kids
-                        && from == v
-                    {
-                        let (moved, v_kids, w_kids) = rotated(kids, t, mv);
-                        kids[t.idx()] = v_kids;
-                        kids[moved.w_idx.idx()] = w_kids;
-                    }
-                    at[from.idx()].push((g, t));
-                    continue;
-                }
-                let kids = group.kids.as_mut().expect("the union has own nodes at both ends of every move");
-                let (l, r) = kids[t.idx()];
-                let under_w = |u: VtreeIdx| child_toward(union, u, v) == w;
-                let to = if under_w(group.union_of[l.idx()]) && under_w(group.union_of[r.idx()]) { w } else { v };
-                group.union_of[t.idx()] = to;
-                at[to.idx()].push((g, t));
-                if mv.crossed && from == w {
-                    kids[t.idx()] = (r, l);
-                    for &i in &group.members {
-                        mirror_level(&mut *members[i], t);
-                    }
-                    if let Some(undo) = undo.as_deref_mut() {
-                        undo.flip(group.base + t.idx());
-                    }
-                }
-                debug_assert_eq!(
-                    child_toward(union, group.union_of[kids[t.idx()].0.idx()], to),
-                    union.children(to).0
-                );
+        for (u, bit) in [(v, 1), (w, 2)] {
+            for e in lists.of(u) {
+                seen[e.group as usize] |= bit;
             }
         }
-        for &(g, _) in from_v.iter().chain(&from_w) {
-            seen[g] = 0;
+        let firsts = [lists.head[v.idx()], lists.head[w.idx()]];
+        lists.head[v.idx()] = NONE;
+        lists.head[w.idx()] = NONE;
+        let mut tails = [NONE; 2];
+        for (from, mut e) in [v, w].into_iter().zip(firsts) {
+            while e != NONE {
+                let At { group: g, own: t, next } = lists.at[e as usize];
+                let group = &mut groups[g as usize];
+                let kids = group.kids.as_mut().expect("the group on the union is not listed");
+                let to = 'to: {
+                    if seen[g as usize] == 3 {
+                        if from == v {
+                            let (moved, v_kids, w_kids) = rotated(kids, t, mv);
+                            kids[t.idx()] = v_kids;
+                            kids[moved.w_idx.idx()] = w_kids;
+                        }
+                        break 'to from;
+                    }
+                    let (l, r) = kids[t.idx()];
+                    let under_w = |u: VtreeIdx| child_toward(union, u, v) == w;
+                    let to = if under_w(group.union_of[l.idx()]) && under_w(group.union_of[r.idx()]) { w } else { v };
+                    group.union_of[t.idx()] = to;
+                    if mv.crossed && from == w {
+                        kids[t.idx()] = (r, l);
+                        for &i in &group.members {
+                            mirror_level(&mut *members[i], t);
+                        }
+                        if let Some(undo) = undo.as_deref_mut() {
+                            undo.flip(group.base + t.idx());
+                        }
+                    }
+                    debug_assert_eq!(
+                        child_toward(union, group.union_of[kids[t.idx()].0.idx()], to),
+                        union.children(to).0
+                    );
+                    to
+                };
+                lists.link(&mut tails[usize::from(to == w)], to, e);
+                e = next;
+            }
+        }
+        for u in [v, w] {
+            for e in lists.of(u) {
+                seen[e.group as usize] = 0;
+            }
         }
     }
 }
@@ -1292,28 +1347,34 @@ fn rotated(
 /// on one allocation of the union, or seated on projections of the home the
 /// union's moves imply.
 fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Groups) {
-    let lifted = union.lifted_home();
     let mut bottom_up = vec![Vec::new(); groups.groups.len()];
     for &u in union.internal_bottomup_slice() {
-        for &(g, t) in &groups.at[u.idx()] {
-            bottom_up[g].push(t);
+        for e in groups.lists.of(u) {
+            bottom_up[e.group as usize].push(e.own);
         }
     }
-    let (home, root) = match lifted {
-        Some(home) => (home, Err(children_table(&union))),
+    let on_union = groups.on_union.map_or(&[][..], |g| &groups.groups[g].members);
+    let home = match union.lifted_home() {
+        Some(home) => {
+            if !on_union.is_empty() {
+                seat_group(eng, members, on_union, &children_table(&union), union.internal_bottomup_slice(), &home);
+            }
+            home
+        }
         None => {
             let root = Arc::new(union);
-            (Home::new(Arc::clone(&root)), Ok(root))
+            for &i in on_union {
+                members[i].vtree = Arc::clone(&root);
+            }
+            if groups.groups.len() == usize::from(groups.on_union.is_some()) {
+                return;
+            }
+            Home::new(root)
         }
     };
     for (group, bottom_up) in groups.groups.iter().zip(&bottom_up) {
-        match (&group.kids, &root) {
-            (Some(kids), _) | (None, Err(kids)) => seat_group(eng, members, &group.members, kids, bottom_up, &home),
-            (None, Ok(root)) => {
-                for &i in &group.members {
-                    members[i].vtree = Arc::clone(root);
-                }
-            }
+        if let Some(kids) = &group.kids {
+            seat_group(eng, members, &group.members, kids, bottom_up, &home);
         }
     }
 }

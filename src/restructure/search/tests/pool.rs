@@ -324,8 +324,8 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let mut scratch = crate::restructure::scratch::RestructureScratch::default();
             let kept = with_members(&mut members, |refs| {
                 let pending = super::move_in_place(&mut tree, mv).expect("the move applied before");
-                let every = super::Every { members: refs.len(), info: &info };
-                let moved = super::Touched::new(every, mv, usize::MAX);
+                let every: Vec<_> = (0..refs.len()).map(|i| (i, info)).collect();
+                let moved = super::Touched::new(super::Listed(&every), mv, usize::MAX);
                 let kept = super::probe_scored(&eng, refs, moved, &mut scratch, super::Twin::Alone, 0, None);
                 pending.revert(&mut tree);
                 kept
