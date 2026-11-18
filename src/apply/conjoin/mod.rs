@@ -257,7 +257,9 @@ fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Res
         projected::check_shared_regions(&f, &g)?;
     }
     prepare_owned_weights(&mut f, &mut g)?;
-    conjoin_cow(eng, f, g, VtreeMask::default())
+    let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
+    crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+    Ok(out)
 }
 
 /// Check that the operands share one weight interpretation, and give an

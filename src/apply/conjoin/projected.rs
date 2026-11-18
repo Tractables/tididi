@@ -28,7 +28,9 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
         LeafSets::Equal(same) => {
             reseat_either(eng, &mut f, &mut g, &same)?;
             prepare_owned_weights(&mut f, &mut g)?;
-            return conjoin_cow(eng, f, g, VtreeMask::default());
+            let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
+            crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+            return Ok(out);
         }
         LeafSets::AInB => Arc::clone(g.vtree()),
         LeafSets::BInA => Arc::clone(f.vtree()),

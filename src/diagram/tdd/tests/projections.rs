@@ -13,6 +13,7 @@ use crate::cnf::{ClauseSink, CnfScheme};
 use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, WeightStore};
 use crate::query::PinSemantics;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
+use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{and2, exact_weight, rand_conj};
 use crate::value::Retention;
 use crate::vtree::rng::Lcg;
@@ -239,6 +240,15 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         _ => same_models(x, y, n),
     };
     let same_tdd = |x: &Tdd, y: &Tdd| equiv(x, y);
+    // Every result on a home with no summed-out level is closed; `embed*`,
+    // `project_over`, `project_to_vars` and the readers place on the
+    // caller's vtree and may pad it.
+    let closed = |x: &Tdd, y: &Tdd| {
+        if Vtree::home_of(x.vtree()).is_some() && !x.has_marginal_level() {
+            check_trimmed(x, false).unwrap_or_else(|e| panic!("not closed: {e}"));
+        }
+        equiv(x, y)
+    };
 
     // Queries.
     a.check("model_count", || g.model_count(), || f.model_count(), PartialEq::eq);
@@ -357,25 +367,25 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     let b = rng.coin();
     let some = vars(rng);
     let lit = |v: VarId, b: bool| Literal { var: v, sign: b };
-    a.check("negate", || g.clone().negate(), || f.clone().negate(), same_tdd);
-    a.check("condition_var", || g.clone().condition_var(x, b), || f.clone().condition_var(x, b), same_tdd);
-    a.check("condition", || g.clone().condition([lit(x, b)]), || f.clone().condition([lit(x, b)]), same_tdd);
-    a.check("condition_vars", || g.clone().condition_vars(&some, b), || f.clone().condition_vars(&some, b), same_tdd);
-    a.check("exists_var", || g.clone().exists_var(x), || f.clone().exists_var(x), same_tdd);
-    a.check("exists_vars", || g.clone().exists_vars(&some), || f.clone().exists_vars(&some), same_tdd);
-    a.check("forall_vars", || g.clone().forall_vars(&some), || f.clone().forall_vars(&some), same_tdd);
+    a.check("negate", || g.clone().negate(), || f.clone().negate(), closed);
+    a.check("condition_var", || g.clone().condition_var(x, b), || f.clone().condition_var(x, b), closed);
+    a.check("condition", || g.clone().condition([lit(x, b)]), || f.clone().condition([lit(x, b)]), closed);
+    a.check("condition_vars", || g.clone().condition_vars(&some, b), || f.clone().condition_vars(&some, b), closed);
+    a.check("exists_var", || g.clone().exists_var(x), || f.clone().exists_var(x), closed);
+    a.check("exists_vars", || g.clone().exists_vars(&some), || f.clone().exists_vars(&some), closed);
+    a.check("forall_vars", || g.clone().forall_vars(&some), || f.clone().forall_vars(&some), closed);
     let clause = [lit(x, b), lit(var(rng), rng.coin())];
-    a.check("and_clause", || g.clone().and_clause(clause), || f.clone().and_clause(clause), same_tdd);
-    a.check("or_cube", || g.clone().or_cube(clause), || f.clone().or_cube(clause), same_tdd);
-    a.check("and_cube", || eng.and_cube(g.clone(), clause), || eng.and_cube(f.clone(), clause), same_tdd);
-    a.check("renumber_top_down", || g.renumber_top_down(), || f.renumber_top_down(), same_tdd);
+    a.check("and_clause", || g.clone().and_clause(clause), || f.clone().and_clause(clause), closed);
+    a.check("or_cube", || g.clone().or_cube(clause), || f.clone().or_cube(clause), closed);
+    a.check("and_cube", || eng.and_cube(g.clone(), clause), || eng.and_cube(f.clone(), clause), closed);
+    a.check("renumber_top_down", || g.renumber_top_down(), || f.renumber_top_down(), closed);
     let mutate = |t: &Tdd, op: &dyn Fn(&mut Tdd) -> Result<(), OperationError>| {
         let mut t = t.clone();
         op(&mut t).map(|()| t)
     };
-    a.check("minimize", || mutate(g, &|t| t.minimize()), || mutate(f, &|t| t.minimize()), same_tdd);
-    a.check("trim", || mutate(g, &|t| t.trim(&hm).map(drop)), || mutate(f, &|t| t.trim(&hm).map(drop)), same_tdd);
-    a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), same_tdd);
+    a.check("minimize", || mutate(g, &|t| t.minimize()), || mutate(f, &|t| t.minimize()), closed);
+    a.check("trim", || mutate(g, &|t| t.trim(&hm).map(drop)), || mutate(f, &|t| t.trim(&hm).map(drop)), closed);
+    a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), closed);
     a.check("attach_level_counts", || mutate(g, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), || mutate(f, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), PartialEq::eq);
     let root = g.vtree().root();
     if g.vtree().num_nodes() > 0 {
@@ -387,20 +397,20 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         );
     }
     let model: Vec<Literal> = (1..=n).map(|v| lit(VarId(v), rng.coin())).collect();
-    a.check("insert_model", || mutate(g, &|t| t.insert_model(&model)), || mutate(f, &|t| t.insert_model(&model)), same_tdd);
-    a.check("remove_model", || mutate(g, &|t| t.remove_model(&model)), || mutate(f, &|t| t.remove_model(&model)), same_tdd);
+    a.check("insert_model", || mutate(g, &|t| t.insert_model(&model)), || mutate(f, &|t| t.insert_model(&model)), closed);
+    a.check("remove_model", || mutate(g, &|t| t.remove_model(&model)), || mutate(f, &|t| t.remove_model(&model)), closed);
     a.check(
         "maintain",
         || mutate(g, &|t| t.maintain().and_then(|mut m| m.insert_model(&model))),
         || mutate(f, &|t| t.maintain().and_then(|mut m| m.insert_model(&model))),
-        same_tdd,
+        closed,
     );
     a.runs("filter_nodes", || g.filter_nodes(|_| true).map(drop));
     a.check(
         "rotation_search",
         || mutate(g, &|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)),
         || mutate(f, &|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)),
-        same_tdd,
+        closed,
     );
     a.runs("rotate_if", || mutate(g, &|t| t.rotate_if(&[], usize::MAX, |_| true).map(drop)).map(drop));
     let other = vars(rng);
@@ -408,10 +418,10 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         (Some(&p), Some(&q)) if p != q => vec![(p, q), (q, p)],
         _ => Vec::new(),
     };
-    a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), same_tdd);
+    a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), closed);
     let literal_x = crate::literal(home, i32::try_from(x.0).unwrap()).unwrap();
     let y = var(rng);
-    a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), same_tdd);
+    a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), closed);
 
     // Moves between vtrees.
     a.check("embed", || g.embed(home, |v| v).map(|r| r.0), || Ok::<_, crate::restructure::EmbedError>(f.clone()), same_tdd);
@@ -423,7 +433,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || Ok(f.clone()),
         same_tdd,
     );
-    a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
+    a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), closed);
     a.check(
         "transport_projection",
         || eng.transport_projection(g.vtree(), &hm, |v| v).map(|v| v.num_leaves()),
