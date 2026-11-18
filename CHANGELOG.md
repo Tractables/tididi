@@ -27,6 +27,11 @@ Breaking changes:
   clone of it conjoined with a diagram on the same leaves gave a wrong
   function. `RotationProbe::before`, `after` and `live_pairs_delta` read
   the rebuilt levels.
+- `exists_var`, `exists_vars` and the operations built on them refuse a
+  diagram with any marginal level with `OperationError::MarginalLevel`.
+  Before, a marginal level off the quantified variables' paths was
+  accepted, and the count could be wrong: after a sum-out, merged nodes no
+  longer tell which events their values came from.
 
 ## 0.2.0
 

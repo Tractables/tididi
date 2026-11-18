@@ -280,48 +280,17 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     assert!(matches!(eng.and(partner, fm), Err(crate::OperationError::MarginalLevel(_))));
 }
 
-/// A marginal level off the projected variable's path must not disturb the
-/// projection or its count.
-///
-/// Build F over balanced(4) with two FULLY DISJOINT halves:
-///   left half (a,b): {a∨b}      (3 models over {a,b})
-///   right half (x,w): {x∨w}     (3 models over {x,w})
-/// so F = (a∨b) ∧ (x∨w), 9 models. Marginalize the LEFT half (a,b) — disjoint
-/// from x's leaf-to-root path — into a real width>1 marginal carrying the
-/// left subtree's per-node counts. Correctly marginalizing a disjoint
-/// subtree preserves the model count, so projecting the marginalized diagram
-/// must equal projecting the non-marginal one.
+/// A marginal level off the projected variable's path refuses: summing out a
+/// sibling subtree can fuse pairs above it, and a fused value no longer tells
+/// which pre-sum events it came from.
 #[test]
-fn projecting_across_a_marginal_sibling_succeeds() {
+fn projecting_across_a_marginal_sibling_is_refused() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])); // a∨b
-    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // x∨w
-    let f = apply_and(t1, t2);
-    assert_eq!(f.model_count().unwrap(), BigUint::from(9u32));
-
-    // Reference: project x on the non-marginal diagram.
-    let ref_count = ((f).clone().exists_var(VarId(3)).unwrap()).model_count().unwrap();
-
-    // Find Internal(a,b) — the root's left child, disjoint from x's path.
-    let ab = leaf_parent(&vtree, 1, 2);
-
-    // Marginalize the disjoint left subtree (a,b) via the test helper, which
-    // installs the correct per-node counts. This produces a real width>1
-    // marginal sibling on x's path (the root's left child).
-    let mut fm = f.clone();
-    crate::test_helpers::marginalize_subtree(&mut fm, ab);
-    assert!(fm.levels[ab.idx()].is_marginal());
-    assert!(fm.levels[ab.idx()].slot_count() > 0);
-    // Marginalizing a disjoint subtree preserves the model count.
-    assert_eq!(fm.model_count().unwrap(), BigUint::from(9u32));
-
-    // Must not panic crossing the marginal sibling, and must match the count.
-    let g = (fm).clone().exists_var(VarId(3)).unwrap();
-    assert_eq!(
-        g.model_count().unwrap(),
-        ref_count,
-        "projection over a marginal sibling gave the wrong count"
-    );
+    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
+    let mut fm = apply_and(t1, t2);
+    crate::test_helpers::marginalize_subtree(&mut fm, leaf_parent(&vtree, 1, 2));
+    assert!(matches!(fm.exists_var(VarId(3)), Err(crate::OperationError::MarginalLevel(_))));
 }
 
 /// Regression for the path-side `One` reference at an INTERNAL ancestor level.
@@ -496,19 +465,15 @@ fn projection_matches_brute_force_on_random_conjunctions() {
     }
 }
 
-/// Quantification regroups rather than disjoining, so a marginal level away
-/// from the variable's path does not refuse the request.
+/// A marginal leaf far from the quantified variable's path still refuses.
 #[test]
-fn projection_crosses_a_marginalized_level() {
-    // The marginal leaf sits far enough from variable 1 for the rewrite's
-    // path preconditions to hold.
+fn projection_across_a_marginalized_level_is_refused() {
     let vtree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
     f.minimize().unwrap();
     let leaf = vtree.leaf_of(VarId(8)).unwrap();
     f.marginalize_levels(&[leaf]).unwrap();
-    let projected = f.exists_var(VarId(1)).unwrap();
-    assert!(!projected.is_zero());
+    assert!(matches!(f.exists_var(VarId(1)), Err(crate::OperationError::MarginalLevel(_))));
 }
 
 /// Universal quantification against the truth table on every vtree shape: an

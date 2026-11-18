@@ -184,8 +184,11 @@ fn spine_walk<L: crate::LiteralInput>(
 /// when a literal's variable has a leaf in the home and none in `f`'s
 /// vtree. Its levels move to their images, no node or pair copied. A literal
 /// that does not convert is left to [`normalize`] to refuse.
-pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, mut f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
+pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
     let Some(home) = f.vtree.home() else { return Ok(f) };
+    if f.vtree.has_regions() {
+        return extend_with_regions(eng, f, lits);
+    }
     let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
     if !vars().any(|var| f.vtree.home_has(var)) {
         return Ok(f);
@@ -193,15 +196,32 @@ pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, mut f: Tdd, lits: 
     let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
     let added = vars().filter(|&var| home.rank(var).is_some());
     let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
-    // Placement drops a store. A structural diagram's store has no column
-    // keyed by a level and the variables keep their names, so it carries
-    // over as it is.
-    let weights = f.weights.take();
-    match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build) {
-        Ok((mut extended, _)) => {
-            extended.weights = weights;
-            Ok(extended)
-        }
+    place_on(eng, f, &into)
+}
+
+/// [`extend_to`] of `f` with regions: refused with
+/// [`OperationError::MarginalLevel`] where a literal's variable is inside
+/// an extent.
+#[cold]
+fn extend_with_regions<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
+    let home = f.vtree.home().expect("a vtree with a region is a projection");
+    let added = lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
+    let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
+    match Vtree::leaf_sets(&f.vtree, &lits)? {
+        crate::vtree::LeafSets::Union(into) => place_on(eng, f, &into),
+        _ => Ok(f),
+    }
+}
+
+/// `f` placed on `into`, a projection of its home holding its leaves.
+fn place_on(eng: &Engine, f: Tdd, into: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+    if f.vtree.num_nodes() == 0 {
+        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        constant.weights = f.weights;
+        return Ok(constant);
+    }
+    match crate::restructure::embed::place_moving(eng, f, into, |var| var, crate::restructure::embed::Free::Build) {
+        Ok((extended, _)) => Ok(extended),
         Err(refused) => Err(match refused.error {
             crate::restructure::EmbedError::Operation(error) => error,
             _ => OperationError::VtreeMismatch,

@@ -424,7 +424,10 @@ impl Tdd {
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
     ///
     /// This decides unsatisfiability without minimization, reading summed-out
-    /// variables as [`Tdd::is_sat`] does.
+    /// variables as [`Tdd::is_sat`] does. On a diagram with summed-out
+    /// regions the answer is exact for model counts and for positive weights;
+    /// with zero or negative weights a sum can cancel to zero without the
+    /// output being [`ZERO`].
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }
@@ -456,7 +459,7 @@ impl Tdd {
     /// The number of reference slots at `idx`, excluding encoded inline values:
     /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::slot_count`].
     pub fn reference_slot_count(&self, idx: VtreeIdx) -> usize {
-        if self.vtree.node(idx).is_leaf() {
+        if self.vtree.node(idx).is_var_leaf() {
             LEAF_WIDTH
         } else {
             self.levels[idx.idx()].slot_count()

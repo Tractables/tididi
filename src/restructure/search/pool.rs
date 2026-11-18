@@ -1085,6 +1085,9 @@ fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
 /// The tree a search over `members` moves, a private copy: their shared
 /// tree, or the union of their projections, with their groups.
 fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationError> {
+    if let Some(region) = members.iter().find_map(|m| m.vtree.regions().next()) {
+        return Err(OperationError::MarginalLevel(region));
+    }
     let first = &members[0].vtree;
     if members.iter().all(|m| Arc::ptr_eq(&m.vtree, first)) {
         return Ok((Vtree::clone(first), None));

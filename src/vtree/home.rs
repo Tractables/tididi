@@ -294,6 +294,10 @@ pub(crate) struct HomeLink {
     pub(super) regions: Vec<Region>,
 }
 
+/// Home ranks as half-open intervals, ascending, neither touching nor
+/// overlapping.
+pub(crate) type Extent = Box<[(u32, u32)]>;
+
 /// The home variables a region ([`VtreeNode::is_region`]) stands for, and
 /// where it sits.
 ///
@@ -305,9 +309,7 @@ pub(crate) struct HomeLink {
 pub(crate) struct Region {
     /// The index of its anchor in [`HomeLink::ranks`].
     pub(super) at: u32,
-    /// Home ranks as half-open intervals, ascending, neither touching nor
-    /// overlapping.
-    pub(super) extent: Box<[(u32, u32)]>,
+    pub(super) extent: Extent,
     /// The number of ranks in `extent`.
     pub(super) count: u32,
 }
@@ -347,6 +349,19 @@ impl HomeLink {
     fn in_extents(&self) -> u32 {
         self.regions.iter().map(|region| region.count).sum()
     }
+}
+
+/// The extent covering `intervals`, which do not overlap.
+pub(crate) fn coalesce(mut intervals: Vec<(u32, u32)>) -> Extent {
+    intervals.sort_unstable();
+    let mut extent: Vec<(u32, u32)> = Vec::with_capacity(intervals.len());
+    for (lo, hi) in intervals {
+        match extent.last_mut() {
+            Some(last) if last.1 == lo => last.1 = hi,
+            _ => extent.push((lo, hi)),
+        }
+    }
+    extent.into_boxed_slice()
 }
 
 /// How the leaf sets of two vtrees with one home compare.
@@ -448,22 +463,15 @@ impl Vtree {
     }
 
     /// The topmost own node at or under home node `h`, `None` when no own leaf
-    /// is under `h`; the region whose extent holds every home leaf under
-    /// `h`, if one does; on a root vtree, `h` itself when it is a node.
-    /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
-    /// of the home's size, and linear in the number of regions.
+    /// or region anchor is under `h`; on a root vtree, `h` itself when it is
+    /// a node. Logarithmic in [`num_leaves`](Self::num_leaves) times the
+    /// logarithm of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
         let Some(link) = self.home.as_deref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (link.home.index(), &link.ranks);
         let gap = *index.slot.get(h.idx())?;
-        if !link.regions.is_empty() {
-            let under = link.home.rank_range(h);
-            if let Some(region) = link.region_over(under.start, under.end) {
-                return Some(link.region_node(region));
-            }
-        }
         if link.home.vtree().node(h).is_leaf() {
             return self.node_at_home(h);
         }
@@ -796,6 +804,24 @@ impl Vtree {
         self.leaf_of(var).is_none() && link.region_over(rank, rank + 1).is_none()
     }
 
+    /// The region whose extent holds `var`.
+    pub(crate) fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
+        let link = self.home.as_deref()?;
+        let rank = link.home.rank(var)?;
+        link.region_over(rank, rank + 1).map(|region| link.region_node(region))
+    }
+
+    /// `var` has no leaf here: [`OperationError::MarginalLevel`] naming its
+    /// region when an extent holds it, else
+    /// [`OperationError::VariableNotInVtree`].
+    #[cold]
+    pub(crate) fn no_leaf_for(&self, var: VarId) -> OperationError {
+        match self.region_of(var) {
+            Some(region) => OperationError::MarginalLevel(region),
+            None => OperationError::VariableNotInVtree(var),
+        }
+    }
+
     /// For `u`, the union of the leaf sets of projections `a` and `b`, whose
     /// root has, as its two children, the projections of `a`'s and `b`'s
     /// leaf sets: by own node of `a` and of `b`, the node of `u` standing for
@@ -899,6 +925,79 @@ impl Vtree {
         if self.index.0.is_some() {
             self.index = RootIndex::default();
         }
+    }
+
+    /// The anchor rank and extent of the region that folding own node `t`
+    /// of this projection makes: the ranks of the variable leaves under `t`
+    /// and the extents of the regions under it, the anchor at the leftmost
+    /// childless node under `t`.
+    pub(crate) fn folded_region(&self, t: VtreeIdx) -> (u32, Extent) {
+        let link = self.home.as_deref().expect("a projection");
+        let position = |u: VtreeIdx| link.ranks.binary_search(&link.home.index().slot[link.node_of[u.idx()].idx()]).expect("a position");
+        let mut intervals = Vec::new();
+        for u in self.subtree(t).filter(|&u| self.node(u).is_leaf()) {
+            match link.regions.binary_search_by_key(&(position(u) as u32), |region| region.at) {
+                Ok(j) => intervals.extend_from_slice(&link.regions[j].extent),
+                Err(_) => intervals.push((link.ranks[position(u)], link.ranks[position(u)] + 1)),
+            }
+        }
+        let mut leftmost = t;
+        while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
+            leftmost = left;
+        }
+        (link.ranks[position(leftmost)], coalesce(intervals))
+    }
+
+    /// The anchor variable and the variables of region `t` of this
+    /// projection.
+    pub(crate) fn region_vars(&self, t: VtreeIdx) -> (VarId, Vec<VarId>) {
+        let link = self.home.as_deref().expect("a projection");
+        let (anchor, extent) = self.region_at(t);
+        let var = |rank: u32| link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]);
+        (var(anchor), extent.iter().flat_map(|&(lo, hi)| lo..hi).map(var).collect())
+    }
+
+    /// Whether this vtree has a region.
+    #[inline]
+    pub(crate) fn has_regions(&self) -> bool {
+        self.num_leaf_nodes() != self.num_leaves() as usize
+    }
+
+    /// The number of childless nodes, variable leaves and regions; the
+    /// nodes are stored leaves first, so these are its first nodes.
+    #[inline]
+    pub(crate) fn num_leaf_nodes(&self) -> usize {
+        self.num_nodes().div_ceil(2)
+    }
+
+    /// The regions of this vtree, by position.
+    pub(crate) fn regions(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
+        self.home.as_deref().into_iter().flat_map(|link| link.regions.iter().map(|region| link.region_node(region)))
+    }
+
+    /// The anchor rank and extent of region `t` of this projection.
+    pub(crate) fn region_at(&self, t: VtreeIdx) -> (u32, Extent) {
+        let link = self.home.as_deref().expect("a projection");
+        let region = link.regions.iter().find(|region| link.region_node(region) == t).expect("a region");
+        (link.ranks[region.at as usize], region.extent.clone())
+    }
+
+    /// The projection of `home` on the leaves of `ranks` and on `regions`,
+    /// each an anchor rank and an extent holding it; together not empty, the
+    /// extents holding no other rank.
+    pub(crate) fn project_regions(home: &Home, mut ranks: Vec<u32>, regions: Vec<(u32, Extent)>) -> Arc<Vtree> {
+        ranks.extend(regions.iter().map(|&(anchor, _)| anchor));
+        ranks.sort_unstable();
+        let mut regions: Vec<Region> = regions
+            .into_iter()
+            .map(|(anchor, extent)| Region {
+                at: ranks.binary_search(&anchor).expect("an anchor") as u32,
+                count: extent.iter().map(|&(lo, hi)| hi - lo).sum(),
+                extent,
+            })
+            .collect();
+        regions.sort_unstable_by_key(|region| region.at);
+        Arc::new(Self::project_ranks(home, ranks, regions))
     }
 
     /// The projection of `home` on the leaves of `ranks`, ascending and not

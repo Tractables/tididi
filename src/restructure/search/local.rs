@@ -166,7 +166,7 @@ impl Engine {
             self.reduce_plain(tdd, crate::reduce::ReductionPlan::default())?;
         }
 
-        let mut search = super::SearchTree::new(self, tdd);
+        let mut search = super::SearchTree::new(self, tdd)?;
         loop {
             if let Some(cap) = config.max_sweeps
                 && rule.stats.sweeps >= cap {

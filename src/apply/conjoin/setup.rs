@@ -649,7 +649,9 @@ fn survey<'r>(
         g_widths[t.idx()] = w2;
         (w1, w2)
     };
-    if masks.f.is_empty() && masks.g.is_empty() {
+    // A region is a leaf `leaf_bottomup_slice` does not list: a vtree with
+    // one lists its leaves as the children of its levels below.
+    if masks.f.is_empty() && masks.g.is_empty() && !vtree.has_regions() {
         let leaves = vtree.leaf_bottomup_slice();
         for &t in leaves {
             level(t, f_widths, g_widths);
@@ -696,7 +698,7 @@ fn survey<'r>(
     lim.reserve(free_before, internal.len())?;
     lim.reserve(tops, internal.len())?;
     lim.reserve(free, internal.len())?;
-    lim.reserve(leaves, vtree.num_leaves() as usize)?;
+    lim.reserve(leaves, vtree.num_leaf_nodes())?;
     let free_at = |t: VtreeIdx| masks.f.contains(t.idx()) || masks.g.contains(t.idx());
     let mut free_nodes = 0u64;
     for &t in internal {
@@ -768,7 +770,7 @@ fn survey<'r>(
 /// A level whose children are not both marked or leaves is decided without
 /// reading it.
 pub(super) fn mark_constant_true(vtree: &Vtree, ops: Operands<&Held<'_>>, out: &mut [bool]) -> bool {
-    let leaves = vtree.num_leaves() as usize;
+    let leaves = vtree.num_leaf_nodes();
     let mut any = false;
     for &t in vtree.internal_bottomup_slice() {
         let (left, right) = vtree.children(t);

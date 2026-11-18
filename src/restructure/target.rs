@@ -69,7 +69,7 @@ impl Tdd {
     /// weight table; [`RestructureError::Bound`] when a rotation would expand
     /// more than `bound` pairs, and [`RestructureError::Operation`] with
     /// [`OperationError::MarginalLevel`] when it would turn a summed-out
-    /// level, or with a refused allocation or an armed stop. After an error
+    /// level or either vtree has a region, or with a refused allocation or an armed stop. After an error
     /// the diagram denotes the same function on its own copy of a vtree
     /// between the two. A diagram on a projection is then on a projection of
     /// a home with the same variables: its own when no rotation or mirror was
@@ -114,6 +114,9 @@ impl Engine {
     ) -> Result<RestructureStats, RestructureError> {
         let _op = self.limits().enter()?;
         same_variables(tdd.vtree(), target)?;
+        if let Some(region) = tdd.vtree().regions().chain(target.regions()).next() {
+            return Err(OperationError::MarginalLevel(region).into());
+        }
         if tdd.weights.is_some() {
             return Err(RestructureError::Weighted);
         }

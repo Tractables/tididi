@@ -100,14 +100,23 @@ pub(super) struct SearchTree<'a> {
 
 impl<'a> SearchTree<'a> {
     /// Detach a shared tree once before probing any pivots.
-    pub(super) fn new(eng: &'a crate::Engine, tdd: &'a mut Tdd) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::MarginalLevel`](crate::OperationError::MarginalLevel)
+    /// naming a region: a kept move would take the tree off its home, which
+    /// a region cannot leave.
+    pub(super) fn new(eng: &'a crate::Engine, tdd: &'a mut Tdd) -> Result<Self, crate::OperationError> {
         use std::sync::Arc;
+        if let Some(region) = tdd.vtree.regions().next() {
+            return Err(crate::OperationError::MarginalLevel(region));
+        }
         let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
         let was_home = tdd.vtree.is_home();
         let index = Arc::get_mut(&mut tdd.vtree).map(Vtree::take_index).unwrap_or_default();
         Vtree::make_mut(&mut tdd.vtree);
-        Self { tdd, eng, original, kept: false, was_home, index }
+        Ok(Self { tdd, eng, original, kept: false, was_home, index })
     }
 
     /// [`probe_moves`](probe::probe_moves) on the private tree; a kept

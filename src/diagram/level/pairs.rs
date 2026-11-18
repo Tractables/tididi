@@ -686,6 +686,24 @@ impl TddLevel {
         }
     }
 
+    /// Whether a node holds one pair twice: the multiplicity a node merge
+    /// above a summed-out level leaves at any height, which a pass reading a
+    /// node's pairs as a set would count once.
+    #[cold]
+    pub(crate) fn repeats_a_pair(&self) -> Result<bool, crate::OperationError> {
+        let mut pairs = Vec::new();
+        for (i, node) in self.nodes().iter().enumerate() {
+            pairs.clear();
+            pairs.try_reserve(self.pair_count_at(i)).map_err(|_| crate::OperationError::OverBudget)?;
+            pairs.extend(self.pairs_iter_of(&node).map(|p| (p.left.raw(), p.right.raw())));
+            pairs.sort_unstable();
+            if pairs.windows(2).any(|w| w[0] == w[1]) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// [`pair_count_at`](Self::pair_count_at) of a node its level's
     /// description implies: the description's count, without the node's
     /// word. Out of line, so that a stored level's read inlines where it is

@@ -168,7 +168,7 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
 ) -> Result<(), OperationError> {
     let ti = t.idx();
     gate.poll(1)?;
-    if tdd.vtree.node(t).is_leaf() {
+    if tdd.vtree.node(t).is_var_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
             let v = f.leaf(t, var, LeafLabel::from_idx(i));

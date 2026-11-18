@@ -238,7 +238,7 @@ fn bad_images_marginal_levels_and_constants() {
     assert!(matches!(r.error, EmbedError::DestinationWeights(_)), "{:?}", r.error);
 
     let mut summed = f.clone();
-    eng.marginalize_levels(&mut summed, &[own.root()]).unwrap();
+    crate::marginal::marginalize_levels(&eng, &mut summed, &[own.root()]).unwrap();
     let r = eng.transport(summed, &home, |v| v).unwrap_err();
     assert!(matches!(r.error, EmbedError::Operation(OperationError::MarginalLevel(_))), "{:?}", r.error);
 

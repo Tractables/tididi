@@ -105,9 +105,11 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
 /// projections of one home; [`OperationError::WeightsAcrossProjections`]
-/// when one with a summed-out level would move to a larger projection;
+/// when operands on different projections carry incompatible weights or one
+/// without weights has a summed-out level beside one with weights;
 /// [`OperationError::MarginalLevel`] naming the lowest level that one
-/// operand has summed out and the other has not;
+/// operand has summed out and the other has not, or an internal summed-out
+/// level of an operand that would move to a larger projection;
 /// [`OperationError::SharedModel`] when neither operand has a summed-out
 /// level and they share a model, whose count of two only a summed-out level
 /// could hold; [`OperationError::IncompatibleWeights`] for different weight
