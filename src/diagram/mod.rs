@@ -46,6 +46,9 @@
 //! - [`ZERO`] never appears in a pair — every live node in a structural diagram is satisfiable;
 //! - marginality is downward-closed: every level below a marginal level is
 //!   marginal or a leaf;
+//! - a structural level names each structural leaf child in one form: as
+//!   [`ONE_LEAF_IDX`] in every pair, or as [`POS_LEAF_IDX`] and
+//!   [`NEG_LEAF_IDX`] in every pair;
 //! - in a diagram an operation produced, distinct nodes at a level denote
 //!   pairwise disjoint functions, so a node's pairs denote disjoint products
 //!   and its count is the sum over its pairs; a diagram built level by level

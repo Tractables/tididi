@@ -467,12 +467,17 @@ mod try_from_levels {
             .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]);
         let x3 = levels[r.idx()]
             .push_internal_node(&[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]);
-        let all = levels[r.idx()]
-            .push_internal_node(&[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)]);
-        // Pairs of one node are mutually exclusive: the second pair covers
-        // ¬(x1 ∧ x2) explicitly.
-        let nand = levels[l.idx()].push_internal_node(&[
+        // A level names each leaf child in one form, so `all` names x3 by
+        // its two literals.
+        let all = levels[r.idx()].push_internal_node(&[
+            ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX),
             ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX),
+        ]);
+        // Pairs of one node are mutually exclusive: together they cover
+        // ¬(x1 ∧ x2).
+        let nand = levels[l.idx()].push_internal_node(&[
+            ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX),
+            ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX),
             ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX),
         ]);
         let out = levels[root.idx()].push_internal_node(&[

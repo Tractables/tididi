@@ -76,8 +76,15 @@ fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
     for level in vtree.bottomup() {
         if vtree.node(level).is_leaf() { continue; }
         let (left, right) = vtree.children(level);
+        let right_true = labels[right.idx()][0];
         labels[level.idx()] = std::array::from_fn(|label| {
-            builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], labels[right.idx()][0])]).unwrap()
+            // A level names its leaf child in one form: true over it by its
+            // two literals.
+            if label == 0 && vtree.node(left).is_leaf() {
+                let pairs = [ChildPair::new(POS_LEAF_IDX, right_true), ChildPair::new(NEG_LEAF_IDX, right_true)];
+                return builder.push(eng, level, &pairs).unwrap();
+            }
+            builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], right_true)]).unwrap()
         });
     }
     let root = vtree.root();

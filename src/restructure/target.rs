@@ -71,7 +71,9 @@ impl Tdd {
     /// [`OperationError::MarginalLevel`] when it would turn a summed-out
     /// level, or with a refused allocation or an armed stop. After an error
     /// the diagram denotes the same function on its own copy of a vtree
-    /// between the two.
+    /// between the two. A diagram on a projection is then on a projection of
+    /// a home with the same variables: its own when no rotation or mirror was
+    /// kept, else the home the kept ones imply; its counts do not change.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -126,6 +128,18 @@ impl Engine {
         // replace only on a canonical diagram. With summed-out levels the
         // rotation keeps every contribution instead, and a minimize would
         // merge them, so those are moved as they are.
+        let original = tdd.vtree.home().is_some().then(|| Arc::clone(&tdd.vtree));
+        let moved = self.move_to(tdd, target, bound);
+        if moved.is_err()
+            && !Arc::ptr_eq(&tdd.vtree, target)
+            && let Some(original) = original
+        {
+            back_home(self, tdd, original);
+        }
+        moved
+    }
+
+    fn move_to(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<RestructureStats, RestructureError> {
         let structural = !tdd.has_marginal_level();
         if structural {
             self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
@@ -406,6 +420,21 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
         tdd.levels.certify(tdd.output);
     }
     Ok(mirrors)
+}
+
+/// `tdd`, refused while moving off `original`, a projection, put back on a
+/// home: `original` itself when no mirror or rotation was kept (each kept one
+/// drops the link), else the home the kept moves imply, so that its counts
+/// stay over the home's variables.
+#[cold]
+#[inline(never)]
+fn back_home(eng: &Engine, tdd: &mut Tdd, original: Arc<Vtree>) {
+    if tdd.vtree.home().is_some() {
+        tdd.vtree = original;
+        return;
+    }
+    Arc::make_mut(&mut tdd.vtree).rejoin_home(&original);
+    crate::restructure::transport::seat_on_lifted_home(eng, tdd);
 }
 
 /// The variable of the leftmost leaf under `t`.

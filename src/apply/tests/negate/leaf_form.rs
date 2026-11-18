@@ -7,44 +7,9 @@
 //! leaf-twin contraction, which is all-or-nothing per level.
 
 use super::*;
-use crate::diagram::{ChildSide, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd};
+use crate::diagram::{ONE_LEAF_IDX, Tdd};
+use crate::test_helpers::check::{assert_no_mixed_leaf_side, labels_at};
 use std::sync::Arc;
-
-/// `(uses One, uses Pos or Neg)` at `side` of level `t`.
-fn labels_at(tdd: &Tdd, t: usize, side: ChildSide) -> (bool, bool) {
-    let level = &tdd.levels[t];
-    let (mut one, mut literal) = (false, false);
-    if level.is_marginal() {
-        return (one, literal);
-    }
-    for j in 0..level.slot_count() {
-        for p in level.pairs_vec(j) {
-            let label = if side == ChildSide::Left { p.left.0 } else { p.right.0 };
-            one |= label == ONE_LEAF_IDX.0;
-            literal |= label == POS_LEAF_IDX.0 || label == NEG_LEAF_IDX.0;
-        }
-    }
-    (one, literal)
-}
-
-/// Panics naming the level if any leaf side of `tdd` names both forms.
-fn assert_no_mixed_leaf_side(tdd: &Tdd, what: &str) {
-    let vtree = Arc::clone(tdd.vtree());
-    for (t, left, right) in vtree.internal_bottomup() {
-        for (child, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
-            if !vtree.node(child).is_leaf() {
-                continue;
-            }
-            let (one, literal) = labels_at(tdd, t.idx(), side);
-            assert!(
-                !(one && literal),
-                "{what}: level {} names leaf {} as One and as Pos/Neg",
-                t.idx(),
-                child.idx()
-            );
-        }
-    }
-}
 
 #[test]
 fn the_fill_joins_a_level_in_the_form_that_level_already_uses() {
@@ -105,8 +70,8 @@ fn a_fill_on_a_one_form_level_is_emitted_as_one() {
                 let mut forms = vec![(false, false); vtree.num_nodes()];
                 for (t, l, r) in vtree.internal_bottomup() {
                     forms[t.idx()] = (
-                        vtree.node(l).is_leaf() && labels_at(&tdd, t.idx(), ChildSide::Left).0,
-                        vtree.node(r).is_leaf() && labels_at(&tdd, t.idx(), ChildSide::Right).0,
+                        vtree.node(l).is_leaf() && labels_at(&tdd, t.idx(), true).0,
+                        vtree.node(r).is_leaf() && labels_at(&tdd, t.idx(), false).0,
                     );
                 }
                 let mut full = tdd.clone();

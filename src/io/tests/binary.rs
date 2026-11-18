@@ -261,9 +261,9 @@ fn unreachable_nodes_are_dropped_as_the_text_writer_drops_them() {
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     // Two nodes on each child level and two at the root; the output reaches
     // the second of each.
-    let _ = b.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    let _ = b.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
     let l = b.push(&eng, left, &[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
-    let _ = b.push(&eng, right, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let _ = b.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let r = b.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     let _ = b.push(&eng, vtree.root(), &[ChildPair::new(l, ONE_LEAF_IDX)]).unwrap();
     let out = b.push(&eng, vtree.root(), &[ChildPair::new(l, r)]).unwrap();
@@ -526,7 +526,7 @@ fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
     let first = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     builder.push(&eng, left, &[ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     let last = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
-    let dead_right = builder.push(&eng, right, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let dead_right = builder.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let kept_right = builder.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     builder.push(&eng, root, &[ChildPair::new(dead_left, dead_right)]).unwrap();
     let output = builder.push(&eng, root, &[ChildPair::new(last, kept_right), ChildPair::new(first, kept_right)]).unwrap();

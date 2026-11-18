@@ -85,6 +85,20 @@ pub enum TddBuildError {
     IncompatibleWeights,
     /// `output` is not a node of the root level (nor the `ZERO` sentinel).
     BadOutput(TddNodeId),
+    /// A level names a structural leaf child as `One` in one pair and as
+    /// `Pos` or `Neg` in another, so its nodes are not disjoint at that leaf.
+    MixedLeafForm {
+        /// The level holding the pairs.
+        level: VtreeIdx,
+        /// The leaf child.
+        leaf: VtreeIdx,
+    },
+    /// The level at a region, which stands for summed-out variables, is not
+    /// marginal.
+    StructuralRegion {
+        /// The region.
+        level: VtreeIdx,
+    },
 }
 
 impl std::fmt::Display for TddBuildError {
@@ -145,6 +159,13 @@ impl std::fmt::Display for TddBuildError {
                 id.vtree.idx(),
                 id.local.0
             ),
+            Self::MixedLeafForm { level, leaf } => write!(
+                f,
+                "level {} names leaf {} as One in one pair and as a literal in another",
+                level.idx(),
+                leaf.idx()
+            ),
+            Self::StructuralRegion { level } => write!(f, "region {} holds no summed-out values", level.idx()),
         }
     }
 }

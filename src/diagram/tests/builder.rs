@@ -30,6 +30,41 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     assert_eq!(result.model_count().unwrap(), 2u32.into());
 }
 
+/// `[(One, Pos), (Pos, Neg)]` over `(x, y)` is `x ∨ y` but names `x` both as
+/// `One` and as `Pos`; `trim` reads the first pair and made it true.
+#[test]
+fn finish_and_the_reader_refuse_a_level_that_mixes_leaf_forms() {
+    use crate::diagram::TddBuildError;
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(2));
+    let root = tree.root();
+    let (x, _) = tree.children(root);
+    let mut b = Tdd::builder(&eng, &tree).unwrap();
+    let mixed = [ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX), ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)];
+    let node = b.push(&eng, root, &mixed).unwrap();
+    let refused = b.finish(TddNodeId { vtree: root, local: node }).unwrap_err();
+    assert_eq!(refused, TddBuildError::MixedLeafForm { level: root, leaf: x });
+    let read = |text: &str| crate::io::read_tdd(&mut text.as_bytes(), &tree);
+    assert!(read("p tdd 1 2 3 2 0\nL 0 1\nL 1 2\nI 2 0 1 0 1 1 2\n").is_err());
+    let literals = read("p tdd 1 2 3 2 0\nL 0 1\nL 1 2\nI 2 0 1 1 1 1 2 2 1\n").unwrap();
+    assert_eq!(literals.model_count().unwrap(), 3u32.into());
+}
+
+#[test]
+fn finish_seats_the_constants_on_a_vtree_with_no_node() {
+    use crate::diagram::{NodeIdx, TddBuildError, TRUE, ZERO};
+    use crate::vtree::Home;
+    let eng = Engine::new();
+    let empty = Vtree::empty_projection(&Home::new(Vtree::balanced(5)));
+    let at = |local| TddNodeId { vtree: empty.root(), local };
+    let one = Tdd::builder(&eng, &empty).unwrap().finish(at(TRUE)).unwrap();
+    assert!(one.is_one());
+    assert_eq!(one.model_count().unwrap(), 32u32.into());
+    assert!(Tdd::builder(&eng, &empty).unwrap().finish(at(ZERO)).unwrap().is_zero());
+    let refused = Tdd::builder(&eng, &empty).unwrap().finish(at(NodeIdx(0))).unwrap_err();
+    assert_eq!(refused, TddBuildError::BadOutput(at(NodeIdx(0))));
+}
+
 /// Assemble `x1 ∧ ¬x2` over `tree`, returning the output node for
 /// [`TddBuilder::finish`].
 fn fill(

@@ -25,6 +25,9 @@ mod tag;
 mod splice;
 mod transport;
 pub(crate) mod target;
+#[cfg(test)]
+#[path = "tests/leaf_form.rs"]
+mod leaf_form_tests;
 
 pub use crate::vtree::graft::Embedding;
 pub use embed::EmbeddingPlan;

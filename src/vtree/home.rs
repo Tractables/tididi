@@ -855,6 +855,14 @@ impl Vtree {
         }
     }
 
+    /// Undo [`reshaped`](Self::reshaped) after moves that kept node indices:
+    /// take back the link of `before`, this tree before the moves, so that
+    /// [`lifted_home`](Self::lifted_home) can read where each node stood.
+    pub(crate) fn rejoin_home(&mut self, before: &Vtree) {
+        self.home = before.home.clone();
+        self.var_to_leaf = Vec::new();
+    }
+
     #[cold]
     #[inline(never)]
     fn leave_home(&mut self) {

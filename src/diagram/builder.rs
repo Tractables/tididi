@@ -15,7 +15,7 @@ use super::pool::{return_levels, try_take_levels};
 use super::primitives::{ChildPair, EncodedChildRef, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
 use super::weights::WeightStore;
-use super::{ChildDecoder, ChildRef, ValueRef, LEAF_WIDTH};
+use super::{ChildDecoder, ChildRef, ValueRef, LEAF_WIDTH, ONE_LEAF_IDX};
 
 /// Hash-cons tables for one level.
 ///
@@ -122,8 +122,9 @@ impl<'a> LevelView<'a> {
 /// is not a rollback: the level keeps what it already holds, and a builder that
 /// cannot go on hands its buffers back with [`abandon`](Self::abandon).
 ///
-/// [`finish`](Self::finish) checks references, storage, and marginal columns.
-/// It does not prove determinism: the caller must ensure that nodes at a
+/// [`finish`](Self::finish) checks references, storage, marginal columns, and
+/// that a level names each leaf child in one form (as `One`, or as `Pos` and
+/// `Neg`). It does not prove determinism: the caller must ensure that nodes at a
 /// structural level represent disjoint functions and that a child pair belongs
 /// to at most one node at that level. Counting relies on these conditions;
 /// minimization cannot turn an arbitrary overlapping circuit into a TDD.
@@ -437,8 +438,10 @@ impl TddBuilder {
     /// # Errors
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
-    /// `output` is neither a live root node nor the false sentinel; other variants
-    /// identify invalid references, marginal columns or leaf storage.
+    /// `output` is neither a live root node nor the false sentinel (nor, on a
+    /// vtree with no node, the true one); [`TddBuildError::MixedLeafForm`]
+    /// when a level names a leaf child both as `One` and as a literal; other
+    /// variants identify invalid references, marginal columns or leaf storage.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -579,8 +582,8 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 /// side naming a live slot in its child level (decoded through `ChildDecoder::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed
 /// marginal count backed by an exact value, marginality downward-closed, a
-/// store behind every weight-marginal level, and `output` a node of the root
-/// level or `ZERO`.
+/// store behind every weight-marginal level, one form per structural leaf
+/// child of a level, and `output` a node of the root level or `ZERO`.
 ///
 /// # Errors
 ///
@@ -604,6 +607,9 @@ pub(crate) fn check_levels(
         return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
     check_leaf_levels(vtree, levels)?;
+    if vtree.num_nodes().div_ceil(2) != vtree.num_leaves() as usize {
+        check_region_levels(vtree, levels)?;
+    }
     for (t, left, right) in vtree.internal_bottomup() {
         if levels[t.idx()].is_marginal() {
             check_marginal_level(vtree, levels, t)?;
@@ -612,6 +618,27 @@ pub(crate) fn check_levels(
         }
     }
     check_output(vtree, levels, output)
+}
+
+/// Every pair of a structural level names each structural leaf child in one
+/// form: as `One`, or as `Pos` or `Neg`. The pass of
+/// [`check_structural_level`] over two structural children reads this itself;
+/// this is the separate pass for a level with a marginal child.
+fn check_leaf_form(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
+) -> Result<(), TddBuildError> {
+    let labelled = |c: VtreeIdx| vtree.node(c).is_leaf() && !levels[c.idx()].is_marginal();
+    let (l, r) = (labelled(left), labelled(right));
+    if !l && !r {
+        return Ok(());
+    }
+    let form = |side: EncodedChildRef| 1u8 << u8::from(side.raw() == ONE_LEAF_IDX.0);
+    let (mut lf, mut rf) = (0u8, 0u8);
+    levels[t.idx()].for_each_node_pair(|_, pair| {
+        lf |= form(pair.left);
+        rf |= form(pair.right);
+    });
+    mixed_leaf_form(vtree, t, [(left, if l { lf } else { 0 }), (right, if r { rf } else { 0 })])
 }
 
 /// A structural leaf level stores nothing. A count-marginal one carries the
@@ -632,6 +659,16 @@ fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildE
         }
     }
     Ok(())
+}
+
+/// A region stands for variables summed out, so its level holds values.
+#[cold]
+#[inline(never)]
+fn check_region_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
+    match vtree.bottomup().find(|&t| vtree.node(t).is_region() && !levels[t.idx()].is_marginal()) {
+        Some(level) => Err(TddBuildError::StructuralRegion { level }),
+        None => Ok(()),
+    }
 }
 
 /// A marginal level's children are leaves or marginal themselves, and every
@@ -666,18 +703,25 @@ fn check_structural_level(
     // one.
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
-        let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+        // The same pass gathers each side's leaf forms, read only where that
+        // child is a leaf.
+        let (mut lf, mut rf) = (0u8, 0u8);
+        let mut fits = |pair: &ChildPair| {
+            lf |= 1 << u8::from(pair.left.raw() == ONE_LEAF_IDX.0);
+            rf |= 1 << u8::from(pair.right.raw() == ONE_LEAF_IDX.0);
+            (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb
+        };
         // A stored level's nodes are read as slices of its arena, in a loop
         // apart from an implicit level's generated pairs.
         let all_fit = match lvl.stored() {
             Some(stored) => stored.nodes().iter().all(|node| {
                 let pairs = stored.of(node);
-                !pairs.is_empty() && pairs.iter().all(fits)
+                !pairs.is_empty() && pairs.iter().all(&mut fits)
             }),
             None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
         };
         if all_fit {
-            return Ok(());
+            return mixed_leaf_form(vtree, t, [(left, lf), (right, rf)]);
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -697,14 +741,28 @@ fn check_structural_level(
             }
         }
     }
-    Ok(())
+    check_leaf_form(vtree, levels, t, left, right)
 }
 
-/// The output is a node of the root level, or `ZERO`.
+/// `Err` naming the first of `sides`, a child and the leaf forms its pairs
+/// used (bit 0 a literal, bit 1 `One`), that is a leaf named both ways.
+fn mixed_leaf_form(vtree: &Vtree, t: VtreeIdx, sides: [(VtreeIdx, u8); 2]) -> Result<(), TddBuildError> {
+    match sides.into_iter().find(|&(c, forms)| forms == 3 && vtree.node(c).is_leaf()) {
+        Some((leaf, _)) => Err(TddBuildError::MixedLeafForm { level: t, leaf }),
+        None => Ok(()),
+    }
+}
+
+/// The output is a node of the root level, or `ZERO`; on a vtree with no
+/// node, `ZERO` or `TRUE`.
 fn check_output(vtree: &Vtree, levels: &[TddLevel], output: TddNodeId) -> Result<(), TddBuildError> {
-    use super::primitives::ZERO;
+    use super::primitives::{TRUE, ZERO};
     let root = vtree.root();
-    if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
+    let in_range = match vtree.num_nodes() {
+        0 => output.local == TRUE,
+        _ => output.local.idx() < bound(vtree, levels, root),
+    };
+    if output.vtree != root || (output.local != ZERO && !in_range) {
         return Err(TddBuildError::BadOutput(output));
     }
     Ok(())
