@@ -775,21 +775,8 @@ impl Plan {
                 node = parent;
             }
         }
-        // A region's image is the region of `into` at its anchor.
-        for region in source.regions() {
-            let target = into
-                .node_at_home(source.home_node(region))
-                .filter(|&t| into.node(t).is_region() && into.region_at(t) == source.region_at(region))
-                .ok_or(EmbedError::NotIsomorphic { source: region })?;
-            free[target.idx()] = false;
-            embedding[region.idx()] = target;
-            let mut node = target;
-            while let Some(parent) = into.node(node).parent()
-                && free[parent.idx()]
-            {
-                free[parent.idx()] = false;
-                node = parent;
-            }
+        if source.has_regions() {
+            map_regions(source, into, free, embedding)?;
         }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
@@ -901,6 +888,28 @@ impl Plan {
         pass_throughs.reverse();
         Ok(())
     }
+}
+
+/// Map each region of `source` to its image in [`Plan::fill`]: the region of
+/// `into` at its anchor, its ancestors not free.
+#[cold]
+fn map_regions(source: &Vtree, into: &Vtree, free: &mut [bool], embedding: &mut [VtreeIdx]) -> Result<(), EmbedError> {
+    for region in source.regions() {
+        let target = into
+            .node_at_home(source.home_node(region))
+            .filter(|&t| into.node(t).is_region() && into.region_at(t) == source.region_at(region))
+            .ok_or(EmbedError::NotIsomorphic { source: region })?;
+        free[target.idx()] = false;
+        embedding[region.idx()] = target;
+        let mut node = target;
+        while let Some(parent) = into.node(node).parent()
+            && free[parent.idx()]
+        {
+            free[parent.idx()] = false;
+            node = parent;
+        }
+    }
+    Ok(())
 }
 
 /// What [`place_moving`] does with the free levels, those of the destination
