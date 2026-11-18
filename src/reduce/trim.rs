@@ -12,7 +12,9 @@
 //! of `e`, its pair lists concatenated by owner otherwise. A chain ending at
 //! a kept leaf maps each node of its top to the labels it holds, and the
 //! level above rewrites its references on that side, the only pass over
-//! pairs a kept level takes. A top whose nodes hold both labels is true, and
+//! pairs a kept level takes; a chain ending at a marginal level maps each
+//! node of its top to the value reference its one pair holds, and the level
+//! above names those values. A top whose nodes hold both labels is true, and
 //! its parent is dropped in the same pass. The levels then move to their
 //! nodes' indices in the projection.
 
@@ -23,10 +25,10 @@ use num_traits::ToPrimitive;
 use crate::Engine;
 use crate::build::constant_without_leaf;
 use crate::diagram::{
-    rewrite_stored_side, ChildPair, ChildSide, EncodedNode, LevelCounts, NodeIdx, StoreRoom, Tdd, TddLevel, TddNodeId,
-    NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX,
+    rewrite_stored_side, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, StoreRoom, Tdd, TddLevel, TddNodeId,
+    NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ValueRef,
 };
-use crate::limits::OperationError;
+use crate::limits::{OperationError, PollGate};
 use crate::value::{Count, CountRead, CountVec};
 use crate::vtree::{Home, Vtree, VtreeIdx, VtreeNode};
 
@@ -76,6 +78,9 @@ struct Shape {
     kind: Vec<Kind>,
     /// For a `LeafChain` node, the labels each of its nodes holds.
     labels: Vec<Vec<u8>>,
+    /// For a `LeafChain` node ending at a marginal level, the reference into
+    /// that level each of its nodes holds, in place of `labels`.
+    values: Vec<Vec<u32>>,
     /// The leaves under each node, and the kept ones.
     leaves: Vec<u32>,
     kept: Vec<u32>,
@@ -120,11 +125,22 @@ impl Shape {
         let lim = eng.limits();
         let vtree = &*f.vtree;
         let n = vtree.num_nodes();
-        let mut shape =
-            Shape { kind: Vec::new(), labels: Vec::new(), leaves: Vec::new(), kept: Vec::new(), dropped: false, merged: false };
+        let mut shape = Shape {
+            kind: Vec::new(),
+            labels: Vec::new(),
+            values: Vec::new(),
+            leaves: Vec::new(),
+            kept: Vec::new(),
+            dropped: false,
+            merged: false,
+        };
         lim.try_resize(&mut shape.kind, n, Kind::True)?;
         lim.reserve_exact(&mut shape.labels, n)?;
         shape.labels.resize_with(n, Vec::new);
+        if summed {
+            lim.reserve_exact(&mut shape.values, n)?;
+            shape.values.resize_with(n, Vec::new);
+        }
         lim.try_resize(&mut shape.leaves, n, 0)?;
         lim.try_resize(&mut shape.kept, n, 0)?;
         let mut gate = lim.gate();
@@ -142,9 +158,10 @@ impl Shape {
             }
             let first = level.pairs_iter_of_idx(0).next().expect("a node holds a pair");
             let marginal = |c: VtreeIdx| summed && f.levels[c.idx()].is_marginal();
+            let over_values = |c: VtreeIdx| marginal(c) || shape.values.get(c.idx()).is_some_and(|v| !v.is_empty());
             let keeps = |c: VtreeIdx, side| match shape.kind[c.idx()] {
                 Kind::True => false,
-                Kind::Leaf if marginal(c) => true,
+                Kind::Leaf | Kind::LeafChain(_) if over_values(c) => true,
                 Kind::Leaf | Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
                 Kind::LevelChain(_) | Kind::Both | Kind::Region => true,
             };
@@ -161,9 +178,10 @@ impl Shape {
                     let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
-                    } else if marginal(c) {
-                        // Its values would have to take this level's numbering.
-                        return Err(OperationError::MarginalLevel(c));
+                    } else if over_values(c) {
+                        let held = shape.chain_values(eng, f, t, c, side, &mut gate)?;
+                        shape.values[t.idx()] = held;
+                        Kind::LeafChain(side)
                     } else {
                         let mut held = Vec::new();
                         lim.try_resize(&mut held, level.slot_count(), 0u8)?;
@@ -183,6 +201,35 @@ impl Shape {
         }
         gate.flush()?;
         Ok(shape)
+    }
+
+    /// For `t` dropped over a kept side `c` that is a marginal level or a
+    /// chain ending at one, the reference into that level each node of `t`
+    /// stands for. A node of `t` with more than one pair would stand for a
+    /// sum of values, which no reference names: refused.
+    fn chain_values(
+        &self,
+        eng: &Engine,
+        f: &Tdd,
+        t: VtreeIdx,
+        c: VtreeIdx,
+        side: ChildSide,
+        gate: &mut PollGate<'_>,
+    ) -> Result<Vec<u32>, OperationError> {
+        let level = &f.levels[t.idx()];
+        let below = &self.values[c.idx()];
+        let mut held = Vec::new();
+        eng.limits().reserve_exact(&mut held, level.slot_count())?;
+        for i in 0..level.slot_count() {
+            let mut pairs = level.pairs_iter_of_idx(i);
+            gate.poll(pairs.len() as u64)?;
+            let (Some(p), None) = (pairs.next(), pairs.next()) else {
+                return Err(OperationError::MarginalLevel(c));
+            };
+            let r = side_ref(p, side);
+            held.push(if below.is_empty() { r } else { below[r as usize] });
+        }
+        Ok(held)
     }
 
     /// The first node down `t`'s chain that is not dropped.
@@ -253,6 +300,14 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
     }
     let local = match shape.kind[root.idx()] {
         Kind::True => None,
+        Kind::LeafChain(_) if summed && !shape.values[root.idx()].is_empty() => {
+            // The output names a slot of a marginal root; an inline value has none.
+            let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
+            match ChildDecoder::marginal().value(side) {
+                ValueRef::Slot(slot) => Some(NodeIdx(slot)),
+                ValueRef::Inline(_) => return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
+            }
+        }
         Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {
             BOTH => None,
             bits => Some(label(bits)),
@@ -464,8 +519,16 @@ fn plan(eng: &Engine, f: &Tdd, shape: &Shape, top: VtreeIdx, end: VtreeIdx) -> R
         let c = child(vtree, end, side);
         if let Kind::LeafChain(_) = shape.kind[c.idx()] {
             let mut map = Vec::new();
-            lim.reserve_exact(&mut map, shape.labels[c.idx()].len())?;
-            map.extend(shape.labels[c.idx()].iter().map(|&bits| label(bits).0));
+            match shape.values.get(c.idx()).filter(|v| !v.is_empty()) {
+                Some(values) => {
+                    lim.reserve_exact(&mut map, values.len())?;
+                    map.extend_from_slice(values);
+                }
+                None => {
+                    lim.reserve_exact(&mut map, shape.labels[c.idx()].len())?;
+                    map.extend(shape.labels[c.idx()].iter().map(|&bits| label(bits).0));
+                }
+            }
             *slot = Some(map);
         }
     }
