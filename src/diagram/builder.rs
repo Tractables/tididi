@@ -703,25 +703,27 @@ fn check_structural_level(
     // one.
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
-        // The same pass gathers each side's leaf forms, read only where that
-        // child is a leaf.
-        let (mut lf, mut rf) = (0u8, 0u8);
-        let mut fits = |pair: &ChildPair| {
-            lf |= 1 << u8::from(pair.left.raw() == ONE_LEAF_IDX.0);
-            rf |= 1 << u8::from(pair.right.raw() == ONE_LEAF_IDX.0);
-            (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb
-        };
-        // A stored level's nodes are read as slices of its arena, in a loop
-        // apart from an implicit level's generated pairs.
-        let all_fit = match lvl.stored() {
-            Some(stored) => stored.nodes().iter().all(|node| {
-                let pairs = stored.of(node);
-                !pairs.is_empty() && pairs.iter().all(&mut fits)
-            }),
-            None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
-        };
-        if all_fit {
-            return mixed_leaf_form(vtree, t, [(left, lf), (right, rf)]);
+        let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+        // Gathering leaf forms in the same pass costs about as much as the
+        // pass, so a level over two internal children, which has none, skips it.
+        if !vtree.node(left).is_leaf() && !vtree.node(right).is_leaf() {
+            if all_pairs_fit(lvl, fits) {
+                return Ok(());
+            }
+        } else {
+            // Bit k of a side's mask: some pair names entry k (mod 32) there,
+            // which `fits` keeps below `LEAF_WIDTH` on a leaf.
+            let (mut lmask, mut rmask) = (0u32, 0u32);
+            let all_fit = all_pairs_fit(lvl, |pair| {
+                lmask |= 1u32.wrapping_shl(pair.left.raw());
+                rmask |= 1u32.wrapping_shl(pair.right.raw());
+                fits(pair)
+            });
+            if all_fit {
+                let one = 1u32 << ONE_LEAF_IDX.0;
+                let form = |m: u32| u8::from(m & !one != 0) | u8::from(m & one != 0) << 1;
+                return mixed_leaf_form(vtree, t, [(left, form(lmask)), (right, form(rmask))]);
+            }
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -742,6 +744,20 @@ fn check_structural_level(
         }
     }
     check_leaf_form(vtree, levels, t, left, right)
+}
+
+/// Whether every node of `lvl` has a pair and `fits` holds for every pair.
+#[inline(always)]
+fn all_pairs_fit(lvl: &TddLevel, mut fits: impl FnMut(&ChildPair) -> bool) -> bool {
+    // A stored level's nodes are read as slices of its arena, in a loop
+    // apart from an implicit level's generated pairs.
+    match lvl.stored() {
+        Some(stored) => stored.nodes().iter().all(|node| {
+            let pairs = stored.of(node);
+            !pairs.is_empty() && pairs.iter().all(&mut fits)
+        }),
+        None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
+    }
 }
 
 /// `Err` naming the first of `sides`, a child and the leaf forms its pairs
