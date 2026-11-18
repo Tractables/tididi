@@ -563,34 +563,28 @@ pub(super) fn in_order_tree(
 ) -> (Vec<VtreeNode>, VtreeIdx, Vec<VtreeIdx>) {
     debug_assert!(k > 0);
     let n = 2 * k - 1;
-    let mut scratch = vec![0u32; 3 * n + 5 * k];
-    let (kids, rest) = scratch.split_at_mut(n);
-    let (up, rest) = rest.split_at_mut(n);
-    let (level, rest) = rest.split_at_mut(n);
+    let mut scratch = vec![0u32; 2 * n + 3 * k];
+    let (kids, rest) = scratch.split_at_mut(n - 1);
     let (open, rest) = rest.split_at_mut(k);
-    let (closed, counts) = rest.split_at_mut(k);
+    let (open_depth, rest) = rest.split_at_mut(k);
+    let (order, starts) = rest.split_at_mut(n);
     // The node between childless nodes i and i + 1 is position 2i + 1, its
     // children are at kids[2i] and kids[2i + 1]. The nodes whose right side
     // is still open are on `open`, depths ascending from the root; a node
-    // takes as its left side those of them deeper than it. A node closes
-    // after its descendants.
-    let (mut tops, mut done) = (0, 0);
+    // takes as its left side those of them deeper than it.
+    let mut tops = 0;
     for i in 0..k - 1 {
         let d = depth(i);
-        level[2 * i + 1] = d;
         let mut side = 2 * i as u32;
-        while tops > 0 && level[2 * open[tops - 1] as usize + 1] > d {
+        while tops > 0 && open_depth[tops - 1] > d {
             tops -= 1;
             let top = open[tops] as usize;
             kids[2 * top + 1] = side;
-            up[side as usize] = 2 * top as u32 + 1;
             side = 2 * top as u32 + 1;
-            closed[done] = side;
-            done += 1;
         }
         kids[2 * i] = side;
-        up[side as usize] = 2 * i as u32 + 1;
         open[tops] = i as u32;
+        open_depth[tops] = d;
         tops += 1;
     }
     let mut root = 2 * (k - 1) as u32;
@@ -598,68 +592,58 @@ pub(super) fn in_order_tree(
         tops -= 1;
         let top = open[tops] as usize;
         kids[2 * top + 1] = root;
-        up[root as usize] = 2 * top as u32 + 1;
         root = 2 * top as u32 + 1;
-        closed[done] = root;
-        done += 1;
     }
-    let closed = &closed[..done];
-    level[root as usize] = 0;
-    let mut deepest = 0;
-    for &p in closed.iter().rev() {
-        let below = level[p as usize] + 1;
-        level[kids[p as usize - 1] as usize] = below;
-        level[kids[p as usize] as usize] = below;
-        deepest = deepest.max(below);
-    }
-    // A bucket per group and level, deepest first; `level` becomes the
-    // bucket, `counts` each bucket's next index.
-    let levels = deepest as usize + 1;
-    let counts = &mut counts[..3 * levels];
-    let mut next_region = 0;
-    for (p, entry) in level.iter_mut().enumerate() {
-        let group = match p % 2 {
-            1 => 2,
-            _ if regions.get(next_region) == Some(&(p as u32 / 2)) => {
-                next_region += 1;
-                1
+    // Breadth first from the root: each level left to right, level j at
+    // order[starts[j]..starts[j + 1]].
+    order[0] = root;
+    let (mut levels, mut at, mut end) = (0, 0, 1);
+    while at < end {
+        starts[levels] = at as u32;
+        levels += 1;
+        let level_end = end;
+        while at < level_end {
+            let p = order[at] as usize;
+            if p % 2 == 1 {
+                order[end] = kids[p - 1];
+                order[end + 1] = kids[p];
+                end += 2;
             }
-            _ => 0,
-        };
-        *entry = (group * levels + deepest as usize - *entry as usize) as u32;
-        counts[*entry as usize] += 1;
+            at += 1;
+        }
     }
-    let mut start = 0;
-    for count in counts.iter_mut() {
-        start += std::mem::replace(count, start);
+    starts[levels] = n as u32;
+    let mut region = vec![false; if regions.is_empty() { 0 } else { k }];
+    for &i in regions {
+        region[i as usize] = true;
     }
-    let in_order: Vec<VtreeIdx> = level
-        .iter()
-        .map(|&bucket| {
-            let count = &mut counts[bucket as usize];
-            *count += 1;
-            VtreeIdx(*count - 1)
-        })
-        .collect();
+    let mut in_order = vec![VtreeIdx(0); n];
     let mut nodes = vec![VtreeNode::Leaf { var: super::REGION_VAR, parent: None }; n];
-    let mut next_region = 0;
-    for (p, &t) in in_order.iter().enumerate() {
-        let parent = (p as u32 != root).then(|| in_order[up[p] as usize]);
-        nodes[t.idx()] = match p % 2 {
-            1 => VtreeNode::Internal { left: in_order[kids[p - 1] as usize], right: in_order[kids[p] as usize], parent },
-            _ if regions.get(next_region) == Some(&(p as u32 / 2)) => {
+    let (mut next_leaf, mut next_region, mut next_internal) = (0, (k - regions.len()) as u32, k as u32);
+    for level in starts[..=levels].windows(2).rev() {
+        for &p in &order[level[0] as usize..level[1] as usize] {
+            let p = p as usize;
+            in_order[p] = if p % 2 == 1 {
+                let (left, right) = (in_order[kids[p - 1] as usize], in_order[kids[p] as usize]);
+                let t = VtreeIdx(next_internal);
+                next_internal += 1;
+                nodes[t.idx()] = VtreeNode::Internal { left, right, parent: None };
+                set_parent(&mut nodes, left, t);
+                set_parent(&mut nodes, right, t);
+                t
+            } else if region.get(p / 2) == Some(&true) {
                 next_region += 1;
-                VtreeNode::Leaf { var: super::REGION_VAR, parent }
-            }
-            _ => VtreeNode::Leaf { var: var(p / 2), parent },
-        };
+                VtreeIdx(next_region - 1)
+            } else {
+                nodes[next_leaf as usize] = VtreeNode::Leaf { var: var(p / 2), parent: None };
+                next_leaf += 1;
+                VtreeIdx(next_leaf - 1)
+            };
+        }
     }
     (nodes, in_order[root as usize], in_order)
 }
 
-/// An entry of `var_to_leaf` or `old_to_new` the walk from the root has
-/// reached, until the reindex writes it; in [`Vtree::from_in_order`], a
-/// variable seen.
 const REACHED: VtreeIdx = VtreeIdx(u32::MAX);
 
 /// A node as the reindex reads it, from whatever list or rule describes the
