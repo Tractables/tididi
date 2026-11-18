@@ -175,9 +175,10 @@ impl Partition<'_> {
     /// Where the pairs come in node order a node's degree is the length of
     /// its run. A first pass reads only where each run ends, and keeps the
     /// runs of the nodes that can have a twin, whose sibling sets are those
-    /// Γ reads: the run of a node already alone costs a compare a pair, and
-    /// a node below the one before ends the pass with nothing changed, the
-    /// parent node left [`Degrees::Unordered`]. The kept runs' siblings are
+    /// Γ reads, and marks alone the last node of its class: the run of a
+    /// node already alone costs a compare a pair, and a node below the one
+    /// before ends the pass, the parent node left [`Degrees::Unordered`].
+    /// The kept runs' siblings are
     /// then counted. The first sum is read off the degrees' histogram (the
     /// nodes of degree at least v, for each v, taken two at a time), the
     /// second added as each sibling's count rises. `wide.column` and `wide.reach` are
@@ -225,6 +226,11 @@ impl Partition<'_> {
                 top = pairs[k..end]
                     .iter()
                     .fold(top, |top, pair| top | split_pair(pair, side).1);
+            } else if c != ALONE {
+                // Every split names each node it reads, so that the node
+                // left unnamed when a refinement stops early, and with it
+                // `unnamed_exact`, does not depend on which split ran.
+                self.alone(t, c);
             }
             k = end;
         }
@@ -853,7 +859,8 @@ enum Degrees {
     /// nested: the nodes of a degree no other node of their class has there
     /// are out of the partition, and the rest are to be split by siblings.
     Unsettled,
-    /// Its pairs do not come in node order, and nothing is changed.
+    /// Its pairs do not come in node order, and nothing is changed but the
+    /// nodes read that could not have a twin, now alone.
     Unordered,
     /// Its pairs name more than [`FEW_SIBLINGS`] siblings, or it holds too
     /// many pairs, for a split by codes, and nothing is changed.
