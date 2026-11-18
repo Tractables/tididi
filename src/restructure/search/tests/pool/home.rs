@@ -39,7 +39,7 @@ fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], weights: Opti
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
-    eng.minimize_plain(&mut f).unwrap();
+    eng.minimize(&mut f).unwrap();
     if let Some(store) = weights {
         f.set_weights(store.clone()).unwrap();
     }
@@ -79,7 +79,7 @@ fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (
     let all: Vec<VarId> = (1..=n).map(VarId).collect();
     let full_vtree = Vtree::projection(home, all.iter().copied()).unwrap();
     for i in 0..2 + rng.below(5) as usize {
-        let twin = full || (i > 0 && rng.below(3) == 0);
+        let twin = full || (i > 0 && rng.below(3) == 0 && own[i - 1].vtree().num_leaves() > 0);
         let leaves = match (full, twin) {
             (true, _) => all.clone(),
             (false, true) => vars(own[i - 1].vtree()),
@@ -130,6 +130,9 @@ fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kep
         assert_eq!(vars(a.vtree()), vars(b.vtree()));
         if !kept {
             assert!(Arc::ptr_eq(a.vtree(), b.vtree()));
+            continue;
+        }
+        if a.vtree().num_nodes() == 0 {
             continue;
         }
         match a.vtree().home() {
@@ -201,6 +204,9 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let share = rng.coin();
         let (own, embedded) = pools(&eng, &home, true, share, &mut rng);
         let config = config(&mut rng);
+        if own.iter().any(|f| f.vtree().num_leaves() != n) {
+            continue;
+        }
         let full = Arc::clone(own[0].vtree());
         accepted();
         let mut searched = own.clone();

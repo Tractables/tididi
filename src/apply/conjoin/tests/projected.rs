@@ -72,6 +72,10 @@ fn leaf_set_pairs(home: &Vtree, rng: &mut Lcg) -> Vec<(Vec<VarId>, Vec<VarId>)> 
     pairs
 }
 
+fn leaf_vars(f: &Tdd) -> Vec<VarId> {
+    f.vtree().leaf_bottomup().map(|(_, var)| var).collect()
+}
+
 fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     eng.embed(f, home, |v| v).unwrap().0
 }
@@ -86,7 +90,8 @@ fn and_on_projections_is_and_on_the_home() {
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
             let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
-            let union = Vtree::projection(&hm, fv.iter().chain(&gv).copied()).unwrap();
+            let (f_vars, g_vars) = (leaf_vars(&f), leaf_vars(&g));
+            let union = f_vars.len() + g_vars.iter().filter(|v| !f_vars.contains(v)).count();
             let results = [
                 eng.and(&f, &g).unwrap(),
                 eng.and(f.clone(), &g).unwrap(),
@@ -95,7 +100,9 @@ fn and_on_projections_is_and_on_the_home() {
             ];
             for mut h in results {
                 assert!(Arc::ptr_eq(h.home().unwrap().vtree(), &home));
-                assert_eq!(h.vtree().num_leaves(), union.num_leaves(), "seed {seed}");
+                if !h.is_zero() {
+                    assert_eq!(h.vtree().num_leaves() as usize, union, "seed {seed}");
+                }
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
@@ -103,12 +110,7 @@ fn and_on_projections_is_and_on_the_home() {
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
             }
             // The operands are intact.
-            assert_eq!(f.vtree().num_leaves() as usize, {
-                let mut vars = fv.clone();
-                vars.sort_unstable();
-                vars.dedup();
-                vars.len()
-            });
+            assert_eq!(leaf_vars(&f), f_vars);
         }
     }
 }
@@ -173,7 +175,7 @@ fn and_clause_extends_to_the_clause_variables() {
                 assert!(Arc::ptr_eq(h.home().unwrap().vtree(), &home));
                 if lits.iter().any(|&l| lits.contains(&-l)) {
                     assert!(Arc::ptr_eq(h.vtree(), f.vtree()), "a true clause leaves the vtree");
-                } else {
+                } else if !h.is_zero() {
                     for &l in &lits {
                         assert!(h.vtree().leaf_of(VarId(l.unsigned_abs())).is_some());
                     }

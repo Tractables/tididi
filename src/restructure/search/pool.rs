@@ -431,6 +431,9 @@ impl Engine {
         if members.is_empty() {
             return Ok(stats);
         }
+        refuse_regions(members)?;
+        // A reduction may narrow a member's tree, so the trees are read after.
+        stats.pairs_before = self.reduce_members(members)?;
         // The union and the groups' trees, moved in place as moves are kept.
         // The members keep their allocations until the descent ends, which
         // seats them on these if it kept a move: their levels follow the
@@ -451,10 +454,9 @@ impl Engine {
         result.map(|()| stats)
     }
 
-    /// The opening reduction and the descent of
-    /// [`pool_search`](Self::pool_search) on the pool's union `tree` and
-    /// `groups`, its work counted from the clock's `start`; `changed` set once
-    /// a move is kept for good.
+    /// The descent of [`pool_search`](Self::pool_search) on the pool's union
+    /// `tree` and `groups`, its work counted from the clock's `start`;
+    /// `changed` set once a move is kept for good.
     fn pool_search_from(
         &self,
         members: &mut [&mut Tdd],
@@ -463,7 +465,6 @@ impl Engine {
         stats: &mut PoolSearchStats,
         (tree, groups, changed): (&mut Vtree, &mut Option<Groups>, &mut bool),
     ) -> Result<(), OperationError> {
-        stats.pairs_before = self.reduce_members(members)?;
         let mut scratch = self.scratch.restructure.checkout(self);
         PoolDescent::new(self, tree, groups, config, start, &mut scratch, stats, members)
             .and_then(|mut descent| descent.run(members, changed))
@@ -472,7 +473,7 @@ impl Engine {
     /// Reduce every member; their live pairs after.
     fn reduce_members(&self, members: &mut [&mut Tdd]) -> Result<usize, OperationError> {
         for m in members.iter_mut() {
-            self.reduce_plain(m, crate::reduce::ReductionPlan::default())?;
+            self.reduce(m, crate::reduce::ReductionPlan::default())?;
         }
         Ok(live_pairs(members))
     }
@@ -1082,12 +1083,18 @@ fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
     rotate_pointers(tree, pivot, kind)
 }
 
+/// [`OperationError::MarginalLevel`] for a member with a region.
+fn refuse_regions(members: &[&mut Tdd]) -> Result<(), OperationError> {
+    match members.iter().find_map(|m| m.vtree.regions().next()) {
+        Some(region) => Err(OperationError::MarginalLevel(region)),
+        None => Ok(()),
+    }
+}
+
 /// The tree a search over `members` moves, a private copy: their shared
 /// tree, or the union of their projections, with their groups.
 fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationError> {
-    if let Some(region) = members.iter().find_map(|m| m.vtree.regions().next()) {
-        return Err(OperationError::MarginalLevel(region));
-    }
+    refuse_regions(members)?;
     let first = &members[0].vtree;
     if members.iter().all(|m| Arc::ptr_eq(&m.vtree, first)) {
         return Ok((Vtree::clone(first), None));

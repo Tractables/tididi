@@ -32,7 +32,7 @@ fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
             .collect();
         f = eng.and_clause(f, &clause).unwrap();
     }
-    eng.minimize_plain(&mut f).unwrap();
+    eng.minimize(&mut f).unwrap();
     f
 }
 
@@ -111,7 +111,7 @@ fn a_search_on_a_projection_keeps_its_counts_on_a_lifted_home() {
         kept_searches += usize::from(kept);
         check_end(&eng, &f, &searched, kept);
 
-        let internal: Vec<VtreeIdx> = own.internal_bottomup().map(|(v, _, _)| v).collect();
+        let internal: Vec<VtreeIdx> = f.vtree().internal_bottomup().map(|(v, _, _)| v).collect();
         for _ in 0..4 {
             if internal.is_empty() {
                 break;
@@ -166,6 +166,11 @@ fn a_diagram_in_two_parts_transports_without_rotating() {
         let parts = [leaves_under(&own, x), leaves_under(&own, z), leaves_under(&own, y)];
 
         let f = diagram(&eng, &own, &mut rng);
+        // The parts are read on `own`: a diagram that does not depend on
+        // every leaf of it is on a narrower projection.
+        if !Arc::ptr_eq(f.vtree(), &own) {
+            continue;
+        }
         let mut moved = f.clone();
         assert!(moved.rotate_if(&[RotationMove { pivot: v, kind: RotationKind::Left }], usize::MAX, |_| true).unwrap());
         check_end(&eng, &f, &moved, true);
@@ -194,6 +199,9 @@ fn a_diagram_in_two_parts_transports_without_rotating() {
         }
         let g_own = Vtree::projection(&home, vars).unwrap();
         let g = diagram(&eng, &g_own, &mut rng);
+        if !Arc::ptr_eq(g.vtree(), &g_own) {
+            continue;
+        }
         cases[usize::from(three)] += 1;
         let rehomed = match three {
             false => eng.transport(&g, &lifted, |v| v, 0).unwrap().0,

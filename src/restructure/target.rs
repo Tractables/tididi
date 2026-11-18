@@ -50,7 +50,10 @@ impl Tdd {
     /// shape, and its levels are then reseated on `target` itself, so the
     /// result shares `target`'s allocation and can be combined with diagrams
     /// built on it. The function is unchanged, and a canonical diagram stays
-    /// canonical.
+    /// canonical. When `target` is on a [home](Vtree::home), the diagram is
+    /// minimized first and the variables it does not depend on leave: it ends
+    /// on the projection of that home on the variables left, which is
+    /// `target` when none left, and a constant ends on no leaf.
     ///
     /// A rotation rebuilds the two levels it turns from the pairs of the
     /// outer level expanded through the inner one; a mirror reads one level's
@@ -121,6 +124,22 @@ impl Engine {
         }
         if tdd.weights.is_some() {
             return Err(RestructureError::Weighted);
+        }
+        let narrowed;
+        let mut target = target;
+        if let Some(home) = Vtree::home_of(target)
+            && !Arc::ptr_eq(tdd.vtree(), target)
+            && !tdd.has_marginal_level()
+        {
+            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+            if tdd.vtree().num_nodes() == 0 {
+                return Ok(TransportStats::default());
+            }
+            if tdd.vtree().num_leaves() != target.num_leaves() {
+                narrowed = Vtree::projection(&home, tdd.vtree().leaf_bottomup().map(|(_, var)| var))
+                    .expect("the target's home has every variable of the diagram");
+                target = &narrowed;
+            }
         }
         if Arc::ptr_eq(tdd.vtree(), target) {
             return Ok(TransportStats { peak_pairs: tdd.pair_count(), ..TransportStats::default() });
