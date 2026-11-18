@@ -251,9 +251,9 @@ impl Tdd {
     /// # Errors
     ///
     /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] if the target leaf, a rewritten ancestor,
-    /// or an ancestor's grandchild is marginal, or [`OperationError::OverBudget`]
-    /// if an allocation is refused. The operand is also consumed on error.
+    /// [`OperationError::MarginalLevel`] if any level is marginal, or
+    /// [`OperationError::OverBudget`] if an allocation is refused. The operand
+    /// is also consumed on error.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -291,9 +291,8 @@ impl Tdd {
     ///
     /// Every variable is validated before quantification. Returns
     /// [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] if a target leaf, rewritten ancestor, or
-    /// an ancestor's grandchild is marginal, or [`OperationError::OverBudget`]
-    /// if an allocation is refused.
+    /// [`OperationError::MarginalLevel`] if any level is marginal, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;

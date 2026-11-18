@@ -947,3 +947,30 @@ fn a_row_cell_grows_only_where_its_new_block_fits_beside_the_old() {
     assert_eq!(rest, Ok(()));
     assert_eq!(cap, len + 100);
 }
+
+/// Sum out `e`, then quantify `x`, over the home (e,(x,y)) and its mirror
+/// ((x,y),e). Σ_e ∃x f, with `x` free, counts 4; a regroup over the summed-out
+/// level counts 6, because the fusion at its parent lets one value stand for
+/// two events the regroup takes to be exclusive.
+#[test]
+fn exists_above_a_summed_out_level_is_refused() {
+    let homes = [
+        ("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n", [vec![-3], vec![-1, 2]]),
+        ("vtree 5\nL 0 2\nL 1 3\nI 2 0 1\nL 3 1\nI 4 2 3\n", [vec![3], vec![1, 2]]),
+    ];
+    let mut wrong = Vec::new();
+    for (text, clauses) in homes {
+        let tree = Arc::new(Vtree::from_text(text).unwrap());
+        let mut f = compile_clauses(&tree, &clauses);
+        f.marginalize_levels(&[tree.leaf_of(VarId(1)).unwrap()]).unwrap();
+        assert_eq!(f.model_count().unwrap(), 3u32.into());
+        for quantify in [Tdd::exists_var as fn(Tdd, VarId) -> _, |f: Tdd, x| f.exists_vars(&[x])] {
+            match quantify(f.clone(), VarId(2)) {
+                Err(OperationError::MarginalLevel(_)) => {}
+                Ok(g) => wrong.push(format!("{text:?}: counts {} where the sum counts 4", g.model_count().unwrap())),
+                Err(other) => wrong.push(format!("{text:?}: {other}")),
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

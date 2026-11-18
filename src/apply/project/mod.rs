@@ -1,11 +1,10 @@
 //! Existential quantification of variables from a diagram.
 //!
 //! `∃X.T` is one bottom-up regroup of the levels above X's leaves, rewritten in
-//! place. It never calls apply or negate, so it is sound when a level elsewhere
-//! is marginal, and it costs one pass over those levels rather than a product
-//! of two full diagrams — one pass for the whole request, not one per
-//! variable. `∀X.T` is `¬∃X.¬T`; its two complements need every level
-//! structural.
+//! place. It never calls apply or negate, and it costs one pass over those
+//! levels rather than a product of two full diagrams — one pass for the whole
+//! request, not one per variable. Both `∃X.T` and `∀X.T` (`¬∃X.¬T`) need every
+//! level structural.
 
 use crate::Engine;
 
