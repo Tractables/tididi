@@ -62,7 +62,7 @@ impl<'s> Held<'s> {
 
 impl Held<'_> {
     /// The operand as the caller gave it, its levels on its own vtree.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn tdd(&self) -> &Tdd {
         match &self.tdd {
             Hold::Owned(tdd) => tdd,
@@ -77,7 +77,7 @@ impl Held<'_> {
     }
 
     /// The operand's level at node `t` of the sweep's vtree.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn level(&self, t: impl LevelAt) -> &TddLevel {
         let t = t.at();
         match &self.view {
@@ -88,7 +88,7 @@ impl Held<'_> {
 
     /// The operand's levels at the sweep's level `shape.t` and its two
     /// children.
-    #[inline]
+    #[inline(always)]
     pub(super) fn here(&self, shape: LevelShape) -> Here<'_> {
         let (t, left, right) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
         let tdd = self.tdd();
@@ -146,7 +146,7 @@ impl Held<'_> {
 
     /// Call `each` on the levels at `ts` where the sweep may change them:
     /// an owned operand's, or ones its view built.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn each_level_mut(&mut self, ts: [usize; 2], mut each: impl FnMut(&mut TddLevel)) {
         match (self.view.as_deref_mut(), &mut self.tdd) {
             (None, Hold::Owned(tdd)) => {
@@ -216,8 +216,19 @@ impl Held<'_> {
     ///
     /// [`OperationError::OverBudget`] where the copy is refused; `out` is
     /// then as it was.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn carry(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
+        match (self.view.is_none(), &mut self.tdd) {
+            (true, Hold::Owned(tdd)) => {
+                std::mem::swap(out, &mut tdd.levels[t]);
+                Ok(())
+            }
+            _ => self.carry_other(lim, t, out),
+        }
+    }
+
+    #[inline(never)]
+    fn carry_other(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
         let own = match self.view.as_deref_mut() {
             None => t,
             Some(view) => match view.held_mut(t) {
@@ -277,14 +288,14 @@ pub(crate) trait LevelAt {
 }
 
 impl LevelAt for usize {
-    #[inline]
+    #[inline(always)]
     fn at(self) -> usize {
         self
     }
 }
 
 impl LevelAt for VtreeIdx {
-    #[inline]
+    #[inline(always)]
     fn at(self) -> usize {
         self.idx()
     }
