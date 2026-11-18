@@ -470,7 +470,7 @@ pub struct AndOntoRefused<'a> {
 /// [`Engine::and_restoring`](crate::Engine::and_restoring) after its entry
 /// and vtree check, for operands whose free levels ([`ApplyRun::cone`]) are
 /// in `free`: refused, both come back as they were given, every free level
-/// built.
+/// built. An operand with a view has its plan in `plans`.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn conjoin_kept<'a>(
     eng: &Engine,
@@ -478,6 +478,7 @@ fn conjoin_kept<'a>(
     mut g: Cow<'a, Tdd>,
     mut free: Operands<VtreeMask<'_>>,
     mut views: Operands<Option<&mut View>>,
+    plans: Operands<Option<&Plan>>,
 ) -> Result<Tdd, AndRefused<'a>> {
     // Whether a level is marginal, and the widest level, in one pass.
     let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
@@ -485,7 +486,10 @@ fn conjoin_kept<'a>(
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
-        debug_assert!(views.f.is_none() && views.g.is_none(), "a viewed operand is plain");
+        if views.f.is_some() || views.g.is_some() {
+            let viewed = Operands { f: views.f.as_deref(), g: views.g.as_deref() };
+            (f, g) = place_viewed(eng, f, g, free, viewed, plans)?;
+        }
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
         return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
@@ -561,6 +565,43 @@ fn conjoin_kept<'a>(
             reinstate_known(&mut g, g_known);
             Err(give_back(error, f, g))
         }
+    }
+}
+
+/// Place each operand of [`conjoin_kept`] that has a view by its plan, free
+/// levels left empty, for the conjunction of weighted or summed-out operands,
+/// which reads no view. Refused, an operand not yet placed comes back as it
+/// was given and a placed one with its free levels built.
+#[cold]
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn place_viewed<'a>(
+    eng: &Engine,
+    f: Cow<'a, Tdd>,
+    g: Cow<'a, Tdd>,
+    free: Operands<VtreeMask<'_>>,
+    views: Operands<Option<&View>>,
+    plans: Operands<Option<&Plan>>,
+) -> Result<(Cow<'a, Tdd>, Cow<'a, Tdd>), AndRefused<'a>> {
+    let place =|tdd: Cow<'a, Tdd>, view: Option<&View>, plan: Option<&Plan>| match view {
+        None => Ok(tdd),
+        Some(view) => place_by(eng, tdd, view.vtree(), plan.expect("a viewed operand has its plan"), Free::Leave)
+            .map(Cow::Owned)
+            .map_err(|(error, tdd)| (crate::apply::extend::operation_error(error), tdd)),
+    };
+    let built = |mut tdd: Cow<'a, Tdd>, free: VtreeMask<'_>| {
+        fill_free_cow(&mut tdd, free);
+        tdd
+    };
+    let f = match place(f, views.f, plans.f) {
+        Ok(f) => f,
+        Err((error, f)) => {
+            let g = if views.g.is_some() { g } else { built(g, free.g) };
+            return Err(AndRefused { error, f, g });
+        }
+    };
+    match place(g, views.g, plans.g) {
+        Ok(g) => Ok((f, g)),
+        Err((error, g)) => Err(AndRefused { error, f: built(f, free.f), g }),
     }
 }
 
@@ -667,10 +708,9 @@ pub(crate) fn conjoin_onto_as<'a>(
     };
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
-    // The conjunction of a view runs on plain operands only.
-    let plain = |tdd: &Tdd| tdd.weights.is_none() && !tdd.has_marginal_level();
-    let viewing = viewing && plain(&f) && plain(&g);
-    if (f.has_marginal_level() || g.has_marginal_level())
+    // Off projections a summed-out operand is never placed, so it is on
+    // `into` already, where the conjunction leaves this check to the caller.
+    if (f.vtree().home().is_some() || g.vtree().home().is_some())
         && !Arc::ptr_eq(f.vtree(), g.vtree())
         && let Err(error) = projected::check_summed_leaves_mapped(&f, &f_map, &g, &g_map)
     {
@@ -732,7 +772,14 @@ pub(crate) fn conjoin_onto_as<'a>(
     };
     let conjoined = match begin_phase(eng, begun) {
         Err(error) => refuse(error.into(), f, g),
-        Ok(()) => conjoin_kept(eng, f, g, free, Operands { f: f_view.as_mut(), g: g_view.as_mut() })
+        Ok(()) => conjoin_kept(
+            eng,
+            f,
+            g,
+            free,
+            Operands { f: f_view.as_mut(), g: g_view.as_mut() },
+            Operands { f: f_plan.as_ref(), g: g_plan.as_ref() },
+        )
             .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
     };
     for plan in [f_plan, g_plan].into_iter().flatten() {
@@ -828,7 +875,7 @@ impl crate::Engine {
         if let Err(error) = crate::apply::check_vtree(&f, &g) {
             return Err(AndRefused { error, f, g });
         }
-        conjoin_kept(self, f, g, Operands::default(), Operands::default())
+        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default())
     }
 
     /// [`Engine::and_restoring`] of `f` and `g` placed on `into` as
