@@ -10,6 +10,39 @@ fn vars(ids: &[u32]) -> Vec<VarId> {
     ids.iter().copied().map(VarId).collect()
 }
 
+/// The variables of the home leaves `own` has neither as a leaf nor in an
+/// extent, by a walk over the home's leaves: the reference for
+/// [`Vtree::free_set`].
+fn free_vars(own: &Vtree) -> Vec<VarId> {
+    let Some(link) = own.home.as_deref() else { return Vec::new() };
+    let mut ranks = link.ranks.iter().copied().peekable();
+    let mut extents: Vec<(u32, u32)> = link.regions.iter().flat_map(|region| region.extent.iter().copied()).collect();
+    extents.sort_unstable();
+    let mut extents = extents.into_iter().peekable();
+    let mut free = Vec::new();
+    for (rank, &leaf) in link.home.index().leaf_at.iter().enumerate() {
+        let rank = rank as u32;
+        while extents.next_if(|&(_, end)| end <= rank).is_some() {}
+        let in_extent = extents.peek().is_some_and(|&(start, _)| start <= rank);
+        if ranks.next_if_eq(&rank).is_none() && !in_extent {
+            free.push(link.home.vtree().leaf_var(leaf));
+        }
+    }
+    free
+}
+
+/// The variables of the home leaves under own node `t`'s home node that
+/// `own` does not have as a leaf, right to left; none when every variable
+/// outside the extents is a leaf: the reference for [`Vtree::free_set_under`].
+fn free_vars_under(own: &Vtree, t: VtreeIdx) -> Vec<VarId> {
+    let Some(home) = own.home().map(Home::vtree).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
+    home.subtree(own.home_node(t))
+        .filter(|&h| home.node(h).is_leaf())
+        .map(|h| home.leaf_var(h))
+        .filter(|&var| own.leaf_of(var).is_none())
+        .collect()
+}
+
 /// The extent as ascending intervals of ranks, from ranks in any order.
 fn intervals(mut ranks: Vec<u32>) -> Box<[(u32, u32)]> {
     ranks.sort_unstable();
@@ -66,7 +99,7 @@ fn a_projection_with_extents_holds() {
     assert_eq!(own.internal_bottomup().len(), 3);
     assert!(own.leaf_of(VarId(1)).is_some() && own.leaf_of(VarId(2)).is_none() && own.leaf_of(VarId(3)).is_none());
     assert_eq!(own.free_leaves(), 1);
-    assert_eq!(own.free_vars(), vars(&[6]));
+    assert_eq!(free_vars(&own), vars(&[6]));
     assert_eq!((1..=8).filter(|&v| own.home_has(VarId(v))).collect::<Vec<_>>(), [6]);
     let first = region_at(&own, 2);
     let h = home.node_over(home.rank(VarId(3)).unwrap(), home.rank(VarId(4)).unwrap());
@@ -130,7 +163,7 @@ fn leaf_sets_refuse_overlaps_and_unite_the_rest() {
     let b = Arc::new(with_regions(&home, &[1, 5], &[(&[7, 8], 8)]));
     let Ok(LeafSets::Union(union)) = Vtree::leaf_sets(&a, &b) else { panic!("a union") };
     assert_eq!(union.validate(), Ok(()));
-    let mut free = union.free_vars();
+    let mut free = free_vars(&union);
     free.sort();
     assert_eq!((union.num_leaves(), free), (2, vars(&[4, 6])));
     let regions = &union.home.as_deref().unwrap().regions;
@@ -191,7 +224,7 @@ fn random_regions_hold_and_count() {
             free.sort_by_key(|&v| home.rank(VarId(v)));
             vars(&free)
         };
-        assert_eq!(own.free_vars(), free);
+        assert_eq!(free_vars(&own), free);
         assert_eq!(own.free_leaves() as usize, free.len());
         for v in 1..=n {
             let role = roles[v as usize - 1];
@@ -268,5 +301,115 @@ fn a_sub_projection_keeps_the_regions() {
             .collect();
         let regions: Vec<(&[u32], u32)> = extents.iter().zip(&anchors).map(|(e, &a)| (e.as_slice(), a)).collect();
         super::projection::assert_same(&sub, &with_regions(&home, &kept, &regions), &format!("seed {seed}"));
+    }
+}
+
+mod free_set {
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+
+    use super::*;
+    use crate::diagram::{EvalAlgebra, LeafLabel, LiteralWeights, RationalWeights};
+    use crate::vtree::FreeVars;
+
+    /// Weights read from a table, rounding at every product.
+    struct Floats(Vec<f64>);
+
+    impl EvalAlgebra for Floats {
+        type Value = f64;
+        fn zero(&self) -> f64 { 0.0 }
+        fn one(&self) -> f64 { 1.0 }
+        fn leaf(&self, var: VarId, label: LeafLabel) -> f64 {
+            let pos = self.0[var.idx()];
+            match label {
+                LeafLabel::Pos => pos,
+                LeafLabel::Neg => 1.0 - pos / 3.0,
+                LeafLabel::One => pos + (1.0 - pos / 3.0),
+                LeafLabel::Zero => 0.0,
+            }
+        }
+        fn add_assign(&self, acc: &mut f64, other: &f64) { *acc += other; }
+        fn mul(&self, a: &f64, b: &f64) -> f64 { a * b }
+    }
+
+    /// Model counts that wrap.
+    struct Wrapping;
+
+    impl EvalAlgebra for Wrapping {
+        type Value = u64;
+        fn zero(&self) -> u64 { 0 }
+        fn one(&self) -> u64 { 1 }
+        fn leaf(&self, var: VarId, label: LeafLabel) -> u64 {
+            match label {
+                LeafLabel::One => 3 + u64::from(var.0),
+                LeafLabel::Zero => 0,
+                _ => 1,
+            }
+        }
+        fn add_assign(&self, acc: &mut u64, other: &u64) { *acc = acc.wrapping_add(*other); }
+        fn mul(&self, a: &u64, b: &u64) -> u64 { a.wrapping_mul(*b) }
+    }
+
+    /// The free factor as the library computed it from the materialized set.
+    fn listed<A: EvalAlgebra>(algebra: &A, vars: &[VarId]) -> Option<A::Value> {
+        let (&first, rest) = vars.split_first()?;
+        let one = |var| algebra.leaf(var, LeafLabel::One);
+        Some(rest.iter().fold(one(first), |acc, &var| algebra.mul(&acc, &one(var))))
+    }
+
+    fn check(set: Option<FreeVars<'_>>, list: &[VarId], algebras: (&Floats, &RationalWeights), at: &str) {
+        let Some(set) = set else {
+            assert!(list.is_empty(), "{at}: no set, {} listed", list.len());
+            return;
+        };
+        assert_eq!(set.vars().collect::<Vec<_>>(), list, "{at}");
+        assert_eq!(set.len() as usize, list.len(), "{at}");
+        let intervals: Vec<_> = set.intervals().collect();
+        assert!(intervals.iter().all(|r| !r.is_empty()), "{at}");
+        assert!(intervals.windows(2).all(|w| w[0].end < w[1].start), "{at}");
+        let (floats, rationals) = algebras;
+        assert_eq!(floats.free(&set).map(f64::to_bits), listed(floats, list).map(f64::to_bits), "{at}");
+        assert_eq!(rationals.free(&set), listed(rationals, list), "{at}");
+        assert_eq!(Wrapping.free(&set), listed(&Wrapping, list), "{at}");
+    }
+
+    #[test]
+    fn the_interval_form_gives_the_values_of_the_listed_set() {
+        for seed in 0..400u64 {
+            let mut rng = Lcg::new(seed);
+            let n = 1 + rng.below(64) as u32;
+            let home = Home::new(match seed % 3 {
+                0 => Vtree::random(n, seed),
+                1 => Vtree::balanced(n),
+                _ => Vtree::linear(n),
+            });
+            let roles: Vec<Role> = match seed % 2 {
+                0 if n >= 2 => random_roles(n, &mut rng),
+                _ => (0..n).map(|_| if rng.below(3) == 0 { Role::Leaf } else { Role::Free }).collect(),
+            };
+            let own = match roles.iter().all(|&role| role == Role::Free) {
+                true => (*Vtree::empty_projection(&home)).clone(),
+                false => build(&home, &roles, &mut rng).0,
+            };
+            let floats = Floats((0..n).map(|_| (1 + rng.below(1000)) as f64 / 997.0).collect());
+            let mut rational = || BigRational::new(BigInt::from(1 + rng.below(9)), BigInt::from(1 + rng.below(7)));
+            let literals: Vec<LiteralWeights<BigRational>> =
+                (0..n).map(|_| LiteralWeights { negative: rational(), positive: rational() }).collect();
+            let rationals = RationalWeights::from_literals(&literals);
+            let algebras = (&floats, &rationals);
+            let free = free_vars(&own);
+            check(own.free_set(), &free, algebras, &format!("seed {seed}"));
+            // The listed set under a node came right to left; the interval form is in rank order.
+            for t in own.bottomup() {
+                let mut under = free_vars_under(&own, t);
+                under.sort_by_key(|&var| home.rank(var));
+                check(own.free_set_under(t), &under, algebras, &format!("seed {seed} under {}", t.0));
+            }
+            let pinned: Vec<VarId> = (1..=n).map(VarId).filter(|_| rng.below(4) == 0).collect();
+            let pins = own.free_ranks(pinned.iter().copied());
+            let unpinned: Vec<VarId> = free.iter().copied().filter(|v| !pinned.contains(v)).collect();
+            let set = own.free_set().map(|set| set.without(&pins)).filter(|set| !set.is_empty());
+            check(set, &unpinned, algebras, &format!("seed {seed} pinned"));
+        }
     }
 }

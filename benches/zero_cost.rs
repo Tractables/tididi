@@ -13,6 +13,10 @@
 //!   literals, on the projection of a balanced home on its variables, with
 //!   a weight algebra over `f64` that keeps the default `free` (its free
 //!   factor is one, so the value does not depend on `n`).
+//! - `unit <n> <k> <calls>`: the same with `free` answering `None`, as an
+//!   algebra whose weights sum to one may.
+//! - `count <n> <k> <calls>`: the same clause, model counts modulo the prime
+//!   2^61 - 1, with `free` answering `2^len` by repeated squaring.
 //! - `and <n> <k> <calls>`: [`Engine::and`] of an owned clone of `F` and a
 //!   borrowed `G`. `F` is a chain of 2-literal clauses over consecutive
 //!   variables of `k` random variables of a balanced home, on their
@@ -37,7 +41,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use tididi::diagram::{EvalAlgebra, LeafLabel};
-use tididi::vtree::{Home, VarId, Vtree};
+use tididi::vtree::{FreeVars, Home, VarId, Vtree};
 use tididi::{Engine, Tdd};
 
 type Error = Box<dyn std::error::Error>;
@@ -75,6 +79,9 @@ impl EvalAlgebra for Weights {
     fn zero(&self) -> f64 {
         0.0
     }
+    fn one(&self) -> f64 {
+        1.0
+    }
     fn leaf(&self, var: VarId, label: LeafLabel) -> f64 {
         let pos = self.0[var.idx()];
         match label {
@@ -89,6 +96,66 @@ impl EvalAlgebra for Weights {
     }
     fn mul(&self, a: &f64, b: &f64) -> f64 {
         a * b
+    }
+}
+
+/// [`Weights`] declaring that every variable's weights sum to one.
+struct Unit(Weights);
+
+impl EvalAlgebra for Unit {
+    type Value = f64;
+    fn zero(&self) -> f64 {
+        0.0
+    }
+    fn one(&self) -> f64 {
+        1.0
+    }
+    fn leaf(&self, var: VarId, label: LeafLabel) -> f64 {
+        self.0.leaf(var, label)
+    }
+    fn add_assign(&self, acc: &mut f64, other: &f64) {
+        *acc += other;
+    }
+    fn mul(&self, a: &f64, b: &f64) -> f64 {
+        a * b
+    }
+    fn free(&self, _: &FreeVars<'_>) -> Option<f64> {
+        None
+    }
+}
+
+const P: u64 = (1 << 61) - 1;
+
+/// Model counts modulo [`P`].
+struct Count;
+
+impl EvalAlgebra for Count {
+    type Value = u64;
+    fn zero(&self) -> u64 {
+        0
+    }
+    fn one(&self) -> u64 {
+        1
+    }
+    fn leaf(&self, _: VarId, label: LeafLabel) -> u64 {
+        if label == LeafLabel::One { 2 } else { 1 }
+    }
+    fn add_assign(&self, acc: &mut u64, other: &u64) {
+        *acc = (*acc + other) % P;
+    }
+    fn mul(&self, a: &u64, b: &u64) -> u64 {
+        (u128::from(*a) * u128::from(*b) % u128::from(P)) as u64
+    }
+    fn free(&self, free: &FreeVars<'_>) -> Option<u64> {
+        let (mut power, mut base, mut e) = (1, 2, free.len());
+        while e > 0 {
+            if e & 1 == 1 {
+                power = self.mul(&power, &base);
+            }
+            base = self.mul(&base, &base);
+            e >>= 1;
+        }
+        Some(power)
     }
 }
 
@@ -111,7 +178,7 @@ fn main() -> Result<(), Error> {
     if args.is_empty() {
         args = ["and", "1000", "64", "10"].map(String::from).to_vec();
     }
-    let usage = "usage: zero_cost <eval|and|restoring|clone|rehome> <n> <k> <calls>";
+    let usage = "usage: zero_cost <eval|unit|count|and|restoring|clone|rehome> <n> <k> <calls>";
     let site = args.first().ok_or(usage)?.as_str();
     let n: u32 = args.get(1).ok_or(usage)?.parse()?;
     let k: usize = args.get(2).ok_or(usage)?.parse()?;
@@ -126,12 +193,17 @@ fn main() -> Result<(), Error> {
     let vars = rng.sorted_vars(n, k);
     let mut sum = 0.0f64;
     match site {
-        "eval" => {
+        "eval" | "unit" | "count" => {
             let lits: Vec<i32> = vars.iter().map(|&v| v as i32).collect();
             let f = eng.clause(&projection(&home, &vars)?, lits)?;
             let weights = Weights((0..n).map(|v| 0.25 + f64::from(v % 7) / 16.0).collect());
+            let unit = Unit(weights);
             for _ in 0..calls {
-                sum += eng.evaluate(black_box(&f), &weights)?;
+                sum += match site {
+                    "eval" => eng.evaluate(black_box(&f), &unit.0)?,
+                    "unit" => eng.evaluate(black_box(&f), &unit)?,
+                    _ => eng.evaluate(black_box(&f), &Count)? as f64,
+                };
             }
         }
         "and" | "restoring" | "clone" => {

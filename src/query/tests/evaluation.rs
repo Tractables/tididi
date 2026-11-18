@@ -151,6 +151,7 @@ impl EvalAlgebra for TrackedBoolean<'_> {
         self.usage.peak_bytes.set(self.usage.peak_bytes.get().max(self.eng.limits().meters().in_flight_bytes));
         Value::new(false, &self.usage)
     }
+    fn one(&self) -> Value { Value::new(true, &self.usage) }
     fn leaf(&self, _: VarId, label: LeafLabel) -> Value {
         Value::new(label != LeafLabel::Zero, &self.usage)
     }
@@ -190,6 +191,7 @@ fn custom_algebra_panics_propagate_and_leave_the_engine_usable() {
     impl EvalAlgebra for Panics {
         type Value = usize;
         fn zero(&self) -> usize { 0 }
+        fn one(&self) -> usize { 1 }
         fn leaf(&self, _: VarId, _: LeafLabel) -> usize { panic!("caller algebra failed") }
         fn add_assign(&self, a: &mut usize, b: &usize) { *a += b; }
         fn mul(&self, a: &usize, b: &usize) -> usize { a * b }
@@ -211,6 +213,7 @@ fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
     impl EvalAlgebra for Regrouped {
         type Value = u128;
         fn zero(&self) -> u128 { 0 }
+        fn one(&self) -> u128 { 1 }
         fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { column_weight(var, label) }
         fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
         fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
@@ -254,6 +257,7 @@ fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
     impl EvalAlgebra for Counts {
         type Value = u128;
         fn zero(&self) -> u128 { 0 }
+        fn one(&self) -> u128 { 1 }
         fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
             match label { LeafLabel::Zero => 0, LeafLabel::One => 2, _ => 1 }
         }
@@ -268,6 +272,7 @@ fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
     impl EvalAlgebra for Plain {
         type Value = u128;
         fn zero(&self) -> u128 { 0 }
+        fn one(&self) -> u128 { 1 }
         fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
             match label { LeafLabel::Zero => 0, LeafLabel::One => 2, _ => 1 }
         }
@@ -364,6 +369,7 @@ struct PlainCounts;
 impl EvalAlgebra for PlainCounts {
     type Value = u128;
     fn zero(&self) -> u128 { 0 }
+    fn one(&self) -> u128 { 1 }
     fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { column_weight(var, label) }
     fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
     fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }

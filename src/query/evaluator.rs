@@ -82,13 +82,14 @@ impl<S: EvalAlgebra> CachedQuery for S {
     }
 
     fn over_home(&self, own: Option<S::Value>, tdd: &Tdd, free: &[(VarId, bool)]) -> S::Value {
-        let unpinned: Vec<VarId> = tdd.vtree.free_vars().into_iter().filter(|&v| free.iter().all(|&(p, _)| p != v)).collect();
+        let pins = tdd.vtree.free_ranks(free.iter().map(|&(var, _)| var));
+        let unpinned = tdd.vtree.free_set().map(|set| set.without(&pins)).filter(|set| !set.is_empty());
         let pinned = free.iter().map(|&(var, value)| self.leaf(var, if value { LeafLabel::Pos } else { LeafLabel::Neg }));
-        let value = pinned.chain(self.free(&unpinned)).fold(own, |acc, v| Some(match acc {
+        let value = pinned.chain(unpinned.and_then(|set| self.free(&set))).fold(own, |acc, v| Some(match acc {
             Some(acc) => self.mul(&acc, &v),
             None => v,
         }));
-        value.expect("a home has a leaf")
+        value.unwrap_or_else(|| self.one())
     }
 }
 

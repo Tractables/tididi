@@ -6,7 +6,7 @@ use num_traits::Zero;
 use crate::value::{walk_bottom_up, CountRead, Retention, FoldInput, ValueDomain, WeightFold};
 use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
 use crate::Engine;
-use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+use crate::vtree::{FreeVars, VarId, VtreeIdx, VtreeNode};
 
 use super::fold::{fold_bottom_up_from, fold_held, LevelFold, Side};
 use crate::limits::{OperationError, PollGate};
@@ -33,7 +33,7 @@ impl Engine {
         let result = if tdd.is_zero() {
             algebra.zero()
         } else if tdd.is_one() {
-            algebra.free(&tdd.vtree.free_vars()).expect("a home has a leaf")
+            tdd.vtree.free_set().and_then(|free| algebra.free(&free)).unwrap_or_else(|| algebra.one())
         } else {
             let root = tdd.vtree.root();
             let fold = Evaluate::counting(algebra, tdd, root)?;
@@ -42,12 +42,9 @@ impl Engine {
             lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
             fold_bottom_up_from(&fold, self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
             let own = cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx());
-            match tdd.vtree.free_leaves() {
-                0 => own,
-                _ => match algebra.free(&tdd.vtree.free_vars()) {
-                    Some(free) => algebra.mul(&own, &free),
-                    None => own,
-                },
+            match tdd.vtree.free_set().and_then(|free| algebra.free(&free)) {
+                Some(free) => algebra.mul(&own, &free),
+                None => own,
             }
         };
         gate.finish()?;
@@ -74,20 +71,20 @@ impl Engine {
         let result = if tdd.is_zero() {
             algebra.zero()
         } else if tdd.is_one() {
-            let free = tdd.vtree.free_vars();
-            let home = tdd.vtree.home().expect("a vtree with no node is a projection");
-            let h = home.vtree().leaf_of(free[0]).expect("a home leaf");
+            let free = tdd.vtree.free_set().expect("a vtree with no node is a projection, and a home has a leaf");
+            let (first, rest) = free.split_first().expect("not empty");
+            let h = free.home().vtree().leaf_of(first).expect("a home leaf");
             let mut col = algebra.column(h, LEAF_WIDTH);
             for i in 0..LEAF_WIDTH {
-                algebra.leaf(h, free[0], LeafLabel::from_idx(i), &mut col);
+                algebra.leaf(h, first, LeafLabel::from_idx(i), &mut col);
             }
-            free_factor(algebra, h, &free[1..], &mut col)?;
+            free_factor(algebra, h, Some(rest), &mut col)?;
             algebra.read(h, col, LeafLabel::One as usize)
         } else {
             let keep = tdd.output.vtree;
             let mut cols = fold_columns_under(self, algebra, tdd, tdd.vtree.root(), keep, &mut gate)?;
             let mut col = std::mem::take(&mut cols[keep.idx()]);
-            free_factor(algebra, keep, &tdd.vtree.free_vars(), &mut col)?;
+            free_factor(algebra, keep, tdd.vtree.free_set(), &mut col)?;
             algebra.read(keep, col, tdd.output.local.idx())
         };
         gate.finish()?;
@@ -115,7 +112,7 @@ impl Engine {
         lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
         fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
         let mut result = std::mem::take(&mut cols[at.idx()]);
-        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under(at)) {
+        if let Some(free) = tdd.vtree.free_set_under(at).and_then(|free| algebra.free(&free)) {
             result.iter_mut().for_each(|v| *v = algebra.mul(v, &free));
         }
         gate.finish()?;
@@ -131,7 +128,7 @@ impl Engine {
     /// vtree.
     pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
         let mut result = self.own_columns_at(tdd, at, algebra)?;
-        free_factor(algebra, at, &tdd.vtree.free_vars_under(at), &mut result)?;
+        free_factor(algebra, at, tdd.vtree.free_set_under(at), &mut result)?;
         Ok(result)
     }
 
@@ -166,8 +163,8 @@ impl Engine {
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
         let mut gate = self.limits().gate();
         let mut value = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
-        if tdd.vtree.free_leaves() > 0 && !tdd.is_zero() {
-            for var in tdd.vtree.free_vars() {
+        if let Some(free) = tdd.vtree.free_set().filter(|_| !tdd.is_zero()) {
+            for var in free.vars() {
                 gate.poll(1)?;
                 let one = ws.leaf_val(var, LeafLabel::One);
                 value = Some(match value {
@@ -378,10 +375,13 @@ fn inline_counts(tdd: &Tdd, t: VtreeIdx, root: VtreeIdx) -> Vec<u32> {
     counts
 }
 
-/// Multiply `col`, the column of `t`, by every assignment to `vars` when
+/// Multiply `col`, the column of `t`, by every assignment to `free` when
 /// there are any.
-pub(crate) fn free_factor<A: ColumnAlgebra>(algebra: &A, t: VtreeIdx, vars: &[VarId], col: &mut A::Column) -> Result<(), OperationError> {
-    if vars.is_empty() || algebra.free(t, vars, col) { Ok(()) } else { Err(OperationError::VariableNotInVtree(vars[0])) }
+pub(crate) fn free_factor<A: ColumnAlgebra>(algebra: &A, t: VtreeIdx, free: Option<FreeVars<'_>>, col: &mut A::Column) -> Result<(), OperationError> {
+    match free.filter(|free| !free.is_empty()) {
+        Some(free) if !algebra.free(t, &free, col) => Err(OperationError::VariableNotInVtree(free.vars().next().expect("not empty"))),
+        _ => Ok(()),
+    }
 }
 
 /// [`Engine::evaluate_columns`]'s walk over the levels under `root`, `keep`

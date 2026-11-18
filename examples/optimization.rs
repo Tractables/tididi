@@ -23,6 +23,8 @@ fn main() -> Result<(), tididi::OperationError> {
 
         fn zero(&self) -> Self::Value { None }
 
+        fn one(&self) -> Self::Value { Some(0) }
+
         fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value {
             match label {
                 LeafLabel::Pos => Some(u64::from(self.0[var.idx()])),

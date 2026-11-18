@@ -18,7 +18,7 @@ pub(crate) use weight::{bounded_key, same_value, weight_key, ScaledSum, WeightKe
 use num_bigint::BigUint;
 
 use crate::diagram::{ChildDecoder, ChildRef, EncodedChildRef, LeafLabel, PairsIter, ValueRef};
-use crate::vtree::{VarId, VtreeIdx};
+use crate::vtree::{FreeVars, VarId, VtreeIdx};
 
 /// Define a value at each leaf and how to combine values at conjunctions and alternatives.
 ///
@@ -31,9 +31,8 @@ use crate::vtree::{VarId, VtreeIdx};
 ///
 /// The operations must form a commutative semiring: addition is associative and
 /// commutative with [`zero`](Self::zero) as identity; multiplication is
-/// associative and commutative, distributes over addition, and has zero as an
-/// absorbing element. The fold needs no explicit multiplicative-identity
-/// method because every product starts with its two child values.
+/// associative and commutative with [`one`](Self::one) as identity,
+/// distributes over addition, and has zero as an absorbing element.
 ///
 /// [`leaf`](Self::leaf) supplies each variable's positive, negative, and free
 /// values. Its `One` value must equal the sum of its `Pos` and `Neg` values:
@@ -71,6 +70,7 @@ use crate::vtree::{VarId, VtreeIdx};
 /// impl EvalAlgebra for FewestTrue {
 ///     type Value = usize;
 ///     fn zero(&self) -> usize { usize::MAX } // no satisfying assignment
+///     fn one(&self) -> usize { 0 }
 ///     fn leaf(&self, _: VarId, label: LeafLabel) -> usize {
 ///         match label {
 ///             LeafLabel::Pos => 1,
@@ -91,6 +91,9 @@ pub trait EvalAlgebra {
     type Value: Clone;
     /// The additive identity.
     fn zero(&self) -> Self::Value;
+    /// The multiplicative identity: the value of the constant-true diagram
+    /// when [`free`](Self::free) answers `None`.
+    fn one(&self) -> Self::Value;
     /// Value of leaf `label` for variable `var`. `LeafLabel::Zero` is never
     /// passed here; `evaluate` returns `zero()` for it.
     fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
@@ -157,6 +160,7 @@ pub trait EvalAlgebra {
     /// impl EvalAlgebra for Count {
     ///     type Value = u64;
     ///     fn zero(&self) -> u64 { 0 }
+    ///     fn one(&self) -> u64 { 1 }
     ///     fn leaf(&self, _: VarId, label: LeafLabel) -> u64 { if label == LeafLabel::One { 2 } else { 1 } }
     ///     fn add_assign(&self, acc: &mut u64, other: &u64) { *acc += other; }
     ///     fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }
@@ -178,14 +182,22 @@ pub trait EvalAlgebra {
         None
     }
 
-    /// The value of every assignment to `vars`, variables of the home vtree a
-    /// diagram on a projection does not have: the product of their `One`
-    /// leaves, `None` for no variable. An algebra with a cheaper product may
-    /// override it; the result must equal the default's.
-    fn free(&self, vars: &[VarId]) -> Option<Self::Value> {
-        let (&first, rest) = vars.split_first()?;
+    /// The value of every assignment to `free`, variables of the home vtree
+    /// a diagram on a projection does not have, of which there is at least
+    /// one; `None` stands for [`one`](Self::one) and makes the evaluation
+    /// the diagram's own value.
+    ///
+    /// The default is the product of their `One` leaves in rank order, one
+    /// step per variable, and overflows a fixed-width value on a large home.
+    /// An override may answer from [`FreeVars::len`] or
+    /// [`FreeVars::intervals`] without listing the variables: `2^len` for a
+    /// count, `None` for weights whose `Pos` and `Neg` sum to one for every
+    /// variable.
+    fn free(&self, free: &FreeVars<'_>) -> Option<Self::Value> {
+        let mut vars = free.vars();
         let one = |var| self.leaf(var, LeafLabel::One);
-        Some(rest.iter().fold(one(first), |acc, &var| self.mul(&acc, &one(var))))
+        let first = one(vars.next()?);
+        Some(vars.fold(first, |acc, var| self.mul(&acc, &one(var))))
     }
 }
 
@@ -321,7 +333,7 @@ pub trait ColumnAlgebra {
     }
 
     /// Multiply every slot of `col`, the column of vtree node `t`, by the
-    /// value of every assignment to `vars`, variables of the home vtree a
+    /// value of every assignment to `free`, variables of the home vtree a
     /// diagram on a projection does not have ([`EvalAlgebra::free`]), and
     /// return `true`.
     ///
@@ -339,9 +351,9 @@ pub trait ColumnAlgebra {
     /// this with the other variables, and reads its `One` slot. `false`
     /// makes the evaluation return
     /// [`OperationError::VariableNotInVtree`](crate::OperationError::VariableNotInVtree)
-    /// naming one of `vars`;
+    /// naming one of them;
     /// the default writes nothing and returns `false`.
-    fn free(&self, _t: VtreeIdx, _vars: &[VarId], _col: &mut Self::Column) -> bool {
+    fn free(&self, _t: VtreeIdx, _free: &FreeVars<'_>, _col: &mut Self::Column) -> bool {
         false
     }
 }
