@@ -51,10 +51,10 @@ fn projection_is_project_to_vars_keeping_ids() {
         let expected = tree.project_to_vars(|v| keep[v.0 as usize].then_some(v), tree.num_vars()).unwrap();
         assert!(own.same_tree(&expected));
         assert_eq!(own.validate(), Ok(()));
-        assert!(Arc::ptr_eq(own.home().unwrap().vtree(), tree));
+        assert!(Arc::ptr_eq(Vtree::home_of(&own).unwrap().vtree(), tree));
         assert!(Arc::ptr_eq(own.context(), tree.context()));
         assert_eq!(own.num_vars(), tree.num_vars());
-        assert!(own.var_to_leaf.is_empty());
+        assert_eq!(own.var_to_leaf.is_empty(), !Arc::ptr_eq(&own, tree));
     });
 }
 
@@ -162,7 +162,7 @@ fn equal_leaf_sets_give_equal_layouts() {
             let other = Vtree::projection(&twin, fewer.iter().copied()).unwrap();
             let direct = Vtree::projection(&Home::new(Arc::clone(&own)), fewer).unwrap();
             assert_eq!(other.nodes, direct.nodes);
-            assert!(Arc::ptr_eq(direct.home().unwrap().vtree(), tree));
+            assert!(Arc::ptr_eq(Vtree::home_of(&direct).unwrap().vtree(), tree));
             assert_eq!(other.validate(), Ok(()));
             assert!(matches!(Vtree::leaf_sets(&other, &own), Ok(LeafSets::AInB | LeafSets::Equal(_))));
         }
@@ -190,8 +190,9 @@ fn leaf_sets_compare_and_unite() {
         if matches!(got, LeafSets::Equal(_)) {
             assert_eq!(vars.len(), other.len());
         }
-        assert!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)));
-        assert!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)));
+        assert_eq!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)), a.home().is_some());
+        assert_eq!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)), b.home().is_some());
+        assert_eq!(Arc::ptr_eq(&a, tree), vars.len() == tree.num_leaves() as usize);
         assert!(matches!(Vtree::leaf_sets(tree, tree), Ok(LeafSets::Equal(_))));
         let stranger = Arc::new((**tree).clone());
         assert!(Vtree::leaf_sets(&a, &stranger).is_err_and(|e| e == crate::OperationError::VtreeMismatch));
@@ -252,4 +253,91 @@ fn validate_checks_the_link() {
     link.node_of.swap(0, 1);
     broken.home = Some(Arc::new(link));
     assert!(matches!(broken.validate(), Err(VtreeError::Invalid(_))));
+}
+
+/// The projection, the union and the sub-projection on every leaf of a home
+/// are the home's own vtree, which `leaf_sets` holds every proper projection
+/// in.
+#[test]
+fn every_leaf_is_the_home() {
+    for seed in 0..30u64 {
+        let n = 2 + (seed % 9) as u32;
+        let home = rotated_home(n, seed);
+        let tree = home.vtree();
+        let all: Vec<VarId> = (1..=n).map(VarId).collect();
+        let full = Vtree::projection(&home, all.iter().copied()).unwrap();
+        assert!(Arc::ptr_eq(&full, tree));
+        assert_eq!(full.validate(), Ok(()));
+        let project = |vars: &[VarId]| Vtree::projection(&home, vars.iter().copied()).unwrap();
+        let (low, high) = all.split_at(n as usize / 2);
+        let (a, b) = (project(low), project(high));
+        let (c, d) = (project(&all[..n as usize - 1]), project(&all[1..]));
+        assert!(Arc::ptr_eq(&Vtree::union(&a, &b).unwrap(), tree));
+        assert!(Arc::ptr_eq(&Vtree::union(&c, &d).unwrap(), tree));
+        assert!(Arc::ptr_eq(&tree.sub_projection(&home, |_| true).unwrap(), tree));
+        assert!(matches!(Vtree::leaf_sets(&full, tree), Ok(LeafSets::Equal(_))));
+        for proper in [&a, &b, &c, &d] {
+            assert!(matches!(Vtree::leaf_sets(proper, tree), Ok(LeafSets::AInB)));
+            assert!(matches!(Vtree::leaf_sets(tree, proper), Ok(LeafSets::BInA)));
+        }
+    }
+}
+
+/// Two projections on one leaf set compare equal, never one inside the
+/// other, the full set included.
+#[test]
+fn equal_leaf_sets_are_never_inclusion() {
+    cases(|home, tree, vars, _| {
+        let a = Vtree::projection(home, vars.iter().copied()).unwrap();
+        for b in [Vtree::projection(home, vars.iter().rev().copied()).unwrap(), Arc::clone(tree)] {
+            let same = b.num_leaves() == a.num_leaves();
+            let got = Vtree::leaf_sets(&a, &b).unwrap();
+            assert_eq!(matches!(got, LeafSets::Equal(_)), same);
+            assert_eq!(matches!(got, LeafSets::AInB), !same);
+        }
+    });
+}
+
+/// A root is indexed once: `Home::new` of a home's root or of a projection
+/// is that home, a clone of the root is not a home, and the index costs a
+/// `Vtree` one word.
+#[test]
+fn a_home_is_made_once_and_not_cloned() {
+    let home = Home::new(Vtree::balanced(6));
+    let again = Home::new(Arc::clone(home.vtree()));
+    assert!(Arc::ptr_eq(again.vtree(), home.vtree()));
+    assert!(std::ptr::eq(again.index(), home.index()));
+    let own = Vtree::projection(&home, [VarId(2), VarId(5)]).unwrap();
+    assert!(Arc::ptr_eq(Home::new(own).vtree(), home.vtree()));
+    let copy = Arc::new(Vtree::clone(home.vtree()));
+    assert!(home.vtree().is_home() && !copy.is_home());
+    assert!(Vtree::home_of(&copy).is_none());
+    assert_eq!(std::mem::size_of::<Vtree>(), 128);
+}
+
+#[test]
+#[should_panic(expected = "shared and not a home")]
+fn a_shared_root_does_not_become_a_home() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let _kept = Arc::clone(&tree);
+    Home::new(tree);
+}
+
+/// The empty projection validates, and a projection whose nodes are not
+/// numbered as the builder numbers them does not, though its tree and link
+/// agree.
+#[test]
+fn the_layout_is_the_builders() {
+    let home = Home::new(Vtree::balanced(8));
+    assert_eq!(Vtree::empty_projection(&home).validate(), Ok(()));
+    let own = Vtree::projection(&home, [VarId(2), VarId(7)]).unwrap();
+    assert_eq!(own.validate(), Ok(()));
+    let mut renumbered = Vtree::clone(&own);
+    renumbered.nodes.swap(0, 1);
+    let root = renumbered.root();
+    renumbered.nodes[root.idx()] = VtreeNode::Internal { left: VtreeIdx(1), right: VtreeIdx(0), parent: None };
+    let link = Arc::make_mut(renumbered.home.as_mut().unwrap());
+    link.node_of.swap(0, 1);
+    link.in_order = vec![VtreeIdx(1), root, VtreeIdx(0)];
+    assert!(renumbered.validate().is_err_and(|e| e.to_string().contains("order the builder gives")));
 }

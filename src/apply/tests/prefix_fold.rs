@@ -1025,6 +1025,8 @@ fn operands_on_projections_fold_as_on_their_home() {
         );
         for shape in SHAPES {
             let (vtree, into) = blocks.vtrees(shape);
+            let home = Home::new(Arc::unwrap_or_clone(vtree));
+            let vtree = Arc::clone(home.vtree());
             for seed in 1..=3u64 {
                 let mut rng = Lcg::new(seed * 7919 + u64::from(nk * 100 + m * 10 + nv));
                 let (points, values) = random(&mut rng, &blocks, 2 + seed);
@@ -1033,7 +1035,6 @@ fn operands_on_projections_fold_as_on_their_home() {
                 let a = eng.from_models(&vtree, &all[..nk as usize + m as usize], &a_rows).unwrap();
                 let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
                 let (mut ta, mut tb) = (a.clone(), b.clone());
-                let home = Home::new(Arc::clone(&vtree));
                 ta.trim(&home).unwrap();
                 tb.trim(&home).unwrap();
                 assert!(ta.vtree().free_leaves() >= nv);

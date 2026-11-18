@@ -8,6 +8,10 @@ use crate::vtree::home::LeafSets;
 use crate::vtree::rng::Lcg;
 
 pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
+    if got.home.is_none() || want.home.is_none() {
+        assert!(std::ptr::eq(got, want), "{what}: the projection on every leaf is the home");
+        return;
+    }
     assert_eq!(got.nodes, want.nodes, "{what}");
     assert_eq!(got.root, want.root, "{what}");
     assert_eq!(got.leaf_count, want.leaf_count, "{what}");

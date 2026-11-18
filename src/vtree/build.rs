@@ -419,6 +419,7 @@ impl Vtree {
             leaf_count: k as u32,
             topo,
             home: None,
+            index: Default::default(),
         };
         debug_assert_eq!(vtree.validate(), Ok(()));
         Ok(vtree)
@@ -674,6 +675,7 @@ fn reindex(
         leaf_count,
         topo,
         home: None,
+        index: Default::default(),
     };
     debug_assert_eq!(vtree.validate(), Ok(()));
     Some((vtree, old_to_new))

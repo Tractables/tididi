@@ -241,8 +241,8 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
 fn operations_on_projections_are_operations_on_the_home() {
     let eng = Engine::new();
     for seed in 0..150u64 {
-        let home = rotated_home(2 + (seed % 9) as u32, seed);
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(rotated_home(2 + (seed % 9) as u32, seed));
+        let home = Arc::clone(hm.vtree());
         let mut rng = Lcg::new(seed ^ 0x5851_f42d);
         let all = vars_under(&home, home.root());
         for (k, (fv, gv)) in leaf_set_pairs(&home, &mut rng).into_iter().enumerate() {

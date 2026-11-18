@@ -207,7 +207,7 @@ impl Engine {
         if cands.is_empty() {
             return Ok(0);
         }
-        // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
+        // Detach to a uniquely-owned vtree so the per-rotation `Vtree::make_mut`s are
         // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
         // shared Arc until the caller reseats them — sound
         // because rotations only change indices inside subtree(root).

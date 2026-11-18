@@ -1345,14 +1345,18 @@ fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Opt
         }
         return;
     }
-    let root = Arc::new(union);
     let Some(groups) = groups else {
+        let root = match members.first().is_some_and(|m| m.vtree.is_home()) {
+            true => Arc::clone(Home::new(union).vtree()),
+            false => Arc::new(union),
+        };
         for m in members.iter_mut() {
             m.vtree = Arc::clone(&root);
         }
         return;
     };
-    let home = Home::new(Arc::clone(&root));
+    let home = Home::new(union);
+    let root = Arc::clone(home.vtree());
     for group in groups.groups {
         match group.tree {
             Some(tree) => seat_group(eng, members, &group.members, tree, &home),

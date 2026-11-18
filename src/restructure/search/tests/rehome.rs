@@ -55,13 +55,13 @@ fn weighted(eng: &Engine, f: &Tdd) -> Option<BigRational> {
 
 /// `after` is `before` moved by a search that kept a move iff `kept`.
 fn check_end(eng: &Engine, before: &Tdd, after: &Tdd, kept: bool) {
-    let home = before.vtree().home().unwrap();
+    let home = before.home().unwrap();
     check_all_fast(before, "before the search");
     check_all_fast(after, "after the search");
     assert_eq!(after.vtree().validate(), Ok(()));
     assert_eq!(eng.model_count(after).unwrap(), eng.model_count(before).unwrap());
     assert_eq!(weighted(eng, after), weighted(eng, before));
-    let lifted = after.vtree().home().expect("a projection stays a projection");
+    let lifted = after.home().expect("a projection stays a projection");
     if !kept {
         assert!(Arc::ptr_eq(after.vtree(), before.vtree()));
         return;
@@ -75,7 +75,7 @@ fn check_end(eng: &Engine, before: &Tdd, after: &Tdd, kept: bool) {
     };
     assert_eq!(vars(after.vtree()), vars(before.vtree()));
     assert_eq!(vars(lifted.vtree()), vars(home.vtree()));
-    let again = Vtree::projection(lifted, vars(after.vtree())).unwrap();
+    let again = Vtree::projection(&lifted, vars(after.vtree())).unwrap();
     assert_eq!(again.num_nodes(), after.vtree().num_nodes());
     for t in (0..again.num_nodes() as u32).map(VtreeIdx) {
         assert_eq!(again.node(t), after.vtree().node(t));
@@ -169,7 +169,7 @@ fn a_diagram_in_two_parts_rehomes_without_rotating() {
         let mut moved = f.clone();
         assert!(moved.rotate_if(&[RotationMove { pivot: v, kind: RotationKind::Left }], usize::MAX, |_| true).unwrap());
         check_end(&eng, &f, &moved, true);
-        let lifted = moved.vtree().home().unwrap().clone();
+        let lifted = moved.home().unwrap();
 
         let three = rng.coin();
         let mut vars: Vec<VarId> = match three {
@@ -207,7 +207,7 @@ fn a_diagram_in_two_parts_rehomes_without_rotating() {
         };
         check_all_fast(&rehomed, "rehomed");
         assert_eq!(rehomed.vtree().validate(), Ok(()));
-        assert!(Arc::ptr_eq(rehomed.vtree().home().unwrap().vtree(), lifted.vtree()));
+        assert!(Arc::ptr_eq(rehomed.home().unwrap().vtree(), lifted.vtree()));
         assert_eq!(eng.model_count(&rehomed).unwrap(), eng.model_count(&g).unwrap());
         let both = eng.and(&moved, &rehomed).unwrap();
         let before = eng.and(&f, &g).unwrap();
@@ -227,5 +227,32 @@ fn a_declined_search_keeps_the_vtree() {
     let turn = RotationMove { pivot: own.root(), kind: RotationKind::Right };
     assert!(!g.rotate_if(&[turn], usize::MAX, |_| false).unwrap());
     assert!(Arc::ptr_eq(g.vtree(), &own));
-    assert!(Arc::ptr_eq(g.vtree().home().unwrap().vtree(), home.vtree()));
+    assert!(Arc::ptr_eq(g.home().unwrap().vtree(), home.vtree()));
+}
+
+/// A home's root held by one diagram alone moves in place: a clone the
+/// probe's callback makes is on no home, a declined move gives the root its
+/// index back, and a kept one ends on a home of the new shape.
+#[test]
+fn a_home_root_held_alone_is_no_home_while_it_moves() {
+    for accept in [false, true] {
+        let mut f = {
+            let root = Arc::clone(Home::new(Vtree::balanced(8)).vtree());
+            Tdd::clause(&root, [1, -4, 6]).unwrap()
+        };
+        let before = Arc::as_ptr(f.vtree());
+        let pivot = f.vtree().root();
+        let mut copy_on_home = None;
+        let kept = f
+            .rotate_if(&[RotationMove { pivot, kind: RotationKind::Right }], usize::MAX, |probe| {
+                copy_on_home = Some(probe.diagram().clone().home().is_some());
+                accept
+            })
+            .unwrap();
+        assert_eq!((kept, copy_on_home), (accept, Some(false)));
+        assert_eq!(Arc::as_ptr(f.vtree()), before);
+        assert!(Arc::ptr_eq(f.home().expect("on a home").vtree(), f.vtree()));
+        assert_eq!(f.vtree().validate(), Ok(()));
+        check_all_fast(&f, "after the move");
+    }
 }

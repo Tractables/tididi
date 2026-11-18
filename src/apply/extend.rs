@@ -128,7 +128,7 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
 /// one with weights or a summed-out level as it is.
 #[inline]
 pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationError> {
-    if result.vtree.home().is_some() {
+    if result.vtree.home().is_some() || result.vtree.is_home() {
         trim_result(eng, &mut result)?;
     }
     Ok(result)
@@ -137,7 +137,7 @@ pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationErr
 #[cold]
 fn trim_result(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
     if result.weights.is_none() && !result.has_marginal_level() {
-        let home = result.vtree.home().expect("a projection").clone();
+        let home = Vtree::home_of(&result.vtree).expect("a vtree on a home");
         eng.trim(result, &home)?;
     }
     Ok(())
@@ -185,10 +185,9 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
 }
 
 /// Whether `f` is on a projection with fewer leaves than `into`, which
-/// holds its leaf set, or `into` is the home: a projection on all of the
-/// home's leaves has the home's shape but not its node numbering.
+/// holds its leaf set.
 fn moves(f: &Tdd, into: &Vtree) -> bool {
-    f.vtree.num_nodes() != into.num_nodes() || f.vtree.home().is_some() != into.home().is_some()
+    f.vtree.num_nodes() != into.num_nodes()
 }
 
 fn check_movable(f: &Tdd, into: &Vtree) -> Result<(), OperationError> {
