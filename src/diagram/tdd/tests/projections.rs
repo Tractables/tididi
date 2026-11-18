@@ -466,7 +466,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), closed);
     a.check(
         "transport_projection",
-        || eng.transport_projection(&g, &hm, |v| v).map(|v| v.num_leaves()),
+        || eng.transport_projection(g, &hm, |v| v).map(|v| v.num_leaves()),
         || Ok(g.vtree().num_leaves()),
         PartialEq::eq,
     );
