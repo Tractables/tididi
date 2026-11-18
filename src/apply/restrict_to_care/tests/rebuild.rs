@@ -7,18 +7,9 @@ use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
 use crate::vtree::Vtree;
 
-/// Keep every node and pair of a structural fixture.
-fn all_live(f: &Tdd) -> Marking {
-    Marking {
-        alive: f
-            .levels
-            .iter()
-            .map(|l| vec![true; l.nodes().len()])
-            .collect(),
-        keep: Vec::new(),
-        pair_alive: PairMarks::all(),
-        root_live: true,
-    }
+/// Keep every node and pair of a fixture.
+fn all_live(eng: &Engine, f: &Tdd) -> Marking {
+    mark_pairs_where(eng, f, |_, _, _| true)
 }
 
 fn mark_pairs_where(
@@ -29,6 +20,9 @@ fn mark_pairs_where(
     let mut pair_alive = PairMarks::new(eng, f).unwrap();
     for (t, _, _) in f.vtree.internal_bottomup() {
         let level = &f.levels[t.idx()];
+        if level.is_marginal() {
+            continue;
+        }
         for j in 0..level.nodes().len() {
             let count = level.pair_count_at(j);
             for (k, p) in level.pairs_iter_of_idx(j).enumerate() {
@@ -40,9 +34,11 @@ fn mark_pairs_where(
             }
         }
     }
+    let rows = |x: bool| f.levels.iter().map(|l| vec![x; l.nodes().len()]).collect();
     Marking {
+        alive: rows(true),
+        keep: rows(false),
         pair_alive,
-        ..all_live(f)
     }
 }
 
@@ -58,7 +54,7 @@ fn marks_that_kill_nothing_leave_the_operand_as_it_is() {
     let tree = Arc::new(Vtree::linear(8192));
     let f = Tdd::one(&tree);
     assert_canonical(&f);
-    let result = all_live(&f).rebuild(&Engine::new(), f.clone()).unwrap();
+    let result = all_live(&Engine::new(), &f).rebuild(&Engine::new(), f.clone()).unwrap();
     assert_same_shape(&result, &f, "nothing dead");
     assert_canonical(&result);
     assert_eq!(
@@ -85,7 +81,7 @@ fn a_dead_node_takes_the_pairs_naming_it_and_nothing_else() {
         .pairs_iter_of_idx(0)
         .all(|p| p.left == POS_LEAF_IDX.into() && p.right == POS_LEAF_IDX.into());
     let target = if both_positive { 0 } else { 1 };
-    let mut marks = all_live(&f);
+    let mut marks = all_live(&Engine::new(), &f);
     marks.alive[left.idx()][target] = false;
 
     let g = marks.rebuild(&eng, f.clone()).unwrap();
@@ -117,6 +113,7 @@ fn the_rebuild_polls_once_per_pair_it_reads() {
     let tree = Arc::new(Vtree::linear(8));
     let f = Tdd::one(&tree);
     let eng = Engine::new();
+    let marks = all_live(&eng, &f);
     eng.limits().pin_reduce_poll_stride(Some(1));
     let _scope = eng
         .limits()
@@ -125,7 +122,7 @@ fn the_rebuild_polls_once_per_pair_it_reads() {
             ..StopRules::default()
         }));
     assert_eq!(
-        all_live(&f).rebuild(&eng, f).err(),
+        marks.rebuild(&eng, f).err(),
         Some(OperationError::Stopped)
     );
     assert_eq!(eng.limits().meters().work_units, 3);
@@ -151,18 +148,18 @@ fn the_rebuild_recovers_after_each_refused_reservation() {
             Err(error) => assert_eq!(error, OperationError::OverBudget),
         }
         eng.limits().grant_every_reserve();
-        let result = all_live(&f).rebuild(&eng, f.clone()).unwrap();
+        let result = all_live(&Engine::new(), &f).rebuild(&eng, f.clone()).unwrap();
         assert_canonical(&result);
         assert_eq!(result.model_count().unwrap(), f.model_count().unwrap());
     }
     assert!(reached_success, "the sweep must cover every reservation");
 }
 
-/// The node filter's bottom-up sweep and this depth-first rebuild keep the
-/// same function once both are minimized, on structural operands and on
+/// The node filter and the restriction's rebuild from marks keep the same
+/// function once both are minimized, on structural operands and on
 /// operands with a summed-out subtree.
 #[test]
-fn the_node_filter_agrees_with_the_depth_first_rebuild() {
+fn the_node_filter_agrees_with_the_rebuild_from_marks() {
     use crate::apply::FilterOutcome;
     use crate::test_helpers::{
         CnfShape, Lcg, assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes,
@@ -213,7 +210,7 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                     FilterOutcome::Filtered { tdd, .. }
                     | FilterOutcome::Unsatisfiable { tdd, .. } => tdd,
                 };
-                let mut marks = Marking::trivial(&eng, &f, true).unwrap();
+                let mut marks = all_live(&eng, &f);
                 for (i, level) in f.levels.iter().enumerate() {
                     if level.is_marginal() {
                         continue;
@@ -227,14 +224,14 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                         }
                     }
                 }
-                let mut dfs = marks.rebuild(&eng, f.clone()).unwrap();
-                eng.minimize(&mut dfs).unwrap();
+                let mut rebuilt = marks.rebuild(&eng, f.clone()).unwrap();
+                eng.minimize(&mut rebuilt).unwrap();
                 if sweep.is_zero() {
-                    assert!(dfs.is_zero());
+                    assert!(rebuilt.is_zero());
                     continue;
                 }
-                assert_same_shape(&sweep, &dfs, "the sweep against the depth-first rebuild");
-                assert_eq!(sweep.model_count().unwrap(), dfs.model_count().unwrap());
+                assert_same_shape(&sweep, &rebuilt, "the node filter against the rebuild from marks");
+                assert_eq!(sweep.model_count().unwrap(), rebuilt.model_count().unwrap());
                 let counts = |g: &Tdd| -> Vec<Option<Vec<u128>>> {
                     g.levels
                         .iter()
@@ -247,7 +244,7 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                         })
                         .collect()
                 };
-                assert_eq!(counts(&sweep), counts(&dfs));
+                assert_eq!(counts(&sweep), counts(&rebuilt));
                 compared += 1;
             }
         }

@@ -589,6 +589,43 @@ impl TddLevel {
         Ok(idx)
     }
 
+    /// Give the node at `idx` the non-empty pair list `pairs` in place of its
+    /// own, appended at the arena's tail; its old range is noted dead.
+    ///
+    /// The caller owes the representation invariants, as for
+    /// [`push_pair_onto_node`](Self::push_pair_onto_node).
+    ///
+    /// # Errors
+    ///
+    /// As [`push_node`](Self::push_node); the node is then as it was.
+    pub(crate) fn replace_node_pairs<G: ArenaGrowth>(
+        &mut self, growth: &G, idx: usize, pairs: &[ChildPair],
+    ) -> Result<(), OperationError> {
+        debug_assert!(!pairs.is_empty(), "a node has a pair");
+        self.store_if_implicit(growth)?;
+        let dead = self.arena_pairs_at(idx);
+        let node = if let [pair] = pairs {
+            EncodedNode::inline(*pair)
+        } else {
+            let arena = self.pairs.stored_mut();
+            let start = arena.len();
+            if arena.capacity() - start < pairs.len() {
+                growth.grow(arena, pairs.len())?;
+            }
+            arena.extend_from_slice(pairs);
+            match self.try_encode_multi(growth, start, pairs.len()) {
+                Ok(node) => node,
+                Err(refused) => {
+                    self.pairs.truncate(start);
+                    return Err(refused);
+                }
+            }
+        };
+        self.nodes.stored_mut()[idx] = node;
+        self.note_dead_pairs(dead);
+        Ok(())
+    }
+
     /// Add one pair to the node at `idx`, in place.
     ///
     /// The node's pairs stay contiguous: a range already at the arena's tail

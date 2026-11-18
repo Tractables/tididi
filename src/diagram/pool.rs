@@ -71,12 +71,33 @@ pub(crate) fn reset_level(level: &mut TddLevel, room: &mut u64) -> u64 {
         *room -= bytes;
         bytes
     }
+    if is_bare(level) {
+        level.forget_held_pairs();
+        return 0;
+    }
     let within = |room: u64| usize::try_from(room).unwrap_or(usize::MAX);
-    level.clear_keeping(within(*room));
+    if level.is_clear_but_held() {
+        level.forget_held_pairs();
+    } else {
+        level.clear_keeping(within(*room));
+    }
     let arenas = retain(level.nodes.stored_mut(), room) + retain(level.pairs.stored_mut(), room);
     let ranges = level.ranges.retain(within(*room));
     *room -= ranges;
     arenas + ranges
+}
+
+/// Whether `level` is clear and owns no allocation, so that resetting it
+/// means only forgetting its kept live-pair count.
+#[inline]
+fn is_bare(level: &mut TddLevel) -> bool {
+    level.nodes.stored_mut().capacity() == 0
+        && level.pairs.stored().is_some()
+        && level.pairs.capacity() == 0
+        && level.ranges.charged_bytes() == 0
+        && level.value_ref_sides == 0
+        && level.dead_pairs == 0
+        && matches!(level.state, super::level::LevelState::Structural(_))
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through

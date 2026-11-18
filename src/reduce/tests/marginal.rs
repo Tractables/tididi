@@ -269,7 +269,9 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let out = tdd.output.local;
     let kept: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(out.idx())[1..].to_vec();
     assert!(kept.len() >= 2, "setup: the output node must keep several pairs");
-    tdd.levels[root.idx()].replace_node_pairs(out, &kept);
+    tdd.levels[root.idx()]
+        .replace_node_pairs(&crate::limits::Limits::new(), out.idx(), &kept)
+        .expect("no limit is installed");
 
     let slot = |side: EncodedChildRef| ChildDecoder::marginal().child(side).index();
     let lowest = |sides: &dyn Fn(&ChildPair) -> EncodedChildRef| {

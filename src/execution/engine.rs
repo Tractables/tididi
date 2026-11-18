@@ -61,7 +61,7 @@ pub struct Engine {
 pub(crate) struct EngineScratch {
     pub(super) ledger: ScratchLedger,
     pub(crate) apply: crate::apply::conjoin::ApplyScratch,
-    pub(crate) clause: crate::apply::conjoin_clause::ClauseScratch,
+    pub(crate) clause: Pool<crate::apply::conjoin_clause::ClauseWork>,
     pub(crate) reduce: crate::reduce::ReduceScratch,
     pub(crate) negate: crate::apply::negate::NegateScratch,
     pub(crate) restructure: Pool<crate::restructure::scratch::RestructureScratch>,
@@ -75,7 +75,7 @@ pub(crate) struct EngineScratch {
 impl Pools for EngineScratch {
     fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
         self.apply.pools(visit);
-        self.clause.pools(visit);
+        visit(&self.clause);
         self.reduce.pools(visit);
         self.negate.pools(visit);
         visit(&self.restructure);

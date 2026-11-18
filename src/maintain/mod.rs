@@ -297,7 +297,7 @@ impl Maintenance<'_> {
 enum ModelShape {
     /// A value for every variable of the vtree.
     Complete,
-    /// Some variable left free: the general cube routes answer.
+    /// Some variable left free: the rebuild answers.
     Partial,
     /// A variable in both polarities: the cube is false.
     Inconsistent,

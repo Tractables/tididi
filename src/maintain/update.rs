@@ -182,7 +182,7 @@ impl Maintenance<'_> {
         // the original until the rebuilt function is ready to install.
         let taken = self.tdd.try_clone_on(eng)?;
         let out = match edit {
-            Edit::Insert => crate::apply::conjoin_clause::disjoin_cube_on(eng, taken, model)?,
+            Edit::Insert => crate::apply::disjoin_cube::disjoin_cube_on(eng, taken, model)?,
             Edit::Remove => {
                 let mut clause = Vec::new();
                 eng.limits().reserve_exact(&mut clause, model.len())?;

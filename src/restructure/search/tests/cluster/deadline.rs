@@ -69,8 +69,84 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed here");
     assert!(
-        !collect_cluster_candidates(&tdd, &subtree_allow_mask(&tdd.vtree, root)).is_empty(),
+        !collect_cluster_candidates(&tdd, root).is_empty(),
         "test setup: the fixture must offer the pass something to cluster",
+    );
+    (tdd, root)
+}
+
+/// A candidate whose rotation saves more than `CLUSTER_MIN_GAIN`, so the pass
+/// keeps it. `root = (D, v)`, `v = (A, w)`, `w = (B, C)` over 10, 2, 2 and 9
+/// variables, with A and B forgotten; D's contexts give `v` and `w` enough
+/// nodes for the rotation to save 358 pairs. The 38 clauses, each one literal
+/// of D, one of A or B and one of C, come from a fixed generator.
+pub(super) fn worthwhile_candidate_tdd() -> (Tdd, VtreeIdx) {
+    fn balanced(vars: std::ops::Range<i32>, lines: &mut Vec<String>) -> usize {
+        let id = lines.len();
+        if vars.len() == 1 {
+            lines.push(format!("L {id} {}", vars.start));
+            return id;
+        }
+        let mid = vars.start + vars.len() as i32 / 2;
+        let l = balanced(vars.start..mid, lines);
+        let r = balanced(mid..vars.end, lines);
+        let id = lines.len();
+        lines.push(format!("I {id} {l} {r}"));
+        id
+    }
+    let mut lines = Vec::new();
+    let d = balanced(1..11, &mut lines);
+    let a = balanced(11..13, &mut lines);
+    let b = balanced(13..15, &mut lines);
+    let c = balanced(15..24, &mut lines);
+    let mut join = |l: usize, r: usize| {
+        let id = lines.len();
+        lines.push(format!("I {id} {l} {r}"));
+        id
+    };
+    let w = join(b, c);
+    let v = join(a, w);
+    join(d, v);
+    let text = format!("vtree {}\n{}\n", lines.len(), lines.join("\n"));
+    let vtree = Arc::new(Vtree::from_text(&text).expect("a well-formed vtree"));
+
+    let mut state = 6364136223846793005u64.wrapping_add(1442695040888963407);
+    let mut draw = |n: i32| {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 33) as i32 % n
+    };
+    let mut lit = |vars: std::ops::Range<i32>| {
+        let var = vars.start + draw(vars.len() as i32);
+        Literal::new(VarId(var as u32), draw(2) == 0)
+    };
+    let mut acc: Option<Tdd> = None;
+    for _ in 0..38 {
+        let clause = clause_to_tdd(&vtree, &[lit(1..11), lit(11..15), lit(15..24)]);
+        acc = Some(match acc {
+            Some(prev) => {
+                let mut r = apply_and(prev, clause);
+                r.minimize().unwrap();
+                r
+            }
+            None => clause,
+        });
+    }
+    let mut tdd = acc.expect("38 clauses build a diagram");
+    tdd.minimize().unwrap();
+
+    let eng = Engine::new();
+    let root = vtree.root();
+    let (_, v_idx) = vtree.children(root);
+    let (a_idx, w_idx) = vtree.children(v_idx);
+    let (b_idx, _) = vtree.children(w_idx);
+    let mut targets = [a_idx, b_idx];
+    targets.sort_by_key(|t| t.idx());
+    marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed here");
+    tdd.minimize().unwrap();
+    assert_eq!(
+        collect_cluster_candidates(&tdd, root),
+        [(v_idx, RotationKind::Left)],
+        "test setup: the fixture must offer the pass one candidate",
     );
     (tdd, root)
 }
@@ -115,11 +191,12 @@ fn a_stop_inside_the_pass_cuts_it() {
 
 /// The poll is amortized, not per-candidate: with a stride wider than the whole
 /// pass's work, the stop is tested once, at entry, and the pass runs to its
-/// fixpoint. Paired with the test above (same fixture, stride 1) this pins
-/// that the stride decides when the stop is tested inside the pass.
+/// fixpoint. Paired with the test above (stride 1) this pins that the stride
+/// decides when the stop is tested inside the pass; this fixture's candidate
+/// is one the pass keeps, so the pass does run to the end.
 #[test]
 fn a_stride_wider_than_the_pass_never_polls() {
-    let (mut tdd, root) = one_candidate_tdd();
+    let (mut tdd, root) = worthwhile_candidate_tdd();
     let before = tdd.model_count().unwrap();
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 

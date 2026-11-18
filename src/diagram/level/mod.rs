@@ -362,6 +362,20 @@ impl TddLevel {
         self.state = LevelState::structural();
     }
 
+    /// Whether the level is as [`clear`](Self::clear) leaves it, whatever
+    /// capacity it keeps, whatever its `uneven` hint holds and whatever
+    /// count of live pairs it keeps
+    /// ([`forget_held_pairs`](Self::forget_held_pairs) forgets that).
+    #[inline]
+    pub(crate) fn is_clear_but_held(&self) -> bool {
+        self.nodes.stored().is_empty()
+            && self.pairs.stored().is_some_and(<[ChildPair]>::is_empty)
+            && self.ranges.is_empty()
+            && self.value_ref_sides == 0
+            && self.dead_pairs == 0
+            && matches!(self.state, LevelState::Structural(_))
+    }
+
     /// The node arena emptied, for a level built in this one's place, of
     /// the capacity it has ([`clear_nodes`](Self::clear_nodes)).
     pub(crate) fn take_nodes(&mut self) -> NodeArena {

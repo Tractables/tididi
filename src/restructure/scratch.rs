@@ -32,13 +32,12 @@ pub(crate) struct RestructureScratch {
 }
 
 /// The tables a pool-search probe scores its members by: the pairs of each
-/// member's two levels before and after the move, whether it is scored, the
-/// least it can hold after the move, and the order it is scored in.
+/// member's two levels before and after the move, the least it can hold
+/// after the move, and the order it is scored in.
 #[derive(Default)]
 pub(super) struct ProbeTables {
     pub(super) before: Vec<usize>,
     pub(super) after: Vec<usize>,
-    pub(super) scored: Vec<bool>,
     pub(super) floors: Vec<usize>,
     pub(super) order: Vec<usize>,
 }
@@ -47,7 +46,6 @@ impl ProbeTables {
     pub(super) fn clear(&mut self) {
         self.before.clear();
         self.after.clear();
-        self.scored.clear();
         self.floors.clear();
         self.order.clear();
     }
@@ -74,7 +72,6 @@ impl Buffers for RestructureScratch {
         visit(&mut self.bucket.pairs);
         visit(&mut self.probe.before);
         visit(&mut self.probe.after);
-        visit(&mut self.probe.scored);
         visit(&mut self.probe.floors);
         visit(&mut self.probe.order);
     }

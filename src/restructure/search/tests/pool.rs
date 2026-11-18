@@ -291,10 +291,9 @@ fn a_probe_charges_its_rebuilds_to_the_work_clock() {
 
 /// A move its scores refuse charges the probe and, for each member, what
 /// a score reads: the pairs of its two levels and the rebuild's fixed
-/// units, or a member of a pair a level its pairs and one. It charges so
-/// also where a score's cap refused the move before every member was
-/// scored, as on seeded pools of four functions on every vtree shape of
-/// six to eight variables some probes do.
+/// units. It charges so also where a score's cap refused the move before
+/// every member was scored, as on seeded pools of four functions on every
+/// vtree shape of six to eight variables some probes do.
 #[test]
 fn a_refused_score_charges_the_pairs_it_reads() {
     use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
@@ -314,16 +313,11 @@ fn a_refused_score_charges_the_pairs_it_reads() {
             let Some(pending) = super::move_in_place(&mut tree, mv) else { continue };
             let info = pending.info();
             pending.revert(&mut tree);
-            let (mut read, mut scorable) = (0u64, 0usize);
+            let mut read = 0u64;
             for m in &members {
                 let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
                 let old = (outer + inner) as u64;
-                if outer <= 1 && inner == outer {
-                    read += old + 1;
-                } else {
-                    read += old + super::REBUILD_UNITS;
-                    scorable += 1;
-                }
+                read += old + super::REBUILD_UNITS;
             }
             let start = eng.limits().work_units();
             let scored = SCORED.with(std::cell::Cell::get);
@@ -341,7 +335,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
                 continue;
             }
             refused += 1;
-            capped += usize::from(SCORED.with(std::cell::Cell::get) - scored < scorable);
+            capped += usize::from(SCORED.with(std::cell::Cell::get) - scored < members.len());
             assert_eq!(eng.limits().work_units() - start, super::PROBE_UNITS + read, "{mv:?}");
             for (m, o) in members.iter().zip(original) {
                 assert!(crate::test_helpers::same_storage(m, o), "{mv:?}");
@@ -408,14 +402,19 @@ fn search_stops_before_another_applicable_move() {
     let mut f = Tdd::one(&vtree);
     let config = PoolSearchConfig { max_work_units: 1, ..PoolSearchConfig::default() };
     let stats = eng.pool_search(&mut [&mut f], &config).unwrap();
-    // The move, and the one member's two levels of a pair each, read and
-    // not rebuilt: the move does not lower the pairs, so it is not kept.
-    assert_eq!(stats.work_units, super::PROBE_UNITS + 3, "only the first applicable probe may overshoot");
+    // The move, and the one member's two levels of a pair each, scored and
+    // charged a rebuild: the move does not lower the pairs, so it is not
+    // kept.
+    assert_eq!(
+        stats.work_units,
+        super::PROBE_UNITS + 2 + super::REBUILD_UNITS,
+        "only the first applicable probe may overshoot"
+    );
     assert_canonical(&f);
 }
 
 #[test]
-fn a_declined_move_rebuilds_no_member_whose_levels_keep_their_size() {
+fn a_declined_move_puts_every_member_back() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(VARS));
     let mut original = vec![Tdd::one(&vtree), Tdd::one(&vtree), compile_clauses(&vtree, &[vec![-4]])];
@@ -430,9 +429,10 @@ fn a_declined_move_rebuilds_no_member_whose_levels_keep_their_size() {
         false
     })).unwrap());
     // Each member's two levels at the root and its right child hold a pair
-    // each: read, charged, and left alone.
+    // each: charged its two old and two new pairs and a rebuild, and put
+    // back.
     let copy = super::PROBE_UNITS + vtree.num_nodes() as u64;
-    assert_eq!(eng.limits().work_units() - start, copy + 3 * 3);
+    assert_eq!(eng.limits().work_units() - start, copy + 3 * (4 + super::REBUILD_UNITS));
     for (m, before) in members.iter().zip(&original) {
         assert!(crate::test_helpers::same_storage(m, before));
         assert!(Arc::ptr_eq(m.vtree(), &vtree));
@@ -991,13 +991,12 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
 /// constant and a two-literal clause beside them, under plain, bounded,
 /// budgeted and restarting searches, the moves kept in order, the
 /// statistics (work units included), the final vtree and every member's
-/// pairs hash to the value the search gave before its probes and kept moves
-/// were made cheaper. A change that moves this hash changes which moves the
-/// search makes or what it charges.
+/// pairs hash to a pinned value. A change that moves this hash changes which
+/// moves the search makes or what it charges.
 #[test]
 fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     use crate::test_helpers::{compile_clauses_on, vtree_shapes, CnfShape, Lcg};
-    const PINNED: u64 = 0xf25c_4e86_87d2_01f6;
+    const PINNED: u64 = 0x99a1_5f54_1dcc_59de;
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x9001);
     let mut hash = 0xcbf2_9ce4_8422_2325u64;

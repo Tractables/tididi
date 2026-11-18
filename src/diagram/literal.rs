@@ -141,15 +141,10 @@ impl LiteralInput for i32 {}
 mod input {
     use super::Literal;
     use crate::vtree::Vtree;
-    use crate::{Engine, OperationError, Tdd};
-    use crate::apply::conjoin_clause::{conjoin_clause_on, disjoin_cube_on};
+    use crate::{Engine, OperationError};
 
     pub trait Sealed: Copy {
         fn literal(self) -> Result<Literal, OperationError>;
-        /// Convert the clause when necessary, then invoke the typed conjunction.
-        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError>;
-        /// Convert the cube when necessary, then invoke the typed disjunction.
-        fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError>;
         /// Append these inputs to `out` as typed literals, checking each
         /// variable against `vtree`.
         fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
@@ -169,44 +164,9 @@ mod input {
 
     impl Sealed for Literal {
         fn literal(self) -> Result<Literal, OperationError> { Ok(self) }
-
-        #[inline]
-        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
-            conjoin_clause_on(eng, f, clause)
-        }
-
-        #[inline]
-        fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
-            disjoin_cube_on(eng, f, cube)
-        }
     }
 
     impl Sealed for i32 {
         fn literal(self) -> Result<Literal, OperationError> { Literal::try_from(self) }
-
-        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
-            typed_op(eng, f, clause, conjoin_clause_on)
-        }
-
-        fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
-            typed_op(eng, f, cube, disjoin_cube_on)
-        }
-    }
-
-    /// Run `op` on `f` and the typed form of `input`, converting the signed
-    /// integers inside the operation's scope so the conversion is charged to
-    /// the operation it prepares.
-    fn typed_op(
-        eng: &Engine,
-        f: Tdd,
-        input: &[i32],
-        op: fn(&Engine, Tdd, &[Literal]) -> Result<Tdd, OperationError>,
-    ) -> Result<Tdd, OperationError> {
-        let lim = eng.limits();
-        let _op = lim.enter()?;
-        let mut literals = Vec::new();
-        let vtree = f.vtree().home().map_or(f.vtree(), crate::vtree::Home::vtree);
-        <i32 as Sealed>::collect(eng, vtree, input, &mut literals)?;
-        op(eng, f, &literals)
     }
 }

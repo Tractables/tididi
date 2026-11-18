@@ -37,7 +37,10 @@
 //!    every product on the path between the two roots is an `f` node beside a
 //!    `care` not rooted yet: their liveness is one pass up the path's levels
 //!    and their marks one pass down, on arrays by node, with nothing
-//!    discovered or hashed.
+//!    discovered or hashed. Where `f` is rooted below `care`, `f` has no pair
+//!    above its root, and off the path a product is a `care` node beside
+//!    `⊤`, live unless `ZERO`: one pass down the path over `care`'s nodes
+//!    finds the products at `f`'s root that the root reaches.
 //! 3. If the root product is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node
 //!    and pair reachable from `f`'s root is marked → `Unchanged`. Otherwise the
 //!    unmarked pairs are dropped in place (marginal levels untouched) and the
@@ -112,7 +115,6 @@ impl RestrictionOutcome {
 
 fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
     if care.is_zero() {
-        // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
     }
     let v0 = f.output.vtree;
@@ -122,17 +124,22 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    let Some(marks) = Marking::walk(eng, &f, care, r, max_pair_visits)? else {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    };
-    if !marks.root_live {
-        // care killed every model of f ⇒ f ∧ care = ∅.
-        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
-    }
-    if marks.nothing_reachable_died(eng, &f)? {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    }
-    Ok(RestrictionOutcome::Shrunk(marks.rebuild(eng, f)?))
+    Ok(match Marking::walk(eng, &f, care, r, max_pair_visits)? {
+        Walked::Unchanged => RestrictionOutcome::Unchanged(f),
+        Walked::Unsatisfiable => RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?),
+        Walked::Marks(marks) if marks.nothing_reachable_died(eng, &f)? => RestrictionOutcome::Unchanged(f),
+        Walked::Marks(marks) => RestrictionOutcome::Shrunk(marks.rebuild(eng, f)?),
+    })
+}
+
+/// What [`Marking::walk`] found.
+enum Walked {
+    /// Nothing can die: the root product is a compatible leaf or a marginal
+    /// scalar, or the probe allowance ran out.
+    Unchanged,
+    /// The root product is dead: `f ∧ care ≡ ⊥`.
+    Unsatisfiable,
+    Marks(Marking),
 }
 
 /// Liveness marks over `f` produced by the `f × care` walk.
@@ -141,12 +148,10 @@ struct Marking {
     alive: Vec<Vec<bool>>,
     /// `[v.idx()][f-local]` — an f-node a live product pairs with a `care`
     /// that is `⊤` over the level's variables: the node and everything below
-    /// it survive whole, so the walk never enters it. Empty when none is.
+    /// it survive whole, so the walk never enters it.
     keep: Vec<Vec<bool>>,
     /// Pair liveness, including nodes wider than a machine word.
     pair_alive: pairs::PairMarks,
-    /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?
-    root_live: bool,
 }
 
 impl crate::Engine {
@@ -154,7 +159,9 @@ impl crate::Engine {
     ///
     /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].
     /// The care diagram is neither copied nor reduced. `max_pair_visits`
-    /// bounds product-pair probes across discovery and liveness evaluation.
+    /// bounds the product-pair probes of the bottom-up joins, of the
+    /// decisions made when asked, of the walk above the lower operand root
+    /// and of the walk down; marks read off the joins' listings take none.
     /// Exhausting it returns [`RestrictionOutcome::Unchanged`] with the
     /// original operand intact. Zero skips the optional restriction.
     ///
@@ -178,6 +185,9 @@ impl crate::Engine {
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
+    /// Reduces `care` in full first, which [`Self::restrict_to_care_bounded`]
+    /// does not.
+    ///
     /// # Errors
     ///
     /// Returns the linked operation's errors; cancellation, allocation refusal and
@@ -192,8 +202,9 @@ impl crate::Engine {
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
-        // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
-        // does not depend on it; the reduced one gives the walk fewer pairs.
+        // Sound for any representation of `care` whose nodes each have a
+        // model (invariant 2), which the walk assumes of both operands; the
+        // reduced one gives the walk fewer pairs.
         self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
         restrict_prepared(self, f, &care, u64::MAX)?.trimmed(self)
     }

@@ -827,8 +827,170 @@ fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     out
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
+#[test]
+fn restrict_to_a_care_rooted_above_f_keeps_exactly_the_pairs_models_use() {
+    same_as_stored(care_rooted_above_f_keeps_exactly_the_pairs_models_use);
+}
+
+/// The cases of
+/// [`restrict_to_a_care_rooted_above_f_keeps_exactly_the_pairs_models_use`]:
+/// the restricted diagrams.
+fn care_rooted_above_f_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
+    // `f` is rooted at a node `u` below the root and `care` above it, over
+    // every variable or over some of them (`⊤` over the rest): above `u`
+    // the walk meets `care`'s nodes beside an `f` not rooted yet. Brute
+    // force as above.
+    let mut out = Vec::new();
+    let mut rng = Lcg::new(0x10e5_ca7e_5eed_0004);
+    let (mut cases, mut strict, mut deep, mut partial) = (0, 0, 0, 0);
+    for &nvars in &[4u32, 5, 6, 7] {
+        let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 11 + 9)];
+        for vtree in shapes {
+            let vtree = Arc::new(vtree);
+            let lows: Vec<crate::vtree::VtreeIdx> =
+                vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
+            if lows.is_empty() {
+                continue;
+            }
+            let all: Vec<u32> = (1..=nvars).collect();
+            for _ in 0..80 {
+                let u = lows[(rng.next_u64() as usize) % lows.len()];
+                let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
+                let mut f = rand_conj_over(&vtree, &vars, 4, 3, false, &mut rng);
+                f.minimize().unwrap();
+                if f.is_zero() {
+                    continue;
+                }
+                let Some(f) = rooted_at(&f, u) else { continue };
+                let some = rng.coin();
+                let care_vars: Vec<u32> = if some { all.iter().copied().filter(|_| rng.coin()).collect() } else { all.clone() };
+                if care_vars.len() < 2 {
+                    continue;
+                }
+                let mut c = rand_conj_over(&vtree, &care_vars, 4, 3, true, &mut rng);
+                if rng.coin() {
+                    c.minimize().unwrap();
+                }
+                let r = c.output.vtree;
+                if count_is_zero(&c) || r == u || vtree.lca(r, u) != r {
+                    continue;
+                }
+                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let used = trace_used_pairs(&f, &c, &g, nvars);
+                assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
+                if used < reachable_pairs(&f) {
+                    strict += 1;
+                }
+                if vtree.node(u).parent() != Some(r) {
+                    deep += 1;
+                }
+                partial += usize::from(some);
+                cases += 1;
+                out.push(g);
+            }
+        }
+    }
+    assert!(cases >= 300, "too few cases exercised: {cases}");
+    assert!(deep >= 100, "too few cases with f rooted more than one level down: {deep}");
+    assert!(partial >= 100, "too few cares over some of the variables: {partial}");
+    assert!(strict > 0, "no case pruned anything");
+    out
+}
+
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
+#[test]
+fn restrict_of_an_f_rooted_above_the_care_holds_on_the_care() {
+    same_as_stored(f_rooted_above_the_care_holds_on_the_care);
+}
+
+/// The cases of [`restrict_of_an_f_rooted_above_the_care_holds_on_the_care`]:
+/// the restricted diagrams.
+fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
+    // `care` is rooted at `u` below `f`'s root, and `f` has one subtree `w`
+    // summed out or none. Where `w` holds `u`, `f` is marginal on the path
+    // from its root to `care`'s, and `care`, reading summed-out variables
+    // only, constrains nothing: the restriction keeps every pair. Otherwise
+    // `#(g ∧ care) = #(f ∧ care)`, and for a structural `f` exactly the pairs
+    // models use are kept.
+    let eng = Engine::new();
+    let mut out = Vec::new();
+    let mut rng = Lcg::new(0x10e5_ca7e_5eed_0005);
+    let (mut cases, mut strict, mut under, mut beside) = (0, 0, 0, 0);
+    for &nvars in &[4u32, 5, 6, 7] {
+        let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 7 + 1)];
+        for vtree in shapes {
+            let vtree = Arc::new(vtree);
+            let lows: Vec<crate::vtree::VtreeIdx> =
+                vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
+            if lows.is_empty() {
+                continue;
+            }
+            for _ in 0..80 {
+                let u = lows[(rng.next_u64() as usize) % lows.len()];
+                let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
+                let mut c = rand_conj_over(&vtree, &vars, 3, 2, false, &mut rng);
+                c.minimize().unwrap();
+                if count_is_zero(&c) {
+                    continue;
+                }
+                let Some(c) = rooted_at(&c, u) else { continue };
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                if f.is_zero() || f.output.vtree != vtree.root() {
+                    continue;
+                }
+                // Summed out: an ancestor of `u` below the root, or a node
+                // beside `u`'s path, or nothing.
+                let w = match rng.below(3) {
+                    0 => Some(lows[(rng.next_u64() as usize) % lows.len()]),
+                    1 => std::iter::successors(vtree.node(u).parent(), |&p| vtree.node(p).parent())
+                        .filter(|&p| p != vtree.root())
+                        .last(),
+                    _ => None,
+                };
+                if w.is_some_and(|w| w != u && vtree.lca(w, u) == u) {
+                    // `care` would read summed-out and kept variables both.
+                    continue;
+                }
+                let holds_u = w.is_some_and(|w| vtree.lca(w, u) == w);
+                if let Some(w) = w {
+                    eng.marginalize_levels(&mut f, &[w]).unwrap();
+                }
+                eng.minimize(&mut f).unwrap();
+                if f.is_zero() || f.levels[f.output.vtree.idx()].is_marginal() {
+                    continue;
+                }
+                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                if holds_u {
+                    assert_eq!(reachable_pairs(&g), reachable_pairs(&f), "a care under a summed-out level pruned f");
+                    assert_eq!(g.model_count().unwrap(), f.model_count().unwrap());
+                    under += 1;
+                } else if w.is_some() {
+                    assert!(reachable_pairs(&g) <= reachable_pairs(&f));
+                    let (fc, gc) = (and2(&f, &c), and2(&g, &c));
+                    assert_eq!(gc.model_count().unwrap(), fc.model_count().unwrap(), "#(g ∧ care) != #(f ∧ care)");
+                    strict += usize::from(reachable_pairs(&g) < reachable_pairs(&f));
+                    beside += 1;
+                    out.extend([fc, gc]);
+                } else {
+                    let used = trace_used_pairs(&f, &c, &g, nvars);
+                    assert_eq!(reachable_pairs(&g), used, "the restriction kept pairs no model uses (nvars={nvars})");
+                    strict += usize::from(used < reachable_pairs(&f));
+                }
+                cases += 1;
+                out.push(g);
+            }
+        }
+    }
+    assert!(cases >= 300, "too few cases exercised: {cases}");
+    assert!(under >= 50, "too few cares under a summed-out level: {under}");
+    assert!(beside >= 50, "too few cares beside a summed-out level: {beside}");
+    assert!(strict > 0, "no case pruned anything");
+    out
+}
+
 /// The walk's two ways to its marks and its joins of a spine and by the
-/// products of both children or of one, each taken by the cases above: a
+/// products of both children, each taken by the cases above: a
 /// care rooted at or under the operand with one node a level down to what
 /// it reads is marked off the listings without the descent from the root,
 /// any other by the descent, and every way keeps exactly the pairs models
@@ -841,13 +1003,17 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     care_on_one_subtree_keeps_exactly_the_pairs_models_use();
     care_rooted_lower_keeps_exactly_the_pairs_models_use();
     let after = restrict_paths();
-    let [listings, descents, spines, paired, keyed] = [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
-    eprintln!("restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired, {keyed} keyed");
+    let [listings, descents, spines, paired, beside_top] =
+        [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
+    eprintln!(
+        "restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired, \
+         {beside_top} beside ⊤"
+    );
     assert!(listings >= 100, "too few walks marked off the listings: {listings}");
     assert!(descents >= 100, "too few walks marked by the descent: {descents}");
     assert!(spines >= 100, "too few levels joined as a spine: {spines}");
     assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
-    assert!(keyed >= 100, "too few levels joined by one child's products: {keyed}");
+    assert!(beside_top >= 1, "too few levels paired beside `⊤`: {beside_top}");
 }
 
 /// Each reservation of a restriction refused in turn, on implicit levels,

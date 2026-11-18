@@ -26,7 +26,7 @@ impl Marking {
         let vtree = Arc::clone(&f.vtree);
         // A child reference names a dead node: `ZERO`, or a structural node
         // the marks did not keep. Marginal children and leaf labels never die.
-        let keep = |v: VtreeIdx, a: usize| self.keep.get(v.idx()).is_some_and(|row| row[a]);
+        let keep = |v: VtreeIdx, a: usize| self.keep[v.idx()][a];
         let dead = |cv: VtreeIdx, child: &TddLevel, side: EncodedChildRef| {
             if child.is_marginal() { return false; }
             let node = ChildDecoder::structural().node(side);
@@ -48,11 +48,13 @@ impl Marking {
             let marks = &self.pair_alive;
             // The node whose marks `row` holds: one look-up a node, not a pair.
             let mut row: Option<(usize, bool, PairRow<'_>)> = None;
-            let alive = &self.alive[v.idx()];
+            // A slice moved into the liveness closure, read once per node: a
+            // captured `&Vec` reloads its header per node.
+            let alive: &[bool] = &self.alive[v.idx()];
             let mut kept_one = false;
             // A node the marks did not keep alive has no kept or marked pair:
             // it is emptied unread, and the prune drops it.
-            rewrite_live_level_pairs(lim, level, |i| alive[i], |i, k, count, pair| {
+            rewrite_live_level_pairs(lim, level, move |i| alive[i], |i, k, count, pair| {
                 let (kept, marked) = match row {
                     Some((at, kept, marked)) if at == i => (kept, marked),
                     _ => {

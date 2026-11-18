@@ -63,7 +63,6 @@ fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes
 
 #[test]
 fn a_long_clause_reads_its_repeats_and_conflicts_as_a_short_one_does() {
-    // Past `SCAN_REPEATS_UP_TO` literals the repeats are found by sorting.
     let vtree = Arc::new(Vtree::balanced(24));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, 3]).unwrap();
@@ -73,7 +72,6 @@ fn a_long_clause_reads_its_repeats_and_conflicts_as_a_short_one_does() {
         g.model_count().unwrap()
     };
     let distinct: Vec<i32> = (4..=22).map(|v| if v % 3 == 0 { -v } else { v }).collect();
-    assert!(distinct.len() > SCAN_REPEATS_UP_TO);
     let mut repeated = distinct.clone();
     repeated.extend([distinct[5], distinct[0], distinct[18], distinct[5]]);
     repeated.rotate_left(7);
@@ -105,4 +103,18 @@ fn empty_clause_gives_a_canonical_false() {
     assert!(out.dirty.is_empty(), "a constant has nothing left to minimize");
     assert!(out.levels.is_canonical(out.output), "a constant is certified canonical");
     assert_canonical(&out);
+}
+
+/// The walk reads the output's `cd_map` block, which it plans only on the
+/// clause's spine, and the root is on every spine. Every diagram the public
+/// API builds has its output at the root (`TddBuilder::finish` refuses
+/// another, and every operation keeps it there); a fixture rooted lower, with
+/// a clause variable outside its subtree, would read a block never planned.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "the clause walk needs the output at the root level")]
+fn an_operand_rooted_below_the_root_is_caught() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let low = crate::test_helpers::reroot_to_child(&Tdd::clause(&vtree, [1, 2]).unwrap(), crate::diagram::ChildSide::Left);
+    let _ = Engine::new().and_clause(low, &[Literal::try_from(5).unwrap()]);
 }

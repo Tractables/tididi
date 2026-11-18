@@ -319,9 +319,7 @@ impl Engine {
     /// `accept` is asked, and put back if it declines. The copy of the trees
     /// charges their nodes to the work clock, and each member rebuilt the
     /// pairs of its two old and two new levels and the fixed cost of a
-    /// rebuild. A member whose two levels hold a pair each, or none, holds as
-    /// many after the move: it is charged its pairs and one, and rebuilt only
-    /// once the move is kept.
+    /// rebuild.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -1361,14 +1359,6 @@ impl<'t> Touched<'t> {
     }
 }
 
-/// Whether a member whose two levels at a move hold `outer` and `inner`
-/// pairs holds as many after it: a level of one pair rebuilds into one of
-/// one pair, two pairs for the two levels, which a `bound` above two lets
-/// through.
-fn keeps_its_pairs(outer: usize, inner: usize, bound: usize) -> bool {
-    bound > 2 && outer <= 1 && inner == outer
-}
-
 /// Member `i`'s two levels at `step` rebuilt within `step.max_pairs`, and
 /// what it needs to be put back filed in `pre`: the new levels' pairs, or
 /// `None` where the rebuild would pass `step.max_pairs`.
@@ -1391,22 +1381,18 @@ fn rebuild_member(
     Ok(Some(pivot_pairs(m, step.info)))
 }
 
-/// Rebuild each touched member `pick` names, by its index in `moved`,
-/// stopping on the first refusal or error, what each needs to be put back
-/// filed in `pre`: the outcome for [`settle`].
-fn rebuild_other_members(
+/// Rebuild every member `moved` touches, by its index in `moved`, stopping
+/// on the first refusal or error, what each needs to be put back filed in
+/// `pre`: the outcome for [`settle`].
+fn rebuild_members(
     lim: &Limits,
     members: &mut [&mut Tdd],
     moved: Touched<'_>,
     scratch: &mut RestructureScratch,
     pre: &mut Preimages<'_>,
-    pick: impl Fn(usize) -> bool,
     mut on_rebuilt: impl FnMut(usize, usize) -> Result<(), OperationError>,
 ) -> Result<bool, OperationError> {
     for k in 0..moved.len() {
-        if !pick(k) {
-            continue;
-        }
         let i = moved.member(k);
         let Some(pairs) = rebuild_member(lim, i, &mut *members[i], moved.step(k), pre, scratch)? else {
             return Ok(false);
@@ -1422,9 +1408,7 @@ fn rebuild_other_members(
 /// caller's: a kept move leaves their levels on the trees the rotations were
 /// made on and their pointers on the old ones.
 ///
-/// A member that keeps its pairs ([`keeps_its_pairs`]) is charged its pairs
-/// and one, and rebuilt only once the move is kept. A member rebuilt is
-/// charged the pairs of its two old and two new levels and
+/// Each member is charged the pairs of its two old and two new levels and
 /// [`REBUILD_UNITS`].
 ///
 /// The descent's probes decide from scores instead ([`probe_scored`]).
@@ -1443,36 +1427,18 @@ fn probe(
     lim.reserve_exact(&mut before, members.len())?;
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
-    let mut deferred = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut deferred, moved.len())?;
     before.resize(members.len(), 0);
     after.resize(members.len(), 0);
-    for (k, &(i, info)) in moved.at.iter().enumerate() {
+    for &(i, info) in moved.at {
         let m = &members[i];
-        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
-        let (old, keeps) = (outer + inner, keeps_its_pairs(outer, inner, moved.max_pairs));
-        if keeps {
-            gate.poll(old as u64 + 1)?;
-        }
-        before[i] = old;
-        after[i] = old;
-        deferred.push(keeps);
-        debug_assert_eq!(deferred.len(), k + 1);
+        before[i] = m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs();
     }
     let mut pre = Preimages::new(lim, moved.len(), 2 * moved.len())?;
-    let rebuilt = rebuild_other_members(
-        lim,
-        members,
-        moved,
-        scratch,
-        &mut pre,
-        |k| !deferred[k],
-        |k, pairs| {
-            let i = moved.member(k);
-            after[i] = pairs;
-            gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
-        },
-    );
+    let rebuilt = rebuild_members(lim, members, moved, scratch, &mut pre, |k, pairs| {
+        let i = moved.member(k);
+        after[i] = pairs;
+        gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
+    });
     // The gate's residue charged and the stop tested before `accept`
     // decides.
     let outcome = rebuilt.and_then(|rebuilt| {
@@ -1483,22 +1449,6 @@ fn probe(
                 before: &before,
                 after: &after,
             }))
-    });
-    let outcome = outcome.and_then(|kept| {
-        Ok(kept
-            && rebuild_other_members(
-                lim,
-                members,
-                moved,
-                scratch,
-                &mut pre,
-                |k| deferred[k],
-                |k, pairs| {
-                    let i = moved.member(k);
-                    debug_assert_eq!(pairs, before[i], "a member that keeps its pairs");
-                    gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS)
-                },
-            )?)
     });
     settle(members, pre, outcome, None)
 }
@@ -1562,21 +1512,15 @@ fn probe_scored_with<'l>(
     let mut gate = lim.gate();
     gate.poll(PROBE_UNITS)?;
     let n = moved.len();
-    let ProbeTables { before, after, scored, floors, order } = tables;
+    let ProbeTables { before, after, floors, order } = tables;
     lim.reserve_exact(before, n)?;
-    // A member that keeps its pairs is not scored, and a scored member ends
-    // with at least a pair for each of its outer nodes.
-    lim.reserve_exact(scored, n)?;
+    // A member ends with at least a pair for each of its outer nodes.
     lim.reserve_exact(floors, n)?;
     for &(i, info) in moved.at {
         let m = &members[i];
-        let ((outer, owners), inner) =
-            (pairs_and_owners(&m.levels[info.v_idx.idx()]), m.levels[info.w_idx.idx()].live_pairs());
-        let old = outer + inner;
-        before.push(old);
-        let scores = !keeps_its_pairs(outer, inner, moved.max_pairs);
-        scored.push(scores);
-        floors.push(if scores { owners } else { old });
+        let (outer, owners) = pairs_and_owners(&m.levels[info.v_idx.idx()]);
+        before.push(outer + m.levels[info.w_idx.idx()].live_pairs());
+        floors.push(owners);
     }
     let total = before.iter().sum::<usize>();
     // The total the move must stay under.
@@ -1599,13 +1543,6 @@ fn probe_scored_with<'l>(
     for (at, &i) in order.iter().enumerate() {
         let (m, step) = (&members[moved.member(i)], moved.step(i));
         rest -= floors[i];
-        let old = before[i];
-        if !scored[i] {
-            gate.poll(old as u64 + 1)?;
-            sum += old;
-            sum_crossed = sum_crossed.map(|s| s + old);
-            continue;
-        }
         #[cfg(test)]
         tests::note_score();
         let score = &mut scratch.score;
@@ -1637,7 +1574,7 @@ fn probe_scored_with<'l>(
             // Refused, by the cap or the bound: this member and the ones
             // after it charged as if scored.
             for &j in &order[at..] {
-                gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+                gate.poll(before[j] as u64 + REBUILD_UNITS)?;
             }
             #[cfg(debug_assertions)]
             debug_check_refusal(lim, members, moved, limit, scratch)?;
@@ -1645,7 +1582,7 @@ fn probe_scored_with<'l>(
             lim.check_stop()?;
             return Ok(false);
         };
-        gate.poll(old as u64 + REBUILD_UNITS)?;
+        gate.poll(before[i] as u64 + REBUILD_UNITS)?;
         after[i] = new;
         sum += new;
     }
@@ -1659,16 +1596,15 @@ fn probe_scored_with<'l>(
         return Ok(false);
     }
     let mut pre = Preimages::new(lim, n, 2 * n)?;
-    let outcome = rebuild_other_members(
+    let outcome = rebuild_members(
         lim,
         members,
         moved,
         scratch,
         &mut pre,
-        |_| true,
         |i, pairs| {
             debug_assert!(
-                !scored[i] || pairs >= after[i],
+                pairs >= after[i],
                 "a score is at most the pairs: {} > {pairs}",
                 after[i]
             );
@@ -1712,8 +1648,7 @@ enum Twin<'s> {
     Alone,
     /// The move is plain and its crossing is still to be probed: each
     /// member's score of the crossing taken with the move's, filed at the
-    /// member's index among those touched, `None` for a member not scored
-    /// or not reached.
+    /// member's index among those touched, `None` for a member not reached.
     Fill(&'s mut Vec<Option<Option<usize>>>),
     /// The move is the crossing of a plain move refused just before, on the
     /// same levels, which filed these scores.
@@ -1754,10 +1689,6 @@ fn debug_check_scores(
 ) -> Result<(), OperationError> {
     for (k, &score) in scores.iter().enumerate() {
         let (m, step) = (&members[moved.member(k)], moved.step(k));
-        let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
-        if keeps_its_pairs(m.levels[v].live_pairs(), m.levels[w].live_pairs(), step.max_pairs) {
-            continue;
-        }
         let mut prepared = Prepared::default();
         let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);
@@ -1785,12 +1716,6 @@ fn debug_check_refusal(
     let mut pairs = 0usize;
     for k in 0..moved.len() {
         let (m, step) = (&members[moved.member(k)], moved.step(k));
-        let (v, w) = (step.info.v_idx.idx(), step.info.w_idx.idx());
-        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        if keeps_its_pairs(outer, inner, step.max_pairs) {
-            pairs += outer + inner;
-            continue;
-        }
         let mut prepared = Prepared::default();
         let new = prepare_levels(lim, m, step, false, scratch, &mut prepared)?;
         lim.discard(prepared);

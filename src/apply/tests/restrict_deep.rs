@@ -48,12 +48,12 @@ fn restrict_over_a_deep_run_of_levels_decided_on_demand() {
             let before = crate::test_helpers::restrict_paths();
             let out = Engine::new().restrict_to_care_bounded(f, &care, u64::MAX).unwrap();
             let after = crate::test_helpers::restrict_paths();
-            (out, [2, 3, 4].map(|k| after[k] - before[k]))
+            (out, [2, 3].map(|k| after[k] - before[k]))
         })
         .expect("the thread starts")
         .join()
         .expect("the restriction returns");
     let (outcome, listed) = outcome;
-    assert_eq!(listed, [0, 0, 0], "levels were listed, not decided on demand");
+    assert_eq!(listed, [0, 0], "levels were listed, not decided on demand");
     assert!(matches!(outcome, RestrictionOutcome::Unchanged(_)), "{outcome:?}");
 }

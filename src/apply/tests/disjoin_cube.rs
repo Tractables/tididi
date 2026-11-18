@@ -1,5 +1,8 @@
-use super::*;
 use std::sync::Arc;
+
+use crate::diagram::{Literal, Tdd};
+use crate::limits::OperationError;
+use crate::vtree::Vtree;
 
 use crate::test_helpers::check::check_determinism;
 use crate::test_helpers::{
@@ -63,6 +66,13 @@ fn disjoining_a_model_keeps_every_level_a_partition() {
             let cube = assignment(num_vars, rng.below(1u64 << num_vars));
             let out = f.clone().or_cube(&cube).expect("the disjunction fits");
             assert_partition(&out, &format!("round {round} {shape}"));
+            let mask = rng.below(1u64 << num_vars);
+            let partial: Vec<i32> = cube
+                .into_iter()
+                .filter(|lit| mask >> (lit.unsigned_abs() - 1) & 1 == 1)
+                .collect();
+            let out = f.clone().or_cube(&partial).expect("the disjunction fits");
+            assert_partition(&out, &format!("round {round} {shape}: {partial:?}"));
         }
     }
 }
