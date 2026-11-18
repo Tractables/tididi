@@ -27,8 +27,7 @@ impl RotationKind {
     }
 }
 
-/// The maintained bottom-up order of a vtree's nodes, with its inverse and the
-/// two filtered views.
+/// The maintained bottom-up order of a vtree's nodes, with its inverse.
 ///
 /// The node list itself is only topological at construction — a rotation
 /// relinks nodes without moving them — so this, not `0..num_nodes`, is what
@@ -36,14 +35,17 @@ impl RotationKind {
 /// builds it from a freshly reindexed node list, [`fixup_after_rotate`](Self::fixup_after_rotate)
 /// repairs it from a rotation's record, and the test-only `rebuild` re-derives
 /// it from the links, so the order can never be edited into disagreement with
-/// the tree. Whether a node is a leaf never changes, so the two filtered views
-/// are functions of `order` alone and follow it.
+/// the tree.
+///
+/// **Leaves first**: the variable leaves hold the first positions, then the
+/// regions, then the internal nodes. A rotation moves only its internal node
+/// `w`, within positions that all hold internal nodes, so the leaf and
+/// internal views are a prefix and a suffix of `order`.
 ///
 /// **Root-last**: for every node `t`, `pos(t)` is the *maximum* of `pos(d)`
 /// over `d ∈ {t} ∪ descendants(t)` — each subtree's root sits at the latest
-/// position among its members. The reindex every construction ends in
-/// (`Vtree::from_nodes`) lays the nodes out leaves first, then the internal
-/// nodes deepest level first, so the identity order has it from the start;
+/// position among its members. Every construction numbers each node after
+/// its children, so the identity order has it from the start;
 /// `fixup_after_rotate` preserves it, and its O(1) case test depends on it.
 ///
 /// **Subtree contiguity is not guaranteed**: after a sequence of rotations a
@@ -55,10 +57,6 @@ pub(super) struct TopoOrder {
     order: Vec<VtreeIdx>,
     /// Inverse of `order`: the position of each node. Inherits root-last.
     pos: Vec<u32>,
-    /// `order` filtered to internal nodes.
-    internal: Vec<VtreeIdx>,
-    /// `order` filtered to variable leaves.
-    leaves: Vec<VtreeIdx>,
 }
 
 impl TopoOrder {
@@ -68,11 +66,11 @@ impl TopoOrder {
 
     /// The internal nodes, in bottom-up order.
     #[inline]
-    pub(super) fn internal(&self) -> &[VtreeIdx] { &self.internal }
+    pub(super) fn internal(&self) -> &[VtreeIdx] { &self.order[self.order.len().div_ceil(2)..] }
 
-    /// The leaves, in bottom-up order.
+    /// The `num_leaves` variable leaves, in bottom-up order.
     #[inline]
-    pub(super) fn leaves(&self) -> &[VtreeIdx] { &self.leaves }
+    pub(super) fn leaves(&self, num_leaves: u32) -> &[VtreeIdx] { &self.order[..num_leaves as usize] }
 
     /// The position of `idx` in the bottom-up order (0 first, root last).
     #[inline]
@@ -81,21 +79,14 @@ impl TopoOrder {
     /// The order as it stands for a freshly built tree whose node list is
     /// already in bottom-up layout: position is index.
     /// The variable leaves are the first `num_leaves` nodes, then the
-    /// regions, then the internal nodes, as the reindex lays them out, so
-    /// each list is a range of indices.
+    /// regions, then the internal nodes.
     pub(super) fn identity(nodes: &[VtreeNode], num_leaves: u32) -> Self {
         let n = nodes.len() as u32;
-        let childless = n.div_ceil(2);
         debug_assert!(nodes.iter().enumerate().all(|(i, t)| {
             let i = i as u32;
-            (i < num_leaves, i < childless) == (t.is_leaf() && !t.is_region(), t.is_leaf())
+            (i < num_leaves, i < n.div_ceil(2)) == (t.is_leaf() && !t.is_region(), t.is_leaf())
         }));
-        TopoOrder {
-            order: (0..n).map(VtreeIdx).collect(),
-            pos: (0..n).collect(),
-            internal: (childless..n).map(VtreeIdx).collect(),
-            leaves: (0..num_leaves).map(VtreeIdx).collect(),
-        }
+        TopoOrder { order: (0..n).map(VtreeIdx).collect(), pos: (0..n).collect() }
     }
 
     /// Localized repair after a single rotation. Nothing moves when the order
@@ -131,24 +122,13 @@ impl TopoOrder {
         // elements in (w_pos..m_end), the shift preserves
         // children-before-parents for every edge of the post-rotation tree.
         // The full proof is in the `vtree::rotate` module doc.
-        //
-        // Only w changes its place relative to the other nodes, and w is
-        // internal: the leaf view is untouched, and in the internal view w
-        // moves past the internal nodes of the slice. Both views are sorted
-        // by position, so their bounds come from the positions before the
-        // shift.
-        let i_w = self.internal.partition_point(|&t| (self.pos[t.idx()] as usize) < w_pos);
-        let i_end = self.internal.partition_point(|&t| (self.pos[t.idx()] as usize) <= m_end);
-        debug_assert_eq!(self.internal[i_w], info.w_idx);
-        self.internal[i_w..i_end].rotate_left(1);
-
         self.order[w_pos..=m_end].rotate_left(1);
         for (offset, &node) in self.order[w_pos..=m_end].iter().enumerate() {
             self.pos[node.idx()] = (w_pos + offset) as u32;
         }
     }
 
-    /// Check the order, its inverse and both filtered views against the nodes.
+    /// Check the order and its inverse against the nodes.
     /// The caller has already checked child indices.
     pub(super) fn validate(&self, nodes: &[VtreeNode]) -> Result<(), String> {
         let n = nodes.len();
@@ -169,10 +149,12 @@ impl TopoOrder {
                 }
             seen[t.idx()] = true;
         }
-        let leaves = self.order.iter().copied().filter(|t| nodes[t.idx()].is_leaf() && !nodes[t.idx()].is_region());
-        let internal = self.order.iter().copied().filter(|t| !nodes[t.idx()].is_leaf());
-        if !leaves.eq(self.leaves.iter().copied()) || !internal.eq(self.internal.iter().copied()) {
-            return Err("leaf/internal views disagree with the bottom-up order".into());
+        let num_leaves = nodes.iter().filter(|t| t.is_leaf() && !t.is_region()).count();
+        for (pos, &t) in self.order.iter().enumerate() {
+            let t = &nodes[t.idx()];
+            if (pos < num_leaves, pos < n.div_ceil(2)) != (t.is_leaf() && !t.is_region(), t.is_leaf()) {
+                return Err("bottom-up order does not list leaves, then regions, then internal nodes".into());
+            }
         }
         Ok(())
     }
@@ -200,7 +182,7 @@ impl Vtree {
     pub fn leaf_bottomup(
         &self,
     ) -> impl DoubleEndedIterator<Item = (VtreeIdx, VarId)> + ExactSizeIterator + '_ {
-        self.topo.leaves().iter().map(move |&t| {
+        self.topo.leaves(self.leaf_count).iter().map(move |&t| {
             let var = match self.node(t) {
                 VtreeNode::Leaf { var, .. } => *var,
                 _ => unreachable!("a leaf view entry is not a leaf"),
@@ -229,7 +211,7 @@ impl Vtree {
     /// The leaves in bottom-up order as a slice — the nodes
     /// [`Vtree::leaf_bottomup`] yields, without their variables.
     pub(crate) fn leaf_bottomup_slice(&self) -> &[VtreeIdx] {
-        self.topo.leaves()
+        self.topo.leaves(self.leaf_count)
     }
 
     /// Repair the bottom-up order after one rotation; see

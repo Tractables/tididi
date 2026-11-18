@@ -644,7 +644,7 @@ fn from_nodes_numbers_leaves_then_internals_from_the_deepest_level() {
     assert_eq!(old_to_new, [4, 2, 6, 0, 3, 1, 5].map(VtreeIdx));
     assert_eq!((vtree.root(), vtree.num_leaves()), (VtreeIdx(6), 4));
     assert_eq!(vtree.topo.internal(), [4, 5, 6].map(VtreeIdx));
-    assert_eq!(vtree.topo.leaves(), [0, 1, 2, 3].map(VtreeIdx));
+    assert_eq!(vtree.topo.leaves(4), [0, 1, 2, 3].map(VtreeIdx));
 }
 
 /// The leaves of `vtree` left to right.
