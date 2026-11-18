@@ -1136,12 +1136,8 @@ fn assemble_moving<'a>(
     }
     // A region at the root holds the output's count in a slot; under a
     // parent a small count is an inline reference instead.
-    if tdd.weights.is_none()
-        && tdd.vtree().num_nodes() == 1
-        && tdd.vtree().node(tdd.vtree().root()).is_region()
-        && into.num_nodes() > 1
-        && let Err(e) = crate::diagram::inline_small_marginal_refs(eng.limits(), &mut result, None)
-            .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, &mut result).map(drop))
+    if tdd.vtree().num_nodes() == 1
+        && let Err(e) = inline_root_region(eng, &tdd, into, &mut result)
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
@@ -1154,23 +1150,22 @@ fn assemble_moving<'a>(
         true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
         false => Ok(()),
     }
-    .and_then(|()| match &tdd {
-        Cow::Owned(_) => Ok(None),
-        Cow::Borrowed(source) => source.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose(),
-    })
-    .and_then(|weights| match &mut tdd {
-        Cow::Owned(moved) => Ok((moved.take_worklists(), moved.weights.take())),
-        Cow::Borrowed(source) => Ok((source.dirty.clone_on(eng)?, weights)),
+    .and_then(|()| match &mut tdd {
+        Cow::Owned(moved) => Ok(moved.take_worklists()),
+        Cow::Borrowed(source) => source.dirty.clone_on(eng),
     });
-    let (mut carried, weights) = match carried {
+    let mut carried = match carried {
         Ok(carried) => carried,
         Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
     };
-    // A store keys its columns by level, so they follow the levels' images.
-    result.weights = weights.map(|mut weights| {
-        weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
-        weights
-    });
+    // Taking a moved diagram's store cannot be refused, so a refusal here
+    // has moved nothing.
+    if tdd.weights.is_some() {
+        match placed_weights(eng, &mut tdd, plan) {
+            Ok(weights) => result.weights = Some(weights),
+            Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
+        }
+    }
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
@@ -1198,6 +1193,29 @@ fn assemble_moving<'a>(
         result.dirty.set_loose(Some(listed));
     }
     Ok(result)
+}
+
+/// Inline the small counts of `result`, `tdd` placed under a parent where
+/// `tdd` is an unweighted region alone.
+#[cold]
+fn inline_root_region(eng: &Engine, tdd: &Tdd, into: &Vtree, result: &mut Tdd) -> Result<(), OperationError> {
+    if tdd.weights.is_some() || !tdd.vtree().node(tdd.vtree().root()).is_region() || into.num_nodes() == 1 {
+        return Ok(());
+    }
+    crate::diagram::inline_small_marginal_refs(eng.limits(), result, None)
+        .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, result).map(drop))
+}
+
+/// The weight store of [`assemble_moving`]'s result: a moved diagram's own,
+/// a borrowed one's copied, its columns keyed by the levels' images.
+#[cold]
+fn placed_weights(eng: &Engine, tdd: &mut std::borrow::Cow<'_, Tdd>, plan: &Plan) -> Result<WeightStore, OperationError> {
+    let mut weights = match tdd {
+        std::borrow::Cow::Owned(moved) => moved.weights.take().expect("a weighted diagram"),
+        std::borrow::Cow::Borrowed(source) => source.weights.as_ref().expect("a weighted diagram").try_clone_on(eng.limits())?,
+    };
+    weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
+    Ok(weights)
 }
 
 /// Give a moved diagram back the levels a seated `result` took from it, as
