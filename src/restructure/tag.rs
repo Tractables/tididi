@@ -183,7 +183,7 @@ impl Engine {
             vtree: into.root(),
             local: root,
         })?;
-        self.minimize_plain(&mut result)?;
+        self.minimize(&mut result)?;
         Ok(result)
     }
 }

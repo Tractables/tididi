@@ -88,7 +88,7 @@ impl Engine {
         }
         gate.flush()?;
         if f.is_zero() || f.is_one() {
-            self.minimize_plain(&mut f)?;
+            self.minimize(&mut f)?;
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
@@ -217,7 +217,7 @@ impl Engine {
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
         // A leaf output can be a cloned replacement, which need not be minimized.
-        self.minimize_plain(&mut result)?;
+        self.minimize(&mut result)?;
         Ok(result)
     }
 }

@@ -25,24 +25,17 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("negate_with(Full)", "a Full reduce of an unminimized operand"),
-    ("filter_nodes_with(Full)", "a Full reduce of an unminimized operand"),
     ("condition", "a contracting reduce, no trim"),
     ("condition_var", "a contracting reduce, no trim"),
     ("condition_vars", "a contracting reduce, no trim"),
     ("exists_var", "a contracting reduce, no trim"),
     ("exists_vars", "a contracting reduce, no trim"),
     ("forall_vars", "a contracting reduce, no trim"),
-    ("at_least_distinct", "a contracting reduce, no trim"),
-    ("project_to_subtree", "a contracting reduce, no trim"),
-    ("tag_level [fixed]", "a contracting reduce, no trim"),
     ("or_cube, empty cube [fixed]", "the cube built on the operand's vtree"),
     ("restructure_to [fixed]", "reduce(Full) on entry"),
     ("rehome with a bound [fixed]", "reduce(Full) on entry"),
     ("rotation_search [fixed]", "reduce(Full) on entry"),
     ("pool_search [fixed]", "reduce(Full) on entry"),
-    ("or of x and not x, weighted [fixed]", "a one-leaf output, trim skipped for weights"),
-    ("add of x and not x, weighted [fixed]", "a one-leaf output, trim skipped for weights"),
     ("project_to_subtree on a leaf [fixed]", "a one-leaf output"),
     ("at_least_distinct on a leaf [fixed]", "a one-leaf output"),
     ("and_clause, tautological [fixed]", "no closing step"),
@@ -54,7 +47,6 @@ const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("clause [fixed]", "a constructor on the caller's vtree"),
     ("from_models [fixed]", "a constructor on the caller's vtree"),
     ("and_onto a wider vtree [fixed]", "a target wider than the union"),
-    ("or, weighted", "trim skipped for weights"),
     ("splice_subtree_unchecked [fixed]", "operands padded by the safety contract"),
     ("embed onto the home", "a variable of the home the operand does not use"),
     ("embed_moving onto the home", "a variable of the home the operand does not use"),
@@ -469,7 +461,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
         let v = f.vtree();
         let at = v.bottomup().find(|&t| !v.node(t).is_leaf() && v.node(v.children(t).0).is_leaf() && v.node(v.children(t).1).is_leaf()).ok_or("no level over x y")?;
         let slots = f.reference_slot_count(at);
-        let into = Arc::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap());
+        let into = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap()).vtree());
         eng.tag_level(&f, at, &into, |v| v, &vec![Some(0); slots], &[VarId(4), VarId(5)], &[0b10]).map_err(|e| format!("{e:?}"))
     });
 

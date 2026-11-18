@@ -28,7 +28,7 @@ pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, O
         // The operand itself carries the vtree and the weights; when every
         // operand is false, so is the disjunction.
         let mut result = live.pop().or(a_false_one).ok_or(OperationError::EmptyOperands)?;
-        eng.reduce_plain(&mut result, ReductionPlan::default())?;
+        eng.reduce(&mut result, ReductionPlan::default())?;
         return Ok(result);
     }
     fold_balanced(eng, live, 0, Engine::or)
@@ -97,7 +97,7 @@ fn fold_balanced(
     // A round minimizes each product as it builds it, so only a lone
     // complement still owes its reduction.
     if lone {
-        eng.reduce_plain(&mut result, ReductionPlan::default())?;
+        eng.reduce(&mut result, ReductionPlan::default())?;
     }
     Ok(result)
 }
@@ -247,7 +247,7 @@ impl crate::Engine {
         let bytes = complements.charged_bytes();
         let result = fold_balanced(self, complements, bytes, |eng, a, b| {
             let mut result = eng.and(a, b)?;
-            eng.reduce_plain(&mut result, ReductionPlan::default())?;
+            eng.reduce(&mut result, ReductionPlan::default())?;
             Ok(result)
         })?;
         crate::apply::extend::trimmed(self, result)

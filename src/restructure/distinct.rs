@@ -197,7 +197,7 @@ impl Engine {
             vtree: into.root(),
             local: top,
         })?;
-        self.minimize_plain(&mut result)?;
+        self.minimize(&mut result)?;
         Ok(result)
     }
 
@@ -233,13 +233,13 @@ impl Engine {
 
 type ProjectedKeySubtree = (Arc<Vtree>, Vec<VtreeIdx>, Vec<VtreeIdx>);
 
-/// The result's vtree (`key`'s subtree, its variable ids kept), the nodes of
-/// `key`'s subtree, and the image in the result vtree of each node of that
-/// subtree.
+/// The result's vtree (`key`'s subtree, its variable ids kept, the home's
+/// projection on them when `vtree` is on a home), the nodes of `key`'s
+/// subtree, and the image in the result vtree of each node of that subtree.
 fn project_onto_key_subtree(
     lim: &Limits,
     gate: &mut PollGate<'_>,
-    vtree: &Vtree,
+    vtree: &Arc<Vtree>,
     key: VtreeIdx,
 ) -> Result<ProjectedKeySubtree, DistinctError> {
     let below: Vec<VtreeIdx> = vtree.subtree(key).collect();
@@ -253,10 +253,17 @@ fn project_onto_key_subtree(
             keep[vtree.leaf_var(t).0 as usize] = true;
         }
     }
-    let into = vtree
-        .project_to_vars(|v| keep[v.0 as usize].then_some(v), vtree.num_vars())
-        .expect("a subtree keeps a variable");
-    let into = Arc::new(into);
+    let into = match Vtree::home_of(vtree) {
+        Some(home) => {
+            let vars = below.iter().filter(|t| vtree.node(**t).is_leaf()).map(|t| vtree.leaf_var(*t));
+            Vtree::projection(&home, vars).map_err(DistinctError::Vtree)?
+        }
+        None => Arc::new(
+            vtree
+                .project_to_vars(|v| keep[v.0 as usize].then_some(v), vtree.num_vars())
+                .expect("a subtree keeps a variable"),
+        ),
+    };
     let mut image = Vec::new();
     lim.try_resize(&mut image, vtree.num_nodes(), VtreeIdx(0))?;
     let mut stack = vec![(key, into.root())];

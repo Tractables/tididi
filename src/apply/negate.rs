@@ -108,7 +108,7 @@ impl Engine {
                 &mut result,
                 plan,
                 crate::reduce::prune::PruneScope::BelowRoot,
-                crate::reduce::Close::Plain,
+                crate::reduce::Close::Settle(&[]),
             )?;
         }
         Ok(result)

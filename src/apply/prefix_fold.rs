@@ -1590,7 +1590,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             vtree: into.root(),
             local: top,
         })?;
-        eng.minimize_plain(&mut result)?;
+        eng.minimize(&mut result)?;
         Ok(result)
     }
 }

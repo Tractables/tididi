@@ -30,6 +30,7 @@ fn edited_marginal_diagram(eng: &Engine) -> crate::Tdd {
 }
 
 mod canonicity;
+mod close;
 mod fixpoint;
 mod marginal;
 mod pair_arena;

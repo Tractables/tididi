@@ -651,6 +651,9 @@ pub(crate) fn conjoin_onto_as<'a>(
     };
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
+    // `conjoin_kept` reads views only beside a plain partner.
+    let plain = |tdd: &Tdd| tdd.weights.is_none() && !tdd.has_marginal_level();
+    let viewing = viewing && plain(&f) && plain(&g);
     let mut begun = false;
     let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, viewing) {
         Ok(placed) => placed,
