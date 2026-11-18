@@ -22,7 +22,7 @@ mod structure;
 mod trimmed;
 
 pub use canonicity::check_canonicity;
-pub use trimmed::check_trimmed;
+pub use trimmed::{check_trimmed, reachable_true_labels};
 pub use implicit::{check_implicit_levels, check_left_pairs_taken};
 pub use rotation::assert_rotation_locality;
 pub use soundness::{assert_no_mixed_leaf_side, check_determinism, labels_at};

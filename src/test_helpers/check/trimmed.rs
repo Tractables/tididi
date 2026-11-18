@@ -3,6 +3,50 @@
 use crate::diagram::{Tdd, ONE_LEAF_IDX};
 use crate::vtree::VtreeNode;
 
+/// The leaf sides of the reachable pairs of `tdd`, summed leaves and summed
+/// levels skipped: `Err` when some level names a leaf child `One` in one pair
+/// and not in another, else the first leaf named `One` (or a one-leaf output
+/// that is `One`), if any. Dead slots are not read: they may hold stale pairs.
+pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
+    let vtree = tdd.vtree();
+    if vtree.num_nodes() == 0 {
+        return Ok(None);
+    }
+    if vtree.node(vtree.root()).is_leaf() {
+        return Ok((tdd.output().local == ONE_LEAF_IDX && !tdd.level(vtree.root()).is_marginal()).then(|| "the output names its leaf as One".to_string()));
+    }
+    let reach = tdd.reachable_nodes();
+    let mut first = None;
+    for t in vtree.bottomup() {
+        let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
+        let level = tdd.level(t);
+        if level.is_marginal() {
+            continue;
+        }
+        for (child, is_left) in [(left, true), (right, false)] {
+            if !vtree.node(child).is_leaf() || tdd.level(child).is_marginal() {
+                continue;
+            }
+            let (mut one, mut other) = (false, false);
+            for j in (0..level.slot_count()).filter(|&j| reach[t.idx()].get(j).copied().unwrap_or(false)) {
+                for pair in level.pairs_iter_of_idx(j) {
+                    let side = if is_left { pair.left } else { pair.right };
+                    if side.raw() == ONE_LEAF_IDX.0 {
+                        one = true;
+                        first.get_or_insert_with(|| format!("node {j} of level {} names leaf {} as One", t.0, child.0));
+                    } else {
+                        other = true;
+                    }
+                }
+            }
+            if one && other {
+                return Err(format!("level {} names leaf {} as One in some pairs and not in others", t.0, child.0));
+            }
+        }
+    }
+    Ok(first)
+}
+
 /// No pair of `tdd` names a leaf as `One`, nor does the output; a constant
 /// has no leaf. With `minimized`, also that the leaves are the
 /// [`support`](Tdd::support).

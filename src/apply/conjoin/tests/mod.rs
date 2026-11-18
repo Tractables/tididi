@@ -6,6 +6,7 @@ mod cap;
 mod complete;
 mod conjunction;
 mod described_sums;
+pub(in crate::apply::conjoin) mod i1_routes;
 mod float_targets;
 mod implicit;
 mod kept_counts;
