@@ -1013,9 +1013,6 @@ impl TwinMode {
 
 /// Commit `pending`, the move `mv` made on `tree` by [`move_in_place`], if
 /// `kept`, else take it back.
-// Forced: with the projection probe as a second caller, the compiler calls
-// it out of line from the probe on one shared tree.
-#[inline(always)]
 fn end_move(eng: &Engine, tree: &mut Vtree, pending: PendingTopo, mv: PoolMove, kept: bool) {
     let info = pending.info();
     if kept {
@@ -1056,9 +1053,6 @@ fn move_slot(kind: RotationKind, crossed: bool) -> usize {
 /// Make `mv` on `tree`, its children swapped first if crossed, with the
 /// bottom-up order's repair owed; `None`, the tree untouched, where the move
 /// does not apply. A crossed move that is reverted owes the swap back.
-// Forced: with the groups' trees as a second caller, the compiler otherwise
-// calls it out of line from the pool probe on one shared tree.
-#[inline(always)]
 fn move_in_place(tree: &mut Vtree, mv: PoolMove) -> Option<PendingTopo> {
     let RotationMove { pivot, kind } = mv.rotation;
     let VtreeNode::Internal { left, right, .. } = *tree.node(pivot) else {
@@ -1734,8 +1728,6 @@ fn probe_scored_with<'l, 't>(
 }
 
 /// A level's live pairs and the nodes that hold them.
-// Forced: the compiler otherwise calls it out of line from the pool probe.
-#[inline(always)]
 fn pairs_and_owners(level: &TddLevel) -> (usize, usize) {
     match level.implicit() {
         Some(d) => (
