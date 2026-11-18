@@ -170,7 +170,7 @@ fn graft_impl(
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
     // sentinel as a child.
     if parts.iter().any(Tdd::is_zero) {
-        let mut result = crate::build::constant_zero(eng, &grafted_arc);
+        let mut result = crate::build::constant_zero_padded(eng, &grafted_arc);
         result.weights = into;
         return Ok((result, layout));
     }

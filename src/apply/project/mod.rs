@@ -18,18 +18,23 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 mod structural;
 
 /// Existentially quantify every variable in `vars` out of `f` in one sweep,
-/// ending with `reduction`.
-fn exists_vars_on(
+/// ending with `reduction`. With `close` the result leaves the quantified
+/// leaves, on a home; without it, it stays on `f`'s vtree.
+pub(crate) fn exists_vars_on(
     eng: &Engine,
     f: Tdd,
     vars: &[VarId],
     reduction: ReductionPlan<'_>,
+    close: bool,
 ) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
     // Caller input, so it is answered before any work and before the ⊥
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
-    exists_targets_on(eng, f, &targets, reduction)
+    if targets.is_empty() {
+        return Ok(f);
+    }
+    structural::exists_leaves_structural(eng, f, &targets, reduction, close)
 }
 
 /// Validate the entire request and retain each leaf once.
@@ -62,7 +67,7 @@ pub(super) fn exists_targets_on(
     if targets.is_empty() {
         return Ok(f);
     }
-    structural::exists_leaves_structural(eng, f, targets, reduction)
+    structural::exists_leaves_structural(eng, f, targets, reduction, true)
 }
 
 impl crate::Engine {
@@ -77,7 +82,7 @@ impl crate::Engine {
     /// The rewrite checks allocation and cancellation while regrouping nodes. Its
     /// output cap counts emitted intermediate nodes, including the final root union.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, &[x], ReductionPlan::default())
+        exists_vars_on(self, f, &[x], ReductionPlan::default(), true)
     }
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
@@ -88,7 +93,7 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, ReductionPlan::default())
+        exists_vars_on(self, f, vars, ReductionPlan::default(), true)
     }
 
     /// [`exists_vars`](Self::exists_vars) with the reduction it ends with
@@ -107,7 +112,7 @@ impl crate::Engine {
     ///
     /// As [`exists_vars`](Self::exists_vars).
     pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, plan)
+        exists_vars_on(self, f, vars, plan, true)
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
@@ -119,13 +124,18 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let targets = quantification_targets(self, f.vtree(), vars)?;
-        if targets.is_empty() {
+        if quantification_targets(self, f.vtree(), vars)?.is_empty() {
             return Ok(f);
+        }
+        // The complement of false is the constant, on no leaf on a home.
+        if f.is_zero() {
+            return crate::build::constant_like(self, &f, false);
         }
         // `¬∃X.¬f`; the complement needs every level structural. Minimizing
         // the projection keeps the second make-full pass small.
         let complement = negate_on(self, f)?;
+        // The complement's reduction can leave a target's leaf.
+        let targets = quantification_targets(self, complement.vtree(), vars)?;
         let projected = exists_targets_on(self, complement, &targets, ReductionPlan::default())?;
         self.negate(projected)
     }

@@ -80,7 +80,7 @@ impl Engine {
                     diagram.require_structure()?;
                 }
                 Replacement::Literal(literal) => {
-                    if f.vtree().leaf_of(literal.var).is_none() {
+                    if f.vtree().leaf_of(literal.var).is_none() && !f.vtree().home_has(literal.var) {
                         return Err(OperationError::VariableNotInVtree(literal.var));
                     }
                 }

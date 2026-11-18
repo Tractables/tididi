@@ -136,6 +136,13 @@ impl Engine {
         self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(&[]))
     }
 
+    /// [`reduce`](Self::reduce) of a diagram whose every pair at the parent
+    /// of each leaf of `seed` names that leaf true: on a home with no
+    /// summed-out level, the result also leaves those leaves.
+    pub(crate) fn reduce_seeded(&self, f: &mut Tdd, plan: ReductionPlan<'_>, seed: &[crate::vtree::VtreeIdx]) -> Result<(), OperationError> {
+        self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(seed))
+    }
+
     /// [`reduce`](Self::reduce) with the scope of its prune chosen by the
     /// caller. Only an operation that knows how the diagram it just built
     /// became unreachable in places may narrow it; see [`PruneScope`].

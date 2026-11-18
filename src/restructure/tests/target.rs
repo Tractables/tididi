@@ -135,7 +135,7 @@ fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
     let home = Home::new(Vtree::linear(10));
     let kept = [1u32, 2, 3, 5, 6, 8, 9];
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
-    let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
+    let f = crate::test_helpers::padded(crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng), &own);
     let count = f.model_count().unwrap();
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());

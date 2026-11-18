@@ -214,8 +214,7 @@ fn counts_on_a_projection_range_over_the_home() {
             for m in [0, 1, 2, 3, all] {
                 let label = format!("seed {seed}, key {key:?}, m {m}");
                 let g = eng.at_least_distinct(&f, key, m).unwrap();
-                // A diagram on all of the home stays on its root, as does its result.
-                assert_eq!(g.vtree().is_on(&home), own.home().is_some(), "{label}: another home");
+                assert!(g.vtree().is_on(&home), "{label}: another home");
                 assert!(g.vtree().leaf_bottomup().all(|(_, v)| kv.contains(&v) && has(&v)), "{label}: a leaf outside K");
                 if g.vtree().num_nodes() > 0 {
                     assert_canonical(&g);

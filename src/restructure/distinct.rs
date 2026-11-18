@@ -114,8 +114,8 @@ impl Engine {
         tdd.require_structure()?;
         let vtree = tdd.vtree();
         let key = key_node(lim, vtree, key.into())?;
-        if let Some(home) = vtree.home() {
-            return distinct_on_home(self, tdd, home, key, m);
+        if let Some(home) = Vtree::home_of(vtree) {
+            return distinct_on_home(self, tdd, &home, key, m);
         }
         if key.idx() >= vtree.num_nodes() {
             return Err(OperationError::LevelNotInVtree(key).into());

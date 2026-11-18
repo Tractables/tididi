@@ -201,7 +201,7 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         return Ok(Cow::Owned(f));
     }
     if f.vtree.num_nodes() == 0 {
-        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        let mut constant = crate::build::constant_padded_on(eng, into, f.is_one())?;
         constant.weights = f.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
         return Ok(Cow::Owned(constant));
     }

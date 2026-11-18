@@ -252,9 +252,24 @@ fn a_cube_or_clause_naming_a_variable_both_ways_leaves_the_vtree() {
     let own = Vtree::projection(&home, [VarId(1), VarId(2)]).expect("a projection");
     let f = Tdd::clause(&own, [1, -2]).expect("a clause on the projection");
     let or = eng.or_cube(f.clone(), &[1, -1, 3]).expect("a false cube");
-    assert!(Arc::ptr_eq(or.vtree(), &own), "or_cube widens the vtree");
+    assert!(Arc::ptr_eq(or.vtree(), f.vtree()), "or_cube widens the vtree");
     let and = eng.and_clause(f.clone(), &[1, -1, 3]).expect("a true clause");
-    assert!(Arc::ptr_eq(and.vtree(), &own), "and_clause widens the vtree");
+    assert!(Arc::ptr_eq(and.vtree(), f.vtree()), "and_clause widens the vtree");
     assert_eq!(eng.or_cube(f.clone(), &[3, -3, 9]).err(), Some(OperationError::VariableNotInVtree(VarId(9))));
     assert_eq!(eng.and_clause(f, &[3, -3, 0]).err(), Some(OperationError::InvalidLiteral(0)));
+}
+
+/// A conjunction across projections can leave a node its output does not
+/// reach, with the levels not known to be pruned; the overlay reads every node
+/// of a level.
+#[test]
+fn an_unreachable_node_does_not_join_the_fill() {
+    let home = crate::vtree::Home::new(Vtree::random(6, 101));
+    let x1 = Vtree::projection(&home, [VarId(1)]).unwrap();
+    let x3_x5 = Vtree::projection(&home, [VarId(3), VarId(5)]).unwrap();
+    let f = crate::and(Tdd::clause(&x1, [-1]).unwrap(), Tdd::clause(&x3_x5, [3, -3, -5]).unwrap()).unwrap();
+    let general = crate::or(f.clone(), Tdd::cube(&x1, [1]).unwrap()).unwrap();
+    let out = f.or_cube([1]).unwrap();
+    assert_partition(&out, "x1 or not x1");
+    assert_eq!(out.model_count().unwrap(), general.model_count().unwrap());
 }

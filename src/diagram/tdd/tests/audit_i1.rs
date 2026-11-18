@@ -25,23 +25,6 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("condition", "a contracting reduce, no trim"),
-    ("condition_var", "a contracting reduce, no trim"),
-    ("condition_vars", "a contracting reduce, no trim"),
-    ("exists_var", "a contracting reduce, no trim"),
-    ("exists_vars", "a contracting reduce, no trim"),
-    ("forall_vars", "a contracting reduce, no trim"),
-    ("or_cube, empty cube [fixed]", "the cube built on the operand's vtree"),
-    ("transport with a bound [fixed]", "reduce(Full) on entry"),
-    ("project_to_subtree on a leaf [fixed]", "a one-leaf output"),
-    ("at_least_distinct on a leaf [fixed]", "a one-leaf output"),
-    ("rename_vars [fixed]", "the literal built on the whole vtree, no trim"),
-    ("negate of false on a vtree with nodes [fixed]", "a constant on a vtree with nodes"),
-    ("one on a vtree with nodes [fixed]", "a constructor on the caller's vtree"),
-    ("literal [fixed]", "a constructor on the caller's vtree"),
-    ("cube [fixed]", "a constructor on the caller's vtree"),
-    ("clause [fixed]", "a constructor on the caller's vtree"),
-    ("from_models [fixed]", "a constructor on the caller's vtree"),
     ("and_onto a wider vtree [fixed]", "a target wider than the union"),
     ("splice_subtree_unchecked [fixed]", "operands padded by the safety contract"),
     ("embed onto the home", "a variable of the home the operand does not use"),
@@ -513,7 +496,6 @@ fn prefix_fold_case() -> Result<Tdd, String> {
 /// today: an index past an empty vtree's nodes, and a draw below zero in
 /// the multistart.
 #[test]
-#[ignore = "panics today"]
 fn audit_i1_constant_operands_do_not_panic() {
     let eng = Engine::new();
     let home = Arc::clone(Home::new(Vtree::balanced(3)).vtree());
@@ -715,4 +697,46 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
             assert!(!one && literal, "{what}: b stays a literal");
         }
     }
+}
+
+/// ((x y) z) with x, y, z = 1, 2, 3 on a home, x ∧ z with the level (x y)
+/// {(Pos, Pos), (Pos, Neg)}: y a full twin side.
+fn x_and_z_over_a_twin(eng: &Engine) -> (Arc<Vtree>, Tdd) {
+    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
+    let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
+    let f = built(eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
+    (xyz, f)
+}
+
+#[test]
+fn audit_i1_weighted_minimize_keeps_the_value() {
+    let eng = Engine::new();
+    let (_, mut f) = x_and_z_over_a_twin(&eng);
+    f.set_weights(weights(3, &mut Lcg::new(11))).unwrap();
+    let before = f.weighted_value().unwrap().unwrap().as_rational().into_owned();
+    f.minimize().unwrap();
+    assert_eq!(vars_of(&f), [VarId(1), VarId(3)]);
+    assert_eq!(reachable_true_labels(&f), Ok(None));
+    assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(), before);
+}
+
+#[test]
+fn audit_i1_weighted_and_across_projections_is_on_the_variables_used() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let ws = weights(4, &mut Lcg::new(5));
+    let on = |vars: &[u32], clause: &[i32]| {
+        let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
+        let mut t = eng.clause(&own, clause.iter().copied()).unwrap();
+        t.set_weights(ws.clone()).unwrap();
+        t
+    };
+    let (f, g) = (on(&[1, 2], &[1, 2]), on(&[1, 2, 3], &[1, -2]));
+    let mut h = eng.and(&f, &g).unwrap();
+    assert_eq!(vars_of(&h), [VarId(1), VarId(2)], "the product keeps the twins at x2");
+    assert_eq!(reachable_true_labels(&h), Ok(None));
+    assert!(!crate::test_helpers::trim_by_rebuild(&mut h.clone(), &home).unwrap());
+    h.minimize().unwrap();
+    assert_eq!(vars_of(&h), [VarId(1)], "x1 or x2, and x1 or not x2, is x1");
+    assert!(h.weights().is_some());
 }

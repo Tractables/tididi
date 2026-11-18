@@ -244,7 +244,8 @@ fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
                 let shape = Arc::new(renamed_mirrored(&into, &inverse(&perm), n, &mut rng));
                 let mut expected = f.clone();
                 expected.restructure_to(&shape, usize::MAX).unwrap();
-                let (expected, _) = eng.transport(expected, &dest, map, 0).map_err(|r| r.error).unwrap();
+                let (mut expected, _) = eng.transport(expected, &dest, map, 0).map_err(|r| r.error).unwrap();
+                expected.trim(&dest).unwrap();
                 assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
                 assert_eq!(leaf_vars(got.vtree()), leaf_vars(expected.vtree()));
                 assert_eq!((got.node_count(), got.pair_count()), (expected.node_count(), expected.pair_count()));
@@ -264,10 +265,11 @@ fn a_refused_rotation_hands_back_f_as_it_was() {
     let home = Home::new(Vtree::linear(10));
     let kept = [1u32, 2, 3, 5, 6, 8, 9];
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
+    let eng = Engine::new();
     let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
+    let f = eng.embed(&f, &own, |v| v).unwrap().0;
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());
-    let eng = Engine::new();
     let (_, stats) = eng.transport(&f, &other, |v| v, usize::MAX).map_err(|r| r.error).unwrap();
     assert!(stats.rotations > 1, "{stats:?}");
     let mut bound = 1;

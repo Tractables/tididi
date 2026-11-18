@@ -381,6 +381,13 @@ fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Res
         return eng.or(f, g);
     }
     f.require_structure()?;
+    // The fill reads every node of a level, so an unreachable one would
+    // overlap the reachable cells it duplicates.
+    if f.dirty.loose().is_none_or(|loose| !loose.is_empty()) {
+        let closed = f.levels.is_closed();
+        crate::reduce::prune::prune_unreachable(eng, &mut f, crate::reduce::prune::PruneScope::Whole)?;
+        f.close_marked_levels(closed);
+    }
     let mut label: Vec<u32> = Vec::new();
     lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX.0)?;
     for &(lit, leaf) in &cube {

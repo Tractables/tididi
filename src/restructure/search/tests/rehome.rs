@@ -22,7 +22,7 @@ fn subset(n: u32, rng: &mut Lcg) -> Vec<VarId> {
 /// A random CNF of one to six clauses over `vtree`'s leaves, minimized.
 fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
     let vars: Vec<VarId> = vtree.leaf_bottomup().map(|(_, var)| var).collect();
-    let mut f = Tdd::one(vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
     for _ in 0..1 + rng.below(6) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -232,7 +232,7 @@ fn a_declined_search_keeps_the_vtree() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(16));
     let own = Vtree::projection(&home, [1, 2, 5, 6, 9, 13, 14].map(VarId)).unwrap();
-    let f = eng.clause(&own, [1, -5, 9]).unwrap();
+    let f = crate::test_helpers::padded(eng.clause(&own, [1, -5, 9]).unwrap(), &own);
     let mut g = f.clone();
     let turn = RotationMove { pivot: own.root(), kind: RotationKind::Right };
     assert!(!g.rotate_if(&[turn], usize::MAX, |_| false).unwrap());
@@ -248,7 +248,7 @@ fn a_home_root_held_alone_is_no_home_while_it_moves() {
     for accept in [false, true] {
         let mut f = {
             let root = Arc::clone(Home::new(Vtree::balanced(8)).vtree());
-            Tdd::clause(&root, [1, -4, 6]).unwrap()
+            crate::test_helpers::padded(Tdd::clause(&root, [1, -4, 6]).unwrap(), &root)
         };
         let before = Arc::as_ptr(f.vtree());
         let pivot = f.vtree().root();

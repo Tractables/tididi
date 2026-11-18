@@ -34,7 +34,7 @@ fn random_diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
             }
         };
     }
-    f
+    crate::test_helpers::padded(f, home)
 }
 
 fn var_subset(n: u32, rng: &mut Lcg) -> Vec<VarId> {
@@ -97,12 +97,12 @@ fn trimmed_copies_answer_as_the_original() {
 fn constants_have_no_leaf() {
     let hm = Home::new(Vtree::balanced(5));
     let home = Arc::clone(hm.vtree());
-    let mut zero = Tdd::clause(&home, [1]).unwrap().condition_var(VarId(1), false).unwrap();
+    let mut zero = crate::test_helpers::padded(Tdd::zero(&home), &home);
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
     assert_eq!(zero.model_count().unwrap(), 0u32.into());
 
-    let mut one = Tdd::one(&home);
+    let mut one = crate::test_helpers::padded(Tdd::one(&home), &home);
     assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
@@ -113,7 +113,7 @@ fn constants_have_no_leaf() {
     assert!(!one.trim(&hm).unwrap());
     check_trimmed(&one, true).unwrap();
 
-    let mut x = literal(&home, 3).unwrap();
+    let mut x = crate::test_helpers::padded(literal(&home, 3).unwrap(), &home);
     assert!(x.trim(&hm).unwrap());
     assert_eq!(x.vtree().num_nodes(), 1);
     assert_eq!(x.model_count().unwrap(), 16u32.into());
@@ -427,7 +427,7 @@ fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: O
     use crate::marginal::tests::region::weights;
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
-    let mut f = Tdd::clause(&own, clause.iter().copied()).unwrap();
+    let mut f = crate::test_helpers::padded(Tdd::clause(&own, clause.iter().copied()).unwrap(), &own);
     if let Some(arithmetic) = arithmetic {
         f.set_weights(WeightStore::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap();
     }

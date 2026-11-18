@@ -46,7 +46,7 @@ fn clause(vars: &[VarId], rng: &mut Lcg) -> Vec<i32> {
 /// A random CNF over the projection of `home` on `vars`, built on it.
 fn cnf_on(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(&vtree), &vtree);
     for _ in 0..1 + rng.below(4) {
         f = eng.and_clause(f, &clause(vars, rng)).unwrap();
     }
@@ -192,7 +192,7 @@ fn absent_variables_leave_the_operand() {
     let eng = Engine::new();
     let hm = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
-    let f = eng.and_clause(Tdd::one(&own), &[2, -5]).unwrap();
+    let f = eng.and_clause(crate::test_helpers::padded(Tdd::one(&own), &own), &[2, -5]).unwrap();
     let same = |g: Tdd| {
         assert!(Arc::ptr_eq(g.vtree(), &own));
         assert!(eng.equivalent(&g, &f).unwrap());

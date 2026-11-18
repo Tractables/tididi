@@ -43,6 +43,16 @@ Breaking changes:
   projection of that home on the tagged and code variables, the code
   subtree on either side of its root. Diagrams on root vtrees are
   unchanged.
+- On a home or a projection of one, a constant is on the home's empty
+  projection: `Tdd::one`, `Tdd::zero`, `Engine::one`, `Engine::zero` and
+  every operation that returns true or false. `literal`, `Tdd::cube` and
+  `Tdd::clause` return a diagram on the projection of their variables,
+  which need only be in the home. `exists_var`, `exists_vars`,
+  `forall_vars`, `condition` and `and_exists` return a diagram on the
+  projection of the variables the result still depends on, and
+  `from_models`, `from_columns` and `from_cubes` leave out a variable every
+  model leaves free. `rename_vars` accepts a target variable of the home
+  that the diagram's vtree does not hold.
 
 Added:
 

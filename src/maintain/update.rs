@@ -150,7 +150,7 @@ impl Maintenance<'_> {
             // diagram is now false. A node with no pairs is not a
             // representation the invariants allow, so the levels go instead.
             let weights = self.tdd.weights.take();
-            let mut zero = crate::build::constant_zero(eng, &self.vtree);
+            let mut zero = crate::build::constant_zero_padded(eng, &self.vtree);
             zero.weights = weights;
             *self.tdd = zero;
             self.index = None;
@@ -172,6 +172,7 @@ impl Maintenance<'_> {
         }
         let root = self.vtree.root();
         Ok(!self.tdd.is_zero()
+            && self.vtree.num_nodes() > 0
             && !self.vtree.node(root).is_leaf()
             && self.tdd.output.vtree == root
             && !self.index.as_ref().expect("just built").any_one_mode)
