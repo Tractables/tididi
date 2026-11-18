@@ -100,6 +100,28 @@ fn trim_reads_every_pair_of_a_level_that_names_a_leaf_both_ways() {
     assert_eq!(f.model_count().unwrap(), BigUint::from(3u32), "after trim, on {} leaves", f.vtree().num_leaves());
 }
 
+/// A clause on a variable the projection lacks is conjoined with the weights
+/// kept, or refused as `and` refuses weighted operands across projections.
+#[test]
+fn and_clause_keeps_the_weights_when_it_adds_a_variable() {
+    use num_rational::BigRational;
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    let home = Home::new(Vtree::balanced(4));
+    let weight = |a: i64, b: i64| BigRational::new(a.into(), b.into());
+    let literals: Vec<_> = (0..4).map(|i| LiteralWeights { negative: weight(1 + i, 2), positive: weight(2, 1 + i) }).collect();
+    let weights = WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
+    let mut f = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [1]).unwrap();
+    let mut on_home = Tdd::clause(home.vtree(), [1]).unwrap();
+    f.set_weights(weights.clone()).unwrap();
+    on_home.set_weights(weights).unwrap();
+    assert_eq!(format!("{:?}", f.weighted_value()), format!("{:?}", on_home.weighted_value()));
+    let expected = on_home.and_clause([3]).unwrap().weighted_value().unwrap();
+    assert!(expected.is_some());
+    if let Ok(g) = f.and_clause([3]) {
+        assert_eq!(format!("{:?}", g.weighted_value().unwrap()), format!("{expected:?}"), "weights attached: {}", g.weights().is_some());
+    }
+}
+
 #[test]
 fn finish_on_no_leaf_answers_or_refuses_an_output() {
     let eng = Engine::new();
