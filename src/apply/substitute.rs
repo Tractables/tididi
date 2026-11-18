@@ -69,7 +69,7 @@ impl Engine {
                 if f.vtree().home_has(var) {
                     continue;
                 }
-                return Err(OperationError::VariableNotInVtree(var));
+                return Err(f.vtree().no_leaf_for(var));
             };
             if by_leaf[leaf.idx()].replace(replacement).is_some() {
                 return Err(OperationError::DuplicateVariable(var));

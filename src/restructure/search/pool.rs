@@ -983,6 +983,9 @@ fn shared_vtree(members: &[&mut Tdd]) -> Result<Arc<Vtree>, OperationError> {
     if members.iter().any(|m| !Arc::ptr_eq(&m.vtree, &shared)) {
         return Err(OperationError::VtreeMismatch);
     }
+    if let Some(region) = shared.regions().next() {
+        return Err(OperationError::MarginalLevel(region));
+    }
     Ok(shared)
 }
 

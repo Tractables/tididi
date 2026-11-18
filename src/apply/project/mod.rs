@@ -42,7 +42,7 @@ pub(super) fn quantification_targets(eng: &Engine, vtree: &Vtree, vars: &[VarId]
         if vtree.home_has(var) {
             continue;
         }
-        let leaf = vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+        let leaf = vtree.leaf_of(var).ok_or_else(|| vtree.no_leaf_for(var))?;
         lim.try_push(&mut targets, leaf)?;
     }
     targets.sort_unstable();

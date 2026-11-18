@@ -94,13 +94,16 @@ impl Vtree {
     /// does not survive the round trip; the tree does. Equal text means equal
     /// tree, but not conversely once a tree has been rotated — compare trees
     /// with [`Vtree::same_tree`].
+    ///
+    /// A region of a projection ([`VtreeNode::is_region`]) is written
+    /// `R <id>`, a record [`Vtree::from_text`] refuses.
     pub fn to_text(&self) -> String {
         let n = self.num_nodes();
         let mut out = format!("vtree {}\n", n);
         for idx in self.bottomup() {
             let id = self.topo_pos(idx);
             match self.node(idx) {
-                VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("the vtree text format"),
+                VtreeNode::Leaf { var: super::REGION_VAR, .. } => out.push_str(&format!("R {id}\n")),
                 VtreeNode::Leaf { var, .. } => {
                     out.push_str(&format!("L {} {}\n", id, var.0));
                 }
@@ -136,6 +139,7 @@ fn parse_node(line: &str) -> Result<(usize, VtreeNode), String> {
     let mut fields = line.split_whitespace();
     let record = (fields.next(), fields.next(), fields.next(), fields.next(), fields.next());
     let (id, node) = match record {
+        (Some("L"), Some(_), Some("0"), None, None) => return Err(format!("variable ids start at 1, found {line:?}")),
         (Some("L"), Some(id), Some(var), None, None) => (
             id, VtreeNode::Leaf { var: VarId(parse_number(var, "variable")?), parent: None },
         ),

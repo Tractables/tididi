@@ -336,7 +336,9 @@ fn roles(
 ///     level's variables are already summed out, and its values carry a
 ///     multiplicity the owner-set regroup cannot represent. Marginality is
 ///     downward-closed (invariant 5), so checking a freed subtree's leaves
-///     settles the whole subtree.
+///     settles the whole subtree. Nor is a leaf child of a regrouped level (a
+///     summed-out variable leaf or a region): the regroup would join two of
+///     its values as if they were disjoint functions.
 ///
 /// (2) No regrouped level is the grandparent of a marginal level. The boundary
 ///     content-twin merge (`reduce::contract::content_twin`) can leave the
@@ -345,6 +347,9 @@ fn roles(
 ///     the two into one and miscount. A marginal level three or more levels
 ///     below is harmless: its duplicates land in a subtree whose references
 ///     are only copied.
+///
+/// (3) No regrouped level holds a pair twice, which a node merge above a
+///     summed-out level leaves at any height: the regroup would count it once.
 fn check_levels_are_rewritable(
     work: &mut Rewrite<'_>,
     t: &Tdd,
@@ -355,21 +360,22 @@ fn check_levels_are_rewritable(
         work.poll()?;
         match role[level.idx()] {
             Role::Free => {}
-            Role::Whole => {
-                if vtree.node(level).is_leaf() {
-                    t.require_structure_at(level)?;
-                }
-            }
+            // A summed-out level can sit above leaves that are not.
+            Role::Whole => t.require_structure_at(level)?,
             Role::Split => {
                 t.require_structure_at(level)?;
                 let (al, ar) = vtree.children(level);
                 for child in [al, ar] {
                     if vtree.node(child).is_leaf() {
+                        t.require_structure_at(child)?;
                         continue;
                     }
                     let (left, right) = vtree.children(child);
                     t.require_structure_at(left)?;
                     t.require_structure_at(right)?;
+                }
+                if t.has_marginal_level() && t.level(level).repeats_a_pair()? {
+                    return Err(OperationError::MarginalLevel(level));
                 }
             }
         }

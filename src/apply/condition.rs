@@ -39,7 +39,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
             lim.try_push(&mut absent, (literal.var, literal.sign))?;
             continue;
         }
-        let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
+        let leaf = f.vtree.leaf_of(literal.var).ok_or_else(|| f.vtree.no_leaf_for(literal.var))?;
         lim.try_push(&mut targets, (leaf, literal.sign))?;
     }
     gate.flush()?;

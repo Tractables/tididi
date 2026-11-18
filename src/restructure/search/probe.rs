@@ -217,7 +217,7 @@ pub(super) fn rotate_if_on(
     let _op = eng.limits().enter()?;
     let mut scratch = eng.scratch.restructure.checkout(eng);
     let mut rule = Closure { accept: Some(accept) };
-    super::SearchTree::new(tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)
+    super::SearchTree::new(tdd)?.probe_moves(eng, moves, &mut rule, &mut scratch, bound)
 }
 
 /// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,

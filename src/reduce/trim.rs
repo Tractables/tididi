@@ -49,7 +49,6 @@ impl Engine {
     /// As [`Tdd::trim`](crate::Tdd::trim).
     pub fn trim(&self, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        f.require_structure()?;
         if !f.vtree.is_on(home) {
             return Err(OperationError::VtreeMismatch);
         }
@@ -159,11 +158,20 @@ impl Shape {
             let first = level.pairs_iter_of_idx(0).next().expect("a node holds a pair");
             let marginal = |c: VtreeIdx| summed && f.levels[c.idx()].is_marginal();
             let over_values = |c: VtreeIdx| marginal(c) || shape.values.get(c.idx()).is_some_and(|v| !v.is_empty());
+            // A region whose sibling stands for values is kept: dropping it
+            // would leave nodes that stand for sums of values.
+            let mut full = [false; 2];
+            if summed {
+                for (slot, (c, other)) in full.iter_mut().zip([(left, right), (right, left)]) {
+                    *slot = vtree.node(c).is_region() && !over_values(other) && names_only_full_counts(f, c, &mut gate)?;
+                }
+            }
             let keeps = |c: VtreeIdx, side| match shape.kind[c.idx()] {
                 Kind::True => false,
                 Kind::Leaf | Kind::LeafChain(_) if over_values(c) => true,
                 Kind::Leaf | Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
-                Kind::LevelChain(_) | Kind::Both | Kind::Region => true,
+                Kind::LevelChain(_) | Kind::Both => true,
+                Kind::Region => !full[usize::from(side == ChildSide::Right)],
             };
             let (kl, kr) = (keeps(left, ChildSide::Left), keeps(right, ChildSide::Right));
             let kept_under = |c: VtreeIdx, k: bool| if k { shape.kept[c.idx()] } else { 0 };
@@ -175,6 +183,11 @@ impl Shape {
                 (false, false) => Kind::True,
                 (true, true) => Kind::Both,
                 _ => {
+                    // A node of `t` becomes one node or value of the kept
+                    // side, so a pair it holds twice would count once.
+                    if summed && level.repeats_a_pair()? {
+                        return Err(OperationError::MarginalLevel(t));
+                    }
                     let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
@@ -241,6 +254,36 @@ impl Shape {
     }
 }
 
+/// Whether every reference into integer region `t` from its parent's pairs
+/// names 2^|extent|: the region is then true over its extent and is dropped,
+/// its variables free again. A weighted region is never dropped: with signed
+/// weights its value says nothing of the function.
+fn names_only_full_counts(f: &Tdd, t: VtreeIdx, gate: &mut PollGate<'_>) -> Result<bool, OperationError> {
+    let (level, vtree) = (&f.levels[t.idx()], &*f.vtree);
+    let (Some(counts), Some(parent)) = (level.count_column(), vtree.node(t).parent()) else { return Ok(false) };
+    let width: u32 = vtree.region_at(t).1.iter().map(|&(lo, hi)| hi - lo).sum();
+    let full_slot = |slot: u32| match counts.get(slot as usize) {
+        CountRead::Fast(c) => width < 128 && c == 1u128 << width,
+        CountRead::Big(b) => *b == num_bigint::BigUint::from(1u32) << width as usize,
+    };
+    let side = if vtree.children(parent).0 == t { ChildSide::Left } else { ChildSide::Right };
+    let (decoder, above) = (level.child_decoder(), &f.levels[parent.idx()]);
+    for i in 0..above.slot_count() {
+        let pairs = above.pairs_iter_of_idx(i);
+        gate.poll(pairs.len() as u64)?;
+        for p in pairs {
+            let full = match decoder.value(EncodedChildRef::from_raw(side_ref(p, side))) {
+                ValueRef::Inline(v) => width < 32 && v == 1 << width,
+                ValueRef::Slot(slot) => full_slot(slot),
+            };
+            if !full {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// How the level of an own internal node is had from the levels of `f`.
 enum Form {
     /// `e`'s level as it is.
@@ -294,7 +337,13 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[VtreeIdx]
         return Ok(true);
     }
     let summed = f.has_marginal_level();
-    let shape = Shape::read(eng, f, summed)?;
+    // With nothing to collapse, a diagram whose drop would leave a sum of
+    // values, an output on an inline value or a repeated pair merged as a
+    // set stays as it is.
+    let shape = match Shape::read(eng, f, summed) {
+        Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
+        shape => shape?,
+    };
     if !shape.dropped {
         return Ok(false);
     }
@@ -305,7 +354,8 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[VtreeIdx]
             let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
             match ChildDecoder::marginal().value(side) {
                 ValueRef::Slot(slot) => Some(NodeIdx(slot)),
-                ValueRef::Inline(_) => return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
+                ValueRef::Inline(_) if collapse.is_empty() => return Ok(false),
+                ValueRef::Inline(_) =>return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
             }
         }
         Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {

@@ -41,7 +41,7 @@ mod validate;
 
 pub(crate) use build::check_var_space;
 pub use home::Home;
-pub(crate) use home::LeafSets;
+pub(crate) use home::{coalesce, Extent, LeafSets};
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
 pub(crate) use node::{region_unsupported, REGION_VAR};

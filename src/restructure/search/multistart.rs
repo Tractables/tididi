@@ -160,7 +160,7 @@ fn kick(
 ) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
     let mut scratch = eng.scratch.restructure.checkout(eng);
-    let mut search = super::SearchTree::new(tdd);
+    let mut search = super::SearchTree::new(tdd)?;
     for _ in 0..count {
         let nodes = search.tdd.vtree().num_nodes() as u64;
         let pivot = VtreeIdx(rng.below(nodes) as u32);

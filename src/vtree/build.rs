@@ -89,6 +89,15 @@ pub(super) fn push_internal(nodes: &mut Vec<VtreeNode>, left: VtreeIdx, right: V
     idx
 }
 
+/// [`VtreeError::Invalid`] for a vtree with a region: a region stands for
+/// variables of its home, which a new tree does not have.
+pub(super) fn refuse_regions<'a>(vtrees: impl IntoIterator<Item = &'a Vtree>) -> Result<(), VtreeError> {
+    match vtrees.into_iter().any(Vtree::has_regions) {
+        true => Err(VtreeError::Invalid("a vtree with a region cannot be part of another vtree".to_string())),
+        false => Ok(()),
+    }
+}
+
 /// Append a copy of `sub`'s nodes (child links shifted, every leaf renamed
 /// through `var`) and return the index its root now has. The one "merge an
 /// arena" step [`Vtree::join`] and the graft share.
@@ -149,6 +158,7 @@ impl Vtree {
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn join(left: &Vtree, right: &Vtree) -> Result<Self, VtreeError> {
+        refuse_regions([left, right])?;
         let num_vars = left.num_vars().max(right.num_vars());
         let mut nodes = Vec::with_capacity(left.num_nodes() + right.num_nodes() + 1);
         let l = append_subtree(&mut nodes, left, |v| v);

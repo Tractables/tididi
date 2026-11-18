@@ -164,6 +164,7 @@ impl Vtree {
                 "graft needs at least one subtree or spine variable".to_string(),
             ));
         }
+        super::build::refuse_regions(subtrees.iter().copied())?;
         let total: usize = subtrees.iter().map(|s| s.num_nodes()).sum::<usize>()
             + spine_vars.len()
             + subtrees.len();

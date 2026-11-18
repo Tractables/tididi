@@ -85,6 +85,9 @@ pub enum TddBuildError {
     IncompatibleWeights,
     /// `output` is not a node of the root level (nor the `ZERO` sentinel).
     BadOutput(TddNodeId),
+    /// A region of the vtree ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region))
+    /// has no summed-out level: its parents name it as a variable leaf.
+    StructuralRegion(VtreeIdx),
 }
 
 impl std::fmt::Display for TddBuildError {
@@ -98,6 +101,7 @@ impl std::fmt::Display for TddBuildError {
                 write!(f, "{found} levels for a vtree with {expected} nodes")
             }
             Self::NonEmptyLeafLevel(t) => write!(f, "leaf level {} stores nodes", t.idx()),
+            Self::StructuralRegion(t) => write!(f, "region {} has no summed-out level", t.idx()),
             Self::WeightedLevelWithoutStore { level } => write!(
                 f,
                 "level {} is weight-marginal, but a diagram assembled here has no weight store",

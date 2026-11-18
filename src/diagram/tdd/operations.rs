@@ -1155,10 +1155,16 @@ impl Tdd {
     /// ([`attach_level_counts`](Self::attach_level_counts)) carry over; a
     /// canonical diagram stays canonical when no node merged.
     ///
+    /// A region ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region))
+    /// stays, unless it holds counts and every reference into it names
+    /// 2^(its extent's size): it is then true over its extent, which it
+    /// leaves free, and goes like a leaf named as true.
+    ///
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when `home` is not the diagram's,
-    /// [`OperationError::MarginalLevel`] for a diagram with a marginal level,
+    /// [`OperationError::MarginalLevel`] for a summed-out level that is not a
+    /// region or a variable leaf,
     /// [`OperationError::OverBudget`] when an allocation is refused, and
     /// [`OperationError::Stopped`] on cancellation; the diagram is then as it
     /// was.

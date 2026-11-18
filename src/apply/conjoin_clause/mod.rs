@@ -218,6 +218,9 @@ fn spine_walk(
         out.weights = f.weights.as_ref().map(WeightStore::empty_like);
         return Ok(out);
     }
+    if let Some(region) = f.vtree.regions().next() {
+        return Err(OperationError::MarginalLevel(region));
+    }
 
     // The chain needs a node at every level, which the two lanes supply only
     // where the cube constrains the subtree; see the `cube` module. A

@@ -631,7 +631,10 @@ fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildE
             return Err(TddBuildError::NonEmptyLeafLevel(leaf));
         }
     }
-    Ok(())
+    match vtree.regions().find(|t| !levels[t.idx()].is_marginal()) {
+        Some(region) => Err(TddBuildError::StructuralRegion(region)),
+        None => Ok(()),
+    }
 }
 
 /// A marginal level's children are leaves or marginal themselves, and every

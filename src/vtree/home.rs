@@ -271,6 +271,19 @@ impl HomeLink {
     }
 }
 
+/// The extent covering `intervals`, which do not overlap.
+pub(crate) fn coalesce(mut intervals: Vec<(u32, u32)>) -> Extent {
+    intervals.sort_unstable();
+    let mut extent: Vec<(u32, u32)> = Vec::with_capacity(intervals.len());
+    for (lo, hi) in intervals {
+        match extent.last_mut() {
+            Some(last) if last.1 == lo => last.1 = hi,
+            _ => extent.push((lo, hi)),
+        }
+    }
+    extent.into_boxed_slice()
+}
+
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
 pub(crate) enum LeafSets {
@@ -574,6 +587,24 @@ impl Vtree {
         self.leaf_of(var).is_none() && link.region_over(rank, rank + 1).is_none()
     }
 
+    /// The region whose extent holds `var`.
+    pub(crate) fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
+        let link = self.home.as_deref()?;
+        let rank = link.home.rank(var)?;
+        link.region_over(rank, rank + 1).map(|region| link.region_node(region))
+    }
+
+    /// `var` has no leaf here: [`OperationError::MarginalLevel`] naming its
+    /// region when an extent holds it, else
+    /// [`OperationError::VariableNotInVtree`].
+    #[cold]
+    pub(crate) fn no_leaf_for(&self, var: VarId) -> OperationError {
+        match self.region_of(var) {
+            Some(region) => OperationError::MarginalLevel(region),
+            None => OperationError::VariableNotInVtree(var),
+        }
+    }
+
     /// For a projection `u` whose root has, as its two children, the
     /// projections of `a`'s and `b`'s leaf sets: by own node of `a` and of
     /// `b`, the node of `u` standing for it, and whether `a` is on the left.
@@ -614,19 +645,20 @@ impl Vtree {
                 Err(_) => intervals.push((link.ranks[position(u)], link.ranks[position(u)] + 1)),
             }
         }
-        intervals.sort_unstable();
-        let mut extent: Vec<(u32, u32)> = Vec::with_capacity(intervals.len());
-        for (lo, hi) in intervals {
-            match extent.last_mut() {
-                Some(last) if last.1 == lo => last.1 = hi,
-                _ => extent.push((lo, hi)),
-            }
-        }
         let mut leftmost = t;
         while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
             leftmost = left;
         }
-        (link.ranks[position(leftmost)], extent.into_boxed_slice())
+        (link.ranks[position(leftmost)], coalesce(intervals))
+    }
+
+    /// The anchor variable and the variables of region `t` of this
+    /// projection.
+    pub(crate) fn region_vars(&self, t: VtreeIdx) -> (VarId, Vec<VarId>) {
+        let link = self.home.as_deref().expect("a projection");
+        let (anchor, extent) = self.region_at(t);
+        let var = |rank: u32| link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]);
+        (var(anchor), extent.iter().flat_map(|&(lo, hi)| lo..hi).map(var).collect())
     }
 
     /// Whether this vtree has a region.
