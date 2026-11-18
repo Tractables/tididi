@@ -1,5 +1,5 @@
 //! A search on a projection ends on the projection of a lifted home, with
-//! its counts over the home's variables; `Engine::rehome` brings other
+//! its counts over the home's variables; `Engine::transport` brings other
 //! diagrams of the old home there.
 
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use num_rational::BigRational;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::restructure::search::{MinimizePairs, RotationMove, RotationSearchConfig};
-use crate::restructure::RestructureError;
+use crate::restructure::TransportError;
 use crate::test_helpers::check::check_all_fast;
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, RotationKind, VarId, Vtree, VtreeIdx};
@@ -141,10 +141,10 @@ fn leaves_under(v: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 
 /// After one kept left rotation `(x, (z, y))` to `((x, z), y)` of a
 /// projection, a diagram of the old home on the leaves of two of the three
-/// parts rehomes with bound 0 and conjoins with the moved one; one on all
+/// parts transports with bound 0 and conjoins with the moved one; one on all
 /// three is refused at bound 0 and moves without a bound.
 #[test]
-fn a_diagram_in_two_parts_rehomes_without_rotating() {
+fn a_diagram_in_two_parts_transports_without_rotating() {
     let eng = Engine::new();
     let mut cases = [0usize; 2];
     for seed in 0..80u64 {
@@ -196,13 +196,15 @@ fn a_diagram_in_two_parts_rehomes_without_rotating() {
         let g = diagram(&eng, &g_own, &mut rng);
         cases[usize::from(three)] += 1;
         let rehomed = match three {
-            false => eng.rehome(&g, &lifted, 0).unwrap(),
+            false => eng.transport(&g, &lifted, |v| v, 0).unwrap().0,
             true => {
-                let refused = eng.rehome(g.clone(), &lifted, 0).unwrap_err();
-                assert!(matches!(refused.error, RestructureError::Bound { .. }));
+                let refused = eng.transport(g.clone(), &lifted, |v| v, 0).unwrap_err();
+                assert!(matches!(refused.error, TransportError::Bound { .. }));
                 assert!(matches!(refused.tdd, std::borrow::Cow::Owned(_)));
-                assert!(eng.equivalent(&refused.tdd, &g).unwrap());
-                eng.rehome(&g, &lifted, usize::MAX).unwrap()
+                assert!(Arc::ptr_eq(refused.tdd.vtree(), g.vtree()));
+                let (rotated, stats) = eng.transport(&g, &lifted, |v| v, usize::MAX).unwrap();
+                assert!(stats.rotations > 0 || g.is_zero(), "{stats:?}");
+                rotated
             }
         };
         check_all_fast(&rehomed, "rehomed");

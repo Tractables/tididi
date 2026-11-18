@@ -212,27 +212,12 @@ fn projection_refuses_no_variables_and_foreign_ones() {
     assert_eq!(lone.home_node(lone.root()), home.vtree().leaf_of(VarId(9)).unwrap());
 }
 
-/// A rotation changes the shape the home link describes, so it makes the
-/// projection a root vtree with the same leaves. A home's vtree does not
-/// change: rotating it in place copies it.
+/// A home's vtree does not change: rotating it in place copies it, and its
+/// projections stay valid.
 #[test]
-fn rotating_clears_the_home() {
+fn rotating_a_homes_vtree_copies_it() {
     let home = rotated_home(12, 7);
     let own = Vtree::projection(&home, [1, 3, 4, 8, 11].map(VarId)).unwrap();
-    let mut rotated = (*own).clone();
-    let root = rotated.root();
-    rotate_right(&mut rotated, root).or_else(|| rotate_left(&mut rotated, root)).unwrap();
-    assert!(rotated.home().is_none());
-    assert_eq!(rotated.validate(), Ok(()));
-    assert_eq!(rotated.num_vars(), home.vtree().num_vars());
-    for v in [1, 3, 4, 8, 11] {
-        assert_eq!(rotated.leaf_var(rotated.leaf_of(VarId(v)).unwrap()), VarId(v));
-    }
-    let mut swapped = (*own).clone();
-    swapped.swap_children(swapped.root());
-    assert!(swapped.home().is_none());
-    assert_eq!(swapped.validate(), Ok(()));
-
     let mut moved = Arc::clone(home.vtree());
     let root = moved.root();
     let shape = Arc::make_mut(&mut moved);

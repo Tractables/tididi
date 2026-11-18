@@ -120,10 +120,10 @@ impl PendingTopo {
         self.info
     }
 
-    /// Keep the rotation: repair the bottom-up order for the new shape. The
-    /// caller owes [`Vtree::reshaped`] once it keeps the tree, unless it
-    /// seats the diagram on a lifted home instead; the probe loop pays for
-    /// any call that may write the vtree.
+    /// Keep the rotation: repair the bottom-up order for the new shape. On a
+    /// projection the caller owes a seat on a lifted home once it keeps the
+    /// tree, whose link no longer describes it; the probe loop pays for any
+    /// call that may write the vtree.
     pub(crate) fn commit_in_probe(mut self, vtree: &mut Vtree) -> RotationInfo {
         vtree.fixup_topo_after_rotate(&self.info, self.kind);
         self.settled = true;
@@ -224,9 +224,10 @@ impl Vtree {
     ///
     /// The bottom-up order only asks that children come before their parent,
     /// so it holds as it is; the diagram level at `v` has to have its pairs
-    /// read the other way round to keep its meaning.
+    /// read the other way round to keep its meaning. A projection changes
+    /// shape only on its way to a lifted home, through the probe's form.
     pub(crate) fn swap_children(&mut self, v: VtreeIdx) {
-        self.reshaped();
+        debug_assert!(self.home.is_none(), "a projection changed shape outside a probe");
         self.swap_children_in_probe(v);
     }
 

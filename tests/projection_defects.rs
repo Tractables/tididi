@@ -26,14 +26,14 @@ fn pair_index_of_true_on_no_leaf_answers() {
 }
 
 #[test]
-fn a_rehome_refused_under_a_bound_keeps_the_count_over_the_home() {
+fn a_transport_refused_under_a_bound_keeps_the_count_over_the_home() {
     let eng = Engine::new();
     let home = Home::new(Vtree::linear(8));
     let other = Home::new(Vtree::balanced(8));
     let f = two_clauses(&home);
     assert_eq!(f.model_count().unwrap(), BigUint::from(192u32));
     for bound in 1..=64 {
-        if let Err(refused) = eng.rehome(&f, &other, bound) {
+        if let Err(refused) = eng.transport(f.clone(), &other, |v| v, bound) {
             assert_eq!(
                 refused.tdd.model_count().unwrap(),
                 BigUint::from(192u32),

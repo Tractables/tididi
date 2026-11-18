@@ -1,40 +1,50 @@
 //! Move a diagram onto the projection of a home vtree on its renamed
-//! variables, level for level.
+//! variables: level for level where the two trees have one shape, by
+//! rotations on private trees where they do not.
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{EmbedError, RehomeRefused, RestructureError, TransportRefused};
+use super::{RestructureError, TransportError, TransportRefused, TransportStats};
 
 use crate::Engine;
 use crate::build::constant_without_leaf;
-use crate::diagram::{LevelCounts, Tdd, TddLevel, TddNodeId, return_levels};
+use crate::diagram::{LevelCounts, Tdd, TddBuildError, TddLevel, TddNodeId, return_levels};
 use crate::limits::Limits;
 use crate::value::CountVec;
-use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 
 impl Engine {
     /// `f` with each variable renamed through `map`, on
     /// [`Vtree::projection`] of `home` on the renamed variables.
     ///
-    /// That projection must have the shape of `f`'s vtree up to mirrors: the
+    /// Where that projection has the shape of `f`'s vtree up to mirrors (the
     /// renamed leaves of each node of `f`'s vtree are the leaves of one node
-    /// of the projection, its children in either order. Each level of `f`
-    /// becomes the level of its image as it is, node indices and all; at an
-    /// image whose children come the other way round, every pair has its two
-    /// sides exchanged, which denotes the same functions over the image. No
-    /// level is built for a variable of `home` outside the image, so the cost
-    /// is the number of `f`'s vtree nodes times the logarithm of `home`'s
-    /// size, plus the pairs of the mirrored levels; an owned `f` is moved, a
-    /// borrowed one copied first. The result is canonical when `f` is, and
-    /// trimmed when `f` is ([`Engine::trim`]).
+    /// of the projection, its children in either order), each level of `f`
+    /// becomes the level of its image as it is, node indices and all, and at
+    /// an image whose children come the other way round every pair has its
+    /// two sides exchanged. The cost is the number of `f`'s vtree nodes times
+    /// the logarithm of `home`'s size, plus the pairs of the mirrored levels;
+    /// an owned `f` is moved, a borrowed one copied first. The result keeps
+    /// what `f` knows of itself: canonical and trimmed ([`Engine::trim`])
+    /// when `f` is.
     ///
-    /// A weight table moves with the diagram, read by the renamed variables'
-    /// ids. A constant on no leaf becomes the same constant on
-    /// [`Vtree::empty_projection`] of `home`.
+    /// Elsewhere, with `bound` above 0, a copy of `f` is minimized and
+    /// rotated to the projection's shape as [`Engine::restructure_to`] does,
+    /// on two private trees over `f`'s leaves, so no part of the cost grows
+    /// with `home`'s size. Each rotation is refused when its triples or the
+    /// new inner level's nodes plus pairs reach `bound`; `usize::MAX` is no
+    /// bound, and mirrors are never bounded. The result is canonical whether
+    /// `f` was or not, on the projection on the images of the variables the
+    /// minimized copy keeps. The rotations rebuild levels, so this path costs
+    /// the copy and every diagram size the rotations pass through, which
+    /// neither end bounds.
     ///
-    /// To put `f` on a vtree that does not have its shape under `map`,
-    /// conjoin its clauses or factors there ([`Engine::and`]).
+    /// [`TransportStats`] counts the rotations and mirrors of the tree, so it
+    /// says which path ran, not which levels were rewritten. A weight table
+    /// moves with the diagram, read by the renamed variables' ids. A constant
+    /// on no leaf becomes the same constant on [`Vtree::empty_projection`] of
+    /// `home`.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -46,43 +56,65 @@ impl Engine {
     /// let own = Vtree::projection(&home, [VarId(1), VarId(2)])?;
     /// let f = engine.clause(&own, [1, -2])?;
     /// // x1 ∨ ¬x2 becomes x6 ∨ ¬x5; x6 is right of x5 in `home`.
-    /// let g = engine.transport(&f, &home, |v| VarId(7 - v.0)).map_err(|r| r.error)?;
-    /// assert_eq!(g.vtree().num_leaves(), 2);
+    /// let (g, stats) = engine.transport(&f, &home, |v| VarId(7 - v.0), 0).map_err(|r| r.error)?;
+    /// assert_eq!((stats.rotations, stats.mirrors), (0, 1));
     /// assert!(Arc::ptr_eq(g.vtree().home().unwrap().vtree(), home.vtree()));
     /// assert_eq!(engine.model_count(&g)?, 192u32.into()); // 3/4 of 2^8
+    ///
+    /// // (x1 x2) and x3 on a balanced home; x1 and (x2 x3) on a linear one.
+    /// let three = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
+    /// let h = engine.clause(&three, [1, 3])?;
+    /// let linear = Home::new(Vtree::linear(8));
+    /// let (moved, stats) = engine.transport(&h, &linear, |v| v, usize::MAX).map_err(|r| r.error)?;
+    /// assert_eq!(stats.rotations, 1);
+    /// assert_eq!(engine.model_count(&moved)?, 192u32.into());
     /// # tididi::test_helpers::assert_canonical(&g);
+    /// # tididi::test_helpers::assert_canonical(&moved);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Each with `f` as it was given: [`EmbedError::NotIsomorphic`] naming
-    /// the node of `f`'s vtree whose image is not one node of the projection
-    /// ([`transport_projection`](Self::transport_projection) checks the
-    /// vtrees alone);
-    /// [`EmbedError::VariableOutOfRange`] for an image that is not a leaf of
-    /// `home`; [`EmbedError::Vtree`] with [`VtreeError::OverlappingVariable`]
-    /// when two variables share an image; [`EmbedError::DestinationWeights`]
-    /// when `f`'s weight table has no weights for an image;
-    /// [`EmbedError::Operation`] with
+    /// Each with `f` as it was given, an owned `f` with all it knows of
+    /// itself. Checked in this order before anything moves:
+    /// [`TransportError::Operation`] with
     /// [`OperationError::MarginalLevel`](crate::OperationError::MarginalLevel)
-    /// for a summed-out level, and for a refused allocation or an armed stop.
+    /// for a summed-out level; [`TransportError::Variable`] for an image that
+    /// is not a leaf of `home`; [`TransportError::Overlap`] for two variables
+    /// with one image; [`TransportError::Weights`] when `f`'s weight table
+    /// does not cover the images or, under a renaming, does not give an image
+    /// both weights of the variable it renames; with `bound` 0,
+    /// [`TransportError::Bound`] naming the lowest node of `f`'s vtree whose
+    /// image is not one node of the projection
+    /// ([`transport_projection`](Self::transport_projection) checks the
+    /// vtrees alone). Then, on the rotation path, [`TransportError::Bound`]
+    /// naming the node a refused rotation turns, and
+    /// [`TransportError::Operation`] for a refused allocation or an armed
+    /// stop.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub fn transport<'a>(
         &self,
         f: impl Into<Cow<'a, Tdd>>,
         home: &Home,
         map: impl Fn(VarId) -> VarId,
-    ) -> Result<Tdd, TransportRefused<'a>> {
+        bound: usize,
+    ) -> Result<(Tdd, TransportStats), TransportRefused<'a>> {
         let f = f.into();
         let _op = match self.limits().enter() {
             Ok(op) => op,
             Err(e) => return Err(TransportRefused { error: e.into(), tdd: f }),
         };
-        let route = match Route::find(self.limits(), &f, home, map) {
-            Ok(route) => route,
+        let lim = self.limits();
+        let ranked = match checked(lim, &f, home, map) {
+            Ok(ranked) => ranked,
             Err(error) => return Err(TransportRefused { error, tdd: f }),
         };
+        let route = match Shape::along(lim, f.vtree(), &ranked).and_then(|shape| Route::with_levels(lim, &f, shape)) {
+            Ok(route) => route,
+            Err(TransportError::Bound { .. }) if bound > 0 => return self.transport_rotating(f, home, ranked, bound),
+            Err(error) => return Err(TransportRefused { error, tdd: f }),
+        };
+        let stats = TransportStats { rotations: 0, mirrors: route.mirrored.len(), peak_pairs: f.pair_count() };
         let mut moved = match f {
             Cow::Owned(f) => f,
             Cow::Borrowed(g) => match g.try_clone_on(self) {
@@ -91,17 +123,17 @@ impl Engine {
             },
         };
         route.seat(self, &mut moved);
-        Ok(moved)
+        Ok((moved, stats))
     }
 
-    /// The vtree [`transport`](Self::transport) would put a diagram on
-    /// `vtree` onto under `map`: [`Vtree::projection`] of `home` on the
-    /// renamed variables, found from the vtrees alone, so a caller can test
-    /// a stored diagram's shape before loading it.
+    /// The vtree [`transport`](Self::transport) with `bound` 0 would put a
+    /// diagram on `vtree` onto under `map`: [`Vtree::projection`] of `home`
+    /// on the renamed variables, found from the vtrees alone, so a caller can
+    /// test a stored diagram's shape before loading it.
     ///
     /// ```
     /// use tididi::{Engine, Vtree};
-    /// use tididi::restructure::EmbedError;
+    /// use tididi::restructure::TransportError;
     /// use tididi::vtree::{Home, VarId};
     ///
     /// let engine = Engine::new();
@@ -112,99 +144,118 @@ impl Engine {
     /// // (x1 (x2 x3)) onto x1, x3 and x5, whose projection is ((x1 x3) x5).
     /// let three = Vtree::balanced(3);
     /// let skew = |v: VarId| [VarId(1), VarId(3), VarId(5)][v.0 as usize - 1];
-    /// assert!(matches!(engine.transport_projection(&three, &home, skew), Err(EmbedError::NotIsomorphic { .. })));
-    /// # Ok::<(), EmbedError>(())
+    /// assert!(matches!(engine.transport_projection(&three, &home, skew), Err(TransportError::Bound { .. })));
+    /// # Ok::<(), TransportError>(())
     /// ```
     ///
     /// # Errors
     ///
     /// [`transport`](Self::transport)'s refusals that depend on the vtrees:
-    /// [`EmbedError::NotIsomorphic`], [`EmbedError::VariableOutOfRange`],
-    /// [`EmbedError::Vtree`] with [`VtreeError::OverlappingVariable`], and
-    /// [`EmbedError::Operation`] for a refused allocation or an armed stop.
-    /// `transport` may still refuse a diagram on `vtree` for its weights or a
-    /// summed-out level.
+    /// [`TransportError::Variable`], [`TransportError::Overlap`],
+    /// [`TransportError::Bound`], and [`TransportError::Operation`] for a
+    /// refused allocation or an armed stop. `transport` may still refuse a
+    /// diagram on `vtree` for its weights or a summed-out level.
     pub fn transport_projection(
         &self,
         vtree: &Vtree,
         home: &Home,
         map: impl Fn(VarId) -> VarId,
-    ) -> Result<Arc<Vtree>, EmbedError> {
+    ) -> Result<Arc<Vtree>, TransportError> {
         let _op = self.limits().enter()?;
-        Ok(Shape::find(self.limits(), vtree, home, map)?.into)
+        let ranked = Ranked::find(self.limits(), vtree, home, map)?;
+        Ok(Shape::along(self.limits(), vtree, &ranked)?.into)
     }
 
-    /// `f`, a diagram on a projection, on [`Vtree::projection`] of `home` on
-    /// the same variables, so that its counts and evaluations are over
-    /// `home`'s variables.
-    ///
-    /// Where that projection has the shape of `f`'s vtree up to mirrors, this
-    /// is [`Engine::transport`] with every variable kept, which costs no
-    /// rotation. Elsewhere it is [`Engine::restructure_to`] onto the
-    /// projection under `bound`, which refuses weighted diagrams; a `bound`
-    /// of 0 allows no rotation.
-    ///
-    /// A projection of a home that a rotation search moved keeps its shape on
-    /// the search's new home when every kept move had its leaves under at
-    /// most two of the three subtrees it turned, so such a diagram rehomes
-    /// with `bound` 0.
-    ///
-    /// ```
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::{Home, VarId};
-    ///
-    /// let engine = Engine::new();
-    /// let home = Home::new(Vtree::balanced(4));
-    /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
-    /// let f = engine.clause(&own, [1, 3])?;
-    /// let other = Home::new(Vtree::linear(4));
-    /// let g = engine.rehome(&f, &other, 0).map_err(|r| r.error)?;
-    /// assert!(g.vtree().home().is_some_and(|h| std::sync::Arc::ptr_eq(h.vtree(), other.vtree())));
-    /// assert_eq!(engine.model_count(&g)?, 12u32.into());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Each with the diagram ([`RehomeRefused`]):
-    /// [`RestructureError::Variables`] for a variable of `f` with no leaf in
-    /// `home`; with `bound` 0, [`RestructureError::Bound`] naming the node of
-    /// `f`'s vtree with no image in the projection; otherwise those of
-    /// [`Engine::restructure_to`], and [`RestructureError::Operation`] for a
-    /// summed-out level.
+    /// The rotation path of [`transport`](Self::transport), on a copy of `f`
+    /// that a refusal drops.
+    #[cold]
+    #[inline(never)]
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn rehome<'a>(&self, f: impl Into<Cow<'a, Tdd>>, home: &Home, bound: usize) -> Result<Tdd, RehomeRefused<'a>> {
-        let TransportRefused { error, tdd } = match self.transport(f, home, |v| v) {
-            Ok(moved) => return Ok(moved),
-            Err(refused) => refused,
+    fn transport_rotating<'a>(
+        &self,
+        f: Cow<'a, Tdd>,
+        home: &Home,
+        ranked: Ranked,
+        bound: usize,
+    ) -> Result<(Tdd, TransportStats), TransportRefused<'a>> {
+        let mut copy = match f.try_clone_on(self) {
+            Ok(copy) => copy,
+            Err(e) => return Err(TransportRefused { error: e.into(), tdd: f }),
         };
-        let error = match error {
-            EmbedError::NotIsomorphic { source } if bound == 0 => RestructureError::Bound { pivot: source },
-            EmbedError::NotIsomorphic { .. } => return self.restructure_onto(tdd, home, bound),
-            EmbedError::VariableOutOfRange { variable, .. } => RestructureError::Variables { variable },
-            error => crate::apply::extend::operation_error(error).into(),
-        };
-        Err(RehomeRefused { error, tdd })
-    }
-
-    /// The general case of [`rehome`](Self::rehome): `f` restructured onto
-    /// the projection of `home` on its variables.
-    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    fn restructure_onto<'a>(&self, f: Cow<'a, Tdd>, home: &Home, bound: usize) -> Result<Tdd, RehomeRefused<'a>> {
-        let vars: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, var)| var).collect();
-        let target = Vtree::projection(home, vars).expect("the transport found every variable in the home");
-        let mut moved = match f {
-            Cow::Owned(f) => f,
-            Cow::Borrowed(g) => match g.try_clone_on(self) {
-                Ok(copy) => copy,
-                Err(e) => return Err(RehomeRefused { error: e.into(), tdd: Cow::Borrowed(g) }),
-            },
-        };
-        match self.restructure_to(&mut moved, &target, bound) {
-            Ok(_) => Ok(moved),
-            Err(error) => Err(RehomeRefused { error, tdd: Cow::Owned(moved) }),
+        // `checked` let only a table through: no level holds a value of it.
+        let weights = copy.weights.take();
+        match self.rotate_copy(&mut copy, home, ranked, bound) {
+            Ok(stats) => {
+                copy.weights = weights;
+                Ok((copy, stats))
+            }
+            Err(error) => Err(TransportRefused { error, tdd: f }),
         }
     }
+
+    /// `copy` seated on a root tree over the local ids `1..=k`, leaf `i` in
+    /// the home's order named `i`, minimized, and moved by the restructure
+    /// kernel onto the same kind of twin of its target projection.
+    fn rotate_copy(
+        &self,
+        copy: &mut Tdd,
+        home: &Home,
+        Ranked { into, order }: Ranked,
+        bound: usize,
+    ) -> Result<TransportStats, TransportError> {
+        let lim = self.limits();
+        let k = order.len() as u32;
+        let mut local = Vec::new();
+        lim.try_resize(&mut local, copy.vtree().num_nodes(), VarId(0))?;
+        for (i, &(_, leaf)) in order.iter().enumerate() {
+            local[leaf.idx()] = VarId(i as u32 + 1);
+        }
+        copy.vtree = Arc::new(copy.vtree().local_twin(|leaf| local[leaf.idx()], k));
+        lim.discard(local);
+        if copy.is_zero() {
+            *copy = crate::build::constant_zero(self, &into);
+            return Ok(TransportStats::default());
+        }
+        self.reduce(copy, crate::reduce::ReductionPlan::default())?;
+        let mut kept = Vec::new();
+        lim.reserve_exact(&mut kept, copy.vtree().num_leaves() as usize)?;
+        kept.extend(copy.vtree().leaf_bottomup().map(|(_, var)| var.0));
+        kept.sort_unstable();
+        let into = match kept.len() == order.len() {
+            true => into,
+            false => Vtree::projection_on_ranks(home, kept.iter().map(|&i| order[i as usize - 1].0).collect()),
+        };
+        let mut name = Vec::new();
+        lim.try_resize(&mut name, into.num_nodes(), VarId(0))?;
+        for (&i, leaf) in kept.iter().zip(into.projected_leaves()) {
+            name[leaf.idx()] = VarId(i);
+        }
+        let twin = Arc::new(into.local_twin(|leaf| name[leaf.idx()], k));
+        let stats = self.rearrange(copy, &twin, bound, true).map_err(|error| match error {
+            RestructureError::Bound { pivot } => TransportError::Bound { pivot },
+            RestructureError::Operation(error) => TransportError::Operation(error),
+            RestructureError::Variables { .. } | RestructureError::Weighted => unreachable!("the twins have one leaf set and no table"),
+        })?;
+        // The twin is `into` with its leaves renamed: the node indices agree.
+        copy.vtree = into;
+        Ok(stats)
+    }
+}
+
+/// The checks of [`Engine::transport`] before the shape, in its order.
+fn checked(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Ranked, TransportError> {
+    f.require_structure()?;
+    let ranked = Ranked::find(lim, f.vtree(), home, &map)?;
+    if let Some(store) = &f.weights
+        && !ranked.order.is_empty()
+    {
+        let leaves = || f.vtree().leaf_bottomup().map(|(_, var)| (var, map(var)));
+        store.check_variables(leaves().map(|(_, image)| image)).map_err(TransportError::Weights)?;
+        if !store.compatible_after_rename(store, leaves().filter(|(var, image)| var != image)) {
+            return Err(TransportError::Weights(TddBuildError::IncompatibleWeights));
+        }
+    }
+    Ok(ranked)
 }
 
 /// `f`, on a projection that rotations and swaps moved since its link was
@@ -214,18 +265,49 @@ pub(super) fn seat_on_lifted_home(eng: &Engine, f: &mut Tdd) {
     let Some(home) = f.vtree.lifted_home() else { return };
     // Nothing here is the caller's to refuse: a search keeps its moves
     // before this runs, and the diagram is only valid once seated.
-    // Not `Route::find`, which refuses a summed-out level: the lifted home has
+    // Not `checked`, which refuses a summed-out level: the lifted home has
     // the variables and shape of the moved tree, so every level keeps its
     // meaning.
     let lim = Limits::new();
-    let shape = Shape::find(&lim, f.vtree(), &home, |v| v).expect("the lifted home has the moved tree's shape");
+    let ranked = Ranked::find(&lim, f.vtree(), &home, |v| v).expect("the lifted home has the moved tree's leaves");
+    let shape = Shape::along(&lim, f.vtree(), &ranked).expect("the lifted home has the moved tree's shape");
     let route = Route::with_levels(&lim, f, shape).expect("unlimited");
     debug_assert!(route.mirrored.is_empty());
     route.seat(eng, f);
 }
 
+/// The leaves of a vtree by the home ranks of their images, and the
+/// projection of the home on those images.
+struct Ranked {
+    into: Arc<Vtree>,
+    /// Each leaf of the vtree with its image's rank, by rank.
+    order: Vec<(u32, VtreeIdx)>,
+}
+
+impl Ranked {
+    fn find(lim: &Limits, source: &Vtree, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, TransportError> {
+        if source.num_nodes() == 0 {
+            return Ok(Self { into: Vtree::empty_projection(home), order: Vec::new() });
+        }
+        let mut order = Vec::new();
+        lim.reserve_exact(&mut order, source.num_leaves() as usize)?;
+        for (leaf, var) in source.leaf_bottomup() {
+            let image = map(var);
+            let Some(rank) = home.rank(image) else { return Err(TransportError::Variable { variable: image }) };
+            order.push((rank, leaf));
+        }
+        order.sort_unstable();
+        if let Some(w) = order.windows(2).find(|w| w[0].0 == w[1].0) {
+            return Err(TransportError::Overlap { variable: map(source.leaf_var(w[0].1)) });
+        }
+        let into = Vtree::projection_on_ranks(home, order.iter().map(|&(rank, _)| rank).collect());
+        Ok(Self { into, order })
+    }
+}
+
 /// The image of each node of a vtree in the projection of a home on its
 /// renamed leaves.
+#[derive(Clone)]
 struct Shape {
     into: Arc<Vtree>,
     to: Vec<VtreeIdx>,
@@ -234,40 +316,16 @@ struct Shape {
 }
 
 impl Shape {
-    fn find(lim: &Limits, source: &Vtree, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
-        if source.num_nodes() == 0 {
-            return Self::along(lim, source, Vtree::empty_projection(home), &[]);
-        }
-        let mut images = Vec::new();
-        lim.reserve_exact(&mut images, source.num_leaves() as usize)?;
-        for (_, var) in source.leaf_bottomup() {
-            let image = map(var);
-            if home.rank(image).is_none() {
-                return Err(EmbedError::VariableOutOfRange { variable: image, num_vars: home.vtree().num_vars() });
-            }
-            images.push(image);
-        }
-        let into = Vtree::projection(home, images.iter().copied())?;
-        if into.num_leaves() != source.num_leaves() {
-            images.sort_unstable();
-            let shared = images.windows(2).find(|w| w[0] == w[1]).expect("fewer leaves than images");
-            return Err(VtreeError::OverlappingVariable(shared[0]).into());
-        }
-        let shape = Self::along(lim, source, into, &images);
-        lim.discard(images);
-        shape
-    }
-
-    /// The shape of `source` on `into`, a projection whose leaves are
-    /// `images`, the images of `source`'s leaves in bottom-up order.
-    fn along(lim: &Limits, source: &Vtree, into: Arc<Vtree>, images: &[VarId]) -> Result<Self, EmbedError> {
-        let mut shape = Self { into, to: Vec::new(), mirrored: Vec::new() };
+    /// The shape of `source` on `ranked`'s projection, or
+    /// [`TransportError::Bound`] at the lowest node with no image.
+    fn along(lim: &Limits, source: &Vtree, ranked: &Ranked) -> Result<Self, TransportError> {
+        let mut shape = Self { into: Arc::clone(&ranked.into), to: Vec::new(), mirrored: Vec::new() };
         if source.num_nodes() == 0 {
             return Ok(shape);
         }
         lim.try_resize(&mut shape.to, source.num_nodes(), VtreeIdx(0))?;
-        for ((leaf, _), &image) in source.leaf_bottomup().zip(images) {
-            shape.to[leaf.idx()] = shape.into.leaf_of(image).expect("a projected leaf");
+        for (&(_, leaf), image) in ranked.order.iter().zip(ranked.into.projected_leaves()) {
+            shape.to[leaf.idx()] = image;
         }
         let mut gate = lim.gate();
         for &s in source.internal_bottomup_slice() {
@@ -276,7 +334,7 @@ impl Shape {
             let (l, r) = (shape.to[left.idx()], shape.to[right.idx()]);
             let into = &shape.into;
             let Some(d) = into.node(l).parent().filter(|&d| into.node(r).parent() == Some(d)) else {
-                return Err(EmbedError::NotIsomorphic { source: s });
+                return Err(TransportError::Bound { pivot: s });
             };
             if into.children(d).0 != l {
                 lim.try_push(&mut shape.mirrored, s)?;
@@ -293,18 +351,14 @@ impl Shape {
 /// for level on one projection of `home` on `own`'s leaves.
 pub(super) fn seat_group(eng: &Engine, members: &mut [&mut Tdd], which: &[usize], own: Vtree, home: &Home) {
     let own = Arc::new(own);
-    let vars: Vec<VarId> = own.leaf_bottomup().map(|(_, var)| var).collect();
-    let into = match vars.is_empty() {
-        true => Vtree::empty_projection(home),
-        false => Vtree::projection(home, vars.iter().copied()).expect("a home has its projections' leaves"),
-    };
     let lim = Limits::new();
+    let ranked = Ranked::find(&lim, &own, home, |v| v).expect("a home has its projections' leaves");
+    let shape = Shape::along(&lim, &own, &ranked).expect("the home has the moved tree's shape");
+    debug_assert!(shape.mirrored.is_empty());
     for &i in which {
         let f = &mut *members[i];
         f.vtree = Arc::clone(&own);
-        let route = Route::along(&lim, f, Arc::clone(&into), &vars).expect("the home has the moved tree's shape");
-        debug_assert!(route.mirrored.is_empty());
-        route.seat(eng, f);
+        Route::with_levels(&lim, f, shape.clone()).expect("unlimited").seat(eng, f);
     }
 }
 
@@ -322,25 +376,7 @@ struct Route {
 }
 
 impl Route {
-    fn find(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
-        f.require_structure()?;
-        let source = f.vtree();
-        let shape = Shape::find(lim, source, home, &map)?;
-        if source.num_nodes() != 0
-            && let Some(store) = &f.weights
-        {
-            store.check_variables(source.leaf_bottomup().map(|(_, var)| map(var))).map_err(EmbedError::DestinationWeights)?;
-        }
-        Self::with_levels(lim, f, shape)
-    }
-
-    /// The route of `f` onto `into`, a projection whose leaves are
-    /// `images`, the images of `f`'s leaves in bottom-up order.
-    fn along(lim: &Limits, f: &Tdd, into: Arc<Vtree>, images: &[VarId]) -> Result<Self, EmbedError> {
-        Self::with_levels(lim, f, Shape::along(lim, f.vtree(), into, images)?)
-    }
-
-    fn with_levels(lim: &Limits, f: &Tdd, Shape { into, to, mirrored }: Shape) -> Result<Self, EmbedError> {
+    fn with_levels(lim: &Limits, f: &Tdd, Shape { into, to, mirrored }: Shape) -> Result<Self, TransportError> {
         let mut route = Self { into, to, mirrored, levels: Vec::new(), columns: Vec::new() };
         let n = f.vtree().num_nodes();
         if n == 0 {
