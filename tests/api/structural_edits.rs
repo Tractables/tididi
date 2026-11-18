@@ -64,7 +64,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
-    b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    b.push(&eng, root, &[ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     let second = b.push(&eng, root, &[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
