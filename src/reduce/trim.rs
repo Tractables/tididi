@@ -69,14 +69,30 @@ impl Engine {
 /// As [`Tdd::trim`]; `f` is then as it was.
 #[inline]
 pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    let vtree = &f.vtree;
-    if vtree.num_nodes() == 0 {
-        return Ok(());
-    }
-    if dropped.is_empty() && !f.is_zero() && !f.is_one_leaf_one() {
+    if dropped.is_empty() {
+        close_constant(eng, f);
         return Ok(());
     }
     settle_cold(eng, f, dropped)
+}
+
+/// [`settle`] with no leaf dropped, which is never refused.
+#[inline]
+pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
+    if f.vtree.num_nodes() != 0 && (f.is_zero() || f.is_one_leaf_one()) {
+        close_constant_cold(eng, f);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
+    let Some(home) = Vtree::home_of(&f.vtree) else { return };
+    let one = !f.is_zero();
+    if f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region()) {
+        return;
+    }
+    replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
 }
 
 #[cold]

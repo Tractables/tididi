@@ -401,7 +401,7 @@ pub(crate) fn conjoin_clause_on<L: crate::LiteralInput>(
     clause: &[L],
 ) -> Result<Tdd, OperationError> {
     let mut out = spine_walk(eng, f, clause)?;
-    crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+    crate::reduce::close_constant(eng, &mut out);
     Ok(out)
 }
 

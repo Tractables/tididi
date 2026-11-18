@@ -57,7 +57,12 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
 pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
     let vtree = tdd.vtree();
     if (tdd.is_zero() || tdd.is_one()) != (vtree.num_nodes() == 0) {
-        return Err(format!("a constant on {} vtree nodes, or a diagram on none", vtree.num_nodes()));
+        return Err(format!(
+            "a constant on {} vtree nodes, or a diagram on none (false {}, true {})",
+            vtree.num_nodes(),
+            tdd.is_zero(),
+            tdd.is_one()
+        ));
     }
     if vtree.num_nodes() == 0 {
         return Ok(());

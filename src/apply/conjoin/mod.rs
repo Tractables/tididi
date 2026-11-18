@@ -258,7 +258,7 @@ fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Res
     }
     prepare_owned_weights(&mut f, &mut g)?;
     let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
-    crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+    crate::reduce::close_constant(eng, &mut out);
     Ok(out)
 }
 
@@ -867,7 +867,10 @@ impl crate::Engine {
         if let Err(error) = crate::apply::check_vtree(&f, &g) {
             return Err(AndRefused { error, f, g });
         }
-        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default())
+        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default()).map(|mut out| {
+            crate::reduce::close_constant(self, &mut out);
+            out
+        })
     }
 
     /// [`Engine::and_restoring`] of `f` and `g` placed on `into` as

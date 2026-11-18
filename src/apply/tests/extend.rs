@@ -284,6 +284,25 @@ fn constants_on_the_empty_projection() {
 }
 
 #[test]
+fn false_of_nested_or_overlapping_leaf_sets_is_on_no_node() {
+    let eng = Engine::new();
+    let home = Home::new(rotated_home(5, 3));
+    let on = |vars: &[u32]| Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
+    let x = Tdd::cube(&on(&[2]), [2]).unwrap();
+    let wide = eng.and_clause(Tdd::cube(&on(&[2, 4, 5]), [-2]).unwrap(), &[4, 5]).unwrap();
+    let across = eng.and_clause(Tdd::cube(&on(&[2, 3]), [2]).unwrap(), &[3]).unwrap();
+    let all = on(&[1, 2, 3, 4, 5]);
+    let (every, but_x) = (Tdd::cube(&all, [1, 2, 3, 4, 5]).unwrap(), Tdd::cube(&all, [1, -2, 3, 4, 5]).unwrap());
+    assert!(Arc::ptr_eq(every.vtree(), home.vtree()));
+    for (f, g) in [(&x, &wide), (&wide, &x), (&wide, &across), (&every, &but_x)] {
+        let both = eng.and(f, g).unwrap();
+        assert!(both.is_zero(), "{:?}", both.vtree().num_nodes());
+        check_trimmed(&both, false).unwrap();
+        check_trimmed(&eng.and_restoring(f, g).map_err(|r| r.error).unwrap(), false).unwrap();
+    }
+}
+
+#[test]
 fn summed_out_internal_levels_do_not_move() {
     let eng = Engine::new();
     let home = Home::new(rotated_home(6, 11));
@@ -300,3 +319,5 @@ fn summed_out_internal_levels_do_not_move() {
     let elsewhere = Tdd::clause(&other, [1, 2]).unwrap();
     assert_eq!(eng.or(f, elsewhere).unwrap_err(), OperationError::VtreeMismatch);
 }
+
+

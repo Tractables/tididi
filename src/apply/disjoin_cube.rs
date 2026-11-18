@@ -348,7 +348,7 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
     let lim = eng.limits();
     let _op = lim.enter()?;
     let mut out = disjoin_cube(eng, f, lits)?;
-    crate::reduce::settle(eng, &mut out, &mut Vec::new())?;
+    crate::reduce::close_constant(eng, &mut out);
     Ok(out)
 }
 
