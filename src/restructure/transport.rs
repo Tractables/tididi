@@ -68,11 +68,11 @@ impl Engine {
     ///
     /// // (x1 x2) and x3 on a balanced home; x1 and (x2 x3) on a linear one.
     /// let three = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
-    /// let h = engine.clause(&three, [1, 3])?;
+    /// let h = engine.clause(&three, [1, 2, 3])?;
     /// let linear = Home::new(Vtree::linear(8));
     /// let (moved, stats) = engine.transport(&h, &linear, |v| v, usize::MAX).map_err(|r| r.error)?;
     /// assert_eq!(stats.rotations, 1);
-    /// assert_eq!(engine.model_count(&moved)?, 192u32.into());
+    /// assert_eq!(engine.model_count(&moved)?, 224u32.into());
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # tididi::test_helpers::assert_canonical(&moved);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
