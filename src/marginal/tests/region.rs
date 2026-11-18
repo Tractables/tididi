@@ -151,8 +151,8 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
     let mut seen = [0usize; 4];
     for case in 0..600u64 {
         let n = 1 + rng.below(64) as u32;
-        let home_vtree = Arc::new(Vtree::random(n, case));
-        let home = Home::new(Arc::clone(&home_vtree));
+        let home = Home::new(Vtree::random(n, case));
+        let home_vtree = Arc::clone(home.vtree());
         let all: Vec<VarId> = home_vtree.leaf_bottomup().map(|(_, var)| var).collect();
         let used: Vec<VarId> = match rng.below(8) {
             0 => Vec::new(),
