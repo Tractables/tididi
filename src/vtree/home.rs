@@ -816,7 +816,7 @@ impl Vtree {
             node_of[in_order[2 * i + 1].idx()] = index.gap_node[g as usize];
         }
         let leaf_count = (k - regions.len()) as u32;
-        let topo = TopoOrder::identity(&nodes, leaf_count);
+        let topo = TopoOrder::by_level(&nodes, own_root);
         Vtree {
             context: Arc::clone(&root.context),
             nodes,

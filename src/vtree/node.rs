@@ -131,8 +131,7 @@ pub struct Vtree {
     /// Number of leaf nodes; smaller than `var_to_leaf.len()` when the variable
     /// numbering has gaps.
     pub(super) leaf_count: u32,
-    /// Bottom-up topological order over `nodes`, with its inverse and the two
-    /// filtered views. Decoupled from node identity: a node's index in `nodes`
+    /// Bottom-up topological order over `nodes`, with its inverse. Decoupled from node identity: a node's index in `nodes`
     /// never changes after construction, but its position in the order may
     /// change after a rotation. See [`TopoOrder`] for the properties it
     /// maintains.
