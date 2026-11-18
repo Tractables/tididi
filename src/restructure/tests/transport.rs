@@ -100,7 +100,7 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
     let vtree = match rng.below(3) {
         0 => {
             let own = Vtree::projection(&dest, vars.iter().map(|v| back[v.idx()])).unwrap();
-            Arc::new(renamed_mirrored(&own, &perm, n, rng))
+            Arc::clone(Home::new(renamed_mirrored(&own, &perm, n, rng)).vtree())
         }
         _ => Vtree::projection(&source_home, vars).unwrap(),
     };
@@ -123,7 +123,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
     assert_eq!(f.pair_count(), pairs);
     if f.vtree().num_nodes() == 0 {
         assert_eq!(got.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
+        assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
         assert_eq!((got.is_one(), got.is_zero()), (f.is_one(), f.is_zero()));
         assert_eq!(got.weights().is_some(), weighted.is_some());
         return;
@@ -147,7 +147,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         v
     };
     assert_eq!(leaf_vars(got.vtree()), images);
-    assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
+    assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
     let trimmed = check_trimmed(f, false).is_ok();
     if trimmed {
         check_trimmed(&got, false).unwrap_or_else(|e| panic!("{e}"));
@@ -248,7 +248,7 @@ fn bad_images_marginal_levels_and_constants() {
         let c = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
         let moved = eng.transport(c, &other, |v| v).map_err(|r| r.error).unwrap();
         assert_eq!(moved.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(moved.vtree().home().unwrap().vtree(), other.vtree()));
+        assert!(Arc::ptr_eq(moved.home().unwrap().vtree(), other.vtree()));
         assert_eq!(moved.is_one(), value);
         assert_eq!(moved.is_zero(), !value);
     }

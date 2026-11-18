@@ -5,30 +5,23 @@ use super::*;
 
 impl TopoOrder {
     /// Recompute everything from the tree by an iterative postorder,
-    /// `O(num_nodes)` — the oracle the rotation tests check the localized
-    /// fixup against.
+    /// `O(num_nodes)`, listing the variable leaves first, then the regions,
+    /// then the internal nodes: the oracle the rotation tests check the
+    /// localized fixup against.
     pub(in crate::vtree) fn rebuild(&mut self, nodes: &[VtreeNode], root: VtreeIdx) {
         let n = nodes.len();
-        self.order.clear();
-        self.order.reserve(n);
-        self.internal.clear();
-        self.leaves.clear();
-        if self.pos.len() != n {
-            self.pos.resize(n, 0);
-        }
-
+        let (mut leaves, mut regions, mut internal) = (Vec::new(), Vec::new(), Vec::new());
         // Iterative postorder via explicit stack: push (idx, visited_yet).
         // First pop pushes children; second pop emits the node.
         let mut stack: Vec<(VtreeIdx, bool)> = Vec::with_capacity(n);
         stack.push((root, false));
         while let Some((idx, done)) = stack.pop() {
             if done {
-                self.pos[idx.idx()] = self.order.len() as u32;
-                self.order.push(idx);
-                if nodes[idx.idx()].is_leaf() {
-                    self.leaves.push(idx);
-                } else {
-                    self.internal.push(idx);
+                let node = &nodes[idx.idx()];
+                match (node.is_leaf(), node.is_region()) {
+                    (true, false) => leaves.push(idx),
+                    (true, true) => regions.push(idx),
+                    _ => internal.push(idx),
                 }
             } else {
                 stack.push((idx, true));
@@ -40,6 +33,11 @@ impl TopoOrder {
                 }
             }
         }
+        self.order = [leaves, regions, internal].concat();
         debug_assert_eq!(self.order.len(), n, "bottom-up order missed nodes (disconnected vtree?)");
+        self.pos.resize(n, 0);
+        for (pos, &t) in self.order.iter().enumerate() {
+            self.pos[t.idx()] = pos as u32;
+        }
     }
 }

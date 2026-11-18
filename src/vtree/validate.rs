@@ -11,11 +11,13 @@ impl Vtree {
     /// Check the representation invariants: exactly one parentless node and it
     /// is the root; every child's parent link names its parent and no node is
     /// the child of two nodes; the bottom-up order covers every node once with
-    /// children before parents (so there is no cycle) and its filtered views
-    /// agree with it; every variable sits on at most one leaf, within the id
+    /// children before parents (so there is no cycle), variable leaves first,
+    /// then regions, then internal nodes; every variable sits on at most one leaf, within the id
     /// space, with [`Vtree::leaf_of`] pointing at it;
     /// [`Vtree::num_leaves`] counts the leaves; and on a projection, each
-    /// node stands for the node of [`Vtree::home`] the projection defines.
+    /// node stands for the node of [`Vtree::home`] the projection defines,
+    /// with the indices the projection's builder gives. A vtree with no node
+    /// holds only as a projection on no leaf.
     ///
     /// `O(nodes)`. Every constructor runs it in debug builds, and
     /// [`Vtree::from_nodes`] refuses a node list it would reject, so a vtree in
@@ -47,7 +49,10 @@ impl Vtree {
     pub fn validate(&self) -> Result<(), VtreeError> {
         let n = self.nodes.len();
         if n == 0 {
-            return invalid("no nodes".to_string());
+            return match self.home.as_deref() {
+                Some(link) if link.ranks.is_empty() && link.node_of.is_empty() && link.in_order.is_empty() => Ok(()),
+                _ => invalid("no nodes".to_string()),
+            };
         }
         if self.root.idx() >= n {
             return invalid(format!("root {} is not a node index", self.root.0));

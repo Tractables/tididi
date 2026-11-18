@@ -479,7 +479,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
     for seed in 0..200u64 {
         let mut rng = Lcg::new(seed ^ 0xa0d1);
         let n = 2 + rng.below(8) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
+        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         let f = diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -494,7 +494,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
 /// `x1 ∧ ¬x3` over `Vtree::balanced(4)`, on the home and trimmed to the
 /// projection on x1 and x3.
 fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
-    let home = Arc::new(Vtree::balanced(4));
+    let home = Arc::clone(Home::new(Vtree::balanced(4)).vtree());
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
     let f = eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap();
     let mut g = f.clone();
@@ -589,7 +589,7 @@ fn the_vtree_check_agrees_with_transport() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(5) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
+        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         let source = if rng.coin() {
             let mut g = diagram(&home, n, &mut rng);
             g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -598,7 +598,7 @@ fn the_vtree_check_agrees_with_transport() {
             rand_conj(&Arc::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
         };
         let shift = rng.below(2) as u32;
-        let wide = Arc::new(Vtree::random(n + shift, seed + 2000));
+        let wide = Arc::clone(Home::new(Vtree::random(n + shift, seed + 2000)).vtree());
         let target = if rng.coin() { &home } else { &wide };
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
         let target_home = Home::new(Arc::clone(target));

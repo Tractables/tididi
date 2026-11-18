@@ -184,6 +184,26 @@ impl Tdd {
         &self.vtree
     }
 
+    /// The home this diagram is on: its projection's home, or its vtree when
+    /// that is a home's root; `None` on a vtree that is neither.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, -3])?;
+    /// assert!(Arc::ptr_eq(f.home().unwrap().vtree(), home.vtree()));
+    /// let all = Tdd::clause(home.vtree(), [2, 4])?;
+    /// assert!(Arc::ptr_eq(all.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Tdd::clause(&Arc::new(Vtree::balanced(4)), [1])?.home().is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn home(&self) -> Option<crate::vtree::Home> {
+        Vtree::home_of(&self.vtree)
+    }
+
     /// The node denoting the function: a node of the root level, or
     /// `local == ZERO` for the constant-false function
     /// ([`is_zero`](Self::is_zero)).

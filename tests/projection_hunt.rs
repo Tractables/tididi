@@ -278,7 +278,7 @@ fn operations_of_two_diagrams_in_every_form() {
     for seed in 0..400u64 {
         let mut rng = Lcg::new(seed ^ 0x51ed_270b);
         let n = 1 + rng.below(6) as u32;
-        let root = Arc::new(Vtree::random(n, seed));
+        let root = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         // Two `Home` values of one root vtree.
         let homes = [Home::new(Arc::clone(&root)), Home::new(Arc::clone(&root))];
         HOME.set(Some(homes[0].clone()));
@@ -633,7 +633,7 @@ fn operations_of_one_diagram_in_every_form() {
     for seed in 0..600u64 {
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let n = 1 + rng.below(6) as u32;
-        let root = Arc::new(Vtree::random(n, seed));
+        let root = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         let homes = [Home::new(Arc::clone(&root))];
         HOME.set(Some(homes[0].clone()));
         let (f, nf, hf) = operand_and_twin(&eng, &homes, n, &mut rng);
@@ -788,7 +788,7 @@ fn pools_in_every_form() {
             log.tdd(n, "and with a diagram outside a search that kept nothing", || eng.and(&members[0].0, &outsider), &zip(&tables[0], &t_out, |x, y| x && y));
         } else {
             kept += 1;
-            let new_home = members[0].0.vtree().home().cloned().unwrap_or_else(|| Home::new(Arc::clone(members[0].0.vtree())));
+            let new_home = members[0].0.home().expect("a member after a kept search is on a home");
             log.same(
                 "and with a diagram left on the old home answers or refuses",
                 || Ok::<_, ()>(eng.and(&members[0].0, &outsider).map_or(true, |t| table(&t, n) == zip(&tables[0], &t_out, |x, y| x && y))),

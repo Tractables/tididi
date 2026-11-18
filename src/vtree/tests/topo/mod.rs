@@ -3,23 +3,13 @@ use super::*;
 mod support;
 
 #[test]
-fn validation_rejects_corrupt_traversal_views() {
-    let original = Vtree::balanced(4);
-    let corruptions: [fn(&mut TopoOrder); 8] = [
-        |topo| topo.leaves[0] = topo.leaves[1],
-        |topo| topo.internal[0] = topo.internal[1],
-        |topo| topo.leaves.swap(0, 1),
-        |topo| topo.internal.swap(0, 1),
-        |topo| topo.leaves[0] = VtreeIdx(u32::MAX),
-        |topo| topo.internal[0] = VtreeIdx(u32::MAX),
-        |topo| { topo.leaves.pop(); },
-        |topo| { topo.internal.push(topo.internal[0]); },
-    ];
-    for corrupt in corruptions {
-        let mut vtree = original.clone();
-        corrupt(&mut vtree.topo);
-        assert!(matches!(vtree.validate(), Err(super::super::VtreeError::Invalid(_))));
-    }
+fn validation_rejects_an_order_with_an_internal_node_before_a_leaf() {
+    let mut vtree = Vtree::balanced(4);
+    let (leaf, internal) = (vtree.topo.order[3], vtree.topo.order[4]);
+    assert!(vtree.node(leaf).is_leaf() && vtree.children(internal) == (VtreeIdx(0), VtreeIdx(1)));
+    vtree.topo.order.swap(3, 4);
+    vtree.topo.pos.swap(leaf.idx(), internal.idx());
+    assert!(matches!(vtree.validate(), Err(super::super::VtreeError::Invalid(_))));
 }
 
 #[test]
@@ -33,8 +23,6 @@ fn validation_rejects_corrupt_order_and_inverse() {
         |topo| {
             topo.order.reverse();
             for (pos, t) in topo.order.iter().enumerate() { topo.pos[t.idx()] = pos as u32; }
-            topo.leaves.reverse();
-            topo.internal.reverse();
         },
     ];
     for corrupt in corruptions {

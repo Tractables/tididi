@@ -155,7 +155,7 @@ impl Engine {
         };
         mover.pairs = mover.tdd.pair_count();
         mover.stats.peak_pairs = mover.pairs;
-        Arc::make_mut(&mut mover.tdd.vtree);
+        Vtree::make_mut(&mut mover.tdd.vtree);
         let mut work = Transient::new(self.limits(), Vec::new());
         self.limits().try_push(&mut work, (mover.tdd.vtree.root(), target.root()))?;
         while let Some((a, b)) = work.pop() {
@@ -343,7 +343,7 @@ impl Mover<'_, '_> {
         if !probe_moves(self.eng, self.tdd, &moves, &mut rule, &mut self.scratch, self.bound)? {
             return Err(RestructureError::Bound { pivot: v });
         }
-        Arc::make_mut(&mut self.tdd.vtree).reshaped();
+        Vtree::make_mut(&mut self.tdd.vtree).reshaped();
         self.stats.rotations += 1;
         self.pairs = (self.pairs as i64 + rule.delta) as usize;
         self.stats.peak_pairs = self.stats.peak_pairs.max(self.pairs);
@@ -359,7 +359,7 @@ impl Mover<'_, '_> {
 
 /// Exchange node `t`'s children and read its level's pairs the other way.
 fn mirror_at(tdd: &mut Tdd, t: VtreeIdx) {
-    Arc::make_mut(&mut tdd.vtree).swap_children(t);
+    Vtree::make_mut(&mut tdd.vtree).swap_children(t);
     tdd.levels[t.idx()].swap_sides();
 }
 
@@ -433,7 +433,7 @@ fn back_home(eng: &Engine, tdd: &mut Tdd, original: Arc<Vtree>) {
         tdd.vtree = original;
         return;
     }
-    Arc::make_mut(&mut tdd.vtree).rejoin_home(&original);
+    Vtree::make_mut(&mut tdd.vtree).rejoin_home(&original);
     crate::restructure::transport::seat_on_lifted_home(eng, tdd);
 }
 

@@ -8,12 +8,14 @@ use crate::vtree::home::LeafSets;
 use crate::vtree::rng::Lcg;
 
 pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
+    if got.home.is_none() || want.home.is_none() {
+        assert!(std::ptr::eq(got, want), "{what}: the projection on every leaf is the home");
+        return;
+    }
     assert_eq!(got.nodes, want.nodes, "{what}");
     assert_eq!(got.root, want.root, "{what}");
     assert_eq!(got.leaf_count, want.leaf_count, "{what}");
     assert_eq!(got.topo.all(), want.topo.all(), "{what}");
-    assert_eq!(got.topo.leaves(), want.topo.leaves(), "{what}");
-    assert_eq!(got.topo.internal(), want.topo.internal(), "{what}");
     assert!(got.var_to_leaf.is_empty() && want.var_to_leaf.is_empty(), "{what}");
     assert!(Arc::ptr_eq(got.context(), want.context()), "{what}");
     let (a, b) = (got.home.as_deref().unwrap(), want.home.as_deref().unwrap());

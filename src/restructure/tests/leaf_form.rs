@@ -21,7 +21,8 @@ fn embedding_projection_and_conjunction_keep_one_leaf_form() {
     for n in [3u32, 5, 7] {
         let wider = vtree_shapes(n + 2);
         for (name, vtree) in vtree_shapes(n) {
-            let home = Home::new(vtree.clone());
+            let home = Home::new(Vtree::clone(&vtree));
+            let vtree = std::sync::Arc::clone(home.vtree());
             for _ in 0..6 {
                 let mut f = rand_conj(&vtree, n, 5, 3, false, &mut rng);
                 let mut g = rand_conj(&vtree, n, 5, 3, false, &mut rng);

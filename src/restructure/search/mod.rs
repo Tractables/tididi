@@ -43,6 +43,7 @@ pub use probe::{RotationMove, RotationProbe};
 pub(in crate::restructure) use probe::{ProbeRule, probe_moves};
 
 use crate::diagram::Tdd;
+use crate::vtree::Vtree;
 use crate::limits::OperationError;
 
 impl crate::Engine {
@@ -83,11 +84,18 @@ impl crate::Engine {
 /// search that kept a move ends by seating the diagram on the projection of
 /// the home the moves imply (`Vtree::lifted_home`), so its
 /// counts stay over a home's variables; one that kept nothing makes no home.
+/// A home's root is not a home while it moves; it gets an index of its new
+/// shape when the search ends with a move kept, and its own index back when
+/// none is kept and no clone of the diagram shares the tree.
 pub(super) struct SearchTree<'a> {
     pub(super) tdd: &'a mut Tdd,
     eng: &'a crate::Engine,
     original: Option<std::sync::Arc<crate::Vtree>>,
     kept: bool,
+    was_home: bool,
+    /// The index of a home's root held by this diagram alone, set aside
+    /// while the tree moves and put back if no move is kept.
+    index: crate::vtree::RootIndex,
 }
 
 impl<'a> SearchTree<'a> {
@@ -96,8 +104,10 @@ impl<'a> SearchTree<'a> {
         use std::sync::Arc;
         let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
-        Arc::make_mut(&mut tdd.vtree);
-        Self { tdd, eng, original, kept: false }
+        let was_home = tdd.vtree.is_home();
+        let index = Arc::get_mut(&mut tdd.vtree).map(Vtree::take_index).unwrap_or_default();
+        Vtree::make_mut(&mut tdd.vtree);
+        Self { tdd, eng, original, kept: false, was_home, index }
     }
 
     /// [`probe_moves`](probe::probe_moves) on the private tree; a kept
@@ -128,8 +138,12 @@ impl Drop for SearchTree<'_> {
     fn drop(&mut self) {
         if let Some(original) = self.original.take() {
             self.tdd.vtree = original;
+        } else if self.kept && self.was_home {
+            Vtree::become_home(&mut self.tdd.vtree);
         } else if self.kept {
             crate::restructure::transport::seat_on_lifted_home(self.eng, self.tdd);
+        } else if let Some(own) = std::sync::Arc::get_mut(&mut self.tdd.vtree) {
+            own.put_index(std::mem::take(&mut self.index));
         }
     }
 }

@@ -131,8 +131,7 @@ pub struct Vtree {
     /// Number of leaf nodes; smaller than `var_to_leaf.len()` when the variable
     /// numbering has gaps.
     pub(super) leaf_count: u32,
-    /// Bottom-up topological order over `nodes`, with its inverse and the two
-    /// filtered views. Decoupled from node identity: a node's index in `nodes`
+    /// Bottom-up topological order over `nodes`, with its inverse. Decoupled from node identity: a node's index in `nodes`
     /// never changes after construction, but its position in the order may
     /// change after a rotation. See [`TopoOrder`] for the properties it
     /// maintains.
@@ -141,9 +140,11 @@ pub struct Vtree {
     /// `Mutex` may sit in a `Vtree`'s own bytes: a type with interior
     /// mutability is not `Freeze`, so `&Vtree` arguments lose `noalias
     /// readonly` and hot loops reload vtree fields (0.4% of a consumer's
-    /// instructions). A home's index is therefore in its
-    /// [`Home`](super::Home), which the caller makes.
+    /// instructions). A home's index is therefore in an allocation of its
+    /// own, set once by [`Home::new`](super::Home::new).
     pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
+    /// The index of a root that is a home.
+    pub(super) index: super::home::RootIndex,
 }
 
 impl Vtree {

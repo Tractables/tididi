@@ -67,8 +67,8 @@ fn trimmed_copies_answer_as_the_original() {
     for seed in 0..300u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(8) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let f = random_diagram(&home, n, &mut rng);
         let label = format!("seed {seed}, {n} variables");
 
@@ -95,8 +95,8 @@ fn trimmed_copies_answer_as_the_original() {
 
 #[test]
 fn constants_have_no_leaf() {
-    let home = Arc::new(Vtree::balanced(5));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::balanced(5));
+    let home = Arc::clone(hm.vtree());
     let mut zero = Tdd::clause(&home, [1]).unwrap().condition_var(VarId(1), false).unwrap();
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
@@ -142,8 +142,8 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
     for seed in 0..40u64 {
         let mut rng = Lcg::new(seed);
         let n = 1 + rng.below(12) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let mut vars = var_subset(n, &mut rng);
         if vars.is_empty() {
             vars.push(VarId(1));
@@ -160,8 +160,8 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
 
 #[test]
 fn counts_on_a_projection_are_over_the_home() {
-    let home = Arc::new(Vtree::balanced(6));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::balanced(6));
+    let home = Arc::clone(hm.vtree());
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
     let f = Tdd::clause(&own, [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
@@ -180,8 +180,8 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
     let eng = Engine::new();
     // x1 ↔ x2, its two nodes under one root node beside true over x3, x4.
-    let home = Arc::new(Vtree::balanced(4));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::balanced(4));
+    let home = Arc::clone(hm.vtree());
     let (l, r) = home.children(home.root());
     let mut b = Tdd::builder(&eng, &home).unwrap();
     let same = b.push(&eng, l, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -199,8 +199,8 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
 
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
-    let two = Arc::new(Vtree::balanced(2));
-    let hm = Home::new(Arc::clone(&two));
+    let hm = Home::new(Vtree::balanced(2));
+    let two = Arc::clone(hm.vtree());
     let mut b = Tdd::builder(&eng, &two).unwrap();
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
@@ -216,8 +216,8 @@ fn counters_count_over_the_home() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(7) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let f = random_diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&hm).unwrap();
@@ -315,8 +315,8 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     use crate::test_helpers::{assert_canonical, assert_same_shape, trim_by_rebuild};
     let mut rng = Lcg::new(seed.wrapping_mul(0x9e37_79b9) ^ 0x7121);
     let n = 2 + rng.below(9) as u32;
-    let home = Arc::new(Vtree::random(n, seed));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::random(n, seed));
+    let home = Arc::clone(hm.vtree());
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
     } else {

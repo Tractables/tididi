@@ -1,5 +1,5 @@
-//! Constructors: the node-list primitives, the named vtree shapes, and the
-//! bottom-up reindex every construction finishes with.
+//! Constructors: the node-list primitives, the named vtree shapes, the
+//! in-order build, and the bottom-up reindex the others finish with.
 
 use super::rng::Lcg;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
@@ -345,6 +345,9 @@ impl Vtree {
     /// split. Each side is built by the same rule. Only depth comparisons
     /// matter, so any depth values are accepted; equal depths produce
     /// [`Vtree::linear_from_order`]'s right-linear tree.
+    /// [`Vtree::bottomup`] lists the internal nodes of the result in
+    /// post-order, where the other constructors list them deepest level
+    /// first; a local search sweeps them in that order.
     ///
     /// To project an existing tree onto selected leaves, pass those leaves
     /// in left-to-right order and their adjacent lowest-common-ancestor
@@ -402,10 +405,11 @@ impl Vtree {
                 return Err(VtreeError::OverlappingVariable(var));
             }
         }
-        let (nodes, root, in_order) = in_order_tree(k, |i| depths[i], &[], |i| vars[i]);
+        // Without regions the build numbers leaf i as node i.
         for (i, &var) in vars.iter().enumerate() {
-            var_to_leaf[var.idx()] = in_order[2 * i];
+            var_to_leaf[var.idx()] = VtreeIdx(i as u32);
         }
+        let (nodes, root) = in_order_tree_with(k, |i| depths[i], &[], |i| vars[i], |_, _| ());
         let topo = crate::vtree::topo::TopoOrder::identity(&nodes, k as u32);
         let vtree = Vtree {
             context: std::sync::Arc::new(crate::Context::new()),
@@ -415,6 +419,7 @@ impl Vtree {
             leaf_count: k as u32,
             topo,
             home: None,
+            index: Default::default(),
         };
         debug_assert_eq!(vtree.validate(), Ok(()));
         Ok(vtree)
@@ -549,99 +554,88 @@ fn check_leaf_var(var: VarId, variables: &mut [bool]) -> Result<(), VtreeError> 
 
 /// The tree [`Vtree::from_in_order`] builds on `k` childless nodes from
 /// `depth(i)`, the depth of the node between childless nodes `i` and `i + 1`,
-/// laid out as [`reindex`] lays out every vtree: variable leaves, then
-/// regions, then internal nodes, each group deepest level first and left to
-/// right within a level. Childless node `i` is a region if `i` is in
-/// `regions` (ascending), else a leaf of `var(i)`. Returns the nodes, the
-/// root and the index of each node by in-order position: childless node `i`
-/// at `2i`, the node between `i` and `i + 1` at `2i + 1`.
+/// with [`in_order_tree_with`]'s layout. Also returns the index of each node
+/// by in-order position: childless node `i` at `2i`, the node between `i`
+/// and `i + 1` at `2i + 1`.
 pub(super) fn in_order_tree(
     k: usize,
     depth: impl Fn(usize) -> u32,
     regions: &[u32],
     var: impl Fn(usize) -> VarId,
 ) -> (Vec<VtreeNode>, VtreeIdx, Vec<VtreeIdx>) {
+    let mut in_order = vec![VtreeIdx(0); 2 * k - 1];
+    let (nodes, root) = in_order_tree_with(k, depth, regions, var, |p, t| in_order[p] = t);
+    (nodes, root, in_order)
+}
+
+/// The tree [`Vtree::from_in_order`] builds on `k` childless nodes from
+/// `depth(i)`, the depth of the node between childless nodes `i` and `i + 1`:
+/// the variable leaves left to right, then the regions left to right, then
+/// the internal nodes in the order one stack pass closes them, which is a
+/// post-order. Childless node `i` is a region if `i` is in `regions`
+/// (ascending), else a leaf of `var(i)`. `at(p, t)` is called once for each
+/// in-order position `p` with its node `t`. Returns the nodes and the root.
+pub(super) fn in_order_tree_with(
+    k: usize,
+    depth: impl Fn(usize) -> u32,
+    regions: &[u32],
+    var: impl Fn(usize) -> VarId,
+    mut at: impl FnMut(usize, VtreeIdx),
+) -> (Vec<VtreeNode>, VtreeIdx) {
     debug_assert!(k > 0);
-    let n = 2 * k - 1;
-    let mut scratch = vec![0u32; 2 * n + 3 * k];
-    let (kids, rest) = scratch.split_at_mut(n - 1);
-    let (open, rest) = rest.split_at_mut(k);
-    let (open_depth, rest) = rest.split_at_mut(k);
-    let (order, starts) = rest.split_at_mut(n);
-    // The node between childless nodes i and i + 1 is position 2i + 1, its
-    // children are at kids[2i] and kids[2i + 1]. The nodes whose right side
-    // is still open are on `open`, depths ascending from the root; a node
-    // takes as its left side those of them deeper than it.
-    let mut tops = 0;
+    let mut nodes = Vec::with_capacity(2 * k - 1);
+    let mut seen = 0;
+    for i in 0..k {
+        if regions.get(seen) == Some(&(i as u32)) {
+            seen += 1;
+        } else {
+            at(2 * i, VtreeIdx(nodes.len() as u32));
+            nodes.push(VtreeNode::Leaf { var: var(i), parent: None });
+        }
+    }
+    for &i in regions {
+        at(2 * i as usize, VtreeIdx(nodes.len() as u32));
+        nodes.push(VtreeNode::Leaf { var: super::REGION_VAR, parent: None });
+    }
+    let first_region = (k - regions.len()) as u32;
+    let mut seen = 0;
+    let mut childless = |i: usize| {
+        if regions.get(seen) == Some(&(i as u32)) {
+            seen += 1;
+            VtreeIdx(first_region + seen as u32 - 1)
+        } else {
+            VtreeIdx((i - seen) as u32)
+        }
+    };
+    let mut close = |nodes: &mut Vec<VtreeNode>, gap: u32, left, right| {
+        let t = VtreeIdx(nodes.len() as u32);
+        nodes.push(VtreeNode::Internal { left, right, parent: None });
+        set_parent(nodes, left, t);
+        set_parent(nodes, right, t);
+        at(2 * gap as usize + 1, t);
+        t
+    };
+    // The nodes whose right side is still open, depths ascending from the
+    // bottom, each with its left side; `last` is the subtree finished most
+    // recently. Popping only deeper nodes makes the earlier of two equal
+    // depths the ancestor, so ties choose the leftmost split.
+    let mut open: Vec<(u32, u32, VtreeIdx)> = Vec::with_capacity(k - 1);
+    let mut last = childless(0);
     for i in 0..k - 1 {
         let d = depth(i);
-        let mut side = 2 * i as u32;
-        while tops > 0 && open_depth[tops - 1] > d {
-            tops -= 1;
-            let top = open[tops] as usize;
-            kids[2 * top + 1] = side;
-            side = 2 * top as u32 + 1;
+        while let Some(&(top_depth, gap, left)) = open.last()
+            && top_depth > d
+        {
+            open.pop();
+            last = close(&mut nodes, gap, left, last);
         }
-        kids[2 * i] = side;
-        open[tops] = i as u32;
-        open_depth[tops] = d;
-        tops += 1;
+        open.push((d, i as u32, last));
+        last = childless(i + 1);
     }
-    let mut root = 2 * (k - 1) as u32;
-    while tops > 0 {
-        tops -= 1;
-        let top = open[tops] as usize;
-        kids[2 * top + 1] = root;
-        root = 2 * top as u32 + 1;
+    while let Some((_, gap, left)) = open.pop() {
+        last = close(&mut nodes, gap, left, last);
     }
-    // Breadth first from the root: each level left to right, level j at
-    // order[starts[j]..starts[j + 1]].
-    order[0] = root;
-    let (mut levels, mut at, mut end) = (0, 0, 1);
-    while at < end {
-        starts[levels] = at as u32;
-        levels += 1;
-        let level_end = end;
-        while at < level_end {
-            let p = order[at] as usize;
-            if p % 2 == 1 {
-                order[end] = kids[p - 1];
-                order[end + 1] = kids[p];
-                end += 2;
-            }
-            at += 1;
-        }
-    }
-    starts[levels] = n as u32;
-    let mut region = vec![false; if regions.is_empty() { 0 } else { k }];
-    for &i in regions {
-        region[i as usize] = true;
-    }
-    let mut in_order = vec![VtreeIdx(0); n];
-    let mut nodes = vec![VtreeNode::Leaf { var: super::REGION_VAR, parent: None }; n];
-    let (mut next_leaf, mut next_region, mut next_internal) = (0, (k - regions.len()) as u32, k as u32);
-    for level in starts[..=levels].windows(2).rev() {
-        for &p in &order[level[0] as usize..level[1] as usize] {
-            let p = p as usize;
-            in_order[p] = if p % 2 == 1 {
-                let (left, right) = (in_order[kids[p - 1] as usize], in_order[kids[p] as usize]);
-                let t = VtreeIdx(next_internal);
-                next_internal += 1;
-                nodes[t.idx()] = VtreeNode::Internal { left, right, parent: None };
-                set_parent(&mut nodes, left, t);
-                set_parent(&mut nodes, right, t);
-                t
-            } else if region.get(p / 2) == Some(&true) {
-                next_region += 1;
-                VtreeIdx(next_region - 1)
-            } else {
-                nodes[next_leaf as usize] = VtreeNode::Leaf { var: var(p / 2), parent: None };
-                next_leaf += 1;
-                VtreeIdx(next_leaf - 1)
-            };
-        }
-    }
-    (nodes, in_order[root as usize], in_order)
+    (nodes, last)
 }
 
 const REACHED: VtreeIdx = VtreeIdx(u32::MAX);
@@ -681,6 +675,7 @@ fn reindex(
         leaf_count,
         topo,
         home: None,
+        index: Default::default(),
     };
     debug_assert_eq!(vtree.validate(), Ok(()));
     Some((vtree, old_to_new))

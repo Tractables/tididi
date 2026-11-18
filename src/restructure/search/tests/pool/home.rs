@@ -118,7 +118,7 @@ fn with_members<R>(members: &mut [Tdd], f: impl FnOnce(&mut [&mut Tdd]) -> R) ->
 /// `after` is the pool `before` after a search that kept a move iff `kept`,
 /// `embedded` the same functions after the search on the home's root.
 fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kept: bool) {
-    let home = after.iter().find_map(|m| m.vtree().home()).cloned().unwrap_or_else(|| Home::new(Arc::clone(after[0].vtree())));
+    let home = after[0].home().expect("a member after a search is on a home");
     for ((b, a), e) in before.iter().zip(after).zip(embedded) {
         check_all_fast(a, "a member after the search");
         assert_eq!(a.vtree().validate(), Ok(()));
@@ -216,8 +216,8 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let kept = stats.accepts > 0;
         check_pool(&eng, &own, &searched, &on_root, kept);
         if kept {
-            let lifted = searched[0].vtree().home().unwrap().vtree();
-            assert_eq!(shape(lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
+            let lifted = Arc::clone(searched[0].home().unwrap().vtree());
+            assert_eq!(shape(&lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
         }
     }
     assert!(moves > 40, "{moves}");
