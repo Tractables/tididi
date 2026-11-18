@@ -648,6 +648,7 @@ fn apply_and_held(
         owed::split_built(&vtree, &mut run);
         loose
     } else {
+        run.lists.collect_built(cone.built);
         None
     };
     let lists = run.lists;
@@ -709,18 +710,35 @@ fn apply_and_held(
         // no marginal level, and so no ref to inline; leaving its levels
         // alone keeps them known closed.
         //
+        // The seat closes the levels the sweep built, the relabelled ones
+        // included, and the levels an identity fast path carried that the
+        // inlining or the leaf canonicalization rewrote; a level carried
+        // untouched is as its operand's end left it.
+        //
         // The subtrees both operands are constant true at are `f`'s levels
         // as `f`'s end left them, with no marginal level and no level above
         // them: no ref there points into a marginal level. The result owes
         // contraction what `f` owed there and the levels the conjunction
-        // visited, which are also all the seat closes.
+        // visited.
+        for &leaf in &canon_leaves {
+            if let Some(parent) = vtree.node(VtreeIdx(leaf as u32)).parent()
+                && lists.identity_carrier(parent.idx()) != 0
+            {
+                lists.built.push(parent);
+            }
+        }
         let levels = assembly.parts_mut().0;
-        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None) {
+        let rewrote = |t: VtreeIdx| {
+            if lists.identity_carrier(t.idx()) != 0 {
+                lists.built.push(t);
+            }
+        };
+        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None, rewrote) {
             Ok(()) if cone.constant => {
                 let owed = crate::diagram::Dirty::stacked(&Default::default(), &f.dirty, cone.built.len());
-                assembly.finish_with_or_return(output, owed, cone.built, Some(cone.built))
+                assembly.finish_with_or_return(output, owed, cone.built, Some(&lists.built[..]))
             }
-            Ok(()) => assembly.finish_or_return(output),
+            Ok(()) => assembly.finish_changed_or_return(output, Some(&lists.built[..])),
             Err(e) => Err((e, assembly)),
         }
     };

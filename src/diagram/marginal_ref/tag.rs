@@ -33,11 +33,12 @@ pub(crate) fn inline_small_marginal_refs(
 ) -> Result<(), OperationError> {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
     let vtree = &tdd.vtree;
-    inline_small_marginal_refs_in(lim, vtree, &mut tdd.levels, vtree.internal_bottomup_slice(), was_marginal)
+    inline_small_marginal_refs_in(lim, vtree, &mut tdd.levels, vtree.internal_bottomup_slice(), was_marginal, |_| {})
 }
 
 /// [`inline_small_marginal_refs`] on levels not yet seated as a diagram, at
 /// the internal levels `at`, bottom-up: every level with a marginal child.
+/// `rewrote` is handed each level whose references the pass rewrote.
 ///
 /// # Errors
 ///
@@ -48,15 +49,19 @@ pub(crate) fn inline_small_marginal_refs_in(
     levels: &mut [TddLevel],
     at: &[crate::vtree::VtreeIdx],
     was_marginal: Option<&[bool]>,
+    mut rewrote: impl FnMut(crate::vtree::VtreeIdx),
 ) -> Result<(), OperationError> {
     for &t in at {
         let (left, right) = vtree.children(t);
-        inline_small_marginal_refs_at_level(lim, levels, was_marginal, t, left, right)?;
+        if inline_small_marginal_refs_at_level(lim, levels, was_marginal, t, left, right)? {
+            rewrote(t);
+        }
     }
     Ok(())
 }
 
-/// One internal level's share of [`inline_small_marginal_refs`].
+/// One internal level's share of [`inline_small_marginal_refs`]: whether it
+/// rewrote the level's references.
 fn inline_small_marginal_refs_at_level(
     lim: &Limits,
     levels: &mut [TddLevel],
@@ -64,17 +69,17 @@ fn inline_small_marginal_refs_at_level(
     t: crate::vtree::VtreeIdx,
     left: crate::vtree::VtreeIdx,
     right: crate::vtree::VtreeIdx,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     let ti = t.idx();
     if levels[ti].is_marginal() {
-        return Ok(());
+        return Ok(false);
     }
     let left_idx = left.idx();
     let right_idx = right.idx();
     let tag_left = levels[left_idx].is_marginal();
     let tag_right = levels[right_idx].is_marginal();
     if !tag_left && !tag_right {
-        return Ok(());
+        return Ok(false);
     }
     // Emit a side iff its child became marginal in this batch; the
     // snapshot is preferred since a rebuild clobbers the marker.
@@ -105,5 +110,5 @@ fn inline_small_marginal_refs_at_level(
     if tag_right {
         levels[ti].set_has_value_refs(ChildSide::Right, true);
     }
-    Ok(())
+    Ok(do_left || do_right)
 }
