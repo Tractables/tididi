@@ -75,7 +75,8 @@ impl Engine {
     ///
     /// [`TagError::Placement`] when `into`'s left subtree is not `at`'s
     /// subtree under `map` (as [`Tdd::embed`] reports a shape that does not
-    /// match) or `into`'s root is a leaf; [`TagError::CodeVariables`] when
+    /// match), on a home also when the projection's tagged side is a mirror
+    /// of it, or `into`'s root is a leaf; [`TagError::CodeVariables`] when
     /// `code_vars` are not exactly the right subtree's leaves;
     /// [`TagError::Tags`] when `tags` does not have one entry per slot or
     /// names a code past the end of `codes`, whose length is not a multiple

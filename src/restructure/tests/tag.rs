@@ -350,5 +350,14 @@ fn tagging_into_a_vtree_on_a_home_lands_on_its_projection() {
         // A code variable inside the tagged side's subtree is refused.
         let mixed = eng.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(2), VarId(4)], &[0b10]);
         assert!(mixed.is_err(), "code on the left: {code_left}");
+        let mirrored = Vtree::balanced_over(&[VarId(2), VarId(1)]).unwrap();
+        let (l, r) = if code_left { (&code, &mirrored) } else { (&mirrored, &code) };
+        let home = Home::new(Vtree::join(&Vtree::join(l, r).unwrap(), &Vtree::leaf(VarId(5))).unwrap());
+        let into = Vtree::projection(&home, (1..=4).map(VarId)).unwrap();
+        let refused = eng.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(3), VarId(4)], &[0b10]);
+        assert!(
+            matches!(refused, Err(TagError::Placement(EmbedError::NotIsomorphic { .. }))),
+            "a mirrored tagged side, code on the left: {code_left}"
+        );
     }
 }

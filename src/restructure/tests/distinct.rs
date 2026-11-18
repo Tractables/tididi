@@ -244,3 +244,85 @@ fn counts_on_a_projection_range_over_the_home() {
     }
     assert!(seen.iter().all(|&c| c > 20), "cases seen {seen:?}");
 }
+
+/// Whether `a` and `b` agree on every assignment to `n` variables.
+fn same_function(a: &Tdd, b: &Tdd, n: u32) -> bool {
+    (0..1u64 << n).all(|bits| {
+        let asn: Vec<bool> = (0..n).map(|i| bits >> i & 1 == 1).collect();
+        value(a, &asn) == value(b, &asn)
+    })
+}
+
+#[test]
+fn a_key_by_variables_names_the_home_node_where_an_own_index_does_not() {
+    let eng = Engine::new();
+    let mut trapped = 0;
+    for seed in 0..120u64 {
+        let mut rng = Lcg::new(seed);
+        let n = 2 + rng.below(9) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let at_home = home.vtree();
+        let f = on_a_projection(&home, n, &mut rng);
+        let root = eng.and(rand_conj(at_home, n, 4, 3, false, &mut rng), rand_conj(at_home, n, 4, 3, false, &mut rng)).unwrap();
+        for g in [&f, &root] {
+            for key in keys(at_home) {
+                let kv = vars_under(at_home, key);
+                for m in [1, 2] {
+                    let by_vars = eng.at_least_distinct(g, kv.as_slice(), m).unwrap();
+                    let by_node = eng.at_least_distinct(g, key, m).unwrap();
+                    assert!(same_function(&by_vars, &by_node, n), "seed {seed}, key {key:?}, m {m}");
+                }
+            }
+        }
+        // An own node over all of a home node's variables, numbered
+        // differently in the two vtrees.
+        let own = f.vtree();
+        for t in keys(own) {
+            let (h, kv) = (own.home_node(t), vars_under(own, t));
+            if h == t || h == at_home.root() || vars_under(at_home, h).len() != kv.len() {
+                continue;
+            }
+            trapped += 1;
+            let sv = vars_under(at_home, at_home.sibling(h));
+            let mut distinct: HashMap<Vec<bool>, HashSet<Vec<bool>>> = HashMap::new();
+            for bits in 0..1u64 << n {
+                let asn: Vec<bool> = (0..n).map(|i| bits >> i & 1 == 1).collect();
+                if value(&f, &asn) {
+                    let k = kv.iter().map(|v| asn[v.idx()]).collect();
+                    distinct.entry(k).or_default().insert(sv.iter().map(|v| asn[v.idx()]).collect::<Vec<bool>>());
+                }
+            }
+            let g = eng.at_least_distinct(&f, kv.as_slice(), 2).unwrap();
+            for bits in 0..1u64 << n {
+                let asn: Vec<bool> = (0..n).map(|i| bits >> i & 1 == 1).collect();
+                let k: Vec<bool> = kv.iter().map(|v| asn[v.idx()]).collect();
+                let count = distinct.get(&k).map_or(0, HashSet::len);
+                assert_eq!(value(&g, &asn), count >= 2, "seed {seed}, own {t:?}, home {h:?}");
+            }
+            // The own index is below the home's node count, so it is read
+            // as home node `t`, over other variables, without an error.
+            let other = vars_under(at_home, t);
+            assert_ne!(other, kv);
+            match t == at_home.root() {
+                true => assert!(matches!(eng.at_least_distinct(&f, t, 2), Err(DistinctError::Root))),
+                false => {
+                    let wrong = eng.at_least_distinct(&f, t, 2).unwrap();
+                    let at_other = eng.at_least_distinct(&f, other.as_slice(), 2).unwrap();
+                    assert!(same_function(&wrong, &at_other, n), "seed {seed}, own {t:?}");
+                }
+            }
+        }
+        let mut refused = vec![vec![], vec![VarId(1), VarId(1)], vec![VarId(n + 1)]];
+        let leaf = |v: u32| at_home.leaf_of(VarId(v)).unwrap();
+        if let Some(far) = (1..=n).find(|&v| at_home.lca(leaf(1), leaf(v)) == at_home.root()).filter(|_| n > 2) {
+            refused.push(vec![VarId(1), VarId(far)]);
+        }
+        for vars in refused {
+            for g in [&f, &root] {
+                let error = eng.at_least_distinct(g, vars.as_slice(), 1).unwrap_err();
+                assert_eq!(error, DistinctError::Key(vars.clone()), "seed {seed}");
+            }
+        }
+    }
+    assert!(trapped > 20, "{trapped} own nodes numbered apart from their home node");
+}

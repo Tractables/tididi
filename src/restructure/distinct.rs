@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use super::DistinctError;
+use super::{DistinctError, DistinctKey};
 
 use crate::Engine;
 use crate::diagram::{
@@ -56,13 +56,15 @@ impl Engine {
     /// subtree, a copy of the levels under `key`, and the minimization of
     /// the result; no level off that path is read.
     ///
-    /// On a diagram with a [home](Vtree::home), `key` is a node of the home,
-    /// not of the diagram's own vtree, and an own index is read as a home
-    /// node without an error. `s` ranges over every home variable under the
-    /// sibling, those the diagram has no leaf for included, and the result is
-    /// on the projection of the same home on the diagram's leaves under
-    /// `key` ([`Vtree::sub_projection`]): a constant when it has none there.
-    /// On a root vtree, `key` is a node of that vtree.
+    /// `key` is a [`DistinctKey`]: a `VtreeIdx`, or the `&[VarId]` under the
+    /// node. On a diagram with a [home](Vtree::home), the node is one of the
+    /// home, not of the diagram's own vtree: an own index is read as a home
+    /// node without an error, while variables name the same node whichever
+    /// vtree the diagram is on. `s` ranges over every home variable under
+    /// the sibling, those the diagram has no leaf for included, and the
+    /// result is on the projection of the same home on the diagram's leaves
+    /// under `key` ([`Vtree::sub_projection`]): a constant when it has none
+    /// there. On a root vtree, `key` is a node of that vtree.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -90,6 +92,8 @@ impl Engine {
     ///
     /// [`DistinctError::Root`] when `key` is the root (of the home, on a
     /// home), which has no sibling;
+    /// [`DistinctError::Key`] for variables that are not exactly the leaves
+    /// of one node;
     /// [`DistinctError::Vtree`] with
     /// [`VtreeError::VariableSpaceTooLarge`](crate::vtree::VtreeError::VariableSpaceTooLarge)
     /// when the diagram, on a root, has variable ids too wide for a vtree of
@@ -99,16 +103,17 @@ impl Engine {
     /// on a root,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
     /// structure at a level, and for a refused allocation or an armed stop.
-    pub fn at_least_distinct(
+    pub fn at_least_distinct<'k>(
         &self,
         tdd: &Tdd,
-        key: VtreeIdx,
+        key: impl Into<DistinctKey<'k>>,
         m: u64,
     ) -> Result<Tdd, DistinctError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = tdd.vtree();
+        let key = key_node(lim, vtree, key.into())?;
         if let Some(home) = vtree.home() {
             return distinct_on_home(self, tdd, home, key, m);
         }
@@ -138,10 +143,10 @@ impl Engine {
     /// the projection, so no level is regrouped: the cost is the reached
     /// pairs on the levels above `key` and a copy of the levels below it.
     ///
-    /// On a diagram with a [home](Vtree::home), `key` is a node of the home
+    /// `key` is read as [`at_least_distinct`](Self::at_least_distinct) reads
+    /// it: on a diagram with a [home](Vtree::home), an index is a home node
     /// and an own index is read as one without an error; the result is on
-    /// the projection of the home on the diagram's leaves under `key`, as
-    /// [`at_least_distinct`](Self::at_least_distinct) says.
+    /// the projection of the home on the diagram's leaves under `key`.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -160,8 +165,47 @@ impl Engine {
     /// # Errors
     ///
     /// As [`at_least_distinct`](Self::at_least_distinct).
-    pub fn project_to_subtree(&self, tdd: &Tdd, key: VtreeIdx) -> Result<Tdd, DistinctError> {
+    pub fn project_to_subtree<'k>(&self, tdd: &Tdd, key: impl Into<DistinctKey<'k>>) -> Result<Tdd, DistinctError> {
         self.at_least_distinct(tdd, key, 1)
+    }
+}
+
+/// The node `key` names: on `vtree`'s home if it has one, else on `vtree`.
+fn key_node(lim: &Limits, vtree: &Vtree, key: DistinctKey<'_>) -> Result<VtreeIdx, DistinctError> {
+    let vars = match key {
+        DistinctKey::Node(node) => return Ok(node),
+        DistinctKey::Vars(vars) => vars,
+    };
+    let refused = || match lim.try_to_vec(vars) {
+        Ok(vars) => DistinctError::Key(vars),
+        Err(error) => error.into(),
+    };
+    let mut sorted = lim.try_to_vec(vars)?;
+    sorted.sort_unstable();
+    if sorted.is_empty() || sorted.windows(2).any(|w| w[0] == w[1]) {
+        return Err(refused());
+    }
+    let (node, leaves) = match vtree.home() {
+        Some(home) => {
+            let (mut lo, mut hi) = (u32::MAX, 0);
+            for &v in &sorted {
+                let rank = home.rank(v).ok_or_else(refused)?;
+                (lo, hi) = (lo.min(rank), hi.max(rank));
+            }
+            let node = home.node_over(lo, hi);
+            (node, home.rank_range(node).len())
+        }
+        None => {
+            let mut node = vtree.leaf_of(sorted[0]).ok_or_else(refused)?;
+            for &v in &sorted[1..] {
+                node = vtree.lca(node, vtree.leaf_of(v).ok_or_else(refused)?);
+            }
+            (node, vtree.subtree(node).filter(|&t| vtree.node(t).is_leaf()).count())
+        }
+    };
+    match leaves == sorted.len() {
+        true => Ok(node),
+        false => Err(refused()),
     }
 }
 
