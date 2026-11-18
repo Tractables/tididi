@@ -11,6 +11,11 @@ Breaking changes:
   same diagram.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
   `Quantification::Fused` (the default) or `Quantification::Product`.
+- `exists_var`, `exists_vars` and the operations built on them refuse a
+  diagram with any marginal level with `OperationError::MarginalLevel`.
+  Before, a marginal level off the quantified variables' paths was
+  accepted, and the count could be wrong: after a sum-out, merged nodes no
+  longer tell which events their values came from.
 
 ## 0.2.0
 

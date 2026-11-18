@@ -19,29 +19,39 @@ fn same(x: &Tdd, y: &Tdd) -> bool {
     format!("{:?}", value(x)) == format!("{:?}", value(y))
 }
 
+/// `∃x` after a sum-out: the region form, once fused, cannot tell which
+/// pre-sum events its values came from, so it once answered 24 where the sum
+/// taken after `∃x4` gives 40 (and, at 62 leaves, seed 127 with `∃x6`). Both
+/// forms refuse.
+#[test]
+fn exists_on_a_summed_diagram_is_refused() {
+    let eng = Engine::new();
+    for (seed, max, x, count) in [(4795, 8, 4, 40u64), (127, 64, 6, 88_664_617_663_856_640)] {
+        let (home, _, f, g, source, hs) = region_case_and_source(&eng, seed, max).unwrap();
+        let mut summed_after = source.exists_var(VarId(x)).unwrap();
+        summed_after.marginalize(under(&home, &hs)).unwrap();
+        assert_eq!(summed_after.model_count().unwrap(), BigUint::from(count), "seed {seed}");
+        assert!(matches!(g.exists_var(VarId(x)), Err(OperationError::MarginalLevel(_))), "seed {seed}");
+        assert!(matches!(f.exists_var(VarId(x)), Err(OperationError::MarginalLevel(_))), "seed {seed}");
+    }
+    // Home (e, (x, y)), ¬y ∧ (¬e ∨ x), e summed out: the fused form would
+    // count 6 for ∃x where Σe ∃x gives 4.
+    let leaf = |v: u32| Vtree::leaf(VarId(v));
+    let vtree = Arc::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap());
+    let mut f = eng.and(Tdd::cube(&vtree, [-3]).unwrap(), Tdd::clause(&vtree, [-1, 2]).unwrap()).unwrap();
+    f.marginalize_levels(&[vtree.leaf_of(VarId(1)).unwrap()]).unwrap();
+    assert!(f.has_marginal_level());
+    assert!(matches!(f.exists_var(VarId(2)), Err(OperationError::MarginalLevel(_))));
+}
+
+/// Every operation but `exists` on a region form against the smooth form;
+/// `exists` of a leaf variable is refused on both.
 #[test]
 fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves() {
-    let wrong = differential(false);
-    assert!(wrong.len() <= 1, "{wrong:?}");
-}
-
-/// `exists` on a region form against the smooth form and against the sum
-/// taken after it; one case of 62 leaves is known to differ.
-#[test]
-#[ignore = "exists on a region form miscounts one case of 62 leaves"]
-fn exists_on_regions_answers_as_the_smooth_form() {
-    let wrong = differential(true);
-    assert!(wrong.is_empty(), "{wrong:?}");
-}
-
-/// Every check below; returns the cases where `exists` on the region form
-/// differs from the smooth form, which agrees with the sum taken after it.
-fn differential(verbose: bool) -> Vec<String> {
     let eng = Engine::new();
-    let mut wrong = Vec::new();
-    let (mut cases, mut compared, mut big) = (0, 0, 0);
+    let (mut cases, mut big) = (0, 0);
     for seed in 0..400u64 {
-        let Some((home, n, f, g, source, hs)) = region_case_and_source(&eng, seed, 64) else { continue };
+        let Some((home, n, f, g, _, _)) = region_case_and_source(&eng, seed, 64) else { continue };
         cases += 1;
         big += usize::from(n > 32);
         let mut rng = Lcg::new(seed);
@@ -60,23 +70,8 @@ fn differential(verbose: bool) -> Vec<String> {
             let (got, expected) = (g.clone().condition_var(x, b).unwrap(), f.clone().condition_var(x, b).unwrap());
             check_form(&got, &what);
             assert!(same(&got, &expected), "{what}: condition {x:?}");
-            match (g.clone().exists_var(x), f.clone().exists_var(x)) {
-                (Ok(got), Ok(expected)) => {
-                    check_form(&got, &what);
-                    let mut summed_after = source.clone().exists_var(x).unwrap();
-                    summed_after.marginalize(under(&home, &hs)).unwrap();
-                    assert!(g.weights().is_some() || same(&summed_after, &expected), "{what}: exists {x:?}, the smooth form");
-                    if !same(&got, &expected) {
-                        wrong.push(format!("{what}: exists {x:?}"));
-                        if verbose {
-                            println!("{what}: exists {x:?}: {:?} against {:?}", value(&got), value(&expected));
-                        }
-                    }
-                    compared += 1;
-                }
-                (Err(OperationError::MarginalLevel(_)), _) | (Ok(_), Err(OperationError::MarginalLevel(_))) => {}
-                (got, expected) => panic!("{what}: exists {x:?}: {:?} against {:?}", got.err(), expected.err()),
-            }
+            assert!(matches!(g.clone().exists_var(x), Err(OperationError::MarginalLevel(_))), "{what}: exists {x:?}");
+            assert!(matches!(f.clone().exists_var(x), Err(OperationError::MarginalLevel(_))), "{what}: exists {x:?}");
             let literal = crate::literal(g.vtree(), i32::try_from(x.0).unwrap()).unwrap();
             assert!(matches!(g.clone().substitute(&[(x, &literal)]), Err(OperationError::MarginalLevel(_))), "{what}: substitute");
         }
@@ -107,8 +102,7 @@ fn differential(verbose: bool) -> Vec<String> {
             assert!(same(&c, &f), "{what}: cluster at {t:?}");
         }
     }
-    assert!(cases > 150 && big > 30 && compared > 50, "{cases} cases, {big} over 32 leaves, {compared} exists compared");
-    wrong
+    assert!(cases > 150 && big > 30, "{cases} cases, {big} over 32 leaves");
 }
 
 /// Home `((((1, 2), (3, 4)), 5), 6)`; `a` holds a region over `{1, 2}`, `b`
@@ -180,3 +174,4 @@ fn a_diagram_with_a_region_refuses_a_search_a_build_and_a_text_record() {
     assert!(text.contains(&format!("R {}", first.0)), "{text}");
     assert!(Vtree::from_text(&text).is_err());
 }
+

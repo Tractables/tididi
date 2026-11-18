@@ -1,6 +1,6 @@
 //! The structural existential forget: rewrite the quantified leaves and their
-//! ancestors in place, never calling apply or negate, so marginal levels
-//! elsewhere are safe.
+//! ancestors in place, never calling apply or negate. A diagram with a
+//! marginal level is refused.
 //!
 //! Distinct nodes at one level compute disjoint functions (determinism,
 //! decided by `test_helpers::check::check_determinism`), so distinct
@@ -16,8 +16,7 @@
 //!   regrouped once: each pair's rewritten sides are expanded over the cells
 //!   the child became, and the atoms that now share an owner set merge.
 //! * **free** — no quantified leaf below it. The level is left untouched and
-//!   its references are copied verbatim, never dereferenced, so it may be
-//!   marginal.
+//!   its references are copied verbatim, never dereferenced.
 //!
 //! The per-level node remap feeds the level above. A regroup that merges
 //! nothing returns no remap: its cells are its old nodes in order, so every
@@ -190,8 +189,8 @@ enum Role {
 /// sweep made still apart. `targets` are distinct leaves of the diagram's
 /// vtree, looked up by the caller. An operand that still owes the reduction
 /// passes is pruned first. The sweep then leaves levels with no quantified
-/// leaf below them byte-identical; the preconditions on the rest are those of
-/// `check_levels_are_rewritable`.
+/// leaf below them byte-identical. An operand with a marginal level is
+/// refused.
 ///
 /// Freeing a whole subtree at once denotes the same function as freeing its
 /// leaves one at a time, in the same representation. Every node of the subtree
@@ -236,8 +235,14 @@ pub(super) fn exists_leaves_structural(
     // levels that lose a node.
     let loose = tdd.dirty.loose().map(|l| lim.try_to_vec(l)).transpose()?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
+    // A marginal level anywhere refuses, not only one the sweep reads. After
+    // a sum-out, pair fusion and the twin merges it cascades into at any
+    // height let one value reference stand for a union of pre-sum events,
+    // and a pair can repeat; the owner-set regroup takes distinct references
+    // as exclusive and a pair list as a set, so it would count an overlap
+    // once. `∃x` of a summed diagram is not a function of its values.
+    tdd.require_structure()?;
     let role = roles(&mut work, &vtree, targets)?;
-    check_levels_are_rewritable(&mut work, &tdd, &vtree, &role)?;
 
     let root_vi = vtree.root();
     if role[root_vi.idx()] == Role::Whole {
@@ -328,59 +333,6 @@ fn roles(
         };
     }
     Ok(role)
-}
-
-/// Check the levels the sweep reads or rewrites.
-///
-/// (1) No quantified leaf and no regrouped level is marginal: a marginal
-///     level's variables are already summed out, and its values carry a
-///     multiplicity the owner-set regroup cannot represent. Marginality is
-///     downward-closed (invariant 5), so checking a freed subtree's leaves
-///     settles the whole subtree. Nor is a leaf child of a regrouped level (a
-///     summed-out variable leaf or a region): the regroup would join two of
-///     its values as if they were disjoint functions.
-///
-/// (2) No regrouped level is the grandparent of a marginal level. The boundary
-///     content-twin merge (`reduce::contract::content_twin`) can leave the
-///     same pair twice in such a grandparent, a count-carrying duplicate, and
-///     the owner-set regroup cannot represent multiplicity, so it would fold
-///     the two into one and miscount. A marginal level three or more levels
-///     below is harmless: its duplicates land in a subtree whose references
-///     are only copied.
-///
-/// (3) No regrouped level holds a pair twice, which a node merge above a
-///     summed-out level leaves at any height: the regroup would count it once.
-fn check_levels_are_rewritable(
-    work: &mut Rewrite<'_>,
-    t: &Tdd,
-    vtree: &Vtree,
-    role: &[Role],
-) -> Result<(), OperationError> {
-    for &level in vtree.bottomup_slice() {
-        work.poll()?;
-        match role[level.idx()] {
-            Role::Free => {}
-            // A summed-out level can sit above leaves that are not.
-            Role::Whole => t.require_structure_at(level)?,
-            Role::Split => {
-                t.require_structure_at(level)?;
-                let (al, ar) = vtree.children(level);
-                for child in [al, ar] {
-                    if vtree.node(child).is_leaf() {
-                        t.require_structure_at(child)?;
-                        continue;
-                    }
-                    let (left, right) = vtree.children(child);
-                    t.require_structure_at(left)?;
-                    t.require_structure_at(right)?;
-                }
-                if t.has_marginal_level() && t.level(level).repeats_a_pair()? {
-                    return Err(OperationError::MarginalLevel(level));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Replace a level all of whose variables are quantified by the single ⊤ node,
