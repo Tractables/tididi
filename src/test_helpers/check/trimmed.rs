@@ -47,9 +47,12 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
     Ok(first)
 }
 
-/// No pair of `tdd` names a leaf as `One`, nor does the output; a constant
-/// has no leaf; a canonical `tdd` with no summed-out level reads no leaf
-/// child through twin literals in every node. With `minimized`, also that
+/// No pair of `tdd` names a leaf as `One`, nor does the output, dead nodes
+/// included; a constant has no leaf; the loose levels, when known, are
+/// complete ([`check_loose_levels`](super::check_loose_levels)); a certified
+/// `tdd` reaches every node it stores and, with no summed-out level, reads no
+/// leaf child through twin literals in every node. An uncertified `tdd` may
+/// hold nodes its output does not reach. With `minimized`, also that
 /// the leaves are the
 /// [`support`](Tdd::support).
 ///
@@ -83,8 +86,12 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
             }
         }
     }
-    if tdd.levels.is_canonical(tdd.output()) && !tdd.has_marginal_level() {
-        full_twin_side(tdd)?;
+    super::check_loose_levels(tdd)?;
+    if tdd.levels.is_canonical(tdd.output()) {
+        every_node_reached(tdd)?;
+        if !tdd.has_marginal_level() {
+            full_twin_side(tdd)?;
+        }
     }
     if minimized {
         let mut leaves: Vec<_> = vtree.bottomup().filter(|&t| vtree.node(t).is_leaf()).map(|t| vtree.leaf_var(t)).collect();
@@ -93,6 +100,23 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
         support.sort_unstable();
         if leaves != support {
             return Err(format!("leaves {leaves:?} are not the support {support:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// The output of a certified `tdd` reaches every node of its structural
+/// internal levels.
+fn every_node_reached(tdd: &Tdd) -> Result<(), String> {
+    let vtree = tdd.vtree();
+    let reach = tdd.reachable_nodes();
+    for t in vtree.bottomup() {
+        let level = tdd.level(t);
+        if vtree.node(t).is_leaf() || level.is_marginal() {
+            continue;
+        }
+        if let Some(j) = (0..level.slot_count()).find(|&j| !reach[t.idx()].get(j).copied().unwrap_or(false)) {
+            return Err(format!("certified, yet the output does not reach node {j} of level {}", t.0));
         }
     }
     Ok(())

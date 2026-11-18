@@ -236,9 +236,9 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
 | 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | — | `test_helpers::check::check_determinism` |
-| 2 | Every live node in a structural diagram is satisfiable; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
+| 2 | Every stored node in a structural diagram is satisfiable, whether or not the output reaches it; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
 | 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
-| 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`]; the prune | any operation that does not end in a prune (apply, conditioning, restriction, placement); a diagram that knows its loose levels (`Dirty::loose`) lists every level below the root with a node no pair of its parent level names | `test_helpers::check::check_loose_levels`, for the loose levels |
+| 4 | Reachability: a certified diagram (`is_canonical`) reaches every stored node. An uncertified one may hold nodes its output does not reach; when it knows its loose levels (`Dirty::loose`), they list every level below the root with a node no pair of its parent level names. A reader that needs reachability requires the certificate, prunes, or numbers the reachable nodes. | [`reduce::minimize`]; the prune | any operation, before it returns | `test_helpers::check::check_trimmed` |
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and its descendants are marginal or leaves whose contribution is absorbed. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
@@ -248,7 +248,7 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
 | 12 | Slot reachability: at a boundary marginal level other than the output's, every value slot is referenced from the structural parent. | [`reduce`]'s slot prune | pair fusion and twin contraction, until the prune runs | `test_helpers::check::marginal::check_no_orphan_slots` |
 
-Rows 3, 4, 8, 9, 10 and 12 hold after a pass rather than throughout. Canonical
+Rows 1 and 2 hold over every stored node, dead ones included: `trim` reads a level's first node and `or_cube` reads every node, reached or not. Rows 3, 8, 9, 10 and 12 hold after a pass rather than throughout. Canonical
 structural form also requires that no twins remain, which no row above
 covers: rows 3 and 9 forbid duplicate pair lists, while twins are nodes their
 parents use identically.
