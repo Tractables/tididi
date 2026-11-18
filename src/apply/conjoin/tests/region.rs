@@ -224,3 +224,70 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
     let Seen { regions, weighted, new_parent, refused, leaf_refused } = case.seen;
     assert!(regions > 250 && weighted > 1000 && new_parent > 15 && refused > 100 && leaf_refused > 0, "{regions} {weighted} {new_parent} {refused} {leaf_refused}");
 }
+
+/// The clause `lits` on the projection of `home` on its variables, with its
+/// smooth form on the home, summed out at the home nodes `at`.
+fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx], weighted: Option<(&RationalWeights, Arithmetic)>) -> Operand {
+    let own = Vtree::projection(home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
+    let mut f = Tdd::clause(&own, lits.iter().copied()).unwrap();
+    let mut smooth = on_home(eng, &f, home.vtree());
+    if let Some((w, arithmetic)) = weighted {
+        f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
+        smooth.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
+    }
+    if !at.is_empty() {
+        eng.marginalize(&mut f, at).unwrap();
+    }
+    Operand { f, smooth }
+}
+
+/// The home node over the leaves of `vars`.
+fn over(home: &Home, vars: &[u32]) -> VtreeIdx {
+    let ranks: Vec<u32> = vars.iter().map(|&v| home.rank(VarId(v)).unwrap()).collect();
+    home.node_over(*ranks.iter().min().unwrap(), *ranks.iter().max().unwrap())
+}
+
+#[test]
+fn and_refuses_a_leaf_inside_a_region() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])], None);
+    let b = summed_clause(&eng, &home, &[-1, 4], &[], None);
+    assert!(a.f.vtree().regions().next().is_some());
+    assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
+    assert!(matches!(eng.and(&b.f, &a.f), Err(OperationError::MarginalLevel(_))));
+}
+
+#[test]
+fn and_refuses_intersecting_regions() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])], None);
+    let b = summed_clause(&eng, &home, &[1, 3, 4], &[home.vtree().root()], None);
+    assert!(b.f.vtree().regions().next().is_some());
+    assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
+    let c = summed_clause(&eng, &home, &[-2, 3], &[over(&home, &[1, 2])], None);
+    assert!(matches!(eng.and(&a.f, &c.f), Err(OperationError::MarginalLevel(_))), "a region summed out by both");
+}
+
+/// A region over 1 and 2 under the node of 1, 2 and 5 meets a leaf 3: in the
+/// union its parent is the node over 1 to 4, which it passes through.
+#[test]
+fn and_gives_a_region_a_new_parent() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(8));
+    let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
+    let w = weights(8, &mut Lcg::new(11));
+    let mut case = Case { eng: &eng, n: 8, arithmetic: None, seen: Seen::default() };
+    for arithmetic in modes {
+        case.arithmetic = arithmetic;
+        let weighted = arithmetic.map(|a| (&w, a));
+        let a = summed_clause(&eng, &home, &[1, -2, 5], &[over(&home, &[1, 2])], weighted);
+        let b = summed_clause(&eng, &home, &[3, -5], &[], weighted);
+        let smooth = eng.and(&a.smooth, &b.smooth).unwrap();
+        let what = format!("new parent {arithmetic:?}");
+        case.check(&what, &[&a.f, &b.f], eng.and(&a.f, &b.f), &smooth, false);
+        case.check(&what, &[&a.f, &b.f], eng.and(b.f.clone(), a.f.clone()), &smooth, false);
+    }
+    assert_eq!(case.seen.new_parent, 6);
+}

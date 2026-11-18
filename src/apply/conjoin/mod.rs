@@ -413,9 +413,11 @@ fn conjoin_recycling(
 /// without weights inherits the other operand's table; stored integer counts
 /// cannot be reweighted. Marginal levels remain marginal, and conjunction is
 /// valid there only when the other operand imposes no further constraint on
-/// the summed-out variables. When both operands are marginal at a level, the
-/// caller must ensure one represents the constant-true function on that subtree;
-/// this condition is checked in debug builds.
+/// the summed-out variables. On one vtree, when both operands are marginal at
+/// a level, the caller must ensure one represents the constant-true function
+/// on that subtree; this condition is checked in debug builds. On projections
+/// of one home it is checked in every build: operands of which one has summed
+/// out a variable the other has a leaf for or has summed out too are refused.
 ///
 /// # Errors
 ///
@@ -423,7 +425,9 @@ fn conjoin_recycling(
 /// are not projections of one home,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// [`OperationError::MarginalLevel`] when a structural operand constrains
-/// variables the other has summed out, or [`OperationError::IndexOverflow`]
+/// variables the other has summed out, both have summed out one variable, or
+/// an operand on a projection has an internal summed-out level that is not a
+/// region, or [`OperationError::IndexOverflow`]
 /// when a level of the result would hold more nodes than a node index
 /// addresses.
 ///
