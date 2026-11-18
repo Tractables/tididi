@@ -51,10 +51,6 @@ pub(super) fn note_scheduled_charge() {}
 
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn note_lone_pair() {}
-
-#[cfg(not(test))]
-#[inline(always)]
 pub(super) fn note_lone_columns() {}
 
 #[cfg(not(test))]

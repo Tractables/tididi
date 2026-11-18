@@ -214,15 +214,12 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
 
     for (care, care_home) in [(g, &hg), (h, &hh)] {
         let expected = eng.and(&hf, care_home).unwrap();
-        let got = eng.restrict_to_care(f.clone(), care.clone()).unwrap().into_tdd();
+        let got = eng.restrict_to_care(f.clone(), care).unwrap().into_tdd();
         if got.vtree().home().is_some() {
             check_trimmed(&got, false).unwrap_or_else(|e| panic!("restrict_to_care {}: {e}", case.what));
         }
         let restricted = eng.and(on_home(eng, &got, home), care_home).unwrap();
         assert!(eng.equivalent(&restricted, &expected).unwrap(), "restrict_to_care {}", case.what);
-        let got = eng.restrict_to_care_bounded(f.clone(), care, 1 + rng.below(64)).unwrap().into_tdd();
-        let restricted = eng.and(on_home(eng, &got, home), care_home).unwrap();
-        assert!(eng.equivalent(&restricted, &expected).unwrap(), "restrict_to_care_bounded {}", case.what);
     }
 
     let f_vars: Vec<VarId> = leaf_vars(f.vtree()).collect();

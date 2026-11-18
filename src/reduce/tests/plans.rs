@@ -9,7 +9,7 @@ use crate::test_helpers::{
     CnfShape, Lcg, assert_canonical, assert_same_shape, compile_clauses, compile_clauses_on, rand_cnf,
     same_as_stored, toy, vtree_shapes, with_floor,
 };
-use crate::vtree::Vtree;
+use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
 use super::edited_marginal_diagram;
@@ -52,6 +52,37 @@ fn the_adaptive_policy_reaches_the_fresh_policy_s_diagram() {
     assert_canonical(&adaptive);
     assert_eq!(schedule.next_scan_at_nodes, 0, "a small diagram is scanned on every call");
     assert_same_shape(&fresh, &adaptive, "fresh against adaptive");
+}
+
+/// Vtree ((x h) (y1 y2)) with h summed out. Scanning between the two
+/// conjunctions merges h's two classes before x can separate them, and no
+/// rewrite splits them again; without scans both orders meet.
+#[test]
+fn a_content_scan_between_conjunctions_moves_a_count_diagram_s_fixpoint() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let h = vtree.leaf_of(VarId(2)).unwrap();
+    let (f1, f2) = (vec![vec![-2, -3], vec![2, 4]], vec![vec![-1, 4], vec![1, -3]]);
+    let full = |f: &mut Tdd, scan: bool| {
+        let twins = if scan { ContentTwinPolicy::Fresh } else { ContentTwinPolicy::Skip };
+        f.reduce(ReductionPlan::Full(twins)).unwrap();
+    };
+    let summed = |clauses: &[Vec<i32>], scan: bool| {
+        let mut f = compile_clauses(&vtree, clauses);
+        f.marginalize_levels(&[h]).unwrap();
+        full(&mut f, scan);
+        f
+    };
+    let orders = |scan: bool| {
+        let at_once = summed(&[f1.clone(), f2.clone()].concat(), scan);
+        let mut staged = crate::and(summed(&f1, scan), compile_clauses(&vtree, &f2)).unwrap();
+        full(&mut staged, scan);
+        assert_eq!(at_once.model_count().unwrap(), staged.model_count().unwrap());
+        (at_once, staged)
+    };
+    let (at_once, staged) = orders(true);
+    assert_ne!(at_once.pair_count(), staged.pair_count(), "the scan's place moves the fixpoint");
+    let (at_once, staged) = orders(false);
+    assert_same_shape(&at_once, &staged, "both orders without scans");
 }
 
 #[test]

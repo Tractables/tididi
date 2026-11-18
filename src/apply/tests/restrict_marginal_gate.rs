@@ -107,7 +107,7 @@ fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
                 "{label}: care/b must share the global root (no graft)"
             );
             let before = (and2(b, care)).model_count().unwrap();
-            let outcome = (b.clone()).restrict_to_care(care.clone()).unwrap();
+            let outcome = (b.clone()).restrict_to_care(care).unwrap();
             match outcome {
                 RestrictionOutcome::Shrunk(_) => shrunk += 1,
                 RestrictionOutcome::Unsatisfiable(_) => false_out += 1,

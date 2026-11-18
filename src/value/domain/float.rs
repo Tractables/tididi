@@ -201,6 +201,22 @@ const PLAIN_LO: i64 = -1020;
 /// The greatest: a sum of fewer than `2^32` products each below
 /// `2^(a + b)` stays below `2^1023`.
 const PLAIN_HI: i64 = 990;
+/// The greatest offset of floats a sum of fewer than `2^32` of which stays
+/// below `2^1023`.
+const SUM_HI: i64 = 991;
+
+/// The power of two [`PlainProducts::run_left`] reads a left float times,
+/// for floats at the offsets `l` and `r` times their powers of two `by`, or
+/// 0 where a sum of the right floats as they are may overflow or a left
+/// float times the power may leave the normal range.
+fn run_by(by: (f64, f64), (l, r): (Offsets, Offsets)) -> f64 {
+    let exp = |p: f64| (p.to_bits() >> 52) as i64 - 1023;
+    let (a, b) = (exp(by.0), exp(by.1));
+    match r.hi - b <= SUM_HI && (-1022..=1023).contains(&(a + b)) && l.lo + b >= -1021 && l.hi + b <= 1024 {
+        true => pow2(a + b),
+        false => 0.0,
+    }
+}
 
 /// `Σ left × right` over `pairs` in plain floats, the left column's floats
 /// times the right's in pair order, standing under the sum of their
@@ -259,6 +275,7 @@ fn plain_fold_centred(
 /// zero, so no cell falls back to the scaled fold. A cell's sum stands under
 /// `scale`, and is the float a narrow column under that scale holds for the
 /// cell's value, bit for bit.
+#[derive(Clone, Copy)]
 pub(crate) struct PlainProducts<'a> {
     left: &'a [f64],
     lview: ChildDecoder,
@@ -269,6 +286,8 @@ pub(crate) struct PlainProducts<'a> {
     ///
     /// [`of_floats`]: Self::of_floats
     by: (f64, f64),
+    /// `by.0 × by.1` where [`run_by`] allows it, else 0.
+    run: f64,
     pub(crate) scale: i64,
 }
 
@@ -315,7 +334,8 @@ impl<'a> PlainProducts<'a> {
         } else {
             return None;
         };
-        Some((PlainProducts { left: l.vals, lview, right: r.vals, rview, by, scale: at.0.scale + at.1.scale }, at))
+        let run = run_by(by, at);
+        Some((PlainProducts { left: l.vals, lview, right: r.vals, rview, by, run, scale: at.0.scale + at.1.scale }, at))
     }
 
     /// Move the middle of the offsets a sum of `places` of these products
@@ -339,13 +359,17 @@ impl<'a> PlainProducts<'a> {
             let c = ((by.to_bits() >> 52) as i64 - 1023) + k;
             ((-1022..=1023).contains(&c) && normal(at.lo + k, at.hi + k)).then(|| pow2(c))
         };
-        if let Some(by) = takes(self.by.0, l) {
+        let shift = |at: Offsets| Offsets { lo: at.lo + k, hi: at.hi + k, ..at };
+        let at = if let Some(by) = takes(self.by.0, l) {
             self.by.0 = by;
+            (shift(l), r)
         } else if let Some(by) = takes(self.by.1, r) {
             self.by.1 = by;
+            (l, shift(r))
         } else {
             return;
-        }
+        };
+        self.run = run_by(self.by, at);
         self.scale -= k;
     }
 
@@ -353,9 +377,21 @@ impl<'a> PlainProducts<'a> {
     /// names, as [`plain_fold`] and [`plain_fold_centred`] form it.
     #[inline(always)]
     pub(crate) fn product(&self, lc: u32, rc: u32) -> f64 {
-        let l = self.left[self.lview.index(EncodedChildRef::from_raw(lc))];
-        let r = self.right[self.rview.index(EncodedChildRef::from_raw(rc))];
-        self.times(l, r)
+        self.left_of(lc) * self.right_of(rc)
+    }
+
+    /// The left factor of [`product`](Self::product) for the value `lc`
+    /// names, scaled.
+    #[inline(always)]
+    pub(crate) fn left_of(&self, lc: u32) -> f64 {
+        self.scaled_left(self.left[self.lview.index(EncodedChildRef::from_raw(lc))])
+    }
+
+    /// The right factor of [`product`](Self::product) for the value `rc`
+    /// names, scaled.
+    #[inline(always)]
+    pub(crate) fn right_of(&self, rc: u32) -> f64 {
+        self.scaled_right(self.right[self.rview.index(EncodedChildRef::from_raw(rc))])
     }
 
     /// The product of a left float `l` and a right float `r` of the
@@ -369,6 +405,31 @@ impl<'a> PlainProducts<'a> {
     #[inline(always)]
     pub(crate) fn scaled_left(&self, l: f64) -> f64 {
         l * self.by.0
+    }
+
+    /// Whether a sum of right floats as they are ([`right_float`]) may be
+    /// multiplied by a left float read through [`run_left`].
+    ///
+    /// [`right_float`]: Self::right_float
+    /// [`run_left`]: Self::run_left
+    #[inline(always)]
+    pub(crate) fn sums_runs(&self) -> bool {
+        self.run != 0.0
+    }
+
+    /// The left float `lc` names, read so that its product with a sum of
+    /// right floats as they are ([`right_float`](Self::right_float)) is the
+    /// sum of their [products](Self::product) up to rounding, where
+    /// [`sums_runs`](Self::sums_runs).
+    #[inline(always)]
+    pub(crate) fn run_left(&self, lc: u32) -> f64 {
+        self.left[self.lview.index(EncodedChildRef::from_raw(lc))] * self.run
+    }
+
+    /// The right float `rc` names, as the column holds it.
+    #[inline(always)]
+    pub(crate) fn right_float(&self, rc: u32) -> f64 {
+        self.right[self.rview.index(EncodedChildRef::from_raw(rc))]
     }
 
     /// A right float `r` as [`times`](Self::times) multiplies it.

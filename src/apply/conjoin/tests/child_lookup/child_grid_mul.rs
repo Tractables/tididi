@@ -6,11 +6,11 @@ use super::*;
 #[test]
 fn child_grid_mul_does_not_wrap_past_u32() {
     let a: u32 = 70_000;
-    let right_width: u32 = 70_000;
-    assert_eq!(child_grid_mul(a, right_width), 4_900_000_000usize);
-    let wrapped = a.wrapping_mul(right_width) as usize;
+    let g_width: u32 = 70_000;
+    assert_eq!(child_grid_mul(a, g_width), 4_900_000_000usize);
+    let wrapped = a.wrapping_mul(g_width) as usize;
     assert_eq!(wrapped, 605_032_704usize);
-    assert_ne!(child_grid_mul(a, right_width), wrapped);
+    assert_ne!(child_grid_mul(a, g_width), wrapped);
 }
 
 /// Exactness at the 2^32 boundary in both directions.

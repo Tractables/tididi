@@ -228,23 +228,6 @@ impl TddBuilder {
         Ok(())
     }
 
-    #[inline]
-    fn update_intern_cache_read(
-        &mut self,
-        eng: &Engine,
-        t: VtreeIdx,
-        cached: Option<InternTable>,
-        index: NodeIdx,
-    ) -> Result<(), OperationError> {
-        if let Some(mut table) = cached {
-            let level = &self.levels[t.idx()];
-            let mut buf = Vec::new();
-            table.insert_on(eng.limits(), level, level.pairs_read(index.idx(), &mut buf), index)?;
-            self.interned[t.idx()] = Some(table);
-        }
-        Ok(())
-    }
-
     /// Append a node with these pairs to level `t`, and return its index.
     ///
     /// Build bottom-up: both sides of a pair name a child node that already
@@ -273,33 +256,6 @@ impl TddBuilder {
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node(eng.limits(), pairs)?;
         self.update_intern_cache(eng, t, cached, pairs, index)?;
-        Ok(index)
-    }
-
-    /// [`push`](Self::push) for a node whose `len` pairs come from `pairs`,
-    /// written straight into the level's pair arena: a node with a pair per
-    /// row is not gathered in a list of its own first. `pairs` yields
-    /// exactly `len` pairs, at least one, in the order `push` takes them.
-    ///
-    /// # Errors
-    ///
-    /// As [`push`](Self::push).
-    pub(crate) fn push_from(
-        &mut self,
-        eng: &Engine,
-        t: VtreeIdx,
-        len: usize,
-        pairs: impl Iterator<Item = ChildPair>,
-    ) -> Result<NodeIdx, OperationError> {
-        self.check_push_width(eng, t)?;
-        let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
-        let index = self.levels[t.idx()].push_node_from(eng.limits(), len, pairs)?;
-        if cfg!(debug_assertions) {
-            let mut buf = Vec::new();
-            let written = self.levels[t.idx()].pairs_read(index.idx(), &mut buf);
-            debug_assert_pairs(&self.vtree, &self.levels, t, written);
-        }
-        self.update_intern_cache_read(eng, t, cached, index)?;
         Ok(index)
     }
 

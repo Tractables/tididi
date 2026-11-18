@@ -124,7 +124,7 @@ fn push_pair_grow(
 /// The capacity a full `Vec<ChildPair>` of capacity `cap` grows to when one
 /// more pair is pushed through [`try_push_pair_into`] outside bounded growth:
 /// `Vec`'s amortized doubling, with its four-element floor for 8-byte
-/// elements. [`ReservedEmitSink`](super::cell::ReservedEmitSink) charges the
+/// elements. [`EmitSink`](super::cell::EmitSink) charges the
 /// output-pair meter on this schedule; a unit test holds it to `Vec`'s.
 #[inline]
 pub(super) fn doubled_pairs_capacity(cap: usize) -> usize {

@@ -111,8 +111,9 @@ pub enum OperationError {
     /// except that its `IncompatibleWeights` becomes
     /// [`IncompatibleWeights`](Self::IncompatibleWeights).
     InvalidDiagram(crate::diagram::TddBuildError),
-    /// A column of [`Tdd::model_columns`](crate::Tdd::model_columns) lists
-    /// more variables than a code holds.
+    /// A column of [`Tdd::model_columns`](crate::Tdd::model_columns) or
+    /// [`Tdd::from_columns`](crate::Tdd::from_columns) lists more variables
+    /// than a code holds.
     ColumnTooWide {
         /// The column's position.
         column: usize,

@@ -42,7 +42,7 @@ pub(super) fn extract(src: &[u64], start: usize, width: usize, dst: &mut [u64]) 
 ///
 /// The order is numeric, the highest bit first, which is the order the split
 /// reads a node's values in: the rows are the values of the lowest node over
-/// every constrained variable, grouped by its right child's part. One-word
+/// every constrained variable, grouped by its left child's part. One-word
 /// rows already in leaf order, ascending strictly and clear past the last
 /// variable are those values as they stand, and are borrowed, not copied.
 pub(super) fn distinct_rows<'a>(
@@ -98,8 +98,6 @@ fn owned_rows(
     let mut packed: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut packed, rows.len())?;
     let mut gate = lim.gate();
-    // Whether the one-word rows are known to ascend strictly.
-    let mut distinct = false;
     if layout.is_identity() {
         // `vars` already runs from the rightmost leaf to the leftmost, the
         // layout's bit order, so re-encoding a row is a copy and only the bits
@@ -111,56 +109,10 @@ fn owned_rows(
             (1u64 << tail) - 1
         };
         gate.poll(rows.len() as u64)?;
-        if let (1, Some((&first, rest))) = (w, rows.split_first()) {
-            // The pass that copies the words also sees whether they ascend
-            // strictly, as a table's rows handed over sorted and distinct
-            // do, which then need no pass to check or drop repeats.
-            let mut last = first & tail_mask;
-            let mut ascending = true;
-            packed.push(last);
-            packed.extend(rest.iter().map(|&word| {
-                let word = word & tail_mask;
-                ascending &= last < word;
-                last = word;
-                word
-            }));
-            distinct = ascending;
-        } else {
-            packed.extend_from_slice(rows);
-            for row in packed.chunks_exact_mut(w) {
-                row[w - 1] &= tail_mask;
-            }
+        packed.extend_from_slice(rows);
+        for row in packed.chunks_exact_mut(w) {
+            row[w - 1] &= tail_mask;
         }
-    } else if layout.is_reversed() {
-        // `vars` runs left to right in leaf order and the leftmost leaf holds
-        // the highest bit, so re-encoding reverses a row's bits; the bits past
-        // the last variable land below the row and shift out.
-        gate.poll(rows.len() as u64)?;
-        let shift = w * 64 - num_vars;
-        if w == 1 {
-            packed.extend(rows.iter().map(|&word| word.reverse_bits() >> shift));
-        } else {
-            packed.resize(rows.len(), 0);
-            for (row, out) in rows.chunks_exact(w).zip(packed.chunks_exact_mut(w)) {
-                for (to, &word) in out.iter_mut().zip(row.iter().rev()) {
-                    *to = word.reverse_bits();
-                }
-                if shift > 0 {
-                    for j in 0..w {
-                        let above = out.get(j + 1).map_or(0, |&next| next << (64 - shift));
-                        out[j] = out[j] >> shift | above;
-                    }
-                }
-            }
-        }
-    } else if w == 1 && n >= BYTE_TABLE_MIN_ROWS {
-        // One table per byte of the input word holds where that byte's bits
-        // land, so a row is re-encoded by eight lookups instead of one step
-        // per set bit.
-        let table = layout.byte_table(lim)?;
-        gate.poll(n as u64)?;
-        packed.extend(rows.iter().map(|&word| Layout::reencode_word(&table, word)));
-        lim.discard(table);
     } else {
         packed.resize(rows.len(), 0);
         for k in 0..n {
@@ -184,34 +136,28 @@ fn owned_rows(
     }
 
     gate.flush()?;
-    sorted_distinct(lim, radix, num_vars, layout, packed, w, distinct)
+    sorted_distinct(lim, radix, num_vars, packed, w)
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats
-/// dropped: `distinct` when one-word rows are known to ascend strictly.
+/// dropped.
 pub(super) fn sorted_distinct(
     lim: &Limits,
     radix: &mut Radix,
     num_vars: usize,
-    layout: &Layout,
     mut packed: Vec<u64>,
     w: usize,
-    distinct: bool,
 ) -> Result<Vec<u64>, OperationError> {
     let n = packed.len() / w;
     let mut gate = lim.gate();
     if w == 1 {
         // One word is the whole row, so the words sort and deduplicate where
         // they are and the detour through a permutation buys nothing.
-        if distinct {
-            return Ok(packed);
-        }
         // Rows handed over in order, as a sorted table often is, need no sort.
         if !packed.is_sorted() {
             // The words are bit-packed values, which a radix sort places in a
             // fixed number of linear passes.
-            let lo = ordered_low_bits(layout, &packed);
-            radix.sort(lim, &mut packed, lo, num_vars - lo)?;
+            radix.sort(lim, &mut packed, 0, num_vars)?;
         }
         packed.dedup();
         return Ok(packed);
@@ -242,38 +188,6 @@ pub(super) fn sorted_distinct(
     lim.discard(order);
     Ok(out)
 }
-
-/// The widest trailing subtree whose bits already ascend down the rows.
-///
-/// A trailing subtree's variables, the vtree's rightmost, are the low bits
-/// of a re-encoded row. A table sorted on the columns placed there, as
-/// tables usually are on their first column, lists its rows in ascending
-/// order of those bits, and the radix sort need not place them. Zero when no
-/// trailing subtree is ordered.
-fn ordered_low_bits(layout: &Layout, packed: &[u64]) -> usize {
-    let mut below = 64;
-    loop {
-        // The widest leading subtree narrower than the last one tried.
-        let widest = (0..layout.lo.len())
-            .filter(|&t| layout.lo[t] == 0 && layout.count[t] > 0 && layout.count[t] < below)
-            .map(|t| layout.count[t])
-            .max();
-        let Some(width) = widest else { return 0 };
-        let mask = (1u64 << width) - 1;
-        if packed
-            .windows(2)
-            .all(|pair| pair[0] & mask <= pair[1] & mask)
-        {
-            return width as usize;
-        }
-        below = width;
-    }
-}
-
-/// Rows from which re-encoding a one-word row goes through byte tables,
-/// whose construction costs about as much as re-encoding this many rows bit
-/// by bit.
-const BYTE_TABLE_MIN_ROWS: usize = 64;
 
 /// Compare two whole rows as numbers, high word first.
 fn compare_row(packed: &[u64], w: usize, a: u32, b: u32) -> std::cmp::Ordering {

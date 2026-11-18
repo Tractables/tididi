@@ -286,8 +286,8 @@ fn fold_child_counts(
 /// Give both children a dense grid and bump-allocate this level's own,
 /// returning the base the cell build writes into.
 ///
-/// The sparse-marginal route allocates only a reused `right_width`-row scratch instead of
-/// the dense `left_width * right_width` slab: the row driver processes one structural row at a
+/// The sparse-marginal route allocates only a reused `g_width`-row scratch instead of
+/// the dense `f_width * g_width` slab: the row driver processes one structural row at a
 /// time into it and records the surviving cells in the output product list, so
 /// the slab is never materialized and the grandparent densifies the level
 /// lazily. That route's base is the scratch, not a slab base, which is why it
@@ -373,13 +373,13 @@ pub(super) fn open_level_arenas(
         lim.begin_level(None);
         return Ok(());
     }
-    let (left_width, right_width) = (shape.f.here, shape.g.here);
+    let (f_width, g_width) = (shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
-    // `left_width * right_width` is an exact bound.
-    let nodes_reserve = left_width
-        .saturating_mul(right_width)
+    // `f_width * g_width` is an exact bound.
+    let nodes_reserve = f_width
+        .saturating_mul(g_width)
         .min(LEVEL_RESERVE_NODES_CAP)
-        .max(left_width.max(right_width));
+        .max(f_width.max(g_width));
     lim.reserve(level.nodes.stored_mut(), nodes_reserve)?;
 
     // The one per-level emit-pair bound ([`emit_pair_bound`]). A bound of
@@ -494,14 +494,8 @@ fn run_row_loop(
         Route::Stream {
             marginal_children: false,
         } => {
-            let left = child_lookup::DenseLookup {
-                base: cell_ctx.sides.left.base,
-                stride: cell_ctx.sides.left.stride,
-            };
-            let right = child_lookup::DenseLookup {
-                base: cell_ctx.sides.right.base,
-                stride: cell_ctx.sides.right.stride,
-            };
+            let left = child_lookup::DenseLookup::new(&cell_ctx.sides.left);
+            let right = child_lookup::DenseLookup::new(&cell_ctx.sides.right);
             stream_rows!(&left, &right)
         }
         // A materializing level with at least one marginal child or
@@ -594,9 +588,9 @@ struct SparseMargScratch<'a> {
 
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
-/// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
-/// `cell_ctx.output_grid_base` serves directly as the row base and the action's
-/// `grid_row` is 0, so a grid position is just `row_base + j` — and records each surviving cell in
+/// Runs the shared emit kernel, but writes into the reused `g_width`-row scratch —
+/// every row is built at grid row 0, so a grid position is
+/// `cell_ctx.output_grid_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
 /// immediately: the level is tagged sparse, its product list is the
 /// authoritative representation, and the grandparent densifies it lazily.
@@ -686,7 +680,7 @@ fn build_cell_ctx<'a>(
     };
     CellCtx {
         output_grid_base,
-        right_width: shape.g.here,
+        g_width: shape.g.here,
         masked: masks.is_some(),
         sides: Sides {
             left: side(
@@ -757,7 +751,7 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
 /// Reserve the arenas of a level with a complete child side to what its
 /// row loop writes where no candidate dies ([`complete_level_size`]), and
 /// return the pair capacity the output-pair meter has been charged for (see
-/// [`ReservedEmitSink`](crate::apply::conjoin::cell::ReservedEmitSink)).
+/// [`EmitSink`](crate::apply::conjoin::cell::EmitSink)).
 ///
 /// With both sides complete that is exactly what the level writes. With one
 /// side complete a pair dies only on the other side, and the count bounds
@@ -1152,11 +1146,10 @@ pub(super) fn build_level_dense(
             );
         }
 
-        // A level of the plain or streaming routes whose candidates
-        // outnumber what the vectors of its child rows cost reads its cells
-        // by g-pair vectors (`run_level_rows_words`,
-        // `run_level_rows_stream_words`); a streaming level needs a side
-        // that is not carried through.
+        // A level of the plain or streaming routes reads its cells by g-pair
+        // vectors (`run_level_rows_words`, `run_level_rows_stream_words`)
+        // where `words_pay` says so, by a sample and two cost models; a
+        // streaming level needs a side that is not carried through.
         let words = !pairs
             && match route {
                 Route::PlainDense => !single_pair && stream_state.is_none(),

@@ -9,6 +9,11 @@ Breaking changes:
   the filtered product under that constraint and is canonical.
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
+- `Tdd::restrict_to_care` and `Engine::restrict_to_care` borrow `care` and
+  no longer reduce it first. The walk's cost follows `care` as written, so
+  reduce an unreduced care before the call.
+- `Engine::restrict_to_care_bounded` is removed. `Engine::restrict_to_care`
+  runs the same walk; the engine's limits bound its work.
 - `Quantification::FusedSubtrees` is removed. `and_exists_with` takes
   `Quantification::Fused` (the default) or `Quantification::Product`.
 - `Tdd::embed_mirrored`, `EmbeddingPlan::new_mirrored`,
@@ -27,6 +32,17 @@ Breaking changes:
   clone of it conjoined with a diagram on the same leaves gave a wrong
   function. `RotationProbe::before`, `after` and `live_pairs_delta` read
   the rebuilt levels.
+
+Fixed:
+
+- `Tdd::marginalize_levels` and `Engine::marginalize_levels` on the root
+  level of a diagram with several root nodes, as `TddBuilder` can build,
+  could report another node's count when two root nodes had equal counts;
+  the output now follows the merge.
+- `exists_var`, `exists_vars` and `exists_vars_with` (on `Tdd` and
+  `Engine`) could answer wrong on a diagram with a marginal level away
+  from the quantified leaves; they now return
+  `OperationError::MarginalLevel` whenever any level is marginal.
 
 ## 0.2.0
 

@@ -41,11 +41,11 @@ Original backup choices: 3
 
 ## Remove choices that cannot occur
 
-Keep copies of the original rule and care set so we can compare the results.
-Extract the resulting circuit, then minimize it:
+Keep a copy of the original rule so we can compare the results; the care set
+is only borrowed. Extract the resulting circuit, then minimize it:
 
 ```rust,ignore,{class=tested-example}
-let mut simplified = rule.clone().restrict_to_care(care.clone())?.into_tdd();
+let mut simplified = rule.clone().restrict_to_care(&care)?.into_tdd();
 simplified.minimize()?;
 println!("Pairs before: {}; after: {}", rule.pair_count(), simplified.pair_count());
 ```

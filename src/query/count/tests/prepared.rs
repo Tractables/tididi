@@ -180,13 +180,12 @@ fn marginal_implicit_and_constant_levels_keep_their_readers() {
 
 #[test]
 fn full_width_headers_and_packed_overflow_use_the_shared_fold() {
-    use super::super::column::QueryCounts;
     let eng = Engine::new();
-    let mut left = QueryCounts::try_with_width(&eng, 1).unwrap();
-    let mut right = QueryCounts::try_with_width(&eng, 1).unwrap();
+    let mut left = CountVec::try_with_width(&eng, 1).unwrap();
+    let mut right = CountVec::try_with_width(&eng, 1).unwrap();
     left.set(&eng, 0, Count::from_u128(u128::MAX)).unwrap();
     right.set(&eng, 0, Count::Fast(2)).unwrap();
-    let mut out = QueryCounts::try_with_width(&eng, 3).unwrap();
+    let mut out = CountVec::try_with_width(&eng, 3).unwrap();
     // Inline, empty range, and one arena pair, with no bits left for a mask.
     let nodes = [0u64, 1, 1 | (1 << 33)];
     let pairs = [0u16];

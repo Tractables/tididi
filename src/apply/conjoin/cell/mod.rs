@@ -18,6 +18,7 @@ use super::child_lookup::{ChildLookup, CompleteLookup, DenseLookup, MarginalLook
 use super::marginal_plan::SidePlan;
 use crate::diagram::Sides;
 use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
+use super::grid_arena::{OPEN_GRID_MAX_CELLS, extend_slab, mark_dead, open_row, write_cells};
 
 /// Everything the cell walk needs about one child side of a level: how the
 /// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair
@@ -51,7 +52,7 @@ pub(super) struct CellCtx<'a> {
     /// Flat base offset of the output level's grid in `node_idx`.
     pub(crate) output_grid_base: usize,
     /// Number of g nodes at this level (column count of the product grid).
-    pub(crate) right_width: usize,
+    pub(crate) g_width: usize,
     /// Whether the level built its dead-pair masks, each side's `live_cols`
     /// and `reach`: both operand levels multi-pair, a side read from a grid,
     /// and a grid of `liveness::MASK_MIN_CELLS` cells or more; or one
@@ -73,8 +74,16 @@ pub(super) use columns::{RightColumns, ColumnSlice};
 pub(super) use columns::GROUPED_MIN_PAIRS;
 mod kernel;
 pub(super) use kernel::*;
+mod sink;
+pub(super) use sink::*;
+mod writer;
+pub(super) use writer::*;
 mod rows;
 pub(super) use rows::*;
+mod single_rows;
+pub(super) use single_rows::*;
+mod complete_rows;
+pub(super) use complete_rows::*;
 mod pair_rows;
 pub(super) use pair_rows::run_level_rows_pairs;
 mod word_cells;

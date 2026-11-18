@@ -11,13 +11,13 @@
 //! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
-use crate::diagram::{LeafLabel, PairsIter, ChildDecoder, Tdd, TddLevel, LEAF_WIDTH};
+use crate::diagram::{PairsIter, ChildDecoder, Tdd, TddLevel, LEAF_WIDTH};
 #[cfg(any(test, feature = "testing"))]
 use crate::diagram::{EncodedChildRef, ChildRef, ValueRef};
 use crate::Engine;
 use crate::limits::PollGate;
 use crate::limits::OperationError;
-use crate::vtree::{VarId, VtreeIdx};
+use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 /// A child level as a pair fold reads it: its column, and how to decode a
 /// reference into it.
@@ -66,10 +66,9 @@ pub(crate) trait LevelFold {
         *col = Self::Col::default();
     }
 
-    /// The value of `label` at vtree leaf `leaf` for variable `var`. `LeafLabel::Zero` never
-    /// reaches a stored leaf slot, but the seed loop passes it, so an
-    /// implementation must answer for it.
-    fn leaf(&self, leaf: VtreeIdx, var: VarId, label: LeafLabel) -> Self::Value;
+    /// Store the [`LEAF_WIDTH`] slots of vtree leaf `leaf`, for variable
+    /// `var`, slot `i` holding `LeafLabel::from_idx(i)`'s value.
+    fn seed_leaf(&self, eng: &Engine, col: &mut Self::Col, leaf: VtreeIdx, var: VarId) -> Result<(), OperationError>;
 
     /// Fill `col` from a marginal level's stored values rather than folding it.
     /// A marginal level has no pairs to fold, so its stored column already is
@@ -155,9 +154,11 @@ pub(crate) trait PairAlgebra: LevelFold {
 /// Compute one level's column: seed it if it is a leaf, copy it if it is
 /// marginal, fold it otherwise.
 ///
-/// The children's columns must already be complete — the walk order is the
-/// caller's to keep. Integer folds charge node slots in bounded batches; other
-/// algebras charge pair visits at node boundaries.
+/// The column is allocated at the level's reference slot count unless it
+/// already has that width, so a column kept from an earlier pass is reused
+/// and overwritten. The children's columns must already be complete — the
+/// walk order is the caller's to keep. Integer folds charge node slots in
+/// bounded batches; other algebras charge pair visits at node boundaries.
 pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     f: &F,
     eng: &Engine,
@@ -168,59 +169,61 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
 ) -> Result<(), OperationError> {
     let ti = t.idx();
     gate.poll(1)?;
-    if tdd.vtree.node(t).is_var_leaf() {
-        let var = tdd.vtree.leaf_var(t);
-        for i in 0..LEAF_WIDTH {
-            let v = f.leaf(t, var, LeafLabel::from_idx(i));
-            f.set(eng, &mut cols[ti], i, v)?;
+    let children = match *tdd.vtree.node(t) {
+        VtreeNode::Leaf { var, .. } if var != crate::vtree::REGION_VAR => {
+            fit(f, eng, &mut cols[ti], LEAF_WIDTH)?;
+            return f.seed_leaf(eng, &mut cols[ti], t, var);
         }
-        return Ok(());
-    }
-    if tdd.levels[ti].is_marginal() {
+        VtreeNode::Leaf { .. } => None,
+        VtreeNode::Internal { left, right, .. } => Some((left.idx(), right.idx())),
+    };
+    let level = &tdd.levels[ti];
+    let width = level.slot_count();
+    fit(f, eng, &mut cols[ti], width)?;
+    if level.is_marginal() {
         return f.marginal_column(eng, tdd, t, &mut cols[ti]);
     }
     if PREPARED && f.prepared_level(eng, tdd, cols, t, gate)? { return Ok(()); }
-    let (left, right) = tdd.vtree.children(t);
-    let (left_idx, right_idx) = (left.idx(), right.idx());
-    let left_view = tdd.levels[left_idx].child_decoder();
-    let right_view = tdd.levels[right_idx].child_decoder();
-    let level = &tdd.levels[ti];
-    let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { usize::MAX };
-    for start in (0..level.nodes().len()).step_by(batch) {
-        let end = start.saturating_add(batch).min(level.nodes().len());
+    let (l, r) = children.expect("a region's level is marginal");
+    let (left_view, right_view) = (tdd.levels[l].child_decoder(), tdd.levels[r].child_decoder());
+    let [col, l, r] = cols.get_disjoint_mut([ti, l, r]).expect("a vtree node is neither of its children");
+    let left = Side { col: &*l, view: left_view };
+    let right = Side { col: &*r, view: right_view };
+    // A structural level has a slot a node.
+    let n = width;
+    let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { n };
+    let mut start = 0;
+    while start < n {
+        let end = n.min(start + batch);
         if F::NODE_WORK {
             gate.poll((end - start) as u64)?;
         }
         let mut next = start;
         while next < end {
-            // The fold's own pass over as many nodes as it takes, the column
-            // taken out of `cols` so the children's stay readable beside it.
-            let mut col = std::mem::take(&mut cols[ti]);
-            let filled = f.fill_nodes(
-                level,
-                Side { col: &cols[left_idx], view: left_view },
-                Side { col: &cols[right_idx], view: right_view },
-                &mut col,
-                next..end,
-            );
-            cols[ti] = col;
+            let filled = f.fill_nodes(level, left, right, col, next..end);
+            if filled == end { break; }
             // One node by `fold_node`: where the pass stopped, or every node
             // when it takes none; an implicit level's nodes generated a chunk
             // at a time, not one call a node.
-            let to = if filled == next { end } else { filled.saturating_add(1).min(end) };
+            let to = if filled == next { end } else { filled + 1 };
             level.try_for_each_node(filled..to, |i, pairs| {
                 if !F::NODE_WORK {
                     gate.poll(pairs.len() as u64 + 1)?;
                 }
-                let v = f.fold_node(
-                    PairsIter::slice(pairs),
-                    Side { col: &cols[left_idx], view: left_view },
-                    Side { col: &cols[right_idx], view: right_view },
-                );
-                f.set(eng, &mut cols[ti], i, v)
+                let v = f.fold_node(PairsIter::slice(pairs), left, right);
+                f.set(eng, col, i, v)
             })?;
             next = to;
         }
+        start = end;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn fit<F: LevelFold>(f: &F, eng: &Engine, col: &mut F::Col, width: usize) -> Result<(), OperationError> {
+    if col.width() != width {
+        *col = f.alloc(eng, width)?;
     }
     Ok(())
 }
@@ -231,9 +234,7 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
 /// its parent's is complete; the output level is exempt, being the one column
 /// read afterwards. See [`walk_bottom_up`] for the order and the frontier.
 ///
-/// Before a level is written, its column is allocated at the level's
-/// reference slot count unless it already has that width, so a column kept
-/// from an earlier pass is reused and overwritten. `gate` is the caller's
+/// Columns are allocated as [`fold_level`] says. `gate` is the caller's
 /// stop-axis gate: the walk is cut at amortized node boundaries and the caller
 /// gets the error.
 ///
@@ -304,13 +305,7 @@ pub(crate) fn fold_held<F: LevelFold, const PREPARED: bool>(
         root,
         cols,
         |_, i| held.get(i).copied().unwrap_or(false),
-        |cols, t| {
-            let width = tdd.reference_slot_count(t);
-            if cols[t.idx()].width() != width {
-                cols[t.idx()] = f.alloc(eng, width)?;
-            }
-            fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate)
-        },
+        |cols, t| fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate),
         |cols, i| f.release(eng, &mut cols[i]),
         retain.frontier(keep),
     )

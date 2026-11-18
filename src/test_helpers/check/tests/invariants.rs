@@ -103,7 +103,7 @@ fn test_determinism_after_apply() {
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[-3, 4]));
-    // Product before minimize is not necessarily deterministic (it has width left_width*right_width),
+    // Product before minimize is not necessarily deterministic (it has width f_width*g_width),
     // but after minimize it should be.
     let mut minimized = apply_and(f, g);
     minimized.minimize().unwrap();

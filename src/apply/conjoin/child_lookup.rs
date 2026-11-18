@@ -34,7 +34,7 @@ fn child_grid_mul(a: u32, stride: u32) -> usize {
 /// the shared per-apply grid slab. Passing the slab per call rather than
 /// holding a borrow keeps the dense impl free of an aliasing borrow against
 /// the output writes into the same slab.
-pub(super) trait ChildLookup {
+pub(super) trait ChildLookup: Copy {
     /// A child grid row resolved once. The pair walks hold `row` fixed across
     /// a run of columns — both child coordinates of a cell take their row from
     /// the same f pair — so resolving the row is hoisted out of the column
@@ -46,6 +46,14 @@ pub(super) trait ChildLookup {
 
     /// The child node at `col` of an already-resolved row.
     fn get_in_row(&self, node_idx: &[u32], row: Self::Row, col: u32) -> u32;
+
+    /// This lookup for a side that is not a pass-through carrier: the same
+    /// answers wherever [`passthrough`](Self::passthrough) is false, with
+    /// no pass-through test.
+    type Grid: ChildLookup;
+
+    /// See [`Grid`](Self::Grid); only where `passthrough` is false.
+    fn grid(self) -> Self::Grid;
 
     /// Resolve a child node at grid position `(row, col)` in one call, for a
     /// walk whose row changes per lookup.
@@ -88,13 +96,26 @@ pub(super) trait ChildLookup {
 ///
 /// [`Products::is_complete`]: super::products::Products::is_complete
 /// [`NodeIdx`]: crate::diagram::NodeIdx
+#[derive(Clone, Copy)]
 pub(super) struct CompleteLookup {
     pub(super) stride: u32,
+}
+
+impl CompleteLookup {
+    pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
+        Self { stride: p.stride }
+    }
 }
 
 impl ChildLookup for CompleteLookup {
     /// The row's first node.
     type Row = u32;
+    type Grid = Self;
+
+    #[inline(always)]
+    fn grid(self) -> Self {
+        self
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> u32 {
@@ -113,14 +134,27 @@ impl ChildLookup for CompleteLookup {
 }
 
 /// Existing grid representation: flat `node_idx[base + row*stride + col]`.
+#[derive(Clone, Copy)]
 pub(super) struct DenseLookup {
     pub(super) base: usize,
     pub(super) stride: u32,
 }
 
+impl DenseLookup {
+    pub(super) fn new(p: &super::cell::ChildPlan<'_>) -> Self {
+        Self { base: p.base, stride: p.stride }
+    }
+}
+
 impl ChildLookup for DenseLookup {
     /// The row's flat offset into the slab.
     type Row = usize;
+    type Grid = Self;
+
+    #[inline(always)]
+    fn grid(self) -> Self {
+        self
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> usize {
@@ -146,6 +180,7 @@ impl ChildLookup for DenseLookup {
 /// consulted (indexing with it would read far out of bounds; see
 /// `plan_marginal_level`). `passthrough` is a per-level runtime flag, so the marginal
 /// inner loops pay one branch per access.
+#[derive(Clone, Copy)]
 pub(super) struct MarginalLookup {
     base: usize,
     stride: u32,
@@ -170,6 +205,13 @@ impl ChildLookup for MarginalLookup {
     /// The row's flat slab offset off pass-through, and the carried f field
     /// itself on it — where the value is the answer rather than a coordinate.
     type Row = usize;
+    type Grid = DenseLookup;
+
+    #[inline(always)]
+    fn grid(self) -> DenseLookup {
+        debug_assert!(!self.passthrough, "a pass-through side read as a grid");
+        DenseLookup { base: self.base, stride: self.stride }
+    }
 
     #[inline(always)]
     fn row(&self, row: u32) -> usize {

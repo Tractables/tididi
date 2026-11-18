@@ -2,31 +2,22 @@
 
 use std::sync::Arc;
 
+use super::filled;
 use super::layout::Layout;
-use super::split::{Decomposition, Plan};
+use super::plan::{Decomposition, Plan};
 use crate::Engine;
 use crate::diagram::{Assembly, ChildPair, NodeIdx, ONE_LEAF_IDX, Tdd, TddNodeId};
-use crate::limits::{Charged, Limits, OperationError};
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
-
-/// A vtree node the pass has finished with, waiting for its parent.
-struct Finished {
-    /// The node each atom was stored at, in atom order.
-    locals: Vec<NodeIdx>,
-}
-
-impl Charged for Finished {
-    fn charged_bytes(&self) -> u64 {
-        self.locals.charged_bytes()
-    }
-}
 
 /// The per-level emission pass over a planned [`Layout`].
 struct Emit<'a> {
     eng: &'a Engine,
     assembly: Assembly<'a>,
     vtree: &'a Arc<Vtree>,
-    state: Vec<Option<Finished>>,
+    /// For each vtree node finished and waiting for its parent, the node
+    /// each atom was stored at, in atom order.
+    state: Vec<Option<Vec<NodeIdx>>>,
     pair_list: Vec<ChildPair>,
 }
 
@@ -40,7 +31,7 @@ pub(super) fn fill(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let assembly = Assembly::new(eng, vtree)?;
-    let mut state: Vec<Option<Finished>> = Vec::new();
+    let mut state: Vec<Option<Vec<NodeIdx>>> = Vec::new();
     lim.reserve_exact(&mut state, vtree.num_nodes())?;
     state.resize_with(vtree.num_nodes(), || None);
     let mut emit = Emit {
@@ -59,13 +50,13 @@ pub(super) fn fill(
             (0, _) => emit.free_subtree(t, leaf)?,
             (_, Some(constrained)) => emit.carry_child(t, constrained)?,
             _ => match plans[t.idx()].take().expect("every split node is planned") {
-                Plan::Leaf(locals) => Finished { locals },
+                Plan::Leaf(locals) => locals,
                 Plan::Branch(split) => emit.store_level(t, split)?,
             },
         };
         if !leaf {
             // A leaf level stores no node, so it emits none either.
-            emitted += finished.locals.len() as u64;
+            emitted += finished.len() as u64;
             lim.check_output_cap(emitted)?;
             let (left, right) = vtree.children(t);
             for child in [left, right] {
@@ -81,10 +72,10 @@ pub(super) fn fill(
     let done = emit.state[root.idx()]
         .as_ref()
         .expect("the root was just finished");
-    debug_assert_eq!(done.locals.len(), 1, "the root level holds one atom");
+    debug_assert_eq!(done.len(), 1, "the root level holds one atom");
     let output = TddNodeId {
         vtree: root,
-        local: done.locals[0],
+        local: done[0],
     };
     // The levels are canonical as built: seat them with nothing to reduce.
     let (levels, _) = emit.assembly.parts_mut();
@@ -113,21 +104,21 @@ fn one_sided_child(vtree: &Vtree, layout: &Layout, t: VtreeIdx) -> Option<VtreeI
 }
 
 /// The node a finished free subtree stored its one atom at.
-fn true_node(state: &[Option<Finished>], t: VtreeIdx) -> NodeIdx {
-    below(state, t).locals[0]
+fn true_node(state: &[Option<Vec<NodeIdx>>], t: VtreeIdx) -> NodeIdx {
+    below(state, t)[0]
 }
 
-/// The finished record of a child.
-fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
+/// The nodes a finished child stored its atoms at.
+fn below(state: &[Option<Vec<NodeIdx>>], t: VtreeIdx) -> &[NodeIdx] {
     state[t.idx()]
-        .as_ref()
+        .as_deref()
         .expect("a child is finished before its parent")
 }
 
 impl Emit<'_> {
     /// A node whose subtree holds no constrained variable: one atom, true over
     /// every assignment to the subtree's leaves.
-    fn free_subtree(&mut self, t: VtreeIdx, leaf: bool) -> Result<Finished, OperationError> {
+    fn free_subtree(&mut self, t: VtreeIdx, leaf: bool) -> Result<Vec<NodeIdx>, OperationError> {
         let local = if leaf {
             ONE_LEAF_IDX
         } else {
@@ -135,10 +126,7 @@ impl Emit<'_> {
             let pair = ChildPair::new(true_node(&self.state, left), true_node(&self.state, right));
             self.assembly.push(self.eng, t, &[pair])?
         };
-        let mut locals = Vec::new();
-        self.eng.limits().reserve_exact(&mut locals, 1)?;
-        locals.push(local);
-        Ok(Finished { locals })
+        filled(self.eng.limits(), 1, local)
     }
 
     /// An internal node whose constrained variables all sit under one child:
@@ -148,17 +136,16 @@ impl Emit<'_> {
         &mut self,
         t: VtreeIdx,
         constrained: VtreeIdx,
-    ) -> Result<Finished, OperationError> {
+    ) -> Result<Vec<NodeIdx>, OperationError> {
         let lim = self.eng.limits();
         let (left, _) = self.vtree.children(t);
         let free_local = true_node(&self.state, self.vtree.sibling(constrained));
         let from = below(&self.state, constrained);
-        let mut locals = Vec::new();
-        lim.try_resize(&mut locals, from.locals.len(), NodeIdx(0))?;
-        self.assembly.reserve(self.eng, t, from.locals.len(), 0)?;
-        let order = stored_order(lim, from.locals.iter().map(|&child| u64::from(child.0)))?;
-        for atom in in_order(&order, from.locals.len()) {
-            let child = from.locals[atom];
+        let mut locals = filled(lim, from.len(), NodeIdx(0))?;
+        self.assembly.reserve(self.eng, t, from.len(), 0)?;
+        let order = stored_order(lim, from.iter().map(|&child| u64::from(child.0)))?;
+        for atom in in_order(&order, from.len()) {
+            let child = from[atom];
             let pair = if constrained == left {
                 ChildPair::new(child, free_local)
             } else {
@@ -167,7 +154,7 @@ impl Emit<'_> {
             locals[atom] = self.assembly.push(self.eng, t, &[pair])?;
         }
         lim.discard(order);
-        Ok(Finished { locals })
+        Ok(locals)
     }
 }
 
@@ -226,7 +213,7 @@ impl Emit<'_> {
         &mut self,
         t: VtreeIdx,
         split: Decomposition,
-    ) -> Result<Finished, OperationError> {
+    ) -> Result<Vec<NodeIdx>, OperationError> {
         let Self {
             eng,
             assembly,
@@ -236,24 +223,17 @@ impl Emit<'_> {
         } = self;
         let lim = eng.limits();
         let (left, right) = vtree.children(t);
-        let (l, r) = (&below(state, left).locals, &below(state, right).locals);
+        let (l, r) = (below(state, left), below(state, right));
         // A child whose nodes are not in atom order, as a leaf's literals and
         // a level stored in the order of its pairs need not be, reorders the
         // pairs.
         let ascending = |nodes: &[NodeIdx]| nodes.windows(2).all(|n| n[0] < n[1]);
-        let one = |local: NodeIdx| -> Result<Finished, OperationError> {
-            let mut locals = Vec::new();
-            lim.reserve_exact(&mut locals, 1)?;
-            locals.push(local);
-            Ok(Finished { locals })
-        };
         let (atoms, triples) = match split {
             Decomposition::Triples { atoms, triples } => (atoms, triples),
             Decomposition::ByAtom { ends, pairs } => {
                 // The atoms' pairs run in child-atom order.
                 let ordered = ascending(l) && ascending(r);
-                let mut locals = Vec::new();
-                lim.try_resize(&mut locals, ends.len(), NodeIdx(0))?;
+                let mut locals = filled(lim, ends.len(), NodeIdx(0))?;
                 assembly.reserve(eng, t, ends.len(), pairs.len())?;
                 let widest = ends
                     .iter()
@@ -295,7 +275,7 @@ impl Emit<'_> {
                 lim.discard(order);
                 lim.discard(ends);
                 lim.discard(pairs);
-                return Ok(Finished { locals });
+                return Ok(locals);
             }
             Decomposition::Grouped { ends, lows } => {
                 // The one atom's pairs, which run in child-atom order: each high
@@ -310,18 +290,6 @@ impl Emit<'_> {
                         ends[high - 1] as usize
                     }..ends[high] as usize]
                 };
-                if ascending(l) && ascending(r) {
-                    // Already in order: written into the level as they are read.
-                    let highs = l.iter().enumerate().flat_map(|(high, &node)| {
-                        group(high)
-                            .iter()
-                            .map(move |&low| ChildPair::new(node, r[low as usize]))
-                    });
-                    let local = assembly.push_from(eng, t, lows.len(), highs)?;
-                    lim.discard(ends);
-                    lim.discard(lows);
-                    return one(local);
-                }
                 let order = stored_order(lim, l.iter().map(|&node| u64::from(node.0)))?;
                 pair_list.clear();
                 lim.reserve_exact(pair_list, lows.len())?;
@@ -341,11 +309,10 @@ impl Emit<'_> {
                 lim.discard(order);
                 lim.discard(ends);
                 lim.discard(lows);
-                return one(local);
+                return filled(lim, 1, local);
             }
         };
-        let mut locals = Vec::new();
-        lim.try_resize(&mut locals, atoms, NodeIdx(0))?;
+        let mut locals = filled(lim, atoms, NodeIdx(0))?;
         assembly.reserve(eng, t, atoms, triples.len())?;
         let mut gate = lim.gate();
         if atoms == triples.len() {
@@ -404,6 +371,6 @@ impl Emit<'_> {
         }
         gate.flush()?;
         lim.discard(triples);
-        Ok(Finished { locals })
+        Ok(locals)
     }
 }

@@ -50,58 +50,26 @@ pub(crate) fn run_level_rows_pairs(
     level: &mut TddLevel,
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
-    let sides = rows.ctx.sides;
-    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
-    let grid = |p: &ChildPlan<'_>| DenseLookup {
-        base: p.base,
-        stride: p.stride,
-    };
     let mut inline = 0;
-    match lookups {
-        PlainLookups::Grid => {
-            let cells = rows.f_width.saturating_mul(rows.ctx.right_width);
-            let most = ahead_most(rows.f_level, rows.g_level, cells);
-            let mut sink =
-                ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
-            pair_rows(
-                eng,
-                rows,
-                scratch,
-                &grid(&sides.left),
-                &grid(&sides.right),
-                &mut sink,
-            )?;
-            sink.trim();
-            Ok(())
-        }
-        PlainLookups::CompleteLeft { charged } => pair_rows(
-            eng,
-            rows,
-            scratch,
-            &complete(&sides.left),
-            &grid(&sides.right),
-            &mut ReservedEmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::CompleteRight { charged } => pair_rows(
-            eng,
-            rows,
-            scratch,
-            &grid(&sides.left),
-            &complete(&sides.right),
-            &mut ReservedEmitSink {
-                level,
-                charged,
-                inline: &mut inline,
-            },
-        ),
-        PlainLookups::Complete { .. } => {
-            unreachable!("a level of two complete sides builds no masks")
-        }
-    }?;
+    if lookups == PlainLookups::Grid {
+        let cells = rows.f_width.saturating_mul(rows.ctx.g_width);
+        let most = ahead_most(rows.f_level, rows.g_level, cells);
+        let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
+        with_lookups!(lookups, rows.ctx.sides, [Grid], |l, r| {
+            pair_rows(eng, rows, scratch, l, r, &mut sink)
+        })?;
+        sink.trim();
+    } else {
+        let mut sink = EmitSink {
+            level,
+            charged: lookups.charged(),
+            inline: &mut inline,
+        };
+        // A level of two complete sides builds no masks.
+        with_lookups!(lookups, rows.ctx.sides, [CompleteLeft, CompleteRight], |l, r| {
+            pair_rows(eng, rows, scratch, l, r, &mut sink)
+        })?;
+    }
     level.leave_written_pairs(inline);
     Ok(())
 }
@@ -133,8 +101,8 @@ where
         node_idx: slab,
     } = scratch;
     let lim = eng.limits();
-    let right_width = ctx.right_width;
-    debug_assert!(right_width <= ROW_COLUMNS_MAX_WIDTH);
+    let g_width = ctx.g_width;
+    debug_assert!(g_width <= ROW_COLUMNS_MAX_WIDTH);
 
     // g's pairs in column order; each column's as a mask of their bits, and
     // each pair's column. The f rows' buffer decodes a column the table
@@ -142,7 +110,7 @@ where
     g_flat.clear();
     lim.reserve_exact(
         g_flat,
-        (0..right_width).map(|j| g_level.pair_count_at(j)).sum(),
+        (0..g_width).map(|j| g_level.pair_count_at(j)).sum(),
     )?;
     let mut columns = Columns {
         g_flat: &[],
@@ -152,7 +120,7 @@ where
         charge_of: [0; 1 << CHARGE_TABLE_COLUMNS],
         tabled: false,
     };
-    for (j, col) in columns.cols.iter_mut().enumerate().take(right_width) {
+    for (j, col) in columns.cols.iter_mut().enumerate().take(g_width) {
         let start = g_flat.len();
         g_flat.extend_from_slice(column_pairs(ctx, g_level, j, f_scratch));
         debug_assert!(
@@ -165,8 +133,8 @@ where
     columns.g_flat = &g_flat[..];
     // Where every column holds one pair, pair `q` is column `q`'s, and a
     // word of pairs is a word of their columns.
-    let one_pair = g_flat.len() == right_width
-        && columns.cols[..right_width]
+    let one_pair = g_flat.len() == g_width
+        && columns.cols[..g_width]
             .iter()
             .all(|c| c.count_ones() == 1);
     // The number of g pairs of a set of columns, which a row's charge
@@ -175,14 +143,14 @@ where
     for (n, col) in columns
         .col_pairs
         .iter_mut()
-        .zip(&columns.cols[..right_width])
+        .zip(&columns.cols[..g_width])
     {
         *n = col.count_ones() as u8;
     }
-    columns.tabled = right_width <= CHARGE_TABLE_COLUMNS
-        && (1 << right_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
+    columns.tabled = g_width <= CHARGE_TABLE_COLUMNS
+        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
     if columns.tabled {
-        for set in 1..1usize << right_width {
+        for set in 1..1usize << g_width {
             columns.charge_of[set] = columns.charge_of[set & (set - 1)]
                 + columns.col_pairs[set.trailing_zeros() as usize];
         }
@@ -196,7 +164,7 @@ where
     };
     // A level of two one-pair columns keeps them in registers and writes
     // each row's cells once.
-    match (one_pair, right_width) {
+    match (one_pair, g_width) {
         (true, 2) => {
             pair_rows_of::<true, 2, _, _, _>(eng, rows, f_scratch, slab, left, right, sink)
         }
@@ -301,9 +269,9 @@ where
     } = columns;
     let (g_flat, tabled) = (*g_flat, *tabled);
     let lim = eng.limits();
-    let right_width = ctx.right_width;
-    debug_assert!(W == 0 || (ONE && W == right_width));
-    let width = if W == 0 { right_width } else { W };
+    let g_width = ctx.g_width;
+    debug_assert!(W == 0 || (ONE && W == g_width));
+    let width = if W == 0 { g_width } else { W };
     let pairs_in = |s: u64| -> u64 {
         if W > 0 {
             return (0..W).map(|j| s >> j & 1).sum();
@@ -413,15 +381,6 @@ where
     let mut many = Transient::new(lim, Vec::<u64>::new());
     let many: &mut Vec<u64> = &mut many;
 
-    // The resets of `run_level_rows`: one fill of a small grid, a row at a
-    // time on a larger one.
-    let slab_fill = f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
-    if W == 0 && slab_fill {
-        let end = ctx.output_grid_base + f_width * width;
-        if !extend_slab(slab, ctx.output_grid_base, end) {
-            mark_dead(&mut slab[ctx.output_grid_base..end]);
-        }
-    }
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
     // A level of two one-pair columns: f's rows where they need no decoding,
@@ -443,6 +402,11 @@ where
         all,
         output_grid_base: ctx.output_grid_base,
     });
+    let whole_grid = W == 0 && f_width.saturating_mul(width) <= OPEN_GRID_MAX_CELLS;
+    if whole_grid {
+        let base = ctx.output_grid_base;
+        open_row(slab, base, base + f_width * width);
+    }
     let mut next = 0;
     'rows: while next < f_width {
         // A row is written straight into the arenas, open across rows, where
@@ -480,11 +444,8 @@ where
             let i = next;
             next += 1;
             let row_base = ctx.output_grid_base + i * width;
-            if W == 0 {
-                let fresh = extend_slab(slab, row_base, row_base + width);
-                if !slab_fill && !fresh {
-                    mark_dead(&mut slab[row_base..row_base + width]);
-                }
+            if W == 0 && !whole_grid {
+                open_row(slab, row_base, row_base + width);
             }
             let f_pairs = match f_described {
                 Some(k) => &f_scratch[i * k..(i + 1) * k],

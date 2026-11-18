@@ -4,7 +4,9 @@ use crate::limits::OperationError;
 use super::{ChildPair, EncodedChildRef, EncodedNode, Digit, ImplicitLevel, TddLevel, NO_PAIRS, RUN_PAIRS, each_place, inline_at, run_of};
 
 impl ImplicitLevel {
-    /// The child slots of the first pair of node `node`.
+    /// The child slots of the first pair of node `node`, which is under
+    /// [`nodes`](Self::nodes): only a debug build checks it, and a release
+    /// build returns the first pair of node `node % nodes`.
     #[inline]
     pub fn node_first(&self, node: usize) -> (i64, i64) {
         debug_assert!(node < self.nodes && self.counts_nodes());
@@ -49,7 +51,8 @@ impl ImplicitLevel {
         NodeCursor::new(&self.digits[self.within..], self.first)
     }
 
-    /// Append the pairs of node `node` to `out`, in their order.
+    /// Append the pairs of node `node` to `out`, in their order. `node` is
+    /// under [`nodes`](Self::nodes), as for [`node_first`](Self::node_first).
     pub fn pairs_of(&self, node: usize, out: &mut Vec<ChildPair>) {
         self.places(node).write_into(out);
     }
@@ -647,7 +650,7 @@ impl<'a> NodeCursor<'a> {
         if run != self.run {
             if run == self.run + 1 {
                 self.runs.step_counted(self.slow, run);
-            } else if run > self.run && self.slow.len() <= NODE_COUNTERS {
+            } else if run > self.run {
                 self.runs.advance(self.slow, run - self.run);
             } else {
                 self.runs.seat(self.slow, self.run, run);

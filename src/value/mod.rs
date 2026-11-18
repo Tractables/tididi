@@ -136,7 +136,7 @@ impl CountVec {
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
-    /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
+    /// streaming output column pre-reserves `f_width.max(g_width)` and then grows
     /// fallibly via [`Self::push`]).
     ///
     /// Forced inline: sharing the constructor across the width and capacity
@@ -180,6 +180,11 @@ impl CountVec {
     }
 
     /// Overwrite slot `i` (pre-sized fill; see [`Self::try_with_width`]).
+    ///
+    /// Inline, the side table's work out of line: a count fold sets every
+    /// leaf slot on every pass, and the call cost a pinned counter 8% of its
+    /// instructions.
+    #[inline(always)]
     pub(crate) fn set(&mut self, eng: &Engine, i: usize, c: Count) -> Result<(), OperationError> {
         match c {
             Count::Fast(v) => {
@@ -190,22 +195,50 @@ impl CountVec {
                 // A slot that stops overflowing must lose its side-table entry,
                 // or the sentinel ⇔ entry invariant breaks; only a Big→Fast
                 // transition touches the table.
-                if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW
-                    && let Some(big) = self.big.as_mut() {
-                        big.take(i);
-                    }
-                if v > u64::MAX as u128 {
-                    self.all_u64 = false;
+                if std::mem::replace(&mut self.fast[i], v) == COUNT_OVERFLOW {
+                    self.clear_big(i);
                 }
+                self.all_u64 &= v <= u64::MAX as u128;
+                Ok(())
             }
-            Count::Big(b) => {
-                self.big
-                    .get_or_insert_with(CountOverflow::default)
-                    .try_insert(eng, i, b)?;
-                self.fast[i] = COUNT_OVERFLOW;
-                self.all_u64 = false;
+            Count::Big(b) => self.set_big(eng, i, b),
+        }
+    }
+
+    /// Overwrite the first `N` slots with values that fit `u64`.
+    #[inline(always)]
+    pub(crate) fn set_u64_prefix<const N: usize>(&mut self, values: [u64; N]) {
+        if self.big.is_some() {
+            self.clear_big_prefix(N);
+        }
+        for (slot, v) in self.fast[..N].iter_mut().zip(values) {
+            *slot = u128::from(v);
+        }
+    }
+
+    #[inline(never)]
+    fn clear_big_prefix(&mut self, n: usize) {
+        for i in 0..n {
+            if self.fast[i] == COUNT_OVERFLOW {
+                self.clear_big(i);
             }
         }
+    }
+
+    #[inline(never)]
+    fn clear_big(&mut self, i: usize) {
+        if let Some(big) = self.big.as_mut() {
+            big.take(i);
+        }
+    }
+
+    #[inline(never)]
+    fn set_big(&mut self, eng: &Engine, i: usize, b: BigUint) -> Result<(), OperationError> {
+        self.big
+            .get_or_insert_with(CountOverflow::default)
+            .try_insert(eng, i, b)?;
+        self.fast[i] = COUNT_OVERFLOW;
+        self.all_u64 = false;
         Ok(())
     }
 
@@ -255,6 +288,16 @@ impl CountVec {
 
     pub(crate) fn len(&self) -> usize {
         self.fast.len()
+    }
+
+    /// Zero every slot, keeping the dense buffer; the side table goes, its
+    /// charge returned.
+    pub(crate) fn zero(&mut self, eng: &Engine) {
+        if let Some(big) = self.big.take() {
+            eng.limits().release_bytes(big.buffer_bytes());
+        }
+        self.fast.fill(0);
+        self.all_u64 = true;
     }
 
     /// Storage-handoff escape hatch: unwrap into the raw `(fast, big)` pair at

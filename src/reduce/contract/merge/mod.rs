@@ -150,8 +150,7 @@ pub(super) fn contract_twins(
         return Ok(0);
     }
     // Everything the merge allocates is had before it changes anything: the
-    // rebuilt level's arenas, and the room an implicit parent is rewritten
-    // into where a pair changes.
+    // rebuilt level's arenas, and the room an implicit parent is stored in.
     if in_order.is_none() {
         gather_words(bufs, tdd.levels[t1.idx()].nodes.stored());
     }
@@ -229,7 +228,7 @@ pub(super) fn contract_twins(
     // (`Listing::ordered`), and a later rewrite of either reads no order.
     let known = !diagram_marginal && listing.ordered(parent.idx());
     let (ordered, parent_pairs) =
-        rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room, known);
+        rewrite_parent(tdd, parent, t1_side, remap, parent_room, known);
     if !diagram_marginal {
         listing.set_ordered(t1.idx());
         if ordered {

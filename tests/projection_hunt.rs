@@ -258,8 +258,7 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
     }
-    log.tdd(n, "restrict_to_care", || eng.and(eng.restrict_to_care(f.clone(), g.clone())?.into_tdd(), g), &and);
-    log.tdd(n, "restrict_to_care_bounded", || eng.and(eng.restrict_to_care_bounded(f.clone(), g, 1 + rng.below(64))?.into_tdd(), g), &and);
+    log.tdd(n, "restrict_to_care", || eng.and(eng.restrict_to_care(f.clone(), g)?.into_tdd(), g), &and);
     let var = 1 + rng.below(u64::from(n)) as u32;
     let bit = 1usize << (var - 1);
     let substituted: Table = (0..tf.len()).map(|a| if tg[a] { tf[a | bit] } else { tf[a & !bit] }).collect();

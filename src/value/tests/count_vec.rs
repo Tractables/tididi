@@ -92,6 +92,19 @@ fn set_overwrites_big_with_fast_clears_big_slot() {
     );
 }
 
+#[test]
+fn zero_drops_the_side_table_and_keeps_the_slots() {
+    let eng = Engine::new();
+    let mut cv = CountVec::with_width(&eng, 3);
+    cv.set_i(&eng, 1, Count::Big(BigUint::from(u128::MAX) * BigUint::from(3u32)));
+    cv.set_i(&eng, 2, Count::Fast(7));
+    cv.zero(&eng);
+    assert_eq!(cv.len(), 3);
+    assert!(!cv.has_big());
+    assert!(cv.as_count_ref().all_u64());
+    assert!((0..3).all(|i| matches!(cv.get(i), CountRead::Fast(0))));
+}
+
 /// Mirrors `conjoin::cell::tests::scratch_sink_pushes_charge_the_soft_budget`'s
 /// install/reset hygiene: a tiny soft budget must trip the engine's
 /// `Err(OperationError::OverBudget)` well before an unbudgeted push loop would

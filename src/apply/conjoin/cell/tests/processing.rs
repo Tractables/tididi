@@ -2,6 +2,7 @@ use super::*;
 use crate::diagram::ChildDecoder;
 use crate::Engine;
 use crate::test_helpers::pair;
+use super::super::rows_stream::ScratchSink;
 
 /// `ScratchSink` pushes must charge the apply soft budget (`try_push`), like
 /// the emit walk's `try_push_pair_into`: an uncharged push lets a wide
@@ -43,8 +44,8 @@ fn marginal_shaped_level() -> (TddLevel, usize) {
         pair(2, ValueRef::inline_raw(2).expect("test inline count must fit inline encoding")),
     ]);
     lvl.push_internal_node(&[pair(5, 0), pair(6, 2)]);
-    let right_width = lvl.nodes().len();
-    (lvl, right_width)
+    let g_width = lvl.nodes().len();
+    (lvl, g_width)
 }
 
 /// Equivalence guard, marginal masks: the per-level column table must hand back,
@@ -54,11 +55,11 @@ fn marginal_shaped_level() -> (TddLevel, usize) {
 fn columns_match_per_cell_decode() {
     let eng = Engine::new();
     
-    let (lvl, right_width) = marginal_shaped_level();
+    let (lvl, g_width) = marginal_shaped_level();
     let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal()); // right child marginal
-    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm, false).expect("a marginal side must build");
+    let cols = RightColumns::build(&eng, &lvl, g_width, lm, rm, false).expect("a marginal side must build");
     let mut scratch: Vec<ChildPair> = Vec::new();
-    for j in 0..right_width {
+    for j in 0..g_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
         assert_eq!(cols.get(j), &want[..], "column {j} diverges from per-cell decode");
     }
@@ -71,11 +72,11 @@ fn columns_match_per_cell_decode() {
 #[test]
 fn columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
-    let (lvl, right_width) = marginal_shaped_level();
-    let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false)
+    let (lvl, g_width) = marginal_shaped_level();
+    let cols = RightColumns::build(&eng, &lvl, g_width, ChildDecoder::structural(), ChildDecoder::structural(), false)
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<ChildPair> = Vec::new();
-    for j in 0..right_width {
+    for j in 0..g_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, ChildDecoder::structural(), ChildDecoder::structural());
         let got = cols.get(j);
         assert_eq!(got, want, "column {j} diverges from the per-cell view");
@@ -92,9 +93,9 @@ fn columns_borrow_identity_mask_storage() {
 #[test]
 fn columns_skip_marginal_levels() {
     let eng = Engine::new();
-    let (mut lvl, right_width) = marginal_shaped_level();
-    lvl.set_counts_state(vec![0u128; right_width], None);
-    assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false).is_none());
+    let (mut lvl, g_width) = marginal_shaped_level();
+    lvl.set_counts_state(vec![0u128; g_width], None);
+    assert!(RightColumns::build(&eng, &lvl, g_width, ChildDecoder::structural(), ChildDecoder::structural(), false).is_none());
 }
 
 /// Budget guard: the marginal-mask decode arena charges the apply soft budget
@@ -106,14 +107,14 @@ fn columns_skip_marginal_levels() {
 #[test]
 fn columns_charge_and_release_the_soft_budget() {
     
-    let (lvl, right_width) = marginal_shaped_level();
+    let (lvl, g_width) = marginal_shaped_level();
 
     {
         let eng = Engine::new();
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal(), false)
+        let cols = RightColumns::build(&eng, &lvl, g_width, ChildDecoder::structural(), ChildDecoder::marginal(), false)
             .expect("within budget");
         let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
@@ -131,7 +132,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false).expect("within budget");
+        let cols = RightColumns::build(&eng, &lvl, g_width, ChildDecoder::structural(), ChildDecoder::structural(), false).expect("within budget");
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h0,
@@ -146,7 +147,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(8));
         let h1 = lim.budget_headroom().unwrap();
-        assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal(), false).is_none());
+        assert!(RightColumns::build(&eng, &lvl, g_width, ChildDecoder::structural(), ChildDecoder::marginal(), false).is_none());
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h1,
@@ -164,9 +165,12 @@ fn columns_charge_and_release_the_soft_budget() {
 /// through `try_push` like the rest of the module.
 /// Always resolves children to a live (non-`NO_PRODUCT`) node, so every
 /// `(p1, p2)` combination emits one pair.
+#[derive(Clone, Copy)]
 struct AliveLookup;
 impl crate::apply::conjoin::child_lookup::ChildLookup for AliveLookup {
     type Row = ();
+    type Grid = Self;
+    fn grid(self) -> Self { self }
     fn row(&self, _row: u32) {}
     fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
 }
@@ -178,7 +182,7 @@ fn unmasked_single_right_ctx() -> super::CellCtx<'static> {
         base: 0, stride: 1, live_cols: &[], reach: &[], reach_cols: &[], row_cols: &[], rows: false,
     };
     super::CellCtx {
-        output_grid_base: 0, right_width: 1,
+        output_grid_base: 0, g_width: 1,
         masked: false,
         sides: Sides { left: side, right: side },
         right_cols: None,
@@ -190,7 +194,7 @@ fn scratch_sink_respects_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::diagram::{ChildPair, NodeIdx, TddLevel, EncodedNode};
-    use super::{process_cell, ScratchSink, OperationError};
+    use super::{process_cell, OperationError};
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair f_pairs into the N×1 arm.
@@ -244,7 +248,7 @@ fn scratch_sink_respects_soft_budget() {
 /// The work clock must count the PAIRS a level walked, not the cells.
 ///
 /// `StopAt::WorkUnits` is a public stop axis and the only reproducible one, so what
-/// the clock counts is observable. A level of N×1 cells walks `left_width * n` pairs
+/// the clock counts is observable. A level of N×1 cells walks `f_width * n` pairs
 /// through `n` cells; the clock has to reflect the pairs. Giving each one-sided
 /// cell its own `PollGate` with a stride wider than the cell would leave the
 /// gate never due and the cell charging nothing, so a level could walk
@@ -256,7 +260,7 @@ fn scratch_sink_respects_soft_budget() {
 fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     use crate::apply::conjoin::child_lookup::ChildLookup;
     use crate::diagram::{ChildPair, NodeIdx, TddLevel};
-    use super::{CellAction, CellArgs, ScratchSink, process_cell, run_level_rows};
+    use super::{CellAction, CellArgs, process_cell, run_level_rows};
 
     const K1: usize = 256;
     const PAIRS_PER_ROW: usize = 1024;
@@ -268,13 +272,11 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Collect<'_> {
         const DENSE_SLAB: bool = true;
         #[inline(always)]
-        fn grid_row(&self, i: usize) -> usize { i }
-        #[inline(always)]
         fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
                 (eng, a.ctx),
                 (a.j, a.row_base), a.f_pairs,
-                (a.right_level_t, a.g_pairs_scratch), a.node_idx, (a.left, a.right),
+                (a.g_level, a.g_pairs_scratch), a.node_idx, (a.left, a.right),
                 (&mut ScratchSink { out: &mut *self.out }, a.gate),
             )
         }
@@ -324,14 +326,17 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 /// scratch).
 #[test]
 fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
-    use super::{process_cell, CellCtx, ScratchSink};
+    use super::{process_cell, CellCtx};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
     // A child resolution that depends on both refs, so an emitted pair carries
     // which column entries the walk actually read.
+    #[derive(Clone, Copy)]
     struct RefLookup;
     impl ChildLookup for RefLookup {
         type Row = u32;
+        type Grid = Self;
+        fn grid(self) -> Self { self }
         fn row(&self, row: u32) -> u32 { row }
         fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
             row.wrapping_mul(31).wrapping_add(col) & 0x00ff_ffff
@@ -339,24 +344,24 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     }
 
     let eng = Engine::new();
-    let (lvl, right_width) = marginal_shaped_level();
+    let (lvl, g_width) = marginal_shaped_level();
     let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal());
-    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm, false)
+    let cols = RightColumns::build(&eng, &lvl, g_width, lm, rm, false)
         .expect("a marginal side must build");
 
     // Nothing culled: every column is reachable and every f row live, so the
     // walk visits each cell and the two derivations are compared in full.
-    let reach = vec![u128::MAX; right_width];
+    let reach = vec![u128::MAX; g_width];
     let live_cols = vec![u128::MAX; 8];
     let side = |view| ChildPlan {
         plan: SidePlan { carrier: None, view },
-        base: 0, stride: right_width as u32,
+        base: 0, stride: g_width as u32,
         live_cols: &live_cols, reach: &reach, reach_cols: &[], row_cols: &[], rows: false,
     };
     let f_pairs = [pair(1, 2), pair(4, 5)];
     let walk = |right_cols| {
         let ctx = CellCtx {
-            output_grid_base: 0, right_width,
+            output_grid_base: 0, g_width,
             masked: true,
             sides: Sides { left: side(lm), right: side(rm) },
             right_cols,
@@ -364,7 +369,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         let mut out: Vec<ChildPair> = Vec::new();
         let mut scratch: Vec<ChildPair> = Vec::new();
         let mut node_idx: Vec<u32> = Vec::new();
-        for j in 0..right_width {
+        for j in 0..g_width {
             process_cell(
                 (&eng, &ctx), (j, 0), &f_pairs,
                 (&lvl, &mut scratch), &mut node_idx,
@@ -472,12 +477,15 @@ fn column_runs_charge_the_soft_budget_and_degrade_when_refused() {
 /// test and the per-pair right test skip entries.
 #[test]
 fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
-    use super::{process_cell, CellCtx, ScratchSink};
+    use super::{process_cell, CellCtx};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
+    #[derive(Clone, Copy)]
     struct SomeDead;
     impl ChildLookup for SomeDead {
         type Row = u32;
+        type Grid = Self;
+        fn grid(self) -> Self { self }
         fn row(&self, row: u32) -> u32 { row }
         fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
             if (row + col).is_multiple_of(3) { NO_PRODUCT } else { row * 1000 + col }
@@ -498,7 +506,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
         let cols = RightColumns::build(&eng, &level, 2, views.0, views.1, grouped).expect("unbudgeted");
         assert_eq!(cols.runs(0).is_some(), grouped);
         let ctx = CellCtx {
-            output_grid_base: 0, right_width: 2,
+            output_grid_base: 0, g_width: 2,
             masked: true,
             sides: Sides { left: side, right: side },
             right_cols: Some(&cols),
@@ -526,7 +534,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
 /// dead candidates on either side at the boundary.
 #[test]
 fn push_kept_grows_where_pushing_each_survivor_would() {
-    use super::{push_kept, ScratchSink, PairSink};
+    use super::{push_kept, PairSink};
     let eng = Engine::new();
     let cands: Vec<(u32, u32)> = (0..40u32)
         .map(|k| match k % 5 {
@@ -559,17 +567,5 @@ fn push_kept_grows_where_pushing_each_survivor_would() {
                 assert_eq!(kept.capacity(), each.capacity(), "cap {cap}, filled {filled}, {n} candidates");
             }
         }
-    }
-}
-
-/// [`mark_dead`] writes `NO_PRODUCT` to every cell of the run it is given and
-/// to nothing around it, at every length its small-run stores cover and past.
-#[test]
-fn mark_dead_resets_exactly_its_run() {
-    for n in 0..=20usize {
-        let mut cells = vec![7u32; n + 2];
-        mark_dead(&mut cells[1..=n]);
-        assert_eq!((cells[0], cells[n + 1]), (7, 7), "run of {n}: a neighbour was written");
-        assert!(cells[1..=n].iter().all(|&c| c == NO_PRODUCT), "run of {n}: a cell was left");
     }
 }

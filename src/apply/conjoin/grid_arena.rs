@@ -32,6 +32,7 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
+use std::mem::MaybeUninit;
 use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
 
 /// Bytes per slab cell.
@@ -340,6 +341,109 @@ impl GridArena {
         }
         Ok(())
     }
+}
+
+/// A row loop with a grid row an f row opens a grid of at most this many
+/// cells in one call ahead of its rows, and a larger one a row at a time,
+/// so that the row being written stays in cache.
+pub(super) const OPEN_GRID_MAX_CELLS: usize = 1 << 16;
+
+/// Make `start..end` of `slab` a row of `NO_PRODUCT` cells, extending the
+/// slab over it ([`extend_slab`]) or filling what an earlier grid left.
+///
+/// Out of line: inlined, the reset's code changed the code of the cell walk
+/// that follows it in the streaming and pair-row loops, and with it one
+/// network's instructions by 2% with no change in its work. The general
+/// row loop resets its rows inline, where the call a row cost more.
+#[inline(never)]
+pub(super) fn open_row(slab: &mut Vec<u32>, start: usize, end: usize) {
+    if !extend_slab(slab, start, end) {
+        mark_dead(&mut slab[start..end]);
+    }
+}
+
+/// Reset `cells` to `NO_PRODUCT`.
+///
+/// Most product grids and rows have a few cells, and a `fill` of a length
+/// the compiler cannot see is a call to `memset`. Up to eight cells are
+/// written here as two four-cell stores that overlap, or three single
+/// stores below four cells; a longer run is a `fill`.
+#[inline(always)]
+pub(super) fn mark_dead(cells: &mut [u32]) {
+    const DEAD: [u32; 4] = [NO_PRODUCT; 4];
+    let n = cells.len();
+    match n {
+        0 => {}
+        1..=3 => {
+            cells[0] = NO_PRODUCT;
+            cells[n / 2] = NO_PRODUCT;
+            cells[n - 1] = NO_PRODUCT;
+        }
+        4..=8 => {
+            cells[..4].copy_from_slice(&DEAD);
+            cells[n - 4..].copy_from_slice(&DEAD);
+        }
+        _ => cells.fill(NO_PRODUCT),
+    }
+}
+
+/// Extend `slab` to `end` cells, `NO_PRODUCT`-filled, and say whether all
+/// of `start..end` was new: the cells of a grid claimed past the slab's end
+/// are first written here, a row as the row loop reaches it, into capacity
+/// the claim reserved. A range the slab already reached into holds whatever
+/// an earlier grid left there.
+#[inline(always)]
+pub(super) fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool {
+    let len = slab.len();
+    if len >= end {
+        return false;
+    }
+    debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
+    // A run of up to eight cells is written as `mark_dead` writes one, into
+    // the spare capacity; a longer one is a `resize`.
+    let n = end - len;
+    if n <= 8 {
+        const DEAD: [MaybeUninit<u32>; 4] = [MaybeUninit::new(NO_PRODUCT); 4];
+        let cells = &mut slab.spare_capacity_mut()[..n];
+        if n < 4 {
+            (cells[0], cells[n / 2], cells[n - 1]) = (DEAD[0], DEAD[0], DEAD[0]);
+        } else {
+            cells[..4].copy_from_slice(&DEAD);
+            cells[n - 4..].copy_from_slice(&DEAD);
+        }
+        // Safety: the `n` slots past the length were written above.
+        unsafe { slab.set_len(end) };
+    } else {
+        slab.resize(end, NO_PRODUCT);
+    }
+    len <= start
+}
+
+/// Write `cells` at `start` of `slab`, extending it into the capacity a
+/// grid's claim reserved where they reach past its end, any gap before them
+/// `NO_PRODUCT`.
+#[inline(always)]
+pub(super) fn write_cells<const W: usize>(slab: &mut Vec<u32>, start: usize, cells: [u32; W]) {
+    let end = start + W;
+    let len = slab.len();
+    if len >= end {
+        slab[start..end].copy_from_slice(&cells);
+        return;
+    }
+    debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
+    if len < start {
+        slab.resize(start, NO_PRODUCT);
+    }
+    let have = slab.len() - start;
+    slab[start..].copy_from_slice(&cells[..have]);
+    for (slot, &cell) in slab.spare_capacity_mut()[..W - have]
+        .iter_mut()
+        .zip(&cells[have..])
+    {
+        slot.write(cell);
+    }
+    // Safety: the slots up to `end` were written above.
+    unsafe { slab.set_len(end) };
 }
 
 #[cfg(test)]

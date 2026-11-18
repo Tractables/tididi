@@ -200,6 +200,14 @@ fn ragged_columns_unknown_rows_and_bad_variables_are_refused() {
         }
     );
     assert_eq!(
+        err(&[a], &[&[1, 2], &[0, 1, 3]], RowSelection::All),
+        OperationError::RaggedColumns {
+            column: 1,
+            len: 3,
+            expected: 2
+        }
+    );
+    assert_eq!(
         err(&[a, b], &[&[1, 2], &[0]], RowSelection::All),
         OperationError::RaggedColumns {
             column: 1,

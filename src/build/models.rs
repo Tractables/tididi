@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::diagram::{NodeIdx, Tdd};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
@@ -24,6 +24,7 @@ mod columns;
 mod cubes;
 mod rows;
 mod split;
+mod plan;
 mod emit;
 pub(crate) mod layout;
 pub use columns::RowSelection;
@@ -110,8 +111,7 @@ impl Engine {
             return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
         }
 
-        let mut layout = self.scratch.model_layout.checkout(self);
-        layout.prepare_for(lim, vtree, vars)?;
+        let layout = Layout::new(lim, vtree, vars)?;
         if rows.is_empty() || vars.is_empty() {
             return super::constant_on(self, vtree, !rows.is_empty());
         }
@@ -153,6 +153,13 @@ fn build_sorted(
 ) -> Result<Tdd, OperationError> {
     let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix)?;
     emit::fill(eng, vtree, layout, &mut plans)
+}
+
+/// A charged vector of `len` copies of `fill`.
+fn filled<T: Clone>(lim: &Limits, len: usize, fill: T) -> Result<Vec<T>, OperationError> {
+    let mut out = Vec::new();
+    lim.try_resize(&mut out, len, fill)?;
+    Ok(out)
 }
 
 #[cfg(test)]

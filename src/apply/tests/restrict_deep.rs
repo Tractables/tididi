@@ -46,7 +46,7 @@ fn restrict_over_a_deep_run_of_levels_decided_on_demand() {
             assert!(f.level(f.vtree.children(lazy).0).is_marginal());
             assert_eq!(care.level(f.vtree.children(lazy).1).nodes().len(), 2);
             let before = crate::test_helpers::restrict_paths();
-            let out = Engine::new().restrict_to_care_bounded(f, &care, u64::MAX).unwrap();
+            let out = Engine::new().restrict_to_care(f, &care).unwrap();
             let after = crate::test_helpers::restrict_paths();
             (out, [2, 3].map(|k| after[k] - before[k]))
         })

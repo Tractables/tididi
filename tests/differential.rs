@@ -843,7 +843,7 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         let mut source = w.f.clone();
         source.set_weights(WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic)).unwrap();
         assert_canonical(&source);
-        let mut restricted = eng.restrict_to_care(source.clone(), care.clone()).unwrap().into_tdd();
+        let mut restricted = eng.restrict_to_care(source.clone(), &care).unwrap().into_tdd();
         restricted.minimize().unwrap();
         assert_canonical(&restricted);
         let truth = diagram_truth(&restricted, case.num_vars);

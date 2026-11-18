@@ -112,8 +112,7 @@ impl Engine {
         for column in columns {
             vars.extend_from_slice(column);
         }
-        let mut layout = self.scratch.model_layout.checkout(self);
-        layout.prepare_for(lim, vtree, &vars)?;
+        let layout = Layout::new(lim, vtree, &vars)?;
         let chosen = match rows {
             RowSelection::All => len,
             RowSelection::Listed(listed) => listed.len(),
@@ -127,10 +126,10 @@ impl Engine {
             return Err(OperationError::IndexOverflow);
         }
         let w = words_per_row(vars.len());
-        let (packed, ascending) = pack(lim, &layout, columns, codes, rows, chosen, w)?;
+        let packed = pack(lim, &layout, columns, codes, rows, chosen, w)?;
         lim.discard(vars);
         let mut radix = crate::sort::Radix::default();
-        let sorted = sorted_distinct(lim, &mut radix, layout.position.len(), &layout, packed, w, ascending)?;
+        let sorted = sorted_distinct(lim, &mut radix, layout.position.len(), packed, w)?;
         super::build_sorted(self, vtree, &layout, Cow::Owned(sorted), w, radix)
     }
 }
@@ -142,7 +141,9 @@ fn table_len(columns: &[&[VarId]], codes: &[&[u32]], rows: RowSelection<'_>) -> 
     }
     let len = codes.first().map_or(0, |c| c.len());
     if codes.len() != columns.len() {
-        return Err(OperationError::RaggedColumns { column: codes.len().min(columns.len()), len: 0, expected: len });
+        let column = codes.len().min(columns.len());
+        let held = codes.get(column).map_or(0, |c| c.len());
+        return Err(OperationError::RaggedColumns { column, len: held, expected: len });
     }
     if let Some(column) = codes.iter().position(|c| c.len() != len) {
         return Err(OperationError::RaggedColumns { column, len: codes[column].len(), expected: len });
@@ -171,8 +172,7 @@ enum Placement {
     Spread { bytes: usize, table: Vec<u64> },
 }
 
-/// The chosen rows packed in the layout's order, `w` words each, and
-/// whether one-word rows ascend strictly as packed.
+/// The chosen rows packed in the layout's order, `w` words each.
 fn pack(
     lim: &Limits,
     layout: &Layout,
@@ -181,7 +181,7 @@ fn pack(
     rows: RowSelection<'_>,
     chosen: usize,
     w: usize,
-) -> Result<(Vec<u64>, bool), OperationError> {
+) -> Result<Vec<u64>, OperationError> {
     let mut placements = Vec::new();
     lim.reserve_exact(&mut placements, columns.len())?;
     let mut first = 0;
@@ -194,69 +194,37 @@ fn pack(
     lim.reserve_exact(&mut packed, chosen * w)?;
     let mut gate = lim.gate();
     gate.poll((chosen * columns.len().max(1)) as u64)?;
-    let ascending = if w == 1 {
-        let one = |r: usize| -> u64 {
-            let mut word = 0u64;
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                word |= match placement {
-                    Placement::Shift { shift, mask, .. } => u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        (0..*bytes).fold(0, |acc, k| acc | table[k * 256 + ((code >> (8 * k)) & 0xff) as usize])
-                    }
-                };
-            }
-            word
-        };
-        let mut ascending = true;
-        let mut last: Option<u64> = None;
-        let mut push = |word: u64| {
-            ascending &= last.is_none_or(|last| last < word);
-            last = Some(word);
-            packed.push(word);
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(|r| push(one(r))),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| push(one(r as usize))),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| push(one(r)));
-            }
-        }
-        ascending
-    } else {
-        let mut row = vec![0u64; w];
-        let mut one = |r: usize| {
-            row.iter_mut().for_each(|word| *word = 0);
-            for (placement, column) in placements.iter().zip(codes) {
-                let code = column[r];
-                match placement {
-                    Placement::Shift { word, shift, mask } => row[*word] |= u64::from(code & mask) << shift,
-                    Placement::Spread { bytes, table } => {
-                        for k in 0..*bytes {
-                            let entry = &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
-                            row.iter_mut().zip(entry).for_each(|(word, &bits)| *word |= bits);
-                        }
+    let mut row = vec![0u64; w];
+    let mut one = |r: usize| {
+        row.iter_mut().for_each(|word| *word = 0);
+        for (placement, column) in placements.iter().zip(codes) {
+            let code = column[r];
+            match placement {
+                Placement::Shift { word, shift, mask } => row[*word] |= u64::from(code & mask) << shift,
+                Placement::Spread { bytes, table } => {
+                    for k in 0..*bytes {
+                        let entry = &table[(k * 256 + ((code >> (8 * k)) & 0xff) as usize) * w..][..w];
+                        row.iter_mut().zip(entry).for_each(|(word, &bits)| *word |= bits);
                     }
                 }
             }
-            packed.extend_from_slice(&row);
-        };
-        match rows {
-            RowSelection::All => (0..codes[0].len()).for_each(&mut one),
-            RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
-            RowSelection::Marked(marked) => {
-                marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| one(r));
-            }
         }
-        false
+        packed.extend_from_slice(&row);
     };
+    match rows {
+        RowSelection::All => (0..codes[0].len()).for_each(&mut one),
+        RowSelection::Listed(listed) => listed.iter().for_each(|&r| one(r as usize)),
+        RowSelection::Marked(marked) => {
+            marked.iter().enumerate().filter(|&(_, &m)| m).for_each(|(r, _)| one(r));
+        }
+    }
     gate.flush()?;
     for placement in placements {
         if let Placement::Spread { table, .. } = placement {
             lim.discard(table);
         }
     }
-    Ok((packed, ascending))
+    Ok(packed)
 }
 
 /// The placement of a column whose bits, most significant first, land at

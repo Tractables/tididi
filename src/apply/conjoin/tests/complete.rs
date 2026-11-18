@@ -186,15 +186,15 @@ fn shared_variables_leave_one_side_on_the_grid() {
     let census = complete_census();
     assert!(census[1] > before[1], "no level read only its left side by arithmetic");
     assert!(census[2] > before[2], "no level read only its right side by arithmetic");
-    assert!(census[5] > before[5], "no level of one complete side read one g pair a column");
+    assert!(census[4] > before[4], "no level of one complete side read one g pair a column");
 }
 
 /// `g` over the leftmost quarter of the variables is one node of one pair
 /// on every level outside it, and a level of two complete sides there reads
-/// that pair in every cell, both ways round. The relabelling route, which
-/// takes such a level first wherever it may, is closed here.
+/// that pair as its one column's, both ways round. The relabelling route,
+/// which takes such a level first wherever it may, is closed here.
 #[test]
-fn a_lone_g_pair_is_read_in_every_cell() {
+fn a_lone_g_pair_is_read_as_its_column() {
     let vtree = Arc::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a904);
@@ -208,7 +208,7 @@ fn a_lone_g_pair_is_read_in_every_cell() {
         }
     });
     let census = complete_census();
-    assert!(census[4] > before[4], "no level read a lone g pair in every cell");
+    assert!(census[4] > before[4], "no level read a lone g pair as its column");
 }
 
 /// Conjoin `f` and `g` on a fresh engine, every cell reading its column
@@ -250,8 +250,34 @@ fn one_pair_columns_read_as_their_columns() {
             }
         }
         let census = complete_census();
-        assert!(census[5] > before[5], "{shape}: no level read one g pair a column");
-        assert!(census[6] > before[6], "{shape}: no row of one pair a column was written whole");
+        assert!(census[4] > before[4], "{shape}: no level read one g pair a column");
+        assert!(census[5] > before[5], "{shape}: no row of one pair a column was written whole");
+    }
+}
+
+/// A level whose every column holds one g pair gives its table of those
+/// pairs back to the in-flight byte meter: after the conjunction the meter
+/// reads the same as with every cell reading its column.
+#[test]
+fn one_pair_columns_give_back_their_table() {
+    let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
+    let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
+    let meter = |f: &Tdd, g: &Tdd| {
+        let eng = Engine::new();
+        eng.and(f.clone(), g.clone()).unwrap();
+        eng.limits().meters().in_flight_bytes
+    };
+    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+        let mut rng = Lcg::new(0x5eed_a908);
+        let before = complete_census();
+        for round in 0..4 {
+            let f = function_of(&vtree, &fv, &mut rng);
+            let g = function_of(&vtree, &gv, &mut rng);
+            let lone = meter(&f, &g);
+            let read = column_reads(|| meter(&f, &g));
+            assert_eq!(lone, read, "{shape}, round {round}: the meter after the conjunction moved with the column reads");
+        }
+        assert!(complete_census()[4] > before[4], "{shape}: no level read one g pair a column");
     }
 }
 

@@ -127,13 +127,20 @@ impl Observations {
         }
     }
 
-    /// Extend the changed leaves with every ancestor, once each, and order
-    /// them children first.
-    fn add_ancestors(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<(), OperationError> {
+    /// Append after the changed leaves each one's path up to the first level
+    /// already dirty, the leaf first, marking each level dirty, and return
+    /// where the paths start.
+    ///
+    /// A path stops below a level of an earlier path, whose ancestors are all
+    /// dirty already, so no level has a dirty descendant on an earlier path:
+    /// the paths taken last to first, each from its leaf up, put every level
+    /// after its children.
+    fn add_ancestors(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<usize, OperationError> {
         eng.limits().try_resize(&mut self.pins, tdd.vtree.num_nodes(), PinState::default())?;
         let leaves = self.changed.len();
         for i in 0..leaves {
             let mut current = self.changed[i];
+            eng.limits().try_push(&mut self.changed, current)?;
             while let Some(parent) = tdd.vtree.node(current).parent() {
                 if self.pins[parent.idx()].dirty { break; }
                 eng.limits().try_push(&mut self.changed, parent)?;
@@ -143,8 +150,7 @@ impl Observations {
             }
             gate.poll(1)?;
         }
-        tdd.vtree.sort_bottom_up(&mut self.changed);
-        Ok(())
+        Ok(leaves)
     }
 
     pub(crate) fn invalidate(&mut self) {
@@ -263,15 +269,24 @@ impl<Q: CachedQuery> QueryCache<Q> {
         let incremental = observations.evaluated && observations.retention == Retention::All;
         observations.evaluated = false;
         if incremental {
-            observations.add_ancestors(eng, tdd, gate)?;
+            let paths = observations.add_ancestors(eng, tdd, gate)?;
             let fold = self.query.fold(&observations.pins);
-            for &level in &observations.changed { fold_level::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, level, gate)?; }
+            let levels = &observations.changed[paths..];
+            let mut end = levels.len();
+            while end > 0 {
+                let start = levels[..end].iter().rposition(|&t| tdd.vtree.node(t).is_leaf()).expect("a path starts at its leaf");
+                for &level in &levels[start..end] { fold_level::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, level, gate)?; }
+                end = start;
+            }
         } else {
             let retention = observations.retention;
-            if retention == Retention::Frontier {
-                for col in self.cols.iter_mut() { *col = Q::Col::default(); }
-            }
-            fold_bottom_up::<_, PREPARED>(&self.query.fold(&observations.pins), eng, tdd, &mut self.cols, retention, gate)?;
+            let fold = self.query.fold(&observations.pins);
+            // Overwriting a column keeps its cleared u64 certificate and
+            // releasing it resets it. The walk releases every column it reads
+            // but the output's, released here so that one stored overflow does
+            // not keep the output's parent off the fast path for good.
+            if retention == Retention::Frontier { fold.release(eng, &mut self.cols[tdd.output.vtree.idx()]); }
+            fold_bottom_up::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, retention, gate)?;
         }
         observations.clear_changed();
         observations.evaluated = true;

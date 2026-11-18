@@ -179,9 +179,12 @@ impl LevelFold for BigCounts<'_> {
         Ok(())
     }
 
-    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> BigUint {
+    fn seed_leaf(&self, _eng: &Engine, col: &mut Vec<BigUint>, _leaf: VtreeIdx, var: VarId) -> Result<(), crate::OperationError> {
         let pin = self.pins.get(var.idx()).copied().flatten();
-        BigUint::from(leaf_seed(label, pin, self.convention))
+        for (i, slot) in col.iter_mut().enumerate() {
+            *slot = BigUint::from(leaf_seed(LeafLabel::from_idx(i), pin, self.convention));
+        }
+        Ok(())
     }
 
     /// A marginal level's counts are pin-independent: they were summed out before
@@ -570,7 +573,7 @@ pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
 /// carry non-canonical false nodes that minimizing removes. Soundness is
 /// therefore checked on the raw result and structure on the minimized one.
 pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
-    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    let g = (f.clone()).restrict_to_care(c).unwrap().into_tdd();
     for mask in 0..(1u32 << nvars) {
         let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
         let cv = eval(c, &asn);

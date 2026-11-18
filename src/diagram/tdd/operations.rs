@@ -251,9 +251,9 @@ impl Tdd {
     /// # Errors
     ///
     /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] if the target leaf, a rewritten ancestor,
-    /// or an ancestor's grandchild is marginal, or [`OperationError::OverBudget`]
-    /// if an allocation is refused. The operand is also consumed on error.
+    /// [`OperationError::MarginalLevel`] if any level is marginal, or
+    /// [`OperationError::OverBudget`] if an allocation is refused. The operand
+    /// is also consumed on error.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -291,9 +291,8 @@ impl Tdd {
     ///
     /// Every variable is validated before quantification. Returns
     /// [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] if a target leaf, rewritten ancestor, or
-    /// an ancestor's grandchild is marginal, or [`OperationError::OverBudget`]
-    /// if an allocation is refused.
+    /// [`OperationError::MarginalLevel`] if any level is marginal, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -421,7 +420,11 @@ impl Tdd {
     /// The result `g` is no larger than this function `f` and satisfies
     /// `g ∧ care == f ∧ care`; outside the care set its value is unspecified.
     /// Both operands are on one vtree or on projections of one home, and their
-    /// output levels may differ. Both are consumed on success and error.
+    /// output levels may differ. This function is consumed on success and
+    /// error; `care` is borrowed and left as it is. The walk visits the
+    /// products of this function's pairs with `care`'s, so its cost follows
+    /// `care` as written: a caller holding an unreduced `care` may reduce it
+    /// first.
     ///
     /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
     /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
@@ -445,11 +448,11 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let care = literal(&vtree, 1)?;
-    /// let g = f.clone().restrict_to_care(care.clone())?.into_tdd();
+    /// let g = f.clone().restrict_to_care(&care)?.into_tdd();
     /// assert!(and(g, care.clone())?.equivalent(&and(f, care)?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn restrict_to_care(self, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+    pub fn restrict_to_care(self, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
         self.context_arc().run(|eng| eng.restrict_to_care(self, care))
     }
 
@@ -1189,7 +1192,10 @@ impl Tdd {
     ///
     /// A partial plan need not establish canonical form; [`minimize`](Self::minimize)
     /// runs the full default plan. Marginal levels remain marginal. The plan selects
-    /// pruning, contraction, or a full pass with its content-twin policy.
+    /// pruning, contraction, or a full pass with its content-twin policy. With a
+    /// marginal level, the result of a full pass depends on where content-twin
+    /// scans ran between the conjunctions that built the diagram
+    /// ([`ContentTwinPolicy`](crate::reduce::ContentTwinPolicy)).
     ///
     /// # Errors
     ///
