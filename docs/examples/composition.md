@@ -108,8 +108,9 @@ to the mapped variables still matches the source vtree; see the
 [`embed` contract](crate::Tdd::embed). Embedding copies structure but drops
 attached weights, so supply weights for the complete model when evaluating it.
 
-If independently built components already use disjoint variable identifiers,
-[`graft`](crate::Tdd::graft) can conjoin them while constructing a combined vtree.
+If independently built components use disjoint variable identifiers, or are
+renamed apart, [`graft_over`](crate::Tdd::graft_over) can conjoin them while
+constructing a combined vtree.
 Embedding is useful when you choose that shared destination in advance, including
 when different components need to refer to the same variable.
 

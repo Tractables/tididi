@@ -37,7 +37,7 @@ fn marginal_part() -> Tdd {
 #[test]
 fn graft_rejects_weighted_marginals_without_a_destination() {
     assert!(matches!(
-        Tdd::graft(vec![marginal_part()], &[]),
+        Engine::new().graft(vec![marginal_part()], &[]),
         Err(GraftError::PartWeights {
             part: 0,
             source: TddBuildError::WeightedLevelWithoutStore { .. }
@@ -165,7 +165,7 @@ fn graft_rejects_variables_outside_the_destination_space() {
         }
     );
     assert_eq!(
-        Tdd::graft(vec![], &[VarId(0)]).unwrap_err(),
+        Engine::new().graft(vec![], &[VarId(0)]).unwrap_err(),
         GraftError::VariableOutOfRange {
             variable: VarId(0),
             num_vars: 0
@@ -173,7 +173,7 @@ fn graft_rejects_variables_outside_the_destination_space() {
     );
     // A zero spine variable beside real parts names the space those parts span.
     assert_eq!(
-        Tdd::graft(vec![Tdd::one(&Arc::new(Vtree::balanced(4)))], &[VarId(0)]).unwrap_err(),
+        Engine::new().graft(vec![Tdd::one(&Arc::new(Vtree::balanced(4)))], &[VarId(0)]).unwrap_err(),
         GraftError::VariableOutOfRange {
             variable: VarId(0),
             num_vars: 4
@@ -208,7 +208,7 @@ fn graft_keeps_a_marginal_root_canonical_under_a_new_parent() {
         .marginalize_levels(&mut f, &[tree.root()])
         .unwrap();
     assert_canonical(&f);
-    let result = Tdd::graft(vec![f], &[VarId(3)]).unwrap();
+    let result = Engine::new().graft(vec![f], &[VarId(3)]).unwrap();
     assert_eq!(result.model_count().unwrap(), 6u32.into());
     assert_canonical(&result);
 }

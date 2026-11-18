@@ -4,7 +4,7 @@
 //! that improve a [`search::RotationObjective`], and
 //! [`Tdd::rotate_if`](crate::Tdd::rotate_if) applies rotations one
 //! sequence at a time under the caller's own decision.
-//! [`Tdd::graft`](crate::Tdd::graft) joins diagrams over disjoint variables on
+//! [`Tdd::graft_over`](crate::Tdd::graft_over) joins diagrams over disjoint variables on
 //! a grafted vtree. [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a
 //! larger vtree under a renaming of its variables,
 //! [`Engine::transport`](crate::Engine::transport) moves one onto the

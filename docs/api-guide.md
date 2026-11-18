@@ -139,7 +139,7 @@ For more specialized control:
 | Encode nodes as clauses for a SAT solver | [`Tdd::encode_cnf`](crate::Tdd::encode_cnf), [`ClauseSink`](crate::cnf::ClauseSink) |
 | Find the encoded nodes the solver proves impossible | [`Tdd::probe_nodes`](crate::Tdd::probe_nodes), [`SatOracle`](crate::cnf::SatOracle) |
 | Replace structure with counts or weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels); [worked example](crate::guide::examples::marginalization) |
-| Conjoin diagrams over disjoint variables | [`Tdd::graft`](crate::Tdd::graft), [`Tdd::graft_over`](crate::Tdd::graft_over) |
+| Conjoin diagrams over disjoint variables | [`Tdd::graft_over`](crate::Tdd::graft_over) |
 | Place a circuit on a larger vtree under a renaming | [`Tdd::embed`](crate::Tdd::embed); [reusable components](crate::guide::examples::composition) |
 | Move a circuit onto another vtree over the same variables | [`Tdd::restructure_to`](crate::Tdd::restructure_to) |
 | Expand each variable into a class of new variables | [`Tdd::expand_variables`](crate::Tdd::expand_variables), [`Vtree::expand_leaves`](crate::Vtree::expand_leaves) |

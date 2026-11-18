@@ -85,7 +85,7 @@ impl Vtree {
     /// left-linear spine: `subtrees[0]` is the leftmost piece, each later
     /// subtree and then each `spine_vars` leaf is attached to a new root on
     /// the right, in the order given. A diagram over the result is what
-    /// [`crate::Tdd::graft`] builds from diagrams over the pieces.
+    /// [`crate::Tdd::graft_over`] builds from diagrams over the pieces.
     ///
     /// ```text
     /// graft([S0, S1], [x]):        ∘

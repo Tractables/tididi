@@ -36,10 +36,6 @@ fn engine_graft_refuses_an_expired_batch_and_retries_unbounded() {
         for parts in [vec![part.clone()], vec![]] {
             assert!(matches!(eng.graft(parts, &[VarId(2)]), Err(GraftError::Operation(OperationError::Stopped))));
         }
-        // The ordinary entry still checks out an independent workspace.
-        let ordinary = Tdd::graft(vec![part.clone()], &[VarId(2)]).unwrap();
-        assert_canonical(&ordinary);
-        assert_eq!(count(&ordinary), 2);
     }
     let result = eng.graft(vec![part], &[VarId(2)]).unwrap();
     assert_canonical(&result);
@@ -58,7 +54,7 @@ fn graft_counts_the_product_times_two_per_spine_var() {
     let g = Tdd::clause(&b, [3, -4]).unwrap() & Tdd::clause(&b, [4]).unwrap(); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));
 
-    let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(5), VarId(6)]).unwrap();
+    let fg = Engine::new().graft(vec![f.clone(), g.clone()], &[VarId(5), VarId(6)]).unwrap();
     assert_eq!(fg.vtree.num_vars(), 6);
     assert_canonical(&fg);
     assert_eq!(count(&fg), 3 * 4);
@@ -79,12 +75,12 @@ fn graft_counts_the_product_times_two_per_spine_var() {
 fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
     let a = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&a, [1, -2, 3]).unwrap();
-    let same = Tdd::graft(vec![f.clone()], &[]).unwrap();
+    let same = Engine::new().graft(vec![f.clone()], &[]).unwrap();
     assert!(same.vtree.same_tree(&a));
     assert_canonical(&same);
     assert_eq!(count(&same), count(&f));
 
-    let free = Tdd::graft(vec![], &[VarId(3)]).unwrap();
+    let free = Engine::new().graft(vec![], &[VarId(3)]).unwrap();
     assert_canonical(&free);
     assert_eq!(free.vtree.num_leaves(), 1);
     assert_eq!(count(&free), 2); // unconstrained in x3
@@ -95,14 +91,14 @@ fn graft_rejects_overlap_and_nothing() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
     let f = Tdd::clause(&a, [1]).unwrap();
     assert_eq!(
-        Tdd::graft(vec![f.clone(), f.clone()], &[]).err(),
+        Engine::new().graft(vec![f.clone(), f.clone()], &[]).err(),
         Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))
     );
     assert_eq!(
-        Tdd::graft(vec![f], &[VarId(2)]).err(),
+        Engine::new().graft(vec![f], &[VarId(2)]).err(),
         Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(2))))
     );
-    assert!(matches!(Tdd::graft(vec![], &[]), Err(GraftError::Vtree(VtreeError::Invalid(_)))));
+    assert!(matches!(Engine::new().graft(vec![], &[]), Err(GraftError::Vtree(VtreeError::Invalid(_)))));
 }
 
 #[test]
@@ -185,7 +181,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
             compile_clauses(&vtree, &renamed)
         })
         .collect();
-    let want = (Tdd::graft(global_parts, &[VarId(7)]).expect("disjoint parts")).evaluate(&global).unwrap();
+    let want = (Engine::new().graft(global_parts, &[VarId(7)]).expect("disjoint parts")).evaluate(&global).unwrap();
 
     assert_eq!(rational_value(&grafted), want, "the graft lost or misplaced a part's weights");
     grafted.minimize().unwrap();
@@ -249,7 +245,7 @@ fn a_false_part_makes_the_graft_false() {
     let g = Tdd::clause(&b, [3]).unwrap() & Tdd::clause(&b, [-3]).unwrap();
     assert!(g.is_zero());
 
-    let fg = Tdd::graft(vec![f, g], &[VarId(5)]).unwrap();
+    let fg = Engine::new().graft(vec![f, g], &[VarId(5)]).unwrap();
     assert!(fg.is_zero());
     assert_eq!(count(&fg), 0);
     assert_eq!(fg.vtree.num_vars(), 5);

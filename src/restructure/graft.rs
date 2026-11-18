@@ -16,60 +16,17 @@ use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
 use crate::diagram::{NodeIdx, Tdd, TddBuildError, WeightStore, ONE_LEAF_IDX};
 
 impl Tdd {
-    /// The conjunction of `parts` — diagrams over pairwise-disjoint variable sets,
-    /// each on its own vtree — as one diagram on
-    /// [`Vtree::graft`]`(part vtrees, spine_vars)`.
-    ///
-    /// Built structurally in `O(total nodes)`: no apply runs, and the result
-    /// is canonical when every part is. `spine_vars` are variables no part
-    /// mentions; the result is unconstrained in them, so each doubles the
-    /// model count (the count ranges over every variable the vtree carries).
-    /// The parts' vtrees are copied into the grafted vtree and the parts'
-    /// levels are moved, which is why `parts` is taken by value; a part's
-    /// integer marginal levels move with it. Structural parts may carry weights,
-    /// which this unweighted entry discards. Parts with computed weight columns
-    /// require [`Tdd::graft_over`] and a compatible destination store. Runs on
-    /// the first part's context with no limits armed, or a fresh context when
-    /// there are no parts. Use [`Engine::graft`] inside a bounded batch. The
-    /// result follows [`Vtree::graft`]'s context policy.
-    ///
-    /// # Errors
-    ///
-    /// [`GraftError::Vtree`] if variable sets overlap or there are no parts or
-    /// spine variables; [`GraftError::VariableOutOfRange`] if a variable cannot
-    /// fit in the id space. [`GraftError::PartWeights`] if a marginal part needs
-    /// its weight store. Cleanup errors are reported as [`GraftError::Operation`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::Tdd;
-    /// use tididi::vtree::{VarId, Vtree, VtreeError};
-    /// use tididi::restructure::GraftError;
-    /// let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
-    /// let b = Arc::new(Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap());
-    /// let f = Tdd::clause(&a, [1, 2])?;   // x1 ∨ x2: 3 models
-    /// let g = Tdd::clause(&b, [3, -4])?;  // x3 ∨ ¬x4: 3 models
-    /// let fg = Tdd::graft(vec![f, g], &[VarId(5)]).unwrap();
-    /// assert_eq!(fg.model_count()?, 18u32.into()); // 3 · 3 · 2 (x5 is free)
-    ///
-    /// // A spine variable one of the parts already carries is refused.
-    /// let h = Tdd::clause(&a, [1, 2])?;
-    /// let k = Tdd::clause(&b, [3, -4])?;
-    /// match Tdd::graft(vec![h, k], &[VarId(1)]) {
-    ///     Ok(_) => unreachable!("variable 1 is already in the first part"),
-    ///     Err(e) => assert!(matches!(e, GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))),
-    /// }
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
-        let context = parts.first().map(|part| Arc::clone(part.context())).unwrap_or_default();
-        context.run(|eng| eng.graft(parts, spine_vars))
-    }
-
-    /// [`Tdd::graft`] for parts compiled in their own local variable spaces.
+    /// The conjunction of `parts`, diagrams compiled in their own local
+    /// variable spaces over variable sets that are pairwise disjoint once
+    /// renamed, as one diagram on [`Vtree::graft_over`] of their vtrees.
     ///
     /// Each `(tdd, local_to_global)` is renamed through its map on the way in,
-    /// and the id space is `num_vars`, which must hold every renamed id. The
+    /// and the id space is `num_vars`, which must hold every renamed id.
+    /// `free_vars` are variables no part mentions; the result is unconstrained
+    /// in them, so each doubles the model count. Built structurally in
+    /// `O(total nodes)`: no apply runs, and the result is canonical when every
+    /// part is. The parts' levels are moved, which is why `parts` is taken by
+    /// value; a part's integer marginal levels move with it. The
     /// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
     /// by vtree index can relocate them.
     ///
@@ -80,8 +37,9 @@ impl Tdd {
     /// arithmetic and literal weights under its rename. Structural parts can
     /// be reweighted. Existing destination columns are discarded.
     ///
-    /// Pass `None` for an unweighted graft as in [`Tdd::graft`]. Stored integer
-    /// counts cannot be reweighted, and stored weights cannot be discarded.
+    /// Pass `None` for an unweighted graft, which discards a structural part's
+    /// weights. Stored integer counts cannot be reweighted, and stored weights
+    /// cannot be discarded.
     /// `parts` is consumed; `eng` supplies level storage. Attaching a marginal
     /// root below a new parent runs a prune under the engine's limits. The
     /// assembly charges its level storage to the limits and a refusal comes
@@ -89,9 +47,11 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// As [`Tdd::graft`], plus [`GraftError::MissingVariableMapping`] for an
-    /// incomplete map and [`GraftError::DestinationWeights`] for missing
-    /// destination weights. [`GraftError::PartWeights`] identifies a part whose
+    /// [`GraftError::Vtree`] if variable sets overlap or there are no parts or
+    /// free variables; [`GraftError::VariableOutOfRange`] if a renamed or free
+    /// variable is outside `1..=num_vars`;
+    /// [`GraftError::MissingVariableMapping`] for an incomplete map and
+    /// [`GraftError::DestinationWeights`] for missing destination weights. [`GraftError::PartWeights`] identifies a part whose
     /// stored values cannot use the destination. Inputs are checked before
     /// moving levels or taking the false-result shortcut.
     pub fn graft_over(
@@ -115,16 +75,9 @@ impl Tdd {
 }
 
 impl Engine {
-    /// [`Tdd::graft`] using this batch's scratch and resource limits.
-    ///
-    /// Checks cancellation at entry, including a single part or only free
-    /// variables. Structural assembly does not poll after entry;
-    /// marginal-root cleanup runs under the engine's limits.
-    ///
-    /// # Errors
-    ///
-    /// As [`Tdd::graft`], with refused work reported as [`GraftError::Operation`].
-    pub fn graft(&self, parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
+    /// [`Tdd::graft_over`] of parts already over disjoint variables, with no
+    /// weight store, on [`Vtree::graft`] of their vtrees.
+    pub(crate) fn graft(&self, parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
         let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
         graft_impl(self, parts, |_, v| v, spine_vars, num_vars, None)
             .map(|(tdd, _)| tdd)
@@ -132,7 +85,7 @@ impl Engine {
 }
 
 
-/// The one graft: [`Tdd::graft`] with the identity rename, [`graft_over`](Tdd::graft_over)
+/// The one graft: [`Engine::graft`] with the identity rename, [`graft_over`](Tdd::graft_over)
 /// with the per-part maps.
 fn graft_impl(
     eng: &Engine,
