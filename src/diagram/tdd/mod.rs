@@ -392,7 +392,10 @@ impl Tdd {
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
     ///
     /// This decides unsatisfiability without minimization, reading summed-out
-    /// variables as [`Tdd::is_sat`] does.
+    /// variables as [`Tdd::is_sat`] does. On a diagram with summed-out
+    /// regions the answer is exact for model counts and for positive weights;
+    /// with zero or negative weights a sum can cancel to zero without the
+    /// output being [`ZERO`].
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }

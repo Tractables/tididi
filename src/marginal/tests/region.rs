@@ -296,3 +296,20 @@ fn every_refused_reserve_of_a_region_sum_out_leaves_the_count() {
     }
     assert!(built && refused > 0, "{refused} refusals");
 }
+
+#[test]
+fn summing_out_a_root_of_several_nodes_follows_the_output() {
+    use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    // Three root nodes with 2, 2 and 3 models; the output is the second.
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(2));
+    let root = vtree.root();
+    let mut b = Tdd::builder(&eng, &vtree).unwrap();
+    b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    let second = b.push(&eng, root, &[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
+    assert_eq!(f.model_count().unwrap(), BigUint::from(2u32));
+    f.marginalize_levels(&[root]).unwrap();
+    assert_eq!(f.model_count().unwrap(), BigUint::from(2u32));
+}
