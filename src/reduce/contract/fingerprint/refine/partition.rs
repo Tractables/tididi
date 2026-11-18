@@ -12,6 +12,10 @@ use super::SMALL_PAIRS;
 /// The class of a node known to have no twin.
 pub(super) const ALONE: u32 = u32::MAX;
 
+/// Of four pairs of a late wide parent node, how many must name a node
+/// alone for its pairs to be filtered ([`Partition::pairs_not_alone`]).
+const SAMPLED_ALONE: usize = 2;
+
 /// The partition of the child level's nodes. A node is in the first class
 /// until its moved bit is set; then it has no twin if its alone bit is set,
 /// and is in class `class[t]` if not. The bits stay in cache where the
@@ -161,7 +165,10 @@ impl Partition<'_> {
 
     /// The pairs of `pairs` that name on `side` a node not alone, in order:
     /// `pairs` itself where every one does, else a copy in `live`. A parent
-    /// node splits the partition as these pairs do.
+    /// node splits the partition as these pairs do. Where fewer than
+    /// [`SAMPLED_ALONE`] of four pairs read at even steps name a node
+    /// alone, `pairs` itself: the copy costs more than the split it saves
+    /// when most pairs are kept.
     pub(super) fn pairs_not_alone<'p>(
         &self,
         lim: &Limits,
@@ -187,6 +194,11 @@ impl Partition<'_> {
             let (w, b) = bits::at(node(pair));
             self.bits[w][1] & b != 0
         };
+        let n = pairs.len();
+        let sampled = (0..4).filter(|&i| alone(&pairs[(n * i) >> 2])).count();
+        if sampled < SAMPLED_ALONE {
+            return Ok(pairs);
+        }
         let Some(first) = pairs.iter().position(alone) else {
             return Ok(pairs);
         };
