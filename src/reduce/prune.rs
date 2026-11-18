@@ -1009,6 +1009,14 @@ fn compact_one_level(
         tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty)
     );
     if !(lost || left.dirty || right.dirty) {
+        // A level the walk read whole and the compaction leaves as it is
+        // keeps no count of its own on open levels: marked changed, it is
+        // left the pairs read, for the close to keep.
+        let level = &tdd.levels[t_idx];
+        if let Some(pairs) = kept.filter(|_| !counted && level.implicit().is_none() && level.known_live_pairs(false).is_none()) {
+            tdd.levels.mark_changed(t);
+            tdd.levels[t_idx].leave_live_pairs(pairs);
+        }
         return false;
     }
     let level = &tdd.levels[t_idx];
