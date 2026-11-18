@@ -214,7 +214,12 @@ pub(super) fn seat_on_lifted_home(eng: &Engine, f: &mut Tdd) {
     let Some(home) = f.vtree.lifted_home() else { return };
     // Nothing here is the caller's to refuse: a search keeps its moves
     // before this runs, and the diagram is only valid once seated.
-    let route = Route::find(&Limits::new(), f, &home, |v| v).expect("the lifted home has the moved tree's shape");
+    // Not `Route::find`, which refuses a summed-out level: the lifted home has
+    // the variables and shape of the moved tree, so every level keeps its
+    // meaning.
+    let lim = Limits::new();
+    let shape = Shape::find(&lim, f.vtree(), &home, |v| v).expect("the lifted home has the moved tree's shape");
+    let route = Route::with_levels(&lim, f, shape).expect("unlimited");
     debug_assert!(route.mirrored.is_empty());
     route.seat(eng, f);
 }
