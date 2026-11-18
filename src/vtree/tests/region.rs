@@ -84,6 +84,28 @@ fn a_region_has_no_variable() {
     own.leaf_var(region_at(&own, 3));
 }
 
+/// A region read as a leaf named `Pos` would later be read with `leaf_var`,
+/// which has no variable to give.
+#[test]
+fn the_builder_refuses_pairs_at_a_region() {
+    use crate::diagram::{ChildPair, POS_LEAF_IDX, TddBuildError, TddNodeId};
+    let eng = crate::Engine::new();
+    let home = Home::new(Vtree::balanced(8));
+    let own = Arc::new(with_regions(&home, &[1, 5], &[(&[2, 3, 4], 2), (&[7, 8], 7)]));
+    let regions = [region_at(&own, 2), region_at(&own, 7)];
+    let mut b = crate::Tdd::builder(&eng, &own).unwrap();
+    let mut below = Vec::new();
+    for r in regions {
+        let parent = own.node(r).parent().unwrap();
+        below.push(b.push(&eng, parent, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap());
+    }
+    let root = b.push(&eng, own.root(), &[ChildPair::new(below[0], below[1])]).unwrap();
+    match b.finish(TddNodeId { vtree: own.root(), local: root }) {
+        Err(TddBuildError::StructuralRegion { level }) => assert!(regions.contains(&level)),
+        other => panic!("pairs naming a region were not refused: {other:?}"),
+    }
+}
+
 #[test]
 fn validation_refuses_overlaps_and_a_stray_anchor() {
     let home = Home::new(Vtree::balanced(8));

@@ -5,7 +5,7 @@ use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
 
-use crate::diagram::{LEAF_WIDTH, LeafLabel, Tdd, ZERO};
+use crate::diagram::{LEAF_WIDTH, LeafLabel, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, ZERO};
 use super::signature::tdd_with_output;
 
 /// Check the determinism property: at each vtree level, all *live* nodes
@@ -127,4 +127,37 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// `(uses One, uses Pos or Neg)` at the left (`left`) or right side of level
+/// `t`.
+pub fn labels_at(tdd: &Tdd, t: usize, left: bool) -> (bool, bool) {
+    let level = &tdd.levels[t];
+    let (mut one, mut literal) = (false, false);
+    if level.is_marginal() {
+        return (one, literal);
+    }
+    for j in 0..level.slot_count() {
+        for p in level.pairs_vec(j) {
+            let label = if left { p.left.0 } else { p.right.0 };
+            one |= label == ONE_LEAF_IDX.0;
+            literal |= label == POS_LEAF_IDX.0 || label == NEG_LEAF_IDX.0;
+        }
+    }
+    (one, literal)
+}
+
+/// Panics naming the level if a structural level of `tdd` names a structural
+/// leaf child both as `One` and as `Pos` or `Neg`.
+pub fn assert_no_mixed_leaf_side(tdd: &Tdd, what: &str) {
+    let vtree = Arc::clone(tdd.vtree());
+    for (t, left, right) in vtree.internal_bottomup() {
+        for (child, is_left) in [(left, true), (right, false)] {
+            if !vtree.node(child).is_leaf() || tdd.levels[child.idx()].is_marginal() {
+                continue;
+            }
+            let (one, literal) = labels_at(tdd, t.idx(), is_left);
+            assert!(!(one && literal), "{what}: level {} names leaf {} as One and as Pos/Neg", t.idx(), child.idx());
+        }
+    }
 }
