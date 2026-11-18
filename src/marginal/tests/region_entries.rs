@@ -331,7 +331,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Home, f: &Tdd, g: &Tdd, n: u32
     a.runs("embed_moving", || eng.embed_moving(g.clone(), hv, |v| v).map(|r| r.0).map_err(|r| r.error));
     a.runs("embed_over", || eng.embed_over(g, hv, |v| v, None).map(|r| r.0));
     a.runs("embedding_plan", || eng.embedding_plan(g.vtree(), hv, |v| v).and_then(|plan| eng.embed_with(g, &plan)));
-    a.check("transport", || eng.transport(g, home, |v| v).map_err(|r| r.error), || Ok(f.clone()), same_value);
+    a.check("transport", || eng.transport(g, home, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error), || Ok(f.clone()), same_value);
     a.runs("project_over", || eng.project_over(g, hv, Some, None));
     a.runs("project_to_vars", || g.project_to_vars(Some, n));
     a.runs("restructure_to", || g.clone().restructure_to(&Arc::new(Vtree::random(n, rng.below(1000))), usize::MAX));

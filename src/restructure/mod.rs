@@ -32,7 +32,7 @@ mod leaf_form_tests;
 pub use crate::vtree::graft::Embedding;
 pub use embed::EmbeddingPlan;
 pub use expand::VariableExpansion;
-pub use target::RestructureStats;
+pub use target::TransportStats;
 
 use crate::diagram::TddBuildError;
 use crate::limits::OperationError;
@@ -142,21 +142,63 @@ pub struct EmbedRefused {
 #[derive(Debug)]
 pub struct TransportRefused<'a> {
     /// Why the transport was refused.
-    pub error: EmbedError,
+    pub error: TransportError,
     /// The diagram, unchanged.
     pub tdd: std::borrow::Cow<'a, crate::Tdd>,
 }
 
-/// A rehome [`Engine::rehome`](crate::Engine::rehome) refused, with the
-/// diagram: as it was given, or, when the restructure onto the projection
-/// failed, an owned copy that denotes the same function on a vtree between
-/// its own and the projection.
-#[derive(Debug)]
-pub struct RehomeRefused<'a> {
-    /// Why the rehome was refused.
-    pub error: RestructureError,
-    /// The diagram.
-    pub tdd: std::borrow::Cow<'a, crate::Tdd>,
+/// Why [`Engine::transport`](crate::Engine::transport) refused a move.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransportError {
+    /// An image that is not a leaf of the destination home.
+    Variable {
+        /// The image.
+        variable: VarId,
+    },
+    /// Two variables of the diagram have this image.
+    Overlap {
+        /// The shared image.
+        variable: VarId,
+    },
+    /// A rotation is needed at this node of the diagram's vtree and the bound
+    /// does not allow it.
+    Bound {
+        /// The node of the diagram's vtree.
+        pivot: VtreeIdx,
+    },
+    /// The diagram's weight table does not cover the images, or does not
+    /// weigh each image as the variable it renames.
+    Weights(TddBuildError),
+    /// An operation the move runs was refused: a summed-out level, a refused
+    /// allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Variable { variable } => write!(f, "variable {} is not a leaf of the destination home", variable.0),
+            Self::Overlap { variable } => write!(f, "two variables are renamed to variable {}", variable.0),
+            Self::Bound { pivot } => write!(f, "a rotation at vtree node {} is needed and not allowed by the bound", pivot.idx()),
+            Self::Weights(error) => write!(f, "transported weights: {error}"),
+            Self::Operation(error) => write!(f, "transporting the diagram: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Weights(error) => Some(error),
+            Self::Operation(error) => Some(error),
+            Self::Variable { .. } | Self::Overlap { .. } | Self::Bound { .. } => None,
+        }
+    }
+}
+
+impl From<OperationError> for TransportError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
 }
 
 impl std::fmt::Display for EmbedError {

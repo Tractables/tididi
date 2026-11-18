@@ -33,7 +33,7 @@ const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("forall_vars", "a contracting reduce, no trim"),
     ("or_cube, empty cube [fixed]", "the cube built on the operand's vtree"),
     ("restructure_to [fixed]", "reduce(Full) on entry"),
-    ("rehome with a bound [fixed]", "reduce(Full) on entry"),
+    ("transport with a bound [fixed]", "reduce(Full) on entry"),
     ("rotation_search [fixed]", "reduce(Full) on entry"),
     ("pool_search [fixed]", "reduce(Full) on entry"),
     ("project_to_subtree on a leaf [fixed]", "a one-leaf output"),
@@ -246,7 +246,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     a.run("restrict_to_care", || eng.restrict_to_care(f.clone(), g.clone()).map(crate::apply::RestrictionOutcome::into_tdd));
     a.run("negate", || f.clone().negate());
     a.run("negate_with(Prune)", || eng.negate_with(&f, ReductionPlan::Prune));
-    a.run("transport", || eng.transport(&f, &hm, |v| v).map_err(|r| r.error));
+    a.run("transport", || eng.transport(&f, &hm, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error));
     if let Some(pivot) = pick(&internal_nodes(&f), rng) {
         let kind = if rng.coin() { RotationKind::Left } else { RotationKind::Right };
         a.run("rotate_if", || mutate(&f, &|t| t.rotate_if(&[RotationMove { pivot, kind }], usize::MAX, |_| true).map(drop)));
@@ -266,7 +266,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         let mut t = f.clone();
         t.restructure_to(&target, usize::MAX).map(|_| t)
     });
-    a.run("rehome", || eng.rehome(&f, &hm, usize::MAX).map_err(|r| format!("{r:?}")));
+    a.run("transport with a bound", || eng.transport(&f, &hm, |v| v, usize::MAX).map(|(t, _)| t).map_err(|r| format!("{r:?}")));
     a.run("renumber_top_down", || f.renumber_top_down());
     let model: Vec<Literal> = vars_of(&f).into_iter().map(|v| lit(v, rng.coin())).collect();
     if !constant {
@@ -399,7 +399,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
         let mut t = y_x_any.clone();
         t.restructure_to(&x_yz, usize::MAX).map(|_| t)
     });
-    a.run("rehome with a bound [fixed]", || eng.rehome(&y_x_any, &Home::new(Arc::clone(&x_yz)), usize::MAX).map_err(|r| format!("{r:?}")));
+    a.run("transport with a bound [fixed]", || eng.transport(&y_x_any, &Home::new(Arc::clone(&x_yz)), |v| v, usize::MAX).map(|(t, _)| t).map_err(|r| format!("{r:?}")));
     a.run("rotation_search [fixed]", || {
         let mut t = y_x_any.clone();
         t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(|_| t)

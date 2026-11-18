@@ -3,6 +3,7 @@
 //! a leaf, two `Home` values of one vtree), checked against truth tables,
 //! counts over the home and the canonical diagram of each result.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
@@ -59,7 +60,6 @@ impl Log {
             "restructure_to: refused Variables",
             "and_indexed: refused VtreeMismatch",
             "and_indexed: PANIC index out of bounds: the len is 0",
-            "rehome refused under a bound",
             "and_marginalizing some levels",
         ];
         // Levels and targets name nodes of a root vtree only; on a projection
@@ -590,13 +590,14 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     }, &tf);
 
     // Moves.
-    log.any(n, "transport onto its home", || eng.transport(f, home, |v| v).map_err(|r| r.error), &tf);
+    log.any(n, "transport onto its home", || eng.transport(f, home, |v| v, 0).map(|r| r.0).map_err(|r| r.error), &tf);
     let other = Home::new(Vtree::random(n, rng.below(1000)));
-    log.any(n, "rehome", || eng.rehome(f, &other, usize::MAX).map_err(|r| r.error), &tf);
-    log.any(n, "rehome and back", || eng.rehome(eng.rehome(f, &other, usize::MAX).map_err(|r| r.error)?, home, usize::MAX).map_err(|r| r.error), &tf);
+    let rotating = |g: Cow<'_, Tdd>, to: &Home| eng.transport(g, to, |v| v, usize::MAX).map(|r| r.0).map_err(|r| r.error);
+    log.any(n, "transport with rotations", || rotating(Cow::Borrowed(f), &other), &tf);
+    log.any(n, "transport with rotations and back", || rotating(Cow::Owned(rotating(Cow::Borrowed(f), &other)?), home), &tf);
     log.same(
-        "rehome refused hands the diagram back",
-        || match eng.rehome(f, &other, 0) {
+        "transport refused hands the diagram back",
+        || match eng.transport(f, &other, |v| v, 0) {
             Ok(_) => Ok::<_, ()>(true),
             Err(r) => Ok(Arc::ptr_eq(r.tdd.vtree(), f.vtree()) && table(&r.tdd, n) == tf && r.tdd.pair_count() == f.pair_count()),
         },
@@ -604,21 +605,21 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     );
     for bound in [1, 4, 8, 12, 16, 24, 32, 48] {
         log.same(
-            "rehome refused under a bound hands back the function, on its home, with its count",
-            || match eng.rehome(f.clone(), &other, bound) {
-                Ok(_) => Ok::<_, ()>((true, true, true)),
-                Err(r) => Ok((table(&r.tdd, n) == tf, r.tdd.model_count() == f.model_count(), eng.and(&*r.tdd, f).is_ok())),
+            "transport refused under a bound hands back the diagram as it was",
+            || match eng.transport(f.clone(), &other, |v| v, bound) {
+                Ok(_) => Ok::<_, ()>(true),
+                Err(r) => Ok(Arc::ptr_eq(r.tdd.vtree(), f.vtree()) && table(&r.tdd, n) == tf && r.tdd.pair_count() == f.pair_count()),
             },
-            || Ok((true, true, true)),
+            || Ok(true),
         );
     }
     let before = (**home.vtree()).clone();
     log.any(n, "rotation_search", || mutate(&|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)), &tf);
     assert!(home.vtree().same_tree(&before), "a search changed the home: {}", log.case);
-    log.any(n, "rotation_search, rehome", || {
+    log.any(n, "rotation_search, transport back", || {
         let mut t = f.clone();
         t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map_err(|e| format!("{e:?}"))?;
-        eng.rehome(t, home, usize::MAX).map_err(|r| format!("{:?}", r.error))
+        eng.transport(t, home, |v| v, usize::MAX).map(|r| r.0).map_err(|r| format!("{:?}", r.error))
     }, &tf);
     let target = Arc::new(Vtree::random(n, rng.below(1000)));
     log.any(n, "restructure_to", || {
@@ -676,12 +677,13 @@ fn transports_in_every_form() {
                 tf[source]
             })
             .collect();
-        log.any(n, "transport", || eng.transport(&f, &home, map).map_err(|r| r.error), &moved);
-        log.any(n, "transport owned", || eng.transport(f.clone(), &home, map).map_err(|r| r.error), &moved);
+        let moving = |g, to: &Home| eng.transport(g, to, map, 0).map(|r| r.0).map_err(|r| format!("{:?}", r.error));
+        log.any(n, "transport", || moving(Cow::Borrowed(&f), &home), &moved);
+        log.any(n, "transport owned", || moving(Cow::Owned(f.clone()), &home), &moved);
         log.any(n, "minimize, transport", || {
             let mut g = f.clone();
             g.minimize().map_err(|e| format!("{e:?}"))?;
-            let g = eng.transport(g, &home, map).map_err(|r| format!("{:?}", r.error))?;
+            let g = moving(Cow::Owned(g), &home)?;
             if g.vtree().num_nodes() != 0 {
                 tididi::test_helpers::check::check_canonicity(&g, 3)?;
             }
@@ -690,7 +692,7 @@ fn transports_in_every_form() {
         log.any(n, "counts, transport", || {
             let mut g = f.clone();
             g.attach_level_counts().map_err(|e| format!("{e:?}"))?;
-            let g = eng.transport(g, &home, map).map_err(|r| format!("{:?}", r.error))?;
+            let g = moving(Cow::Owned(g), &home)?;
             let mut counter = g.counter().map_err(|e| format!("{e:?}"))?;
             if counter.model_count() != g.model_count() {
                 return Err("the counter and the kept counts differ".to_string());
@@ -698,17 +700,23 @@ fn transports_in_every_form() {
             drop(counter);
             Ok(g)
         }, &moved);
+        // A renaming carries the table only where it weighs each image as
+        // the variable it renames.
         let (ws, literal_weights) = weights(n, &mut rng);
         let (weighted, _) = tididi::test_helpers::weighted_sum(&moved, &literal_weights);
+        let kept = f.vtree().leaf_bottomup().all(|(_, v)| literal_weights[v.idx()] == literal_weights[map(v).idx()]);
         log.same(
             "weighted, transport",
             || {
                 let mut w = f.clone();
                 w.set_weights(ws.clone()).map_err(|e| format!("{e:?}"))?;
-                let w = eng.transport(w, &home, map).map_err(|r| format!("{:?}", r.error))?;
+                let w = moving(Cow::Owned(w), &home)?;
                 w.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
             },
-            || Ok(Some(weighted.clone())),
+            || match kept {
+                true => Ok(Some(weighted.clone())),
+                false => Err("Weights(IncompatibleWeights)".to_string()),
+            },
         );
         // Onto a wider home, shifted.
         let wide = Home::new(Vtree::balanced(2 * n));
@@ -716,14 +724,14 @@ fn transports_in_every_form() {
         HOME.set(None);
         log.same(
             "transport onto a wider home",
-            || eng.transport(&f, &wide, |v| VarId(v.0 + shift)).map(|g| (g.model_count().unwrap(), g.vtree().num_leaves())).map_err(|r| r.error),
+            || eng.transport(&f, &wide, |v| VarId(v.0 + shift), 0).map(|(g, _)| (g.model_count().unwrap(), g.vtree().num_leaves())).map_err(|r| r.error),
             || Ok((popcount(&tf) << n as usize, f.vtree().num_leaves())),
         );
         // A map that is not one to one, and one that leaves the home.
         if f.vtree().num_leaves() >= 2 {
             log.same(
                 "transport refuses a shared image",
-                || Ok::<_, ()>(eng.transport(&f, &home, |_| VarId(1)).is_err()),
+                || Ok::<_, ()>(eng.transport(&f, &home, |_| VarId(1), 0).is_err()),
                 || Ok(true),
             );
         }
@@ -731,7 +739,7 @@ fn transports_in_every_form() {
             for out in [0, n + 1, u32::MAX] {
                 log.same(
                     "transport refuses an image outside the home",
-                    || Ok::<_, ()>(eng.transport(&f, &home, |_| VarId(out)).is_err()),
+                    || Ok::<_, ()>(eng.transport(&f, &home, |_| VarId(out), 0).is_err()),
                     || Ok(true),
                 );
             }
@@ -799,11 +807,11 @@ fn pools_in_every_form() {
             );
             log.tdd(
                 n,
-                "and with a diagram outside a search, rehomed",
-                || eng.and(&members[0].0, eng.rehome(&outsider, &new_home, usize::MAX).map_err(|r| match r.error {
-                    tididi::restructure::RestructureError::Operation(e) => e,
+                "and with a diagram outside a search, transported",
+                || eng.and(&members[0].0, eng.transport(&outsider, &new_home, |v| v, usize::MAX).map_err(|r| match r.error {
+                    tididi::restructure::TransportError::Operation(e) => e,
                     _ => OperationError::VtreeMismatch,
-                })?),
+                })?.0),
                 &zip(&tables[0], &t_out, |x, y| x && y),
             );
         }

@@ -423,7 +423,13 @@ impl Vtree {
         }
         ranks.sort_unstable();
         ranks.dedup();
-        Ok(Self::seated(home, ranks.len(), false, || Self::project_ranks(home, ranks, Vec::new())))
+        Ok(Self::projection_on_ranks(home, ranks))
+    }
+
+    /// [`Vtree::projection`] on the variables of `ranks`, home ranks
+    /// ascending without repeats, at least one.
+    pub(crate) fn projection_on_ranks(home: &Home, ranks: Vec<u32>) -> Arc<Vtree> {
+        Self::seated(home, ranks.len(), false, || Self::project_ranks(home, ranks, Vec::new()))
     }
 
     /// The projection of `home` on no leaf, the vtree of a constant: no node,
@@ -1070,36 +1076,38 @@ impl Vtree {
         self.home.as_deref().map_or(0, |link| link.home.vtree().num_vars())
     }
 
-    /// Called by every kept change of shape that does not end on a lifted
-    /// home, as a rotation search's does: a projection becomes a root with a
-    /// dense leaf table. Inline, because a restructure commits rotations by
-    /// the hundred thousand on vtrees that are not projections.
-    #[inline]
-    pub(crate) fn reshaped(&mut self) {
-        if self.home.is_some() {
-            self.leave_home();
-        }
+    /// A projection's childless nodes in its home's order, a home's root's
+    /// leaves in its own; nothing on another root.
+    pub(crate) fn projected_leaves(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
+        let projected = self.home.as_deref().into_iter().flat_map(|link| link.in_order.iter().step_by(2).copied());
+        projected.chain(self.index.0.as_deref().into_iter().flat_map(|index| index.leaf_at.iter().copied()))
     }
 
-    /// Undo [`reshaped`](Self::reshaped) after moves that kept node indices:
-    /// take back the link of `before`, this tree before the moves, so that
-    /// [`lifted_home`](Self::lifted_home) can read where each node stood.
-    pub(crate) fn rejoin_home(&mut self, before: &Vtree) {
-        self.home = before.home.clone();
-        self.var_to_leaf = Vec::new();
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn leave_home(&mut self) {
-        let Some(link) = self.home.take() else { return };
-        assert!(link.regions.is_empty(), "a vtree with a region changed shape");
-        self.var_to_leaf = vec![VtreeIdx(0); link.home.vtree().num_vars() as usize];
-        for (i, node) in self.nodes.iter().enumerate() {
+    /// This tree as a root over the variables `1..=k`, with the same node
+    /// indices and leaf `t` named `name(t)`: a private tree whose leaf table
+    /// is sized by `k`, not by a home's variables.
+    pub(crate) fn local_twin(&self, name: impl Fn(VtreeIdx) -> VarId, k: u32) -> Vtree {
+        let mut nodes = self.nodes.clone();
+        let mut var_to_leaf = vec![VtreeIdx(0); k as usize];
+        for (i, node) in nodes.iter_mut().enumerate() {
             if let VtreeNode::Leaf { var, .. } = node {
-                self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
+                debug_assert!(*var != super::REGION_VAR, "a private tree has no region");
+                *var = name(VtreeIdx(i as u32));
+                var_to_leaf[var.idx()] = VtreeIdx(i as u32);
             }
         }
+        let twin = Vtree {
+            context: Arc::clone(&self.context),
+            nodes,
+            root: self.root,
+            var_to_leaf,
+            leaf_count: self.leaf_count,
+            topo: self.topo.clone(),
+            home: None,
+            index: RootIndex::default(),
+        };
+        debug_assert_eq!(twin.validate(), Ok(()));
+        twin
     }
 
     /// The regions of `link` are this tree's regions, by position, each

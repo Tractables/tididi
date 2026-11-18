@@ -75,7 +75,7 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
             let literal = crate::literal(g.vtree(), i32::try_from(x.0).unwrap()).unwrap();
             assert!(matches!(g.clone().substitute(&[(x, &literal)]), Err(OperationError::MarginalLevel(_))), "{what}: substitute");
         }
-        let moved = eng.transport(&g, &home, |v| v).map_err(|r| r.error).unwrap();
+        let moved = eng.transport(&g, &home, |v| v, 0).map_err(|r| r.error).unwrap().0;
         check_form(&moved, &what);
         assert!(same(&moved, &f), "{what}: transport");
         if g.weights().is_none() {
@@ -89,7 +89,7 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
                 })
                 .collect();
             let other = Home::new(Vtree::from_text(&mirrored.join("\n")).unwrap());
-            let renamed = eng.transport(&g, &other, |v| VarId(n + 1 - v.0)).map_err(|r| r.error).unwrap();
+            let renamed = eng.transport(&g, &other, |v| VarId(n + 1 - v.0), 0).map_err(|r| r.error).unwrap().0;
             check_form(&renamed, &what);
             assert_eq!(renamed.model_count().unwrap(), g.model_count().unwrap(), "{what}: transport renamed");
             assert_eq!(renamed.vtree().regions().count(), g.vtree().regions().count(), "{what}");

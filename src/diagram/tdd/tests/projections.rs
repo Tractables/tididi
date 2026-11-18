@@ -423,7 +423,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || Ok(f.clone()),
         same_tdd,
     );
-    a.check("transport", || eng.transport(g, &hm, |v| v).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
+    a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
     a.check(
         "transport_projection",
         || eng.transport_projection(g.vtree(), &hm, |v| v).map(|v| v.num_leaves()),
@@ -603,8 +603,8 @@ fn the_vtree_check_agrees_with_transport() {
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
         let target_home = Home::new(Arc::clone(target));
         let checked = eng.transport_projection(source.vtree(), &target_home, map);
-        match eng.transport(&source, &target_home, map) {
-            Ok(moved) => {
+        match eng.transport(&source, &target_home, map, 0) {
+            Ok((moved, _)) => {
                 accepted += 1;
                 let leaves = |v: &Vtree| v.leaf_bottomup().map(|(_, var)| var).collect::<Vec<_>>();
                 assert_eq!(leaves(moved.vtree()), leaves(&checked.unwrap()), "seed {seed}");
