@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use tididi::{and, literal, Engine, Tdd, Vtree};
-use tididi::diagram::{ChildPair, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
+use tididi::diagram::{ChildPair, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, TddNodeId};
 use tididi::test_helpers::assert_canonical;
 
 #[test]
@@ -54,4 +54,21 @@ fn independent_subtree_splice_matches_conjunction() {
     assert_eq!(left.model_count().unwrap(), 4u32.into());
     assert_canonical(&left);
     assert_canonical(&expected);
+}
+
+#[test]
+fn summing_out_a_root_of_several_nodes_follows_the_output() {
+    // Three root nodes with 2, 2 and 3 models, the output the second: the
+    // first two values merge when the root is summed out.
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(2));
+    let root = vtree.root();
+    let mut b = Tdd::builder(&eng, &vtree).unwrap();
+    b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    let second = b.push(&eng, root, &[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
+    assert_eq!(f.model_count().unwrap(), 2u32.into());
+    f.marginalize_levels(&[root]).unwrap();
+    assert_eq!(f.model_count().unwrap(), 2u32.into());
 }

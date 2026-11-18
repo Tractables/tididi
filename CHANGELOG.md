@@ -28,6 +28,13 @@ Breaking changes:
   a structural diagram, and a diagram with a marginal level still needs
   every node's children in their order.
 
+Fixed:
+
+- `Tdd::marginalize_levels` and `Engine::marginalize_levels` on the root
+  level of a diagram with several root nodes, as `TddBuilder` can build,
+  could report another node's count when two root nodes had equal counts;
+  the output now follows the merge.
+
 ## 0.2.0
 
 Breaking changes:
