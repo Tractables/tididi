@@ -54,11 +54,13 @@ pub(crate) fn inline_small_marginal_refs_in(
     // The tests stay in the loop: most levels fail them, and a call per
     // level cost more than the pass's work.
     for &t in at {
+        if levels[t.idx()].is_marginal() {
+            continue;
+        }
         let (left, right) = vtree.children(t);
         let tag_left = levels[left.idx()].is_marginal();
         let tag_right = levels[right.idx()].is_marginal();
         if (tag_left || tag_right)
-            && !levels[t.idx()].is_marginal()
             && inline_small_marginal_refs_at_level(lim, levels, was_marginal, t, (left, right), (tag_left, tag_right))?
         {
             rewrote(t);
