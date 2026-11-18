@@ -343,7 +343,9 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
+    let unextended = Arc::as_ptr(&f.vtree);
     let mut f = extend_to(eng, f, lits)?;
+    let extended = !std::ptr::eq(unextended, Arc::as_ptr(&f.vtree));
     let vtree = Arc::clone(&f.vtree);
     let cube = match normalize(lim, &vtree, lits)? {
         // A variable in both polarities: the cube is false.
@@ -365,7 +367,10 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
         return Ok(out);
     }
     let root = vtree.root();
-    if f.output.vtree != root || vtree.node(root).is_leaf() {
+    // The overlay panics or leaves twins on a diagram `extend_to` has just
+    // placed on a wider projection (the projection tests find both), so such
+    // a diagram takes the disjunction.
+    if extended || f.output.vtree != root || vtree.node(root).is_leaf() {
         let g = eng.cube(&vtree, literals())?;
         return eng.or(f, g);
     }

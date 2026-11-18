@@ -191,8 +191,8 @@ fn internal_with(kind: RotationKind, promoted: VtreeIdx, other: VtreeIdx, parent
 ///
 /// Forced inline with [`PendingTopo::revert`]: a pool search makes and
 /// undoes one per probe, and once the callers outside the probe loop
-/// outnumber it, LLVM stops inlining both there, which costs more than
-/// their own instructions.
+/// outnumber it, the compiler stops inlining both there, which costs more
+/// than their own instructions.
 #[inline(always)]
 pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<PendingTopo> {
     let VtreeNode::Internal { left, right, parent: v_parent } = vtree.nodes[v.idx()] else {
@@ -244,7 +244,8 @@ impl Vtree {
 /// left as it was before the rotation, which is why this is reachable only
 /// through [`PendingTopo::revert`] (and the round-trip oracle in the rotation
 /// tests).
-// Forced with `PendingTopo::revert`, which LLVM otherwise calls out of line.
+// Forced with `PendingTopo::revert`, which the compiler otherwise calls out
+// of line.
 #[inline(always)]
 fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind) {
     let RotationInfo { v_idx, w_idx, a_idx, b_idx, c_idx } = *info;
