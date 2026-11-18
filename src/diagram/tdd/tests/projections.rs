@@ -607,7 +607,9 @@ fn the_vtree_check_agrees_with_transport() {
             Ok((moved, _)) => {
                 accepted += 1;
                 let leaves = |v: &Vtree| v.leaf_bottomup().map(|(_, var)| var).collect::<Vec<_>>();
-                assert_eq!(leaves(moved.vtree()), leaves(&checked.unwrap()), "seed {seed}");
+                if !(source.is_zero() || source.is_one_leaf_one()) {
+                    assert_eq!(leaves(moved.vtree()), leaves(&checked.unwrap()), "seed {seed}");
+                }
             }
             Err(refused) => assert_eq!(checked.unwrap_err(), refused.error, "seed {seed}"),
         }

@@ -25,7 +25,7 @@ use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
-use super::primitives::{LEAF_WIDTH, TddNodeId, TRUE, ZERO};
+use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 
 /// A Boolean function represented by a Tree Decision Diagram.
 ///
@@ -438,6 +438,11 @@ impl Tdd {
     /// too; [`trim`](Self::trim) turns one into this constant.
     pub fn is_one(&self) -> bool {
         self.output.local == TRUE
+    }
+
+    /// True on a vtree that is one leaf, the output naming that leaf `One`.
+    pub(crate) fn is_one_leaf_one(&self) -> bool {
+        self.output.local == ONE_LEAF_IDX && self.vtree.num_nodes() == 1
     }
 
     /// True if any level of the diagram is marginal, in which case a pair list

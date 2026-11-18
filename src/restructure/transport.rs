@@ -48,8 +48,8 @@ impl Engine {
     /// [`TransportStats`] counts the rotations and mirrors of the tree, so it
     /// says which path ran, not which levels were rewritten. A weight table
     /// moves with the diagram, read by the renamed variables' ids. A constant
-    /// on no leaf becomes the same constant on [`Vtree::empty_projection`] of
-    /// `home`.
+    /// on no leaf, false, and true named `One` at a one-leaf root become that
+    /// constant on [`Vtree::empty_projection`] of `home`.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -115,7 +115,12 @@ impl Engine {
             Ok(ranked) => ranked,
             Err(error) => return Err(TransportRefused { error, tdd: f }),
         };
-        let route = match Shape::along(lim, f.vtree(), &ranked).and_then(|shape| Route::with_levels(lim, &f, shape)) {
+        let constant = (f.is_zero() || f.is_one_leaf_one()) && !f.vtree().has_regions();
+        let shape = Shape::along(lim, f.vtree(), &ranked).map(|shape| match constant {
+            true => Shape { into: Vtree::empty_projection(home), to: Vec::new(), mirrored: Vec::new() },
+            false => shape,
+        });
+        let route = match shape.and_then(|shape| Route::with_levels(lim, &f, shape)) {
             Ok(route) => route,
             Err(TransportError::Bound { .. }) if bound > 0 && !f.vtree().has_regions() => return self.transport_rotating(f, home, ranked, bound),
             Err(error) => return Err(TransportRefused { error, tdd: f }),
@@ -244,6 +249,9 @@ impl Engine {
         })?;
         // The twin is `into` with its leaves renamed: the node indices agree.
         copy.vtree = into;
+        // The reduction ran on a bare root, which names a leaf the copy does
+        // not depend on `One` instead of dropping it.
+        crate::reduce::trim(self, copy, home, None, &[])?;
         Ok(stats)
     }
 }
@@ -454,7 +462,7 @@ impl Route {
     fn seat(self, eng: &Engine, f: &mut Tdd) {
         let Self { into, to, mirrored, mut levels, mut columns } = self;
         if into.num_nodes() == 0 {
-            let (weights, one) = (f.weights.take(), f.is_one());
+            let (weights, one) = (f.weights.take(), !f.is_zero());
             let old = std::mem::replace(f, constant_without_leaf(&into, one));
             return_levels(eng, old.levels.into_vec());
             f.weights = weights;

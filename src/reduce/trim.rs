@@ -73,8 +73,7 @@ pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> 
     if vtree.num_nodes() == 0 {
         return Ok(());
     }
-    let one_leaf = f.output.local == ONE_LEAF_IDX && vtree.node(vtree.root()).is_leaf();
-    if dropped.is_empty() && !f.is_zero() && !one_leaf {
+    if dropped.is_empty() && !f.is_zero() && !f.is_one_leaf_one() {
         return Ok(());
     }
     settle_cold(eng, f, dropped)
