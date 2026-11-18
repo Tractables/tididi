@@ -930,20 +930,24 @@ impl Vtree {
     /// The anchor rank and extent of the region that folding own node `t`
     /// of this projection makes: the ranks of the variable leaves under `t`
     /// and the extents of the regions under it, the anchor at the leftmost
-    /// childless node under `t`.
+    /// childless node under `t`. On a home's root, `t`'s leaves.
     pub(crate) fn folded_region(&self, t: VtreeIdx) -> (u32, Extent) {
-        let link = self.home.as_deref().expect("a projection");
+        let mut leftmost = t;
+        while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
+            leftmost = left;
+        }
+        let leaves = self.subtree(t).filter(|&u| self.node(u).is_leaf());
+        let Some(link) = self.home.as_deref() else {
+            let slot = &self.index.0.as_deref().expect("a projection or a home's root").slot;
+            return (slot[leftmost.idx()], coalesce(leaves.map(|u| (slot[u.idx()], slot[u.idx()] + 1)).collect()));
+        };
         let position = |u: VtreeIdx| link.ranks.binary_search(&link.home.index().slot[link.node_of[u.idx()].idx()]).expect("a position");
         let mut intervals = Vec::new();
-        for u in self.subtree(t).filter(|&u| self.node(u).is_leaf()) {
+        for u in leaves {
             match link.regions.binary_search_by_key(&(position(u) as u32), |region| region.at) {
                 Ok(j) => intervals.extend_from_slice(&link.regions[j].extent),
                 Err(_) => intervals.push((link.ranks[position(u)], link.ranks[position(u)] + 1)),
             }
-        }
-        let mut leftmost = t;
-        while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
-            leftmost = left;
         }
         (link.ranks[position(leftmost)], coalesce(intervals))
     }

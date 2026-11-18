@@ -167,11 +167,11 @@ pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result
         false => evaluate_levels(eng, f, &levels, &vtree),
     };
     let restored = restore_marginal_invariants(eng, f, maximal, &vtree);
-    if let Some(home) = vtree.home() {
+    if let Some(home) = Vtree::home_of(&vtree) {
         levels.clear();
         levels.extend(maximal.iter().copied().filter(|&t| f.levels[t.idx()].is_marginal()));
         if !levels.is_empty() {
-            trim(eng, f, home, None, &levels)?;
+            trim(eng, f, &home, None, &levels)?;
             folded?;
             restored?;
             // Nodes above a new region can now be equal; only a full pass
