@@ -239,13 +239,40 @@ fn spine_walk(
 /// vtree. Its levels move to their images, no node or pair copied.
 fn extend_to(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationError> {
     let Some(home) = f.vtree.home() else { return Ok(f) };
+    if f.vtree.has_regions() {
+        return extend_with_regions(eng, f, lits);
+    }
     if !lits.iter().any(|lit| f.vtree.home_has(lit.var)) {
         return Ok(f);
     }
     let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
     let added = lits.iter().map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
     let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
-    match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build, false) {
+    place_on(eng, f, &into)
+}
+
+/// [`extend_to`] of `f` with regions: refused with
+/// [`OperationError::MarginalLevel`] where a literal's variable is inside
+/// an extent.
+#[cold]
+fn extend_with_regions(eng: &Engine, f: Tdd, lits: &[Literal]) -> Result<Tdd, OperationError> {
+    let home = f.vtree.home().expect("a vtree with a region is a projection");
+    let added = lits.iter().map(|lit| lit.var).filter(|&var| home.rank(var).is_some());
+    let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
+    match Vtree::leaf_sets(&f.vtree, &lits)? {
+        crate::vtree::LeafSets::Union(into) => place_on(eng, f, &into),
+        _ => Ok(f),
+    }
+}
+
+/// `f` placed on `into`, a projection of its home holding its leaves.
+fn place_on(eng: &Engine, f: Tdd, into: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+    if f.vtree.num_nodes() == 0 {
+        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        constant.weights = f.weights;
+        return Ok(constant);
+    }
+    match crate::restructure::embed::place_moving(eng, f, into, |var| var, crate::restructure::embed::Free::Build, false) {
         Ok((extended, plan)) => {
             plan.recycle(eng);
             Ok(extended)

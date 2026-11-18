@@ -622,6 +622,24 @@ impl Vtree {
         free
     }
 
+    /// Whether this vtree has a region.
+    #[inline]
+    pub(crate) fn has_regions(&self) -> bool {
+        self.num_leaf_nodes() != self.num_leaves() as usize
+    }
+
+    /// The number of childless nodes, variable leaves and regions; the
+    /// nodes are stored leaves first, so these are its first nodes.
+    #[inline]
+    pub(crate) fn num_leaf_nodes(&self) -> usize {
+        self.num_nodes().div_ceil(2)
+    }
+
+    /// The regions of this vtree, by position.
+    pub(crate) fn regions(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
+        self.home.as_deref().into_iter().flat_map(|link| link.regions.iter().map(|region| link.region_node(region)))
+    }
+
     /// The anchor rank and extent of region `t` of this projection.
     pub(crate) fn region_at(&self, t: VtreeIdx) -> (u32, Extent) {
         let link = self.home.as_deref().expect("a projection");

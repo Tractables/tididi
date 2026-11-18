@@ -198,4 +198,4 @@ pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, targets: &[VtreeIdx]) -> Re
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

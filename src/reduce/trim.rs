@@ -240,13 +240,13 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
     lim.check_stop()?;
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
-        if f.output.local != ONE_LEAF_IDX {
+        if f.output.local != ONE_LEAF_IDX || vtree.node(root).is_region() {
             return Ok(false);
         }
         replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
         return Ok(true);
     }
-    let summed = !collapse.is_empty();
+    let summed = f.has_marginal_level();
     let shape = Shape::read(eng, f, summed)?;
     if !shape.dropped {
         return Ok(false);
@@ -274,7 +274,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
             Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
             Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
             Kind::Region => {
-                let i = collapse.binary_search_by_key(&t, |&(t, _)| t).expect("a summed-out level that is collapsed");
+                let i = collapse.binary_search_by_key(&t, |&(t, _)| t).map_err(|_| OperationError::MarginalLevel(t))?;
                 let under = home.rank_range(collapse[i].1);
                 lim.try_push(&mut regions, (under.start, Box::from([(under.start, under.end)])))?;
             }

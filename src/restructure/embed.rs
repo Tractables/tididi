@@ -775,6 +775,22 @@ impl Plan {
                 node = parent;
             }
         }
+        // A region's image is the region of `into` at its anchor.
+        for region in source.regions() {
+            let target = into
+                .node_at_home(source.home_node(region))
+                .filter(|&t| into.node(t).is_region() && into.region_at(t) == source.region_at(region))
+                .ok_or(EmbedError::NotIsomorphic { source: region })?;
+            free[target.idx()] = false;
+            embedding[region.idx()] = target;
+            let mut node = target;
+            while let Some(parent) = into.node(node).parent()
+                && free[parent.idx()]
+            {
+                free[parent.idx()] = false;
+                node = parent;
+            }
+        }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
         // A leaf under each source node, and whether each source node's
@@ -923,10 +939,11 @@ pub(crate) fn place_moving(
     })
 }
 
-/// [`place_moving`] of an owned or borrowed diagram: a borrowed one without
-/// weights has its levels copied into the destination's, and one with
-/// weights is copied whole and the copy moved. Refused, the diagram comes
-/// back as it was given.
+/// [`place_moving`] of an owned or borrowed diagram: a borrowed one has its
+/// levels copied into the destination's and its weight store copied. On a
+/// projection, a summed-out level may sit at a leaf: a region, or a summed
+/// variable whose parent stays its parent. Refused, the diagram comes back
+/// as it was given.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -939,7 +956,7 @@ pub(crate) fn place<'a>(
     free: Free,
     mirror: bool,
 ) -> Result<(Tdd, Plan), (EmbedError, std::borrow::Cow<'a, Tdd>)> {
-    if let Err(e) = tdd.require_structure() {
+    if let Err(e) = require_placeable(&tdd) {
         return Err((e.into(), tdd));
     }
     let plan = match Plan::build(eng, tdd.vtree(), into, map, mirror) {
@@ -955,7 +972,21 @@ pub(crate) fn place<'a>(
     }
 }
 
-/// [`place`] by a `plan` built for `tdd`, a structural diagram.
+/// Refuse a summed-out level [`place`] does not move: any on a root vtree,
+/// an internal one on a projection.
+fn require_placeable(tdd: &Tdd) -> Result<(), OperationError> {
+    match tdd.vtree().home() {
+        None => tdd.require_structure(),
+        Some(_) if !tdd.has_marginal_level() => Ok(()),
+        Some(_) => match tdd.vtree().bottomup().find(|&t| !tdd.vtree().node(t).is_leaf() && tdd.level(t).is_marginal()) {
+            Some(t) => Err(OperationError::MarginalLevel(t)),
+            None => Ok(()),
+        },
+    }
+}
+
+/// [`place`] by a `plan` built for `tdd`, a structural diagram or one whose
+/// summed-out levels are leaves of a projection.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -967,19 +998,12 @@ pub(crate) fn place_by<'a>(
     plan: &Plan,
     free: Free,
 ) -> Result<Tdd, (EmbedError, std::borrow::Cow<'a, Tdd>)> {
-    use std::borrow::Cow;
     if tdd.is_zero() {
-        return Ok(crate::build::constant_zero(eng, into));
+        let mut zero = crate::build::constant_zero(eng, into);
+        zero.weights = tdd.weights.as_ref().map(WeightStore::empty_like);
+        return Ok(zero);
     }
-    let placed = match tdd {
-        Cow::Borrowed(source) if source.weights.is_some() => match source.try_clone_on(eng) {
-            Ok(copy) => assemble_moving(eng, Cow::Owned(copy), into, plan, free)
-                .map_err(|(e, _)| (e, Cow::Borrowed(source))),
-            Err(e) => Err((e, Cow::Borrowed(source))),
-        },
-        tdd => assemble_moving(eng, tdd, into, plan, free),
-    };
-    placed.map_err(|(e, tdd)| (e.into(), tdd))
+    assemble_moving(eng, tdd, into, plan, free).map_err(|(e, tdd)| (e.into(), tdd))
 }
 
 /// Whether the ancestor path from `node` meets `target` before `stop`, for a
@@ -1041,9 +1065,9 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
 /// Move the levels of a structural diagram onto the destination and build
 /// what it adds, as [`assemble`] does with copies; the diagram comes back,
 /// levels and worklists in place, when the result's storage is refused. A
-/// borrowed diagram, which has no weights, has its levels copied into the
-/// destination's instead, and a refusal drops the copies. The result takes
-/// a moved diagram's worklists, and a copy of a borrowed one's, once nothing
+/// borrowed diagram has its levels copied into the destination's instead,
+/// and a refusal drops the copies. The result takes a moved diagram's
+/// worklists and weight store, and copies of a borrowed one's, once nothing
 /// is left to refuse.
 #[expect(
     clippy::result_large_err,
@@ -1070,7 +1094,6 @@ fn assemble_moving<'a>(
             Some(known)
         }
         Cow::Borrowed(source) => {
-            debug_assert!(source.weights.is_none(), "a weighted diagram is moved");
             if let Err(e) = placement.copy_part(source, &plan.embedding.levels) {
                 return Err((e, tdd));
             }
@@ -1111,6 +1134,17 @@ fn assemble_moving<'a>(
     {
         return Err((e, unseat(eng, result, tdd, plan, known.take())));
     }
+    // A region at the root holds the output's count in a slot; under a
+    // parent a small count is an inline reference instead.
+    if tdd.weights.is_none()
+        && tdd.vtree().num_nodes() == 1
+        && tdd.vtree().node(tdd.vtree().root()).is_region()
+        && into.num_nodes() > 1
+        && let Err(e) = crate::diagram::inline_small_marginal_refs(eng.limits(), &mut result, None)
+            .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, &mut result).map(drop))
+    {
+        return Err((e, unseat(eng, result, tdd, plan, known.take())));
+    }
     // Room for the result's loose levels where `tdd`'s are known and some
     // may be listed, then the worklists: a moved diagram's own, a borrowed
     // one's copied.
@@ -1120,14 +1154,23 @@ fn assemble_moving<'a>(
         true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
         false => Ok(()),
     }
-    .and_then(|()| match &mut tdd {
-        Cow::Owned(moved) => Ok(moved.take_worklists()),
-        Cow::Borrowed(source) => source.dirty.clone_on(eng),
+    .and_then(|()| match &tdd {
+        Cow::Owned(_) => Ok(None),
+        Cow::Borrowed(source) => source.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose(),
+    })
+    .and_then(|weights| match &mut tdd {
+        Cow::Owned(moved) => Ok((moved.take_worklists(), moved.weights.take())),
+        Cow::Borrowed(source) => Ok((source.dirty.clone_on(eng)?, weights)),
     });
-    let mut carried = match carried {
+    let (mut carried, weights) = match carried {
         Ok(carried) => carried,
         Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
     };
+    // A store keys its columns by level, so they follow the levels' images.
+    result.weights = weights.map(|mut weights| {
+        weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
+        weights
+    });
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
@@ -1236,6 +1279,15 @@ fn build_embedded_levels(
         // A refused join is undone with the placement by the caller.
         if !into.node(carried).is_leaf() {
             placement.pass_through(t, free_side)?;
+        } else if into.node(carried).is_region() {
+            match image_above(into, plan, t) {
+                Some((parent, side)) if placement.holds_counts(carried) => placement.pass_over_region(t, free_side, parent, side)?,
+                _ => placement.pass_through(t, free_side)?,
+            }
+        } else if placement.is_marginal(carried) {
+            // A summed variable's values live in its parent's references,
+            // which a new parent between them does not take.
+            return Err(OperationError::MarginalLevel(plan.covered_by[carried.idx()].unwrap_or(carried)));
         } else if let Some(top) = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t) {
             literal_tops.push(top);
             placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])?;
@@ -1245,6 +1297,18 @@ fn build_embedded_levels(
     }
     gate.flush()?;
     Ok(literal_tops)
+}
+
+/// The nearest ancestor of `t` that is the image of a source level, and the
+/// side of it `t` is under.
+fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<(VtreeIdx, ChildSide)> {
+    while let Some(parent) = into.node(t).parent() {
+        if plan.covered_by[parent.idx()].is_some() {
+            return Some((parent, ChildSide::of(into, parent, t)));
+        }
+        t = parent;
+    }
+    None
 }
 
 /// The levels of [`assemble_moving`]'s result that may hold a node no pair

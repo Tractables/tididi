@@ -4,4 +4,4 @@ mod alloc_guard;
 mod deadline;
 mod deep;
 mod primitives;
-mod region;
+pub(crate) mod region;

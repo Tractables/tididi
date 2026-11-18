@@ -73,7 +73,7 @@ pub(super) fn init_leaf_identity_over(
         buf[t.idx()] = false;
     }
     // Nodes are stored leaves first.
-    let leaves = vtree.num_leaves() as usize;
+    let leaves = vtree.num_leaf_nodes();
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
     for &t in scanned {

@@ -581,6 +581,9 @@ fn apply_and_held(
         f: f.tdd().levels.is_closed(),
         g: g.tdd().levels.is_closed(),
     };
+    if vtree.has_regions() {
+        super::leaf_seed::carry_region_leaves(lim, &vtree, cone.leaves, run.levels, f, g)?;
+    }
     region::take_regions(&vtree, lim, &mut run, f, g)?;
     let mut sweep = Sweep {
         vtree: &vtree,

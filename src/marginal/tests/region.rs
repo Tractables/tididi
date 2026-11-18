@@ -15,7 +15,7 @@ use crate::{Engine, OperationError, Tdd};
 /// A random trimmed diagram on the projection of `home` on `vars`: a CNF of
 /// one to five clauses, a constant on the empty projection when `vars` is
 /// empty.
-fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
+pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     if vars.is_empty() {
         let empty = Vtree::empty_projection(home);
         return if rng.below(4) == 0 { Tdd::zero(&empty) } else { Tdd::one(&empty) };
@@ -35,14 +35,14 @@ fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     f
 }
 
-fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+pub(crate) fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if f.vtree().num_nodes() == 0 {
         return if f.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
     }
     eng.embed(f, home, |v| v).unwrap().0
 }
 
-fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
+pub(crate) fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
     let mut rat = || BigRational::new((1 + rng.below(6) as i64).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..n).map(|_| LiteralWeights { negative: rat(), positive: rat() }).collect();
     RationalWeights::from_literals(&literals)
@@ -50,7 +50,7 @@ fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
 
 /// One to three home nodes; for a second sum-out, each related to one of
 /// `before` with probability two in three, an ancestor or a descendant.
-fn targets(home: &Vtree, before: &[VtreeIdx], rng: &mut Lcg) -> Vec<VtreeIdx> {
+pub(crate) fn targets(home: &Vtree, before: &[VtreeIdx], rng: &mut Lcg) -> Vec<VtreeIdx> {
     (0..1 + rng.below(3))
         .map(|_| {
             let mut h = VtreeIdx(rng.below(home.num_nodes() as u64) as u32);
@@ -70,7 +70,7 @@ fn targets(home: &Vtree, before: &[VtreeIdx], rng: &mut Lcg) -> Vec<VtreeIdx> {
         .collect()
 }
 
-fn check_form(f: &Tdd, what: &str) {
+pub(crate) fn check_form(f: &Tdd, what: &str) {
     let vtree = f.vtree();
     if vtree.num_nodes() != 0 {
         vtree.validate().unwrap_or_else(|e| panic!("{what}: {e}"));
@@ -111,7 +111,7 @@ impl EvalAlgebra for Counting {
     }
 }
 
-fn check_values(f: &Tdd, g: &Tdd, n: u32, arithmetic: Option<Arithmetic>, what: &str) {
+pub(crate) fn check_values(f: &Tdd, g: &Tdd, n: u32, arithmetic: Option<Arithmetic>, what: &str) {
     match arithmetic {
         None => {
             assert_eq!(f.model_count().unwrap(), g.model_count().unwrap(), "{what}: model count");
