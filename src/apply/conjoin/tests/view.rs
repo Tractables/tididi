@@ -1,7 +1,7 @@
 //! [`Engine::and_onto`] reads its plain operands through views: it builds
 //! what placing them and conjoining the placed operands builds, for the same
 //! work, is refused where that is refused, and hands back every operand as
-//! it was given.
+//! it was given or, owned and placed rather than viewed, placed.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -67,12 +67,19 @@ fn as_given(back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool) -> bool {
 }
 
 /// Whether a refused call handed back both operands as given; an owned
-/// false operand is not viewed, and may come back placed.
-fn handed_back(r: &AndOntoRefused<'_>, ((f, _), (g, _), u): Case<'_>, (bf, bg): (bool, bool)) -> bool {
-    let placed_false = |back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool| {
-        !borrowed && t.is_zero() && back.is_zero() && Arc::ptr_eq(back.vtree(), u)
+/// operand that is not viewed (false, or with many pass-through levels)
+/// may come back placed.
+fn handed_back(r: &AndOntoRefused<'_>, ((f, f_map), (g, g_map), u): Case<'_>, (bf, bg): (bool, bool)) -> bool {
+    let placed = |back: &Cow<'_, Tdd>, t: &Tdd, map: &[VarId], borrowed: bool| {
+        !borrowed && Arc::ptr_eq(back.vtree(), u) && {
+            let eng = Engine::new();
+            let embedded = eng.embed_moving(t.clone(), u, |v| map[v.0 as usize - 1]).map_err(|r| r.error).unwrap().0;
+            same_storage(back, &embedded)
+        }
     };
-    [(&r.f, f, bf), (&r.g, g, bg)].into_iter().all(|(back, t, b)| as_given(back, t, b) || placed_false(back, t, b))
+    [(&r.f, f, f_map, bf), (&r.g, g, g_map, bg)]
+        .into_iter()
+        .all(|(back, t, map, b)| as_given(back, t, b) || placed(back, t, map, b))
 }
 
 type Case<'t> = ((&'t Tdd, &'t [VarId]), (&'t Tdd, &'t [VarId]), &'t Arc<Vtree>);
