@@ -422,8 +422,15 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
+        let tdd = self.finish_trusting_pairs(output)?;
+        check_repeated_pairs(&tdd.vtree, &tdd.levels)?;
+        Ok(tdd)
+    }
+
+    /// [`finish`](Self::finish) without the repeated-pair check, for a
+    /// reader that trusts its levels.
+    pub(crate) fn finish_trusting_pairs(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
-        check_repeated_pairs(&self.vtree, &self.levels)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
     }
@@ -663,9 +670,12 @@ fn check_structural_level(
 /// Given the children's determinism, distinct pairs are disjoint, so this is
 /// determinism over the level's stored nodes. Above a marginal level a
 /// repeated pair is a multiplicity the content-twin merge leaves, and legal.
+///
+/// Needs `check_levels` first: the sides are then node indices below their
+/// child level's width, and the rights are bucketed by left side and marked.
 fn check_repeated_pairs(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
     let mut marginal_below = vec![false; vtree.num_nodes()];
-    let mut keys: Vec<u64> = Vec::new();
+    let (mut end, mut rights, mut seen) = (Vec::<usize>::new(), Vec::<u32>::new(), Vec::<u32>::new());
     for (t, left, right) in vtree.internal_bottomup() {
         let below = [left, right].iter().any(|c| levels[c.idx()].is_marginal() || marginal_below[c.idx()]);
         marginal_below[t.idx()] = below;
@@ -673,14 +683,31 @@ fn check_repeated_pairs(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBui
         if below || lvl.is_marginal() {
             continue;
         }
-        keys.clear();
-        for node in lvl.nodes().iter() {
-            keys.extend(lvl.pairs_iter_of(&node).map(|p| u64::from(p.left.raw()) << 32 | u64::from(p.right.raw())));
+        let lb = bound(vtree, levels, left);
+        end.clear();
+        end.resize(lb + 1, 0);
+        lvl.for_each_node_pair(|_, p| end[p.left.raw() as usize + 1] += 1);
+        for l in 1..=lb {
+            end[l] += end[l - 1];
         }
-        keys.sort_unstable();
-        if let Some(w) = keys.windows(2).find(|w| w[0] == w[1]) {
-            let pair = ChildPair::new(EncodedChildRef((w[0] >> 32) as u32), EncodedChildRef(w[0] as u32));
-            return Err(TddBuildError::RepeatedPair { level: t, pair });
+        rights.resize(end[lb], 0);
+        lvl.for_each_node_pair(|_, p| {
+            let at = &mut end[p.left.raw() as usize];
+            rights[*at] = p.right.raw();
+            *at += 1;
+        });
+        seen.clear();
+        seen.resize(bound(vtree, levels, right), u32::MAX);
+        let mut from = 0;
+        for (l, &to) in end[..lb].iter().enumerate() {
+            for &r in &rights[from..to] {
+                if seen[r as usize] == l as u32 {
+                    let pair = ChildPair::new(EncodedChildRef(l as u32), EncodedChildRef(r));
+                    return Err(TddBuildError::RepeatedPair { level: t, pair });
+                }
+                seen[r as usize] = l as u32;
+            }
+            from = to;
         }
     }
     Ok(())

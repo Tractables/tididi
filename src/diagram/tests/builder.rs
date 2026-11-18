@@ -148,6 +148,40 @@ fn interning_recovers_after_an_index_update_is_refused() {
     }
 }
 
+/// Over ((x1,x2),(x3,x4)) with nine one-pair nodes in each child level, the
+/// root's 81 distinct pairs, scattered over its nodes, pass; one of them
+/// again in another node is refused and named.
+#[test]
+fn a_repeated_pair_is_found_among_many() {
+    use crate::diagram::NodeIdx;
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let root = tree.root();
+    let build = |extra: Option<(u32, u32)>| {
+        let mut b = Tdd::builder(&eng, &tree).unwrap();
+        for (t, _, _) in tree.internal_bottomup().filter(|&(t, _, _)| t != root) {
+            for i in 0..9 {
+                b.push(&eng, t, &[ChildPair::new(NodeIdx(i / 3), NodeIdx(i % 3))]).unwrap();
+            }
+        }
+        let mut pairs: Vec<_> = (0..81u32).map(|k| (k * 7 % 81 / 9, k * 7 % 9)).collect();
+        pairs.extend(extra);
+        let mut out = NodeIdx(0);
+        for chunk in pairs.chunks(4) {
+            let chunk: Vec<_> = chunk.iter().map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r))).collect();
+            out = b.push(&eng, root, &chunk).unwrap();
+        }
+        b.finish(TddNodeId { vtree: root, local: out })
+    };
+    assert!(build(None).is_ok());
+    match build(Some((5, 2))) {
+        Err(crate::diagram::TddBuildError::RepeatedPair { level, pair }) => {
+            assert_eq!((level, pair), (root, ChildPair::new(NodeIdx(5), NodeIdx(2))));
+        }
+        r => panic!("{:?}", r.map(|_| ())),
+    }
+}
+
 /// Over ((x1,x2),x3), the inner level holds the nodes `inner` and the root the
 /// one node `root`; every pair on the right of the root names x3.
 fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, crate::diagram::TddBuilder, TddNodeId) {
@@ -165,7 +199,7 @@ fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, 
 
 /// A pair twice in one level, within a node or across two, denotes one event
 /// twice: negation and the count read it as two disjoint ones. The builder
-/// and both readers refuse it; distinct pairs over the same children pass.
+/// and the text reader refuse it; distinct pairs over the same children pass.
 #[test]
 fn a_pair_repeated_in_a_level_is_refused() {
     let eng = Engine::new();
@@ -194,12 +228,15 @@ fn a_pair_repeated_in_a_level_is_refused() {
         let (mut text, mut binary) = (Vec::new(), Vec::new());
         crate::io::write_tdd(&mut text, &f).unwrap();
         crate::io::write_tdd_binary(&mut binary, &f).unwrap();
-        let read = [("text", crate::io::read_tdd(&mut text.as_slice(), &tree)), ("binary", crate::io::read_tdd_binary(&mut binary.as_slice(), &tree))];
         let pruned = root.len() == 1 && inner.len() == 2;
-        for (format, r) in read {
-            if pruned != r.as_ref().is_ok() && !r.as_ref().is_err_and(|e| e.to_string().contains("twice")) {
-                wrong.push(format!("{inner:?} {root:?}: {format} reader {:?}", r.map(|g| g.model_count().unwrap())));
-            }
+        let r = crate::io::read_tdd(&mut text.as_slice(), &tree);
+        if pruned != r.as_ref().is_ok() && !r.as_ref().is_err_and(|e| e.to_string().contains("twice")) {
+            wrong.push(format!("{inner:?} {root:?}: text reader {:?}", r.map(|g| g.model_count().unwrap())));
+        }
+        // The binary reader trusts its levels: it gives back what was written.
+        match crate::io::read_tdd_binary(&mut binary.as_slice(), &tree) {
+            Ok(g) if g.model_count().unwrap() == f.model_count().unwrap() => {}
+            r => wrong.push(format!("{inner:?} {root:?}: binary reader {:?}", r.map(|g| g.model_count().unwrap()))),
         }
     }
     let text = "p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nL 3 3\nI 2 0 1 2 1\nI 2 0 1 2 1\nI 4 2 3 1 1\n";

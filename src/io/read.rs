@@ -48,7 +48,9 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
 /// preserves the file's node order; reading does not minimize.
 ///
-/// The reader validates the encoding, not semantic determinism. Files must
+/// The reader validates the encoding, and of semantic determinism only what
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) checks: no pair
+/// twice in a level with no marginal level under it. Files must
 /// describe TDDs satisfying the [data-model rules](crate::guide::model), as the
 /// library's writer produces; arbitrary overlapping pair lists are not valid
 /// inputs for model counting.

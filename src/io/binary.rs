@@ -155,11 +155,13 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// Nothing in the file is trusted before it is checked: the magic, version and
 /// byte-order mark, then the checksum over all the bytes, then every count
 /// against the bytes left to hold it and every pair side against its child
-/// level. As for the text format, the reader validates the encoding, not
-/// semantic determinism; it relies on determinism only to refuse more than
-/// one pair in a level over two one-node levels, whose pairs take no bits.
-/// The level counts of a version 2 file are bounded, not recomputed, and are
-/// trusted from there on ([format](crate::io#binary-format)).
+/// level. The reader validates the encoding, not semantic determinism; it
+/// relies on determinism only to refuse more than one pair in a level over
+/// two one-node levels, whose pairs take no bits. Unlike the text reader, it
+/// does not look for a pair repeated in a level: it trusts the levels, as a
+/// library writer emits them, since that check costs several times the
+/// decode. The level counts of a version 2 file are bounded, not recomputed,
+/// and are trusted from there on ([format](crate::io#binary-format)).
 ///
 /// # Errors
 ///
@@ -834,7 +836,7 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
         }
     };
     let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
-        .finish(TddNodeId { vtree: root, local })
+        .finish_trusting_pairs(TddNodeId { vtree: root, local })
         .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
     if let Some(counts) = counts {
         tdd.levels.keep_counts(counts);
