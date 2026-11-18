@@ -364,11 +364,11 @@ impl Engine {
         };
         let info = pending.commit_in_probe(&mut tree);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
+        let copy = copy.saturating_add(groups.nodes() as u64);
         let mut scratch = self.scratch.restructure.checkout(self);
         let mut touched = Vec::new();
-        groups.touch(&info, mv, &mut touched);
-        let copy = copy.saturating_add(groups.nodes() as u64);
-        let kept = probe(self, members, Touched::new(Listed(&touched), mv, bound), copy, &mut scratch, accept)?;
+        let listed = groups.touch(&info, mv, &mut touched);
+        let kept = probe(self, members, Touched::new(listed, mv, bound), copy, &mut scratch, accept)?;
         if kept {
             groups.kept(&tree, &info, mv, members, None);
             end_on_home(self, members, tree, groups);
@@ -946,9 +946,7 @@ impl<'l> PoolDescent<'l> {
             return Ok(false);
         };
         let info = pending.info();
-        touched.clear();
-        groups.touch(&info, mv, touched);
-        let listed = Touched::new(Listed(touched), mv, config.max_inner_pairs);
+        let listed = Touched::new(groups.touch(&info, mv, touched), mv, config.max_inner_pairs);
         let twin = twin.with(crossed_scores);
         let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
         let kept = matches!(outcome, Ok(true));
@@ -1075,8 +1073,9 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
             }
         }
     };
-    let mut lists = Lists { head: vec![NONE; union.num_nodes()], at: Vec::new() };
-    let mut tail = vec![NONE; union.num_nodes()];
+    let listed = if groups.iter().any(|g| g.kids.is_some()) { union.num_nodes() } else { 0 };
+    let mut lists = Lists { head: vec![NONE; listed], at: Vec::new() };
+    let mut tail = vec![NONE; listed];
     let mut slots = 0;
     for (g, group) in groups.iter_mut().enumerate() {
         group.base = slots;
@@ -1107,7 +1106,8 @@ const NONE: u32 = u32::MAX;
 /// between its two nodes and allocates nothing.
 #[derive(Clone)]
 struct Lists {
-    /// By node of the union: its first entry in `at`.
+    /// By node of the union: its first entry in `at`; empty when no group
+    /// is on a projection.
     head: Vec<u32>,
     at: Vec<At>,
 }
@@ -1122,7 +1122,8 @@ struct At {
 impl Lists {
     /// The entries at union node `u`.
     fn of(&self, u: VtreeIdx) -> impl Iterator<Item = At> + '_ {
-        std::iter::successors(self.at.get(self.head[u.idx()] as usize).copied(), |e| {
+        let first = self.head.get(u.idx()).and_then(|&e| self.at.get(e as usize));
+        std::iter::successors(first.copied(), |e| {
             self.at.get(e.next as usize).copied()
         })
     }
@@ -1189,14 +1190,17 @@ impl Groups {
         self.groups.iter().filter_map(|g| g.kids.as_ref()).map(Vec::len).sum()
     }
 
-    /// List in `touched` the members of each group with own nodes at both
-    /// nodes of `mv`, made on the union as `info`, with the rotation `mv` is
-    /// on their own nodes.
-    fn touch(&mut self, info: &RotationInfo, mv: PoolMove, touched: &mut Vec<(usize, RotationInfo)>) {
+    /// The members `mv`, made on the union as `info`, touches: those on the
+    /// union, and listed in `touched` the members of each group with own
+    /// nodes at both nodes of `mv`, with the rotation `mv` is on them.
+    fn touch<'t>(
+        &'t mut self,
+        info: &'t RotationInfo,
+        mv: PoolMove,
+        touched: &'t mut Vec<(usize, RotationInfo)>,
+    ) -> Listed<'t> {
+        touched.clear();
         let Groups { groups, on_union, lists, seen, .. } = self;
-        if let Some(g) = *on_union {
-            touched.extend(groups[g].members.iter().map(|&i| (i, *info)));
-        }
         for e in lists.of(info.w_idx) {
             seen[e.group as usize] = 2;
         }
@@ -1212,6 +1216,8 @@ impl Groups {
         for e in lists.of(info.w_idx) {
             seen[e.group as usize] = 0;
         }
+        let on_union = on_union.map_or(&[][..], |g| &groups[g].members[..]);
+        Listed { on_union, info, rest: touched }
     }
 
     /// After `mv`, made on `union` as `info`, was kept: the table of each
@@ -1229,6 +1235,9 @@ impl Groups {
         mut undo: Option<&mut Undo<'_>>,
     ) {
         let Groups { groups, lists, seen, .. } = self;
+        if lists.at.is_empty() {
+            return;
+        }
         let (v, w) = (info.v_idx, info.w_idx);
         for (u, bit) in [(v, 1), (w, 2)] {
             for e in lists.of(u) {
@@ -1387,21 +1396,32 @@ trait TouchedAt<'t>: Copy {
     fn info(self, k: usize) -> &'t RotationInfo;
 }
 
-/// The members a move touches, each with the rotation on its own nodes.
+/// The members a move touches, each with the rotation on its own nodes: those
+/// on the union, which see the move as `info`, then the listed rest.
 #[derive(Clone, Copy)]
-struct Listed<'t>(&'t [(usize, RotationInfo)]);
+struct Listed<'t> {
+    on_union: &'t [usize],
+    info: &'t RotationInfo,
+    rest: &'t [(usize, RotationInfo)],
+}
 
 impl<'t> TouchedAt<'t> for Listed<'t> {
     fn len(self) -> usize {
-        self.0.len()
+        self.on_union.len() + self.rest.len()
     }
 
     fn member(self, k: usize) -> usize {
-        self.0[k].0
+        match self.on_union.get(k) {
+            Some(&i) => i,
+            None => self.rest[k - self.on_union.len()].0,
+        }
     }
 
     fn info(self, k: usize) -> &'t RotationInfo {
-        &self.0[k].1
+        match k < self.on_union.len() {
+            true => self.info,
+            false => &self.rest[k - self.on_union.len()].1,
+        }
     }
 }
 
