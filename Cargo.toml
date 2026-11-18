@@ -43,3 +43,7 @@ harness = false
 [[bench]]
 name = "projection"
 harness = false
+
+[[bench]]
+name = "zero_cost"
+harness = false
