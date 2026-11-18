@@ -6,7 +6,7 @@ use num_traits::Zero;
 use crate::value::{walk_bottom_up, CountRead, Retention, FoldInput, ValueDomain, WeightFold};
 use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
 use crate::Engine;
-use crate::vtree::{FreeVars, VarId, VtreeIdx, VtreeNode};
+use crate::vtree::{FreeVars, VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::fold::{fold_bottom_up_from, fold_held, LevelFold, Side};
 use crate::limits::{OperationError, PollGate};
@@ -33,7 +33,7 @@ impl Engine {
         let result = if tdd.is_zero() {
             algebra.zero()
         } else if tdd.is_one() {
-            tdd.vtree.free_set().and_then(|free| algebra.free(&free)).unwrap_or_else(|| algebra.one())
+            free_value(algebra, &tdd.vtree).unwrap_or_else(|| algebra.one())
         } else {
             let root = tdd.vtree.root();
             let fold = Evaluate::counting(algebra, tdd, root)?;
@@ -42,7 +42,7 @@ impl Engine {
             lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
             fold_bottom_up_from(&fold, self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
             let own = cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx());
-            match tdd.vtree.free_set().and_then(|free| algebra.free(&free)) {
+            match tdd.vtree.home().and_then(|_| free_value(algebra, &tdd.vtree)) {
                 Some(free) => algebra.mul(&own, &free),
                 None => own,
             }
@@ -373,6 +373,13 @@ fn inline_counts(tdd: &Tdd, t: VtreeIdx, root: VtreeIdx) -> Vec<u32> {
     counts.sort_unstable();
     counts.dedup();
     counts
+}
+
+/// What `algebra` values every assignment to the home variables `vtree`
+/// lacks at; `None` for none, or when the algebra answers the identity.
+#[inline(never)]
+fn free_value<S: EvalAlgebra>(algebra: &S, vtree: &Vtree) -> Option<S::Value> {
+    vtree.free_set().and_then(|free| algebra.free(&free))
 }
 
 /// Multiply `col`, the column of `t`, by every assignment to `free` when
