@@ -22,6 +22,11 @@ Breaking changes:
   in the other order is no longer refused. `Engine::embed_over` does so for
   a structural diagram, and a diagram with a marginal level still needs
   every node's children in their order.
+- `RotationProbe::diagram` is removed. On a projection the probed diagram's
+  vtree still carried the home link of the shape before the rotations, so a
+  clone of it conjoined with a diagram on the same leaves gave a wrong
+  function. `RotationProbe::before`, `after` and `live_pairs_delta` read
+  the rebuilt levels.
 
 ## 0.2.0
 

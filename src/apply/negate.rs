@@ -90,7 +90,7 @@ impl Engine {
         let _op = self.limits().enter()?;
         let f = f.into();
         if f.vtree.num_nodes() == 0 {
-            return Ok(crate::build::constant_without_leaf(&f.vtree, !f.is_one()));
+            return negate_without_leaf(self, f);
         }
         let canonical = f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
@@ -112,6 +112,17 @@ impl Engine {
         }
         Ok(result)
     }
+}
+
+/// The complement of a constant on a vtree with no node, with its store.
+#[cold]
+fn negate_without_leaf(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+    let mut result = crate::build::constant_without_leaf(&f.vtree, !f.is_one());
+    result.weights = match f {
+        Cow::Owned(mut f) => f.weights.take(),
+        Cow::Borrowed(f) => f.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?,
+    };
+    Ok(result)
 }
 
 /// Make `tdd` full and complement it at the root, consuming the operand;

@@ -80,9 +80,12 @@ impl RotationProbe<'_> {
         self.moves
     }
 
-    /// The diagram with the sequence applied, on its rotated vtree.
+    /// The diagram with the sequence applied, on its rotated vtree. Not
+    /// public: on a projection that vtree keeps the link of the shape before
+    /// the sequence until the search seats the diagram on its lifted home, so
+    /// a clone taken here would be a projection whose link misdescribes it.
     #[inline]
-    pub fn diagram(&self) -> &Tdd {
+    pub(crate) fn diagram(&self) -> &Tdd {
         self.tdd
     }
 

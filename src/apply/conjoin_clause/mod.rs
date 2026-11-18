@@ -184,7 +184,7 @@ fn spine_walk<L: crate::LiteralInput>(
 /// when a literal's variable has a leaf in the home and none in `f`'s
 /// vtree. Its levels move to their images, no node or pair copied. A literal
 /// that does not convert is left to [`normalize`] to refuse.
-pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
+pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, mut f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
     let Some(home) = f.vtree.home() else { return Ok(f) };
     let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
     if !vars().any(|var| f.vtree.home_has(var)) {
@@ -193,8 +193,15 @@ pub(crate) fn extend_to<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]
     let own = f.vtree.leaf_bottomup().map(|(_, var)| var);
     let added = vars().filter(|&var| home.rank(var).is_some());
     let into = Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home");
+    // Placement drops a store. A structural diagram's store has no column
+    // keyed by a level and the variables keep their names, so it carries
+    // over as it is.
+    let weights = f.weights.take();
     match crate::restructure::embed::place_moving(eng, f, &into, |var| var, crate::restructure::embed::Free::Build) {
-        Ok((extended, _)) => Ok(extended),
+        Ok((mut extended, _)) => {
+            extended.weights = weights;
+            Ok(extended)
+        }
         Err(refused) => Err(match refused.error {
             crate::restructure::EmbedError::Operation(error) => error,
             _ => OperationError::VtreeMismatch,
