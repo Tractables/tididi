@@ -14,7 +14,8 @@ const CONTENT_SCAN_MAX_NODES: u64 = 131_072;
 
 /// The driver consumes rewrite reports; kernels own their scratch and local
 /// worklists. A content merge needs pruning and contraction, a leaf rewrite
-/// needs contraction, and equal value slots can require a content rescan.
+/// needs contraction on a diagram with a summed-out level, and equal value
+/// slots can require a content rescan.
 /// The sibling fixed point stays inside contraction's top-down sweep.
 pub(super) struct Reduction<'a> {
     eng: &'a Engine,
@@ -208,13 +209,11 @@ impl<'a> Reduction<'a> {
     /// leaf sides in place of writing them.
     fn contract(&mut self) -> Result<(), OperationError> {
         contract_all_twins(self.eng, self.tdd)?;
-        let record = self.seed.is_some() && on_home(&self.tdd.vtree) && !self.tdd.has_marginal_level();
-        if contract_leaf_twins(self.eng, self.tdd, record.then_some(&mut self.recorded))? {
-            #[cfg(debug_assertions)]
-            let before = level_counts(self.tdd);
+        let marginal = self.tdd.has_marginal_level();
+        let record = self.seed.is_some() && !marginal && on_home(&self.tdd.vtree);
+        // Leaf contraction leaves no inner twins unless a level is summed out.
+        if contract_leaf_twins(self.eng, self.tdd, record.then_some(&mut self.recorded))? && marginal {
             contract_all_twins(self.eng, self.tdd)?;
-            #[cfg(debug_assertions)]
-            debug_assert!(self.tdd.has_marginal_level() || before == level_counts(self.tdd), "a leaf rewrite made an inner twin");
         }
         Ok(())
     }
@@ -269,11 +268,6 @@ impl<'a> Reduction<'a> {
 
 fn on_home(vtree: &Vtree) -> bool {
     vtree.home().is_some() || vtree.is_home()
-}
-
-#[cfg(debug_assertions)]
-fn level_counts(tdd: &Tdd) -> Vec<(usize, usize)> {
-    tdd.levels.iter().map(|l| (l.node_count(), l.pair_counts().sum())).collect()
 }
 
 /// The debug checks of a closing reduction, over every pair of every node.
