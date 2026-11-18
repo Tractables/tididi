@@ -209,3 +209,18 @@ fn the_typed_and_integer_cubes_agree() {
     from_typed.minimize().expect("minimizing fits");
     assert_same_shape(&from_integers, &from_typed, "typed and integer cubes");
 }
+
+/// A conjunction across projections can leave a node its output does not
+/// reach, with the levels not known to be pruned; the overlay reads every node
+/// of a level.
+#[test]
+fn an_unreachable_node_does_not_join_the_fill() {
+    let home = crate::vtree::Home::new(Vtree::random(6, 101));
+    let x1 = Vtree::projection(&home, [VarId(1)]).unwrap();
+    let x3_x5 = Vtree::projection(&home, [VarId(3), VarId(5)]).unwrap();
+    let f = crate::and(Tdd::clause(&x1, [-1]).unwrap(), Tdd::clause(&x3_x5, [3, -3, -5]).unwrap()).unwrap();
+    let general = crate::or(f.clone(), Tdd::cube(&x1, [1]).unwrap()).unwrap();
+    let out = f.or_cube([1]).unwrap();
+    assert_partition(&out, "x1 or not x1");
+    assert_eq!(out.model_count().unwrap(), general.model_count().unwrap());
+}
