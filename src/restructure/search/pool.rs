@@ -371,16 +371,15 @@ impl Engine {
                 probe(self, members, Touched::new(every, mv, bound), copy, &mut scratch, accept)?
             }
             Some(groups) => {
-                let (mut touched, mut own) = (Vec::new(), Vec::new());
-                groups.touch(&info, mv, &mut touched, &mut own);
-                groups.settle(&mut own, true, mv.crossed);
+                let mut touched = Vec::new();
+                groups.touch(&info, mv, &mut touched);
                 let copy = copy.saturating_add(groups.nodes() as u64);
                 probe(self, members, Touched::new(Listed(&touched), mv, bound), copy, &mut scratch, accept)?
             }
         };
         if kept {
             if let Some(groups) = groups.as_mut() {
-                groups.kept(&tree, &info, mv.crossed, members, None);
+                groups.kept(&tree, &info, mv, members, None);
             }
             end_on_home(self, members, tree, groups);
         }
@@ -431,7 +430,7 @@ impl Engine {
         if members.is_empty() {
             return Ok(stats);
         }
-        // The union and the groups' trees, moved in place as moves are kept.
+        // The union and the groups' tables, moved in place as moves are kept.
         // The members keep their allocations until the descent ends, which
         // seats them on these if it kept a move: their levels follow the
         // moves, and nothing in a probe reads a member's tree.
@@ -490,10 +489,8 @@ struct PoolDescent<'a> {
     stats: &'a mut PoolSearchStats,
     known: Known,
     crossed_scores: Transient<'a, Vec<Option<Option<usize>>>>,
-    /// The probe under way's [`Listed`] members, and its moves on the
-    /// groups' trees.
+    /// The probe under way's [`Listed`] members.
     touched: Vec<(usize, RotationInfo)>,
-    own: Vec<(usize, PendingTopo)>,
     marginal: bool,
 }
 
@@ -533,7 +530,6 @@ impl<'l> PoolDescent<'l> {
             known,
             crossed_scores,
             touched: Vec::with_capacity(members.len()),
-            own: Vec::new(),
             marginal,
         })
     }
@@ -727,12 +723,12 @@ impl Known {
     }
 }
 
-/// What a restart needs to put the pool back as it began: the trees, what
-/// the descent knew, each member's header, and the first level each kept
-/// move replaced at each node.
+/// What a restart needs to put the pool back as it began: the union and the
+/// groups, what the descent knew, each member's header, and the first level
+/// each kept move replaced at each node.
 ///
 /// The members of a group are rebuilt and mirrored together, so what is
-/// known of their levels is kept by *slot*, a node of a group's tree.
+/// known of their levels is kept by *slot*, an own node of a group.
 struct Undo<'a> {
     tree: Vtree,
     known: Known,
@@ -801,14 +797,14 @@ impl<'a> Undo<'a> {
         }
     }
 
-    /// Put every member, the trees and what the descent knew back as the
-    /// restart found them.
+    /// Put every member, the union, the groups and what the descent knew
+    /// back as the restart found them.
     fn revert(self, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known, groups: &mut Option<Groups>) {
         let Undo { tree: t, known: k, groups: g, pre, flipped, .. } = self;
         pre.put_back_then(members, |members| {
             let Some(g) = &g else { return };
             for group in &g.groups {
-                let nodes = group.tree.as_ref().map_or(t.num_nodes(), Vtree::num_nodes);
+                let nodes = group.kids.as_ref().map_or(t.num_nodes(), Vec::len);
                 for node in (0..nodes).filter(|&n| flipped[group.base + n]) {
                     for &i in &group.members {
                         mirror_level(&mut *members[i], VtreeIdx(node as u32));
@@ -984,7 +980,7 @@ impl<'l> PoolDescent<'l> {
         slack: usize,
         mut undo: Option<&mut Undo<'l>>,
     ) -> Result<bool, OperationError> {
-        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, own, .. } = self;
+        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, .. } = self;
         let eng: &'l Engine = eng;
         let groups = groups.as_mut().expect("a probe on projections has groups");
         let Some(pending) = move_in_place(tree, mv) else {
@@ -992,15 +988,14 @@ impl<'l> PoolDescent<'l> {
         };
         let info = pending.info();
         touched.clear();
-        groups.touch(&info, mv, touched, own);
+        groups.touch(&info, mv, touched);
         let listed = Touched::new(Listed(touched), mv, config.max_inner_pairs);
         let twin = twin.with(crossed_scores);
         let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
         let kept = matches!(outcome, Ok(true));
-        groups.settle(own, kept, mv.crossed);
         end_move(eng, tree, pending, mv, kept);
         if kept {
-            groups.kept(tree, &info, mv.crossed, members, undo);
+            groups.kept(tree, &info, mv, members, undo);
         }
         outcome
     }
@@ -1101,27 +1096,25 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
         let g = *index.entry(Arc::as_ptr(&m.vtree)).or_insert_with(|| {
             groups.push(Group {
                 members: Vec::new(),
-                tree: Some(Vtree::clone(&m.vtree)),
+                kids: m.vtree.home().map(|_| children_table(&m.vtree)),
                 union_of: Vec::new(),
                 base: 0,
             });
             groups.len() - 1
         });
         if m.vtree.home().is_none() {
-            root = Some(g);
+            root = Some(i);
         }
         groups[g].members.push(i);
         of.push(g);
     }
+    let tree_of = |group: &Group| &members[group.members[0]].vtree;
     let union = match root {
-        Some(g) => groups[g].tree.take().expect("a group has its tree"),
+        Some(i) => Vtree::clone(&members[i].vtree),
         None => {
             let home = first.home().expect("a projection has a home");
-            let vars: Vec<VarId> = groups
-                .iter()
-                .filter_map(|g| g.tree.as_ref())
-                .flat_map(|t| t.leaf_bottomup().map(|(_, var)| var))
-                .collect();
+            let vars: Vec<VarId> =
+                groups.iter().flat_map(|g| tree_of(g).leaf_bottomup().map(|(_, var)| var)).collect();
             match vars.is_empty() {
                 true => Vtree::clone(&Vtree::empty_projection(home)),
                 false => Arc::unwrap_or_clone(Vtree::projection(home, vars).expect("a home has its projections' leaves")),
@@ -1132,13 +1125,14 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
     let mut slots = 0;
     for (g, group) in groups.iter_mut().enumerate() {
         group.base = slots;
-        let Some(tree) = &group.tree else {
+        if group.kids.is_none() {
             slots += union.num_nodes();
             for &u in union.internal_bottomup_slice() {
                 at[u.idx()].push((g, u));
             }
             continue;
-        };
+        }
+        let tree = &members[group.members[0]].vtree;
         slots += tree.num_nodes();
         group.union_of = (0..tree.num_nodes() as u32)
             .map(|t| union.node_at_home(tree.home_node(VtreeIdx(t))).expect("the union has every own node"))
@@ -1153,12 +1147,13 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Option<Groups>), OperationE
 
 /// Members on more than one vtree, the members on each in a group.
 ///
-/// Each own node of a group's tree stands at the node of the union over the
-/// same leaves, and the group's tree has the union's shape there: a move at
-/// the union's `v` promoting `w` is the same move on the trees of the groups
-/// with own nodes at both, and leaves every other tree as it is, its own
-/// node at `v` or `w` standing afterwards where the union has its leaves
-/// under both children.
+/// A group's own nodes are those of its members' vtree, which the search
+/// leaves as it is; the group's table holds the projection of the union on
+/// its leaves. Each own node stands at the node of the union over the same
+/// leaves: a move at the union's `v` promoting `w` is the same move on the
+/// tables of the groups with own nodes at both, and leaves every other table
+/// as it is, its own node at `v` or `w` standing afterwards where the union
+/// has its leaves under both children.
 #[derive(Clone)]
 struct Groups {
     groups: Vec<Group>,
@@ -1170,15 +1165,16 @@ struct Groups {
     /// By group: where a move being made has its own nodes, 1 for `v` and 2
     /// for `w`; 0 between moves.
     seen: Vec<u8>,
-    /// The slots of [`Undo`], one per node of each group's tree.
+    /// The slots of [`Undo`], one per own node of each group.
     slots: usize,
 }
 
 #[derive(Clone)]
 struct Group {
     members: Vec<usize>,
-    /// The group's tree, `None` for the home's root, which is the union.
-    tree: Option<Vtree>,
+    /// By own node: its two children, left first; `None` for the home's
+    /// root, which is the union. A leaf's entry is never read.
+    kids: Option<Vec<(VtreeIdx, VtreeIdx)>>,
     /// By node of the tree: the node of the union over the same leaves.
     union_of: Vec<VtreeIdx>,
     /// The first of the group's slots.
@@ -1186,22 +1182,15 @@ struct Group {
 }
 
 impl Groups {
-    /// The nodes of the groups' own trees.
+    /// The nodes of the groups' tables.
     fn nodes(&self) -> usize {
-        self.groups.iter().filter_map(|g| g.tree.as_ref()).map(Vtree::num_nodes).sum()
+        self.groups.iter().filter_map(|g| g.kids.as_ref()).map(Vec::len).sum()
     }
 
-    /// Make `mv`, made on the union as `info`, on the tree of each group
-    /// with own nodes at both of its nodes, and list in `touched` the
-    /// group's members with the rotation on their tree; the moves made on
-    /// the groups' trees in `own`, for [`settle`](Self::settle).
-    fn touch(
-        &mut self,
-        info: &RotationInfo,
-        mv: PoolMove,
-        touched: &mut Vec<(usize, RotationInfo)>,
-        own: &mut Vec<(usize, PendingTopo)>,
-    ) {
+    /// List in `touched` the members of each group with own nodes at both
+    /// nodes of `mv`, made on the union as `info`, with the rotation `mv` is
+    /// on their own nodes.
+    fn touch(&mut self, info: &RotationInfo, mv: PoolMove, touched: &mut Vec<(usize, RotationInfo)>) {
         let Groups { groups, at, seen, .. } = self;
         let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
         for &(g, _) in &at[w] {
@@ -1211,17 +1200,10 @@ impl Groups {
             if seen[g] != 2 {
                 continue;
             }
-            let group = &mut groups[g];
-            let moved = match &mut group.tree {
+            let group = &groups[g];
+            let moved = match &group.kids {
                 None => *info,
-                Some(tree) => {
-                    let rotation = RotationMove { pivot: t, kind: mv.rotation.kind };
-                    let pending = move_in_place(tree, PoolMove { rotation, ..mv })
-                        .expect("a tree with own nodes at both ends of a move moves with it");
-                    let moved = pending.info();
-                    own.push((g, pending));
-                    moved
-                }
+                Some(kids) => rotated(kids, t, mv).0,
             };
             touched.extend(group.members.iter().map(|&i| (i, moved)));
         }
@@ -1230,33 +1212,17 @@ impl Groups {
         }
     }
 
-    /// Commit the moves `touch` made on the groups' trees if `kept`, else
-    /// take them back.
-    fn settle(&mut self, own: &mut Vec<(usize, PendingTopo)>, kept: bool, crossed: bool) {
-        for (g, pending) in own.drain(..) {
-            let tree = self.groups[g].tree.as_mut().expect("a moved group has its tree");
-            if kept {
-                pending.commit_in_probe(tree);
-            } else {
-                let w = pending.info().w_idx;
-                pending.revert(tree);
-                if crossed {
-                    tree.swap_children_in_probe(w);
-                }
-            }
-        }
-    }
-
-    /// After `mv`, made on `union` as `info`, was kept: each group with an
-    /// own node at one of its two nodes stands there where the union now has
-    /// that node's leaves under both children. The node of a group at `w`
-    /// alone is mirrored when the move crossed `w`'s children, with each
-    /// member's level there, and the mirror recorded in `undo`.
+    /// After `mv`, made on `union` as `info`, was kept: the table of each
+    /// group with own nodes at both of its nodes moves with the union; each
+    /// group with an own node at one of them stands there where the union
+    /// now has that node's leaves under both children. The node of a group
+    /// at `w` alone is mirrored when the move crossed `w`'s children, with
+    /// each member's level there, and the mirror recorded in `undo`.
     fn kept(
         &mut self,
         union: &Vtree,
         info: &RotationInfo,
-        crossed: bool,
+        mv: PoolMove,
         members: &mut [&mut Tdd],
         mut undo: Option<&mut Undo<'_>>,
     ) {
@@ -1271,19 +1237,26 @@ impl Groups {
         }
         for (from, entries) in [(v, &from_v), (w, &from_w)] {
             for &(g, t) in entries {
+                let group = &mut groups[g];
                 if seen[g] == 3 {
+                    if let Some(kids) = &mut group.kids
+                        && from == v
+                    {
+                        let (moved, v_kids, w_kids) = rotated(kids, t, mv);
+                        kids[t.idx()] = v_kids;
+                        kids[moved.w_idx.idx()] = w_kids;
+                    }
                     at[from.idx()].push((g, t));
                     continue;
                 }
-                let group = &mut groups[g];
-                let tree = group.tree.as_mut().expect("the union has own nodes at both ends of every move");
-                let (l, r) = tree.children(t);
+                let kids = group.kids.as_mut().expect("the union has own nodes at both ends of every move");
+                let (l, r) = kids[t.idx()];
                 let under_w = |u: VtreeIdx| child_toward(union, u, v) == w;
                 let to = if under_w(group.union_of[l.idx()]) && under_w(group.union_of[r.idx()]) { w } else { v };
                 group.union_of[t.idx()] = to;
                 at[to.idx()].push((g, t));
-                if crossed && from == w {
-                    tree.swap_children_in_probe(t);
+                if mv.crossed && from == w {
+                    kids[t.idx()] = (r, l);
                     for &i in &group.members {
                         mirror_level(&mut *members[i], t);
                     }
@@ -1292,7 +1265,7 @@ impl Groups {
                     }
                 }
                 debug_assert_eq!(
-                    child_toward(union, group.union_of[tree.children(t).0.idx()], to),
+                    child_toward(union, group.union_of[kids[t.idx()].0.idx()], to),
                     union.children(to).0
                 );
             }
@@ -1326,39 +1299,82 @@ fn mirror_level(m: &mut Tdd, t: VtreeIdx) {
     }
 }
 
+/// By node of `tree`: its two children, left first; a leaf is its own
+/// children.
+fn children_table(tree: &Vtree) -> Vec<(VtreeIdx, VtreeIdx)> {
+    (0..tree.num_nodes() as u32)
+        .map(VtreeIdx)
+        .map(|t| match *tree.node(t) {
+            VtreeNode::Internal { left, right, .. } => (left, right),
+            VtreeNode::Leaf { .. } => (t, t),
+        })
+        .collect()
+}
+
+/// `mv` at own node `v` of a table of children `kids`: the rotation as
+/// [`rotate_pointers`] names it after the swap a crossed move makes first,
+/// and the new children of `v` and of the promoted node.
+fn rotated(
+    kids: &[(VtreeIdx, VtreeIdx)],
+    v: VtreeIdx,
+    mv: PoolMove,
+) -> (RotationInfo, (VtreeIdx, VtreeIdx), (VtreeIdx, VtreeIdx)) {
+    let (l, r) = kids[v.idx()];
+    let children = |w: VtreeIdx| if mv.crossed { (kids[w.idx()].1, kids[w.idx()].0) } else { kids[w.idx()] };
+    match mv.rotation.kind {
+        RotationKind::Left => {
+            let (w, x) = (r, l);
+            let (z, y) = children(w);
+            (RotationInfo { v_idx: v, w_idx: w, a_idx: x, b_idx: z, c_idx: y }, (w, y), (x, z))
+        }
+        RotationKind::Right => {
+            let (w, x) = (l, r);
+            let (y, z) = children(w);
+            (RotationInfo { v_idx: v, w_idx: w, a_idx: y, b_idx: z, c_idx: x }, (y, w), (z, x))
+        }
+    }
+}
+
 /// The end of a search on `union` and `groups` that kept a move: the members
 /// on one allocation of the union, or seated on projections of the home the
 /// union's moves imply.
 fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Option<Groups>) {
-    if let Some(home) = union.lifted_home() {
-        match groups {
-            None => {
+    let lifted = union.lifted_home();
+    let Some(groups) = groups else {
+        match lifted {
+            Some(home) => {
                 let all: Vec<usize> = (0..members.len()).collect();
-                seat_group(eng, members, &all, union, &home);
+                seat_group(eng, members, &all, &children_table(&union), union.internal_bottomup_slice(), &home);
             }
-            Some(groups) => {
-                for group in groups.groups {
-                    let tree = group.tree.expect("a union with a home is no group's tree");
-                    seat_group(eng, members, &group.members, tree, &home);
+            None => {
+                let root = Arc::new(union);
+                for m in members.iter_mut() {
+                    m.vtree = Arc::clone(&root);
                 }
             }
         }
         return;
-    }
-    let root = Arc::new(union);
-    let Some(groups) = groups else {
-        for m in members.iter_mut() {
-            m.vtree = Arc::clone(&root);
-        }
-        return;
     };
-    let home = Home::new(Arc::clone(&root));
-    for group in groups.groups {
-        match group.tree {
-            Some(tree) => seat_group(eng, members, &group.members, tree, &home),
+    let mut bottom_up = vec![Vec::new(); groups.groups.len()];
+    for &u in union.internal_bottomup_slice() {
+        for &(g, t) in &groups.at[u.idx()] {
+            bottom_up[g].push(t);
+        }
+    }
+    let (home, root) = match lifted {
+        Some(home) => (home, None),
+        None => {
+            let root = Arc::new(union);
+            (Home::new(Arc::clone(&root)), Some(root))
+        }
+    };
+    for (group, bottom_up) in groups.groups.iter().zip(&bottom_up) {
+        match &group.kids {
+            Some(kids) => seat_group(eng, members, &group.members, kids, bottom_up, &home),
             None => {
+                let root = root.as_ref().expect("the home's root is the union");
                 for &i in &group.members {
-                    members[i].vtree = Arc::clone(&root);
+                    members[i].vtree = Arc::clone(root);
                 }
             }
         }
@@ -1498,8 +1514,8 @@ fn rebuild_members<'t>(
 /// The two levels of each member `moved` touches rebuilt, the change shown
 /// to `accept`, and the move kept for all members or put back for all;
 /// `extra` units charged for the move itself. The members' trees are the
-/// caller's: a kept move leaves their levels on the trees the rotations were
-/// made on and their pointers on the old ones.
+/// caller's: a kept move leaves their levels on the shapes the rotations
+/// were made on and their pointers on the old trees.
 ///
 /// Each member is charged the pairs of its two old and two new levels and
 /// [`REBUILD_UNITS`].

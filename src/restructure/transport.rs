@@ -319,18 +319,30 @@ impl Shape {
     /// The shape of `source` on `ranked`'s projection, or
     /// [`TransportError::Bound`] at the lowest node with no image.
     fn along(lim: &Limits, source: &Vtree, ranked: &Ranked) -> Result<Self, TransportError> {
+        Self::of_children(lim, ranked, source.num_nodes(), source.internal_bottomup_slice(), |s| source.children(s))
+    }
+
+    /// [`along`](Self::along) a vtree of `nodes` nodes whose internal nodes
+    /// are `bottom_up`, in that order, with the children `children`.
+    fn of_children(
+        lim: &Limits,
+        ranked: &Ranked,
+        nodes: usize,
+        bottom_up: &[VtreeIdx],
+        children: impl Fn(VtreeIdx) -> (VtreeIdx, VtreeIdx),
+    ) -> Result<Self, TransportError> {
         let mut shape = Self { into: Arc::clone(&ranked.into), to: Vec::new(), mirrored: Vec::new() };
-        if source.num_nodes() == 0 {
+        if nodes == 0 {
             return Ok(shape);
         }
-        lim.try_resize(&mut shape.to, source.num_nodes(), VtreeIdx(0))?;
+        lim.try_resize(&mut shape.to, nodes, VtreeIdx(0))?;
         for (&(_, leaf), image) in ranked.order.iter().zip(ranked.into.projected_leaves()) {
             shape.to[leaf.idx()] = image;
         }
         let mut gate = lim.gate();
-        for &s in source.internal_bottomup_slice() {
+        for &s in bottom_up {
             gate.poll(1)?;
-            let (left, right) = source.children(s);
+            let (left, right) = children(s);
             let (l, r) = (shape.to[left.idx()], shape.to[right.idx()]);
             let into = &shape.into;
             let Some(d) = into.node(l).parent().filter(|&d| into.node(r).parent() == Some(d)) else {
@@ -346,18 +358,27 @@ impl Shape {
     }
 }
 
-/// Members `which` of `members`, whose levels are on `own`, a projection
-/// that rotations and swaps moved as `home` was lifted from it, seated level
-/// for level on one projection of `home` on `own`'s leaves.
-pub(super) fn seat_group(eng: &Engine, members: &mut [&mut Tdd], which: &[usize], own: Vtree, home: &Home) {
-    let own = Arc::new(own);
+/// Members `which` of `members`, which share a projection, seated level for
+/// level on one projection of `home` on its leaves. Their levels are on the
+/// projection as rotations and swaps moved it while `home` was lifted from
+/// it: the internal nodes `bottom_up`, in that order, with the children
+/// `kids` (by node, left first).
+pub(super) fn seat_group(
+    eng: &Engine,
+    members: &mut [&mut Tdd],
+    which: &[usize],
+    kids: &[(VtreeIdx, VtreeIdx)],
+    bottom_up: &[VtreeIdx],
+    home: &Home,
+) {
     let lim = Limits::new();
-    let ranked = Ranked::find(&lim, &own, home, |v| v).expect("a home has its projections' leaves");
-    let shape = Shape::along(&lim, &own, &ranked).expect("the home has the moved tree's shape");
+    let source = Arc::clone(&members[which[0]].vtree);
+    let ranked = Ranked::find(&lim, &source, home, |v| v).expect("a home has its projections' leaves");
+    let shape = Shape::of_children(&lim, &ranked, source.num_nodes(), bottom_up, |s| kids[s.idx()])
+        .expect("the home has the moved tree's shape");
     debug_assert!(shape.mirrored.is_empty());
     for &i in which {
         let f = &mut *members[i];
-        f.vtree = Arc::clone(&own);
         Route::with_levels(&lim, f, shape.clone()).expect("unlimited").seat(eng, f);
     }
 }
