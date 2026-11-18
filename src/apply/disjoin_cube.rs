@@ -323,6 +323,9 @@ fn overlay_cube(eng: &Engine, f: &mut Tdd, label: &[u32]) -> Result<Tdd, Operati
             return Assembly::from_levels(eng, Arc::clone(&vtree), levels, weights)
                 .finish(TddNodeId { vtree: root, local: out });
         }
+        // Nodes the output does not reach are split too. Determinism over
+        // every stored node keeps their inside pieces disjoint from the
+        // others', so such a piece only joins the cube's cover.
         let mut s = spare.pop().unwrap_or_default();
         split_level(lim, level, l, r, &mut w, &mut s)?;
         out_nodes += s.in_cube.len() as u64;
@@ -381,14 +384,6 @@ fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Res
         return eng.or(f, g);
     }
     f.require_structure()?;
-    // The fill reads every node of a level, so an unreachable one would
-    // overlap the reachable cells it duplicates. The loose levels leave out
-    // the root, whose other nodes are unreachable.
-    if f.levels[root.idx()].slot_count() > 1 || f.dirty.loose().is_none_or(|loose| !loose.is_empty()) {
-        let closed = f.levels.is_closed();
-        crate::reduce::prune::prune_unreachable(eng, &mut f, crate::reduce::prune::PruneScope::Whole)?;
-        f.close_marked_levels(closed);
-    }
     let mut label: Vec<u32> = Vec::new();
     lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX.0)?;
     for &(lit, leaf) in &cube {
