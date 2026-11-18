@@ -1020,6 +1020,9 @@ impl TwinMode {
 
 /// Commit `pending`, the move `mv` made on `tree` by [`move_in_place`], if
 /// `kept`, else take it back.
+// Forced: with the projection probe as a second caller, LLVM calls it out
+// of line from the probe on one shared tree.
+#[inline(always)]
 fn end_move(eng: &Engine, tree: &mut Vtree, pending: PendingTopo, mv: PoolMove, kept: bool) {
     let info = pending.info();
     if kept {
