@@ -127,7 +127,7 @@ fn join_at_the_root_carries_what_the_operands_owe() {
         let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
         // Contraction visits only the levels a diagram owes it.
         let contracted = |mut d: Tdd| {
-            eng.reduce(&mut d, ReductionPlan::Contract).unwrap();
+            eng.reduce_plain(&mut d, ReductionPlan::Contract).unwrap();
             d
         };
         let joined_reduced = eng.and(contracted(f.clone()), contracted(g.clone())).unwrap();
@@ -224,7 +224,7 @@ fn reductions_and_counts_run_on_projections() {
                 ReductionPlan::default(),
             ] {
                 let mut r = h.clone();
-                eng.reduce(&mut r, plan).unwrap();
+                eng.reduce_plain(&mut r, plan).unwrap();
                 assert!(Arc::ptr_eq(r.vtree(), h.vtree()));
                 assert_eq!(eng.model_count(&r).unwrap(), eng.model_count(&h).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&eng, &r, &home), &expected).unwrap(), "seed {seed}");

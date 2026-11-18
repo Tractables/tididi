@@ -118,7 +118,7 @@ impl Engine {
             return Ok(FilterOutcome::Unsatisfiable { tdd: crate::build::constant_like(self, f, false)?, stats });
         }
         let mut tdd = assembly.finish(TddNodeId { vtree: root.vtree, local })?;
-        self.reduce(&mut tdd, plan)?;
+        self.reduce_plain(&mut tdd, plan)?;
         Ok(FilterOutcome::Filtered { tdd, stats })
     }
 }

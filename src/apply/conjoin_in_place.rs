@@ -665,7 +665,7 @@ fn and_in_place_kernel(
         f.dirty.set_loose(Some(loose));
     }
     match prune {
-        true => eng.reduce(&mut f, ReductionPlan::Prune)?,
+        true => eng.reduce_plain(&mut f, ReductionPlan::Prune)?,
         false => f.close_marked_levels(closed),
     }
     Ok(f)

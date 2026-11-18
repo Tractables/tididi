@@ -290,6 +290,9 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// after summing levels out is the marginal family.
 pub fn assert_canonical(tdd: &Tdd) {
     use crate::test_helpers::check::{check_all_fast, check_no_false_nodes, validate_vtree_structure};
+    if tdd.vtree().num_nodes() == 0 {
+        return;
+    }
     if !tdd.has_marginal_level() {
         check_all_fast(tdd, "assert_canonical");
         return;

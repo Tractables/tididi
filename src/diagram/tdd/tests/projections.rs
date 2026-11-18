@@ -179,7 +179,7 @@ fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
             1 => f.exists_vars(&[var]).unwrap(),
             2 => and2(&f, &rand_conj(home, n, 2, 3, false, rng)),
             _ => {
-                f.minimize().unwrap();
+                Engine::new().minimize_plain(&mut f).unwrap();
                 f
             }
         };

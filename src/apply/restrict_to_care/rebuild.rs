@@ -84,7 +84,7 @@ impl Marking {
             propagate_false_nodes(lim, &mut f)?;
         }
         // The nodes the dropped pairs no longer name are unreachable now.
-        eng.reduce(&mut f, ReductionPlan::Prune)?;
+        eng.reduce_plain(&mut f, ReductionPlan::Prune)?;
         Ok(f)
     }
 }

@@ -301,7 +301,7 @@ impl Engine {
         if targets.is_empty() || product.is_zero() {
             // No sweep runs to reduce the product, so it is reduced here.
             let mut product = product;
-            self.reduce(&mut product, plan)?;
+            self.reduce_plain(&mut product, plan)?;
             return super::extend::trimmed(self, product);
         }
         super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, plan)?)

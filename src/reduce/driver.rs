@@ -3,7 +3,7 @@
 use crate::{Engine, Tdd, OperationError};
 use crate::diagram::{NodeIdx, Pass, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx};
-use super::{ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
+use super::{Close, ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
 use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
@@ -19,18 +19,48 @@ const CONTENT_SCAN_MAX_NODES: u64 = 131_072;
 pub(super) struct Reduction<'a> {
     eng: &'a Engine,
     tdd: &'a mut Tdd,
+    /// The seed of a closing reduction; `None` in a plain one.
+    seed: Option<&'a [VtreeIdx]>,
+    /// The leaves leaf contraction found twins at in a closing reduction,
+    /// their parents' levels left as they were for the close to drop.
+    recorded: Vec<VtreeIdx>,
+    /// The variables some pair names true at entry.
+    #[cfg(debug_assertions)]
+    named_one: Vec<crate::vtree::VarId>,
 }
 
 impl<'a> Reduction<'a> {
-    pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd) -> Self { Self { eng, tdd } }
+    pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd, close: Close<'a>) -> Self {
+        let seed = match close {
+            Close::Plain => None,
+            Close::Settle(seed) => Some(seed),
+        };
+        Self {
+            eng,
+            tdd,
+            seed,
+            recorded: Vec::new(),
+            #[cfg(debug_assertions)]
+            named_one: Vec::new(),
+        }
+    }
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
+        #[cfg(debug_assertions)]
+        if self.seed.is_some() {
+            self.named_one = oracle::named_one(self.tdd);
+        }
         let done = self.run_passes(plan, scope);
         // A pass that left a level's live pairs for the close at the end
         // (`TddLevel::leave_live_pairs`) may be followed by one refused
         // before that close.
         if done.is_err() {
             self.tdd.levels.forget_left_pairs();
+            if !self.recorded.is_empty() {
+                let vtree = &self.tdd.vtree;
+                let parents: Vec<u32> = self.recorded.iter().map(|&leaf| vtree.node(leaf).parent().expect("a recorded leaf has a parent").0).collect();
+                self.tdd.dirty.requeue(Pass::LeafContract, parents);
+            }
         }
         done
     }
@@ -45,18 +75,23 @@ impl<'a> Reduction<'a> {
             ReductionPlan::Contract => {
                 contract_all_twins(self.eng, self.tdd)?;
                 self.tdd.close_marked_levels(closed);
-                return Ok(());
+                return self.settle();
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
                 prune_value_slots(self.eng, self.tdd)?;
                 self.tdd.close_marked_levels(closed);
-                return Ok(());
+                return self.settle();
             }
             ReductionPlan::Full(policy) => {
                 // A certified diagram with nothing owed is at the fixpoint of
-                // every pass below, so there is nothing to run.
-                if self.tdd.levels.is_canonical(self.tdd.output) && self.tdd.dirty.is_empty() {
+                // every pass below, so there is nothing to run. Its certificate
+                // does not say that no pair names a leaf true: a diagram an
+                // embedding padded is certified and keeps its padding.
+                if self.tdd.levels.is_canonical(self.tdd.output)
+                    && self.tdd.dirty.is_empty()
+                    && self.seed.is_none_or(<[VtreeIdx]>::is_empty)
+                {
                     return Ok(());
                 }
                 policy
@@ -90,17 +125,21 @@ impl<'a> Reduction<'a> {
         // for. What the lists still hold is what the passes' own rewrites
         // pushed after the sweep had taken its list, plus content-twin
         // entries that only the scan reads.
-        self.finish(closed, structural, whole);
-        Ok(())
+        self.finish(closed, structural, whole)
     }
 
     /// Close the levels the passes marked (`closed` saying they were closed
-    /// before), and on a `structural` diagram list no level loose: the prune
-    /// left every node reachable, and a contraction only merges twins, whose
-    /// children are the same. At the `fixpoint` of every pass, clear the
-    /// worklists and certify a structural diagram.
-    fn finish(&mut self, closed: bool, structural: bool, fixpoint: bool) {
+    /// before), settle a closing reduction, and on a `structural` diagram
+    /// list no level loose: the prune left every node reachable, and a
+    /// contraction only merges twins, whose children are the same. At the
+    /// `fixpoint` of every pass, clear the worklists and certify a structural
+    /// diagram.
+    fn finish(&mut self, closed: bool, structural: bool, fixpoint: bool) -> Result<(), OperationError> {
         self.tdd.close_marked_levels(closed);
+        self.settle()?;
+        if self.tdd.vtree.num_nodes() == 0 {
+            return Ok(());
+        }
         if structural {
             #[cfg(debug_assertions)]
             super::prune::debug_assert_all_reached(self.tdd);
@@ -112,8 +151,27 @@ impl<'a> Reduction<'a> {
             }
             if structural {
                 self.tdd.levels.certify(self.tdd.output);
+                #[cfg(debug_assertions)]
+                super::contract::contract_leaf::assert_no_full_twin_side(self.tdd);
             }
         }
+        Ok(())
+    }
+
+    /// Drop the recorded leaves and the seed's in a closing reduction
+    /// ([`super::trim::settle`]).
+    fn settle(&mut self) -> Result<(), OperationError> {
+        let Some(seed) = self.seed else { return Ok(()) };
+        if !seed.is_empty() {
+            self.eng.limits().reserve_exact(&mut self.recorded, seed.len())?;
+            self.recorded.extend_from_slice(seed);
+        }
+        #[cfg(debug_assertions)]
+        let dropped = oracle::at_entry(self.tdd, &self.recorded, seed, &self.named_one);
+        super::trim::settle(self.eng, self.tdd, &mut self.recorded)?;
+        #[cfg(debug_assertions)]
+        oracle::at_exit(self.tdd, dropped.as_deref(), &self.named_one);
+        Ok(())
     }
 
     /// Prune a negation of a canonical diagram and certify the result, with no
@@ -143,15 +201,20 @@ impl<'a> Reduction<'a> {
                 level.shrink_arrays();
             }
         }
-        self.finish(closed, true, true);
-        Ok(())
+        self.finish(closed, true, true)
     }
 
-    /// Leaf rewrites can create inner twins; clean passes drain empty worklists.
+    /// A closing reduction on a home with no summed-out level records the
+    /// leaf sides in place of writing them.
     fn contract(&mut self) -> Result<(), OperationError> {
         contract_all_twins(self.eng, self.tdd)?;
-        if contract_leaf_twins(self.eng, self.tdd)? {
+        let record = self.seed.is_some() && on_home(&self.tdd.vtree) && !self.tdd.has_marginal_level();
+        if contract_leaf_twins(self.eng, self.tdd, record.then_some(&mut self.recorded))? {
+            #[cfg(debug_assertions)]
+            let before = level_counts(self.tdd);
             contract_all_twins(self.eng, self.tdd)?;
+            #[cfg(debug_assertions)]
+            debug_assert!(self.tdd.has_marginal_level() || before == level_counts(self.tdd), "a leaf rewrite made an inner twin");
         }
         Ok(())
     }
@@ -200,6 +263,94 @@ impl<'a> Reduction<'a> {
         for (i, &was_marginal) in before.iter().enumerate() {
             assert!(!was_marginal || self.tdd.levels[i].is_marginal(),
                 "vtree level {i} became structural during {pass}; marginalization is permanent");
+        }
+    }
+}
+
+fn on_home(vtree: &Vtree) -> bool {
+    vtree.home().is_some() || vtree.is_home()
+}
+
+#[cfg(debug_assertions)]
+fn level_counts(tdd: &Tdd) -> Vec<(usize, usize)> {
+    tdd.levels.iter().map(|l| (l.node_count(), l.pair_counts().sum())).collect()
+}
+
+/// The debug checks of a closing reduction, over every pair of every node.
+#[cfg(debug_assertions)]
+mod oracle {
+    use crate::Tdd;
+    use crate::diagram::{ChildSide, ONE_LEAF_IDX};
+    use crate::reduce::contract::contract_leaf::is_full_twin_side;
+    use crate::vtree::{VarId, VtreeIdx, VtreeNode};
+
+    fn names_one(tdd: &Tdd, parent: VtreeIdx, side: ChildSide) -> (bool, bool) {
+        let level = &tdd.levels[parent.idx()];
+        let (mut some, mut all) = (false, true);
+        for i in 0..level.slot_count() {
+            for p in level.pairs_iter_of_idx(i) {
+                let one = side.pick(p.left, p.right).raw() == ONE_LEAF_IDX.0;
+                (some, all) = (some || one, all && one);
+            }
+        }
+        (some, all)
+    }
+
+    /// The variables of the leaves some pair names true.
+    pub(super) fn named_one(tdd: &Tdd) -> Vec<VarId> {
+        let vtree = &tdd.vtree;
+        let mut vars = Vec::new();
+        for t in vtree.bottomup() {
+            let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
+            if tdd.levels[t.idx()].is_marginal() {
+                continue;
+            }
+            for (c, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
+                if vtree.node(c).is_leaf() && !tdd.levels[c.idx()].is_marginal() && names_one(tdd, t, side).0 {
+                    vars.push(vtree.leaf_var(c));
+                }
+            }
+        }
+        vars.sort_unstable();
+        vars
+    }
+
+    /// Check the leaves `settle` is given, and return their variables when
+    /// it will drop them.
+    pub(super) fn at_entry(tdd: &Tdd, dropped: &[VtreeIdx], seed: &[VtreeIdx], at_reduce: &[VarId]) -> Option<Vec<VarId>> {
+        let vtree = &tdd.vtree;
+        if !super::on_home(vtree) || tdd.has_marginal_level() || vtree.num_nodes() == 0 {
+            return None;
+        }
+        let parent = |leaf: VtreeIdx| {
+            let p = vtree.node(leaf).parent().expect("a dropped leaf has a parent");
+            (p, ChildSide::of(vtree, p, leaf))
+        };
+        for &leaf in &dropped[..dropped.len() - seed.len()] {
+            let (p, side) = parent(leaf);
+            assert!(is_full_twin_side(tdd, p, side), "recorded leaf {} is not a full twin side of level {}", leaf.0, p.0);
+        }
+        for &leaf in seed {
+            let (p, side) = parent(leaf);
+            assert!(names_one(tdd, p, side).1, "seed leaf {} is not named true by every pair of level {}", leaf.0, p.0);
+        }
+        let mut vars: Vec<VarId> = dropped.iter().map(|&leaf| vtree.leaf_var(leaf)).collect();
+        vars.sort_unstable();
+        vars.dedup();
+        if !tdd.is_zero() {
+            let mut expected: Vec<VarId> = seed.iter().map(|&leaf| vtree.leaf_var(leaf)).chain(at_reduce.iter().copied()).collect();
+            expected.sort_unstable();
+            expected.dedup();
+            assert_eq!(named_one(tdd), expected, "the leaves named true at the close are not the seed and those named at entry");
+        }
+        Some(vars)
+    }
+
+    pub(super) fn at_exit(tdd: &Tdd, dropped: Option<&[VarId]>, at_reduce: &[VarId]) {
+        let Some(dropped) = dropped else { return };
+        for var in named_one(tdd) {
+            assert!(at_reduce.contains(&var), "the close names {var:?} true, which no pair named at entry");
+            assert!(!dropped.contains(&var), "the close kept {var:?}, which it was to drop");
         }
     }
 }

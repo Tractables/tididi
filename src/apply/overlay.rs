@@ -580,7 +580,7 @@ pub(crate) fn overlay_on(
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,
     };
     result.weights = weights;
-    eng.reduce(&mut result, ReductionPlan::default())?;
+    eng.reduce_plain(&mut result, ReductionPlan::default())?;
     crate::apply::extend::trimmed(eng, result)
 }
 

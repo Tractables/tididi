@@ -228,7 +228,7 @@ pub(super) fn exists_leaves_structural(
         // atoms it owns refine the owner-set partition the level above then
         // has to fan out over. A diagram already at the fixpoint owes nothing
         // and skips the pass.
-        eng.reduce(&mut tdd, ReductionPlan::Prune)?;
+        eng.reduce_plain(&mut tdd, ReductionPlan::Prune)?;
     }
     // The levels that may hold a node their parent level does not name
     // (`Dirty::loose`), where that is known: none after the prune. The sweep
@@ -297,7 +297,7 @@ pub(super) fn exists_leaves_structural(
     // node that level's `⊤` pair names (index 0 of an internal child). The
     // root's other nodes are dropped by a plan that prunes.
     tdd.dirty.set_loose(loose);
-    eng.reduce(&mut tdd, reduction)?;
+    eng.reduce_plain(&mut tdd, reduction)?;
     Ok(tdd)
 }
 

@@ -39,7 +39,7 @@ pub fn assert_rotation_locality(eng: &Engine, tdd: &mut Tdd, w_idx: VtreeIdx) {
         );
     }
     let fired =
-        contract_leaf_twins(eng, tdd).expect("rotation-locality check: an allocation was refused");
+        contract_leaf_twins(eng, tdd, None).expect("rotation-locality check: an allocation was refused");
     assert!(
         !fired,
         "rotation locality: leaf-twin contraction fired after the rotation at {}",

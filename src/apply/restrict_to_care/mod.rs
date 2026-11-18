@@ -196,7 +196,7 @@ impl crate::Engine {
     pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
         if crate::apply::extend::needed([&f, &care]) {
-            self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
+            self.reduce_plain(&mut care, crate::reduce::ReductionPlan::default())?;
             return restrict_across(self, f, &care, u64::MAX);
         }
         if f.is_zero() {
@@ -205,7 +205,7 @@ impl crate::Engine {
         // Sound for any representation of `care` whose nodes each have a
         // model (invariant 2), which the walk assumes of both operands; the
         // reduced one gives the walk fewer pairs.
-        self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
+        self.reduce_plain(&mut care, crate::reduce::ReductionPlan::default())?;
         restrict_prepared(self, f, &care, u64::MAX)?.trimmed(self)
     }
 }

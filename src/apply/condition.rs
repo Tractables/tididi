@@ -84,7 +84,7 @@ fn condition_targets(
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     if !eng.is_sat(&tdd)? { tdd.output.local = ZERO; }
-    eng.reduce(&mut tdd, ReductionPlan::default())?;
+    eng.reduce_plain(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 

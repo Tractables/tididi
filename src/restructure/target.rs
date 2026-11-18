@@ -142,7 +142,7 @@ impl Engine {
     fn move_to(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<RestructureStats, RestructureError> {
         let structural = !tdd.has_marginal_level();
         if structural {
-            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+            self.reduce_plain(tdd, crate::reduce::ReductionPlan::default())?;
         }
         let mut mover = Mover {
             eng: self,

@@ -242,7 +242,7 @@ impl Engine {
             Cow::Owned(f) => f,
         };
         let mut g = self.exists_vars(f, dropped)?;
-        self.minimize(&mut g)?;
+        self.minimize_plain(&mut g)?;
         match splice(self, &g, into, plan)? {
             Some(result) => Ok(result),
             None => unreachable!("a canonical diagram over the kept variables alone splices"),
@@ -255,7 +255,7 @@ impl Engine {
             return Ok(Cow::Borrowed(f));
         }
         let mut copy = f.try_clone_on(self)?;
-        self.minimize(&mut copy)?;
+        self.minimize_plain(&mut copy)?;
         Ok(Cow::Owned(copy))
     }
 }

@@ -32,7 +32,7 @@ fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
             .collect();
         f = eng.and_clause(f, &clause).unwrap();
     }
-    eng.minimize(&mut f).unwrap();
+    eng.minimize_plain(&mut f).unwrap();
     f
 }
 

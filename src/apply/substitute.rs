@@ -88,7 +88,7 @@ impl Engine {
         }
         gate.flush()?;
         if f.is_zero() || f.is_one() {
-            self.minimize(&mut f)?;
+            self.minimize_plain(&mut f)?;
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
@@ -121,7 +121,7 @@ impl Engine {
         mut gate: PollGate,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
-        self.minimize(&mut f)?;
+        self.minimize_plain(&mut f)?;
         let vtree = f.vtree().clone();
         let mut uses = Vec::<Vec<usize>>::new();
         lim.try_resize(&mut uses, vtree.num_nodes(), Vec::new())?;
@@ -217,7 +217,7 @@ impl Engine {
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
         // A leaf output can be a cloned replacement, which need not be minimized.
-        self.minimize(&mut result)?;
+        self.minimize_plain(&mut result)?;
         Ok(result)
     }
 }

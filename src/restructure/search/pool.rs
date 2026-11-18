@@ -472,7 +472,7 @@ impl Engine {
     /// Reduce every member; their live pairs after.
     fn reduce_members(&self, members: &mut [&mut Tdd]) -> Result<usize, OperationError> {
         for m in members.iter_mut() {
-            self.reduce(m, crate::reduce::ReductionPlan::default())?;
+            self.reduce_plain(m, crate::reduce::ReductionPlan::default())?;
         }
         Ok(live_pairs(members))
     }

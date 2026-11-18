@@ -3,7 +3,7 @@
 use super::*;
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
 fn canonicalize_content_twins(eng: &Engine, tdd: &mut crate::Tdd) -> Result<(), OperationError> {
-    super::driver::Reduction::new(eng, tdd).content_twins()
+    super::driver::Reduction::new(eng, tdd, super::Close::Plain).content_twins()
 }
 use crate::apply::apply_and;
 use crate::test_helpers::clause_to_tdd;

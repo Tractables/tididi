@@ -88,6 +88,18 @@ pub struct ContentTwinSchedule {
     pub(crate) next_scan_at_nodes: u64,
 }
 
+/// How a reduction ends on a diagram on a home with no summed-out level.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Close<'a> {
+    /// Leaf contraction writes the true label and the diagram keeps its
+    /// vtree.
+    Plain,
+    /// Leaf contraction records the leaves it would name true, and the
+    /// reduction ends by dropping them and the leaves of the seed, which the
+    /// caller named true in every pair of their parents ([`trim::settle`]).
+    Settle(&'a [crate::vtree::VtreeIdx]),
+}
+
 use crate::Engine;
 use self::prune::PruneScope;
 use crate::limits::OperationError;
@@ -103,13 +115,24 @@ impl Engine {
         self.reduce(f, ReductionPlan::default())
     }
 
+    /// [`minimize`](Self::minimize) without the closing step: the diagram
+    /// stays on its vtree and leaf contraction writes the true label.
+    pub(crate) fn minimize_plain(&self, f: &mut Tdd) -> Result<(), OperationError> {
+        self.reduce_plain(f, ReductionPlan::default())
+    }
+
+    /// [`reduce`](Self::reduce) without the closing step.
+    pub(crate) fn reduce_plain(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
+        self.reduce_scoped(f, plan, PruneScope::Whole, Close::Plain)
+    }
+
     /// Run the selected reduction passes under this engine's resource limits.
     ///
     /// See [`Tdd::reduce`] for plan semantics and preservation guarantees.
     /// Allocation and stop refusals leave the diagram at the last completed pass
     /// boundary, where its count is still readable and preserved.
     pub fn reduce(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
-        self.reduce_scoped(f, plan, PruneScope::Whole)
+        self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(&[]))
     }
 
     /// [`reduce`](Self::reduce) with the scope of its prune chosen by the
@@ -120,11 +143,12 @@ impl Engine {
         f: &mut Tdd,
         plan: ReductionPlan<'_>,
         scope: PruneScope,
+        close: Close<'_>,
     ) -> Result<(), OperationError> {
         if f.vtree.num_nodes() == 0 {
             return Ok(());
         }
-        driver::Reduction::new(self, f).run(plan, scope)
+        driver::Reduction::new(self, f, close).run(plan, scope)
     }
 
     /// End a negation of a canonical operand: prune below the root and
@@ -132,7 +156,7 @@ impl Engine {
     /// level arrays as a full reduction does. `old` is the old output's slot
     /// where the complement was built beside it.
     pub(crate) fn certify_complement(&self, f: &mut Tdd, shrink: bool, old: Option<crate::diagram::NodeIdx>) -> Result<(), OperationError> {
-        driver::Reduction::new(self, f).certify_complement(shrink, old)
+        driver::Reduction::new(self, f, Close::Plain).certify_complement(shrink, old)
     }
 }
 

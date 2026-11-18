@@ -19,7 +19,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 /// Drop the nodes the joins made in `result` that nothing refers to.
 fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    eng.reduce(result, crate::reduce::ReductionPlan::Prune)
+    eng.reduce_plain(result, crate::reduce::ReductionPlan::Prune)
 }
 
 /// The true reference for an unconstrained child already placed bottom-up.
@@ -354,7 +354,7 @@ impl<'a> MovePlacement<'a> {
             crate::diagram::inline_small_marginal_refs(self.eng.limits(), &mut result, None)?;
         }
         if self.contract {
-            self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
+            self.eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
         } else if self.prune {
             prune(self.eng, &mut result)?;
         }

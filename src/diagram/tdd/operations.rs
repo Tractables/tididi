@@ -1117,11 +1117,17 @@ impl Tdd {
     /// [`exists_vars`](Self::exists_vars) and [`rename_vars`](Self::rename_vars)
     /// return minimized results.
     ///
+    /// On a [`Home`](crate::vtree::Home) or one of its projections, with no
+    /// summed-out level, a variable the minimization finds the diagram does
+    /// not depend on leaves its vtree: the result is on the projection of the
+    /// remaining variables. Off a home the vtree is kept.
+    ///
     /// # Errors
     ///
     /// Returns [`OperationError::OverBudget`] if an allocation is refused.
     /// Completed passes remain applied: the diagram is well-formed and count-correct
     /// at the last completed pass boundary, and can still be queried or retried.
+    /// The vtree is then unchanged.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -1190,13 +1196,15 @@ impl Tdd {
     /// A partial plan need not establish canonical form; [`minimize`](Self::minimize)
     /// runs the full default plan. Marginal levels remain marginal. The plan selects
     /// pruning, contraction, or a full pass with its content-twin policy.
+    /// On a home, the variables contraction finds the diagram does not depend
+    /// on leave its vtree, as in [`minimize`](Self::minimize).
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::OverBudget`] if an allocation is refused. Each pass
     /// reserves growth before mutation, so completed passes remain applied and the
     /// diagram stays well-formed and count-correct at the last pass boundary.
-    /// It can still be queried or retried.
+    /// It can still be queried or retried, and its vtree is unchanged.
     ///
     /// ```
     /// use std::sync::Arc;

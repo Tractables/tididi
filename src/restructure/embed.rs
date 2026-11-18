@@ -721,7 +721,7 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
         let (left, right) = into.children(t);
         into.node(if plan.is_free(left) { right } else { left }).is_leaf()
     }) {
-        eng.reduce(&mut result, crate::reduce::ReductionPlan::Prune)?;
+        eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Prune)?;
     }
     Ok(result)
 }

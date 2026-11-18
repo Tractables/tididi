@@ -39,7 +39,7 @@ fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], weights: Opti
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
-    eng.minimize(&mut f).unwrap();
+    eng.minimize_plain(&mut f).unwrap();
     if let Some(store) = weights {
         f.set_weights(store.clone()).unwrap();
     }

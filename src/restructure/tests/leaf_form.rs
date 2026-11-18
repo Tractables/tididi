@@ -26,8 +26,8 @@ fn embedding_projection_and_conjunction_keep_one_leaf_form() {
             for _ in 0..6 {
                 let mut f = rand_conj(&vtree, n, 5, 3, false, &mut rng);
                 let mut g = rand_conj(&vtree, n, 5, 3, false, &mut rng);
-                f.minimize().unwrap();
-                g.minimize().unwrap();
+                Engine::new().minimize_plain(&mut f).unwrap();
+                Engine::new().minimize_plain(&mut g).unwrap();
                 assert_one_form(&f, "input");
                 assert_one_form(&eng.and(&f, &g).unwrap(), &format!("and on {name}"));
                 for (into_name, into) in &wider {

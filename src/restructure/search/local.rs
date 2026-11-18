@@ -163,7 +163,7 @@ impl Engine {
         // the child multiset without Boolean dedup, which is what preserves the
         // count, and a minimize here would collapse it.
         if !tdd.has_marginal_level() {
-            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+            self.reduce_plain(tdd, crate::reduce::ReductionPlan::default())?;
         }
 
         let mut search = super::SearchTree::new(self, tdd);

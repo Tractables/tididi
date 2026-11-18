@@ -51,8 +51,43 @@ impl Engine {
         if !f.vtree.is_on(home) {
             return Err(OperationError::VtreeMismatch);
         }
-        trim(self, f, home)
+        trim(self, f, home, None)
     }
+}
+
+/// The closing step of a reduction on a diagram on a home with no summed-out
+/// level: false, or a leaf with output `One`, becomes the constant on the
+/// empty projection, and the leaves of `dropped` leave as [`Tdd::trim`]
+/// drops leaves named true. A leaf of `dropped` is named true in every pair
+/// of its parent, or by a literal in every pair, each node holding
+/// `(Pos, S)` exactly when it holds `(Neg, S)`. Another leaf goes only with a
+/// sibling whose chain ends at it holding both labels.
+///
+/// # Errors
+///
+/// As [`Tdd::trim`]; `f` is then as it was.
+pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
+    let vtree = &f.vtree;
+    if vtree.num_nodes() == 0 {
+        return Ok(());
+    }
+    let one_leaf = f.output.local == ONE_LEAF_IDX && vtree.node(vtree.root()).is_leaf();
+    if dropped.is_empty() && !f.is_zero() && !one_leaf {
+        return Ok(());
+    }
+    settle_cold(eng, f, dropped)
+}
+
+#[cold]
+#[inline(never)]
+fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
+    let Some(home) = Vtree::home_of(&f.vtree) else { return Ok(()) };
+    if f.has_marginal_level() {
+        return Ok(());
+    }
+    dropped.sort_unstable();
+    dropped.dedup();
+    trim(eng, f, &home, Some(dropped)).map(|_| ())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,6 +126,10 @@ fn child(vtree: &Vtree, t: VtreeIdx, side: ChildSide) -> VtreeIdx {
     side.pick(left, right)
 }
 
+fn other(side: ChildSide) -> ChildSide {
+    side.pick(ChildSide::Right, ChildSide::Left)
+}
+
 fn label(bits: u8) -> NodeIdx {
     match bits {
         POS => POS_LEAF_IDX,
@@ -112,7 +151,9 @@ impl Shape {
         }
     }
 
-    fn read(eng: &Engine, f: &Tdd) -> Result<Self, OperationError> {
+    /// `dropped`, sorted, names the leaves to drop; without it a leaf is
+    /// dropped when the first pair of its parent names it `One`.
+    fn read(eng: &Engine, f: &Tdd, dropped: Option<&[VtreeIdx]>) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let vtree = &*f.vtree;
         let n = vtree.num_nodes();
@@ -134,7 +175,11 @@ impl Shape {
             let first = level.pairs_iter_of_idx(0).next().expect("a node holds a pair");
             let keeps = |c: VtreeIdx, side| match shape.kind[c.idx()] {
                 Kind::True => false,
-                Kind::Leaf | Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
+                Kind::Leaf => match dropped {
+                    Some(dropped) => dropped.binary_search(&c).is_err(),
+                    None => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
+                },
+                Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
                 Kind::LevelChain(_) | Kind::Both => true,
             };
             let (kl, kr) = (keeps(left, ChildSide::Left), keeps(right, ChildSide::Right));
@@ -151,15 +196,18 @@ impl Shape {
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
                     } else {
+                        let twin = negative_half(vtree, t, side);
                         let mut held = Vec::new();
                         lim.try_resize(&mut held, level.slot_count(), 0u8)?;
                         for (i, h) in held.iter_mut().enumerate() {
                             let pairs = level.pairs_iter_of_idx(i);
                             gate.poll(pairs.len() as u64)?;
-                            shape.merged |= pairs.len() > 1;
-                            for p in pairs {
+                            let mut read = 0;
+                            for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
+                                read += 1;
                                 *h |= shape.bits(vtree, c, side_ref(p, side));
                             }
+                            shape.merged |= read > 1;
                         }
                         shape.labels[t.idx()] = held;
                         Kind::LeafChain(side)
@@ -206,9 +254,16 @@ struct Plan {
 
 const SIDES: [ChildSide; 2] = [ChildSide::Left, ChildSide::Right];
 
+/// The reference on the dropped side of `t`, kept on `side`, that a pair of
+/// a level recorded by leaf contraction holds besides its positive twin:
+/// `Neg` when that side is a leaf. Such a level is read on its positive half.
+fn negative_half(vtree: &Vtree, t: VtreeIdx, side: ChildSide) -> Option<u32> {
+    vtree.node(child(vtree, t, other(side))).is_leaf().then_some(NEG_LEAF_IDX.0)
+}
+
 /// The trim, all of its allocations made before `f` changes, so that a
-/// refusal leaves `f` as it was.
-fn trim(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
+/// refusal leaves `f` as it was. `dropped` as [`Shape::read`].
+fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[VtreeIdx]>) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let vtree = Arc::clone(&f.vtree);
     if vtree.num_nodes() == 0 {
@@ -227,7 +282,7 @@ fn trim(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> 
         replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
         return Ok(true);
     }
-    let shape = Shape::read(eng, f)?;
+    let shape = Shape::read(eng, f, dropped)?;
     if !shape.dropped {
         return Ok(false);
     }
@@ -394,6 +449,8 @@ fn trim(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> 
     f.close_marked_levels(closed);
     if canonical && !built && !shape.merged {
         f.levels.certify(f.output);
+        #[cfg(debug_assertions)]
+        super::contract::contract_leaf::assert_no_full_twin_side(f);
     }
     if let Some(counts) = counts {
         f.levels.keep_counts(counts);
@@ -445,6 +502,7 @@ fn merge(
     while t != end {
         let Kind::LevelChain(side) = shape.kind[t.idx()] else { unreachable!("a level chain") };
         let c = child(vtree, t, side);
+        let twin = negative_half(vtree, t, side);
         let mut below = Vec::new();
         lim.try_resize(&mut below, f.levels[c.idx()].slot_count(), UNNAMED)?;
         let level = &f.levels[t.idx()];
@@ -452,7 +510,7 @@ fn merge(
             if o != UNNAMED {
                 let pairs = level.pairs_iter_of_idx(i);
                 gate.poll(pairs.len() as u64)?;
-                for p in pairs {
+                for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
                     below[side_ref(p, side) as usize] = o;
                 }
             }

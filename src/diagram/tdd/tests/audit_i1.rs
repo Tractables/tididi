@@ -25,9 +25,6 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("minimize", "a contracting reduce, no trim"),
-    ("minimize [fixed]", "a contracting reduce, no trim"),
-    ("reduce(Full)", "a contracting reduce, no trim"),
     ("negate_with(Full)", "a Full reduce of an unminimized operand"),
     ("filter_nodes_with(Full)", "a Full reduce of an unminimized operand"),
     ("condition", "a contracting reduce, no trim"),
@@ -36,7 +33,6 @@ const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("exists_var", "a contracting reduce, no trim"),
     ("exists_vars", "a contracting reduce, no trim"),
     ("forall_vars", "a contracting reduce, no trim"),
-    ("and_exists", "a contracting reduce, no trim"),
     ("at_least_distinct", "a contracting reduce, no trim"),
     ("project_to_subtree", "a contracting reduce, no trim"),
     ("tag_level [fixed]", "a contracting reduce, no trim"),
@@ -64,12 +60,6 @@ const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("embed_moving onto the home", "a variable of the home the operand does not use"),
     ("embed_over the home", "a variable of the home the operand does not use"),
     ("embed_with a plan onto the home", "a variable of the home the operand does not use"),
-    ("or", "unpredicted: or(f, x4), f on x3 x4 x1 x2 with x3 irrelevant to the result"),
-    ("add", "unpredicted: as or"),
-    ("ite", "unpredicted: as or"),
-    ("and_not", "unpredicted"),
-    ("substitute", "unpredicted"),
-    ("restrict_to_care", "unpredicted"),
 ];
 
 // Predicted open, but no result named One on these inputs, so the audit
@@ -394,7 +384,7 @@ fn leaf(v: u32) -> Vtree {
 fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.inputs.clear();
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let xyz = Arc::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
+    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
     let hm = Home::new(Arc::clone(&xyz));
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let trimmed = |mut t: Tdd| {
@@ -412,7 +402,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     let x_y_any = unminimized((POS, NEG));
     let y_x_any = unminimized((NEG, POS));
     a.case = "restructure_to (x (y z)) from ((x y) z), level (x y) {(Pos, Pos), (Neg, Pos)}, root {(n0, Pos)}".into();
-    let x_yz = Arc::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap());
+    let x_yz = Arc::clone(Home::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap()).vtree());
     a.run("restructure_to [fixed]", || {
         let mut t = y_x_any.clone();
         t.restructure_to(&x_yz, usize::MAX).map(|_| t)
@@ -445,7 +435,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.run("or of x and not x [fixed]", || eng.or(x.clone(), x.clone().negate().unwrap()));
 
     a.case = "(x, y) root {(Pos, Pos), (Neg, Neg)}, key the leaf x".into();
-    let two = Arc::new(Vtree::join(&leaf(1), &leaf(2)).unwrap());
+    let two = Arc::clone(Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap()).vtree());
     let same = built(eng, &two, &[(two.root(), vec![(POS, POS), (NEG, NEG)])]);
     let key = two.children(two.root()).0;
     a.run("project_to_subtree on a leaf [fixed]", || eng.project_to_subtree(&same, key));
@@ -515,7 +505,7 @@ impl FoldMonoid for Sum {
 /// day 0, so that the totals do not read the day of an open store.
 fn prefix_fold_case() -> Result<Tdd, String> {
     let chain = |low: Vtree| Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &Vtree::join(&leaf(3), &low).unwrap()).unwrap()).unwrap();
-    let vtree = Arc::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap()));
+    let vtree = Arc::clone(Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap())).vtree());
     let into = Arc::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6)).unwrap()).unwrap()));
     let row = |store: u64, day: u64, amount: u64| store | (day >> 1) << 1 | (day & 1) << 2 | amount << 3;
     let vars: Vec<VarId> = (1..=5).map(VarId).collect();
@@ -538,7 +528,7 @@ fn prefix_fold_case() -> Result<Tdd, String> {
 #[ignore = "panics today"]
 fn audit_i1_constant_operands_do_not_panic() {
     let eng = Engine::new();
-    let home = Arc::new(Vtree::balanced(3));
+    let home = Arc::clone(Home::new(Vtree::balanced(3)).vtree());
     let hm = Home::new(Arc::clone(&home));
     for mut c in [Tdd::one(&home), Tdd::zero(&home)] {
         c.trim(&hm).unwrap();
@@ -560,7 +550,7 @@ fn audit_i1_every_producer() {
     for seed in 0..160u64 {
         let mut rng = Lcg::new(seed ^ 0x11a7);
         let n = 3 + rng.below(6) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
+        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         audit.case = format!("seed {seed}, {n} variables");
         random_case(&mut audit, &eng, &home, n, &mut rng);
     }
@@ -570,15 +560,15 @@ fn audit_i1_every_producer() {
     assert!(findings.is_empty(), "{}\n{report}", findings.join("\n"));
 }
 
-/// E3: `minimize` of x on ((x y) z), level (x y) {(Pos, Pos), (Pos, Neg)},
-/// stopped at each poll in turn. Each stop comes before the contraction and
-/// leaves no `One`; the finished minimization names y `One`.
+/// E3: `minimize` of x ∧ z on ((x y) z), level (x y) {(Pos, Pos), (Pos, Neg)},
+/// on a home, stopped at each poll in turn. Each stop returns `Err` and
+/// leaves no `One`, and the finished minimization names none.
 #[test]
 fn audit_i1_minimize_stopped_after_a_contraction() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let eng = Engine::new();
-    let xyz = Arc::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
+    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(&eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     let polls = Arc::new(AtomicUsize::new(0));
@@ -603,12 +593,12 @@ fn audit_i1_minimize_stopped_after_a_contraction() {
         };
         outcomes.push((allowed, done.is_err(), reachable_true_labels(&m)));
     }
-    eprintln!("{outcomes:?}");
-    assert!(outcomes.iter().any(|(_, refused, _)| *refused), "{outcomes:?}");
+    assert!(outcomes.iter().all(|(_, refused, _)| *refused), "{outcomes:?}");
     assert!(outcomes.iter().all(|(_, _, labels)| matches!(labels, Ok(None))), "a stop leaves y named One: {outcomes:?}");
     let mut done = f.clone();
     eng.minimize(&mut done).unwrap();
-    assert!(matches!(reachable_true_labels(&done), Ok(Some(_))), "the finished minimization names y One");
+    assert_eq!(reachable_true_labels(&done), Ok(None));
+    assert_eq!(done.vtree().num_leaves(), 2, "x and z");
 }
 
 /// ((a b) c) with a, b, c = 1, 2, 3; `f` is c, its level (a b) one node

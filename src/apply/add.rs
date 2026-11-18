@@ -166,7 +166,7 @@ fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
             sum_levels(eng, &f, &g)?
         }
     };
-    eng.reduce(&mut result, ReductionPlan::default())?;
+    eng.reduce_plain(&mut result, ReductionPlan::default())?;
     crate::apply::extend::trimmed(eng, result)
 }
 
