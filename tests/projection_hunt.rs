@@ -434,6 +434,11 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     let holds = |a: usize, l: &Literal| (a >> (l.var.0 - 1) & 1 == 1) == l.sign;
     log.any(n, "and_clause", || eng.and_clause(f.clone(), &clause), &(0..size).map(|a| tf[a] && clause.iter().any(|l| holds(a, l))).collect());
     log.any(n, "or_cube", || eng.or_cube(f.clone(), &clause), &(0..size).map(|a| tf[a] || clause.iter().all(|l| holds(a, l))).collect());
+    let mut both = clause.clone();
+    both.push(clause[0].negated());
+    let or_table: Table = (0..size).map(|a| tf[a] || clause.iter().all(|l| holds(a, l))).collect();
+    log.any(n, "or_cube after a false cube", || eng.or_cube(f.clone(), &both).and_then(|g| eng.or_cube(g, &clause)), &or_table);
+    log.any(n, "or_cube after a true clause", || eng.and_clause(f.clone(), &both).and_then(|g| eng.or_cube(g, &clause)), &or_table);
     log.any(n, "and_cube", || eng.and_cube(f.clone(), clause.clone()), &(0..size).map(|a| tf[a] && clause.iter().all(|l| holds(a, l))).collect());
     let (p, q) = (var(rng), var(rng));
     if p != q {

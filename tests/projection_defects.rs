@@ -150,3 +150,25 @@ fn negate_on_no_leaf_keeps_the_weights() {
     assert!(owned.weights().is_some(), "negate of an owned constant with no leaf drops its weights");
     assert!(owned.is_zero());
 }
+
+#[test]
+fn or_cube_on_a_diagram_an_earlier_call_placed_is_canonical() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)]).unwrap(), [1, -2]).unwrap();
+    let mut want = eng.or_cube(f.clone(), &[3, 4]).unwrap();
+    want.minimize().unwrap();
+    let wide = Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap();
+    let placed = [
+        ("a false cube", eng.or_cube(f.clone(), &[3, -3, 4]).unwrap()),
+        ("a true clause", eng.and_clause(f.clone(), &[3, -3, 4]).unwrap()),
+        ("embed_moving", eng.embed_moving(f, &wide, |v| v).unwrap().0),
+    ];
+    for (how, placed) in placed {
+        let got = catch_unwind(AssertUnwindSafe(|| eng.or_cube(placed, &[3, 4]).unwrap()));
+        let mut got = got.unwrap_or_else(|_| panic!("the overlay after {how}"));
+        assert_eq!(got.model_count().unwrap(), want.model_count().unwrap(), "after {how}");
+        got.minimize().unwrap();
+        assert_eq!((got.node_count(), got.pair_count()), (want.node_count(), want.pair_count()), "after {how}");
+    }
+}

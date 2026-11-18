@@ -171,8 +171,12 @@ fn and_clause_extends_to_the_clause_variables() {
             let typed: Vec<crate::Literal> = lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect();
             for h in [eng.and_clause(f.clone(), &lits).unwrap(), eng.and_clause(f.clone(), &typed).unwrap()] {
                 assert!(Arc::ptr_eq(h.vtree().home().unwrap().vtree(), &home));
-                for &l in &lits {
-                    assert!(h.vtree().leaf_of(VarId(l.unsigned_abs())).is_some());
+                if lits.iter().any(|&l| lits.contains(&-l)) {
+                    assert!(Arc::ptr_eq(h.vtree(), f.vtree()), "a true clause leaves the vtree");
+                } else {
+                    for &l in &lits {
+                        assert!(h.vtree().leaf_of(VarId(l.unsigned_abs())).is_some());
+                    }
                 }
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
