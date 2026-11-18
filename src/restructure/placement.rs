@@ -60,7 +60,7 @@ impl PassThrough {
     pub(crate) fn new(vtree: &Vtree, at: VtreeIdx, free_side: ChildSide, slots: impl FnOnce(VtreeIdx) -> usize) -> Self {
         let (left, right) = vtree.children(at);
         let (free, carries) = free_side.pick((left, right), (right, left));
-        let carries_leaf = vtree.node(carries).is_leaf();
+        let carries_leaf = vtree.node(carries).is_var_leaf();
         let width = if carries_leaf { LEAF_WIDTH } else { slots(carries) };
         Self { carries, carries_leaf, one: true_node(vtree, free), width, free_side }
     }
@@ -185,8 +185,8 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
-    /// Copy every level of `source`, not its weights, through a checked
-    /// placement map, each over the level the placement took from
+    /// Copy every level of `source`, its weight columns left to the caller,
+    /// through a checked placement map, each over the level the placement took from
     /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
     /// Hands back a refusal, for the caller to drop the placement.
     ///
@@ -270,6 +270,68 @@ impl<'a> MovePlacement<'a> {
         }
         self.changed.push(at);
         through.build(self.eng.limits(), &mut self.assembly.parts_mut().0[at.idx()])
+    }
+
+    /// Whether the placed level at `at` is summed out.
+    pub(super) fn is_marginal(&self, at: VtreeIdx) -> bool {
+        self.assembly.level(at).is_marginal()
+    }
+
+    /// Whether the placed level at `at` holds integer counts.
+    pub(super) fn holds_counts(&self, at: VtreeIdx) -> bool {
+        let level = self.assembly.level(at);
+        level.is_marginal() && !level.is_weight_marginal()
+    }
+
+    /// Lift an integer region through a join with a free sibling at `at`,
+    /// the foot of a chain of joins under `parent`, which reads the chain on
+    /// `side`: one node per slot of the region, at the same index, then one
+    /// per inline value `parent` holds on `side`, which it names instead.
+    /// An inline value is no slot, so the nodes for them are new. Hands back
+    /// a refusal; `parent` is rewritten whole or not at all.
+    #[cold]
+    pub(super) fn pass_over_region(&mut self, at: VtreeIdx, free_side: ChildSide, parent: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
+        let lim = self.eng.limits();
+        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
+        let slots = through.width as u32;
+        let mut inline = Vec::new();
+        let (levels, _) = self.assembly.parts_mut();
+        let read = &levels[parent.idx()];
+        let value_refs = read.has_value_refs(side);
+        let decoder = crate::diagram::ChildDecoder::marginal();
+        for (_, pairs) in read.internal_inputs_iter() {
+            for pair in pairs {
+                let r = side.pick(pair.left, pair.right);
+                if !r.is_reserved() && matches!(decoder.value(r), crate::diagram::ValueRef::Inline(_)) {
+                    lim.try_push(&mut inline, r)?;
+                }
+            }
+        }
+        for (left, right) in through.pairs() {
+            self.join(at, left, right)?;
+        }
+        for &value in &inline {
+            let (left, right) = free_side.pick((through.one, NodeIdx(value.0)), (NodeIdx(value.0), through.one));
+            self.join(at, left, right)?;
+        }
+        let (levels, _) = self.assembly.parts_mut();
+        levels[at.idx()].set_has_value_refs(free_side.pick(ChildSide::Right, ChildSide::Left), value_refs);
+        if inline.is_empty() {
+            return Ok(());
+        }
+        let mut next = slots;
+        crate::diagram::for_each_side_ref_mut(lim, &mut levels[parent.idx()], side, |r| {
+            let encoded = crate::diagram::EncodedChildRef(*r);
+            if !encoded.is_reserved() && matches!(decoder.value(encoded), crate::diagram::ValueRef::Inline(_)) {
+                *r = next;
+                next += 1;
+            }
+        })?;
+        levels[parent.idx()].set_has_value_refs(side, false);
+        if !self.changed.levels.contains(&parent) {
+            self.changed.levels.push(parent);
+        }
+        Ok(())
     }
 
     /// Lift a leaf child through a join with a free sibling, one node per

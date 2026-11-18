@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, PairsIter, TddLevel, WeightStore, WeightValue};
-use crate::vtree::{Vtree, VtreeNode};
+use crate::vtree::{Vtree, VtreeNode, REGION_VAR};
 use crate::value::{WeightFold};
 
 /// Level `t`'s weighted column, or `None` when this diagram's level is
@@ -41,7 +41,9 @@ fn read_weight<'a>(
     levels: &[TddLevel],
     computed_weights: &'a [Option<Vec<WeightValue>>],
 ) -> std::borrow::Cow<'a, WeightValue> {
-    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
+    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32))
+        && var != REGION_VAR
+    {
         if side.is_reserved() {
             // `ZERO` sentinel, as in the integer reader. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.

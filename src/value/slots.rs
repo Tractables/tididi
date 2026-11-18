@@ -387,7 +387,7 @@ impl SlotValues for WeightFold {
         // every diagram of the compile aliases; appending a fourth would break
         // that alias. The leaf paths resolve by lookup and never reach here.
         debug_assert!(
-            !tdd.vtree.node(v).is_leaf(),
+            !tdd.vtree.node(v).is_var_leaf(),
             "refusing to mint a weight slot into a pinned leaf column (level {})",
             v.0
         );

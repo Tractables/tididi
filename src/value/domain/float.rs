@@ -21,7 +21,7 @@ use crate::value::{FloatCol, FloatFold, FloatSlice};
 use crate::isa::avx2_fn;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use crate::isa::Avx2;
-use crate::vtree::{Vtree, VtreeNode};
+use crate::vtree::{Vtree, VtreeNode, REGION_VAR};
 
 /// A value of a scaled-float store.
 #[inline(always)]
@@ -527,7 +527,9 @@ fn read_float(
     if side.is_reserved() {
         return ScaledFloat::ZERO;
     }
-    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
+    if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32))
+        && var != REGION_VAR
+    {
         return scaled(&ws.leaf_val(var, LeafLabel::from_idx(ChildDecoder::marginal().index(side))));
     }
     let level = &levels[level_idx];

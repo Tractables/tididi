@@ -436,7 +436,7 @@ impl Tdd {
     /// The number of reference slots at `idx`, excluding encoded inline values:
     /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::slot_count`].
     pub fn reference_slot_count(&self, idx: VtreeIdx) -> usize {
-        if self.vtree.node(idx).is_leaf() {
+        if self.vtree.node(idx).is_var_leaf() {
             LEAF_WIDTH
         } else {
             self.levels[idx.idx()].slot_count()

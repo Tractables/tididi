@@ -290,7 +290,7 @@ fn constants_on_the_empty_projection() {
 }
 
 #[test]
-fn weights_and_summed_out_levels_do_not_move() {
+fn summed_out_internal_levels_do_not_move() {
     let eng = Engine::new();
     let home = Home::new(rotated_home(6, 11));
     let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap(), [1, 2, 3]).unwrap();
@@ -300,7 +300,7 @@ fn weights_and_summed_out_levels_do_not_move() {
     eng.marginalize_levels(&mut summed, &[root]).unwrap();
     assert!(summed.has_marginal_level());
     for result in [eng.or(summed.clone(), g.clone()), eng.and_not(g.clone(), summed.clone()), eng.add(summed.clone(), g.clone())] {
-        assert_eq!(result.unwrap_err(), OperationError::WeightsAcrossProjections);
+        assert!(matches!(result.unwrap_err(), OperationError::MarginalLevel(_)));
     }
     let other = Arc::new(Vtree::balanced(6));
     let elsewhere = Tdd::clause(&other, [1, 2]).unwrap();

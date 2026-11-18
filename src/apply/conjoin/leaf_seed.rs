@@ -94,7 +94,7 @@ pub(crate) fn seed_output_leaves(
         let left_idx = leaf.idx();
         let left_m = f.level(left_idx).is_marginal();
         let right_m = g.level(left_idx).is_marginal();
-        if left_m || right_m {
+        if (left_m || right_m) && !f.vtree().node(leaf).is_region() {
             debug_assert!(
                 (left_m && right_m) || (left_m && g_identity[left_idx]) || (right_m && f_identity[left_idx]),
                 "marginal leaf {left_idx} conjoined with a non-identity operand \
@@ -138,4 +138,27 @@ pub(crate) fn seed_output_leaves(
         }
     }
     canon_leaves
+}
+
+/// Give each region among `leaves` the level of the operand that summed it
+/// out, values included: the other operand is constant true over it, and
+/// the level above carries the references to it as they are.
+#[cold]
+pub(crate) fn carry_region_leaves(
+    lim: &crate::limits::Limits,
+    vtree: &crate::vtree::Vtree,
+    leaves: &[VtreeIdx],
+    levels: &mut [TddLevel],
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+) -> Result<(), OperationError> {
+    for &leaf in leaves.iter().filter(|&&leaf| vtree.node(leaf).is_region()) {
+        let at = leaf.idx();
+        match (f.level(at).is_marginal(), g.level(at).is_marginal()) {
+            (true, false) => f.carry(lim, at, &mut levels[at])?,
+            (false, true) => g.carry(lim, at, &mut levels[at])?,
+            (both, _) => debug_assert!(!both, "two operands summed out one region"),
+        }
+    }
+    Ok(())
 }

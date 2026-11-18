@@ -21,6 +21,7 @@ mod relabel;
 mod probe;
 mod projected;
 mod reach_columns;
+mod region;
 mod restoring;
 mod self_conjunction;
 mod single_rows;

@@ -126,7 +126,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
 /// Decide whether a group's exact sum can be stored without changing a pinned column.
 fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
     use crate::diagram::{ChildDecoder, ValueRef};
-    let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_leaf()) else {
+    let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_var_leaf()) else {
         return true;
     };
     let col = ws.level(v.idx()).expect("weighted marginal leaf has a column");
@@ -414,7 +414,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     let mut scratch = RefSlotScratch::default();
     for i in 0..tdd.levels.len() {
         let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(VtreeIdx(i as u32)) else { continue };
-        if !tdd.levels[i].is_weight_marginal() {
+        if !tdd.levels[i].is_weight_marginal() || tdd.vtree.node(VtreeIdx(i as u32)).is_region() {
             continue;
         }
         if tdd.levels[i].slot_count() != LEAF_WIDTH {

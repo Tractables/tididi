@@ -120,12 +120,10 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
         LeafSets::Equal(_) | LeafSets::AInB if into.num_nodes() != 0 => {}
         _ => return Err(OperationError::VtreeMismatch),
     }
-    check_movable(f, into)?;
     extend_one(eng, Cow::Borrowed(f), into)
 }
 
-/// `result` of an operation on projections, trimmed to the leaves it names;
-/// one with weights or a summed-out level as it is.
+/// `result` of an operation on projections, trimmed to the leaves it names.
 #[inline]
 pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationError> {
     if result.vtree.home().is_some() {
@@ -136,10 +134,8 @@ pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationErr
 
 #[cold]
 fn trim_result(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    if result.weights.is_none() && !result.has_marginal_level() {
-        let home = result.vtree.home().expect("a projection").clone();
-        eng.trim(result, &home)?;
-    }
+    let home = result.vtree.home().expect("a projection").clone();
+    crate::reduce::trim(eng, result, &home, &[])?;
     Ok(())
 }
 
@@ -178,8 +174,8 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
         let (_, var) = home.vtree().leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }
-    for f in &operands {
-        check_movable(f, &into)?;
+    if operands.iter().any(|f| moves(f, &into)) {
+        crate::apply::shared_weights(operands.iter().map(|f| &**f)).map_err(|_| OperationError::WeightsAcrossProjections)?;
     }
     operands.into_iter().map(|f| extend_one(eng, f, &into)).collect()
 }
@@ -189,13 +185,6 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
 /// home's leaves has the home's shape but not its node numbering.
 fn moves(f: &Tdd, into: &Vtree) -> bool {
     f.vtree.num_nodes() != into.num_nodes() || f.vtree.home().is_some() != into.home().is_some()
-}
-
-fn check_movable(f: &Tdd, into: &Vtree) -> Result<(), OperationError> {
-    match moves(f, into) && (f.weights.is_some() || f.has_marginal_level()) {
-        true => Err(OperationError::WeightsAcrossProjections),
-        false => Ok(()),
-    }
 }
 
 /// `f` on `into`, which holds its leaf set: reseated when the leaf sets are
@@ -213,7 +202,9 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         return Ok(Cow::Owned(f));
     }
     if f.vtree.num_nodes() == 0 {
-        return Ok(Cow::Owned(crate::build::constant_on(eng, into, f.is_one())?));
+        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        constant.weights = f.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
+        return Ok(Cow::Owned(constant));
     }
     match place(eng, f, into, |var| var, Free::Build) {
         Ok((placed, _)) => Ok(Cow::Owned(placed)),

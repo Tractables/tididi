@@ -68,7 +68,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // Invariant 11: a weight-marginal leaf's column is the label-ordered
         // cache of `WeightStore::leaf_val`, shared by every diagram over this
         // vtree, so compacting it would corrupt every other holder.
-        if tdd.vtree.node(v).is_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
+        if tdd.vtree.node(v).is_var_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }
         // Empty stores need no parent walks. Weighted live width still needs

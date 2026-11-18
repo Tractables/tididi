@@ -142,8 +142,8 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
 /// projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
-/// [`OperationError::WeightsAcrossProjections`] when one with weights or a
-/// summed-out level would move to a larger projection,
+/// [`OperationError::WeightsAcrossProjections`] when operands on different
+/// projections carry incompatible weights,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
 /// even when the other operand is false; [`OperationError::IndexOverflow`] when

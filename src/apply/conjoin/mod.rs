@@ -253,6 +253,9 @@ fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Res
     if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
         return projected::conjoin_projections(eng, f, g);
     }
+    if f.vtree().has_regions() {
+        projected::check_shared_regions(&f, &g)?;
+    }
     prepare_owned_weights(&mut f, &mut g)?;
     conjoin_cow(eng, f, g, VtreeMask::default())
 }
@@ -410,9 +413,11 @@ fn conjoin_recycling(
 /// without weights inherits the other operand's table; stored integer counts
 /// cannot be reweighted. Marginal levels remain marginal, and conjunction is
 /// valid there only when the other operand imposes no further constraint on
-/// the summed-out variables. When both operands are marginal at a level, the
-/// caller must ensure one represents the constant-true function on that subtree;
-/// this condition is checked in debug builds.
+/// the summed-out variables. On one vtree, when both operands are marginal at
+/// a level, the caller must ensure one represents the constant-true function
+/// on that subtree; this condition is checked in debug builds. On projections
+/// of one home it is checked in every build: operands of which one has summed
+/// out a variable the other has a leaf for or has summed out too are refused.
 ///
 /// # Errors
 ///
@@ -420,7 +425,9 @@ fn conjoin_recycling(
 /// are not projections of one home,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// [`OperationError::MarginalLevel`] when a structural operand constrains
-/// variables the other has summed out, or [`OperationError::IndexOverflow`]
+/// variables the other has summed out, both have summed out one variable, or
+/// an operand on a projection has an internal summed-out level that is not a
+/// region, or [`OperationError::IndexOverflow`]
 /// when a level of the result would hold more nodes than a node index
 /// addresses.
 ///
@@ -463,7 +470,7 @@ pub struct AndOntoRefused<'a> {
 /// [`Engine::and_restoring`](crate::Engine::and_restoring) after its entry
 /// and vtree check, for operands whose free levels ([`ApplyRun::cone`]) are
 /// in `free`: refused, both come back as they were given, every free level
-/// built.
+/// built. An operand with a view has its plan in `plans`.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn conjoin_kept<'a>(
     eng: &Engine,
@@ -471,6 +478,7 @@ fn conjoin_kept<'a>(
     mut g: Cow<'a, Tdd>,
     mut free: Operands<VtreeMask<'_>>,
     mut views: Operands<Option<&mut View>>,
+    plans: Operands<Option<&Plan>>,
 ) -> Result<Tdd, AndRefused<'a>> {
     // Whether a level is marginal, and the widest level, in one pass.
     let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
@@ -478,7 +486,10 @@ fn conjoin_kept<'a>(
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
     if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
-        debug_assert!(views.f.is_none() && views.g.is_none(), "a viewed operand is plain");
+        if views.f.is_some() || views.g.is_some() {
+            let viewed = Operands { f: views.f.as_deref(), g: views.g.as_deref() };
+            (f, g) = place_viewed(eng, f, g, free, viewed, plans)?;
+        }
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
         return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
@@ -557,6 +568,43 @@ fn conjoin_kept<'a>(
     }
 }
 
+/// Place each operand of [`conjoin_kept`] that has a view by its plan, free
+/// levels left empty, for the conjunction of weighted or summed-out operands,
+/// which reads no view. Refused, an operand not yet placed comes back as it
+/// was given and a placed one with its free levels built.
+#[cold]
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn place_viewed<'a>(
+    eng: &Engine,
+    f: Cow<'a, Tdd>,
+    g: Cow<'a, Tdd>,
+    free: Operands<VtreeMask<'_>>,
+    views: Operands<Option<&View>>,
+    plans: Operands<Option<&Plan>>,
+) -> Result<(Cow<'a, Tdd>, Cow<'a, Tdd>), AndRefused<'a>> {
+    let place =|tdd: Cow<'a, Tdd>, view: Option<&View>, plan: Option<&Plan>| match view {
+        None => Ok(tdd),
+        Some(view) => place_by(eng, tdd, view.vtree(), plan.expect("a viewed operand has its plan"), Free::Leave)
+            .map(Cow::Owned)
+            .map_err(|(error, tdd)| (crate::apply::extend::operation_error(error), tdd)),
+    };
+    let built = |mut tdd: Cow<'a, Tdd>, free: VtreeMask<'_>| {
+        fill_free_cow(&mut tdd, free);
+        tdd
+    };
+    let f = match place(f, views.f, plans.f) {
+        Ok(f) => f,
+        Err((error, f)) => {
+            let g = if views.g.is_some() { g } else { built(g, free.g) };
+            return Err(AndRefused { error, f, g });
+        }
+    };
+    match place(g, views.g, plans.g) {
+        Ok(g) => Ok((f, g)),
+        Err((error, g)) => Err(AndRefused { error, f: built(f, free.f), g }),
+    }
+}
+
 /// Take back what an owned operand given whole was known to be before a
 /// refused conjunction put its levels back ([`conjoin_kept`]).
 fn reinstate_known(tdd: &mut Cow<'_, Tdd>, known: Option<diagram::Known>) {
@@ -594,6 +642,15 @@ fn place_onto<'a>(
         return Err((error.into(), tdd));
     }
     *begun = true;
+    if tdd.vtree().num_nodes() == 0 {
+        return match crate::build::constant_on(eng, into, tdd.is_one()) {
+            Ok(mut constant) => {
+                constant.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
+                Ok((Cow::Owned(constant), None, false))
+            }
+            Err(error) => Err((error.into(), tdd)),
+        };
+    }
     if viewing && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
         let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
             Ok(plan) => plan,
@@ -651,6 +708,14 @@ pub(crate) fn conjoin_onto_as<'a>(
     };
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
+    // Off projections a summed-out operand is never placed, so it is on
+    // `into` already, where the conjunction leaves this check to the caller.
+    if (f.vtree().home().is_some() || g.vtree().home().is_some())
+        && !Arc::ptr_eq(f.vtree(), g.vtree())
+        && let Err(error) = projected::check_summed_leaves_mapped(&f, &f_map, &g, &g_map)
+    {
+        return Err(AndOntoRefused { error: error.into(), f, g });
+    }
     let mut begun = false;
     let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, viewing) {
         Ok(placed) => placed,
@@ -701,7 +766,14 @@ pub(crate) fn conjoin_onto_as<'a>(
     };
     match begin_phase(eng, begun) {
         Err(error) => refuse(error.into(), f, g),
-        Ok(()) => conjoin_kept(eng, f, g, free, Operands { f: f_view.as_mut(), g: g_view.as_mut() })
+        Ok(()) => conjoin_kept(
+            eng,
+            f,
+            g,
+            free,
+            Operands { f: f_view.as_mut(), g: g_view.as_mut() },
+            Operands { f: f_plan.as_ref(), g: g_plan.as_ref() },
+        )
             .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
     }
 }
@@ -793,7 +865,7 @@ impl crate::Engine {
         if let Err(error) = crate::apply::check_vtree(&f, &g) {
             return Err(AndRefused { error, f, g });
         }
-        conjoin_kept(self, f, g, Operands::default(), Operands::default())
+        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default())
     }
 
     /// [`Engine::and_restoring`] of `f` and `g` placed on `into` as
@@ -859,7 +931,9 @@ impl crate::Engine {
     ///
     /// `targets` names vtree nodes; order and duplicates do not matter. Internal
     /// targets can be summed out during product construction; leaf targets are
-    /// handled afterward. The result preserves the conjunction's count, or its
+    /// handled afterward. Where an operand is on a projection, `targets` are
+    /// nodes of its home, summed out on the result as [`Engine::marginalize`]
+    /// sums them. The result preserves the conjunction's count, or its
     /// fixed weighted value when weights are attached.
     ///
     /// Every target's remaining structure is discarded, including after identity
@@ -914,11 +988,11 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         let (f, g) = (f.into(), g.into());
         let _op = self.limits().enter()?;
+        if f.vtree().home().is_some() || g.vtree().home().is_some() {
+            return marginalizing_projections(self, f, g, targets);
+        }
         f.check_level_indices(targets)?;
-        let from = Arc::clone(f.vtree());
         let [mut f, mut g] = extend::cows(self, [f, g])?;
-        let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
-        let targets = translated.as_deref().unwrap_or(targets);
         prepare_owned_weights(&mut f, &mut g)?;
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
@@ -985,7 +1059,10 @@ impl crate::Engine {
         let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
         let targets = translated.as_deref().unwrap_or(targets);
         if f.weights.is_some() || g.weights.is_some() {
-            let out = self.and_marginalizing(f, g, targets)?;
+            // On a projection, `and_marginalizing` takes home nodes; the free
+            // variables under one are counted either way.
+            let homes: Vec<VtreeIdx> = targets.iter().map(|&t| f.vtree().home_node(t)).collect();
+            let out = self.and_marginalizing(f, g, &homes)?;
             return self.model_count(&out);
         }
         crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
@@ -1018,6 +1095,70 @@ impl crate::Engine {
             Conjoined::Built(out) => self.model_count(&out),
         }
     }
+}
+
+/// [`Engine::and_marginalizing`] of operands on projections, `targets` home
+/// nodes: the conjunction on the union of the leaf sets, which sums out
+/// during the sweep each maximal target over an internal own node with no
+/// free variable under it, and then [`crate::marginal::marginalize`], which
+/// collapses those and sums out the rest.
+#[cold]
+fn marginalizing_projections(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+    let home = f.vtree().home().or(g.vtree().home()).expect("an operand on a projection").clone();
+    if let Some(&h) = targets.iter().find(|h| h.idx() >= home.vtree().num_nodes()) {
+        return Err(OperationError::LevelNotInVtree(h));
+    }
+    if (f.has_marginal_level() || g.has_marginal_level()) && !Arc::ptr_eq(f.vtree(), g.vtree()) {
+        Vtree::leaf_sets(f.vtree(), g.vtree())?;
+        projected::check_summed_leaves(&f, &g)?;
+    }
+    if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
+        let mut out = projected::conjoin_constant(eng, f, g)?;
+        if !out.is_zero() {
+            crate::marginal::marginalize(eng, &mut out, targets)?;
+        }
+        return extend::trimmed(eng, out);
+    }
+    let [mut f, mut g] = extend::cows(eng, [f, g])?;
+    projected::check_shared_regions(&f, &g)?;
+    prepare_owned_weights(&mut f, &mut g)?;
+    let vtree = Arc::clone(f.vtree());
+    let mut ranges: Vec<_> = targets.iter().map(|&h| (home.rank_range(h), h)).collect();
+    ranges.sort_unstable_by_key(|(r, _)| (r.start, std::cmp::Reverse(r.end)));
+    let mut swept = Vec::new();
+    let mut end = None;
+    for (range, h) in ranges {
+        if end.is_some_and(|end| range.end <= end) {
+            continue;
+        }
+        end = Some(range.end);
+        if let Some(t) = vtree.own_at(h)
+            && !vtree.node(t).is_leaf()
+            && vtree.free_vars_under(h).is_empty()
+        {
+            swept.push((t, h));
+        }
+    }
+    let own: Vec<VtreeIdx> = swept.iter().map(|&(t, _)| t).collect();
+    let mut mask = target_mask(eng, &vtree, &own, true)?;
+    let unweighted = f.weights.is_none() && g.weights.is_none();
+    if unweighted {
+        collapse_target_subtrees(eng, &vtree, &f, &g, &mut mask)?;
+    }
+    let summed = match unweighted && !mask.contains(&true) {
+        true => VtreeMask::default(),
+        false => VtreeMask::new(Some(&mask)),
+    };
+    let mut out = conjoin_cow(eng, f, g, summed)?;
+    if !out.is_zero() {
+        swept.retain(|&(t, _)| out.level(t).is_marginal());
+        swept.sort_unstable();
+        if !swept.is_empty() {
+            crate::reduce::trim(eng, &mut out, &home, &swept)?;
+        }
+        crate::marginal::marginalize(eng, &mut out, targets)?;
+    }
+    extend::trimmed(eng, out)
 }
 
 /// Membership mask of internal vtree nodes in `targets`, optionally including

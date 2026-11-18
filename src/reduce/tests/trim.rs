@@ -413,3 +413,57 @@ fn the_in_place_trim_is_the_rebuild() {
     assert!(described_here() > described, "no level was implicit");
     assert!(seen.iter().all(|&k| k >= 5), "cases seen: {seen:?}");
 }
+
+/// The trim the conjunction runs on its results; `Tdd::trim` refuses a
+/// diagram with a marginal level.
+fn trim_summed(f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
+    crate::reduce::trim(&crate::Engine::new(), f, home, &[])
+}
+
+/// `f` on the projection of a home of four variables on 1, 2 and 3, its leaf
+/// 2 summed out: the level over leaves 1 and 2 names 1 as true, so it is
+/// dropped over the marginal leaf 2.
+fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: Option<Arithmetic>) -> (Tdd, Tdd, Home) {
+    use crate::marginal::tests::region::weights;
+    let home = Home::new(Vtree::balanced(4));
+    let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
+    let mut f = Tdd::clause(&own, clause.iter().copied()).unwrap();
+    if let Some(arithmetic) = arithmetic {
+        f.set_weights(WeightStore::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap();
+    }
+    let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
+    f.marginalize_levels(&[leaf]).unwrap();
+    (f.clone(), f, home)
+}
+
+#[test]
+fn trim_drops_a_level_over_a_summed_out_leaf() {
+    use crate::marginal::tests::region::{check_form, check_values};
+    for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)] {
+        let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2, 3], &[1, 2, 3], arithmetic);
+        assert!(trim_summed(&mut f, &home).unwrap(), "{arithmetic:?}");
+        assert_eq!(f.vtree().num_leaves(), 2, "{arithmetic:?}");
+        check_form(&f, &format!("{arithmetic:?}"));
+        check_values(&f, &g, 4, arithmetic, &format!("{arithmetic:?}"));
+    }
+}
+
+#[test]
+fn trim_drops_a_root_over_a_summed_out_leaf_when_the_output_names_a_slot() {
+    use crate::marginal::tests::region::{check_form, check_values};
+    // Over 1 to 4 the chain is two dropped levels long.
+    for vars in [&[1, 2][..], &[1, 2, 3, 4]] {
+        for arithmetic in [Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)] {
+            let what = format!("{vars:?} {arithmetic:?}");
+            let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2], vars, arithmetic);
+            assert!(trim_summed(&mut f, &home).unwrap(), "{what}");
+            assert_eq!(f.vtree().num_leaves(), 1, "{what}");
+            check_form(&f, &what);
+            check_values(&f, &g, 4, arithmetic, &what);
+        }
+    }
+    let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2], &[1, 2], None);
+    let leaf = g.vtree().leaf_of(crate::vtree::VarId(2)).unwrap();
+    assert_eq!(trim_summed(&mut f, &home), Err(OperationError::MarginalLevel(leaf)), "an inline count at the root names no slot");
+    assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+}

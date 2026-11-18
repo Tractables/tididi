@@ -115,7 +115,7 @@ impl Engine {
         lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
         fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
         let mut result = std::mem::take(&mut cols[at.idx()]);
-        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under(at)) {
+        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under_own(at)) {
             result.iter_mut().for_each(|v| *v = algebra.mul(v, &free));
         }
         gate.finish()?;
@@ -131,7 +131,7 @@ impl Engine {
     /// vtree.
     pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
         let mut result = self.own_columns_at(tdd, at, algebra)?;
-        free_factor(algebra, at, &tdd.vtree.free_vars_under(at), &mut result)?;
+        free_factor(algebra, at, &tdd.vtree.free_vars_under_own(at), &mut result)?;
         Ok(result)
     }
 
@@ -436,7 +436,7 @@ fn fold_columns<A: ColumnAlgebra>(
     let mut out = algebra.column(t, base + inline.len());
     let level = &tdd.levels[t.idx()];
     let mut n = BigUint::ZERO;
-    if tdd.vtree.node(t).is_leaf() {
+    if tdd.vtree.node(t).is_var_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
             algebra.leaf(t, var, LeafLabel::from_idx(i), &mut out);
