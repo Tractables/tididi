@@ -716,7 +716,7 @@ pub(crate) fn place_by<'a>(
             Err(e) => Err((e.into(), tdd)),
         };
     }
-    assemble_moving(eng, tdd, into, plan, free).map_err(|(e, tdd)| (e.into(), tdd))
+    assemble_moving(eng, tdd, into, plan, free, true).map_err(|(e, tdd)| (e.into(), tdd))
 }
 
 /// Copy a structural diagram's levels onto the destination through
@@ -726,7 +726,7 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
     if tdd.is_zero() || tdd.is_one() {
         return Ok(crate::build::constant_on(eng, into, tdd.is_one())?);
     }
-    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build)
+    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build, false)
         .map_err(|(e, _)| e)?;
     // One unit per internal node and one per slot of its level, less the
     // units `assemble_moving` polled: a large diagram's copy, charged a unit
@@ -758,8 +758,8 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
 /// the result's storage is refused. A borrowed diagram has its levels copied
 /// into the destination's instead, and a refusal drops the copies. The
 /// result takes a moved diagram's worklists and weight store, and copies of
-/// a borrowed one's, once nothing
-/// is left to refuse.
+/// a borrowed one's (its store only when `copy_weights`), once nothing is
+/// left to refuse.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -770,6 +770,7 @@ fn assemble_moving<'a>(
     into: &Arc<Vtree>,
     plan: &Plan,
     free: Free,
+    copy_weights: bool,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
     // Room for the inner pass's share of the leaf pass's worklist (below),
@@ -870,7 +871,7 @@ fn assemble_moving<'a>(
     };
     // Taking a moved diagram's store cannot be refused, so a refusal here
     // has moved nothing.
-    if tdd.weights.is_some() {
+    if tdd.weights.is_some() && (copy_weights || matches!(tdd, Cow::Owned(_))) {
         match placed_weights(eng, &mut tdd, plan) {
             Ok(weights) => result.weights = Some(weights),
             Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
