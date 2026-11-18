@@ -427,8 +427,15 @@ impl TddBuilder {
         Ok(self.seat(output, dirty, None))
     }
 
+    /// The checks [`finish`](Self::finish) runs, the repeated-pair check
+    /// included.
+    pub(crate) fn check_pairs(&self, output: TddNodeId) -> Result<(), TddBuildError> {
+        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())
+    }
+
     /// [`finish`](Self::finish) without the repeated-pair check, for a
-    /// reader that trusts its levels.
+    /// reader that trusts its levels or a construction that cannot repeat
+    /// a pair its input does not.
     pub(crate) fn finish_trusting_pairs(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
