@@ -573,6 +573,9 @@ pub(crate) fn check_levels(
 /// Given the children's determinism, distinct pairs are disjoint, so this is
 /// determinism over the level's stored nodes. Above a marginal level a
 /// repeated pair is a multiplicity the content-twin merge leaves, and legal.
+// Inlined, as is `check_structural_level`: out of line, the storage loop
+// costs a query that reads its diagrams from binary files about 1% more.
+#[inline(always)]
 fn check_storage<const PAIRS: bool>(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
@@ -647,6 +650,7 @@ fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Resu
 /// Every node of a structural level has a pair, and every pair side names
 /// an entry of its child level without the reserved bit; with `PAIRS`, no
 /// pair occurs twice when `scan` says the level is checked for that.
+#[inline(always)]
 fn check_structural_level<const PAIRS: bool>(
     vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx, scan: &mut PairScan,
 ) -> Result<(), TddBuildError> {
