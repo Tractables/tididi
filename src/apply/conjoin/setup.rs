@@ -87,6 +87,11 @@ pub(super) struct Cone<'a> {
     pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
+    /// The index in `built` from which each level is the parent of the one
+    /// before it and `g` has one node there, read as its output only: the
+    /// sweep stops before such a level when its child's products are `f`'s
+    /// nodes in order (`drive::sweep_levels`). `usize::MAX` for none.
+    pub(super) stop_from: usize,
 }
 
 impl Cone<'_> {
@@ -372,6 +377,10 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// only each region's top from `f`, and the finish moves the levels it
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
+    /// The levels of the chain from `g`'s top the sweep stopped short of
+    /// ([`Cone::stop_from`]), the root's included, `f`'s as stored, and so
+    /// is the output; empty where it did not stop.
+    pub(super) kept: &'r [VtreeIdx],
     /// Whether nothing but pairs changes hands: no weights, no summed-out
     /// or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
@@ -700,6 +709,7 @@ fn survey<'r, L: Levels + ?Sized>(
             free_nodes: 0,
             constant: false,
             masks,
+            stop_from: usize::MAX,
         };
         let snapshot = Snapshot {
             total_cells,
@@ -776,6 +786,7 @@ fn survey<'r, L: Levels + ?Sized>(
         free_nodes,
         constant: false,
         masks,
+        stop_from: usize::MAX,
     };
     let snapshot = Snapshot {
         total_cells,
@@ -783,6 +794,83 @@ fn survey<'r, L: Levels + ?Sized>(
         might_use_sparse,
     };
     Ok((snapshot, cone))
+}
+
+/// The levels an adopting conjunction sweeps, children first, and the index
+/// among them of [`Cone::stop_from`].
+pub(super) type Listed<'r> = (&'r [VtreeIdx], usize);
+
+/// [`survey`] of plain operands of which `g` is free at every internal level
+/// but those of `listed`, children first: only those levels, their leaf
+/// children and their free children, the tops, are read. The output-node
+/// cap counts the levels outside them by `f`'s node count, read only where
+/// a cap is set.
+#[expect(clippy::too_many_arguments, reason = "the survey's inputs and outputs")]
+fn survey_listed<'r>(
+    eng: &Engine,
+    vtree: &'r Vtree,
+    ops: Operands<&Held<'_>>,
+    masks: Operands<VtreeMask<'r>>,
+    (listed, stop_from): Listed<'r>,
+    min_grid: usize,
+    widths: Operands<&mut [usize]>,
+    lists: &'r mut ConeLists,
+) -> Result<(Snapshot, Cone<'r>), OperationError> {
+    let Operands { f, g } = ops;
+    let lim = eng.limits();
+    let ConeLists { tops, leaves, .. } = lists;
+    tops.clear();
+    leaves.clear();
+    lim.reserve(tops, listed.len() + 1)?;
+    lim.reserve(leaves, 2 * listed.len() + 1)?;
+    let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
+    let mut total_cells = 0u64;
+    let mut might_use_sparse = false;
+    let mut swept_nodes = 0u64;
+    for &t in listed {
+        let at = t.idx();
+        let (w1, w2) = (f.level(at).slot_count(), g.level(at).slot_count());
+        widths.f[at] = w1;
+        widths.g[at] = w2;
+        swept_nodes += w1 as u64;
+        let cells = (w1 as u64).saturating_mul(w2 as u64);
+        let combinations = combinations_bound(f.level(at), g.level(at));
+        might_use_sparse |= cells > min_grid as u64 || combinations > min_grid as u128;
+        if cells <= min_grid as u64 {
+            total_cells = total_cells.saturating_add(cells);
+        }
+        let (left, right) = vtree.children(t);
+        for child in [left, right] {
+            if vtree.node(child).is_leaf() {
+                widths.f[child.idx()] = LEAF_WIDTH;
+                widths.g[child.idx()] = LEAF_WIDTH;
+                if leaf_cells <= min_grid as u64 {
+                    total_cells = total_cells.saturating_add(leaf_cells);
+                }
+                leaves.push(child);
+            } else if masks.g.contains(child.idx()) {
+                widths.f[child.idx()] = f.level(child).slot_count();
+                widths.g[child.idx()] = 1;
+                tops.push(child);
+            }
+        }
+    }
+    let free_nodes = match lim.output_node_cap() {
+        Some(_) => (f.tdd().levels.node_count() as u64).saturating_sub(swept_nodes),
+        None => 0,
+    };
+    let cone = Cone {
+        built: listed,
+        free_before: &[],
+        tops,
+        free: &[],
+        leaves,
+        free_nodes,
+        constant: false,
+        masks,
+        stop_from,
+    };
+    Ok((Snapshot { total_cells, any_entry_marginal: false, might_use_sparse }, cone))
 }
 
 /// Mark in `out` each internal level at which both operands are constant
@@ -875,7 +963,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
-    (targets, free, found_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
+    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<Listed<'r>>),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -944,9 +1032,10 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
             might_use_sparse,
         },
         cone,
-    ) = match (ops.f.own_levels(), ops.g.own_levels()) {
-        (Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
-        _ => survey(eng, vtree, ops, free, min_grid, out, cone)?,
+    ) = match (listed, ops.f.own_levels(), ops.g.own_levels()) {
+        (Some(listed), ..) => survey_listed(eng, vtree, ops, free, listed, min_grid, out.0, cone)?,
+        (None, Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
+        (None, ..) => survey(eng, vtree, ops, free, min_grid, out, cone)?,
     };
     let cone = Cone {
         constant: found_free,
@@ -986,6 +1075,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         lists,
         restoring: false,
         adopted: false,
+        kept: &[],
         plain: false,
         built_marginal: false,
         cone,

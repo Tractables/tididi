@@ -8,24 +8,28 @@ use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{known, same_storage as same};
+use crate::vtree::{Home, VarId};
 use crate::{Engine, Tdd, Vtree};
 
 /// Two operands whose supports overlap on a few variables of a balanced
 /// vtree over 12, so the sweep takes identity levels from both before it
 /// reaches the shared ones.
 fn operands(eng: &Engine, vtree: &Arc<Vtree>) -> (Tdd, Tdd) {
-    let build = |clauses: &[&[i32]]| {
-        let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
-        for c in clauses {
-            let c = eng.clause(vtree, c.iter().copied()).unwrap();
-            f = eng.and(f, c).unwrap();
-        }
-        eng.minimize(&mut f).unwrap();
-        f
-    };
-    let f = build(&[&[1, 2, -7], &[-1, 3], &[2, -3, 8], &[4, 5], &[-5, 6, 7]]);
-    let g = build(&[&[7, 8, -9], &[-8, 10], &[9, -10, 11], &[-11, 12, 1], &[6, -12]]);
-    (f, g)
+    (build(eng, vtree, F_CLAUSES), build(eng, vtree, G_CLAUSES))
+}
+
+const F_CLAUSES: &[&[i32]] = &[&[1, 2, -7], &[-1, 3], &[2, -3, 8], &[4, 5], &[-5, 6, 7]];
+const G_CLAUSES: &[&[i32]] = &[&[7, 8, -9], &[-8, 10], &[9, -10, 11], &[-11, 12, 1], &[6, -12]];
+
+/// The conjunction of `clauses` on `vtree`, minimized.
+fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
+    let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+    for c in clauses {
+        let c = eng.clause(vtree, c.iter().copied()).unwrap();
+        f = eng.and(f, c).unwrap();
+    }
+    eng.minimize(&mut f).unwrap();
+    f
 }
 
 /// `t` minimized and then negated on a fresh engine, with the work each
@@ -52,10 +56,13 @@ fn as_given(back: &Tdd, given: &Tdd) -> bool {
 /// Refuse the conjunction at each point `arm` picks in turn, on operands
 /// keeping level counts where `counts` says, checking that every refusal
 /// hands both operands back as given, until one is granted.
-fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>) {
+fn refuse_at_every_point(
+    counts: bool,
+    given: impl Fn(&Engine) -> (Tdd, Tdd),
+    arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>,
+) {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(12));
-    let (mut f, mut g) = operands(&eng, &vtree);
+    let (mut f, mut g) = given(&eng);
     if counts {
         eng.attach_level_counts(&mut f).unwrap();
         eng.attach_level_counts(&mut g).unwrap();
@@ -85,6 +92,10 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
                     let count = |t: &Tdd| Engine::new().model_count(t).map_err(|e| format!("{e:?}"));
                     assert_eq!((count(&refused.f), count(&refused.g)), (count(a), count(b)), "refused at {n}: another model count");
                     assert!(as_given(&refused.f, a) && as_given(&refused.g, b), "refused at {n}: an operand changed");
+                    assert!(
+                        Arc::ptr_eq(refused.f.vtree(), a.vtree()) && Arc::ptr_eq(refused.g.vtree(), b.vtree()),
+                        "refused at {n}: an operand on another vtree",
+                    );
                     refusals += 1;
                 }
             }
@@ -94,10 +105,48 @@ fn refuse_at_every_point(counts: bool, arm: impl Fn(&Engine, u64) -> Option<crat
     }
 }
 
+/// [`operands`] on one balanced vtree over 12.
+fn on_one_vtree(eng: &Engine) -> (Tdd, Tdd) {
+    operands(eng, &Arc::new(Vtree::balanced(12)))
+}
+
+/// The variables `vars` as a projection of `home`.
+fn projection(home: &Home, vars: impl IntoIterator<Item = u32>) -> Arc<Vtree> {
+    Vtree::projection(home, vars.into_iter().map(VarId)).unwrap()
+}
+
+/// [`operands`] on projections of a balanced home over 13: `f` on the
+/// variables 1 to 12, `g` on its own, inside them.
+fn nested(eng: &Engine) -> (Tdd, Tdd) {
+    let home = Home::new(Arc::new(Vtree::balanced(13)));
+    let f = build(eng, &projection(&home, 1..=12), F_CLAUSES);
+    let g = build(eng, &projection(&home, std::iter::once(1).chain(6..=12)), G_CLAUSES);
+    (f, g)
+}
+
+/// [`operands`] on two allocations of one projection.
+fn equal_layouts(eng: &Engine) -> (Tdd, Tdd) {
+    let home = Home::new(Arc::new(Vtree::balanced(13)));
+    let (f, _) = operands(eng, &projection(&home, 1..=12));
+    let (_, g) = operands(eng, &projection(&home, 1..=12));
+    (f, g)
+}
+
+/// [`operands`] on one allocation of a projection.
+fn one_projection(eng: &Engine) -> (Tdd, Tdd) {
+    let home = Home::new(Arc::new(Vtree::balanced(13)));
+    operands(eng, &projection(&home, 1..=12))
+}
+
+type Layout = fn(&Engine) -> (Tdd, Tdd);
+
+/// Each layout of operands the restoring conjunction takes owned.
+const LAYOUTS: [Layout; 4] = [on_one_vtree, nested, equal_layouts, one_projection];
+
 #[test]
 fn every_refused_reserve_gives_the_operands_back() {
-    for counts in [false, true] {
-        refuse_at_every_point(counts, |eng, n| {
+    for (given, counts) in LAYOUTS.into_iter().flat_map(|given| [(given, false), (given, true)]) {
+        refuse_at_every_point(counts, given, |eng, n| {
             eng.refuse_nth_reserve(n as u32);
             None
         });
@@ -106,12 +155,49 @@ fn every_refused_reserve_gives_the_operands_back() {
 
 #[test]
 fn every_stop_gives_the_operands_back() {
-    for counts in [false, true] {
-        refuse_at_every_point(counts, |eng, n| {
+    for (given, counts) in LAYOUTS.into_iter().flat_map(|given| [(given, false), (given, true)]) {
+        refuse_at_every_point(counts, given, |eng, n| {
             let at = eng.limits().work_units() + n;
             let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
             Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
         });
+    }
+}
+
+/// A conjunction that adopts an owned `f`, refused at each reserve in
+/// turn, leaves the engine's workspace so that the next one is right: `g`
+/// spread over `f`'s vtree, and `g` on two variables deep in it, where the
+/// sweep may stop below the root.
+#[test]
+fn a_refused_adopting_conjunction_leaves_the_next_one_right() {
+    let eng = Engine::new();
+    let home = Home::new(Arc::new(Vtree::linear(13)));
+    let (f, spread) = nested(&eng);
+    let deep = build(&eng, &projection(&home, 11..=12), &[&[11, -12]]);
+    let on_linear = build(&eng, &projection(&home, 1..=12), F_CLAUSES);
+    for (f, g) in [(&f, &spread), (&on_linear, &deep)] {
+        let expected = eng.and(f.clone(), g).unwrap();
+        let mut refusals = 0;
+        for n in 0.. {
+            let given = f.clone();
+            eng.refuse_nth_reserve(n);
+            let outcome = eng.and(given, g);
+            let pending = eng.limits().refusal_pending();
+            eng.limits().grant_every_reserve();
+            let next = eng.and(f.clone(), g).unwrap();
+            assert!(eng.equivalent(&next, &expected).unwrap(), "after a refusal at {n}");
+            match outcome {
+                Ok(out) => {
+                    assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}");
+                    if pending {
+                        break;
+                    }
+                }
+                Err(_) => refusals += 1,
+            }
+            assert!(n < 10_000, "never granted");
+        }
+        assert!(refusals > 3, "only {refusals} refusal points");
     }
 }
 

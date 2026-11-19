@@ -27,7 +27,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 /// Where the view finds the operand's level at a node of `U`.
 #[derive(Clone, Copy, Debug)]
-enum Slot {
+pub(crate) enum Slot {
     /// The operand's own level of this index.
     Own(u32),
     /// The view's level of this index.
@@ -56,11 +56,24 @@ impl View {
     /// [`OperationError::OverBudget`] when a buffer, a built level or the
     /// copy of the worklists is refused.
     pub(crate) fn build(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<View, OperationError> {
-        let lim = eng.limits();
-        let mut at = Vec::new();
-        lim.try_resize(&mut at, into.num_nodes(), Slot::Free)?;
-        for (s, &d) in plan.embedding.levels.iter().enumerate() {
-            at[d.idx()] = Slot::Own(s as u32);
+        Self::build_in(eng, tdd, into, plan, Vec::new()).map_err(|(error, _)| error)
+    }
+
+    /// [`View::build`] in `at`, a table every entry of which is
+    /// [`Slot::Free`], grown to `into` where shorter, and of which only the
+    /// entries of the nodes `plan` gives the operand's variables are written;
+    /// [`View::release`] clears them. Refused, `at` comes back cleared.
+    pub(crate) fn build_in(
+        eng: &Engine,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        plan: &Plan,
+        mut at: Vec<Slot>,
+    ) -> Result<View, (OperationError, Vec<Slot>)> {
+        if at.len() < into.num_nodes()
+            && let Err(error) = eng.limits().try_resize(&mut at, into.num_nodes(), Slot::Free)
+        {
+            return Err((error, at));
         }
         let mut view = View {
             vtree: Arc::clone(into),
@@ -70,6 +83,32 @@ impl View {
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
         };
+        match view.fill(eng, tdd, into, plan) {
+            Ok(()) => Ok(view),
+            Err(error) => Err((error, view.release(plan))),
+        }
+    }
+
+    /// The table of [`View::build_in`], every entry free again.
+    pub(crate) fn release(mut self, plan: &Plan) -> Vec<Slot> {
+        for &d in &plan.embedding.levels {
+            self.at[d.idx()] = Slot::Free;
+        }
+        for &t in plan.cone_nodes() {
+            self.at[t.idx()] = Slot::Free;
+        }
+        if plan.cone_nodes().is_empty() {
+            self.at.clear();
+        }
+        self.at
+    }
+
+    fn fill(&mut self, eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        let view = self;
+        for (s, &d) in plan.embedding.levels.iter().enumerate() {
+            view.at[d.idx()] = Slot::Own(s as u32);
+        }
         lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
         let own = |p: VtreeIdx| &tdd.levels[plan.covered_by(p).expect("a chain's reader is an image").idx()];
         let mut literal_tops = Vec::new();
@@ -105,7 +144,7 @@ impl View {
         gate.flush()?;
         view.renumber(lim, tdd, &literal_tops)?;
         view.dirty = moved_dirty(eng, tdd, into, plan, &mut literal_tops)?;
-        Ok(view)
+        Ok(())
     }
 
     /// Point the readers of the chain tops `tops` at the chains' nodes 0
@@ -224,7 +263,9 @@ fn moved_dirty(
     if let Some(mut loose) = loose {
         let mut listed = Vec::new();
         if !loose.is_empty() || !literal_tops.is_empty() {
-            eng.limits().reserve_exact(&mut listed, into.num_nodes())?;
+            // `moved_loose` lists at most the two children of each image of
+            // an internal level.
+            eng.limits().reserve_exact(&mut listed, 2 * tdd.vtree().internal_bottomup_slice().len())?;
         }
         loose.sort_unstable();
         moved_loose(tdd.vtree(), into, plan, &loose, literal_tops, &mut listed);

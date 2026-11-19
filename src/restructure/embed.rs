@@ -450,11 +450,15 @@ pub(crate) struct Plan {
     mirrors: bool,
     /// The number of pass-throughs.
     pub(crate) pass_throughs: usize,
+    /// For a plan [`Plan::cone`] built, every internal destination node with
+    /// a source variable under it, children before parents; empty otherwise.
+    cone: Vec<VtreeIdx>,
+    chain_from: usize,
 }
 
 /// What a destination node's level is under a [`Plan`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Target {
+pub(crate) enum Target {
     /// No renamed source variable is under the node: a free level, constant
     /// true.
     Free,
@@ -499,10 +503,112 @@ impl Plan {
     /// The pass-throughs of the plan, `into`'s internal nodes with renamed
     /// variables on one side only, bottom-up.
     pub(crate) fn pass_throughs<'a>(&'a self, into: &'a Vtree) -> impl Iterator<Item = &'a VtreeIdx> {
-        into.internal_bottomup_slice()
-            .iter()
+        let all = match self.cone.is_empty() {
+            true => into.internal_bottomup_slice(),
+            false => &self.cone[..],
+        };
+        all.iter()
             .filter(|&&t| matches!(self.targets[t.idx()], Target::PassThrough(_)))
             .take(self.pass_throughs)
+    }
+
+    /// For a plan [`Plan::cone`] built, the internal destination nodes with
+    /// a source variable under them, children before parents.
+    pub(crate) fn cone_nodes(&self) -> &[VtreeIdx] {
+        &self.cone
+    }
+
+    /// For a plan [`Plan::cone`] built, the index in
+    /// [`cone_nodes`](Self::cone_nodes) of the parent of the source root's
+    /// image: the chain to the root starts there.
+    pub(crate) fn chain_from(&self) -> usize {
+        self.chain_from
+    }
+
+    /// The plan that embeds `source` in `into`, a projection of the same home
+    /// on a superset of its variables, with `leaves` the image of each leaf
+    /// of `source`: the nodes of `into` with a variable of `source` under
+    /// them are found from the leaves upward, and only their entries of
+    /// `targets`, every one [`Target::Free`] and grown to `into` where
+    /// shorter, are written. [`Plan::release`] clears them. The work clock is
+    /// charged one unit a node found.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when a table cannot grow, or the stop;
+    /// `targets` comes back with every entry free.
+    pub(crate) fn cone(
+        lim: &crate::limits::Limits,
+        source: &Vtree,
+        into: &Vtree,
+        leaves: &[(VtreeIdx, VtreeIdx)],
+        mut targets: Vec<Target>,
+    ) -> Result<Plan, (OperationError, Vec<Target>)> {
+        let mut plan = Plan { targets: Vec::new(), embedding: Embedding { levels: Vec::new() }, mirrors: false, pass_throughs: 0, cone: Vec::new(), chain_from: 0 };
+        if let Err(error) = lim.try_resize(&mut plan.embedding.levels, source.num_nodes(), into.root()) {
+            return Err((error, targets));
+        }
+        if targets.len() < into.num_nodes()
+            && let Err(error) = lim.try_resize(&mut targets, into.num_nodes(), Target::Free)
+        {
+            return Err((error, targets));
+        }
+        plan.targets = targets;
+        match plan.find_cone(lim, source, into, leaves) {
+            Ok(()) => Ok(plan),
+            Err(error) => Err((error, plan.release())),
+        }
+    }
+
+    fn find_cone(&mut self, lim: &crate::limits::Limits, source: &Vtree, into: &Vtree, leaves: &[(VtreeIdx, VtreeIdx)]) -> Result<(), OperationError> {
+        let mut gate = lim.gate();
+        for &(s, d) in leaves {
+            self.embedding.levels[s.idx()] = d;
+            self.targets[d.idx()] = Target::Image { source: s, mirrored: false };
+        }
+        let mut found = |plan: &mut Plan, t: VtreeIdx, target: Target| -> Result<(), OperationError> {
+            gate.poll(1)?;
+            lim.try_push(&mut plan.cone, t)?;
+            plan.targets[t.idx()] = target;
+            plan.pass_throughs += usize::from(matches!(target, Target::PassThrough(_)));
+            Ok(())
+        };
+        for &s in source.internal_bottomup_slice() {
+            let home = source.home_node(s);
+            let mut image = into.root();
+            for c in <[VtreeIdx; 2]>::from(source.children(s)) {
+                let mut u = self.embedding.levels[c.idx()];
+                loop {
+                    u = into.node(u).parent().expect("a source node's image is under its parent's");
+                    if into.home_node(u) == home {
+                        break;
+                    }
+                    found(self, u, Target::PassThrough(c))?;
+                }
+                image = u;
+            }
+            self.embedding.levels[s.idx()] = image;
+            found(self, image, Target::Image { source: s, mirrored: false })?;
+        }
+        let top = source.root();
+        self.chain_from = self.cone.len();
+        let mut u = self.embedding.levels[top.idx()];
+        while let Some(parent) = into.node(u).parent() {
+            found(self, parent, Target::PassThrough(top))?;
+            u = parent;
+        }
+        gate.flush()
+    }
+
+    /// The targets table of a plan [`Plan::cone`] built, every entry free.
+    pub(crate) fn release(mut self) -> Vec<Target> {
+        for &d in &self.embedding.levels {
+            self.targets[d.idx()] = Target::Free;
+        }
+        for &t in &self.cone {
+            self.targets[t.idx()] = Target::Free;
+        }
+        self.targets
     }
 
     /// Check the renaming against both trees and record the correspondence.
@@ -602,6 +708,8 @@ impl Plan {
             embedding: Embedding { levels: embedding },
             mirrors,
             pass_throughs,
+            cone: Vec::new(),
+            chain_from: 0,
         })
     }
 }

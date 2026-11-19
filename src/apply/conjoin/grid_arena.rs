@@ -90,7 +90,9 @@ impl GridArena {
     ) -> Result<(), OperationError> {
         // A level outside `cone` is read by no other level, and its entry is
         // never read.
-        self.grids.resize(n, None);
+        if self.grids.len() < n {
+            self.grids.resize(n, None);
+        }
         let mut bump = self.bump.take().unwrap_or_default();
         bump.end = 0;
         bump.free.clear();
