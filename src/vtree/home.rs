@@ -1148,7 +1148,7 @@ impl Vtree {
     /// home node than its child; the node indices are the ones the builder
     /// gives the rank list. Each extent holds its anchor and meets neither
     /// another extent nor a leaf's rank.
-    pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
+    pub(crate) fn validate_home(&self) -> Result<(), VtreeError> {
         let Some(link) = self.home.as_deref() else {
             return Ok(());
         };

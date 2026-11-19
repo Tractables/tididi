@@ -285,6 +285,25 @@ impl crate::Engine {
     }
 }
 
+#[cfg(debug_assertions)]
+#[cold]
+fn debug_check_reseat_on_home(from: &Vtree, onto: &Vtree) {
+    assert!(onto.on_home(), "reseat_vtree_unchecked moves a diagram on a home off every home");
+    if let Err(e) = onto.validate_home() {
+        panic!("reseat_vtree_unchecked onto a vtree whose home link is invalid: {e}");
+    }
+    for i in 0..from.num_nodes() {
+        let t = VtreeIdx(i as u32);
+        let (a, b) = (from.node(t), onto.node(t));
+        let same = match (a, b) {
+            (crate::vtree::VtreeNode::Leaf { var: x, .. }, crate::vtree::VtreeNode::Leaf { var: y, .. }) => x == y,
+            (crate::vtree::VtreeNode::Internal { .. }, crate::vtree::VtreeNode::Internal { .. }) => true,
+            _ => false,
+        };
+        assert!(same, "reseat_vtree_unchecked: node {i} is {a:?} before and {b:?} after");
+    }
+}
+
 impl Tdd {
     /// Replace the vtree allocation without rebuilding any diagram level.
     ///
@@ -303,14 +322,25 @@ impl Tdd {
     /// where the diagram's stored structure remains valid under it.
     /// Invalid references can cause out-of-bounds reads in later operations.
     ///
+    /// For a diagram on a home ([`Vtree::home`]), the replacement must be on
+    /// a home too, with a link to it that is valid for the replacement's own
+    /// shape, and must carry the same variable at every leaf index. No level
+    /// is written, so the result then names a leaf true, or sits on leaves it
+    /// does not use, exactly when the diagram did.
+    ///
     /// # Panics
     ///
-    /// Debug builds check that the node count is unchanged.
+    /// Debug builds check that the node count is unchanged and, for a diagram
+    /// on a home, the two conditions above.
     pub unsafe fn reseat_vtree_unchecked(&mut self, vtree: &Arc<Vtree>) {
         debug_assert_eq!(
             self.vtree.num_nodes(), vtree.num_nodes(),
             "reseat_vtree_unchecked onto a tree of a different size leaves levels unaddressable",
         );
+        #[cfg(debug_assertions)]
+        if self.vtree.on_home() && self.vtree.num_nodes() > 0 {
+            debug_check_reseat_on_home(&self.vtree, vtree);
+        }
         self.levels.forget();
         self.vtree = Arc::clone(vtree);
     }

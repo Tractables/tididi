@@ -229,6 +229,12 @@ impl Maintenance<'_> {
     }
 
     /// The diagram under maintenance.
+    ///
+    /// On a home an edit keeps the diagram's vtree, but a rebuild returns
+    /// what [`or_cube`](Tdd::or_cube) or [`and_clause`](Tdd::and_clause)
+    /// returns, on the projection of the leaves that result uses, and
+    /// removing the last model leaves false on the empty projection: the
+    /// vtree read here can change from one update to the next.
     #[must_use]
     pub fn diagram(&self) -> &Tdd {
         self.tdd

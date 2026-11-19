@@ -67,8 +67,14 @@ Breaking changes:
   a summed-out region, is `IoError::Format`. On a home the binary reader
   refuses a pair repeated in a level, as the text reader does everywhere.
   `finish` reports a refused allocation in that trim as the new
-  `TddBuildError::OverBudget`. `TddBuilder::finish_unchecked` does not
+  `TddBuildError::OverBudget`, and the readers as the new
+  `IoError::OverBudget`. `TddBuilder::finish_unchecked` does not
   trim. Diagrams on root vtrees are unchanged.
+- On a home, `Maintenance` updates accept a variable of the home the
+  diagram has no leaf for, and a rebuild or the removal of the last model
+  can move the diagram to another projection of the home.
+  `Tdd::reseat_vtree_unchecked` and `Tdd::splice_subtree_unchecked` state
+  their contracts on a home.
 
 Added:
 

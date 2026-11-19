@@ -238,3 +238,41 @@ fn a_constructor_given_the_root_or_a_projection_returns_the_same_vtree() {
         }
     }
 }
+
+/// On a home of four variables, a rename onto variables of the home answers
+/// as on a bare root of the same shape, on the projection of the variables
+/// the result uses: onto a variable `f` has no leaf for, a swap with one,
+/// onto a leaf `f` keeps. A target outside the home is refused on both.
+#[test]
+fn a_rename_onto_a_home_variable_answers_as_on_a_bare_root() {
+    use crate::test_helpers::check::check_trimmed;
+    use crate::test_helpers::eval;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let bare = Arc::new(Vtree::balanced(4));
+    let f_on = |vtree: &Arc<Vtree>| eng.or(eng.literal(vtree, 1).unwrap(), eng.literal(vtree, 2).unwrap()).unwrap();
+    let f = f_on(home.vtree());
+    assert_eq!(leaf_vars(&f), [VarId(1), VarId(2)]);
+    let v = VarId;
+    type Case<'a> = (&'a [(VarId, VarId)], &'a [VarId]);
+    let cases: [Case<'_>; 3] = [
+        (&[(v(1), v(3))], &[v(2), v(3)]),
+        (&[(v(1), v(4)), (v(4), v(1))], &[v(2), v(4)]),
+        (&[(v(1), v(2))], &[v(2)]),
+    ];
+    for (renames, leaves) in cases {
+        let got = eng.rename_vars(f.clone(), renames).unwrap();
+        check_trimmed(&got, true).unwrap_or_else(|e| panic!("{renames:?}: {e}"));
+        let mut got_leaves = leaf_vars(&got);
+        got_leaves.sort_unstable();
+        assert_eq!(got_leaves, leaves, "{renames:?}");
+        let want = eng.rename_vars(f_on(&bare), renames).unwrap();
+        for a in 0..16u32 {
+            let asn: Vec<bool> = (0..4).map(|i| a >> i & 1 == 1).collect();
+            assert_eq!(eval(&got, &asn), eval(&want, &asn), "{renames:?} at {asn:?}");
+        }
+    }
+    for vtree in [home.vtree(), &bare] {
+        assert_eq!(eng.rename_vars(f_on(vtree), &[(v(1), v(9))]).err(), Some(OperationError::VariableNotInVtree(v(9))));
+    }
+}
