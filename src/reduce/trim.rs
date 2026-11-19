@@ -14,7 +14,10 @@
 //! level above rewrites its references on that side, the only pass over
 //! pairs a kept level takes; a chain ending at a marginal level maps each
 //! node of its top to the value reference its one pair holds, and the level
-//! above names those values. A top whose nodes hold both labels is true, and
+//! above names those values. Where a node of the chain holds more than one
+//! pair, it stands for the sum of their values: the marginal level is
+//! rebuilt with one value per node of the chain's level, added in the
+//! diagram's algebra. A top whose nodes hold both labels is true, and
 //! its parent is dropped in the same pass. The levels then move to their
 //! nodes' indices in the projection.
 
@@ -28,7 +31,11 @@ use crate::diagram::{
     rewrite_stored_side, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, StoreRoom, Tdd, TddLevel, TddNodeId,
     NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ValueRef,
 };
+use rustc_hash::FxHashMap;
+
+use crate::diagram::{weight_key, MarginalStorage, WeightKey};
 use crate::limits::{OperationError, PollGate};
+use crate::value::slots::{push_count_slot, sum_marginal_counts};
 use crate::value::{Count, CountRead, CountVec};
 use crate::vtree::{Home, Vtree, VtreeIdx, VtreeNode};
 
@@ -56,20 +63,22 @@ impl Engine {
     }
 }
 
-/// The closing step of a reduction on a diagram on a home with no summed-out
-/// level: false, or a leaf with output `One`, becomes the constant on the
-/// empty projection, and the leaves of `dropped` leave as [`Tdd::trim`]
-/// drops leaves named true. A leaf of `dropped` is named true in every pair
-/// of its parent, or by a literal in every pair, each node holding
-/// `(Pos, S)` exactly when it holds `(Neg, S)`. Another leaf goes only with a
-/// sibling whose chain ends at it holding both labels.
+/// The closing step of a reduction on a diagram on a home: false, or a leaf
+/// with output `One`, becomes the constant on the empty projection, and the
+/// leaves of `dropped` leave as [`Tdd::trim`] drops leaves named true. A leaf
+/// of `dropped` is named true in every pair of its parent, or by a literal in
+/// every pair, each node holding `(Pos, S)` exactly when it holds `(Neg, S)`.
+/// Another leaf goes only with a sibling whose chain ends at it holding both
+/// labels. With a summed-out level `dropped` holds at most the caller's seed
+/// and a diagram whose summed levels are regions or leaves is trimmed by
+/// detection instead; the smooth form, with an internal summed level, stays.
 ///
 /// # Errors
 ///
 /// As [`Tdd::trim`]; `f` is then as it was.
 #[inline]
 pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    if dropped.is_empty() {
+    if dropped.is_empty() && !f.has_marginal_level() {
         close_constant(eng, f);
         return Ok(());
     }
@@ -89,7 +98,7 @@ pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
 fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
     let Some(home) = f.vtree.home() else { return };
     let one = !f.is_zero();
-    if f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region()) {
+    if one && f.vtree.node(f.vtree.root()).is_region() {
         return;
     }
     replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
@@ -100,11 +109,33 @@ fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
     let Some(home) = f.vtree.home() else { return Ok(()) };
     if f.has_marginal_level() {
-        return Ok(());
+        // A summed internal level is the smooth form `marginalize_levels`
+        // leaves on the home, which stays as it is.
+        if f.vtree.bottomup().any(|t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
+            return Ok(());
+        }
+        return trim(eng, f, &home, None, &[]).map(|_| ());
     }
     dropped.sort_unstable();
     dropped.dedup();
     trim(eng, f, &home, Some(dropped), &[]).map(|_| ())
+}
+
+/// [`trim`] by detection of a diagram on `home` with a summed-out level,
+/// each internal summed level not under another becoming a region.
+#[cold]
+#[inline(never)]
+pub(crate) fn trim_summed(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
+    let vtree = Arc::clone(&f.vtree);
+    let summed = |t: VtreeIdx| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal();
+    let mut tops = Vec::new();
+    for t in vtree.bottomup() {
+        if summed(t) && vtree.node(t).parent().is_none_or(|p| !summed(p)) {
+            eng.limits().try_push(&mut tops, t)?;
+        }
+    }
+    tops.sort_unstable();
+    trim(eng, f, home, None, &tops)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,6 +162,9 @@ struct Shape {
     /// For a `LeafChain` node ending at a marginal level, the reference into
     /// that level each of its nodes holds, in place of `labels`.
     values: Vec<Vec<u32>>,
+    /// Marginal levels rebuilt with the sums a chain above them holds, by the
+    /// node of `f` whose level each replaces; `values` refer into these.
+    regrouped: Vec<(VtreeIdx, TddLevel)>,
     /// The leaves under each node, and the kept ones.
     leaves: Vec<u32>,
     kept: Vec<u32>,
@@ -185,6 +219,7 @@ impl Shape {
             kind: Vec::new(),
             labels: Vec::new(),
             values: Vec::new(),
+            regrouped: Vec::new(),
             leaves: Vec::new(),
             kept: Vec::new(),
             dropped: false,
@@ -244,15 +279,17 @@ impl Shape {
                 (false, false) => Kind::True,
                 (true, true) => Kind::Both,
                 _ => {
-                    // A node of `t` becomes one node or value of the kept
-                    // side, so a pair it holds twice would count once.
-                    if summed && level.repeats_a_pair()? {
+                    let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
+                    let values = over_values(c);
+                    // A node of `t` becomes one node or label of the kept
+                    // side, so a pair it holds twice would count once; a
+                    // value adds it twice.
+                    if summed && !values && level.repeats_a_pair()? {
                         return Err(OperationError::MarginalLevel(t));
                     }
-                    let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
-                    } else if over_values(c) {
+                    } else if values {
                         let held = shape.chain_values(eng, f, t, c, side, &mut gate)?;
                         shape.values[t.idx()] = held;
                         Kind::LeafChain(side)
@@ -282,10 +319,10 @@ impl Shape {
 
     /// For `t` dropped over a kept side `c` that is a marginal level or a
     /// chain ending at one, the reference into that level each node of `t`
-    /// stands for. A node of `t` with more than one pair would stand for a
-    /// sum of values, which no reference names: refused.
+    /// stands for. A node of `t` with other than one pair stands for the sum
+    /// of their values, which [`Shape::regroup`] mints.
     fn chain_values(
-        &self,
+        &mut self,
         eng: &Engine,
         f: &Tdd,
         t: VtreeIdx,
@@ -294,19 +331,119 @@ impl Shape {
         gate: &mut PollGate<'_>,
     ) -> Result<Vec<u32>, OperationError> {
         let level = &f.levels[t.idx()];
+        let twin = negative_half(&f.vtree, t, side);
         let below = &self.values[c.idx()];
         let mut held = Vec::new();
         eng.limits().reserve_exact(&mut held, level.slot_count())?;
         for i in 0..level.slot_count() {
-            let mut pairs = level.pairs_iter_of_idx(i);
+            let pairs = level.pairs_iter_of_idx(i);
             gate.poll(pairs.len() as u64)?;
+            let mut pairs = pairs.filter(|&p| Some(side_ref(p, other(side))) != twin);
             let (Some(p), None) = (pairs.next(), pairs.next()) else {
-                return Err(OperationError::MarginalLevel(c));
+                held.clear();
+                self.regroup(eng, f, t, c, side, &mut held, gate)?;
+                return Ok(held);
             };
             let r = side_ref(p, side);
             held.push(if below.is_empty() { r } else { below[r as usize] });
         }
         Ok(held)
+    }
+
+    /// The level at the end of `c`'s chain, rebuilt with one value per node
+    /// of `t`: the sum over the node's pairs of the values they reach, in the
+    /// diagram's algebra. Equal values share a slot, and a small count rides
+    /// inline. `held` receives the references. A summed variable leaf, whose
+    /// column readers decode as labels, is refused.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn regroup(
+        &mut self,
+        eng: &Engine,
+        f: &Tdd,
+        t: VtreeIdx,
+        c: VtreeIdx,
+        side: ChildSide,
+        held: &mut Vec<u32>,
+        gate: &mut PollGate<'_>,
+    ) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        let vtree = &*f.vtree;
+        let end = self.end(vtree, c);
+        if vtree.node(end).is_var_leaf() {
+            return Err(OperationError::MarginalLevel(c));
+        }
+        let at = self.regrouped.iter().position(|&(e, _)| e == end);
+        let source = at.map_or(&f.levels[end.idx()], |k| &self.regrouped[k].1);
+        let (level, below) = (&f.levels[t.idx()], &self.values[c.idx()]);
+        let twin = negative_half(vtree, t, side);
+        let mut refs = Vec::new();
+        let mut node_refs = |i: usize, refs: &mut Vec<u32>| -> Result<(), OperationError> {
+            refs.clear();
+            for p in level.pairs_iter_of_idx(i).filter(|&p| Some(side_ref(p, other(side))) != twin) {
+                let r = side_ref(p, side);
+                lim.try_push(refs, if below.is_empty() { r } else { below[r as usize] })?;
+            }
+            gate.poll(refs.len() as u64)
+        };
+        let mut out = TddLevel::new();
+        if let Some(counts) = source.count_column() {
+            out.become_marginal(Vec::new(), None);
+            let mut slots: FxHashMap<Count, u32> = FxHashMap::default();
+            for i in 0..level.slot_count() {
+                node_refs(i, &mut refs)?;
+                let sum = sum_marginal_counts(counts, &refs);
+                let inline = match sum {
+                    Count::Fast(v) => ValueRef::inline_raw(v),
+                    Count::Big(_) => None,
+                };
+                let r = match inline {
+                    Some(r) => r,
+                    None => match slots.get(&sum) {
+                        Some(&slot) => ValueRef::slot_raw(slot),
+                        None => {
+                            lim.reserve_map(&mut slots, 1)?;
+                            let slot = push_count_slot(eng, &mut out, sum.clone())?;
+                            slots.insert(sum, slot);
+                            ValueRef::slot_raw(slot)
+                        }
+                    },
+                };
+                lim.try_push(held, r)?;
+            }
+        } else {
+            let values = source.weight_values().expect("a summed level holds counts or weights");
+            out.become_marginal_weighted(Vec::new());
+            let ws = f.weight_store();
+            let mut slots: FxHashMap<WeightKey, u32> = FxHashMap::default();
+            for i in 0..level.slot_count() {
+                node_refs(i, &mut refs)?;
+                let mut sum = ws.wzero();
+                for &raw in &refs {
+                    let r = EncodedChildRef::from_raw(raw);
+                    if !r.is_reserved() {
+                        sum.add_assign(&values[ChildDecoder::marginal().index(r)]);
+                    }
+                }
+                let key = weight_key(&sum);
+                let slot = match slots.get(&key) {
+                    Some(&slot) => slot,
+                    None => {
+                        lim.reserve_map(&mut slots, 1)?;
+                        let slot = MarginalStorage::new(&mut out).push_weight(eng, sum)?;
+                        slots.insert(key, slot);
+                        slot
+                    }
+                };
+                lim.try_push(held, ValueRef::slot_raw(slot))?;
+            }
+        }
+        match at {
+            Some(k) => self.regrouped[k].1 = out,
+            None => lim.try_push(&mut self.regrouped, (end, out))?,
+        }
+        Ok(())
     }
 
     /// The first node down `t`'s chain that is not dropped.
@@ -409,10 +546,9 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         return Ok(true);
     }
     let summed = f.has_marginal_level();
-    // With nothing to collapse, a diagram whose drop would leave a sum of
-    // values, an output on an inline value or a repeated pair merged as a
-    // set stays as it is.
-    let shape = match Shape::read(eng, f, dropped, summed) {
+    // With nothing to collapse, a diagram whose drop would merge a repeated
+    // pair as a set, or rebuild a summed variable leaf, stays as it is.
+    let mut shape = match Shape::read(eng, f, dropped, summed) {
         Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
         shape => shape?,
     };
@@ -422,12 +558,26 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     let local = match shape.kind[root.idx()] {
         Kind::True => None,
         Kind::LeafChain(_) if summed && !shape.values[root.idx()].is_empty() => {
-            // The output names a slot of a marginal root; an inline value has none.
+            // The output names a slot of a marginal root; an inline count
+            // gets a level of one slot.
             let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
             match ChildDecoder::marginal().value(side) {
                 ValueRef::Slot(slot) => Some(NodeIdx(slot)),
-                ValueRef::Inline(_) if collapse.is_empty() => return Ok(false),
-                ValueRef::Inline(_) =>return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
+                ValueRef::Inline(count) => {
+                    let end = shape.end(&vtree, root);
+                    if vtree.node(end).is_var_leaf() {
+                        return match collapse.is_empty() {
+                            true => Ok(false),
+                            false => Err(OperationError::MarginalLevel(end)),
+                        };
+                    }
+                    let mut level = TddLevel::new();
+                    level.become_marginal(Vec::new(), None);
+                    let slot = push_count_slot(eng, &mut level, Count::from_u128(u128::from(count)))?;
+                    shape.regrouped.retain(|&(e, _)| e != end);
+                    lim.try_push(&mut shape.regrouped, (end, level))?;
+                    Some(NodeIdx(slot))
+                }
             }
         }
         Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {
@@ -586,7 +736,13 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         }
     }
     for &(u, t) in &placed {
-        levels[u.idx()] = std::mem::take(&mut old[t.idx()]);
+        levels[u.idx()] = match shape.regrouped.iter().position(|&(e, _)| e == t) {
+            Some(k) => {
+                changed.push(u);
+                std::mem::take(&mut shape.regrouped[k].1)
+            }
+            None => std::mem::take(&mut old[t.idx()]),
+        };
     }
     crate::diagram::return_levels(eng, old);
 
@@ -606,7 +762,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         f.invalidate(u);
     }
     f.close_marked_levels(closed);
-    if canonical && !built && !shape.merged {
+    if canonical && !built && !shape.merged && shape.regrouped.is_empty() {
         f.levels.certify(f.output);
         #[cfg(debug_assertions)]
         super::contract::contract_leaf::assert_no_full_twin_side(f);

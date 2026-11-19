@@ -1019,12 +1019,7 @@ impl crate::Engine {
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
         }
-        // On a home's root, an internal summed-out level is a form a
-        // projection cannot hold, so the trim would refuse it.
-        if out.has_marginal_level() {
-            return Ok(out);
-        }
-        extend::trimmed(self, out)
+        Ok(out)
     }
 
     /// Conjoin two diagrams and sum out the variables `summable` names.

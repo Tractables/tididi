@@ -538,18 +538,22 @@ pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
     check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
 }
 
-/// [`Tdd::trim`] of a diagram just seated on a home, unless it has a marginal
-/// level.
+/// [`Tdd::trim`] of a diagram just seated on a home; an internal summed-out
+/// level not under another becomes a region. A drop that would merge a
+/// repeated pair above a summed-out level as a set leaves the diagram as it
+/// was seated.
 #[cold]
 #[inline(never)]
 pub(crate) fn trim_on_home(tdd: &mut Tdd) -> Result<(), TddBuildError> {
-    if tdd.has_marginal_level() {
-        return Ok(());
-    }
     let home = tdd.vtree.home().expect("a vtree on a home");
     let context = Arc::clone(tdd.vtree.context());
-    match context.run(|eng| eng.trim(tdd, &home)) {
-        Ok(_) => Ok(()),
+    let summed = tdd.has_marginal_level();
+    let trimmed = context.run(|eng| match summed {
+        true => eng.limits().enter().and_then(|_op| crate::reduce::trim_summed(eng, tdd, &home)),
+        false => eng.trim(tdd, &home),
+    });
+    match trimmed {
+        Ok(_) | Err(OperationError::MarginalLevel(_)) => Ok(()),
         Err(e) => {
             debug_assert_eq!(e, OperationError::OverBudget, "a trim without limits is refused only an allocation");
             Err(TddBuildError::OverBudget)

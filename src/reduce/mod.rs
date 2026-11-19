@@ -11,7 +11,7 @@ pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
 mod trim;
 pub(crate) use driver::restore_marginal_invariants;
-pub(crate) use trim::{close_constant, settle, trim};
+pub(crate) use trim::{close_constant, settle, trim, trim_summed};
 
 use crate::execution::pool::{Drain, Pool, Pools};
 

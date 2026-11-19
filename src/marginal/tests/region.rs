@@ -100,6 +100,15 @@ pub(crate) fn check_form(f: &Tdd, what: &str) {
         check_slot_count_uniqueness(f).unwrap_or_else(|e| panic!("{what}: {e}"));
     }
     check_no_orphan_slots(f).unwrap_or_else(|e| panic!("{what}: {e}"));
+    if let Some(home) = vtree.home()
+        && let Err(e) = crate::test_helpers::check::check_trimmed(f, false)
+    {
+        // A level holding a pair twice stands for a doubled value, which
+        // dropping a leaf under it would merge as a set: the trim refuses
+        // and the leaf stays named `One`.
+        let repeated = vtree.bottomup().any(|t| f.level(t).repeats_a_pair().unwrap());
+        assert!(repeated && f.clone().trim(&home) == Ok(false), "{what}: {e}");
+    }
 }
 
 /// Model counts as an algebra that values counts.
@@ -154,7 +163,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
     let eng = Engine::new();
     let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
     let mut rng = Lcg::new(0x5eed_0bad);
-    let mut seen = [0usize; 4];
+    let mut seen = [0usize; 5];
     for case in 0..600u64 {
         let n = 1 + rng.below(64) as u32;
         let home = Home::new(Vtree::random(n, case));
@@ -183,6 +192,26 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             eng.marginalize_levels(&mut g, &hs).unwrap();
             check_form(&f, &what);
             check_values(&f, &g, n, arithmetic, &what);
+            // The closing step of `condition` on the summed-out form.
+            let mut pick = Lcg::new(case << 2 | step);
+            // A lone summable leaf stays a variable leaf of `f` while `g`
+            // sums it.
+            let summed_in_g = |x: VarId| {
+                let leaf = g.vtree().leaf_of(x).expect("a leaf of the home");
+                std::iter::successors(Some(leaf), |&t| g.vtree().node(t).parent()).any(|t| g.level(t).is_marginal())
+            };
+            let vars: Vec<VarId> = f.vtree().bottomup().filter(|&t| f.vtree().node(t).is_var_leaf()).map(|t| f.vtree().leaf_var(t)).filter(|&x| !summed_in_g(x)).collect();
+            if f.has_marginal_level() && !vars.is_empty() {
+                let (x, b) = (vars[pick.below(vars.len() as u64) as usize], pick.coin());
+                let fx = f.clone().condition_var(x, b).unwrap_or_else(|e| panic!("{what}: condition {x:?}: {e:?}"));
+                let gx = g.clone().condition_var(x, b).unwrap();
+                check_form(&fx, &format!("{what}, condition {x:?} {b}"));
+                // Or a repeated pair kept it, which `check_form` admitted.
+                let kept = crate::test_helpers::check::check_trimmed(&fx, false).is_err();
+                assert!(fx.vtree().leaf_of(x).is_none() || kept, "{what}: condition {x:?} {b} left its leaf");
+                seen[4] += usize::from(!kept);
+                check_values(&fx, &gx, n, arithmetic, &format!("{what}, condition {x:?} {b}"));
+            }
             seen[0] += usize::from(count_regions(&f) > had);
             seen[1] += usize::from(free);
             seen[2] += usize::from(had > 0);
@@ -190,9 +219,42 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             before = hs;
         }
     }
-    let [built, free, again, intervals] = seen;
-    println!("largest number of intervals in an extent: {intervals}");
-    assert!(built > 150 && free > 300 && again > 40, "{built} sum-outs built a region, {free} had a free target, {again} ran on a region");
+    let [built, free, again, intervals, conditioned] = seen;
+    println!("largest number of intervals in an extent: {intervals}; {conditioned} conditioned on a summed-out form");
+    assert!(
+        built > 150 && free > 300 && again > 40 && conditioned > 100,
+        "{built} sum-outs built a region, {free} had a free target, {again} ran on a region, {conditioned} conditioned"
+    );
+}
+
+/// Home `((e, f), (x, y))` and `e ∧ f ∧ x ∧ y` with `e` and `f` summed into a
+/// region: conditioning on `x` drops its leaf and `∃x` is refused, as on any
+/// diagram with a summed-out level; so is `∃x` of `¬y ∧ (¬e ∨ x) ∧ (e ∨ f)`
+/// with the region on either side of the root.
+#[test]
+fn a_closing_step_beside_a_region_drops_the_leaf_it_names_true() {
+    let leaf = |v: u32| Vtree::leaf(VarId(v));
+    let join = |a: &Vtree, b: &Vtree| Vtree::join(a, b).unwrap();
+    let (ef, xy) = (join(&leaf(1), &leaf(2)), join(&leaf(3), &leaf(4)));
+    let home = Home::new(join(&ef, &xy));
+    let mut f = Tdd::cube(home.vtree(), [1, 2, 3, 4]).unwrap();
+    f.marginalize(|v| v.0 <= 2).unwrap();
+    assert_eq!(count_regions(&f), 1);
+    for b in [true, false] {
+        let fx = f.clone().condition_var(VarId(3), b).unwrap();
+        check_form(&fx, &format!("condition x {b}"));
+        assert!(fx.vtree().leaf_of(VarId(3)).is_none(), "condition x {b} left its leaf");
+        assert_eq!(fx.model_count().unwrap(), BigUint::from(if b { 2u32 } else { 0 }), "condition x {b}");
+    }
+    assert!(matches!(f.exists_var(VarId(3)), Err(OperationError::MarginalLevel(_))));
+    for home in [Home::new(join(&ef, &xy)), Home::new(join(&xy, &ef))] {
+        let mut g = Tdd::cube(home.vtree(), [-4]).unwrap();
+        g = g.and_clause([-1, 3]).unwrap().and_clause([1, 2]).unwrap();
+        g.marginalize(|v| v.0 <= 2).unwrap();
+        assert_eq!(count_regions(&g), 1);
+        assert!(matches!(g.clone().exists_var(VarId(3)), Err(OperationError::MarginalLevel(_))));
+        assert!(matches!(g.exists_vars(&[VarId(3)]), Err(OperationError::MarginalLevel(_))));
+    }
 }
 
 fn count_regions(f: &Tdd) -> usize {
