@@ -392,7 +392,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: fd9c07c9820c079fdb746cdae2854ec217b0b588bb3c92b0504757e2eda1ca91 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 8d0885fb0a6b70dc3c05873ae5176da8ac6a64c1bab9451c1692f1734992e310 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -460,7 +460,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 3a8b82e933b28110d5602deaa578979deb2a14c36a207152d9297d3ccb120726 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 23f5d5178bd5b6d3c9bbaf35b023cb9a9320c50d270a49ab68a5a6c2f79d73a7 -->
 
 ## Reusable components
 
