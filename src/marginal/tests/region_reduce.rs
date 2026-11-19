@@ -78,11 +78,12 @@ fn every_reduction_pass_keeps_a_diagram_with_regions() {
     assert!(cases > 1000 && refused > 0, "{cases} cases, {refused} refused");
 }
 
-/// E9c: summing after the conjunction merges the nodes the sum makes equal
-/// above the region, up to the root: the study's 7 pairs. Summing first,
-/// the conjunction keeps a node no pair reaches, which a prune drops.
+/// E9c: summing after the conjunction leaves the nodes the sum makes equal
+/// above the region, and a minimize merges them up to the root: the study's
+/// 7 pairs. Summing first, the conjunction keeps a node no pair reaches,
+/// which a prune drops.
 #[test]
-fn e9c_summing_after_a_conjunction_merges_up_to_the_root() {
+fn e9c_a_minimize_after_summing_merges_up_to_the_root() {
     let eng = Engine::new();
     let (phi1, z) = e9c();
     let is_e = |v: VarId| (2..=4).contains(&v.0);
@@ -91,12 +92,14 @@ fn e9c_summing_after_a_conjunction_merges_up_to_the_root() {
     let mut before = eng.and(&before, &z).unwrap();
     let mut after = eng.and(&phi1, &z).unwrap();
     after.marginalize(is_e).unwrap();
+    let summed = after.pair_count();
+    after.minimize().unwrap();
     let stored = before.pair_count();
     before.reduce(crate::reduce::ReductionPlan::Prune).unwrap();
-    println!("E9c pairs: sum then conjoin {stored}, pruned {}; conjoin then sum {}", before.pair_count(), after.pair_count());
+    println!("E9c pairs: sum then conjoin {stored}, pruned {}; conjoin then sum {summed}, minimized {}", before.pair_count(), after.pair_count());
     for f in [&before, &after] {
         check_form(f, "E9c");
         assert_eq!(f.model_count().unwrap(), BigUint::from(9u32));
     }
-    assert_eq!((before.pair_count(), after.pair_count()), (4, 7));
+    assert_eq!((before.pair_count(), summed, after.pair_count()), (4, 9, 7));
 }

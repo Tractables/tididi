@@ -935,6 +935,10 @@ fn assemble_moving<'a>(
     if chains {
         literal_tops.sort_unstable();
         carried.leaf_owes_inner(|t| {
+            // A stale entry may name a region, a childless level.
+            if into.node(VtreeIdx(t)).is_leaf() {
+                return false;
+            }
             let (left, right) = into.children(VtreeIdx(t));
             literal_tops.binary_search(&left).is_ok() || literal_tops.binary_search(&right).is_ok()
         });
