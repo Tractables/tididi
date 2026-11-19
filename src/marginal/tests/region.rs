@@ -243,3 +243,87 @@ fn every_refused_reserve_of_a_region_sum_out_leaves_the_count() {
     }
     assert!(built && refused > 0, "{refused} refusals");
 }
+
+/// Trim of a summed diagram can leave a region in its pass lists, the end of
+/// a dropped chain the lists named; the conjunction that follows must read
+/// it as the leaf it is.
+#[test]
+fn a_restricted_summed_diagram_conjoins_as_it_was() {
+    let eng = Engine::new();
+    let mut cases = 0;
+    for seed in 0..600u64 {
+        let mut rng = Lcg::new(seed ^ 0x7e61_0a4d);
+        let n = 2 + rng.below(9) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let h = home.vtree();
+        let used: Vec<VarId> = (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect();
+        let mut g = operand(&eng, &home, &used, &mut rng);
+        if g.vtree().num_nodes() == 0 {
+            continue;
+        }
+        if rng.below(3) == 0 {
+            g.set_weights(WeightStore::new(weights(n, &mut rng), Arithmetic::ExactRational)).unwrap();
+        }
+        let full: Vec<VtreeIdx> = h
+            .bottomup()
+            .filter(|&t| !h.node(t).is_leaf() && h.subtree(t).filter(|&u| h.node(u).is_leaf()).all(|u| g.vtree().leaf_of(h.leaf_var(u)).is_some()))
+            .collect();
+        let mut hs: Vec<VtreeIdx> = Vec::new();
+        for _ in 0..1 + rng.below(2) {
+            if let Some(&t) = full.get(rng.below(full.len().max(1) as u64) as usize)
+                && hs.iter().all(|&c| !h.in_subtree(c, t) && !h.in_subtree(t, c))
+            {
+                hs.push(t);
+            }
+        }
+        if hs.is_empty() {
+            continue;
+        }
+        eng.marginalize(&mut g, &hs).unwrap();
+        if count_regions(&g) == 0 {
+            continue;
+        }
+        let free = (1..=n).map(VarId).filter(|&v| hs.iter().all(|&t| !h.in_subtree(h.leaf_of(v).unwrap(), t)));
+        let mut rng = Lcg::new(seed ^ 0xb1de);
+        let vars: Vec<VarId> = free.filter(|_| rng.below(3) != 0).collect();
+        if vars.is_empty() {
+            continue;
+        }
+        let care = operand(&eng, &home, &vars, &mut rng);
+        cases += 1;
+        let r = eng.restrict_to_care(g.clone(), &care).unwrap().into_tdd();
+        let want = conjoined_value(&eng, &g, &care);
+        assert_eq!(conjoined_value(&eng, &r, &care), want, "seed {seed}");
+    }
+    assert!(cases > 150, "{cases} cases");
+}
+
+/// The value of `f ∧ g` in each order, each operand borrowed and owned, all
+/// four equal.
+fn conjoined_value(eng: &Engine, f: &Tdd, g: &Tdd) -> String {
+    let value = |t: Tdd| format!("{:?} {:?}", t.model_count(), t.weighted_value());
+    let forms = [eng.and(f, g), eng.and(g, f), eng.and(f.clone(), g.clone()), eng.and(g.clone(), f.clone())];
+    let values: Vec<String> = forms.into_iter().map(|t| value(t.unwrap())).collect();
+    assert!(values.iter().all(|v| *v == values[0]), "{values:?}");
+    values[0].clone()
+}
+
+/// Home `((x1, x2), (x3, x4))`, `f = x1 ∧ (x3 ∨ x4)` summed over `(x3, x4)`:
+/// beside `x2`, the reader of `x1` names it as a literal through a
+/// pass-through, with the region in `f`'s leaf pass list.
+#[test]
+fn a_literal_beside_a_region_conjoins_with_a_pass_through() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let own = Vtree::projection(&home, [1, 3, 4].map(VarId)).unwrap();
+    let mut f = Tdd::one(&own);
+    for clause in [&[1][..], &[3, 4]] {
+        f = eng.and_clause(f, clause).unwrap();
+    }
+    let h = home.vtree();
+    eng.marginalize(&mut f, &[h.node(h.leaf_of(VarId(3)).unwrap()).parent().unwrap()]).unwrap();
+    let care = Tdd::clause(&Vtree::projection(&home, [VarId(2)]).unwrap(), [2]).unwrap();
+    let r = eng.restrict_to_care(f.clone(), &care).unwrap().into_tdd();
+    assert_eq!(conjoined_value(&eng, &f, &care), "Ok(3) Ok(None)");
+    assert_eq!(conjoined_value(&eng, &r, &care), "Ok(3) Ok(None)");
+}
