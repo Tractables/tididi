@@ -670,39 +670,37 @@ fn check_structural_level<const PAIRS: bool>(
             }
         } else if lb * rb <= u64::BITS as usize {
             // Every pair a bit of one word, `left * rb + right`: no buffer
-            // for the narrow levels most finishes consist of.
-            let (mut grid, mut repeat) = (0u64, None);
+            // for the narrow levels most finishes consist of. The loop only
+            // learns whether some pair repeats; keeping the pair in it costs
+            // a level's check three times as much.
+            let (mut grid, mut repeated) = (0u64, 0u64);
             let all_fit = every_pair(lvl, |pair| {
                 fits(pair) && {
                     let bit = 1u64 << (pair.left.raw() as usize * rb + pair.right.raw() as usize);
-                    if grid & bit != 0 {
-                        repeat.get_or_insert(*pair);
-                    }
+                    repeated |= grid & bit;
                     grid |= bit;
                     true
                 }
             });
             if all_fit {
-                return repeat.map_or(Ok(()), |pair| Err(TddBuildError::RepeatedPair { level: t, pair }));
+                return if repeated == 0 { Ok(()) } else { scan.name_repeat(lvl, t, lb, rb) };
             }
         } else if lb * rb <= GRID_BITS {
             let grid = &mut scan.grid;
             grid.clear();
             grid.resize((lb * rb).div_ceil(64), 0);
-            let mut repeat = None;
+            let mut repeated = 0u64;
             let all_fit = every_pair(lvl, |pair| {
                 fits(pair) && {
                     let at = pair.left.raw() as usize * rb + pair.right.raw() as usize;
                     let (word, bit) = (&mut grid[at / 64], 1u64 << (at % 64));
-                    if *word & bit != 0 {
-                        repeat.get_or_insert(*pair);
-                    }
+                    repeated |= *word & bit;
                     *word |= bit;
                     true
                 }
             });
             if all_fit {
-                return repeat.map_or(Ok(()), |pair| Err(TddBuildError::RepeatedPair { level: t, pair }));
+                return if repeated == 0 { Ok(()) } else { scan.name_repeat(lvl, t, lb, rb) };
             }
         } else {
             scan.start(lb);
@@ -790,6 +788,20 @@ impl PairScan {
     fn count(&mut self, pair: &ChildPair) -> bool {
         self.end[pair.left.raw() as usize + 1] += 1;
         true
+    }
+
+    /// The repeated pair of a level the bit grid found to hold one, with
+    /// sides below `left_width` and `right_width`.
+    #[cold]
+    #[inline(never)]
+    fn name_repeat(&mut self, lvl: &TddLevel, t: VtreeIdx, left_width: usize, right_width: usize) -> Result<(), TddBuildError> {
+        self.start(left_width);
+        lvl.for_each_node_pair(|_, pair| {
+            self.count(&pair);
+        });
+        let found = self.find_repeat(lvl, t, left_width, right_width);
+        debug_assert!(found.is_err(), "the bit grid saw a repeat the counting sort does not");
+        found
     }
 
     /// After every pair of `lvl` was counted, with sides below `left_width`
