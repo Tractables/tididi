@@ -203,8 +203,10 @@ impl TddLevel {
 
     /// Rewrite every pair of a stored level whose ranges are in node order
     /// ([`ranges_in_node_order`](Self::ranges_in_node_order)) through `f`,
-    /// which returns the pair to write and whether it is kept, in one pass
-    /// in node order: each node's kept pairs move down to a write cursor,
+    /// in one pass in node order. `f(seg, from)` rewrites the pairs
+    /// `seg[from..]` of one node, writes the kept ones in order from
+    /// `seg[0]`, and returns how many it kept; `seg[..from]` is free. Each
+    /// node's kept pairs move down to a write cursor,
     /// which never overtakes a range not yet read, and the node is
     /// re-encoded as the moved range (two pairs or more), its sole kept pair
     /// inline, or the empty placeholder, as
@@ -215,7 +217,7 @@ impl TddLevel {
     /// level's live pairs: the moved pairs, and one for each node inline
     /// before or after, counted in the arms that leave a node inline.
     #[inline]
-    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(ChildPair) -> (ChildPair, bool)) -> usize {
+    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(&mut [ChildPair], usize) -> usize) -> usize {
         debug_assert!(self.ranges_in_node_order(), "a slide reads the ranges in node order");
         let TddLevel { nodes, pairs, ranges, dead_pairs, .. } = self;
         let pairs = pairs.stored_mut();
@@ -224,9 +226,10 @@ impl TddLevel {
         for node in nodes.iter_mut() {
             let (start, len, ranged) = match node.kind() {
                 NodeKind::Inline(pair) => {
-                    let (pair, kept) = f(pair);
-                    debug_assert!(kept, "an inline node's pair is never dropped");
-                    *node = EncodedNode::inline(pair);
+                    let mut one = [pair];
+                    let kept = f(&mut one, 0);
+                    debug_assert_eq!(kept, 1, "an inline node's pair is never dropped");
+                    *node = EncodedNode::inline(one[0]);
                     inline += 1;
                     continue;
                 }
@@ -237,15 +240,8 @@ impl TddLevel {
                 }
             };
             debug_assert!(cursor <= start, "the write cursor stays behind the reads");
-            let seg = &mut pairs[cursor..start + len];
-            let mut kept_here = 0usize;
-            for read in start - cursor..seg.len() {
-                let (pair, kept) = f(seg[read]);
-                // SAFETY: `kept_here` counts kept pairs among those read
-                // since `start - cursor`, so it is at most `read`.
-                unsafe { *seg.get_unchecked_mut(kept_here) = pair };
-                kept_here += usize::from(kept);
-            }
+            let kept_here = f(&mut pairs[cursor..start + len], start - cursor);
+            debug_assert!(kept_here <= len, "a node keeps at most its pairs");
             let write = cursor + kept_here;
             *node = match kept_here {
                 0 => EncodedNode::multi_pair(0, 0),
