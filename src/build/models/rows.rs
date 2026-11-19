@@ -113,6 +113,15 @@ fn owned_rows(
         for row in packed.chunks_exact_mut(w) {
             row[w - 1] &= tail_mask;
         }
+    } else if n >= BYTE_TABLE_MIN_ROWS && (2..=4).contains(&w) {
+        gate.poll(rows.len() as u64)?;
+        let table = layout.byte_table(lim, w)?;
+        match w {
+            2 => reencode_rows::<2>(&table, rows, &mut packed),
+            3 => reencode_rows::<3>(&table, rows, &mut packed),
+            _ => reencode_rows::<4>(&table, rows, &mut packed),
+        }
+        lim.discard(table);
     } else {
         packed.resize(rows.len(), 0);
         for k in 0..n {
@@ -137,6 +146,20 @@ fn owned_rows(
 
     gate.flush()?;
     sorted_distinct(lim, radix, num_vars, packed, w)
+}
+
+/// Rows from which re-encoding through [`Layout::byte_table`] pays for the
+/// table, which takes about as long to fill as a hundred rows of four
+/// words take to re-encode bit by bit. Past four words the table outgrows
+/// the second-level cache.
+const BYTE_TABLE_MIN_ROWS: usize = 1 << 10;
+
+/// Append `rows`, `W` words each, re-encoded through `table` onto `packed`.
+fn reencode_rows<const W: usize>(table: &[u64], rows: &[u64], packed: &mut Vec<u64>) {
+    for row in rows.chunks_exact(W) {
+        let row: &[u64; W] = row.try_into().expect("a chunk is a row");
+        packed.extend_from_slice(&Layout::reencode_row::<W>(table, row));
+    }
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats

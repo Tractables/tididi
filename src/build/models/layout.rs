@@ -81,27 +81,46 @@ impl Layout {
         t
     }
 
-    /// One table per byte of an input word holding where that byte's bits land
-    /// in a re-encoded word, so a one-word cube is re-encoded by eight lookups
-    /// ([`Self::reencode_word`]).
-    pub(super) fn byte_table(&self, lim: &Limits) -> Result<Vec<u64>, OperationError> {
+    /// One table per byte of an input row of `words` words holding where
+    /// that byte's bits land in the re-encoded row, an entry of `words`
+    /// words, so a row is re-encoded by eight lookups a word
+    /// ([`Self::reencode_row`]).
+    pub(super) fn byte_table(&self, lim: &Limits, words: usize) -> Result<Vec<u64>, OperationError> {
         let mut table = Vec::new();
-        lim.try_resize(&mut table, 8 * 256, 0u64)?;
+        lim.try_resize(&mut table, words * 8 * 256 * words, 0u64)?;
         for (bit, &to) in self.position.iter().enumerate() {
             let (byte, within) = (bit / 8, bit % 8);
-            for (value, entry) in table[byte * 256..][..256].iter_mut().enumerate() {
-                if (value >> within) & 1 == 1 {
-                    *entry |= 1u64 << to;
-                }
+            let (word, mask) = (to as usize / 64, 1u64 << (to % 64));
+            for value in (0..256).filter(|value| (value >> within) & 1 == 1) {
+                table[(byte * 256 + value) * words + word] |= mask;
             }
         }
         Ok(table)
     }
 
-    /// Re-encode `word` into leaf order through [`Self::byte_table`].
+    /// Re-encode `row` into leaf order through [`Self::byte_table`] for `W`
+    /// words.
+    #[inline]
+    pub(super) fn reencode_row<const W: usize>(table: &[u64], row: &[u64; W]) -> [u64; W] {
+        let mut out = [0u64; W];
+        for (j, &word) in row.iter().enumerate() {
+            for byte in 0..8 {
+                let value = ((word >> (8 * byte)) & 0xff) as usize;
+                let entry: &[u64; W] = table[((j * 8 + byte) * 256 + value) * W..][..W]
+                    .try_into()
+                    .expect("an entry is a row");
+                for (out, &bits) in out.iter_mut().zip(entry) {
+                    *out |= bits;
+                }
+            }
+        }
+        out
+    }
+
+    /// Re-encode the one-word `word` through [`Self::byte_table`] for one word.
     #[inline]
     pub(super) fn reencode_word(table: &[u64], word: u64) -> u64 {
-        (0..8).fold(0, |acc, byte| acc | table[byte * 256 + ((word >> (8 * byte)) & 0xff) as usize])
+        Self::reencode_row::<1>(table, &[word])[0]
     }
 }
 
