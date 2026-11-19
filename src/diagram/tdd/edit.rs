@@ -107,6 +107,35 @@ impl Tdd {
         Ok(())
     }
 
+    /// Leave the output alone at the root level of a structural diagram whose
+    /// output is the root's. The other nodes there are unreachable, the root
+    /// having no parent, and an edit that grows the output in place would
+    /// make them overlap it, breaking determinism (invariant 1) for every
+    /// reader of the whole level.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when `lim` refuses the new level;
+    /// the diagram is then as it was.
+    pub(crate) fn drop_dead_root_nodes(&mut self, lim: &Limits) -> Result<(), OperationError> {
+        let root = self.vtree.root();
+        if self.output.vtree != root || self.output.local.is_reserved() || self.levels[root.idx()].slot_count() <= 1 {
+            return Ok(());
+        }
+        let lone = TddLevel::lone_node(lim, &self.levels[root.idx()], self.output.local)?;
+        self.levels[root.idx()] = lone;
+        self.levels.mark_changed(root);
+        self.output.local = NodeIdx(0);
+        self.invalidate_shrunk(root);
+        let (left, right) = self.vtree.children(root);
+        for c in [left, right] {
+            if !self.vtree.node(c).is_leaf() {
+                self.dirty.add_loose(c.0);
+            }
+        }
+        Ok(())
+    }
+
     /// Install a rotation only after both levels have been built. Their old
     /// arenas are returned together for a search that may undo the rotation.
     pub(crate) fn replace_level_pair(

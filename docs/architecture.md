@@ -253,6 +253,14 @@ structural form also requires that no twins remain, which no row above
 covers: rows 3 and 9 forbid duplicate pair lists, while twins are nodes their
 parents use identically.
 
+A diagram an operation returns without a full reduction may hold unreachable
+nodes, duplicates and twins, but row 1 holds over every stored node, reachable
+or not, and every operation assumes no more of its input. Readers that take a
+whole level, such as negation's fill, the graft of an expansion and the
+maintenance index, rely on that. At the root, which has no parent, the nodes
+other than the output are unreachable and disjoint from it; an operation that
+grows the output in place or builds its complement beside it drops them first.
+
 ## Testing
 
 | Oracle | Path | When |

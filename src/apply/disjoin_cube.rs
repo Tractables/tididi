@@ -288,6 +288,7 @@ fn overlay_cube(eng: &Engine, f: &mut Tdd, label: &[u32]) -> Result<Tdd, Operati
     let lim = eng.limits();
     let vtree = Arc::clone(&f.vtree);
     let root = vtree.root();
+    f.drop_dead_root_nodes(lim)?;
     let out_local = f.output.local;
     let mut levels = std::mem::take(&mut f.levels).into_vec();
     let mut built: Vec<Option<Split>> = Vec::new();

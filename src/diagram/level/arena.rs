@@ -498,6 +498,23 @@ impl TddLevel {
         self.push_node(&Untracked, input_pairs).expect("out of memory pushing a node")
     }
 
+    /// A level holding node `idx` of `from` alone, as node 0, for a level
+    /// whose children are structural.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when `lim` refuses a buffer.
+    pub(crate) fn lone_node(lim: &Limits, from: &TddLevel, idx: NodeIdx) -> Result<TddLevel, OperationError> {
+        debug_assert!(!from.is_marginal() && !from.any_value_ref_side());
+        let mut pairs = Vec::new();
+        let node = from.pairs_iter_of_idx(idx.idx());
+        lim.reserve_exact(&mut pairs, node.len())?;
+        pairs.extend(node);
+        let mut level = TddLevel::new();
+        level.push_node(lim, &pairs)?;
+        Ok(level)
+    }
+
     /// Ensure `self.nodes` has capacity for one more node and return its
     /// index, refused with [`OperationError::IndexOverflow`] where the level
     /// already holds [`ArenaGrowth::width_cap`] nodes.
