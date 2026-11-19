@@ -100,6 +100,7 @@ impl Engine {
     #[cold]
     fn substitute_across(&self, f: Tdd, replacements: &[(VarId, &Tdd)]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        super::extend::refuse_other_homes(std::iter::once(&f).chain(replacements.iter().map(|&(_, diagram)| diagram)))?;
         for &(_, diagram) in replacements {
             diagram.require_structure()?;
         }

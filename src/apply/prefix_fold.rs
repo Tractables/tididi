@@ -341,6 +341,7 @@ impl Engine {
     ) -> Result<Tdd, PrefixFoldError> {
         let lim = self.limits();
         let _op = lim.enter()?;
+        crate::apply::extend::refuse_other_homes([points, values])?;
         points.require_structure()?;
         values.require_structure()?;
         let [points, values] = crate::apply::extend::on_one(self, [Cow::Borrowed(points), Cow::Borrowed(values)])?;

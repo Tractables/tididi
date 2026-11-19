@@ -138,6 +138,7 @@ impl Engine {
 /// `f + g` of two owned operands on one vtree, minimized.
 fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     if !f.is_zero() && !g.is_zero() && (f.has_marginal_level() || g.has_marginal_level()) && crate::apply::extend::needed([&f, &g]) {
+        crate::apply::extend::refuse_other_homes([&f, &g])?;
         refuse_unshared_sums(&f, &g)?;
     }
     let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);

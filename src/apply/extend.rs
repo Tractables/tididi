@@ -37,6 +37,17 @@ pub(crate) fn needed<const N: usize>(operands: [&Tdd; N]) -> bool {
     }
 }
 
+/// [`OperationError::VtreeMismatch`] for `operands` on more than one home,
+/// which an operation refuses before any refusal that reads their levels.
+#[inline]
+pub(crate) fn refuse_other_homes<'t>(operands: impl IntoIterator<Item = &'t Tdd>) -> Result<(), OperationError> {
+    let mut operands = operands.into_iter();
+    let Some(first) = operands.next() else { return Ok(()) };
+    operands
+        .filter(|g| !Arc::ptr_eq(&first.vtree, &g.vtree))
+        .try_for_each(|g| Vtree::refuse_other_home(&first.vtree, &g.vtree))
+}
+
 /// `operands`, an array or a `Vec`, on one vtree: each one already there as
 /// it is, the others placed. An owned operand stays owned.
 #[inline]

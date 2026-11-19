@@ -179,6 +179,7 @@ impl Engine {
         else_branch: Tdd,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        super::extend::refuse_other_homes([&condition, &then_branch, &else_branch])?;
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
@@ -198,6 +199,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        super::extend::refuse_other_homes([&f, &g])?;
         f.require_structure()?;
         g.require_structure()?;
         let [f, g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
@@ -259,6 +261,7 @@ impl Engine {
         plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        super::extend::refuse_other_homes([&f, &g])?;
         f.require_structure()?;
         g.require_structure()?;
         let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);

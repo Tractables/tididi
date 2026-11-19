@@ -565,6 +565,7 @@ pub(crate) fn overlay_on(
     f: Tdd,
     g: Tdd,
 ) -> Result<Tdd, OperationError> {
+    crate::apply::extend::refuse_other_homes([&f, &g])?;
     f.require_structure()?;
     g.require_structure()?;
     let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);

@@ -547,6 +547,7 @@ fn prune_under(
 /// each branching level found bottom-up ([`block_products`]).
 pub(crate) fn and_in_place_on(eng: &Engine, f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
+    super::extend::refuse_other_homes([&f, g])?;
     f.require_structure()?;
     g.require_structure()?;
     let [f, g] = super::extend::on_one(eng, [Cow::Owned(f), Cow::Borrowed(g)])?;

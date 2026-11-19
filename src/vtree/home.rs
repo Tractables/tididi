@@ -958,6 +958,16 @@ impl Vtree {
         Self::leaf_sets_reading(a, b, None::<&mut NoReader>)
     }
 
+    /// [`OperationError::VtreeMismatch`] when `a` and `b` have different
+    /// homes (a root vtree is its own home).
+    pub(crate) fn refuse_other_home(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<(), OperationError> {
+        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, Home::vtree));
+        match root_of(a) == root_of(b) {
+            true => Ok(()),
+            false => Err(OperationError::VtreeMismatch),
+        }
+    }
+
     /// [`Vtree::leaf_sets`], giving `read`, in the union case of operands
     /// with no region, each node of the union with how `a` and `b` read it.
     ///
@@ -970,10 +980,7 @@ impl Vtree {
         b: &Arc<Vtree>,
         mut read: Option<&mut impl UnionReader>,
     ) -> Result<LeafSets, OperationError> {
-        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, Home::vtree));
-        if root_of(a) != root_of(b) {
-            return Err(OperationError::VtreeMismatch);
-        }
+        Self::refuse_other_home(a, b)?;
         debug_assert_eq!(a.validate_home(), Ok(()));
         debug_assert_eq!(b.validate_home(), Ok(()));
         let first_region = |link: &HomeLink| {
