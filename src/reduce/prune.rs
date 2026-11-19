@@ -555,6 +555,7 @@ pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
         &mut marks,
         &mut visits,
         &mut Vec::new(),
+        false,
     )
     .expect("unbounded limits refuse nothing");
     for v in &visits {
@@ -1452,6 +1453,7 @@ fn moved(remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
 /// count of those pairs, or `Err(OperationError::OverBudget)` if the
 /// offsets an implicit level's nodes are read in are refused
 /// ([`mark_described`]), or the bytes.
+#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the reduction's closed flag")]
 fn mark_children_of_level(
     lim: &Limits,
     tdd: &Tdd,
@@ -1460,11 +1462,13 @@ fn mark_children_of_level(
     children: [Option<usize>; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
+    counted: bool,
 ) -> Result<Option<usize>, OperationError> {
+    let known = || tdd.levels[t.idx()].known_live_pairs(counted);
     match children {
-        [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes),
-        [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes),
-        [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes),
+        [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes, known()),
+        [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes, known()),
+        [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes, known()),
         [None, None] => Ok(None),
     }
 }
@@ -1482,7 +1486,9 @@ fn mark_children_of_level(
 /// The bytes cost a clear and a pack a slot, which pay where the marks a
 /// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
 ///
-/// A stored level counts the pairs of its marked nodes as it reads them.
+/// A stored level counts the pairs of its marked nodes as it reads them,
+/// unless every node is marked and its live pairs are `known`.
+#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the level's known count")]
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1491,6 +1497,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     child_base: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
+    known: Option<usize>,
 ) -> Result<Option<usize>, OperationError> {
     let [left_base, right_base] = child_base;
     let (left, right) = tdd.vtree.children(t);
@@ -1508,6 +1515,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     // The sides staged as bytes: their slots, rounded up to whole words.
     let marked = count(&marks[base..base + words(width)]);
+    let known = known.filter(|_| marked == width);
     let staged = |on: bool, c: VtreeIdx| {
         let slots = tdd.reference_slot_count(c);
         (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
@@ -1529,6 +1537,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
+                known,
             )
             .map(Some),
             (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
@@ -1539,6 +1548,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
+                known,
             )
             .map(Some),
             (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
@@ -1549,6 +1559,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
+                known,
             )
             .map(Some),
             (None, None) => unreachable!(),
@@ -1556,10 +1567,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     let stored = level.stored().expect("a level is stored or implicit");
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
-    let mut read = 0;
-    for_each_marked_beside(width, base, marks, |marks, i| {
-        let pairs = stored.of_idx(i);
-        read += pairs.len();
+    let mut on_node = |marks: &mut [u64], pairs: &[ChildPair]| {
         for &pair in pairs {
             if LEFT {
                 left_marks.mark(marks, left_base, pair.left.raw() as usize);
@@ -1568,7 +1576,22 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 right_marks.mark(marks, right_base, pair.right.raw() as usize);
             }
         }
-    });
+    };
+    let read = match known {
+        Some(n) => {
+            for_each_marked_beside(width, base, marks, |marks, i| on_node(marks, stored.of_idx(i)));
+            n
+        }
+        None => {
+            let mut read = 0;
+            for_each_marked_beside(width, base, marks, |marks, i| {
+                let pairs = stored.of_idx(i);
+                read += pairs.len();
+                on_node(marks, pairs);
+            });
+            read
+        }
+    };
     left_marks.finish(marks);
     right_marks.finish(marks);
     Ok(Some(read))
@@ -1603,8 +1626,9 @@ fn note_sides_marked(_bytes: u64, _bits: u64) {}
 /// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots
 /// rounded up to whole words, and packed into its block of `marks` at
 /// `child_base`; a side not staged marked as bits. Returns the pairs of the
-/// marked nodes.
+/// marked nodes: `known` where every node is marked, counted otherwise.
 #[inline(always)]
+#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the level's known count")]
 fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1613,6 +1637,7 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     n: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
+    known: Option<usize>,
 ) -> Result<usize, OperationError> {
     let level = &tdd.levels[t.idx()];
     let stored = level.stored().expect("a staged level is stored");
@@ -1625,10 +1650,7 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     let (lb, rb) = bytes[..used].split_at_mut(n[0]);
     let (mut left_marks, mut right_marks) =
         (Marker::new(child_base[0]), Marker::new(child_base[1]));
-    let mut read = 0;
-    for_each_marked_beside(width, base, marks, |marks, i| {
-        let pairs = stored.of_idx(i);
-        read += pairs.len();
+    let mut on_node = |marks: &mut [u64], pairs: &[ChildPair]| {
         for &pair in pairs {
             let (l, r) = (pair.left.raw() as usize, pair.right.raw() as usize);
             if LEFT {
@@ -1646,7 +1668,22 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
                 }
             }
         }
-    });
+    };
+    let read = match known {
+        Some(n) => {
+            for_each_marked_beside(width, base, marks, |marks, i| on_node(marks, stored.of_idx(i)));
+            n
+        }
+        None => {
+            let mut read = 0;
+            for_each_marked_beside(width, base, marks, |marks, i| {
+                let pairs = stored.of_idx(i);
+                read += pairs.len();
+                on_node(marks, pairs);
+            });
+            read
+        }
+    };
     left_marks.finish(marks);
     right_marks.finish(marks);
     if LB {
@@ -1873,7 +1910,7 @@ pub(super) fn prune_walk(
         eng.limits().reserve_exact(marks, total.saturating_sub(marks.len()))?;
         eng.limits().reserve_exact(visits, levels)?;
     }
-    let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes)?;
+    let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes, counted)?;
     match start {
         // A walk from the seeds is charged as one from the output would be.
         Start::Seeds(_, _, top) => {
@@ -1910,6 +1947,7 @@ struct Walked {
 
 /// The marking half of [`prune_walk`]: `visits` the levels it
 /// entered, top-down, each with its block of `marks` and its children.
+#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the reduction's closed flag")]
 fn mark_walk(
     lim: &Limits,
     tdd: &Tdd,
@@ -1918,6 +1956,7 @@ fn mark_walk(
     marks: &mut Vec<u64>,
     visits: &mut Vec<Visit>,
     bytes: &mut Vec<u8>,
+    counted: bool,
 ) -> Result<Walked, OperationError> {
     let vtree = &tdd.vtree;
     let out = tdd.output;
@@ -1999,7 +2038,7 @@ fn mark_walk(
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
+        visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes, counted)?;
 
         let (lc, rc) = (Child::read(marks, lb, lw), Child::read(marks, rb, rw));
         visits[i].left = lc;
