@@ -170,18 +170,18 @@ impl<'a> MovePlacement<'a> {
         Ok(Self { eng, vtree, assembly, prune: false, contract: false, changed })
     }
 
-    /// Move every level and its weighted column through a checked placement map.
+    /// Move every level through a checked placement map.
     /// The caller has checked that stored values retain their interpretation.
     pub(super) fn move_part(&mut self, source: &mut Tdd, map: &[VtreeIdx]) {
         debug_assert_eq!(source.vtree().num_nodes(), map.len());
         self.changed.take_from(source);
-        let (levels, weights) = self.assembly.parts_mut();
+        let (levels, _) = self.assembly.parts_mut();
         // One mutable access to the source's levels for the whole move: each
         // access forgets what the storage knows of them.
         let source_levels = &mut source.levels[..];
         for (from, &to) in map.iter().enumerate() {
-            MarginalStorage::new(&mut levels[to.idx()], weights.as_mut(), to.idx())
-                .move_from(&mut source_levels[from], source.weights.as_mut(), from);
+            MarginalStorage::new(&mut levels[to.idx()])
+                .move_from(&mut source_levels[from]);
         }
     }
 
@@ -189,14 +189,14 @@ impl<'a> MovePlacement<'a> {
     /// marginal parent, whose values the parent's subsume.
     pub(super) fn subsume(&mut self, at: VtreeIdx) {
         self.changed.push(at);
-        let (levels, weights) = self.assembly.parts_mut();
-        MarginalStorage::new(&mut levels[at.idx()], weights.as_mut(), at.idx()).install_weights(Vec::new());
+        let (levels, _) = self.assembly.parts_mut();
+        MarginalStorage::new(&mut levels[at.idx()]).install_weights(Vec::new());
     }
 
     /// Multiply every value of a weight-marginal level by `factor`.
     pub(super) fn scale(&mut self, at: VtreeIdx, factor: &WeightValue) {
-        let (_, weights) = self.assembly.parts_mut();
-        if let Some(values) = weights.as_mut().and_then(|w| w.level_vals_mut(at.idx())) {
+        let (levels, _) = self.assembly.parts_mut();
+        if let Some(values) = levels[at.idx()].weight_values_mut() {
             for value in values.iter_mut() {
                 *value = value.mul(factor);
             }
@@ -290,7 +290,7 @@ impl<'a> MovePlacement<'a> {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
                     crate::marginal::canonicalize_weighted_leaf_refs(
-                        self.eng.limits(), &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref())?;
+                        self.eng.limits(), &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref().or_else(|| result.vtree.weights()))?;
                 }
             }
             crate::diagram::inline_small_marginal_refs(self.eng.limits(), &mut result, None)?;

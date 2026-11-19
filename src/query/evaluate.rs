@@ -160,7 +160,7 @@ impl Engine {
     /// Numeric payload allocations are outside the best-effort byte budget.
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().enter()?;
-        let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
+        let Some(ws) = tdd.weight_table() else { return Ok(None); };
         let mut gate = self.limits().gate();
         let mut value = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
         if let Some(free) = tdd.vtree.free_set().filter(|_| !tdd.is_zero()) {
@@ -504,7 +504,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     let out_t = tdd.output.vtree.idx();
     let out_i = tdd.output.local.idx();
     if tdd.levels[out_t].is_weight_marginal() {
-        return Ok(ws.level(out_t).expect("output level weight-marginalized")[out_i].clone());
+        return Ok(tdd.levels[out_t].weight_values().expect("output level weight-marginalized")[out_i].clone());
     }
     // Leaf output level: the fold below stores nothing for leaves (their values
     // come from the semiring on demand), so read the leaf value directly.

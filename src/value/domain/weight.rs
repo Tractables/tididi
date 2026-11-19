@@ -5,29 +5,15 @@ use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, PairsI
 use crate::vtree::{Vtree, VtreeNode, REGION_VAR};
 use crate::value::{WeightFold};
 
-/// Level `t`'s weighted column, or `None` when this diagram's level is
-/// structural and its node indices are therefore not slots of any column.
-/// Takes the one level rather than the whole slice for the apply, whose
-/// output levels are split apart for the level it is building.
-fn column_of<'a>(
-    store: &'a WeightStore,
-    level: &TddLevel,
-    t: usize,
-) -> Option<&'a [WeightValue]> {
-    level.is_weight_marginal().then(|| store.level(t)).flatten()
-}
-
 /// Resolve a child node's semiring value for the weighted marginalization
 /// cascade, the weighted counterpart of the integer domain's level reader.
 /// Reads, in order:
-///   0. a leaf level by label, never through the store column: a leaf-side ref
+///   0. a leaf level by label, never through its column: a leaf-side ref
 ///      is a bare `LeafLabel` index whether the leaf is structural or
 ///      weight-marginal (the pinned column is installed in label order by
-///      `diagram::leaf_column_vals`),
-///      and the shared store may hold a column at this index that belongs to
-///      another diagram;
-///   1. the [`WeightStore`] column of a level this diagram has already
-///      weight-marginalized; marginal-side refs are bare slots in weighted mode;
+///      `diagram::leaf_column_vals`);
+///   1. the values of a level this diagram has already weight-marginalized;
+///      marginal-side refs are bare slots in weighted mode;
 ///   2. the per-batch `computed_weights` buffer for a level computed earlier in
 ///      this batch but not yet stored.
 ///
@@ -38,7 +24,7 @@ fn read_weight<'a>(
     side: EncodedChildRef,
     vtree: &Vtree,
     ws: &'a WeightStore,
-    levels: &[TddLevel],
+    levels: &'a [TddLevel],
     computed_weights: &'a [Option<Vec<WeightValue>>],
 ) -> std::borrow::Cow<'a, WeightValue> {
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32))
@@ -53,17 +39,13 @@ fn read_weight<'a>(
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
         #[cfg(debug_assertions)]
         debug_assert!(
-            leaf_column_slot_agrees(ws, level_idx, label_idx, &v),
+            leaf_column_slot_agrees(&levels[level_idx], label_idx, &v),
             "weight-marginal leaf {level_idx}: pinned column disagrees with leaf_val \
              at label slot {label_idx}"
         );
         return std::borrow::Cow::Owned(v);
     }
-    // Internal level: `column_of` is gated on this diagram's own marginality,
-    // since the shared store can hold a column at this index installed by
-    // another live diagram while this one's level is still structural, and a
-    // structural level's node indices are not slots of that column.
-    if let Some(values) = column_of(ws, &levels[level_idx], level_idx) {
+    if let Some(values) = levels[level_idx].weight_values() {
         if side.is_reserved() {
             return std::borrow::Cow::Owned(ws.wzero());
         }
@@ -80,13 +62,12 @@ fn read_weight<'a>(
 /// differs from `expect`, or the column has other than three slots.
 #[cfg(debug_assertions)]
 fn leaf_column_slot_agrees(
-    ws: &WeightStore,
-    level_idx: usize,
+    level: &TddLevel,
     label_idx: usize,
     expect: &WeightValue,
 ) -> bool {
     use crate::diagram::weight_key;
-    let Some(col) = ws.level(level_idx) else { return true };
+    let Some(col) = level.weight_values() else { return true };
     if col.len() != crate::diagram::LEAF_WIDTH {
         return false; // some pass compacted, erased or appended to the column
     }
@@ -94,7 +75,7 @@ fn leaf_column_slot_agrees(
 }
 
 impl ValueDomain for WeightFold {
-    /// The external store the marginal columns live in.
+    /// The weights and arithmetic the values are folded in.
     type Store = WeightStore;
 
     /// Borrow stored columns; own the three computed leaf values.
@@ -172,7 +153,7 @@ impl ValueDomain for WeightFold {
         computed: &'a [Option<Vec<WeightValue>>],
         store: &'a WeightStore,
     ) -> StreamChild<'a, WeightFold> {
-        if let Some(col) = column_of(store, level, level_idx) {
+        if let Some(col) = level.weight_values() {
             return StreamChild { col: std::borrow::Cow::Borrowed(col), view: ChildDecoder::marginal() };
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
@@ -180,7 +161,7 @@ impl ValueDomain for WeightFold {
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
             // `diagram::leaf_column_vals`, the one definition of that triple
-            // (the same one `marginalize_leaf_weighted` pins into the store), so
+            // (the same one `marginalize_leaf_weighted` pins into the level), so
             // the structural and marginal branches cannot drift apart. Fixed
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).

@@ -2,9 +2,14 @@
 //!
 //! An operation that reads two or more diagrams level by level runs on the
 //! projection of their home on the union of their leaf sets. Each operand
-//! not on it is placed there, every added leaf a true level, so the kernels
-//! read the operands as they read operands of one vtree. A result on a
-//! projection is trimmed to the leaves it names.
+//! not on it is placed there, so the kernels read the operands as they read
+//! operands of one vtree. An added leaf, variable or region, is named `One`:
+//! the operand is true over its variables and has not summed them out.
+//! Beside another operand's region that `One` is the identity of a product
+//! with its sum, which is how the conjunction and the product count read
+//! it; an entry for which a summed operand has no meaning refuses it before
+//! anything is placed. A result on a projection is trimmed to the leaves it
+//! names.
 
 use std::borrow::Cow;
 use std::sync::Arc;

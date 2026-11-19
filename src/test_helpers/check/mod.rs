@@ -28,7 +28,19 @@ pub use rotation::assert_rotation_locality;
 pub use soundness::{assert_no_mixed_leaf_side, check_determinism, labels_at};
 pub use structure::{check_loose_levels, check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
 
-use crate::diagram::Tdd;
+use crate::diagram::{LEAF_WIDTH, Tdd};
+use crate::vtree::VtreeIdx;
+
+/// [`Tdd::reference_slot_count`], but [`LEAF_WIDTH`] at a region not summed
+/// out: an operand placed beside another operand's region names `One` there,
+/// slot 0 of a level with no slots.
+fn checked_width(tdd: &Tdd, t: VtreeIdx) -> usize {
+    if tdd.vtree.node(t).is_region() && !tdd.level(t).is_marginal() {
+        LEAF_WIDTH
+    } else {
+        tdd.reference_slot_count(t)
+    }
+}
 
 /// Panic naming the checker and the caller's label, or carry on.
 fn require(label: &str, checker: &str, r: Result<(), String>) {

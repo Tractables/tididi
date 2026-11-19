@@ -46,8 +46,10 @@ impl Engine {
     /// diagram with a region takes no rotation path.
     ///
     /// [`TransportStats`] counts the rotations and mirrors of the tree, so it
-    /// says which path ran, not which levels were rewritten. A weight table
-    /// moves with the diagram, read by the renamed variables' ids. A constant
+    /// says which path ran, not which levels were rewritten. Weights `f`
+    /// carries ([`Tdd::set_weights`]) move with it onto a home made by
+    /// [`Home::new`], read by the renamed variables' ids; onto a weighted home
+    /// ([`Home::weighted`]) the result reads that home's. A constant
     /// on no leaf, false, and true named `One` at a one-leaf root become that
     /// constant on [`Vtree::empty_projection`] of `home`.
     ///
@@ -87,9 +89,16 @@ impl Engine {
     /// for a summed-out level that is not a region; [`TransportError::Variable`]
     /// for an image, of a leaf or of an extent, that is not a leaf of `home`;
     /// [`TransportError::Overlap`] for two variables with one image;
-    /// [`TransportError::Weights`] when `f`'s weight table does not cover the
-    /// images of its leaves or, under a renaming, does not give an image both
-    /// weights of the variable it renames; with `bound` 0 or a region,
+    /// [`TransportError::Weights`] when weights `f` carries onto a home made
+    /// by [`Home::new`] do not cover the images of its leaves or, under a
+    /// renaming, do not give an image both weights of the variable it
+    /// renames, and for a summed-out region whose values `home` would read
+    /// under other weights: [`TddBuildError::CountLevelWithWeights`] for
+    /// counts onto a weighted home, [`TddBuildError::WeightedLevelWithoutStore`]
+    /// for weight values of `f`'s home onto an unweighted one, and
+    /// [`TddBuildError::IncompatibleWeights`] where the arithmetic differs or
+    /// `home` does not weigh the image of a variable of the region as `f` is
+    /// weighed at the variable; with `bound` 0 or a region,
     /// [`TransportError::Bound`] naming the lowest node of `f`'s vtree whose
     /// image is not one node of the projection
     /// ([`transport_projection`](Self::transport_projection) checks the
@@ -129,6 +138,9 @@ impl Engine {
             },
         };
         route.seat(self, &mut moved);
+        if home.weights().is_some() {
+            moved.weights = None;
+        }
         Ok((moved, stats))
     }
 
@@ -197,7 +209,7 @@ impl Engine {
         let weights = copy.weights.take();
         match self.rotate_copy(&mut copy, home, ranked, bound) {
             Ok(stats) => {
-                copy.weights = weights;
+                copy.weights = weights.filter(|_| home.weights().is_none());
                 Ok((copy, stats))
             }
             Err(error) => Err(TransportRefused { error, tdd: f }),
@@ -266,6 +278,7 @@ fn checked(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> 
     }
     let ranked = Ranked::find(lim, f.vtree(), home, &map)?;
     if let Some(store) = &f.weights
+        && home.weights().is_none()
         && !ranked.order.is_empty()
     {
         let leaves = || f.vtree().leaf_bottomup().map(|(_, var)| (var, map(var)));
@@ -274,7 +287,35 @@ fn checked(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> 
             return Err(TransportError::Weights(TddBuildError::IncompatibleWeights));
         }
     }
+    if f.vtree().has_regions() {
+        check_summed_weights(f, home, &map).map_err(TransportError::Weights)?;
+    }
     Ok(ranked)
+}
+
+/// Refuse `f` onto `home` when a value it stores would be read under other
+/// weights. Only the summed-out regions store values that depend on the
+/// weights, and only through the weights of their variables.
+#[cold]
+#[inline(never)]
+fn check_summed_weights(f: &Tdd, home: &Home, map: &impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
+    let vtree = f.vtree();
+    let mut summed = vtree.regions().filter(|t| f.levels[t.idx()].is_marginal());
+    let Some(level) = summed.next() else { return Ok(()) };
+    match (f.weight_table(), home.weights()) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => Err(TddBuildError::CountLevelWithWeights { level }),
+        (Some(_), None) if f.weights.is_some() => Ok(()),
+        (Some(_), None) => Err(TddBuildError::WeightedLevelWithoutStore { level }),
+        (Some(from), Some(to)) => {
+            let vars: Vec<VarId> = std::iter::once(level).chain(summed).flat_map(|t| vtree.region_vars(t).1).collect();
+            from.check_variables(vars.iter().copied())?;
+            match from.compatible_after_rename(to, vars.iter().map(|&var| (var, map(var)))) {
+                true => Ok(()),
+                false => Err(TddBuildError::IncompatibleWeights),
+            }
+        }
+    }
 }
 
 /// `f`, on a projection that rotations and swaps moved since its link was
@@ -515,9 +556,6 @@ impl Route {
         return_levels(eng, old);
         for &s in &mirrored {
             levels[to[s.idx()].idx()].swap_sides();
-        }
-        if let Some(weights) = f.weights.as_mut().filter(|_| f.vtree.has_regions()) {
-            weights.rekey_levels(|s| Some(to[s].idx()));
         }
         f.dirty.remap_keeping(&to, |_| mirrored.is_empty());
         f.vtree = into;

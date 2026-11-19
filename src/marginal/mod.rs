@@ -113,13 +113,13 @@ fn on_projection() -> OperationError {
 /// targets are weight-marginal and carry no integer counts, so the integer
 /// batch may not run on them.
 fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    if let Some(mut ws) = f.weights.take() {
-        let r = fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, &mut ws);
-        f.weights = Some(ws);
-        r
-    } else {
-        marginalize_batch(eng, f, levels, vtree)
-    }
+    let own = f.weights.take();
+    let r = match own.as_ref().or_else(|| vtree.weights()) {
+        Some(ws) => fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, ws),
+        None => marginalize_batch(eng, f, levels, vtree),
+    };
+    f.weights = own;
+    r
 }
 
 /// The internal nodes of `vtree` whose childless nodes are all finished: a

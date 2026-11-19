@@ -122,7 +122,7 @@ impl Engine {
         if let Some(region) = tdd.vtree().regions().chain(target.regions()).next() {
             return Err(OperationError::MarginalLevel(region).into());
         }
-        if tdd.weights.is_some() {
+        if tdd.holds_weights() {
             return Err(RestructureError::Weighted);
         }
         let narrowed;

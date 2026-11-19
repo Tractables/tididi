@@ -565,9 +565,9 @@ pub(crate) fn overlay_on(
     f: Tdd,
     g: Tdd,
 ) -> Result<Tdd, OperationError> {
-    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     f.require_structure()?;
     g.require_structure()?;
+    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     eng.limits().check_stop()?;
     let weights = f.weights.take();

@@ -488,3 +488,146 @@ fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
         assert!(eng.equivalent(&on_home(got), &expected).unwrap(), "{model:?} {insert}");
     }
 }
+
+/// The same update by the operation a rebuild stands in for, minimized.
+fn by_operations(f: &Tdd, model: &[i32], insert: bool) -> Tdd {
+    let mut out = if insert {
+        f.clone().or_cube(model).unwrap()
+    } else {
+        let clause: Vec<i32> = model.iter().map(|lit| -lit).collect();
+        f.clone().and_clause(&clause).unwrap()
+    };
+    out.minimize().unwrap();
+    out
+}
+
+/// The batch's diagram, minimized, sits on the projection of its support,
+/// names no leaf true, and equals the same updates made by `or_cube` and
+/// `and_clause` node for node.
+fn assert_matches_operations(got: &Tdd, want: &Tdd, what: &str) {
+    use crate::test_helpers::check::check_trimmed;
+    let mut got = got.clone();
+    got.minimize().unwrap();
+    check_trimmed(&got, true).unwrap_or_else(|e| panic!("{what}: {e}"));
+    let leaves = |t: &Tdd| -> Vec<VarId> {
+        let v = t.vtree();
+        v.bottomup().filter(|&n| v.node(n).is_leaf()).map(|n| v.leaf_var(n)).collect()
+    };
+    assert_eq!(leaves(&got), leaves(want), "{what}: leaves differ");
+    assert_eq!(got.is_zero(), want.is_zero(), "{what}");
+    if got.vtree().num_nodes() > 0 {
+        assert_same_shape(&got, want, what);
+    } else {
+        assert_eq!(got.is_one(), want.is_one(), "{what}");
+    }
+}
+
+/// Both constants on a home, each on its empty projection, take both
+/// updates: a complete model, a partial one, an empty one and a
+/// contradictory one, each through a fresh batch.
+#[test]
+fn constants_on_a_home_take_both_updates() {
+    use crate::vtree::Home;
+    let home = Home::new(Vtree::balanced(4));
+    let models: [&[i32]; 4] = [&[1, -2, 3, 4], &[-2, 4], &[], &[1, -1, 3]];
+    for constant in [Tdd::zero(home.vtree()), Tdd::one(home.vtree())] {
+        assert_eq!(constant.vtree().num_nodes(), 0);
+        for model in models {
+            for insert in [true, false] {
+                let mut f = constant.clone();
+                apply_update(&mut f.maintain().unwrap(), model, insert).unwrap();
+                let what = format!("{} {model:?} insert {insert}", constant.is_one());
+                assert_matches_operations(&f, &by_operations(&constant, model, insert), &what);
+            }
+        }
+    }
+}
+
+/// Random batches on homes of at most eight variables, starting from a
+/// diagram on the projection of its support, against the same updates made
+/// one by one with `or_cube` and `and_clause`.
+#[test]
+fn random_batches_on_a_home_match_the_clause_and_cube_entries() {
+    use crate::vtree::Home;
+    let mut rng = Lcg::new(0x3a1f);
+    let mut rebuilds = 0u64;
+    let mut updates = 0u64;
+    let mut moved = 0u64;
+    for seed in 0..500u64 {
+        let n = 2 + rng.below(7) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let mut f = crate::test_helpers::rand_conj(home.vtree(), n, 3, 3, false, &mut rng);
+        f.minimize().unwrap();
+        let mut want = f.clone();
+        let start = Arc::clone(f.vtree());
+        {
+            let mut batch = f.maintain().unwrap();
+            for step in 0..1 + rng.below(6) {
+                let mut model = Vec::new();
+                for v in 1..=n as i32 {
+                    if rng.below(4) != 0 {
+                        model.push(if rng.coin() { v } else { -v });
+                    }
+                }
+                if rng.below(8) == 0 {
+                    let v = 1 + rng.below(u64::from(n)) as i32;
+                    model.extend([v, -v]);
+                }
+                let insert = rng.coin();
+                apply_update(&mut batch, &model, insert).unwrap();
+                want = by_operations(&want, &model, insert);
+                assert_matches_operations(batch.diagram(), &want, &format!("seed {seed} step {step}: {model:?} insert {insert}"));
+                updates += 1;
+            }
+            rebuilds += batch.rebuilds();
+            moved += u64::from(!Arc::ptr_eq(batch.diagram().vtree(), &start));
+        }
+    }
+    assert!(rebuilds > 0 && rebuilds < updates, "{rebuilds} rebuilds of {updates} updates");
+    assert!(moved > 0, "no batch left its first projection");
+}
+
+/// After a rebuild that moved the diagram to a wider projection, an edit on
+/// the new vtree takes the edit route.
+#[test]
+fn an_edit_after_a_rebuild_that_moved_the_vtree_is_an_edit() {
+    use crate::vtree::Home;
+    let home = Home::new(Vtree::balanced(3));
+    let mut f = Tdd::cube(home.vtree(), [1, 2]).unwrap();
+    assert_eq!(f.vtree().num_leaves(), 2);
+    let first = Arc::clone(f.vtree());
+    let mut batch = f.maintain().unwrap();
+    batch.remove_model([1, 2, 3]).unwrap();
+    assert_eq!(batch.rebuilds(), 1);
+    assert!(!Arc::ptr_eq(batch.diagram().vtree(), &first));
+    assert_eq!(batch.diagram().vtree().num_leaves(), 3);
+    // The rebuild leaves unreachable nodes at (x2 x3), one of them with two
+    // pairs; this assignment's path meets only singletons.
+    batch.insert_model([-1, 2, 3]).unwrap();
+    assert_eq!(batch.rebuilds(), 1, "the second update is an edit");
+    let want = by_operations(&by_operations(&Tdd::cube(home.vtree(), [1, 2]).unwrap(), &[1, 2, 3], false), &[-1, 2, 3], true);
+    assert_matches_operations(batch.diagram(), &want, "remove then insert");
+}
+
+/// Removing the last model on a home leaves false on the empty projection
+/// with the diagram's weight store, and the batch goes on from there.
+#[test]
+fn the_false_exit_on_a_home_keeps_the_weight_store() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::test_helpers::rat;
+    use crate::vtree::Home;
+    let home = Home::new(Vtree::balanced(3));
+    let mut f = Tdd::cube(home.vtree(), [1, -2, 3]).unwrap();
+    let table = vec![LiteralWeights { negative: rat(1, 1), positive: rat(3, 1) }; 3];
+    f.set_weights(WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
+    let mut batch = f.maintain().unwrap();
+    batch.remove_model([1, -2, 3]).unwrap();
+    assert_eq!(batch.rebuilds(), 0, "the removal is an edit");
+    let zero = batch.diagram();
+    assert!(zero.is_zero());
+    assert_eq!(zero.vtree().num_nodes(), 0);
+    assert!(zero.weights.is_some());
+    batch.insert_model([1, 2, 3]).unwrap();
+    f.minimize().unwrap();
+    assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(27, 1));
+}

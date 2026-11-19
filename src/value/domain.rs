@@ -1,7 +1,7 @@
 //! Arithmetic and column access shared by standalone and streaming folds.
 //!
-//! Three domains exist — integer model counts, semiring weights held in an
-//! external [`WeightStore`], and the bare scaled floats a conjunction sums
+//! Three domains exist — integer model counts, semiring weights interpreted
+//! by a [`WeightStore`], and the bare scaled floats a conjunction sums
 //! out under the scaled-float arithmetic — and two folds consume them: the
 //! marginalization cascade over a finished diagram, and the streaming column
 //! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns

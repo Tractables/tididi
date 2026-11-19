@@ -132,16 +132,15 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let two = BigRational::from_integer(BigInt::from(2));
 
     let (mut tdd, root, gp, bp, m_v, s) =
-        boundary_content_twins_fixture(|m| m.become_marginal_weighted(1));
+        boundary_content_twins_fixture(|m| m.become_marginal_weighted(vec![crate::diagram::WeightValue::exact(BigRational::new(BigInt::from(3), BigInt::from(7)))]));
 
     // Attach the store after building the diagram (mirrors `toy_weighted`'s
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
-    let mut ws = crate::diagram::WeightStore::new(
+    let ws = crate::diagram::WeightStore::new(
         RationalWeights::from_literals(&vec![LiteralWeights { negative: v.clone(), positive: v.clone() }; tdd.vtree.num_vars() as usize]),
         Arithmetic::ExactRational,
     );
-    ws.set_level(m_v.idx(), vec![crate::diagram::WeightValue::exact(v.clone())]);
     tdd.set_weights(ws).unwrap();
 
     tdd.seed_contract_worklist([root.0]);
@@ -164,7 +163,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
             // slot count — nothing may have been minted into it.
             let (total, n_slots) = {
                 let level =
-                    tdd.weights().unwrap().level(m_v.idx()).expect("weight store level");
+                    tdd.levels[m_v.idx()].weight_values().expect("weight store level");
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
                     let p_pair = tdd.levels[bp.idx()].pairs_vec(l as usize)[0];

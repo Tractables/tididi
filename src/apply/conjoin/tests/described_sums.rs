@@ -97,10 +97,7 @@ fn bits(v: &crate::diagram::WeightValue) -> (u64, i64) {
 /// on every summed one.
 fn same_sums(out: &Tdd, oracle: &Tdd) {
     assert_eq!(out.output, oracle.output, "another root");
-    let (wa, wb) = (
-        out.weights.as_ref().unwrap(),
-        oracle.weights.as_ref().unwrap(),
-    );
+    assert!(out.weights.is_some() && oracle.weights.is_some());
     let (mut a_buf, mut b_buf) = (Vec::new(), Vec::new());
     for (t, (a, b)) in out.levels.iter().zip(&oracle.levels).enumerate() {
         assert_eq!(a.is_marginal(), b.is_marginal(), "level {t}");
@@ -109,8 +106,8 @@ fn same_sums(out: &Tdd, oracle: &Tdd) {
             b.slot_count(),
             "level {t} holds other slots"
         );
-        let values = |w: &WeightStore| w.level(t).map(|vs| vs.iter().map(bits).collect::<Vec<_>>());
-        assert_eq!(values(wa), values(wb), "level {t} holds other values");
+        let values = |l: &crate::diagram::TddLevel| l.weight_values().map(|vs| vs.iter().map(bits).collect::<Vec<_>>());
+        assert_eq!(values(a), values(b), "level {t} holds other values");
         if !a.is_marginal() {
             for i in 0..a.nodes().len() {
                 assert_eq!(

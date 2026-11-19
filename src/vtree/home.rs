@@ -15,6 +15,7 @@ use super::layout::SameLayout;
 use super::topo::TopoOrder;
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 use crate::OperationError;
+use crate::diagram::{TddBuildError, Weights};
 
 /// In-order positions in a root vtree, and lowest common ancestors of its
 /// leaves by range minimum over depths.
@@ -166,21 +167,62 @@ impl HomeIndex {
     }
 }
 
-/// The index a root vtree carries once it is a home. A clone of the vtree is
-/// not a home, so `clone` gives none: a copy that a search rotates never
-/// carries an index of the shape it had.
+/// What a root vtree carries in one allocation: its index once it is a
+/// home, and the weights of its variables once it is a weighted home. A clone
+/// of the vtree is not a home, so `clone` gives no index: a copy that a search
+/// rotates never carries an index of the shape it had. The weights are a fact
+/// about the variables, which a rotation keeps, so a clone keeps them.
 #[derive(Default)]
-pub(crate) struct RootIndex(Option<Box<HomeIndex>>);
+pub(crate) struct RootIndex(Option<Box<RootData>>);
+
+struct RootData {
+    index: Option<HomeIndex>,
+    weights: Option<Weights>,
+}
+
+impl RootIndex {
+    #[inline]
+    fn home(&self) -> Option<&HomeIndex> {
+        self.0.as_deref().and_then(|data| data.index.as_ref())
+    }
+
+    #[inline]
+    fn weights(&self) -> Option<&Weights> {
+        self.0.as_deref().and_then(|data| data.weights.as_ref())
+    }
+
+    fn new(index: Option<HomeIndex>, weights: Option<Weights>) -> Self {
+        match index.is_none() && weights.is_none() {
+            true => RootIndex(None),
+            false => RootIndex(Some(Box::new(RootData { index, weights }))),
+        }
+    }
+
+    fn take_home(&mut self) -> Option<HomeIndex> {
+        let data = self.0.take()?;
+        let RootData { index, weights } = *data;
+        *self = RootIndex::new(None, weights);
+        index
+    }
+
+    fn set_home(&mut self, index: Option<HomeIndex>) {
+        let weights = self.0.take().and_then(|data| data.weights);
+        *self = RootIndex::new(index, weights);
+    }
+}
 
 impl Clone for RootIndex {
     fn clone(&self) -> Self {
-        RootIndex(None)
+        RootIndex::new(None, self.weights().cloned())
     }
 }
 
 impl std::fmt::Debug for RootIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.0.is_some() { "RootIndex(indexed)" } else { "RootIndex(None)" })
+        f.debug_struct("RootIndex")
+            .field("indexed", &self.home().is_some())
+            .field("weights", &self.weights())
+            .finish()
     }
 }
 
@@ -233,8 +275,62 @@ impl Home {
             return home;
         }
         let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share Home::vtree");
-        root.index = RootIndex(Some(Box::new(HomeIndex::new(root))));
+        root.index.set_home(Some(HomeIndex::new(root)));
         Home(vtree)
+    }
+
+    /// [`Home::new`] with `weights` for its variables: every diagram on the
+    /// home is weighted, and a sum-out on it stores weight values computed
+    /// under `weights` ([`Tdd::weighted_value`](crate::Tdd::weighted_value)).
+    /// A diagram on a weighted home carries no weights of its own
+    /// ([`Tdd::set_weights`](crate::Tdd::set_weights) refuses it).
+    ///
+    /// ```
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::diagram::{Arithmetic, RationalWeights, Weights};
+    /// use tididi::vtree::Home;
+    ///
+    /// let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
+    /// let home = Home::weighted(Vtree::balanced(2), weights)?;
+    /// let f = Tdd::clause(home.vtree(), [1, 2])?;
+    /// assert_eq!(f.weighted_value()?.expect("the home is weighted").into_rational(), num_rational::BigRational::from_integer(3.into()));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`TddBuildError::MissingVariableWeight`] when the table has no weight
+    /// for a leaf's variable. [`TddBuildError::IncompatibleWeights`] when
+    /// `vtree` is already a home's root or a projection, and that home does
+    /// not have these weights: its diagrams were made under its own, so the
+    /// weights of a home are fixed when it is made. On such a vtree with
+    /// these weights, that home.
+    ///
+    /// # Panics
+    ///
+    /// As [`Home::new`]: if `vtree` is a root that is not a home and whose
+    /// `Arc` is shared.
+    ///
+    /// [`TddBuildError::MissingVariableWeight`]: crate::diagram::TddBuildError::MissingVariableWeight
+    /// [`TddBuildError::IncompatibleWeights`]: crate::diagram::TddBuildError::IncompatibleWeights
+    pub fn weighted(vtree: impl Into<Arc<Vtree>>, weights: Weights) -> Result<Self, TddBuildError> {
+        let mut vtree = vtree.into();
+        if let Some(home) = vtree.home() {
+            return match home.weights() == Some(&weights) {
+                true => Ok(home),
+                false => Err(TddBuildError::IncompatibleWeights),
+            };
+        }
+        weights.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;
+        let root = Arc::get_mut(&mut vtree).expect("Home::weighted: the vtree is shared and not a home; make the home first and share Home::vtree");
+        root.index = RootIndex::new(Some(HomeIndex::new(root)), Some(weights));
+        Ok(Home(vtree))
+    }
+
+    /// The weights of the home's variables, `None` on a home made by
+    /// [`Home::new`].
+    pub fn weights(&self) -> Option<&Weights> {
+        self.0.index.weights()
     }
 
     /// The root vtree.
@@ -243,7 +339,7 @@ impl Home {
     }
 
     pub(super) fn index(&self) -> &HomeIndex {
-        self.0.index.0.as_deref().expect("a home's root carries its index")
+        self.0.index.home().expect("a home's root carries its index")
     }
 
     /// The rank of `var`'s leaf; `None` when it has none.
@@ -1312,7 +1408,24 @@ impl Vtree {
 
     /// Whether this vtree is a home's root.
     pub(crate) fn is_home(&self) -> bool {
-        self.index.0.is_some()
+        self.index.home().is_some()
+    }
+
+    /// The weights of this vtree's home, or of this root: those it was given
+    /// as a weighted home, kept by a copy and a rotation.
+    #[inline]
+    pub(crate) fn weights(&self) -> Option<&Weights> {
+        match &self.home {
+            Some(link) => link.home.weights(),
+            None => self.index.weights(),
+        }
+    }
+
+    /// Give a root that is not a home the weights of the root it was made
+    /// from.
+    pub(crate) fn keep_weights_of(&mut self, from: &Vtree) {
+        debug_assert!(self.home.is_none() && !self.is_home());
+        self.index = RootIndex::new(None, from.weights().cloned());
     }
 
     /// `vtree` to change in place, copied first when shared. A home's root
@@ -1331,25 +1444,26 @@ impl Vtree {
     #[inline(never)]
     pub(crate) fn become_home(vtree: &mut Arc<Vtree>) {
         let own = Arc::make_mut(vtree);
-        own.index = RootIndex(Some(Box::new(HomeIndex::new(own))));
+        let index = HomeIndex::new(own);
+        own.index.set_home(Some(index));
     }
 
     /// The index of a home's root, which stops being a home.
     pub(crate) fn take_index(&mut self) -> RootIndex {
-        std::mem::take(&mut self.index)
+        RootIndex::new(self.index.take_home(), None)
     }
 
     /// Put back the index [`take_index`](Self::take_index) took, the tree
     /// having its shape again.
-    pub(crate) fn put_index(&mut self, index: RootIndex) {
-        self.index = index;
+    pub(crate) fn put_index(&mut self, mut index: RootIndex) {
+        self.index.set_home(index.take_home());
     }
 
     /// Drop the index of a home's root about to change shape.
     #[inline]
     pub(crate) fn stop_being_home(&mut self) {
-        if self.index.0.is_some() {
-            self.index = RootIndex::default();
+        if self.index.home().is_some() {
+            self.index.set_home(None);
         }
     }
 
@@ -1364,7 +1478,7 @@ impl Vtree {
         }
         let leaves = self.subtree(t).filter(|&u| self.node(u).is_leaf());
         let Some(link) = self.home.as_ref() else {
-            let slot = &self.index.0.as_deref().expect("a projection or a home's root").slot;
+            let slot = &self.index.home().expect("a projection or a home's root").slot;
             return (slot[leftmost.idx()], coalesce(leaves.map(|u| (slot[u.idx()], slot[u.idx()] + 1)).collect()));
         };
         let ranks = link.ranks();
@@ -1489,7 +1603,7 @@ impl Vtree {
     /// leaves in its own; nothing on another root.
     pub(crate) fn projected_leaves(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
         let projected = self.home.as_ref().into_iter().flat_map(|link| (0..link.k()).map(|i| link.childless(i)));
-        projected.chain(self.index.0.as_deref().into_iter().flat_map(|index| index.leaf_at.iter().copied()))
+        projected.chain(self.index.home().into_iter().flat_map(|index| index.leaf_at.iter().copied()))
     }
 
     /// This tree as a root over the variables `1..=k`, with the same node
@@ -1565,7 +1679,7 @@ impl Vtree {
     /// its home leaf's variable, each internal node stands for the lowest
     /// common ancestor in the home of the childless nodes on either side of
     /// it.
-    pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
+    pub(crate) fn validate_home(&self) -> Result<(), VtreeError> {
         let Some(link) = self.home.as_ref() else {
             return Ok(());
         };

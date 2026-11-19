@@ -199,6 +199,7 @@ impl Engine {
     ) -> Result<Tdd, EmbedError> {
         let lim = self.limits();
         let _op = lim.enter()?;
+        let (weights, on_weighted_home) = super::embed::destination_weights(into, weights)?;
         let vtree = tdd.vtree();
         let (original, dropped) = renaming(lim, vtree, &local_of, into.num_vars())?;
         if let Some((leaf, _)) = into.leaf_bottomup().find(|&(_, var)| original[var.idx()].is_none()) {
@@ -217,15 +218,19 @@ impl Engine {
             check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
         let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false, Free::Leave)?;
-        match weights {
-            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
+        let mut result = match weights {
+            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store)?,
             weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
-                if let Some(store) = weights {
+                if let Some(store) = weights.filter(|_| !on_weighted_home) {
                     result.set_weights(store).map_err(OperationError::from)?;
                 }
                 Ok(result)
-            }),
+            })?,
+        };
+        if on_weighted_home {
+            result.weights = None;
         }
+        Ok(result)
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in
@@ -334,22 +339,12 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
         }
         return Err(EmbedError::Unsummed { variable: vtree.leaf_var(n) });
     }
-    let source = tdd.weights();
     let mut assembly = Assembly::new(eng, into)?;
     let (levels, store) = assembly.parts_mut();
     let store = store.insert(weights);
     for s in into.bottomup() {
         gate.poll(1)?;
-        let d = plan.embedding.levels[s.idx()];
-        let level = tdd.level(d);
-        level.try_copy_over(lim, &mut levels[s.idx()])?;
-        if level.is_weight_marginal() {
-            let column = source.and_then(|w| w.level(d.idx())).unwrap_or(&[]);
-            let mut copy = Vec::new();
-            lim.reserve_exact(&mut copy, column.len())?;
-            copy.extend_from_slice(column);
-            store.set_level(s.idx(), copy);
-        }
+        tdd.level(plan.embedding.levels[s.idx()]).try_copy_over(lim, &mut levels[s.idx()])?;
     }
     gate.flush()?;
     store.check_levels(into, levels).map_err(EmbedError::DestinationWeights)?;

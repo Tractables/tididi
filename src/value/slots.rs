@@ -348,7 +348,7 @@ impl SlotValues for WeightFold {
     /// declines in a bounded-precision domain.
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightValue {
         let ws = tdd.weight_store();
-        let values = ws.level(v.idx());
+        let values = tdd.levels[v.idx()].weight_values();
         let mut acc = ws.wzero();
         for &raw in refs {
             // The zero sentinel (bit 31) contributes the additive identity.
@@ -383,20 +383,20 @@ impl SlotValues for WeightFold {
     /// must never become the bit-31 zero sentinel, which denotes the structural
     /// false node. The slot is checked before allocation or mutation.
     fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightValue) -> Result<u32, OperationError> {
-        // A weighted leaf column is pinned to three label-ordered slots that
-        // every diagram of the compile aliases; appending a fourth would break
-        // that alias. The leaf paths resolve by lookup and never reach here.
+        // A weighted leaf column is pinned to three label-ordered slots, which
+        // readers decode as labels. The leaf paths resolve by lookup and never
+        // reach here.
         debug_assert!(
             !tdd.vtree.node(v).is_var_leaf(),
             "refusing to mint a weight slot into a pinned leaf column (level {})",
             v.0
         );
-        crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx())
+        crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()])
             .push_weight(eng, value)
     }
 
     /// A weighted leaf column is the pinned, label-ordered three-slot cache
-    /// every diagram of the compile aliases.
+    /// whose slots readers decode as labels.
     const LEAF_PINNED: bool = true;
 
     /// The slot holding `value`, found by
@@ -410,7 +410,7 @@ impl SlotValues for WeightFold {
             !ws.is_bounded(),
             "leaf lookup reached in a bounded-precision domain (the fusion gate must exclude it)"
         );
-        crate::diagram::find_leaf_slot_by_value(ws, v.idx(), value).map(ValueRef::slot_raw)
+        crate::diagram::find_leaf_slot_by_value(&tdd.levels[v.idx()], value).map(ValueRef::slot_raw)
     }
 }
 

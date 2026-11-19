@@ -58,6 +58,23 @@ Breaking changes:
   `from_models`, `from_columns` and `from_cubes` leave out a variable every
   model leaves free. `rename_vars` accepts a target variable of the home
   that the diagram's vtree does not hold.
+- On a vtree on a home, `TddBuilder::finish`, `read_tdd`, `load_tdd`,
+  `read_tdd_binary` and `load_tdd_binary` return a diagram on the
+  projection of the home on the leaves its pairs use, and false on the
+  empty projection; a diagram with a marginal level keeps the builder's
+  vtree. The readers take the supplied vtree as naming the home only and
+  accept a file over any projection of it; another tree, or a vtree with
+  a summed-out region, is `IoError::Format`. On a home the binary reader
+  refuses a pair repeated in a level, as the text reader does everywhere.
+  `finish` reports a refused allocation in that trim as the new
+  `TddBuildError::OverBudget`, and the readers as the new
+  `IoError::OverBudget`. `TddBuilder::finish_unchecked` does not
+  trim. Diagrams on root vtrees are unchanged.
+- On a home, `Maintenance` updates accept a variable of the home the
+  diagram has no leaf for, and a rebuild or the removal of the last model
+  can move the diagram to another projection of the home.
+  `Tdd::reseat_vtree_unchecked` and `Tdd::splice_subtree_unchecked` state
+  their contracts on a home.
 
 Added:
 
@@ -75,6 +92,12 @@ Fixed:
   `Engine`) could answer wrong on a diagram with a marginal level away
   from the quantified leaves; they now return
   `OperationError::MarginalLevel` whenever any level is marginal.
+- `TddBuilder::finish` and `read_tdd` accepted a level holding a pair twice,
+  within one node or across two, and `negate` and the model count were then
+  wrong on the diagram. They now return `TddBuildError::RepeatedPair`,
+  unless a level under it is marginal, where a repeated pair is a legal
+  multiplicity. The binary reader trusts the levels it reads and does not
+  check.
 
 ## 0.2.0
 

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
 use crate::value::{CountRead, CountVec};
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::numbering::{number_reachable, OMITTED};
 
@@ -129,8 +129,8 @@ pub fn write_tdd_binary<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
 
 /// Read a diagram from a binary file written by [`save_tdd_binary`].
 ///
-/// The diagram shares the supplied vtree; see [`read_tdd_binary`] for what is
-/// checked. A file holds one diagram: bytes after its checksum are refused.
+/// The vtree of the result, and what is checked, are as [`read_tdd_binary`]
+/// states. A file holds one diagram: bytes after its checksum are refused.
 ///
 /// # Errors
 ///
@@ -155,17 +155,28 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// Nothing in the file is trusted before it is checked: the magic, version and
 /// byte-order mark, then the checksum over all the bytes, then every count
 /// against the bytes left to hold it and every pair side against its child
-/// level. As for the text format, the reader validates the encoding, not
-/// semantic determinism; it relies on determinism only to refuse more than
-/// one pair in a level over two one-node levels, whose pairs take no bits.
-/// The level counts of a version 2 file are bounded, not recomputed, and are
-/// trusted from there on ([format](crate::io#binary-format)).
+/// level. The reader validates the encoding, not semantic determinism; it
+/// relies on determinism only to refuse more than one pair in a level over
+/// two one-node levels, whose pairs take no bits. Unlike the text reader, it
+/// does not look for a pair repeated in a level: it trusts the levels, as a
+/// library writer emits them, since that check costs several times the
+/// decode. The level counts of a version 2 file are bounded, not recomputed,
+/// and are trusted from there on ([format](crate::io#binary-format)).
+///
+/// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
+/// the supplied vtree names only the home: the file's vtree must be the
+/// projection of the home on the variables it declares. The reader seats the
+/// levels and their counts over that projection, refuses a pair repeated in
+/// a level, as the text reader does, and moves the result by the trim of
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
+/// projection on the leaves its pairs use, the counts with it.
 ///
 /// # Errors
 ///
 /// Returns [`IoError::Format`] for a file that is not in this format, an
 /// unsupported version, a truncated file, a checksum mismatch, a vtree that is
-/// not `vtree`, or a malformed or out-of-range record. Returns [`IoError::Io`]
+/// not `vtree` (on a home, not a projection of the home), or a malformed or
+/// out-of-range record. Returns [`IoError::Io`]
 /// if reading fails.
 ///
 /// ```
@@ -254,10 +265,48 @@ fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
 // any test there changes the code of the level reader inlined into it.
 #[inline(always)]
 fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    if vtree.on_home() {
+        return decode_on_home(bytes, vtree);
+    }
     match vtree.num_nodes() {
         0 => decode_without_leaf(bytes, vtree),
         _ => decode_levels(bytes, vtree),
     }
+}
+
+/// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
+/// file declares; the seated diagram, its counts attached, is checked for a
+/// repeated pair and then trimmed, which rescales the counts.
+// The header is checked here a second time rather than in a helper shared
+// with `decode_levels`: a second caller of anything inlined there changes
+// the code of the level reader, by about 1% of a query that reads its
+// diagrams from binary files.
+#[cold]
+#[inline(never)]
+fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+    if vtree.has_regions() {
+        return Err(malformed(super::REGION_REFUSED));
+    }
+    let home = vtree.home().expect("a vtree on a home");
+    let (total, _) = check_header(bytes)?;
+    if bytes.len() < total {
+        return Err(truncated(bytes.len(), total));
+    }
+    let covered = &bytes[..total - TRAILER_BYTES];
+    let stored = u64::from_le_bytes(bytes[covered.len()..total].try_into().expect("eight bytes"));
+    if stored != xxh64(covered) {
+        return Err(malformed(format!("checksum mismatch: the file records {stored:#018x}")));
+    }
+    let mut body = Body { bytes: &covered[HEADER_BYTES..], at: 0 };
+    let own = read_projection(&mut body, &home)?;
+    if own.num_nodes() == 0 {
+        return decode_without_leaf(bytes, &own);
+    }
+    let mut tdd = decode_levels(bytes, &own)?;
+    let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
+    crate::diagram::check_seated_pairs(&tdd).map_err(built)?;
+    crate::diagram::trim_on_home(&mut tdd).map_err(|e| super::build_error(e, built))?;
+    Ok(tdd)
 }
 
 /// A file over a vtree with no node holds the false or the true diagram;
@@ -813,7 +862,6 @@ fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx
     for (k, &t) in order.iter().enumerate() {
         let token = body.varint("vtree node")?;
         let expected = match *vtree.node(t) {
-            VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("the binary format"),
             VtreeNode::Leaf { var, .. } => u64::from(var.0),
             VtreeNode::Internal { .. } => 0,
         };
@@ -866,12 +914,65 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
         }
     };
     let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
-        .finish(TddNodeId { vtree: root, local })
+        .finish_trusting_pairs(TddNodeId { vtree: root, local })
         .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
     if let Some(counts) = counts {
         tdd.levels.keep_counts(counts);
     }
     Ok(tdd)
+}
+
+/// The stored vtree of a file read onto `home`: the projection of `home` on
+/// the leaves it declares, when the stored tree is that
+/// projection's. Its counts are bounded by the home's before a buffer is
+/// sized from them.
+fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<Arc<Vtree>, IoError> {
+    let leaves = body.varint("leaf count")?;
+    let nodes = body.varint("vtree node count")?;
+    let most = u64::from(home.vtree().num_leaves());
+    if leaves > most || nodes != (2 * leaves).saturating_sub(1) || nodes > body.left() as u64 {
+        return Err(malformed(format!(
+            "the file's vtree has {leaves} leaves and {nodes} nodes, not a projection of the \
+             vtree's home of {most} leaves"
+        )));
+    }
+    let mut tokens = Vec::with_capacity(nodes as usize);
+    let mut ranks = Vec::with_capacity(leaves as usize);
+    for _ in 0..nodes {
+        let token = body.varint("vtree node")?;
+        if token != 0 {
+            let rank = u32::try_from(token).ok().and_then(|v| home.rank(VarId(v)));
+            ranks.push(rank.ok_or_else(|| malformed(format!("variable {token} has no leaf in the vtree's home")))?);
+        }
+        tokens.push(token);
+    }
+    if ranks.len() as u64 != leaves {
+        return Err(malformed(format!("the file's vtree declares {} of its {leaves} leaves", ranks.len())));
+    }
+    ranks.sort_unstable();
+    if ranks.windows(2).any(|w| w[0] == w[1]) {
+        return Err(malformed("the file's vtree declares a variable at two leaves"));
+    }
+    if ranks.is_empty() {
+        return Ok(Vtree::empty_projection(home));
+    }
+    let own = Vtree::projection_on_ranks(home, ranks);
+    let order = postorder(&own);
+    for (k, (&t, &token)) in order.iter().zip(&tokens).enumerate() {
+        let expected = match *own.node(t) {
+            VtreeNode::Leaf { var, .. } => u64::from(var.0),
+            VtreeNode::Internal { .. } => 0,
+        };
+        if token != expected {
+            let describe = |v: u64| if v == 0 { "an internal node".to_string() } else { format!("the leaf of variable {v}") };
+            return Err(malformed(format!(
+                "vtree node {k} in postorder is {} in the file and {} in the projection of the vtree's home on its leaves",
+                describe(token),
+                describe(expected)
+            )));
+        }
+    }
+    Ok(own)
 }
 
 /// The counts section of a version 2 file: per internal level in `order`,

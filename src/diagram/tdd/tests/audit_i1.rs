@@ -14,7 +14,7 @@ use crate::apply::{FilterOutcome, FoldCodes, FoldMonoid, FoldRange};
 use crate::diagram::{Arithmetic, ChildPair, LeafLabel, LiteralWeights, NodeIdx, PairIndex, RationalWeights, TddNodeId, WeightStore};
 use crate::reduce::{ContentTwinPolicy, ReductionPlan};
 use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolSearchConfig, RotationMove, RotationSearchConfig};
-use crate::test_helpers::check::reachable_true_labels;
+use crate::test_helpers::check::{check_trimmed, reachable_true_labels};
 use crate::test_helpers::rand_conj;
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, RotationKind, VarId, VtreeIdx};
@@ -27,10 +27,24 @@ use super::*;
 const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("and_onto a wider vtree [fixed]", "a target wider than the union"),
     ("splice_subtree_unchecked [fixed]", "operands padded by the safety contract"),
+    ("splice_subtree_unchecked below the root of a home [fixed]", "the pass-through level above the merge level"),
     ("embed onto the home", "a variable of the home the operand does not use"),
     ("embed_moving onto the home", "a variable of the home the operand does not use"),
     ("embed_over the home", "a variable of the home the operand does not use"),
     ("embed_with a plan onto the home", "a variable of the home the operand does not use"),
+];
+
+/// Producers whose results on a home are also held to [`check_trimmed`]:
+/// on the projection of no leaf they do not read, besides naming none true.
+const HELD_TRIMMED: &[&str] = &[
+    "and_in_place_loose",
+    "and_cube",
+    "rotation_multistart",
+    "rotate_if",
+    "renumber_top_down",
+    "Maintenance::insert_model",
+    "Maintenance::remove_model",
+    "Tdd::insert_model",
 ];
 
 // Predicted open, but no result named One on these inputs, so the audit
@@ -46,6 +60,7 @@ struct Seen {
     leaf_form: Vec<String>,
     panics: Vec<String>,
     false_with_nodes: usize,
+    untrimmed: Vec<String>,
 }
 
 #[derive(Default)]
@@ -69,6 +84,15 @@ impl Audit {
             Ok(Ok(t)) => {
                 seen.runs += 1;
                 seen.false_with_nodes += usize::from(t.is_zero() && t.vtree().num_nodes() > 0);
+                // The smooth form `marginalize_levels` leaves on a home's
+                // root keeps its internal summed levels.
+                let smooth = t.vtree().bottomup().any(|u| !t.vtree().node(u).is_leaf() && t.level(u).is_marginal());
+                if t.vtree().on_home()
+                    && !smooth
+                    && let Err(e) = check_trimmed(&t, false)
+                {
+                    seen.untrimmed.push(format!("{case}: {e}"));
+                }
                 match catch_unwind(AssertUnwindSafe(|| reachable_true_labels(&t))) {
                     Err(_) => seen.panics.push(format!("{case}: the scan")),
                     Ok(Err(e)) => seen.leaf_form.push(format!("{case}: {e}")),
@@ -91,15 +115,19 @@ impl Audit {
         for (&name, s) in &self.seen {
             let open = EXPECTED_OPEN.iter().any(|&(n, _)| n == name);
             report += &format!(
-                "{name}: {} results, {} named One, {} refused, {} false on a vtree with nodes{}\n",
+                "{name}: {} results, {} named One, {} refused, {} false on a vtree with nodes, {} not trimmed{}\n",
                 s.runs,
                 s.named_one,
                 s.refused,
                 s.false_with_nodes,
+                s.untrimmed.len(),
                 s.first_one.as_ref().map(|w| format!(" (first {w})")).unwrap_or_default()
             );
             if let Some(e) = s.leaf_form.first() {
                 findings.push(format!("{name}: leaf form fails {} times, first {e}", s.leaf_form.len()));
+            }
+            if let (true, Some(e)) = (HELD_TRIMMED.contains(&name), s.untrimmed.first()) {
+                findings.push(format!("{name}: not trimmed {} times, first {e}", s.untrimmed.len()));
             }
             if let Some(p) = s.panics.first() {
                 findings.push(format!("{name}: {} panics, first {p}", s.panics.len()));
@@ -249,9 +277,10 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     a.run("renumber_top_down", || f.renumber_top_down());
     let model: Vec<Literal> = vars_of(&f).into_iter().map(|v| lit(v, rng.coin())).collect();
     if !constant {
-        a.run("Maintenance::insert_model", || mutate(&f, &|t| t.maintain().and_then(|mut m| m.insert_model(&model))));
-        a.run("Maintenance::remove_model", || mutate(&f, &|t| t.maintain().and_then(|mut m| m.remove_model(&model))));
-        a.run("Tdd::insert_model", || mutate(&f, &|t| t.insert_model(&model)));
+        // The batch's diagram after the `minimize` that ends a batch.
+        a.run("Maintenance::insert_model", || mutate(&f, &|t| t.maintain().and_then(|mut m| m.insert_model(&model)).and_then(|()| t.minimize())));
+        a.run("Maintenance::remove_model", || mutate(&f, &|t| t.maintain().and_then(|mut m| m.remove_model(&model)).and_then(|()| t.minimize())));
+        a.run("Tdd::insert_model", || mutate(&f, &|t| t.insert_model(&model).and_then(|()| t.minimize())));
     }
     a.run("reseat_vtree_unchecked", || {
         let mut t = f.clone();
@@ -284,6 +313,9 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         a.run("project_to_subtree", || eng.project_to_subtree(&f, at));
         a.run("marginalize_levels", || mutate(&f, &|t| t.marginalize_levels(&[at])));
         a.run("and_marginalizing", || eng.and_marginalizing(&f, &g, &[at]));
+        let under_at: Vec<VarId> = f.vtree().leaf_bottomup().filter(|&(l, _)| f.vtree().in_subtree(l, at)).map(|(_, v)| v).collect();
+        a.run("marginalize", || mutate(&f, &|t| t.marginalize(|v| under_at.contains(&v))));
+        a.run("and_marginalizing_where", || eng.and_marginalizing_where(&f, &g, |v| under_at.contains(&v)));
         a.run("rotate_marginal_cluster", || {
             let mut t = f.clone();
             t.marginalize_levels(&[at])?;
@@ -340,7 +372,8 @@ fn built(eng: &Engine, vtree: &Arc<Vtree>, nodes: &[(VtreeIdx, Vec<(u32, u32)>)]
         let pairs: Vec<ChildPair> = pairs.iter().map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r))).collect();
         last = b.push(eng, *t, &pairs).unwrap();
     }
-    b.finish(TddNodeId { vtree: nodes.last().unwrap().0, local: last }).unwrap()
+    // Seated unchecked: `finish` on a home would trim a padded operand.
+    unsafe { b.finish_unchecked(TddNodeId { vtree: nodes.last().unwrap().0, local: last }) }
 }
 
 const POS: u32 = LeafLabel::Pos as u32;
@@ -457,6 +490,20 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
         // Safety: both on `vtree` and unweighted, each one pair at the root
         // whose other side is true.
         unsafe { f.splice_subtree_unchecked(eng, right, vtree.root()) };
+        Ok::<_, OperationError>(f)
+    });
+
+    a.case = "splice of x1 and x2 at (x1 x2) on the home ((x1 x2) x3)".into();
+    a.run("splice_subtree_unchecked below the root of a home [fixed]", || {
+        let leaf = |v| Vtree::leaf(VarId(v));
+        let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
+        let all = Arc::clone(home.vtree());
+        let t = all.children(all.root()).0;
+        let mut f = eng.embed(&eng.literal(&all, 1)?, &all, |v| v).unwrap().0;
+        let right = eng.embed(&eng.literal(&all, 2)?, &all, |v| v).unwrap().0;
+        // Safety: both on `all` and unweighted, each one pair at `t` whose
+        // other side is true.
+        unsafe { f.splice_subtree_unchecked(eng, right, t) };
         Ok::<_, OperationError>(f)
     });
 }

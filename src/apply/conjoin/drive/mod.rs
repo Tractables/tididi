@@ -54,7 +54,7 @@ pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     /// The levels summed out as they are built.
     pub(super) targets: VtreeMask<'a>,
-    pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
+    pub(super) ws: Option<&'a crate::diagram::WeightStore>,
     /// Whether the output is wanted only for its count: then a root level
     /// the sparse route builds as one product is counted instead, into
     /// `counted`, and left empty.
@@ -129,7 +129,6 @@ fn sweep_levels(
         eng,
         run.levels,
         run.stream_cache,
-        sweep.ws.as_deref_mut(),
     )?;
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes + run.cone.free_nodes)
@@ -561,28 +560,22 @@ fn apply_and_held(
 
     let _op = lim.begin_operation();
 
-    // The weight store follows the diagram: the operands' stores merge into the
-    // result's, and every level this apply marginalizes writes its values there.
-    // Their marginal levels are the two disjoint subtrees they were built over,
-    // so the merge loses nothing.
     let take_weights = |op: &mut Held<'_>| match op.owned() {
-        Some(op) => Ok(op.weights.take()),
-        None => op
-            .tdd()
-            .weights
-            .as_ref()
-            .map(|ws| ws.try_clone_on(lim))
-            .transpose(),
+        Some(op) => op.weights.take(),
+        None => op.tdd().weights.clone(),
     };
-    let ws: Option<crate::diagram::WeightStore> = match (take_weights(f)?, take_weights(g)?) {
-        (Some(mut a), Some(b)) => {
-            a.absorb(b);
-            Some(a)
-        }
-        (a, b) => a.or(b),
-    };
+    let (fw, gw) = (take_weights(f), take_weights(g));
+    let ws = fw.or(gw);
+    let vtree = Arc::clone(f.vtree());
+    // On a weighted home the operands carry no store: the sweep reads the
+    // home's weights when a level holds or comes to hold values, and
+    // otherwise runs as an unweighted conjunction.
+    let home_table = vtree
+        .weights()
+        .filter(|_| !targets.is_empty() || f.tdd().has_marginal_level() || g.tdd().has_marginal_level());
     debug_assert!(
         ws.is_some()
+            || home_table.is_some()
             || !f
                 .tdd()
                 .levels
@@ -593,7 +586,7 @@ fn apply_and_held(
     );
     // Nothing but pairs changes hands: no weights, no summed-out level,
     // and, as the setup finds, no marginal level.
-    let unmarked = ws.is_none() && targets.is_empty();
+    let unmarked = ws.is_none() && home_table.is_none() && targets.is_empty();
     // A built conjunction, restoring or not, that sums no level and
     // carries no weights takes the subtrees at which
     // both operands are constant true whole from `f`, as the identity fast
@@ -607,7 +600,6 @@ fn apply_and_held(
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
-    let vtree = Arc::clone(f.vtree());
     let num_nodes = vtree.num_nodes();
     if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
@@ -652,7 +644,8 @@ fn apply_and_held(
     };
     let mut assembly = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, ws);
     let (levels, ws) = assembly.parts_mut();
-    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
+    let ws = ws.as_ref().or(home_table);
+    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws);
     let mut run = apply_and_setup(
         eng,
         &vtree,
@@ -710,7 +703,7 @@ fn apply_and_held(
             f: &run.f_identity[..],
             g: &run.g_identity[..],
         },
-        ws.as_ref(),
+        ws,
     );
     // Taken here, after the setup and before the regions or the sweep move
     // or drop any operand level: an access that changed a level would have
@@ -726,7 +719,7 @@ fn apply_and_held(
     let mut sweep = Sweep {
         vtree: &vtree,
         targets,
-        ws: ws.as_mut(),
+        ws,
         count_root,
         counted: None,
     };
@@ -754,7 +747,7 @@ fn apply_and_held(
         &canon_leaves,
         &vtree,
         run.levels,
-        ws.as_ref(),
+        ws,
     ) {
         if run.restoring {
             give_back(run.levels, f, g, run.lists, cone);

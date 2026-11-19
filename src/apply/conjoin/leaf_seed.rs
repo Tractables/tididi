@@ -87,9 +87,8 @@ pub(crate) fn seed_output_leaves(
     // The bottom-up loop never visits a leaf as `t`, so a marginal leaf's output
     // level is flagged here from the operands. An integer-marginal leaf keeps
     // its counts inline at the parent, so the output store stays empty. A
-    // weight-marginal leaf holds a pinned per-slot column in the `WeightStore`
-    // (`check_leaf_columns_pinned`), so the output level reports `LEAF_WIDTH`
-    // and this only re-flags it.
+    // weight-marginal leaf holds its pinned per-slot column
+    // (`check_leaf_columns_pinned`), which this installs.
     //
     // `canon_leaves` collects the leaves weight-marginal on one operand only:
     // the other operand's leaf-label refs flow through the grid into the output
@@ -125,18 +124,14 @@ pub(crate) fn seed_output_leaves(
                 // mass with no error anywhere.
                 let leaf_slots = crate::diagram::LEAF_WIDTH;
                 debug_assert!(
-                    ws.is_none_or(|w| w.level(left_idx).is_none_or(|v| v.len() == leaf_slots)),
-                    "weight-marginal leaf {left_idx}: WeightStore column is not the \
-                     pinned {leaf_slots}-slot leaf_val cache",
-                );
-                debug_assert!(
                     (!w1 || f.level(left_idx).slot_count() == leaf_slots)
                         && (!w2 || g.level(left_idx).slot_count() == leaf_slots),
                     "weight-marginal leaf {left_idx}: operand slot carriers \
                      (f={}, g={}) disagree with `LEAF_WIDTH` ({leaf_slots})",
                     f.level(left_idx).slot_count(), g.level(left_idx).slot_count(),
                 );
-                levels[left_idx].become_marginal_weighted(leaf_slots as u32);
+                let ws = ws.expect("a weight-marginal leaf has its store");
+                levels[left_idx].become_marginal_weighted(crate::diagram::leaf_column_vals(ws, f.vtree().leaf_var(leaf)));
                 if w1 != w2 {
                     canon_leaves.push(left_idx);
                 }

@@ -188,7 +188,8 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let differ = b.push(&eng, l, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let t = b.push(&eng, r, &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
     let root = b.push(&eng, home.root(), &[ChildPair::new(same, t), ChildPair::new(differ, t)]).unwrap();
-    let f = b.finish(TddNodeId { vtree: home.root(), local: root }).unwrap();
+    // Seated unchecked: `finish` on a home would trim it.
+    let f = unsafe { b.finish_unchecked(TddNodeId { vtree: home.root(), local: root }) };
     let mut g = f.clone();
     assert!(g.trim(&hm).unwrap());
     check_trimmed(&g, false).unwrap();
@@ -205,7 +206,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
         .unwrap();
-    let mut f = b.finish(TddNodeId { vtree: two.root(), local: root }).unwrap();
+    let mut f = unsafe { b.finish_unchecked(TddNodeId { vtree: two.root(), local: root }) };
     assert!(f.trim(&hm).unwrap());
     assert!(f.is_one());
     assert_eq!(f.model_count().unwrap(), 4u32.into());
@@ -279,7 +280,8 @@ fn built_diagram(home: &Arc<Vtree>, dropped: &[bool], rng: &mut Lcg) -> Tdd {
     }
     let root = home.root();
     let local = refs[root.idx()][rng.below(refs[root.idx()].len() as u64) as usize];
-    b.finish(TddNodeId { vtree: root, local }).unwrap()
+    // Seated unchecked: `finish` on a home would trim it.
+    unsafe { b.finish_unchecked(TddNodeId { vtree: root, local }) }
 }
 
 fn leaf_vars(v: &Vtree) -> Vec<VarId> {

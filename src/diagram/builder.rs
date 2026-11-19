@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
@@ -89,18 +89,17 @@ impl InternTable {
     }
 }
 
-/// A borrowed level together with the store interpreting its weighted columns.
+/// A borrowed level together with the store interpreting its weighted values.
 #[derive(Clone, Copy, Debug)]
 pub struct LevelView<'a> {
     level: &'a TddLevel,
     weights: Option<&'a WeightStore>,
-    source: VtreeIdx,
 }
 
 impl<'a> LevelView<'a> {
     /// Borrow a structural or count-marginal level; weighted levels need [`Tdd::level_view`].
     pub fn unweighted(level: &'a TddLevel) -> Option<Self> {
-        (!level.is_weight_marginal()).then_some(Self { level, weights: None, source: VtreeIdx(0) })
+        (!level.is_weight_marginal()).then_some(Self { level, weights: None })
     }
 
     /// The level's structural data or count column.
@@ -110,7 +109,9 @@ impl<'a> LevelView<'a> {
 /// A diagram under construction: one level per vtree node, filled bottom-up.
 ///
 /// Start with [`Tdd::builder`], add nodes, then call [`finish`](Self::finish)
-/// with the output node. The result shares the vtree supplied to the builder.
+/// with the output node. The result shares the vtree supplied to the builder,
+/// except on a home, where [`finish`](Self::finish) moves it to the
+/// projection on the leaves it uses.
 ///
 /// Level buffers come from the engine's recycling pool. On success they belong
 /// to the returned diagram; [`abandon`](Self::abandon) returns them to the pool,
@@ -170,7 +171,7 @@ impl std::fmt::Debug for TddBuilder {
 impl Tdd {
     /// Borrow a level together with any weighted values needed to copy it.
     pub fn level_view(&self, t: VtreeIdx) -> LevelView<'_> {
-        LevelView { level: self.level(t), weights: self.weights(), source: t }
+        LevelView { level: self.level(t), weights: self.weights() }
     }
 
     /// Start a diagram over `vtree`, with one empty level per vtree node.
@@ -196,7 +197,13 @@ impl TddBuilder {
     }
 
     pub(crate) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
-        check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())
+        check_levels(&self.vtree, &self.levels, output, self.table())
+    }
+
+    /// The weights the levels are read under: the vtree's home's on a
+    /// weighted home, else the build's own.
+    fn table(&self) -> Option<&WeightStore> {
+        self.weights.as_ref().or_else(|| self.vtree.weights())
     }
 
     /// The level of vtree node `t` as built so far.
@@ -326,8 +333,13 @@ impl TddBuilder {
     ///
     /// # Errors
     ///
-    /// Refuses a store inconsistent with the levels already copied in.
+    /// Refuses weights inconsistent with the levels already copied in, and
+    /// any on a weighted home ([`TddBuildError::IncompatibleWeights`]), whose
+    /// diagrams read the home's.
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
+        if self.vtree.weights().is_some() {
+            return Err(TddBuildError::IncompatibleWeights);
+        }
         ws.install(&self.vtree, &self.levels, &mut self.weights)
     }
 
@@ -350,34 +362,25 @@ impl TddBuilder {
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
         if let Some(source) = from.weights {
-            if self.weights.as_ref().is_some_and(|ws| !ws.compatible(source)) {
+            if self.table().is_some_and(|ws| !ws.compatible(source)) {
                 return Err(TddBuildError::IncompatibleWeights.into());
             }
-            if self.weights.is_none()
+            if self.table().is_none()
                 && let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
                     return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) }.into());
                 }
         }
-        if from.level.is_marginal() && !from.level.is_weight_marginal() && self.weights.is_some() {
+        if from.level.is_marginal() && !from.level.is_weight_marginal() && self.table().is_some() {
             return Err(TddBuildError::CountLevelWithWeights { level: t }.into());
         }
-        let column = if from.level.is_weight_marginal() {
-            let ws = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
-            let column = ws.level(from.source.idx()).unwrap_or(&[]);
-            if column.len() != from.level.slot_count() {
+        if from.level.is_weight_marginal() {
+            from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
+            if from.level.weight_values().unwrap_or(&[]).len() != from.level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" }.into());
             }
-            let mut copy = Vec::new();
-            lim.reserve_exact(&mut copy, column.len())?;
-            copy.extend_from_slice(column);
-            Some(copy)
-        } else { None };
-        from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
-        if self.weights.is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
-        if let Some(ws) = self.weights.as_mut() {
-            ws.take_level(t.idx());
-            if let Some(column) = column { ws.set_level(t.idx(), column); }
         }
+        from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
+        if self.table().is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
         if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
         Ok(())
     }
@@ -388,8 +391,16 @@ impl TddBuilder {
     /// unreachable nodes and uncontracted twins.
     /// [`minimize`](crate::Tdd::minimize) makes a valid TDD canonical.
     ///
-    /// Storage validity is checked in every build profile. Semantic determinism
+    /// Storage validity is checked in every build profile, and so is the one
+    /// part of determinism a level shows by itself: no pair occurs twice in a
+    /// level with no marginal level under it. The rest of semantic determinism
     /// remains the caller's responsibility, as described on [`TddBuilder`].
+    ///
+    /// On a vtree on a home (its root or a projection), a diagram with no
+    /// marginal level is then [trimmed](crate::Tdd::trim): it is returned on
+    /// the projection of the home on the leaves its pairs do not name `One`,
+    /// and false is the constant on the empty projection. A diagram with a
+    /// marginal level is returned on the builder's vtree.
     ///
     /// # Errors
     ///
@@ -398,6 +409,8 @@ impl TddBuilder {
     /// vtree with no node, the true one); [`TddBuildError::MixedLeafForm`]
     /// when a level names a leaf child both as `One` and as a literal; other
     /// variants identify invalid references, marginal columns or leaf storage.
+    /// [`TddBuildError::OverBudget`] when the trim on a home is refused an
+    /// allocation.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -423,6 +436,25 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
+        check_storage::<true>(&self.vtree, &self.levels, output, self.table())?;
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
+        let mut tdd = self.seat(output, dirty, None);
+        if tdd.vtree.on_home() {
+            trim_on_home(&mut tdd)?;
+        }
+        Ok(tdd)
+    }
+
+    /// The checks [`finish`](Self::finish) runs, the repeated-pair check
+    /// included.
+    pub(crate) fn check_pairs(&self, output: TddNodeId) -> Result<(), TddBuildError> {
+        check_storage::<true>(&self.vtree, &self.levels, output, self.table())
+    }
+
+    /// [`finish`](Self::finish) without the repeated-pair check, for a
+    /// reader that trusts its levels or a construction that cannot repeat
+    /// a pair its input does not.
+    pub(crate) fn finish_trusting_pairs(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
@@ -443,12 +475,16 @@ impl TddBuilder {
     /// or the false sentinel. The diagram must also be deterministic.
     /// Invalid references can cause out-of-bounds reads in later operations.
     ///
+    /// This seat does not trim. On a vtree on a home the caller names no leaf
+    /// `One`, or accepts a diagram that names one, which no reduction then
+    /// moves to the projection on the leaves it uses.
+    ///
     /// # Panics
     ///
     /// Debug builds check storage validity and panic if it fails.
     pub unsafe fn finish_unchecked(self, output: TddNodeId) -> Tdd {
         debug_assert!(
-            check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
+            check_levels(&self.vtree, &self.levels, output, self.table()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
@@ -487,6 +523,41 @@ impl TddBuilder {
         return_levels(eng, std::mem::take(&mut self.levels));
     }
 
+}
+
+/// The checks of [`TddBuilder::finish`] on a diagram without weights,
+/// seated without the repeated-pair check.
+// The weights are `None` here, not read from the diagram: a second call of
+// `WeightStore::check_levels` takes it out of line in `finish_trusting_pairs`,
+// whose storage loop then costs a query that reads its diagrams from binary
+// files 0.4 to 0.8% more.
+#[cold]
+#[inline(never)]
+pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
+    debug_assert!(tdd.weights.is_none(), "a diagram read from a file has no weights");
+    check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
+}
+
+/// [`Tdd::trim`] of a diagram just seated on a home; an internal summed-out
+/// level not under another becomes a region. A drop that would rebuild a
+/// summed variable leaf leaves the diagram as it was seated.
+#[cold]
+#[inline(never)]
+pub(crate) fn trim_on_home(tdd: &mut Tdd) -> Result<(), TddBuildError> {
+    let home = tdd.vtree.home().expect("a vtree on a home");
+    let context = Arc::clone(tdd.vtree.context());
+    let summed = tdd.has_marginal_level();
+    let trimmed = context.run(|eng| match summed {
+        true => eng.limits().enter().and_then(|_op| crate::reduce::trim_summed(eng, tdd, &home)),
+        false => eng.trim(tdd, &home),
+    });
+    match trimmed {
+        Ok(_) | Err(OperationError::MarginalLevel(_)) => Ok(()),
+        Err(e) => {
+            debug_assert_eq!(e, OperationError::OverBudget, "a trim without limits is refused only an allocation");
+            Err(TddBuildError::OverBudget)
+        }
+    }
 }
 
 /// The index bound a pair side pointing at level `t` is checked against: the
@@ -544,7 +615,25 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 /// # Errors
 ///
 /// The first violation found.
+#[inline]
 pub(crate) fn check_levels(
+    vtree: &Arc<Vtree>,
+    levels: &[TddLevel],
+    output: TddNodeId,
+    weights: Option<&WeightStore>,
+) -> Result<(), TddBuildError> {
+    check_storage::<false>(vtree, levels, output, weights)
+}
+
+/// [`check_levels`], and with `PAIRS` also no pair twice in a structural level
+/// with no marginal level under it, found in the same pass over the pairs.
+/// Given the children's determinism, distinct pairs are disjoint, so this is
+/// determinism over the level's stored nodes. Above a marginal level a
+/// repeated pair is a multiplicity the content-twin merge leaves, and legal.
+// Inlined, as is `check_structural_level`: out of line, the storage loop
+// costs a query that reads its diagrams from binary files about 1% more.
+#[inline(always)]
+fn check_storage<const PAIRS: bool>(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
     output: TddNodeId,
@@ -559,18 +648,22 @@ pub(crate) fn check_levels(
     }
     if let Some(ws) = weights {
         ws.check_levels(vtree, levels)?;
-    } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
-        return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
-    check_leaf_levels(vtree, levels)?;
     if vtree.num_nodes().div_ceil(2) != vtree.num_leaves() as usize {
         check_region_levels(vtree, levels)?;
     }
-    for (t, left, right) in vtree.internal_bottomup() {
-        if levels[t.idx()].is_marginal() {
-            check_marginal_level(vtree, levels, t)?;
-        } else {
-            check_structural_level(vtree, levels, t, left, right)?;
+    let mut scan = PairScan::default();
+    for t in vtree.bottomup() {
+        let lvl = &levels[t.idx()];
+        if weights.is_none() && lvl.is_weight_marginal() {
+            return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
+        }
+        match *vtree.node(t) {
+            VtreeNode::Leaf { .. } => check_leaf_level(lvl, t)?,
+            VtreeNode::Internal { .. } if lvl.is_marginal() => check_marginal_level(vtree, levels, t)?,
+            VtreeNode::Internal { left, right, .. } => {
+                check_structural_level::<PAIRS>(vtree, levels, t, left, right, &mut scan)?;
+            }
         }
     }
     check_output(vtree, levels, output)
@@ -600,19 +693,16 @@ fn check_leaf_form(
 /// A structural leaf level stores nothing. A count-marginal one carries the
 /// pinned label column `[2, 1, 1]` or nothing at all (its parents then hold
 /// the counts inline); a weight-marginal column is checked by the store.
-fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
-    for (leaf, _var) in vtree.leaf_bottomup() {
-        let lvl = &levels[leaf.idx()];
-        let stores_structure = !lvl.nodes().is_empty() || !lvl.pairs.is_empty();
-        if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
-            return Err(TddBuildError::NonEmptyLeafLevel(leaf));
-        }
-        if let Some(counts) = lvl.marginal_counts()
-            && !counts.is_empty()
-            && counts != super::leaf_column::LEAF_COUNTS
-        {
-            return Err(TddBuildError::NonEmptyLeafLevel(leaf));
-        }
+fn check_leaf_level(lvl: &TddLevel, leaf: VtreeIdx) -> Result<(), TddBuildError> {
+    let stores_structure = !lvl.nodes().is_empty() || !lvl.pairs.is_empty();
+    if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
+        return Err(TddBuildError::NonEmptyLeafLevel(leaf));
+    }
+    if let Some(counts) = lvl.marginal_counts()
+        && !counts.is_empty()
+        && counts != super::leaf_column::LEAF_COUNTS
+    {
+        return Err(TddBuildError::NonEmptyLeafLevel(leaf));
     }
     Ok(())
 }
@@ -646,31 +736,37 @@ fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Resu
 }
 
 /// Every node of a structural level has a pair, and every pair side names
-/// an entry of its child level without the reserved bit.
-fn check_structural_level(
-    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
+/// an entry of its child level without the reserved bit; with `PAIRS`, no
+/// pair occurs twice when `scan` says the level is checked for that.
+#[inline(always)]
+fn check_structural_level<const PAIRS: bool>(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx, scan: &mut PairScan,
 ) -> Result<(), TddBuildError> {
     let lvl = &levels[t.idx()];
     let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
+    let scanned = PAIRS && scan.enter(levels.len(), t, [left, right], lm.is_marginal() || rm.is_marginal());
     // Over structural children a side is a node index, and one below
     // `MAX_LIVE` has bit 31 clear, so one comparison a side checks both
     // rules. The loop below names the first violation where this pass finds
-    // one.
+    // one; a scanned level always takes this pass, as its children are
+    // structural, and the loop always finds one, as no level holds more than
+    // `MAX_LIVE` nodes.
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+        let leafy = vtree.node(left).is_leaf() || vtree.node(right).is_leaf();
         // Gathering leaf forms in the same pass costs about as much as the
         // pass, so a level over two internal children, which has none, skips it.
-        if !vtree.node(left).is_leaf() && !vtree.node(right).is_leaf() {
-            if all_pairs_fit(lvl, fits) {
+        if !scanned && !leafy {
+            if every_pair(lvl, fits) {
                 return Ok(());
             }
-        } else {
+        } else if !scanned {
             // Bit k of a side's mask: some pair names entry k (mod 32) there,
             // which `fits` keeps below `LEAF_WIDTH` on a leaf.
             let (mut lmask, mut rmask) = (0u32, 0u32);
-            let all_fit = all_pairs_fit(lvl, |pair| {
+            let all_fit = every_pair(lvl, |pair| {
                 lmask |= 1u32.wrapping_shl(pair.left.raw());
                 rmask |= 1u32.wrapping_shl(pair.right.raw());
                 fits(pair)
@@ -680,6 +776,29 @@ fn check_structural_level(
                 let form = |m: u32| u8::from(m & !one != 0) | u8::from(m & one != 0) << 1;
                 return mixed_leaf_form(vtree, t, [(left, form(lmask)), (right, form(rmask))]);
             }
+        } else if lb <= 8 && rb <= 8 {
+            // Every pair a bit of one word, `8 * left + right`: no buffer for
+            // the narrow levels most finishes consist of. The stride is a
+            // constant so that the index is one address computation. The
+            // loop only learns whether some pair repeats; carrying the pair
+            // through it spills registers and more than doubles its cost.
+            let (mut grid, mut repeated) = (0u64, 0u64);
+            let all_fit = every_pair(lvl, |pair| {
+                fits(pair) && {
+                    let at = 8 * pair.left.raw() + pair.right.raw();
+                    repeated |= grid >> at;
+                    grid |= 1 << at;
+                    true
+                }
+            });
+            if all_fit {
+                if repeated & 1 != 0 {
+                    return scan.name_repeat(lvl, t, lb, rb);
+                }
+                return if leafy { mixed_leaf_form(vtree, t, grid_forms(grid, left, right)) } else { Ok(()) };
+            }
+        } else if let Some(checked) = scan.check_wide(lvl, t, lb, rb) {
+            return checked.and_then(|()| check_leaf_form(vtree, levels, t, left, right));
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -699,20 +818,21 @@ fn check_structural_level(
             }
         }
     }
+    debug_assert!(!scanned, "a scanned level failed the fast pass with no violation");
     check_leaf_form(vtree, levels, t, left, right)
 }
 
-/// Whether every node of `lvl` has a pair and `fits` holds for every pair.
+/// Whether every node of `lvl` has a pair and `f` holds on every pair. A
+/// stored level's nodes are read as slices of its arena, in a loop apart from
+/// an implicit level's generated pairs.
 #[inline(always)]
-fn all_pairs_fit(lvl: &TddLevel, mut fits: impl FnMut(&ChildPair) -> bool) -> bool {
-    // A stored level's nodes are read as slices of its arena, in a loop
-    // apart from an implicit level's generated pairs.
+fn every_pair(lvl: &TddLevel, mut f: impl FnMut(&ChildPair) -> bool) -> bool {
     match lvl.stored() {
         Some(stored) => stored.nodes().iter().all(|node| {
             let pairs = stored.of(node);
-            !pairs.is_empty() && pairs.iter().all(&mut fits)
+            !pairs.is_empty() && pairs.iter().all(&mut f)
         }),
-        None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
+        None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| f(&pair))),
     }
 }
 
@@ -722,6 +842,131 @@ fn mixed_leaf_form(vtree: &Vtree, t: VtreeIdx, sides: [(VtreeIdx, u8); 2]) -> Re
     match sides.into_iter().find(|&(c, forms)| forms == 3 && vtree.node(c).is_leaf()) {
         Some((leaf, _)) => Err(TddBuildError::MixedLeafForm { level: t, leaf }),
         None => Ok(()),
+    }
+}
+
+/// The leaf forms (as [`mixed_leaf_form`] reads them) of the two sides of a
+/// level whose pairs set the bits `8 * left + right` of `grid`.
+fn grid_forms(grid: u64, left: VtreeIdx, right: VtreeIdx) -> [(VtreeIdx, u8); 2] {
+    let row = 0xffu64 << (8 * ONE_LEAF_IDX.0);
+    let column = 0x0101_0101_0101_0101u64 << ONE_LEAF_IDX.0;
+    let form = |one: u64| u8::from(grid & !one != 0) | u8::from(grid & one != 0) << 1;
+    [(left, form(row)), (right, form(column))]
+}
+
+/// Buffers for finding a repeated pair, reused across levels: the level's
+/// rights bucketed by left side (a counting sort), then each bucket's rights
+/// marked in an array over the right child level, stamped with the left side.
+#[derive(Default)]
+struct PairScan {
+    /// Empty until a level with a marginal level under it is met: the levels
+    /// before it in bottom-up order have none.
+    marginal_below: Vec<bool>,
+    grid: Vec<u64>,
+    end: Vec<usize>,
+    rights: Vec<u32>,
+    seen: Vec<u32>,
+}
+
+/// Up to this many possible pairs, a level is checked with a bit per pair:
+/// 8 KiB, cleared per level for less than the counting sort's passes over
+/// both child levels.
+const GRID_BITS: usize = 1 << 16;
+
+impl PairScan {
+    /// Record whether a marginal level lies under `t`, given whether one of
+    /// its `children` is marginal, and say whether `t` is checked: it is when
+    /// none does.
+    fn enter(&mut self, level_count: usize, t: VtreeIdx, children: [VtreeIdx; 2], child_marginal: bool) -> bool {
+        let below = child_marginal || children.iter().any(|c| self.marginal_below.get(c.idx()) == Some(&true));
+        if below {
+            if self.marginal_below.is_empty() {
+                self.marginal_below.resize(level_count, false);
+            }
+            self.marginal_below[t.idx()] = true;
+        }
+        !below
+    }
+
+    fn start(&mut self, left_width: usize) {
+        self.end.clear();
+        self.end.resize(left_width + 1, 0);
+    }
+
+    #[inline(always)]
+    fn count(&mut self, pair: &ChildPair) -> bool {
+        self.end[pair.left.raw() as usize + 1] += 1;
+        true
+    }
+
+    /// The repeated-pair check of a scanned level wider than one word, with
+    /// sides below `lb` and `rb`; `None` when some side is past its bound.
+    /// Out of line, so that the narrow levels' loop keeps its registers.
+    #[inline(never)]
+    fn check_wide(&mut self, lvl: &TddLevel, t: VtreeIdx, lb: usize, rb: usize) -> Option<Result<(), TddBuildError>> {
+        let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+        if lb * rb <= GRID_BITS {
+            let grid = &mut self.grid;
+            grid.clear();
+            grid.resize((lb * rb).div_ceil(64), 0);
+            let mut repeated = 0u64;
+            let all_fit = every_pair(lvl, |pair| {
+                fits(pair) && {
+                    let at = pair.left.raw() as usize * rb + pair.right.raw() as usize;
+                    let (word, bit) = (&mut grid[at / 64], 1u64 << (at % 64));
+                    repeated |= *word & bit;
+                    *word |= bit;
+                    true
+                }
+            });
+            all_fit.then(|| if repeated == 0 { Ok(()) } else { self.name_repeat(lvl, t, lb, rb) })
+        } else {
+            self.start(lb);
+            every_pair(lvl, |pair| fits(pair) && self.count(pair)).then(|| self.find_repeat(lvl, t, lb, rb))
+        }
+    }
+
+    /// The repeated pair of a level the bit grid found to hold one, with
+    /// sides below `left_width` and `right_width`.
+    #[cold]
+    #[inline(never)]
+    fn name_repeat(&mut self, lvl: &TddLevel, t: VtreeIdx, left_width: usize, right_width: usize) -> Result<(), TddBuildError> {
+        self.start(left_width);
+        lvl.for_each_node_pair(|_, pair| {
+            self.count(&pair);
+        });
+        let found = self.find_repeat(lvl, t, left_width, right_width);
+        debug_assert!(found.is_err(), "the bit grid saw a repeat the counting sort does not");
+        found
+    }
+
+    /// After every pair of `lvl` was counted, with sides below `left_width`
+    /// and `right_width`.
+    fn find_repeat(&mut self, lvl: &TddLevel, t: VtreeIdx, left_width: usize, right_width: usize) -> Result<(), TddBuildError> {
+        let end = &mut self.end;
+        for l in 1..=left_width {
+            end[l] += end[l - 1];
+        }
+        self.rights.resize(end[left_width], 0);
+        lvl.for_each_node_pair(|_, p| {
+            let at = &mut end[p.left.raw() as usize];
+            self.rights[*at] = p.right.raw();
+            *at += 1;
+        });
+        self.seen.clear();
+        self.seen.resize(right_width, u32::MAX);
+        let mut from = 0;
+        for (l, &to) in end[..left_width].iter().enumerate() {
+            for &r in &self.rights[from..to] {
+                if self.seen[r as usize] == l as u32 {
+                    let pair = ChildPair::new(EncodedChildRef(l as u32), EncodedChildRef(r));
+                    return Err(TddBuildError::RepeatedPair { level: t, pair });
+                }
+                self.seen[r as usize] = l as u32;
+            }
+            from = to;
+        }
+        Ok(())
     }
 }
 

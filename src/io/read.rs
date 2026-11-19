@@ -5,13 +5,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::diagram::{EncodedChildRef, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId};
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::{IoError, TDD_FORMAT_VERSION};
 
 /// Read a diagram from a `.tdd` file written by [`save_tdd`](super::save_tdd).
 ///
-/// The diagram shares the supplied vtree; see [`read_tdd`] for format requirements.
+/// The vtree of the result is as [`read_tdd`] states, with its format requirements.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -48,7 +48,18 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
 /// preserves the file's node order; reading does not minimize.
 ///
-/// The reader validates the encoding, not semantic determinism. Files must
+/// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
+/// the supplied vtree names only the home. The file's leaves and child
+/// relationships must form the projection of the home on the variables it
+/// declares, and the result is moved by the trim of
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
+/// projection on the leaves its pairs use. A file without node records, with
+/// counts `0 0` or those of the supplied vtree, is a constant on the empty
+/// projection.
+///
+/// The reader validates the encoding, and of semantic determinism only what
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) checks: no pair
+/// twice in a level with no marginal level under it. Files must
 /// describe TDDs satisfying the [data-model rules](crate::guide::model), as the
 /// library's writer produces; arbitrary overlapping pair lists are not valid
 /// inputs for model counting.
@@ -91,7 +102,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let mut levels = vec![FileLevel::default(); vtree.num_nodes()];
+    let home = vtree.home();
+    if home.is_some() && vtree.has_regions() {
+        return Err(IoError::Format(format!("tdd: {}", super::REGION_REFUSED)));
+    }
+    let mut levels = Vec::new();
     let mut header: Option<ProblemLine> = None;
     // Pairs name their children by the local index the writer assigned, which
     // for an internal level counts `I` lines at that vtree node in file order —
@@ -104,16 +119,20 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
             Some("p") => {
                 if header.is_some() { return Err(malformed(n, "duplicate problem line")); }
                 let h = parse_problem_line(&mut tok, n)?;
-                check_problem_line(&h, vtree, n)?;
+                match &home {
+                    None => check_problem_line(&h, vtree, n)?,
+                    Some(home) => bound_problem_line(&h, home, n)?,
+                }
+                levels = vec![FileLevel::default(); h.num_vtree_nodes];
                 header = Some(h);
             }
             Some(kind @ ("L" | "I")) => {
                 let h = header.as_ref().ok_or_else(|| malformed(n, "node record before the problem line"))?;
                 if h.out_local.is_none() { return Err(malformed(n, "node record after a ZERO or ONE output")); }
                 if kind == "L" {
-                    read_leaf_line(&mut tok, vtree, &mut levels, n)?;
+                    read_leaf_line(&mut tok, &mut levels, n)?;
                 } else {
-                    read_internal_line(&mut tok, vtree, &mut levels, n)?;
+                    read_internal_line(&mut tok, &mut levels, n)?;
                 }
             }
             Some(other) => {
@@ -122,7 +141,51 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
         }
     }
     let header = header.ok_or_else(|| IoError::Format("tdd: no `p tdd` problem line".into()))?;
-    build_diagram(header, levels, vtree)
+    match home {
+        None => build_diagram(header, levels, vtree),
+        Some(home) => read_onto_home(header, levels, vtree, &home),
+    }
+}
+
+/// The records read onto the projection of `home` on the leaves they
+/// declare, the vtree they must describe. A file with no record holds a
+/// constant, given counts `0 0` or `vtree`'s.
+fn read_onto_home(h: ProblemLine, stored: Vec<FileLevel>, vtree: &Vtree, home: &Home) -> Result<Tdd, IoError> {
+    if h.out_local.is_none() {
+        let empty = (h.num_leaves, h.num_vtree_nodes, h.out_vtree.0) == (0, 0, 0);
+        let supplied = !h.one
+            && vtree.num_nodes() > 0
+            && (h.num_leaves, h.num_vtree_nodes) == (vtree.num_leaves(), vtree.num_nodes())
+            && h.out_vtree.0 == vtree.topo_pos(vtree.root());
+        if !empty && !supplied {
+            return Err(malformed(
+                h.line,
+                "a file without node records holds ZERO with the counts 0 0 or the vtree's, or ONE with 0 0",
+            ));
+        }
+        return Ok(crate::build::constant_without_leaf(&Vtree::empty_projection(home), h.one));
+    }
+    let mut ranks = Vec::new();
+    for entry in &stored {
+        if let Some(VtreeNode::Leaf { var, .. }) = entry.node {
+            let rank = home
+                .rank(var)
+                .ok_or_else(|| malformed(entry.line, format!("variable {} has no leaf in the vtree's home", var.0)))?;
+            ranks.push(rank);
+        }
+    }
+    if ranks.len() != h.num_leaves as usize {
+        return Err(malformed(h.line, format!("the file declares {} of its {} leaves", ranks.len(), h.num_leaves)));
+    }
+    ranks.sort_unstable();
+    if ranks.windows(2).any(|w| w[0] == w[1]) {
+        return Err(malformed(h.line, "a variable is declared at two leaves"));
+    }
+    let own = match ranks.is_empty() {
+        true => Vtree::empty_projection(home),
+        false => Vtree::projection_on_ranks(home, ranks),
+    };
+    build_diagram(h, stored, &own)
 }
 
 /// One file-local vtree declaration and the diagram nodes stored at it.
@@ -172,19 +235,16 @@ fn next_u32<'a>(
     t.parse().map_err(|_| malformed(line, format!("{what} is not a number: {t:?}")))
 }
 
-/// A vtree index, checked against the tree's node count.
+/// A file-local vtree index, checked against the problem line's node count.
 fn next_vtree_idx<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
     what: &str,
-    vtree: &Vtree,
+    nodes: usize,
     line: usize,
 ) -> Result<VtreeIdx, IoError> {
     let raw = next_u32(tok, what, line)?;
-    if raw as usize >= vtree.num_nodes() {
-        return Err(malformed(
-            line,
-            format!("{what} {raw} is past the vtree's {} nodes", vtree.num_nodes()),
-        ));
+    if raw as usize >= nodes {
+        return Err(malformed(line, format!("{what} {raw} is past the file's {nodes} vtree nodes")));
     }
     Ok(VtreeIdx(raw))
 }
@@ -273,14 +333,31 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
     Ok(())
 }
 
+/// On a home, the header's counts are those of a projection of it, so that
+/// nothing larger is allocated from them.
+fn bound_problem_line(h: &ProblemLine, home: &Home, line: usize) -> Result<(), IoError> {
+    let nodes = (2 * h.num_leaves as usize).saturating_sub(1);
+    if h.num_leaves > home.vtree().num_leaves() || h.num_vtree_nodes != nodes {
+        return Err(malformed(
+            line,
+            format!(
+                "file has {} leaves and {} vtree nodes, not a projection of the vtree's home of {} leaves",
+                h.num_leaves,
+                h.num_vtree_nodes,
+                home.vtree().num_leaves()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Record the variable at a file-local leaf, independent of in-memory indices.
 fn read_leaf_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
-    vtree: &Vtree,
     levels: &mut [FileLevel],
     line: usize,
 ) -> Result<(), IoError> {
-    let t = next_vtree_idx(tok, "leaf vtree node", vtree, line)?;
+    let t = next_vtree_idx(tok, "leaf vtree node", levels.len(), line)?;
     let var = next_u32(tok, "variable", line)?;
     end_of_record(tok, line)?;
     if var == 0 { return Err(malformed(line, "variables are numbered from 1")); }
@@ -291,13 +368,13 @@ fn read_leaf_line<'a>(
 /// appended to its level in file order.
 fn read_internal_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
-    vtree: &Vtree,
     levels: &mut [FileLevel],
     line: usize,
 ) -> Result<(), IoError> {
-    let t = next_vtree_idx(tok, "node vtree index", vtree, line)?;
-    let left = next_vtree_idx(tok, "left child vtree index", vtree, line)?;
-    let right = next_vtree_idx(tok, "right child vtree index", vtree, line)?;
+    let nodes = levels.len();
+    let t = next_vtree_idx(tok, "node vtree index", nodes, line)?;
+    let left = next_vtree_idx(tok, "left child vtree index", nodes, line)?;
+    let right = next_vtree_idx(tok, "right child vtree index", nodes, line)?;
     levels[t.idx()].declare(VtreeNode::Internal { left, right, parent: None }, line)?;
     let mut pairs: Vec<ChildPair> = Vec::new();
     while let Some(l) = tok.next() {
@@ -367,5 +444,5 @@ fn build_diagram(
     };
     crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
         .finish(output)
-        .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))
+        .map_err(|e| super::build_error(e, |e| malformed(h.line, format!("the records do not form a diagram: {e}"))))
 }

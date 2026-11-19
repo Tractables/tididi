@@ -47,10 +47,11 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
     Ok(first)
 }
 
-/// No pair of `tdd` names a leaf as `One`, nor does the output; a constant
-/// has no leaf; a canonical `tdd` with no summed-out level reads no leaf
-/// child through twin literals in every node. With `minimized`, also that
-/// the leaves are the
+/// No pair of `tdd` names a variable leaf as `One`, nor does the output; a
+/// constant has no leaf; on a home, summed-out levels and regions as
+/// `regions` checks; a canonical `tdd` with no summed-out level reads no leaf
+/// child through twin literals in every node. With `minimized` and no
+/// summed-out level, also that the leaves are the
 /// [`support`](Tdd::support).
 ///
 /// Cost: O(diagram size).
@@ -67,16 +68,23 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
     if vtree.num_nodes() == 0 {
         return Ok(());
     }
-    if vtree.node(vtree.root()).is_leaf() && tdd.output().local == ONE_LEAF_IDX {
+    let root = vtree.root();
+    if vtree.node(root).is_leaf() && !vtree.node(root).is_region() && tdd.output().local == ONE_LEAF_IDX {
         return Err("the output names its leaf as One".to_string());
+    }
+    if vtree.home().is_some() {
+        regions(tdd)?;
     }
     for t in vtree.bottomup() {
         let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
         let level = tdd.level(t);
+        if level.is_marginal() {
+            continue;
+        }
         for j in 0..level.slot_count() {
             for pair in level.pairs_iter_of_idx(j) {
                 for (child, side) in [(left, pair.left), (right, pair.right)] {
-                    if vtree.node(child).is_leaf() && side.raw() == ONE_LEAF_IDX.0 {
+                    if vtree.node(child).is_var_leaf() && !tdd.level(child).is_marginal() && side.raw() == ONE_LEAF_IDX.0 {
                         return Err(format!("node {j} of level {} names leaf {} as One", t.0, child.0));
                     }
                 }
@@ -86,7 +94,7 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
     if tdd.levels.is_canonical(tdd.output()) && !tdd.has_marginal_level() {
         full_twin_side(tdd)?;
     }
-    if minimized {
+    if minimized && !tdd.has_marginal_level() {
         let mut leaves: Vec<_> = vtree.bottomup().filter(|&t| vtree.node(t).is_leaf()).map(|t| vtree.leaf_var(t)).collect();
         leaves.sort_unstable();
         let mut support = tdd.support().map_err(|e| e.to_string())?;
@@ -96,6 +104,30 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// On a home: a summed-out level stands only at a region or a variable leaf
+/// (which a builder can seat) and every region holds one (R1); the extents are pairwise disjoint and hold the rank of no
+/// variable leaf (R2).
+fn regions(tdd: &Tdd) -> Result<(), String> {
+    let vtree = tdd.vtree();
+    let home = vtree.home().expect("a vtree on a home");
+    for t in vtree.bottomup() {
+        let summed_leaf = vtree.node(t).is_var_leaf() && tdd.level(t).is_marginal();
+        if tdd.level(t).is_marginal() != vtree.node(t).is_region() && !summed_leaf {
+            return Err(format!("level {} is summed out {}, a region {}", t.0, tdd.level(t).is_marginal(), vtree.node(t).is_region()));
+        }
+    }
+    let mut spans: Vec<(u32, u32)> = vtree.regions().flat_map(|t| vtree.region_at(t).1.into_vec()).collect();
+    spans.extend(vtree.bottomup().filter(|&t| vtree.node(t).is_var_leaf()).map(|t| {
+        let rank = home.rank(vtree.leaf_var(t)).expect("a variable of the home");
+        (rank, rank + 1)
+    }));
+    spans.sort_unstable();
+    match spans.windows(2).find(|w| w[1].0 < w[0].1) {
+        Some(w) => Err(format!("extents or variable leaves overlap: ranks {:?} and {:?}", w[0], w[1])),
+        None => Ok(()),
+    }
 }
 
 /// No level of a canonical `tdd` reads a leaf child the same through both

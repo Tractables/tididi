@@ -64,6 +64,7 @@ impl ClauseSink for Sink {
 #[derive(Default)]
 struct Tally {
     same: usize,
+    both_refused: BTreeMap<String, usize>,
     refused: BTreeMap<String, usize>,
     differs: Vec<String>,
     panics: Vec<String>,
@@ -110,7 +111,10 @@ impl Audit {
             },
             (Err(e), Ok(_)) => *tally.refused.entry(format!("{e:?}").split('(').next().unwrap_or("").to_string()).or_default() += 1,
             (Ok(_), Err(e)) => tally.differs.push(format!("{case}: only the home refused: {e:?}")),
-            (Err(_), Err(_)) => tally.same += 1,
+            (Err(e), Err(_)) => {
+                tally.same += 1;
+                *tally.both_refused.entry(format!("{e:?}").split('(').next().unwrap_or("").to_string()).or_default() += 1;
+            }
         }
     }
 
@@ -123,6 +127,9 @@ impl Audit {
         let mut out = String::new();
         for (name, t) in &self.tallies {
             out += &format!("{name}: {} same", t.same);
+            for (e, n) in &t.both_refused {
+                out += &format!(" ({n} both refused, here {e})");
+            }
             for (e, n) in &t.refused {
                 out += &format!(", {n} refused {e}");
             }
@@ -368,4 +375,132 @@ fn every_entry_point_on_a_diagram_with_regions_answers_as_the_smooth_form_or_ref
     eprintln!("{cases} cases\n{report}");
     assert!(cases > 300, "{cases} cases");
     assert!(!report.contains("DIFFER") && !report.contains("PANIC"), "{report}");
+}
+
+/// A trimmed diagram on the projection of `home` on some of the variables
+/// that no region of `g` holds, or `None` when it would have none.
+fn beside(eng: &Engine, home: &Home, g: &Tdd, n: u32, rng: &mut Lcg) -> Option<Tdd> {
+    let free: Vec<VarId> = (1..=n).map(VarId).filter(|&v| g.vtree().region_of(v).is_none()).collect();
+    let vars: Vec<VarId> = free.iter().copied().filter(|_| rng.below(3) != 0).collect();
+    (!vars.is_empty()).then(|| operand(eng, home, &vars, rng))
+}
+
+/// Every entry that brings two or three operands to one vtree, with `g`
+/// summed out and `b` lacking its regions, in both orders, against `f` and
+/// `b` on `f`'s vtree.
+#[allow(clippy::too_many_lines)]
+fn binary_audit_case(a: &mut Audit, eng: &Engine, f: &Tdd, g: &Tdd, b: &Tdd) {
+    let bf = eng.embed(b, f.vtree(), |v| v).unwrap().0;
+    // A placed operand passes the checks its operand passed.
+    let fast = |t: &Tdd| catch_unwind(AssertUnwindSafe(|| crate::test_helpers::check::check_all_fast(t, "operand"))).is_ok();
+    if let Ok([pg, pb]) = crate::apply::extend::on_one(eng, [std::borrow::Cow::Borrowed(g), std::borrow::Cow::Borrowed(b)]) {
+        for (name, operand, placed) in [("placed summed", g, pg), ("placed beside", b, pb)] {
+            if b.vtree().num_nodes() != 0 && fast(operand) {
+                a.runs(name, || {
+                    crate::test_helpers::check::check_all_fast(&placed, name);
+                    Ok::<_, ()>(())
+                });
+            }
+        }
+    }
+    let check_form = |t: &Tdd| super::region::check_form(t, "result");
+    for first in [true, false] {
+        let pair = |x: &Tdd, y: &Tdd| if first { (x.clone(), y.clone()) } else { (y.clone(), x.clone()) };
+        let (p, q) = pair(g, b);
+        let (hp, hq) = pair(f, &bf);
+        let v = p.vtree().leaf_bottomup().find(|&(t, _)| !p.level(t).is_marginal()).map(|(_, v)| v);
+        let formed = |r: Result<Tdd, OperationError>, checked: bool| if checked { r.inspect(check_form) } else { r };
+        macro_rules! both {
+            ($label:expr, $call:expr, $cmp:expr) => {{
+                let label: &'static str = if first { concat!($label, " (summed first)") } else { concat!($label, " (summed second)") };
+                let call = $call;
+                let (p, q, hp, hq) = (p.clone(), q.clone(), hp.clone(), hq.clone());
+                a.check(label, || call(p, q, true), || call(hp, hq, false), $cmp);
+            }};
+        }
+        both!("and", |x: Tdd, y: Tdd, c: bool| formed(eng.and(&x, &y), c), same_value);
+        both!("and_marginalizing_where", |x: Tdd, y: Tdd, c: bool| formed(eng.and_marginalizing_where(&x, &y, |_| false), c), same_value);
+        both!("and_model_count", |x: Tdd, y: Tdd, _: bool| eng.and_model_count(x, y, &[]), PartialEq::eq);
+        both!("marginal_product_count", |x: Tdd, y: Tdd, _: bool| eng.marginal_product_count(&x, &y), PartialEq::eq);
+        both!("and_in_place", |x: Tdd, y: Tdd, c: bool| formed(eng.and_in_place(x, &y), c), same_value);
+        both!("and_exists", |x: Tdd, y: Tdd, c: bool| formed(eng.and_exists(x, y, &[]), c), same_value);
+        both!("add", |x: Tdd, y: Tdd, c: bool| formed(eng.add(x, y), c), same_value);
+        both!("or", |x: Tdd, y: Tdd, c: bool| formed(eng.or(x, y), c), same_value);
+        both!("xor", |x: Tdd, y: Tdd, c: bool| formed(eng.xor(x, y), c), same_value);
+        both!("and_not", |x: Tdd, y: Tdd, c: bool| formed(eng.and_not(x, y), c), same_value);
+        both!("ite then", |x: Tdd, y: Tdd, c: bool| { let k = y.clone(); formed(eng.ite(k, x, y), c) }, same_value);
+        both!("ite condition", |x: Tdd, y: Tdd, c: bool| { let e = y.clone(); formed(eng.ite(x, y, e), c) }, same_value);
+        both!("equivalent", |x: Tdd, y: Tdd, _: bool| eng.equivalent(&x, &y), PartialEq::eq);
+        both!("implies", |x: Tdd, y: Tdd, _: bool| eng.implies(&x, &y), PartialEq::eq);
+        both!("or_many", |x: Tdd, y: Tdd, c: bool| formed(eng.or_many(vec![x, y]), c), same_value);
+        both!("nor_many", |x: Tdd, y: Tdd, c: bool| formed(eng.nor_many(vec![x, y]), c), same_value);
+        both!("restrict_to_care", |x: Tdd, y: Tdd, c: bool| formed(eng.restrict_to_care(x, &y).map(crate::apply::restrict_to_care::RestrictionOutcome::into_tdd), c).and_then(|r| eng.and(r, &y)), same_value);
+        both!(
+            "substitute",
+            |x: Tdd, y: Tdd, c: bool| {
+                match v {
+                    Some(v) => formed(eng.substitute(x, &[(v, &y)]), c),
+                    None => Ok(x),
+                }
+            },
+            same_value
+        );
+    }
+}
+
+#[test]
+fn every_binary_entry_beside_a_region_answers_as_the_smooth_form_or_refuses() {
+    let eng = Engine::new();
+    let mut audit = Audit::default();
+    std::panic::set_hook(Box::new(|info| {
+        let at = info.location().map(ToString::to_string).unwrap_or_default();
+        if std::env::var_os("REGION_ENTRIES_TRACE").is_some() {
+            eprintln!("panic at {at}: {info}");
+        }
+        *PANIC_AT.lock().unwrap() = at;
+    }));
+    let mut cases = 0;
+    for seed in 0..600u64 {
+        let Some((home, n, f, g)) = region_case(&eng, seed, 10) else { continue };
+        let mut rng = Lcg::new(seed ^ 0xb1de);
+        let Some(b) = beside(&eng, &home, &g, n, &mut rng) else { continue };
+        cases += 1;
+        audit.case = format!("seed {seed}, {n} variables, {} regions", g.vtree().regions().count());
+        binary_audit_case(&mut audit, &eng, &f, &g, &b);
+    }
+    let _ = std::panic::take_hook();
+    let report = audit.report();
+    eprintln!("{cases} cases\n{report}");
+    assert!(cases > 150, "{cases} cases");
+    assert!(!report.contains("DIFFER") && !report.contains("PANIC"), "{report}");
+}
+
+/// `and_exists` refuses a summed operand before placing it, naming the
+/// operand's own level, as the other entries that refuse one do.
+#[test]
+fn and_exists_beside_a_region_refuses_before_placing() {
+    let eng = Engine::new();
+    let mut cases = 0;
+    for seed in 0..100u64 {
+        let Some((home, n, _, g)) = region_case(&eng, seed, 10) else { continue };
+        let Some(b) = beside(&eng, &home, &g, n, &mut Lcg::new(seed ^ 0xb1de)) else { continue };
+        cases += 1;
+        let own = g.require_structure().unwrap_err();
+        assert_eq!(eng.and_exists(g.clone(), b.clone(), &[]).unwrap_err(), own, "seed {seed}");
+        assert_eq!(eng.and_exists(b, g, &[]).unwrap_err(), own, "seed {seed}");
+    }
+    assert!(cases > 20, "{cases} cases");
+}
+
+/// The trim of a result sent the levels it dropped to the leaf at each
+/// chain's end, the region included, and left them owed a pass that reads
+/// their children: the next conjunction panicked.
+#[test]
+fn a_trimmed_result_owes_no_pass_at_a_leaf() {
+    let eng = Engine::new();
+    let seed = 470;
+    let (home, n, _, g) = region_case(&eng, seed, 10).unwrap();
+    let b = beside(&eng, &home, &g, n, &mut Lcg::new(seed ^ 0xb1de)).unwrap();
+    let r = eng.restrict_to_care(g.clone(), &b).unwrap().into_tdd();
+    assert!(same_value(&eng.and(r, &b).unwrap(), &eng.and(&g, &b).unwrap()));
 }

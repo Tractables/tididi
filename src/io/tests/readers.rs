@@ -1,4 +1,5 @@
-use crate::io::{IoError, read_tdd, write_tdd};
+use crate::io::{IoError, write_tdd};
+use super::read_tdd;
 use crate::test_helpers::assert_canonical;
 use crate::{Tdd, Vtree};
 use std::sync::Arc;

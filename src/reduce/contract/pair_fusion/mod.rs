@@ -92,10 +92,10 @@ pub(super) fn fuse_pairs_inner(
     scratch: &mut ContractScratch,
 ) -> Result<usize, OperationError> {
     debug_assert!(listed.is_none() || parent_filter.is_some_and(|p| p.len() == 1), "a list is of one parent's nodes");
-    // Weighted marginalization keeps its values in the `WeightStore` and
+    // A weight-marginal level keeps weight values and its
     // `marginal_counts` is `None`: the exact domain runs the weighted arm, a
     // bounded-precision domain is skipped (its addition is order-dependent).
-    let weighted = match tdd.weights.as_ref() {
+    let weighted = match tdd.weight_table() {
         Some(ws) if ws.is_bounded() => return Ok(0),
         Some(_) => true,
         None => false,
@@ -118,9 +118,9 @@ pub(super) fn fuse_pairs_inner(
             );
             continue;
         }
-        // Weighted reads and mints go through this level's `WeightStore` vec, so
-        // a marginal level with no store yet is not fusable.
-        if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
+        // Weighted reads and mints go through this level's values, so a level
+        // whose values its operation still holds is not fusable.
+        if weighted && tdd.levels[v.idx()].weights_held() {
             continue;
         }
         let boundary = Boundary { v, parent, side };

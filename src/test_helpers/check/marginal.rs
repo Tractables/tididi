@@ -126,10 +126,10 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
 /// Decide whether a group's exact sum can be stored without changing a pinned column.
 fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
     use crate::diagram::{ChildDecoder, ValueRef};
-    let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_var_leaf()) else {
+    if tdd.weights().is_none() || !tdd.vtree.node(v).is_var_leaf() {
         return true;
-    };
-    let col = ws.level(v.idx()).expect("weighted marginal leaf has a column");
+    }
+    let col = tdd.levels[v.idx()].weight_values().expect("weighted marginal leaf has a column");
     let mut sum = num_rational::BigRational::from_integer(0.into());
     for &raw in refs {
         let ValueRef::Slot(slot) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) else {
@@ -175,13 +175,12 @@ pub fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
 }
 
 /// How many slots a marginal level actually stores, in whichever domain it was
-/// marginal into: integer counts live inside the level, weighted values in the
-/// diagram's external store.
+/// marginal into.
 fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
     if tdd.levels[left_idx].is_weight_marginal() {
         return tdd
             .weights()
-            .and_then(|ws| ws.level(left_idx))
+            .and_then(|_| tdd.levels[left_idx].weight_values())
             .map_or(0, |c| c.len());
     }
     tdd.levels[left_idx].marginal_counts().map_or(0, |c| c.len())
@@ -408,7 +407,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     use crate::diagram::{leaf_canon_map, LeafLabel, LEAF_WIDTH};
     use crate::value::slots::referenced_marginal_slots;
     use crate::vtree::VtreeNode;
-    let Some(ws) = tdd.weights.as_ref() else {
+    let Some(ws) = tdd.weight_table() else {
         return Ok(());
     };
     let mut scratch = RefSlotScratch::default();
@@ -443,7 +442,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
             // minted a leaf-side ref without running
             // `canonicalize_leaf_refs_at_parent`.
             if !ws.is_bounded()
-                && let Some(col) = ws.level(i)
+                && let Some(col) = tdd.levels[i].weight_values()
             {
                 let canon = leaf_canon_map(col);
                 for &s in refs {
@@ -460,7 +459,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
                 }
             }
         }
-        let Some(col) = ws.level(i) else { continue };
+        let Some(col) = tdd.levels[i].weight_values() else { continue };
         if col.len() != LEAF_WIDTH {
             return Err(format!(
                 "weight-marginal leaf level {i} column holds {} values — it was \

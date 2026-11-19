@@ -34,9 +34,9 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use crate::test_helpers::{rat, toy_weighted};
 use std::sync::Arc;
 
-/// Slots the attached store holds for `level`.
+/// Slots `level` holds values for.
 fn store_len(tdd: &Tdd, level: VtreeIdx) -> usize {
-    with_ws(tdd, |ws| ws.level(level.idx()).map_or(0, |s| s.len()))
+    tdd.levels[level.idx()].weight_values().map_or(0, <[WeightValue]>::len)
 }
 
 /// Read the store the fixture attached to `tdd`.
@@ -129,13 +129,13 @@ fn weighted_leaf_fixture(
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
-    let mut ws = WeightStore::new(
+    let ws = WeightStore::new(
         RationalWeights::from_literals(weights),
         Arithmetic::ExactRational,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
     let vt = Arc::clone(&tdd.vtree);
-    marginalize_leaf_weighted(&crate::limits::Limits::new(), &mut tdd, right, &vt, &mut ws).unwrap();
+    marginalize_leaf_weighted(&crate::limits::Limits::new(), &mut tdd, right, &vt, &ws).unwrap();
     tdd.set_weights(ws).unwrap();
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),
@@ -151,7 +151,7 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
         panic!("assert_leaf_column_pinned: not a vtree leaf")
     };
-    let col = ws.level(leaf.idx()).expect("pinned leaf column");
+    let col = tdd.levels[leaf.idx()].weight_values().expect("pinned leaf column");
     assert_eq!(col.len(), LEAF_WIDTH, "the pinned column must keep exactly LEAF_WIDTH slots");
     assert_eq!(
         tdd.levels[leaf.idx()].slot_count(),
@@ -170,11 +170,11 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
 }
 
 /// Resolve a marginal-side ref to its exact value.
-fn marginal_value(ws: &WeightStore, marginal: VtreeIdx, raw: u32) -> BigRational {
+fn marginal_value(tdd: &Tdd, marginal: VtreeIdx, raw: u32) -> BigRational {
     let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) else {
         panic!("weighted marginal-side refs are bare slots")
     };
-    ws.level(marginal.idx()).expect("weighted level")[s as usize]
+    tdd.levels[marginal.idx()].weight_values().expect("weighted level")[s as usize]
         .clone()
         .into_rational_opt()
         .expect("fixture is exact-domain")
@@ -200,16 +200,16 @@ fn node_value(
             .leaf_val(var, LeafLabel::from_idx(p.left.0 as usize))
             .into_rational_opt()
             .expect("fixture is exact-domain");
-        acc += xw * marginal_value(ws, marginal, p.right.0);
+        acc += xw * marginal_value(tdd, marginal, p.right.0);
     }
     acc
 }
 
 /// Every marginal-side ref the parent still holds must resolve in bounds, and the
 /// level's live width (its slot count, which is what apply sizes its
-/// buffers from) must cover the whole WeightStore vec.
-fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, marginal: VtreeIdx) {
-    let store_len = ws.level(marginal.idx()).expect("weighted level").len();
+/// buffers from) must cover all of its values.
+fn assert_refs_and_width_in_sync(tdd: &Tdd, root: VtreeIdx, marginal: VtreeIdx) {
+    let store_len = tdd.levels[marginal.idx()].weight_values().expect("weighted level").len();
     assert_eq!(
         tdd.levels[marginal.idx()].slot_count(),
         store_len,
@@ -255,9 +255,9 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     let size_before = tdd.pair_count();
     let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
-        assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
+        assert_refs_and_width_in_sync(&tdd, root, marginal);
         let ps = tdd.levels[root.idx()].pairs_vec(0);
-        (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
+        (ps.len(), marginal_value(&tdd, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
     assert_eq!(groups, 1, "the +a/−a pair pair is one fusion group");
@@ -291,11 +291,11 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
     let before_other = with_ws(&tdd, |ws| node_value(&tdd, ws, root, marginal, 1));
     let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
-        assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
+        assert_refs_and_width_in_sync(&tdd, root, marginal);
         let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(1).to_vec();
         let values: Vec<BigRational> =
-            ps.iter().map(|p| marginal_value(ws, marginal, p.right.0)).collect();
-        let store = ws.level(marginal.idx()).expect("weighted level");
+            ps.iter().map(|p| marginal_value(&tdd, marginal, p.right.0)).collect();
+        let store = tdd.levels[marginal.idx()].weight_values().expect("weighted level");
         let unwrap = |i: usize| {
             store[i].clone().into_rational_opt().expect("fixture is exact-domain")
         };
@@ -334,10 +334,10 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     let size_before = tdd.pair_count();
     let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, values, after) = with_ws(&tdd, |ws| {
-        assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
+        assert_refs_and_width_in_sync(&tdd, root, marginal);
         let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
         let values: Vec<BigRational> =
-            ps.iter().map(|p| marginal_value(ws, marginal, p.right.0)).collect();
+            ps.iter().map(|p| marginal_value(&tdd, marginal, p.right.0)).collect();
         (ps, values, node_value(&tdd, ws, root, marginal, 0))
     });
 
@@ -379,9 +379,9 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     let size_before = tdd.pair_count();
     let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
-        assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
+        assert_refs_and_width_in_sync(&tdd, root, marginal);
         let ps = tdd.levels[root.idx()].pairs_vec(0);
-        (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
+        (ps.len(), marginal_value(&tdd, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
     assert_eq!(groups, 1);
@@ -408,18 +408,18 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
         &[a.clone(), rat(5, 7)],
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
-    let mut ws = WeightStore::new(
+    tdd.weights = Some(WeightStore::new(
         tdd.weights().unwrap().algebra().clone(),
         Arithmetic::SignedLog,
-    );
-    ws.set_level(
-        marginal.idx(),
+    ));
+    crate::test_helpers::set_weight_column(
+        &mut tdd,
+        marginal,
         vec![
             WeightValue::Log(SignedLog::from_rational(&a)),
             WeightValue::Log(SignedLog::from_rational(&rat(5, 7))),
         ],
     );
-    tdd.weights = Some(ws);
 
     let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let slots_before = store_len(&tdd, marginal);

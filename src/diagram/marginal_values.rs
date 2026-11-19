@@ -1,8 +1,7 @@
 //! Coordinated access to marginal payloads and their level metadata.
 //!
-//! Counts remain inline in the level; weighted columns remain in the side
-//! store to keep structural levels compact. Passes use this boundary to move,
-//! install or compact values without separately maintaining their slot count.
+//! Passes use this boundary to move, install or compact a level's values
+//! without separately maintaining its slot count.
 
 use super::{TddLevel, WeightStore, WeightValue};
 use crate::value::{CountRead, CountRef};
@@ -19,7 +18,7 @@ pub(crate) enum Compaction {
     /// merged onto an earlier equal one.
     Counts { len: usize, merged: usize },
     /// A weighted level none of whose slots is referenced: its width goes
-    /// to zero, with or without a column in the store.
+    /// to zero, its values left as they are.
     NoSlots,
     /// The weighted column keeps `len` slots, `merged` merged.
     Weights { len: usize, merged: usize },
@@ -32,11 +31,11 @@ pub(crate) enum MarginalValues<'a> {
 }
 
 impl<'a> MarginalValues<'a> {
-    pub(crate) fn read(level: &'a TddLevel, weights: Option<&'a WeightStore>, index: usize) -> Option<Self> {
+    pub(crate) fn read(level: &'a TddLevel) -> Option<Self> {
         if let Some(counts) = level.count_column() {
             Some(Self::Counts(counts))
         } else if level.is_weight_marginal() {
-            Some(Self::Weights(weights.expect("weighted level requires its store").level(index).unwrap_or(&[])))
+            Some(Self::Weights(level.weight_values().unwrap_or(&[])))
         } else {
             None
         }
@@ -58,13 +57,11 @@ impl<'a> MarginalValues<'a> {
 /// updated by the enclosing diagram edit, after this storage edit completes.
 pub(crate) struct MarginalStorage<'a> {
     level: &'a mut TddLevel,
-    weights: Option<&'a mut WeightStore>,
-    index: usize,
 }
 
 impl<'a> MarginalStorage<'a> {
-    pub(crate) fn new(level: &'a mut TddLevel, weights: Option<&'a mut WeightStore>, index: usize) -> Self {
-        Self { level, weights, index }
+    pub(crate) fn new(level: &'a mut TddLevel) -> Self {
+        Self { level }
     }
 
     pub(crate) fn install_counts(&mut self, counts: Vec<u128>, big: Option<super::CountOverflow>) {
@@ -72,23 +69,19 @@ impl<'a> MarginalStorage<'a> {
     }
 
     pub(crate) fn install_weights(&mut self, column: Vec<WeightValue>) {
-        let width = column.len() as u32;
-        self.weights.as_mut().expect("weighted installation requires its store").set_level(self.index, column);
-        self.level.become_marginal_weighted(width);
+        self.level.become_marginal_weighted(column);
     }
 
     /// Make the level weight-marginal at `width` slots whose values the
-    /// caller holds: the store keeps no column for it until the caller
-    /// installs one with [`Self::install_weights`].
+    /// caller holds until it installs them with [`Self::install_weights`].
     pub(crate) fn hold_weights(&mut self, width: u32) {
-        self.weights.as_mut().expect("weighted installation requires its store").take_level(self.index);
-        self.level.become_marginal_weighted(width);
+        self.level.become_held_weighted(width);
     }
 
     /// Decide the compaction to the referenced slots, merging equal values,
     /// without moving any: `remap[old]` is written for every referenced slot,
     /// and [`compact`](Self::compact) then moves them. With `merge` off, a
-    /// bounded-precision weighted store keeps equal values in their own
+    /// bounded-precision weighted level keeps equal values in their own
     /// slots, which invariant 10 allows it; every other store merges
     /// regardless.
     /// Weighted leaf columns must never be passed here: they are pinned by label.
@@ -96,7 +89,7 @@ impl<'a> MarginalStorage<'a> {
     /// # Errors
     ///
     /// `OverBudget` where `lim` refuses the map that finds equal values.
-    pub(crate) fn plan_compact(&self, lim: &Limits, referenced: &[u32], remap: &mut [u32], merge: bool) -> Result<Compaction, OperationError> {
+    pub(crate) fn plan_compact(&self, lim: &Limits, weights: Option<&WeightStore>, referenced: &[u32], remap: &mut [u32], merge: bool) -> Result<Compaction, OperationError> {
         let kept = referenced.iter().map(|&i| i as usize);
         if let Some(counts) = self.level.marginal_counts() {
             if counts.is_empty() { return Ok(Compaction::Unchanged); }
@@ -107,8 +100,8 @@ impl<'a> MarginalStorage<'a> {
         }
         if !self.level.is_weight_marginal() { return Ok(Compaction::Unchanged); }
         if remap.is_empty() { return Ok(Compaction::NoSlots); }
-        let weights = self.weights.as_deref().expect("weighted compaction requires its store");
-        let values = weights.level(self.index).expect("a nonempty weighted store has a column");
+        let weights = weights.expect("weighted compaction requires its store");
+        let values = self.level.weight_values().expect("a nonempty weighted level has its values");
         let (len, merged) = match weights.is_bounded() {
             true if !merge => (plan_slots_apart(kept, remap), 0),
             // Two words a key, where a `WeightKey` can hold a big rational.
@@ -152,8 +145,7 @@ impl<'a> MarginalStorage<'a> {
                 0
             }
             Compaction::Weights { len, merged } => {
-                let weights = self.weights.as_mut().expect("weighted compaction requires its store");
-                let values = weights.level_vals_mut(self.index).expect("a nonempty weighted store has a column");
+                let values = self.level.weight_values_mut().expect("a weighted compaction of a weighted level");
                 move_slots(values.as_mut_slice(), kept, |values, dst, src| values.swap(dst, src), remap);
                 truncate_with_slack(values, len);
                 self.level.set_weight_width(len as u32);
@@ -170,27 +162,20 @@ impl<'a> MarginalStorage<'a> {
         }
         if self.level.is_weight_marginal() && self.level.slot_count() != 0 && !leaf {
             self.level.set_weight_width(0);
-            if let Some(weights) = self.weights.as_mut() { weights.set_level(self.index, Vec::new()); }
+            if let Some(values) = self.level.weight_values_mut() { *values = Vec::new(); }
         }
     }
 
-    /// Move the source's structure and optional weighted payload to this
-    /// level. The source is left with what this level held, an empty level
-    /// with its arenas where the destination was taken from the pool, so
-    /// that they go back to it with the source's levels.
-    pub(crate) fn move_from(&mut self, source: &mut TddLevel, weights: Option<&mut WeightStore>, index: usize) {
-        if source.is_weight_marginal()
-            && let (Some(destination), Some(weights)) = (self.weights.as_mut(), weights)
-            && let Some(values) = weights.take_level(index)
-        {
-            destination.set_level(self.index, values);
-        }
+    /// Move the source's structure or values to this level. The source is
+    /// left with what this level held, an empty level with its arenas where
+    /// the destination was taken from the pool, so that they go back to it
+    /// with the source's levels.
+    pub(crate) fn move_from(&mut self, source: &mut TddLevel) {
         std::mem::swap(self.level, source);
     }
 
     pub(crate) fn push_weight(&mut self, eng: &crate::Engine, value: WeightValue) -> Result<u32, crate::OperationError> {
-        let values = self.weights.as_mut().expect("weighted append requires its store")
-            .level_vals_mut(self.index).expect("weighted level has a column");
+        let values = self.level.weight_values_mut().expect("weighted level has a column");
         let slot = eng.limits().next_slot(values.len())?;
         eng.limits().try_push(values, value)?;
         self.level.set_weight_width(slot + 1);

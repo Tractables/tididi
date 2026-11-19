@@ -3,7 +3,8 @@
 //! Use [`write_tdd`] and [`read_tdd`] with streams, or [`save_tdd`] and [`load_tdd`]
 //! with paths. Save the vtree separately using [`Vtree::to_text`](crate::Vtree::to_text)
 //! and restore it with [`Vtree::from_text`](crate::Vtree::from_text).
-//! A loaded diagram shares the vtree allocation passed to its reader.
+//! A loaded diagram shares the vtree allocation passed to its reader, except
+//! on a home, where it is on the projection on the leaves it uses.
 //! [`write_tdd_binary`], [`read_tdd_binary`], [`save_tdd_binary`] and
 //! [`load_tdd_binary`] do the same in the [binary format](#binary-format), which
 //! is smaller and is read without parsing text.
@@ -34,7 +35,10 @@
 //! where `var` is a one-based variable number. Vtree IDs are file-local labels
 //! in `0..num_vtree_nodes`. The writer uses the same labels as [`Vtree::to_text`](crate::Vtree::to_text);
 //! the reader matches leaf variables and child relationships to the supplied
-//! vtree, regardless of its in-memory numbering.
+//! vtree, regardless of its in-memory numbering. A diagram on a projection of
+//! a home is written over that projection, with no leaf index `0` standing
+//! for a variable it does not use, and a reader given any vtree on that home
+//! accepts it.
 //!
 //! Each `I` record defines a node as a disjunction of pairs. The pair sides are
 //! zero-based local indices into the declared left and right child levels.
@@ -162,6 +166,12 @@ pub enum IoError {
     /// file whose header or checksum is wrong is refused here before any of
     /// it is parsed.
     Format(String),
+    /// Reading onto a projection of a home: the allocator refused memory
+    /// to trim the diagram read onto the projection of the leaves it uses.
+    /// The trim runs with no memory budget installed, so no
+    /// [`LimitConfig`](crate::limits::LimitConfig) avoids this; the data is
+    /// valid.
+    OverBudget,
 }
 
 impl std::fmt::Display for IoError {
@@ -169,6 +179,10 @@ impl std::fmt::Display for IoError {
         match self {
             IoError::Io(e) => write!(f, "{e}"),
             IoError::Format(m) => f.write_str(m),
+            IoError::OverBudget => f.write_str(
+                "the allocator refused memory to trim the diagram read onto the leaves it uses \
+                 (no memory budget applies to a reader)",
+            ),
         }
     }
 }
@@ -177,7 +191,7 @@ impl std::error::Error for IoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             IoError::Io(e) => Some(e),
-            IoError::Format(_) => None,
+            IoError::Format(_) | IoError::OverBudget => None,
         }
     }
 }
@@ -195,6 +209,19 @@ use crate::diagram::Tdd;
 
 /// The `.tdd` format version emitted by the writer and accepted by the reader.
 const TDD_FORMAT_VERSION: u32 = 1;
+
+/// What a reader answers for a vtree with a region, which no file describes.
+const REGION_REFUSED: &str = "the vtree read against has a summed-out region, which no file describes";
+
+/// [`IoError::OverBudget`] for the refused trim on a home, else `format`'s
+/// error.
+#[cold]
+fn build_error(e: crate::diagram::TddBuildError, format: impl FnOnce(crate::diagram::TddBuildError) -> IoError) -> IoError {
+    match e {
+        crate::diagram::TddBuildError::OverBudget => IoError::OverBudget,
+        e => format(e),
+    }
+}
 
 /// Reject marginal values that structural serialization and rendering cannot represent.
 fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {

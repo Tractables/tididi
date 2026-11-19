@@ -228,6 +228,7 @@ impl From<crate::diagram::TddBuildError> for OperationError {
     fn from(source: crate::diagram::TddBuildError) -> Self {
         match source {
             crate::diagram::TddBuildError::IncompatibleWeights => OperationError::IncompatibleWeights,
+            crate::diagram::TddBuildError::OverBudget => OperationError::OverBudget,
             other => OperationError::InvalidDiagram(other),
         }
     }

@@ -40,6 +40,7 @@ impl Vtree {
         let (mut lifted, _) =
             Self::from_nodes_with_map(nodes, old.root(), old.num_vars()).expect("chains moved whole form one tree");
         lifted.context = Arc::clone(&old.context);
+        lifted.keep_weights_of(old);
         Some(Home::new(lifted))
     }
 }

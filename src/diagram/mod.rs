@@ -33,7 +33,7 @@
 //!   [`TddLevel::marginal_counts`] holds one model count per node. In weighted
 //!   mode ([`Tdd::set_weights`]) the level is weight-marginal instead
 //!   ([`TddLevel::is_weight_marginal`]): `marginal_counts` is `None` and the
-//!   values are [`WeightStore::level`]`(t.idx())` of the diagram's store. A
+//!   values are [`TddLevel::weight_values`]. A
 //!   pair whose child level is marginal does not hold a plain index on that
 //!   side; decode it with the child's [`TddLevel::child_decoder`], which yields
 //!   either the count itself or an index into the child's values.
@@ -206,7 +206,7 @@ pub(crate) use marginal_ref::{
 // semiring
 pub use semiring::{ColumnAlgebra, EvalAlgebra, LiteralWeights, RationalWeights, ScaledFloat, SignedLog, SlotPairs, WeightValue};
 pub(crate) use semiring::{bounded_key, weight_key, InlineSlots, ScaledSum, WeightKey};
-pub use weights::{Arithmetic, WeightStore};
+pub use weights::{Arithmetic, WeightStore, Weights};
 
 // level
 pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Nodes, NodesIter, Pairs, StoredPairs, TddLevel, FLOOR};
@@ -222,6 +222,7 @@ pub(crate) use pool::{LevelBuffer, LevelPool};
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
+pub(crate) use builder::{check_seated_pairs, trim_on_home};
 pub use pair_index::PairIndex;
 pub use tdd::Tdd;
 pub use crate::build::models::RowSelection;

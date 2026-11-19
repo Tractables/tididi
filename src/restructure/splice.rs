@@ -25,6 +25,15 @@ impl Tdd {
     /// determinism invariants of [`TddBuilder`](crate::diagram::TddBuilder).
     /// Invalid references can cause out-of-bounds reads in later operations.
     ///
+    /// On a home the operands are padded: each sits on leaves it does not
+    /// use, which no diagram an operation returns on a home does. The result
+    /// sits on the projection of the leaves it uses only when `t` is the root
+    /// of the vtree and each operand reads every leaf under its own side of
+    /// `t` and names none true. Above `t` it keeps `self`'s pass-through
+    /// levels, which name the leaves outside `t` true, and nothing here
+    /// reduces them. Two diagrams on projections of one home with disjoint
+    /// leaves are conjoined into that form by [`Engine::and`].
+    ///
     /// # Panics
     ///
     /// If either diagram's level at `t` does not hold exactly one stored node, or
@@ -75,14 +84,8 @@ impl Tdd {
         self.dirty.restore_fused(fused, &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
 
-        if let Some(rw) = other.detach_weights() {
-            match self.detach_weights() {
-                Some(mut lw) => {
-                    lw.absorb(rw);
-                    self.weights = Some(lw);
-                }
-                None => self.weights = Some(rw),
-            }
+        if self.weights.is_none() {
+            self.weights = other.detach_weights();
         }
     }
 }

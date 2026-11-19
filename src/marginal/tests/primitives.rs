@@ -205,7 +205,6 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
         "subsumed weighted levels hold data: {viol:?}"
     );
 
-    let ws = tdd.weights().expect("attached above");
     let nested = nested_marginal_levels(&tdd);
     assert!(
         !nested.is_empty(),
@@ -213,7 +212,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     );
     for i in nested {
         assert!(
-            ws.level(i).map(|v| v.is_empty()).unwrap_or(true),
+            tdd.levels[i].weight_values().is_none_or(<[_]>::is_empty),
             "subsumed weighted level {i} still has WeightStore values"
         );
     }

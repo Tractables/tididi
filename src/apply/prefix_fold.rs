@@ -341,13 +341,13 @@ impl Engine {
     ) -> Result<Tdd, PrefixFoldError> {
         let lim = self.limits();
         let _op = lim.enter()?;
+        points.require_structure()?;
+        values.require_structure()?;
         let [points, values] = crate::apply::extend::on_one(self, [Cow::Borrowed(points), Cow::Borrowed(values)])?;
         let (points, values) = (&*points, &*values);
         let vtree = points.vtree();
         let counted = monoid.count(1).is_some();
         let layout = Layout::new(lim, vtree, order, value_vars, counted)?;
-        points.require_structure()?;
-        values.require_structure()?;
         if points.is_zero() || values.is_zero() {
             let FoldCodes {
                 into,

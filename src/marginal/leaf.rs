@@ -145,10 +145,9 @@ fn canonicalize_leaf_refs_at_parent(
 ///
 /// # Soundness
 ///
-/// The column installed here is pinned (architecture invariant 11): it is
-/// shared by every diagram whose store this one's was merged into, while a
-/// parent-ref rewrite reaches one `Tdd` only, so compacting, reordering or
-/// appending to it would desynchronise every other holder.
+/// The column installed here is pinned (architecture invariant 11): readers
+/// decode a leaf-side reference as a label, so compacting, reordering or
+/// appending to it would desynchronise the column from the references.
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)
 /// decides the invariant.
 ///
@@ -162,7 +161,7 @@ pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
-    ws: &mut WeightStore,
+    ws: &WeightStore,
 ) -> Result<(), OperationError> {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
@@ -178,13 +177,10 @@ pub(crate) fn marginalize_leaf_weighted(
         (LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg)
     ));
     let values: Vec<WeightValue> = leaf_column_vals(ws, var);
-    // A subsumed leaf (parent already marginal) gets the same full column: the
-    // column is shared with every diagram this one's store reaches, and another
-    // holder whose leaf level is still structural decodes its bare leaf-label
-    // refs against it, so a shorter column would misread there. Subsumption
-    // only skips the ref rewrite and the parent invalidation: a marginal parent
-    // has folded this leaf's bases into its own aggregate and has no leaf-side
-    // pairs left.
+    // A subsumed leaf (parent already marginal) gets the same full column.
+    // Subsumption only skips the ref rewrite and the parent invalidation: a
+    // marginal parent has folded this leaf's bases into its own aggregate and
+    // has no leaf-side pairs left.
     if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
         tdd.rewrite_level(parent, |plevel| {
             // Exact domain only; see the doc above.
@@ -194,7 +190,7 @@ pub(crate) fn marginalize_leaf_weighted(
             }
         })?;
     }
-    crate::diagram::MarginalStorage::new(&mut tdd.levels[leaf.idx()], Some(ws), leaf.idx()).install_weights(values);
+    crate::diagram::MarginalStorage::new(&mut tdd.levels[leaf.idx()]).install_weights(values);
     Ok(())
 }
 

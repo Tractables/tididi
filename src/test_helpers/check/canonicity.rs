@@ -34,7 +34,9 @@ pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
 
         // Check for collisions: two nodes at the same level with equal
         // signatures likely compute the same function (non-canonical).
-        for t in vtree.bottomup() {
+        // The slots of a region not summed out are labels, of which only One
+        // has a meaning.
+        for t in vtree.bottomup().filter(|&t| !vtree.node(t).is_region() || tdd.level(t).is_marginal()) {
             let level_sigs = &signatures[t.idx()];
             let mut seen = HashSet::with_capacity(level_sigs.len());
             for (i, &sig) in level_sigs.iter().enumerate() {

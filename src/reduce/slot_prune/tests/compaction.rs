@@ -39,10 +39,10 @@ fn weighted_prune_merges_equal_value_slots() {
     );
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
+    let slots_before = tdd.levels[v.idx()].weight_values().unwrap().len();
     let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
-    let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
+    let new_vals = exact_vals(tdd.levels[v.idx()].weight_values().unwrap());
     let width = tdd.levels[v.idx()].slot_count();
     let mut buf = crate::value::slots::RefSlotScratch::default();
     let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
@@ -73,10 +73,10 @@ fn weighted_prune_compacts_orphans() {
     );
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
+    let slots_before = tdd.levels[v.idx()].weight_values().unwrap().len();
     let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
-    let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
+    let new_vals = exact_vals(tdd.levels[v.idx()].weight_values().unwrap());
     let width = tdd.levels[v.idx()].slot_count();
     let mut buf = crate::value::slots::RefSlotScratch::default();
     let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
@@ -107,9 +107,8 @@ fn toy_scaled_sevenths(
     let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
     let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
-    ws.set_level(v.idx(), sevenths(vals).into_iter().map(WeightValue::scaled).collect());
-    tdd.weights = Some(ws);
+    tdd.weights = Some(crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat));
+    crate::test_helpers::set_weight_column(&mut tdd, v, sevenths(vals).into_iter().map(WeightValue::scaled).collect());
     (tdd, v, parent, side)
 }
 
@@ -131,7 +130,7 @@ fn a_bounded_prune_merges_equal_values() {
 
         let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
-        let values = tdd.weights().unwrap().level(v.idx()).unwrap();
+        let values = tdd.levels[v.idx()].weight_values().unwrap();
         let got: Vec<ScaledFloat> = values.iter().map(|v| *v.as_scaled().unwrap()).collect();
         assert_eq!(got, sevenths(kept), "{vals:?}");
         assert_eq!(tdd.levels[v.idx()].slot_count(), kept.len(), "{vals:?}");
@@ -162,7 +161,7 @@ fn a_large_bounded_level_merges_where_its_sample_repeats() {
 
         let merged = prune_value_slots(eng, &mut tdd).unwrap();
 
-        let values = tdd.weights().unwrap().level(v.idx()).unwrap();
+        let values = tdd.levels[v.idx()].weight_values().unwrap();
         assert_eq!(values.len(), kept, "{distinct} distinct");
         assert_eq!(tdd.levels[v.idx()].slot_count(), kept, "{distinct} distinct");
         assert_eq!(merged.is_empty(), kept == n, "{distinct} distinct");
@@ -351,8 +350,8 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged = {
-            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx());
-            let plan = storage.plan_compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()]);
+            let plan = storage.plan_compact(crate::Engine::new().limits(), None, &[1, 2, 3, 5], &mut remap, true).unwrap();
             storage.compact(&[1, 2, 3, 5], &remap, plan)
         };
 
@@ -425,12 +424,12 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged = {
-            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx());
-            let plan = storage.plan_compact(crate::Engine::new().limits(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+            let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()]);
+            let plan = storage.plan_compact(crate::Engine::new().limits(), tdd.weights.as_ref(), &[1, 2, 3, 5], &mut remap, true).unwrap();
             storage.compact(&[1, 2, 3, 5], &remap, plan)
         };
 
-        let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
+        let values = super::exact_vals(tdd.levels[v.idx()].weight_values().unwrap());
 
         assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
@@ -446,8 +445,8 @@ mod compact_store_in_place_tests {
 /// A boundary store's values and its parent's pairs, as raw references.
 fn boundary_state(tdd: &Tdd) -> (Vec<String>, Vec<Vec<(u32, u32)>>) {
     let (v, parent, _) = boundary_marginal_levels(tdd)[0];
-    let values = match tdd.weights() {
-        Some(ws) => ws.level(v.idx()).unwrap().iter().map(|w| format!("{w:?}")).collect(),
+    let values = match tdd.levels[v.idx()].weight_values() {
+        Some(values) => values.iter().map(|w| format!("{w:?}")).collect(),
         None => tdd.levels[v.idx()].marginal_counts().unwrap().iter().map(u128::to_string).collect(),
     };
     let pairs = tdd.levels[parent.idx()]

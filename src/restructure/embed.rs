@@ -412,6 +412,7 @@ impl Engine {
         weights: Option<WeightStore>,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
+        let (weights, on_weighted_home) = destination_weights(into, weights)?;
         let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level(), Free::Build)?;
         // Integer counts reach a parent through inline references, which
         // do not survive a new parent; only weighted values are placed.
@@ -433,12 +434,27 @@ impl Engine {
             assemble_marginal(self, tdd, into, &plan, store)?
         } else {
             let mut result = assemble(self, tdd, into, &plan)?;
-            if let Some(store) = weights {
+            if let Some(store) = weights.filter(|_| !on_weighted_home) {
                 result.set_weights(store).map_err(OperationError::from)?;
             }
             result
         };
+        let mut result = result;
+        if on_weighted_home {
+            result.weights = None;
+        }
         Ok((result, plan.embedding))
+    }
+}
+
+/// The weights a diagram placed on `into` is read under: those given, or
+/// on a weighted home the home's, which the result does not carry; and
+/// whether `into` is on a weighted home.
+pub(super) fn destination_weights(into: &Vtree, weights: Option<WeightStore>) -> Result<(Option<WeightStore>, bool), EmbedError> {
+    match (into.weights(), weights) {
+        (None, weights) => Ok((weights, false)),
+        (Some(home), None) => Ok((Some(home.clone()), true)),
+        (Some(_), Some(_)) => Err(EmbedError::DestinationWeights(crate::diagram::TddBuildError::IncompatibleWeights)),
     }
 }
 
@@ -967,8 +983,9 @@ fn refuse_free_region(into: &Vtree, targets: &[Target]) -> Result<(), EmbedError
 pub(crate) enum Free {
     /// Build each: one node, true on both sides. A free region is refused.
     Build,
-    /// Build each internal one and leave a free region empty, for an
-    /// operation that takes another operand's region there.
+    /// Build each internal one; a free region keeps an empty level that is
+    /// not summed out and is named `One`, as a free variable leaf is, for an
+    /// operand that another operand's sum meets there.
     Operand,
     /// Leave each empty, for a conjunction that reads it as the level it
     /// stands for and takes the other operand's level there; a projection,
@@ -1129,7 +1146,7 @@ fn assemble_view<'a>(
 /// small counts are inline references there instead of slots.
 fn is_region_alone(tdd: &Tdd, into: &Vtree) -> bool {
     tdd.vtree().num_nodes() == 1
-        && tdd.weights.is_none()
+        && tdd.weight_table().is_none()
         && tdd.vtree().node(tdd.vtree().root()).is_region()
         && into.num_nodes() > 1
 }
@@ -1221,10 +1238,6 @@ fn seat_view<'a>(
             levels[t.idx()].close_held_pairs();
         }
     }
-    let weights = weights.map(|mut weights| {
-        weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
-        weights
-    });
     let mut result = Tdd { vtree: Arc::clone(into), levels: levels.into(), weights, output, dirty };
     // The view closed what it built, and the levels taken unchanged were
     // closed where `tdd`'s were.
@@ -1245,7 +1258,7 @@ fn seat_view<'a>(
 /// What [`seat_view`] can be refused once the view is built, taken before
 /// anything moves: the free levels' work units where they are built, a
 /// borrowed diagram's own levels copied into `levels`, the result's level
-/// array, and its weight store copied when `copy_weights`. `at` is the
+/// array, and its weights shared when `copy_weights`. `at` is the
 /// view's table, and `borrowed` the diagram when it is copied.
 #[expect(clippy::too_many_arguments, reason = "the placement's parts, taken apart by the view")]
 fn take_placement(
@@ -1269,7 +1282,7 @@ fn take_placement(
         gate.flush()?;
     }
     let weights = match borrowed.and_then(|source| source.weights.as_ref()) {
-        Some(weights) if copy_weights => Some(weights.try_clone_on(lim)?),
+        Some(weights) if copy_weights => Some(weights.clone()),
         _ => None,
     };
     if let Some(source) = borrowed {

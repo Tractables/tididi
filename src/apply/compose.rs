@@ -188,11 +188,11 @@ impl Engine {
         else_branch: Tdd,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let [mut condition, mut then_branch, mut else_branch] =
-            super::extend::on_one(self, [condition, then_branch, else_branch].map(Cow::Owned))?.map(Cow::into_owned);
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
+        let [mut condition, mut then_branch, mut else_branch] =
+            super::extend::on_one(self, [condition, then_branch, else_branch].map(Cow::Owned))?.map(Cow::into_owned);
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let mut condition = SharedCircuit::new(condition, 2);
         let yes = self.and(condition.take(self)?, then_branch)?;
@@ -208,9 +208,9 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         f.require_structure()?;
         g.require_structure()?;
+        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         super::prepare_weights(&mut [&mut f, &mut g])?;
         let mut f = SharedCircuit::new(f, 2);
         let mut g = SharedCircuit::new(g, 2);
@@ -281,9 +281,9 @@ impl Engine {
         plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         f.require_structure()?;
         g.require_structure()?;
+        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         super::prepare_weights(&mut [&mut f, &mut g])?;
         // Quantifying a weighted operand away entirely would replace its store
         // by an empty one, and which of the two stores the product then carries

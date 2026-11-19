@@ -245,20 +245,14 @@ fn join_at_root(
         true => ChildPair::new(f.output.local, g.output.local),
         false => ChildPair::new(g.output.local, f.output.local),
     };
-    let copied = |op: &Cow<'_, Tdd>| match op {
-        Cow::Borrowed(source) => source.weights.as_ref().map(|w| w.try_clone_on(lim)).transpose(),
-        Cow::Owned(_) => Ok(None),
-    };
-    let stores = [copied(&f)?, copied(&g)?];
     let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?, None);
     let (levels, weights) = assembly.parts_mut();
     // A moved level owes the reductions it owed in its operand, at its image.
     let mut carried = Dirty::default();
-    for ((operand, map), store) in [(f, f_map), (g, g_map)].into_iter().zip(stores) {
-        let mut store = store;
+    for (operand, map) in [(f, f_map), (g, g_map)] {
+        if weights.is_none() { *weights = operand.weights.clone(); }
         let mut owed = match operand {
             Cow::Owned(mut moved) => {
-                store = moved.weights.take();
                 let source = &mut moved.levels[..];
                 for (from, &to) in map.iter().enumerate() {
                     std::mem::swap(&mut levels[to.idx()], &mut source[from]);
@@ -275,14 +269,6 @@ fn join_at_root(
         };
         owed.remap(map);
         carried.merge_under(owed);
-        // A store keys its columns by level, so they follow the levels' images.
-        if let Some(mut store) = store {
-            store.rekey_levels(|level| Some(map[level].idx()));
-            match weights {
-                Some(merged) => merged.absorb(store),
-                None => *weights = Some(store),
-            }
-        }
     }
     carried.dedup_above(into.num_nodes());
     let root = into.root();

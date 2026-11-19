@@ -136,7 +136,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     let eng = Engine::new();
     let local = Arc::new(Vtree::balanced(3));
     // `balanced(3)`'s root has an internal right child: marginalizing it leaves
-    // a store column no reader can recompute from the weight table alone, and a
+    // a column no reader can recompute from the weight table alone, and a
     // structural root above it to reference that column.
     let (_, inner) = local.children(local.root());
     let clauses = [vec![vec![1, 2], vec![2, -3]], vec![vec![-1, 3]]];
@@ -221,7 +221,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
             .expect("one part covers every variable exactly once");
     assert_eq!(rational_value(&grafted), want, "the store did not survive the round trip through the graft");
 
-    // A marginalized level's values live in the store, so the detach is refused.
+    // A marginalized level's values need the store, so the detach is refused.
     let mut part = compile_clauses(&local, &clauses);
     part.set_weights(store()).unwrap();
     eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");

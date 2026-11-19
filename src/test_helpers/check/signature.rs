@@ -65,7 +65,7 @@ fn side_signature(child: ChildRef, child_signatures: &[u64]) -> u64 {
 pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -> Vec<Vec<u64>> {
     let vtree = &tdd.vtree;
     let mut signatures: Vec<Vec<u64>> = (0..tdd.levels.len())
-        .map(|i| vec![0u64; tdd.reference_slot_count(VtreeIdx(i as u32))])
+        .map(|i| vec![0u64; super::checked_width(tdd, VtreeIdx(i as u32))])
         .collect();
 
     for (t, var) in vtree.leaf_bottomup() {
@@ -83,6 +83,12 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
             };
         }
     }
+    // A region not summed out is read as true over its extent: an
+    // indeterminate of its own, drawn from this round's assignment.
+    let draw = pos_val.iter().fold(1u64, |a, &p| mod_add(mod_mul(a, 31), p));
+    for t in vtree.regions().filter(|&t| !tdd.level(t).is_marginal()) {
+        signatures[t.idx()][LeafLabel::One as usize] = mod_add(mod_mul(draw, u64::from(t.0) + 2), 1);
+    }
     for (t, left, right) in vtree.internal_bottomup() {
         let level = tdd.level(t);
         // Marginal level: each node's signature (and mass) is its stored count
@@ -98,7 +104,7 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
                     let big_i = big.and_then(|b| b.get(i));
                     signatures[t.idx()][i] = count_mod_p(c, big_i);
                 }
-            } else if let Some(values) = tdd.weights().and_then(|ws| ws.level(t.idx())) {
+            } else if let Some(values) = level.weight_values() {
                 for (i, value) in values.iter().enumerate() {
                     signatures[t.idx()][i] = weight_mod_p(value);
                 }

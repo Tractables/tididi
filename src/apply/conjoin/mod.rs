@@ -1022,7 +1022,7 @@ impl crate::Engine {
         // would pay to build it.
         let vtree = Arc::clone(f.vtree());
         let mut mask = target_mask(self, &vtree, targets, true)?;
-        let unweighted = f.weights.is_none() && g.weights.is_none();
+        let unweighted = f.weight_table().is_none() && g.weight_table().is_none();
         if unweighted {
             collapse_target_subtrees(self, &vtree, &f, &g, &mut mask)?;
         }
@@ -1037,12 +1037,7 @@ impl crate::Engine {
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
         }
-        // On a home's root, an internal summed-out level is a form a
-        // projection cannot hold, so the trim would refuse it.
-        if out.has_marginal_level() {
-            return Ok(out);
-        }
-        extend::trimmed(self, out)
+        Ok(out)
     }
 
     /// Conjoin two diagrams and sum out the variables `summable` names.
@@ -1133,7 +1128,7 @@ impl crate::Engine {
         let [mut f, mut g] = extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
         let targets = translated.as_deref().unwrap_or(targets);
-        if f.weights.is_some() || g.weights.is_some() {
+        if f.weight_table().is_some() || g.weight_table().is_some() {
             let out = match f.vtree().on_home() {
                 true => self.and_marginalizing_where(f, g, |_| true)?,
                 false => self.and_marginalizing(f, g, targets)?,
@@ -1207,7 +1202,7 @@ fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable:
     // A root summed in the sweep keeps one slot per product node; the fold
     // after it merges equal values and renumbers the output.
     mask[vtree.root().idx()] = false;
-    let unweighted = f.weights.is_none() && g.weights.is_none();
+    let unweighted = f.weight_table().is_none() && g.weight_table().is_none();
     if unweighted {
         collapse_target_subtrees(eng, &vtree, &f, &g, &mut mask)?;
     }

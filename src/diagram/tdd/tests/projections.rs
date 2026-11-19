@@ -609,7 +609,9 @@ fn diagrams_on_projections_are_written_and_read() {
         crate::io::write_tdd_binary(&mut bytes, t).unwrap();
         let binary = crate::io::read_tdd_binary(&mut bytes.as_slice(), &vtree).unwrap();
         for back in [read, binary] {
-            assert!(Arc::ptr_eq(back.vtree(), &vtree));
+            assert!(back.vtree().is_on(hm));
+            // f pads x2 and x4 with `One`; read onto the home it is on g's leaves.
+            assert_eq!(back.vtree().num_leaves(), if vtree.num_nodes() > 0 { 2 } else { 0 });
             assert_eq!((back.is_one(), back.is_zero()), (t.is_one(), t.is_zero()));
             assert_eq!(back.model_count().unwrap(), t.model_count().unwrap());
             if vtree.num_nodes() > 0 {
@@ -619,7 +621,8 @@ fn diagrams_on_projections_are_written_and_read() {
     }
     let mut text = Vec::new();
     crate::io::write_tdd(&mut text, &one).unwrap();
-    assert!(crate::io::read_tdd(&mut text.as_slice(), g.vtree()).is_err());
+    let back = crate::io::read_tdd(&mut text.as_slice(), g.vtree()).unwrap();
+    assert!(back.is_one() && back.vtree().num_nodes() == 0 && back.vtree().is_on(hm));
 }
 
 #[test]

@@ -15,8 +15,9 @@ fn invariant_checkers_are_active_in_release_integration_tests() {
     let root = vtree.root();
     let output = builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
-    let f = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
-    // Storage-valid but deliberately noncanonical: two nodes have identical content.
+    // Two nodes with identical content: `finish` refuses the repeated pair,
+    // and the references are valid, so the unchecked seat may take it.
+    let f = unsafe { builder.finish_unchecked(TddNodeId { vtree: root, local: output }) };
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_canonical(&f))).is_err());
     let valid = Tdd::cube(&vtree, [1, -2]).unwrap();
     assert_canonical(&valid);

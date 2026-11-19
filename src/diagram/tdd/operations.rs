@@ -1173,7 +1173,13 @@ impl Tdd {
     /// A region ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region))
     /// stays, unless it holds counts and every reference into it names
     /// 2^(its extent's size): it is then true over its extent, which it
-    /// leaves free, and goes like a leaf named as true.
+    /// leaves free, and goes like a leaf named as true. Above a region, a
+    /// node of a dropped level holding more than one pair stands for the sum
+    /// of the values its pairs reach, and the region's level is rebuilt with
+    /// those sums. A dropped node that holds a node of the kept side more
+    /// than once stands for a multiple of it, which the kept level holds as
+    /// a repeated pair where a summed-out level is under it; where none is,
+    /// no region is dropped as true.
     ///
     /// # Errors
     ///
@@ -1305,7 +1311,17 @@ impl Tdd {
     /// applies its algebra to those variables, not the weights of the sum.
     ///
     /// A diagram on a projection with no summed-out level is first trimmed
-    /// ([`trim`](Self::trim)).
+    /// ([`trim`](Self::trim)), and the result is trimmed again: no pair names
+    /// a variable leaf true.
+    ///
+    /// A diagram with a region is canonical for nothing: two of them for the
+    /// same summed function may differ. Its variable leaves and Boolean
+    /// classes are those of the function before the sum-out as the
+    /// reduction passes left them, not those of the summed function, and
+    /// [`equivalent`](Self::equivalent) refuses it. A region whose counts
+    /// all equal 2^(its extent's size) goes as [`trim`](Self::trim) says;
+    /// weighted values, floating-point ones included, are not tested for
+    /// the value that leaves their extent free, so such a region stays.
     ///
     /// # Errors
     ///

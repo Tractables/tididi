@@ -331,8 +331,8 @@ impl View {
     /// Build the pass-through at `t` over the region `through` carries: a
     /// node per slot of the region at the same index. Where the region holds
     /// counts and an image reads it through the chain, one more node per
-    /// inline value that image holds on that side, which the image's copy in
-    /// the view names instead.
+    /// distinct inline value that image holds on that side, which the
+    /// image's copy in the view names instead.
     #[cold]
     #[inline(never)]
     fn pass_over_region(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx, through: &PassThrough) -> Result<(), OperationError> {
@@ -356,6 +356,8 @@ impl View {
                 }
             }
         }
+        inline.sort_unstable_by_key(|r| r.0);
+        inline.dedup();
         let free_side = through.free_side;
         let level = self.slot_mut(lim, t)?;
         for (left, right) in through.pairs() {
@@ -372,11 +374,11 @@ impl View {
         level.close_held_pairs();
         let (Some((parent, side)), false) = (reader, inline.is_empty()) else { return Ok(()) };
         let copy = self.reader_mut(lim, tdd, plan, parent)?;
-        let mut next = through.width as u32;
+        let width = through.width as u32;
         crate::diagram::for_each_side_ref_mut(lim, copy, side, |r| {
             if inline_value(EncodedChildRef(*r)) {
-                *r = next;
-                next += 1;
+                let at = inline.binary_search_by_key(r, |v| v.0).expect("an inline value of the reader was collected");
+                *r = width + at as u32;
             }
         })?;
         copy.set_has_value_refs(side, false);

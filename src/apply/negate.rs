@@ -90,7 +90,7 @@ impl Engine {
         let _op = self.limits().enter()?;
         let f = f.into();
         if f.vtree.num_nodes() == 0 {
-            return negate_without_leaf(self, f);
+            return negate_without_leaf(f);
         }
         let canonical = f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
@@ -120,11 +120,11 @@ impl Engine {
 
 /// The complement of a constant on a vtree with no node, with its store.
 #[cold]
-fn negate_without_leaf(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+fn negate_without_leaf(f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     let mut result = crate::build::constant_without_leaf(&f.vtree, !f.is_one());
     result.weights = match f {
         Cow::Owned(mut f) => f.weights.take(),
-        Cow::Borrowed(f) => f.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?,
+        Cow::Borrowed(f) => f.weights.clone(),
     };
     Ok(result)
 }
@@ -151,7 +151,7 @@ pub(crate) fn complement_on(
         // The constant reads nothing of the operand but its weights.
         let weights = match tdd {
             Cow::Owned(mut tdd) => tdd.weights.take(),
-            Cow::Borrowed(tdd) => tdd.weights.as_ref().map(|w| w.try_clone_on(eng.limits())).transpose()?,
+            Cow::Borrowed(tdd) => tdd.weights.clone(),
         };
         let mut result = crate::build::constant_on(eng, &vtree, true)?;
         result.weights = weights;
@@ -164,11 +164,7 @@ pub(crate) fn complement_on(
             (tdd.levels.into_vec(), None, weights, owed)
         }
         Cow::Borrowed(tdd) => {
-            let weights = tdd
-                .weights
-                .as_ref()
-                .map(|w| w.try_clone_on(eng.limits()))
-                .transpose()?;
+            let weights = tdd.weights.clone();
             let owed = tdd.dirty.clone_on(eng)?;
             (
                 Target::empty_levels(eng, &tdd.levels)?,
