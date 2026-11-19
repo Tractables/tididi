@@ -1,6 +1,6 @@
 //! The row loop of a masked level read by pairs.
 
-use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
+use super::super::liveness::{PairColumns, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use super::*;
 use crate::diagram::{NodeKind, StoredPairs};
 use crate::limits::{PollGate, Transient};
@@ -19,8 +19,8 @@ const CHARGE_TABLE_ENTRIES_A_ROW: usize = 8;
 const REACH_TABLE_ROWS_A_BYTE: usize = 64;
 
 /// The row loop of a masked level whose g level has at most
-/// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all (`liveness::pairs_fit`), read by
-/// pairs.
+/// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, read by pairs: `table`
+/// (`liveness::fill_pair_columns`).
 ///
 /// Each side's row columns are then over g's pairs, numbered in column
 /// order: bit `q` of child row `a`'s word is set iff the child grid's cell
@@ -47,6 +47,7 @@ pub(crate) fn run_level_rows_pairs(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
+    table: &PairColumns,
     level: &mut TddLevel,
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
@@ -56,7 +57,7 @@ pub(crate) fn run_level_rows_pairs(
         let most = ahead_most(rows.f_level, rows.g_level, cells);
         let mut sink = ProjectedEmitSink::new(eng.limits(), most, rows.f_width, level, &mut inline);
         with_lookups!(lookups, rows.ctx.sides, [Grid], |l, r| {
-            pair_rows(eng, rows, scratch, l, r, &mut sink)
+            pair_rows(eng, rows, scratch, table, l, r, &mut sink)
         })?;
         sink.trim();
     } else {
@@ -67,7 +68,7 @@ pub(crate) fn run_level_rows_pairs(
         };
         // A level of two complete sides builds no masks.
         with_lookups!(lookups, rows.ctx.sides, [CompleteLeft, CompleteRight], |l, r| {
-            pair_rows(eng, rows, scratch, l, r, &mut sink)
+            pair_rows(eng, rows, scratch, table, l, r, &mut sink)
         })?;
     }
     level.leave_written_pairs(inline);
@@ -79,6 +80,7 @@ fn pair_rows<L, R, S>(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
+    table: &PairColumns,
     left: &L,
     right: &R,
     sink: &mut S,
@@ -90,68 +92,41 @@ where
 {
     let RowLoop {
         f_level,
-        g_level,
         ctx,
         f_width,
         ..
     } = rows;
     let RowScratch {
         f_pairs: f_scratch,
-        g_pairs: g_flat,
         node_idx: slab,
+        ..
     } = scratch;
-    let lim = eng.limits();
     let g_width = ctx.g_width;
     debug_assert!(g_width <= ROW_COLUMNS_MAX_WIDTH);
-
-    // g's pairs in column order; each column's as a mask of their bits, and
-    // each pair's column. The f rows' buffer decodes a column the table
-    // does not hold.
-    g_flat.clear();
-    lim.reserve_exact(
-        g_flat,
-        (0..g_width).map(|j| g_level.pair_count_at(j)).sum(),
-    )?;
-    let mut columns = Columns {
-        g_flat: &[],
-        cols: [0; ROW_COLUMNS_MAX_WIDTH],
-        col_of: [0; ROW_COLUMNS_MAX_WIDTH],
-        col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
-        charge_of: [0; 1 << CHARGE_TABLE_COLUMNS],
-        tabled: false,
-    };
-    for (j, col) in columns.cols.iter_mut().enumerate().take(g_width) {
-        let start = g_flat.len();
-        g_flat.extend_from_slice(column_pairs(ctx, g_level, j, f_scratch));
-        debug_assert!(
-            g_flat.len() <= ROW_COLUMNS_MAX_WIDTH,
-            "a level read by pairs fits"
-        );
-        *col = low(g_flat.len()) & !low(start);
-        columns.col_of[start..g_flat.len()].fill(j as u8);
-        columns.col_pairs[j] = (g_flat.len() - start) as u8;
-    }
-    columns.g_flat = &g_flat[..];
-    // Where every column holds one pair, pair `q` is column `q`'s, and a
-    // word of pairs is a word of their columns.
-    let one_pair = g_flat.len() == g_width && columns.col_pairs[..g_width].iter().all(|&n| n == 1);
+    debug_assert_eq!(table.cols[..g_width].iter().map(|c| c.count_ones() as usize).sum::<usize>(), table.pairs().len());
     // The number of g pairs of a set of columns, which a row's charge
     // counts: off a table of every set where the level has few columns and
     // rows enough to pay for it, else column by column.
-    columns.tabled = g_width <= CHARGE_TABLE_COLUMNS
-        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
-    if columns.tabled {
+    let mut charges;
+    let charge_of: Option<&[u8; 1 << CHARGE_TABLE_COLUMNS]> = if g_width <= CHARGE_TABLE_COLUMNS
+        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW)
+    {
+        charges = [0u8; 1 << CHARGE_TABLE_COLUMNS];
         for set in 1..1usize << g_width {
-            columns.charge_of[set] = columns.charge_of[set & (set - 1)]
-                + columns.col_pairs[set.trailing_zeros() as usize];
+            charges[set] = charges[set & (set - 1)] + table.col_pairs[set.trailing_zeros() as usize];
         }
-    }
+        Some(&charges)
+    } else {
+        None
+    };
+    let one_pair = table.one;
     super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let rows = PairRows {
         f_level,
         ctx,
         f_width,
-        columns: &columns,
+        table,
+        charge_of,
     };
     // A level of two one-pair columns keeps them in registers and writes
     // each row's cells once.
@@ -201,27 +176,16 @@ fn low(n: usize) -> u64 {
     (1u64 << n) - 1
 }
 
-/// A level's g pairs in column order, and what the row loop reads off them.
-struct Columns<'a> {
-    g_flat: &'a [ChildPair],
-    /// Each column's pairs, as a mask of their bits.
-    cols: [u64; ROW_COLUMNS_MAX_WIDTH],
-    /// Each pair's column.
-    col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
-    /// Each column's number of pairs.
-    col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
-    /// The number of pairs of each set of columns, where `tabled`.
-    charge_of: [u8; 1 << CHARGE_TABLE_COLUMNS],
-    tabled: bool,
-}
-
 /// What the row loop of a level read by pairs reads.
 #[derive(Clone, Copy)]
 struct PairRows<'a> {
     f_level: &'a TddLevel,
     ctx: &'a CellCtx<'a>,
     f_width: usize,
-    columns: &'a Columns<'a>,
+    table: &'a PairColumns,
+    /// The number of pairs of each set of columns, on a level that tables
+    /// them.
+    charge_of: Option<&'a [u8; 1 << CHARGE_TABLE_COLUMNS]>,
 }
 
 /// The row loop of [`pair_rows`], `ONE` where every column holds one pair,
@@ -248,17 +212,10 @@ where
         f_level,
         ctx,
         f_width,
-        columns,
-    } = rows;
-    let Columns {
-        g_flat,
-        cols,
-        col_of,
-        col_pairs,
+        table,
         charge_of,
-        tabled,
-    } = columns;
-    let (g_flat, tabled) = (*g_flat, *tabled);
+    } = rows;
+    let (g_flat, cols, col_of, col_pairs) = (table.pairs(), &table.cols, &table.col_of, &table.col_pairs);
     let lim = eng.limits();
     let g_width = ctx.g_width;
     debug_assert!(W == 0 || (ONE && W == g_width));
@@ -267,7 +224,7 @@ where
         if W > 0 {
             return (0..W).map(|j| s >> j & 1).sum();
         }
-        if tabled {
+        if let Some(charge_of) = charge_of {
             return u64::from(charge_of[s as usize]);
         }
         if ONE {
@@ -284,26 +241,6 @@ where
     let g: [ChildPair; W] = std::array::from_fn(|j| g_flat[j]);
     let all = ROW_LIVE | low(g_flat.len());
     let (left_words, right_words) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
-    debug_assert!(
-        !left.kills()
-            || ctx
-                .sides
-                .left
-                .reach
-                .iter()
-                .zip(g_flat)
-                .all(|(&r, q)| r == 1u128 << q.left.0)
-    );
-    debug_assert!(
-        !right.kills()
-            || ctx
-                .sides
-                .right
-                .reach
-                .iter()
-                .zip(g_flat)
-                .all(|(&r, q)| r == 1u128 << q.right.0)
-    );
     let word_left = |p: &ChildPair| {
         if left.kills() {
             left_words[p.left.raw() as usize]

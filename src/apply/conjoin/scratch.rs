@@ -73,6 +73,7 @@ pub(crate) struct ApplyWorkspace {
     pub(super) products: products::Products,
     pub(super) stream_cache: StreamCache,
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
+    pub(super) pair_cols: liveness::PairColumns,
     pub(super) words: WordScratch,
     pub(super) cone: super::setup::ConeLists,
     pub(super) lists: super::setup::SweepLists,

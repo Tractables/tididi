@@ -413,7 +413,7 @@ pub(super) fn open_level_arenas(
 /// a description ([`run_level_rows_single`]).
 fn run_row_loop(
     eng: &Engine,
-    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, bool, bool),
+    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, Option<&liveness::PairColumns>, bool),
     words: Option<(&mut WordScratch, Sides<usize>)>,
     (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
     level: &mut TddLevel,
@@ -421,12 +421,12 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
-    if pairs {
+    if let Some(table) = pairs {
         debug_assert!(
             route == Route::Dense,
             "only a masked level is read by pairs"
         );
-        return run_level_rows_pairs(eng, rows, scratch, level, lookups);
+        return run_level_rows_pairs(eng, rows, scratch, table, level, lookups);
     }
     if let Some((words, f_rows)) = words {
         if let Route::Stream { marginal_children } = route {
@@ -556,7 +556,7 @@ fn build_level_prefilter_masks(
             g_width: gw.left,
             base: bases.left.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs),
+        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then_some(&*run.pair_cols)),
         run.products.arena.slab(),
         &mut run.prefilter_masks.left,
     )?;
@@ -569,7 +569,7 @@ fn build_level_prefilter_masks(
             g_width: gw.right,
             base: bases.right.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs),
+        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then_some(&*run.pair_cols)),
         run.products.arena.slab(),
         &mut run.prefilter_masks.right,
     )
@@ -878,17 +878,24 @@ pub(super) fn build_level_dense(
     let pairs = masked
         && route == Route::Dense
         && !super::super::pair_rows_forced_off()
-        && liveness::pairs_fit(
+        && liveness::fill_pair_columns(
             g_t,
             gw.here,
+            (
+                Sides {
+                    left: gw.left,
+                    right: gw.right,
+                },
+                Sides {
+                    left: matches!(lookups, PlainLookups::CompleteLeft { .. }),
+                    right: matches!(lookups, PlainLookups::CompleteRight { .. }),
+                },
+            ),
             Sides {
-                left: gw.left,
-                right: gw.right,
+                left: sides.left.view,
+                right: sides.right.view,
             },
-            Sides {
-                left: matches!(lookups, PlainLookups::CompleteLeft { .. }),
-                right: matches!(lookups, PlainLookups::CompleteRight { .. }),
-            },
+            run.pair_cols,
         );
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
@@ -1065,7 +1072,8 @@ pub(super) fn build_level_dense(
             .expect("a vtree node and its two children are distinct level indices");
         let (left_level, right_level) = (&*left_level, &*right_level);
 
-        let right_cols = column_table_pays(f_t, g_t, fw.here, gw.here, grouped)
+        // A level read by pairs reads its columns off its pair table.
+        let right_cols = (!pairs && column_table_pays(f_t, g_t, fw.here, gw.here, grouped))
             .then(|| {
                 RightColumns::build(
                     eng,
@@ -1176,7 +1184,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs, relay),
+            (route, lookups, single_pair, pairs.then_some(&*run.pair_cols), relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,

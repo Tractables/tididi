@@ -371,6 +371,8 @@ pub(super) struct ApplyRun<'a, 'r> {
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
+    /// g's pairs at a level read by pairs.
+    pub(super) pair_cols: &'a mut liveness::PairColumns,
     /// The g-pair vectors of the levels whose cells are read by them.
     pub(super) words: &'a mut super::WordScratch,
     /// What the sweep lists as it goes: the levels it carried, lent and
@@ -992,6 +994,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         products,
         stream_cache,
         prefilter_masks,
+        pair_cols,
         words,
         cone,
         lists,
@@ -1080,6 +1083,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         f_pairs_scratch,
         g_pairs_scratch,
         prefilter_masks,
+        pair_cols,
         words,
         lists,
         restoring: false,

@@ -18,7 +18,7 @@
 
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
-use crate::diagram::Sides;
+use crate::diagram::{decoded, ChildDecoder, EncodedChildRef, Sides};
 
 /// The fewest cells a product grid of two multi-pair levels has for its
 /// level to build the masks. Under it they cost more than they save: on such
@@ -276,16 +276,63 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
 /// The most g nodes a masked level has for its sides to build their
 /// [row columns](build_row_columns): a bit a g node, and the top bit of
 /// the word for a row with a live cell. Also the most pairs a level read
-/// by pairs ([`pairs_fit`]) has.
+/// by pairs ([`fill_pair_columns`]) has.
 pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 
-/// Whether a masked level is read by pairs: each child row's word over g's
-/// pairs, [`build_row_columns`] of the [pair reach](build_pair_reach), in
-/// place of its word over g's nodes. That takes g's first `g_width`
-/// nodes holding at most [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child
-/// grids whose masks are bit-exact, which the words reproduce, and a
-/// `complete` side's child having columns, which the loop reads whole.
-pub(super) fn pairs_fit(level: &TddLevel, g_width: usize, child_g_widths: Sides<usize>, complete: Sides<bool>) -> bool {
+/// The g pairs of a level read by pairs ([`fill_pair_columns`]), decoded
+/// as the level's views read them, in column order, and their columns:
+/// the one read of g's pairs that both sides' row columns and the row
+/// loop take.
+#[derive(Debug)]
+pub(crate) struct PairColumns {
+    pairs: [ChildPair; ROW_COLUMNS_MAX_WIDTH],
+    len: usize,
+    /// Each pair's column.
+    pub(super) col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
+    /// Each column's pairs, as a mask of their bits.
+    pub(super) cols: [u64; ROW_COLUMNS_MAX_WIDTH],
+    /// Each column's number of pairs.
+    pub(super) col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
+    /// Whether every column holds one pair: pair `q` is then column `q`'s.
+    pub(super) one: bool,
+}
+
+impl Default for PairColumns {
+    fn default() -> Self {
+        let none = EncodedChildRef::from_raw(0);
+        Self {
+            pairs: [ChildPair::new(none, none); ROW_COLUMNS_MAX_WIDTH],
+            len: 0,
+            col_of: [0; ROW_COLUMNS_MAX_WIDTH],
+            cols: [0; ROW_COLUMNS_MAX_WIDTH],
+            col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
+            one: false,
+        }
+    }
+}
+
+impl PairColumns {
+    /// g's pairs, in column order.
+    #[inline(always)]
+    pub(super) fn pairs(&self) -> &[ChildPair] {
+        &self.pairs[..self.len]
+    }
+}
+
+/// Whether a masked level is read by pairs, and then its [`PairColumns`]
+/// in `out`: each child row's word is over g's pairs, the
+/// [`build_row_columns`] of a reach mask a pair, in place of its word over
+/// g's nodes. That takes g's first `g_width` nodes holding at most
+/// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child grids whose masks are
+/// bit-exact, which the words reproduce, and a `complete` side's child
+/// having columns, which the loop reads whole.
+pub(super) fn fill_pair_columns(
+    level: &TddLevel,
+    g_width: usize,
+    (child_g_widths, complete): (Sides<usize>, Sides<bool>),
+    views: Sides<ChildDecoder>,
+    out: &mut PairColumns,
+) -> bool {
     if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
         || bucket_shift(child_g_widths.right) != 0
@@ -294,35 +341,26 @@ pub(super) fn pairs_fit(level: &TddLevel, g_width: usize, child_g_widths: Sides<
     {
         return false;
     }
-    let mut n = 0;
-    level.try_for_each_node(0..g_width, |_, pairs| {
-        n += pairs.len();
-        if n > ROW_COLUMNS_MAX_WIDTH { Err(()) } else { Ok(()) }
-    }).is_ok()
-}
-
-/// Each pair of g's first `k_level` nodes, in node order, as the mask bit
-/// of its child on one side: the reach masks of a level read by pairs, a
-/// mask a pair where [`build_reach_masks`] ORs a node's. Bit-exact: the
-/// level [fits](pairs_fit).
-pub(super) fn build_pair_reach(
-    eng: &Engine,
-    level: &TddLevel,
-    k_level: usize,
-    reach: &mut Vec<u128>,
-    pair_side: impl Fn(&ChildPair) -> usize,
-) -> Result<(), OperationError> {
-    reach.clear();
-    // The pairs the level holds, at most `ROW_COLUMNS_MAX_WIDTH`: a byte
-    // budget is charged for them only.
-    let n = (0..k_level).map(|x| level.pair_count_at(x)).sum();
-    eng.limits().reserve_exact(reach, n)?;
-    level.try_for_each_node::<std::convert::Infallible>(0..k_level, |_, pairs| {
-        debug_assert!(reach.len() + pairs.len() <= ROW_COLUMNS_MAX_WIDTH, "a level read by pairs fits");
-        reach.extend(pairs.iter().map(|p| 1u128 << pair_side(p)));
+    let decode = views.left.is_marginal() || views.right.is_marginal();
+    let (mut n, mut one) = (0, true);
+    let fits = level.try_for_each_node(0..g_width, |j, pairs| {
+        let end = n + pairs.len();
+        if end > ROW_COLUMNS_MAX_WIDTH {
+            return Err(());
+        }
+        for ((slot, col), p) in out.pairs[n..end].iter_mut().zip(&mut out.col_of[n..end]).zip(pairs) {
+            *slot = if decode { decoded(*p, views.left, views.right) } else { *p };
+            *col = j as u8;
+        }
+        out.cols[j] = ((1u64 << end) - 1) & !((1u64 << n) - 1);
+        out.col_pairs[j] = pairs.len() as u8;
+        one &= pairs.len() == 1;
+        n = end;
         Ok(())
-    }).unwrap_or_else(|never| match never {});
-    Ok(())
+    });
+    out.len = n;
+    out.one = one;
+    fits.is_ok()
 }
 
 /// The flag bit of a [row columns](build_row_columns) word: the row has a
@@ -407,27 +445,27 @@ fn extend_cached_words<K: Copy + Eq + Default>(
 const ROW_GATHER_MAX_PAIRS: usize = 4;
 
 /// The [row columns](build_row_columns) of a level read by pairs
-/// ([`pairs_fit`]) whose child grid has at most 64 columns, read off the
-/// grid's bits ([`alive_bits`]) in one pass: a child row's cells are one
-/// word of them, its flag whether that word has a bit, and its bit `j` the
-/// word's bit at pair `j`'s child, the one bit of `out.reach[j]` (the
-/// [pair reach](build_pair_reach)). The level builds no live column masks
-/// (`out.live_cols` is left empty), which only these words read. A level
-/// of at most [`ROW_GATHER_MAX_PAIRS`] pairs reads each pair's bit off the
-/// row; one of more ORs the pairs of each of the row's live columns.
+/// ([`fill_pair_columns`]) whose child grid has at most 64 columns, read
+/// off the grid's bits ([`alive_bits`]) in one pass: a child row's cells
+/// are one word of them, its flag whether that word has a bit, and its bit
+/// `j` the word's bit at column `side(&pairs[j])`, pair `j`'s child. The
+/// level builds no live column masks (`out.live_cols` is left empty),
+/// which only these words read. A level of at most
+/// [`ROW_GATHER_MAX_PAIRS`] pairs reads each pair's bit off the row; one of
+/// more ORs the pairs of each of the row's live columns.
 pub(super) fn build_pair_row_columns(
     eng: &Engine,
-    k1_side: usize,
-    side_width: usize,
-    base: usize,
+    (k1_side, side_width, base): (usize, usize, usize),
     node_idx: &[u32],
+    (pairs, side): (&[ChildPair], impl Fn(&ChildPair) -> u32),
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     debug_assert!(side_width <= 64);
+    debug_assert!(pairs.len() <= ROW_COLUMNS_MAX_WIDTH && pairs.iter().all(|p| (side(p) as usize) < side_width));
     let PrefilterSideMasks { live_cols, reach, row_cols, bits, .. } = out;
-    debug_assert!(reach.len() <= ROW_COLUMNS_MAX_WIDTH && reach.iter().all(|&r| r.count_ones() == 1 && r >> side_width == 0));
     live_cols.clear();
+    reach.clear();
     row_cols.clear();
     lim.reserve_exact(row_cols, k1_side)?;
     if side_width == 0 {
@@ -438,18 +476,18 @@ pub(super) fn build_pair_row_columns(
     let bits = &bits[..];
     let keep = u64::MAX >> (64 - side_width);
     let rows = (0..k1_side).map(|a| bits_from(bits, a * side_width) & keep);
-    match reach.len() {
-        0 => gather_rows::<0>(rows, reach, row_cols),
-        1 => gather_rows::<1>(rows, reach, row_cols),
-        2 => gather_rows::<2>(rows, reach, row_cols),
-        3 => gather_rows::<3>(rows, reach, row_cols),
-        4 => gather_rows::<4>(rows, reach, row_cols),
+    match pairs.len() {
+        0 => gather_rows::<0>(rows, pairs, side, row_cols),
+        1 => gather_rows::<1>(rows, pairs, side, row_cols),
+        2 => gather_rows::<2>(rows, pairs, side, row_cols),
+        3 => gather_rows::<3>(rows, pairs, side, row_cols),
+        4 => gather_rows::<4>(rows, pairs, side, row_cols),
         n => {
             debug_assert!(n > ROW_GATHER_MAX_PAIRS);
             // The pairs of each child column, and the columns some pair has.
             let (mut by_bit, mut any) = ([0u64; 64], 0u64);
-            for (j, &r) in reach.iter().enumerate() {
-                let c = r.trailing_zeros();
+            for (j, p) in pairs.iter().enumerate() {
+                let c = side(p);
                 by_bit[c as usize] |= 1 << j;
                 any |= 1 << c;
             }
@@ -476,8 +514,13 @@ fn row_flag(row: u64) -> u64 {
 /// The words of [`build_pair_row_columns`] for a level of `P` pairs, each
 /// pair's bit read off each row.
 #[inline(always)]
-fn gather_rows<const P: usize>(rows: impl Iterator<Item = u64>, reach: &[u128], row_cols: &mut Vec<u64>) {
-    let child: [u32; P] = std::array::from_fn(|j| reach[j].trailing_zeros());
+fn gather_rows<const P: usize>(
+    rows: impl Iterator<Item = u64>,
+    pairs: &[ChildPair],
+    side: impl Fn(&ChildPair) -> u32,
+    row_cols: &mut Vec<u64>,
+) {
+    let child: [u32; P] = std::array::from_fn(|j| side(&pairs[j]));
     row_cols.extend(rows.map(|row| child.iter().enumerate().fold(row_flag(row), |word, (j, &c)| word | (row >> c & 1) << j)));
 }
 
