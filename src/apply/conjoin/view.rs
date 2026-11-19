@@ -180,7 +180,7 @@ impl View {
     }
 
     /// The level of `tdd`, the operand, at node `t` of the view's vtree.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn level<'a>(&'a self, tdd: &'a Tdd, t: usize) -> &'a TddLevel {
         match self.at[t] {
             Slot::Own(s) => &tdd.levels[s as usize],
