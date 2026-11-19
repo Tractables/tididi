@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use super::{ExpandError, GraftError};
+use super::{EmbedError, ExpandError, GraftError};
 
 use crate::Engine;
 use crate::diagram::{
@@ -79,11 +79,13 @@ impl Tdd {
     /// by its class's first literal, conjoined with the agreement of each
     /// class and with the constants; its model count is this diagram's
     /// doubled once per free variable. A variable's class must be nonempty,
-    /// and every class must belong to a variable of this vtree; each expanded
-    /// variable is named once.
+    /// and every class must belong to a variable of this vtree or, on a home,
+    /// of the home; each expanded variable is named once.
     ///
-    /// The result's vtree is [`Vtree::expand_leaves`] on this vtree, with each
-    /// class's variables in the order given, joined as by [`Vtree::graft`]
+    /// On a home, the diagram is first copied onto the projection of the home
+    /// over its variables and those with a class, which then stands for this
+    /// vtree below. The result's vtree is [`Vtree::expand_leaves`] on this
+    /// vtree, with each class's variables in the order given, joined as by [`Vtree::graft`]
     /// with a balanced tree over the constants and then with the free
     /// variables. It has the id space `1..=expansion.num_vars` and this
     /// vtree's execution context. No apply runs: the levels above the classes
@@ -120,15 +122,15 @@ impl Tdd {
     /// # Errors
     ///
     /// [`ExpandError::MissingClass`] for a variable of this vtree without a
-    /// class, [`ExpandError::ClassWithoutLeaf`] for a class of a variable the
-    /// vtree does not carry, [`ExpandError::VariableOutOfRange`] for an
+    /// class, [`ExpandError::ClassWithoutLeaf`] for a class of a variable
+    /// neither the vtree nor its home carries, [`ExpandError::VariableOutOfRange`] for an
     /// expanded variable outside `1..=num_vars`, and [`ExpandError::Vtree`]
     /// with [`VtreeError::OverlappingVariable`](crate::vtree::VtreeError::OverlappingVariable)
     /// for one named twice, or with another [`VtreeError`](crate::vtree::VtreeError)
     /// for an id space too wide for the result. [`ExpandError::Operation`]
     /// carries [`OperationError::MarginalLevel`] for a diagram with a
     /// summed-out level, and a refused allocation or an armed stop. The
-    /// expansion is checked before any level is built.
+    /// expansion is checked before any level of the result is built.
     pub fn expand_variables(&self, expansion: &VariableExpansion) -> Result<Tdd, ExpandError> {
         self.context().run(|eng| eng.expand_variables(self, expansion))
     }
@@ -149,6 +151,8 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
+        let widened = widened_onto_classes(self, tdd, expansion)?;
+        let tdd = widened.as_ref().unwrap_or(tdd);
         expansion.check(self, tdd.vtree())?;
         let classes = &expansion.classes;
         let class_vtree = Arc::new(tdd.vtree().expand_leaves(
@@ -175,6 +179,28 @@ impl Engine {
             GraftError::Vtree(error) => ExpandError::Vtree(error),
             error => unreachable!("the checked expansion grafts disjoint structural parts: {error}"),
         })
+    }
+}
+
+/// `tdd` copied onto the projection of its home over its own variables and
+/// every home variable with a class, when that projection is wider than its
+/// vtree; `None` when it is not.
+fn widened_onto_classes(eng: &Engine, tdd: &Tdd, expansion: &VariableExpansion) -> Result<Option<Tdd>, ExpandError> {
+    let Some(home) = tdd.home() else { return Ok(None) };
+    let vtree = tdd.vtree();
+    let added: Vec<VarId> = (0..expansion.classes.len())
+        .filter(|&r| !expansion.classes[r].is_empty())
+        .map(|r| VarId(r as u32 + 1))
+        .filter(|&var| vtree.leaf_of(var).is_none() && home.rank(var).is_some())
+        .collect();
+    if added.is_empty() {
+        return Ok(None);
+    }
+    let into = Vtree::projection(&home, vtree.leaf_bottomup().map(|(_, var)| var).chain(added))?;
+    match eng.embed(tdd, &into, |var| var) {
+        Ok((widened, _)) => Ok(Some(widened)),
+        Err(EmbedError::Operation(error)) => Err(ExpandError::Operation(error)),
+        Err(error) => unreachable!("a projection embeds in a wider projection of its home: {error}"),
     }
 }
 
