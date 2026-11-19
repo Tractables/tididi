@@ -364,6 +364,40 @@ pub(crate) fn coalesce(mut intervals: Vec<(u32, u32)>) -> Extent {
     extent.into_boxed_slice()
 }
 
+/// Whether every rank of `short` is in `long`, both ascending; `found` is
+/// given the position in `long` of each rank of `short` in turn, up to the
+/// first missing one. Each rank is searched in what follows the last one
+/// found, or both lists are merged once where `short.len()·log₂ long.len()`
+/// exceeds `short.len() + long.len()`.
+pub(crate) fn ranks_within(short: &[u32], long: &[u32], mut found: impl FnMut(usize)) -> bool {
+    let log = (usize::BITS - long.len().leading_zeros()) as usize;
+    let mut from = 0;
+    if short.len().saturating_mul(log) > short.len() + long.len() {
+        for &r in short {
+            while long.get(from).is_some_and(|&x| x < r) {
+                from += 1;
+            }
+            if long.get(from) != Some(&r) {
+                return false;
+            }
+            found(from);
+            from += 1;
+        }
+        return true;
+    }
+    for &r in short {
+        match long[from..].binary_search(&r) {
+            Ok(i) => {
+                from += i;
+                found(from);
+                from += 1;
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
 pub(crate) enum LeafSets {
@@ -615,22 +649,26 @@ impl Vtree {
             return Self::region_leaf_sets(la, lb);
         }
         let (ra, rb) = (&la.ranks, &lb.ranks);
+        if ra.len() == rb.len() {
+            if ra == rb {
+                return Ok(LeafSets::Equal(SameLayout::new(a, b)));
+            }
+        } else if ra.len() < rb.len() {
+            if ranks_within(ra, rb, |_| {}) {
+                return Ok(LeafSets::AInB);
+            }
+        } else if ranks_within(rb, ra, |_| {}) {
+            return Ok(LeafSets::BInA);
+        }
         let mut union = Vec::with_capacity(ra.len() + rb.len());
-        let (mut i, mut j, mut a_only, mut b_only) = (0, 0, false, false);
+        let (mut i, mut j) = (0, 0);
         while i < ra.len() || j < rb.len() {
             let (x, y) = (ra.get(i).copied().unwrap_or(u32::MAX), rb.get(j).copied().unwrap_or(u32::MAX));
             union.push(x.min(y));
-            a_only |= x < y;
-            b_only |= y < x;
             i += usize::from(x <= y);
             j += usize::from(y <= x);
         }
-        Ok(match (a_only, b_only) {
-            (false, false) => LeafSets::Equal(SameLayout::new(a, b)),
-            (false, true) => LeafSets::AInB,
-            (true, false) => LeafSets::BInA,
-            (true, true) => LeafSets::Union(Self::seated(&la.home, union.len(), false, || Self::union_of(la, lb, union))),
-        })
+        Ok(LeafSets::Union(Self::seated(&la.home, union.len(), false, || Self::union_of(la, lb, union))))
     }
 
     /// The projection on `union`, the merged ranks of `la` and `lb`. Two

@@ -7,12 +7,12 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{conjoin_cow, conjoin_onto, prepare_owned_weights, VtreeMask};
+use super::{conjoin_cow, conjoin_kept, conjoin_onto, prepare_owned_weights, AndRefused, Operands, VtreeMask};
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
 use crate::limits::OperationError;
 use crate::apply::extend;
 use crate::build::constant_without_leaf;
-use crate::vtree::{LeafSets, SameLayout, VarId, Vtree, VtreeIdx};
+use crate::vtree::{LeafSets, VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
 /// [`Engine::and`] of operands on different vtree allocations.
@@ -25,8 +25,8 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
         check_summed_leaves(&f, &g)?;
     }
     let into = match sets {
-        LeafSets::Equal(same) => {
-            reseat_either(eng, &mut f, &mut g, &same)?;
+        // The sweep reads the vtree of `f` only, and the two have one layout.
+        LeafSets::Equal(_) => {
             prepare_owned_weights(&mut f, &mut g)?;
             let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
             crate::reduce::close_constant(eng, &mut out);
@@ -48,6 +48,40 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     let mut out = conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))?;
     crate::reduce::close_constant(eng, &mut out);
     Ok(out)
+}
+
+/// [`Engine::and_restoring`] of operands not on one vtree allocation, or on
+/// the empty projection. A plain operand, with no weight store and no summed
+/// level, goes through as given where the leaf sets are equal or one holds
+/// the other, as those paths hand it back unchanged; otherwise both are read
+/// borrowed.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Tdd, AndRefused<'a>> {
+    let plain = |t: &Tdd| t.weights.is_none() && !t.has_marginal_level();
+    if f.vtree().num_nodes() != 0 && g.vtree().num_nodes() != 0 && plain(&f) && plain(&g) {
+        let into = match Vtree::leaf_sets(f.vtree(), g.vtree()) {
+            Err(error) => return Err(AndRefused { error, f, g }),
+            Ok(LeafSets::Equal(_)) => None,
+            Ok(LeafSets::AInB) => Some(Arc::clone(g.vtree())),
+            Ok(LeafSets::BInA) => Some(Arc::clone(f.vtree())),
+            Ok(LeafSets::Union(_)) => return conjoin_borrowing(eng, f, g),
+        };
+        let mut out = match into {
+            None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default())?,
+            Some(into) => conjoin_onto(eng, f, |v| v, g, |v| v, &into)
+                .map_err(|r| AndRefused { error: extend::operation_error(r.error), f: r.f, g: r.g })?,
+        };
+        crate::reduce::close_constant(eng, &mut out);
+        return Ok(out);
+    }
+    conjoin_borrowing(eng, f, g)
+}
+
+/// [`conjoin_projections`] of borrows of `f` and `g`, which a refusal hands
+/// back.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn conjoin_borrowing<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Tdd, AndRefused<'a>> {
+    conjoin_projections(eng, Cow::Borrowed(&*f), Cow::Borrowed(&*g)).map_err(|error| AndRefused { error, f, g })
 }
 
 /// Refuse operands of which one has summed out a variable the other has a
@@ -109,21 +143,6 @@ pub(super) fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -
         out.weights = weights;
     }
     Ok(out)
-}
-
-/// Put one operand on the other's vtree, of the same layout: an owned one is
-/// reseated, else a copy of `g` is.
-fn reseat_either<'a>(eng: &Engine, f: &mut Cow<'a, Tdd>, g: &mut Cow<'a, Tdd>, same: &SameLayout) -> Result<(), OperationError> {
-    let from = match (matches!(f, Cow::Owned(_)), matches!(g, Cow::Owned(_))) {
-        (_, true) => g,
-        (true, false) => f,
-        (false, false) => {
-            *g = Cow::Owned(g.try_clone_on(eng)?);
-            g
-        }
-    };
-    from.to_mut().reseat(same);
-    Ok(())
 }
 
 /// Whether [`join_at_root`] takes `tdd`: it moves levels and pairs two

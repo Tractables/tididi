@@ -423,3 +423,36 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
     }
     assert!(checked > 800 && marginal > 60 && refusals > 1000, "{checked} joins, {marginal} with a marginal level, {refusals} refusals");
 }
+
+/// The reserves `run` makes on cold pools: the first `n` at which a refusal
+/// armed for the `n`-th is left pending.
+fn reserves(eng: &Engine, run: impl Fn() -> bool) -> u32 {
+    (0..10_000)
+        .find(|&n| {
+            eng.refuse_nth_reserve(n);
+            let granted = run();
+            let pending = eng.limits().refusal_pending();
+            eng.limits().grant_every_reserve();
+            granted && pending
+        })
+        .expect("granted within the bound")
+}
+
+#[test]
+fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
+    let eng = Engine::new();
+    let home = crate::vtree::Home::new(Arc::new(Vtree::balanced(9)));
+    let on = || Vtree::projection(&home, (1..=8).map(VarId)).unwrap();
+    let (a, b) = (on(), on());
+    assert!(!Arc::ptr_eq(&a, &b));
+    let clauses = |vtree: &Arc<Vtree>| {
+        let f = eng.clause(vtree, [1, -4, 6]).unwrap();
+        eng.and(f, eng.clause(vtree, [-2, 5, 8]).unwrap()).unwrap()
+    };
+    let (f, g_apart, g_shared) = (clauses(&a), eng.clause(&b, [2, -6, 7]).unwrap(), eng.clause(&a, [2, -6, 7]).unwrap());
+    let apart = reserves(&eng, || eng.and(&f, &g_apart).is_ok());
+    let shared = reserves(&eng, || eng.and(&f, &g_shared).is_ok());
+    assert_eq!(apart, shared, "a conjunction across two allocations copies an operand");
+    let (apart, shared) = (eng.and(&f, &g_apart).unwrap(), eng.and(&f, &g_shared).unwrap());
+    assert!(same_storage(&apart, &shared));
+}
