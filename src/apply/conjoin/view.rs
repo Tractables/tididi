@@ -64,6 +64,8 @@ pub(crate) struct View {
     dirty: Dirty,
     /// The tops of the chains over a leaf read as `Pos` and `Neg`, sorted.
     tops: Vec<VtreeIdx>,
+    /// The levels [`View::pass_through`] built.
+    reached: Vec<VtreeIdx>,
 }
 impl View {
     /// The view of `tdd`, a diagram that is not constant, on `into`, as
@@ -141,6 +143,7 @@ impl View {
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
             tops: Vec::new(),
+            reached: Vec::new(),
         };
         match view.fill(eng, tdd, into, plan, !by_node) {
             Ok(()) => Ok(view),
@@ -173,7 +176,7 @@ impl View {
         for &d in &plan.embedding.levels {
             self.at[d.idx()] = Slot::Free;
         }
-        for &t in plan.cone_nodes() {
+        for &t in plan.cone_nodes().iter().chain(&self.reached) {
             self.at[t.idx()] = Slot::Free;
         }
         if plan.cone_nodes().is_empty() {
@@ -245,6 +248,33 @@ impl View {
             view.dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &literal_tops);
         }
         view.tops = literal_tops;
+        Ok(())
+    }
+
+    /// Build the pass-through at `t`, a node the plan left free on the
+    /// chain from the operand's top toward the root ([`Plan::cone`]), over
+    /// its child on that chain, which the view gives a level already.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the level or a table cannot grow.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn pass_through(&mut self, lim: &Limits, tdd: &Tdd, t: VtreeIdx) -> Result<(), OperationError> {
+        let (left, _) = self.vtree.children(t);
+        let free_side = match self.at[left.idx()] {
+            Slot::Free => ChildSide::Left,
+            _ => ChildSide::Right,
+        };
+        let through = PassThrough::new(&self.vtree, t, free_side, |c| self.level(tdd, c.idx()).slot_count());
+        debug_assert!(!through.carries_leaf, "a cone plan builds the chain's level over a leaf");
+        lim.try_push(&mut self.reached, t)?;
+        let level = self.slot_mut(lim, t)?;
+        if through.width > 0 {
+            through.build(lim, level)?;
+        }
+        level.close();
+        level.close_held_pairs();
         Ok(())
     }
 

@@ -150,7 +150,7 @@ pub(super) fn compute_apply_output(
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
 ) -> Option<NodeIdx> {
-    if !run.kept.is_empty() {
+    if run.stopped {
         return Some(f.output().local);
     }
     let out_ti = f.output().vtree.idx();

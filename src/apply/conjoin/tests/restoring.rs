@@ -212,6 +212,26 @@ fn a_refused_adopting_conjunction_leaves_the_next_one_right() {
     }
 }
 
+/// `g` on the two deepest variables of an implication chain forces every
+/// variable above it, so the sweep reaches each level of the chain to the
+/// root; a second `g` the result implies stops it at once.
+#[test]
+fn a_forced_chain_is_reached_to_the_root() {
+    let eng = Engine::new();
+    let home = Home::new(Arc::new(Vtree::linear(14)));
+    let chain: Vec<[i32; 2]> = (1..13).map(|v| [v, -(v + 1)]).collect();
+    let clauses: Vec<&[i32]> = chain.iter().map(|c| &c[..]).collect();
+    let f = build(&eng, &projection(&home, 1..=13), &clauses);
+    let g = build(&eng, &projection(&home, 12..=13), &[&[12, 13]]);
+    let mut with_g = clauses.clone();
+    with_g.push(&[12, 13]);
+    let expected = build(&eng, &projection(&home, 1..=13), &with_g);
+    let out = eng.and(f, &g).unwrap();
+    assert!(eng.equivalent(&out, &expected).unwrap());
+    let again = eng.and(out, &g).unwrap();
+    assert!(eng.equivalent(&again, &expected).unwrap());
+}
+
 #[test]
 fn a_granted_conjunction_matches_and() {
     let eng = Engine::new();

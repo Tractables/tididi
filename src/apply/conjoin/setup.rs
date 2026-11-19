@@ -87,11 +87,12 @@ pub(super) struct Cone<'a> {
     pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
-    /// The index in `built` from which each level is the parent of the one
-    /// before it and `g` has one node there, read as its output only: the
-    /// sweep stops before such a level when its child's products are `f`'s
-    /// nodes in order (`drive::sweep_levels`). `usize::MAX` for none.
-    pub(super) stop_from: usize,
+    /// Whether `built` ends at `g`'s top, below the chain from there to the
+    /// root, which the free levels hold and at each level of which `g` is
+    /// its output passing through: the sweep goes on up the chain a level
+    /// at a time, and stops at the first level whose products are `f`'s
+    /// nodes in order (`drive::sweep_levels`).
+    pub(super) chain: bool,
 }
 
 impl Cone<'_> {
@@ -226,6 +227,13 @@ pub(super) struct SweepLists {
     pub(super) twin_free: Vec<VtreeIdx>,
     /// The stack of a walk down a region (`region::constant_true`).
     pub(super) stack: Vec<VtreeIdx>,
+    /// The levels of the chain above [`Cone::built`] the sweep built
+    /// ([`Cone::chain`]), bottom-up.
+    pub(super) chain: Vec<VtreeIdx>,
+    /// `drive::owed::loose_levels`' flags by level, all zero between
+    /// conjunctions, and the levels it set them at.
+    pub(super) loose_in: Vec<u8>,
+    pub(super) loose_touched: Vec<u32>,
 }
 
 impl SweepLists {
@@ -258,12 +266,14 @@ impl SweepLists {
         identity_carrier(self.moved[t])
     }
 
-    /// List in `built` the levels of `cone` no identity fast path moved:
-    /// the levels a plain conjunction built, the relabelled ones included.
+    /// List in `built` the levels of `cone` and of `chain` no identity fast
+    /// path moved: the levels a plain conjunction built, the relabelled ones
+    /// included.
     pub(super) fn collect_built(&mut self, cone: &[VtreeIdx]) {
-        let moved = &self.moved;
-        self.built.extend(
+        let Self { moved, built, chain, .. } = self;
+        built.extend(
             cone.iter()
+                .chain(chain.iter())
                 .copied()
                 .filter(|t| identity_carrier(moved[t.idx()]) == 0),
         );
@@ -301,6 +311,7 @@ impl SweepLists {
         self.owed_twins.clear();
         self.twin_free.clear();
         self.stack.clear();
+        self.chain.clear();
     }
 
     /// Ready the lists for a conjunction over `num_nodes` levels.
@@ -334,6 +345,9 @@ impl SweepLists {
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);
         visit(&mut self.stack);
+        visit(&mut self.chain);
+        visit(&mut self.loose_in);
+        visit(&mut self.loose_touched);
     }
 }
 
@@ -377,10 +391,10 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// only each region's top from `f`, and the finish moves the levels it
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
-    /// The levels of the chain from `g`'s top the sweep stopped short of
-    /// ([`Cone::stop_from`]), the root's included, `f`'s as stored, and so
-    /// is the output; empty where it did not stop.
-    pub(super) kept: &'r [VtreeIdx],
+    /// Whether the sweep stopped short of the root on the chain from `g`'s
+    /// top ([`Cone::chain`]): every level above, and the output, are `f`'s
+    /// as stored.
+    pub(super) stopped: bool,
     /// Whether nothing but pairs changes hands: no weights, no summed-out
     /// or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
@@ -709,7 +723,7 @@ fn survey<'r, L: Levels + ?Sized>(
             free_nodes: 0,
             constant: false,
             masks,
-            stop_from: usize::MAX,
+            chain: false,
         };
         let snapshot = Snapshot {
             total_cells,
@@ -786,7 +800,7 @@ fn survey<'r, L: Levels + ?Sized>(
         free_nodes,
         constant: false,
         masks,
-        stop_from: usize::MAX,
+        chain: false,
     };
     let snapshot = Snapshot {
         total_cells,
@@ -796,12 +810,9 @@ fn survey<'r, L: Levels + ?Sized>(
     Ok((snapshot, cone))
 }
 
-/// The levels an adopting conjunction sweeps, children first, and the index
-/// among them of [`Cone::stop_from`].
-pub(super) type Listed<'r> = (&'r [VtreeIdx], usize);
-
 /// [`survey`] of plain operands of which `g` is free at every internal level
-/// but those of `listed`, children first: only those levels, their leaf
+/// but those of `listed`, children first, and the chain above them
+/// ([`Cone::chain`]): only the levels listed, their leaf
 /// children and their free children, the tops, are read. The output-node
 /// cap counts the levels outside them by `f`'s node count, read only where
 /// a cap is set.
@@ -811,7 +822,7 @@ fn survey_listed<'r>(
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
     masks: Operands<VtreeMask<'r>>,
-    (listed, stop_from): Listed<'r>,
+    listed: &'r [VtreeIdx],
     min_grid: usize,
     widths: Operands<&mut [usize]>,
     lists: &'r mut ConeLists,
@@ -868,7 +879,7 @@ fn survey_listed<'r>(
         free_nodes,
         constant: false,
         masks,
-        stop_from,
+        chain: true,
     };
     Ok((Snapshot { total_cells, any_entry_marginal: false, might_use_sparse }, cone))
 }
@@ -963,7 +974,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
-    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<Listed<'r>>),
+    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<&'r [VtreeIdx]>),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -1075,7 +1086,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         lists,
         restoring: false,
         adopted: false,
-        kept: &[],
+        stopped: false,
         plain: false,
         built_marginal: false,
         cone,

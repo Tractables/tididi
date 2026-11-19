@@ -218,9 +218,24 @@ impl Products {
         grow(&mut self.live_counts, n, 0);
         grow(&mut self.is_touched, n, false);
         for i in cone.nodes() {
-            self.product_lists[i].clear(); self.has_pl[i] = false; self.complete[i] = false; self.live_counts[i] = 0;
+            self.clear_level(i);
         }
         self.arena.reset(eng, sparse, n, f_widths, g_widths, cone)
+    }
+
+    fn clear_level(&mut self, t: usize) {
+        self.product_lists[t].clear();
+        self.has_pl[t] = false;
+        self.complete[t] = false;
+        self.live_counts[t] = 0;
+    }
+
+    /// Clear the products at level `t`, which [`reset`](Self::reset) did
+    /// not, and ready its grid of `cells` cells
+    /// ([`GridArena::lay_out`](super::grid_arena::GridArena::lay_out)).
+    pub(super) fn reach(&mut self, eng: &Engine, t: usize, cells: usize) -> Result<(), OperationError> {
+        self.clear_level(t);
+        self.arena.lay_out(eng, t, cells)
     }
 
     /// Whether level `t` is complete: every product `f[i] ∧ g[j]` of its

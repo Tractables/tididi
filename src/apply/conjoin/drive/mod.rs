@@ -98,14 +98,9 @@ fn sweep_levels(
     // their regions before the sweep, and their nodes are counted as if they
     // were built in their places bottom-up.
     let mut output_nodes = 0u64;
-    for (k, &t) in cone.built.iter().enumerate() {
-        if k > 0 && k >= cone.stop_from && kept_above(run, cone.built[k - 1]) {
-            (run.cone.built, run.kept) = cone.built.split_at(k);
-            if lim.output_node_cap().is_some() {
-                run.cone.free_nodes += run.kept.iter().map(|s| run.f_widths[s.idx()] as u64).sum::<u64>();
-            }
-            break;
-        }
+    let mut next = cone.built.first().copied();
+    let mut k = 0;
+    while let Some(t) = next {
         let (left, right) = vtree.children(t);
         if progress {
             // The level's place among all internal levels, from 1.
@@ -120,6 +115,12 @@ fn sweep_levels(
         lim.level_done(before)?;
         build_level(eng, run, f, g, sweep, (t, left, right), before)?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
+        k += 1;
+        next = match cone.built.get(k) {
+            Some(&t) => Some(t),
+            None if cone.chain => reach_parent(eng, run, f, g, vtree, t)?,
+            None => None,
+        };
     }
     if progress {
         lim.conjunction_reached(internal.len() as u32);
@@ -132,6 +133,96 @@ fn sweep_levels(
     )?;
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes + run.cone.free_nodes)
+}
+
+/// The parent of `c`, the last level an adopting conjunction built, `g`'s
+/// top or a level of the chain above it, readied for the sweep, unless the
+/// sweep stops at `c` ([`kept_above`]) or `c` is the root: `g`'s view builds
+/// its pass-through there, and the parent and its child off the chain, a
+/// leaf or the top of a region free in `g`, get what the setup gives the
+/// levels it lists and their children (`survey_listed`,
+/// `init_leaf_identity_over`, `apply_leaf_levels`, `region::take_regions`).
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a level or table cannot grow.
+fn reach_parent(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    vtree: &crate::vtree::Vtree,
+    c: VtreeIdx,
+) -> Result<Option<VtreeIdx>, OperationError> {
+    let Some(t) = vtree.node(c).parent() else { return Ok(None) };
+    if kept_above(run, c) {
+        run.stopped = true;
+        return Ok(None);
+    }
+    reach(eng, run, f, g, vtree, t, c)?;
+    Ok(Some(t))
+}
+
+#[cold]
+#[inline(never)]
+fn reach(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    vtree: &crate::vtree::Vtree,
+    t: VtreeIdx,
+    c: VtreeIdx,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let (left, right) = vtree.children(t);
+    let s = if left == c { right } else { left };
+    let leaf = vtree.node(s).is_leaf();
+    g.pass_through(lim, t)?;
+    lim.try_push(&mut run.lists.chain, t)?;
+    let (at, side) = (t.idx(), s.idx());
+    run.f_widths[at] = f.level(at).slot_count();
+    run.g_widths[at] = g.level(at).slot_count();
+    (run.f_widths[side], run.g_widths[side]) = match leaf {
+        true => (LEAF_WIDTH, LEAF_WIDTH),
+        false => (f.level(side).slot_count(), 1),
+    };
+    for x in [at, side] {
+        let cells = grid_arena::grid_cells(run.f_widths[x], run.g_widths[x])?;
+        run.products.reach(eng, x, cells)?;
+    }
+    let (unscanned, leaves): (&[VtreeIdx], &[VtreeIdx]) = match leaf {
+        true => (&[], &[s]),
+        false => (&[s], &[]),
+    };
+    init_leaf_identity_over(eng, run.g_identity, g, &[t], unscanned, leaves)?;
+    init_leaf_identity_over(eng, run.f_identity, f, &[t], unscanned, leaves)?;
+    if leaf {
+        super::leaf_seed::leaf_grid(eng, run.products, side)?;
+    } else {
+        // As `region::take_regions` takes a top for an adopting conjunction.
+        run.g_identity[side] = true;
+        super::identity::publish_identity_level(run.products, side, run.f_widths[side]);
+        run.products.note_complete(side);
+        f.carry(lim, side, &mut run.levels[side])?;
+    }
+    if lim.output_node_cap().is_some() {
+        run.cone.free_nodes = run.cone.free_nodes.saturating_sub(run.f_widths[at] as u64);
+    }
+    Ok(())
+}
+
+/// Every level a conjunction visited: those of `cone`, and each level of
+/// `chain`, the levels it built above them ([`reach_parent`]), with its
+/// child off the chain, the sibling of the level below.
+fn visited<'a>(vtree: &'a crate::vtree::Vtree, cone: super::setup::Cone<'a>, chain: &'a [VtreeIdx]) -> impl Iterator<Item = usize> + 'a {
+    let mut below = cone.built.last().copied();
+    cone.nodes().chain(chain.iter().flat_map(move |&t| {
+        let (left, right) = vtree.children(t);
+        let side = if Some(left) == below { right } else { left };
+        below = Some(t);
+        [t.idx(), side.idx()]
+    }))
 }
 
 /// Whether the parent of `v`, a level of the chain from `g`'s top to the
@@ -172,7 +263,7 @@ fn build_level(
     let taken = take_level_fast_path(eng, run, f, g, shape)?
         || take_relabel_level(eng, run, f, g, shape, sweep)?;
     debug_assert!(
-        taken || !run.cone.free_at(t.idx()),
+        taken || !run.cone.free_at(t.idx()) || run.lists.chain.last() == Some(&t),
         "a free level at {} takes the other operand's level",
         t.idx(),
     );
@@ -319,11 +410,11 @@ pub(crate) enum ConjoinMode<'a> {
     Restore { free: Operands<VtreeMask<'a>> },
     /// Build into an owned `f`'s level array, `g` read through a view whose
     /// plan [`Plan::cone`](crate::restructure::embed::Plan::cone) built:
-    /// `cone` lists the internal levels with a leaf of `g` under them,
-    /// children first, and `free` holds the others, `g`'s free levels;
-    /// from `stop_from` on `cone` is the chain from `g`'s top to the root
-    /// ([`Cone::stop_from`](super::setup::Cone)).
-    Adopt { free: VtreeMask<'a>, cone: &'a [VtreeIdx], stop_from: usize },
+    /// `cone` lists the internal levels with a leaf of `g` under them up to
+    /// `g`'s top, children first, and `free` holds the others, the chain
+    /// from `g`'s top to the root included, which the sweep reaches up a
+    /// level at a time ([`Cone::chain`](super::setup::Cone)).
+    Adopt { free: VtreeMask<'a>, cone: &'a [VtreeIdx] },
 }
 
 /// Conjoin a plain owned `f` and a plain `g` read through a view whose leaves
@@ -335,10 +426,10 @@ pub(crate) fn apply_and_adopting(
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     free: VtreeMask<'_>,
-    (cone, stop_from): (&[VtreeIdx], usize),
+    cone: &[VtreeIdx],
 ) -> Result<Tdd, OperationError> {
     debug_assert!(f.owned().is_some() && g.is_viewed());
-    apply_and_held(eng, f, g, VtreeMask::default(), ConjoinMode::Adopt { free, cone, stop_from }).map(Conjoined::diagram)
+    apply_and_held(eng, f, g, VtreeMask::default(), ConjoinMode::Adopt { free, cone }).map(Conjoined::diagram)
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
@@ -455,7 +546,7 @@ fn apply_and_held(
 ) -> Result<Conjoined, OperationError> {
     let (free, listed) = match mode {
         ConjoinMode::Restore { free } => (free, None),
-        ConjoinMode::Adopt { free, cone, stop_from } => (Operands { f: VtreeMask::default(), g: free }, Some((cone, stop_from))),
+        ConjoinMode::Adopt { free, cone } => (Operands { f: VtreeMask::default(), g: free }, Some(cone)),
         _ => (Operands::default(), None),
     };
     debug_assert!(
@@ -701,7 +792,7 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &run, ops));
+        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &mut run, ops));
         owed::split_built(&vtree, &mut run);
         loose
     } else {
@@ -720,11 +811,11 @@ fn apply_and_held(
             taken_dirty = Some(std::mem::take(&mut f.dirty));
             let mut own = std::mem::take(&mut f.levels).into_vec();
             let levels = assembly.parts_mut().0;
-            for t in cone.nodes() {
+            for t in visited(&vtree, cone, &lists.chain) {
                 std::mem::swap(&mut levels[t], &mut own[t]);
             }
             std::mem::swap(levels, &mut own);
-            for t in cone.nodes() {
+            for t in visited(&vtree, cone, &lists.chain) {
                 own[t] = TddLevel::new();
             }
             Some(own)

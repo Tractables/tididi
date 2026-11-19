@@ -8,6 +8,7 @@ fn full_bump_arena(cells: usize) -> GridArena {
         cells: Vec::with_capacity(cells),
         grids: vec![None; 2],
         bump: Some(Bump { end: 0, free: Vec::new() }),
+        planned: 0,
     };
     arena.cells.resize(arena.cells.capacity(), NO_PRODUCT);
     arena.bump.as_mut().unwrap().end = arena.cells.len();

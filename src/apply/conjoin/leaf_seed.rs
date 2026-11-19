@@ -7,6 +7,7 @@ use crate::diagram::{TddLevel, WeightStore, LEAF_WIDTH};
 use crate::vtree::VtreeIdx;
 use super::setup::Operands;
 use super::setup::ApplyRun;
+use super::products::Products;
 use super::{CONJOIN_GRID, NO_PRODUCT};
 
 /// `CONJOIN_GRID` row by row: the product grid of every leaf level.
@@ -46,12 +47,18 @@ pub(super) fn apply_leaf_levels(
     for &t in cone.leaves {
         let t_idx = t.idx();
         debug_assert!(f_widths[t_idx] == LEAF_WIDTH && g_widths[t_idx] == LEAF_WIDTH, "a leaf level has the leaf width");
-        let base = products.arena.alloc(eng, t_idx, LEAF_GRID.len())?;
-        products.arena.set_dense(t_idx, base);
-        let at = base.idx();
-        products.arena.slab_mut()[at..at + LEAF_GRID.len()].copy_from_slice(&LEAF_GRID);
-        if products.arena.is_bump() { products.record_live(t_idx, LEAF_LIVE); }
+        leaf_grid(eng, products, t_idx)?;
     }
+    Ok(())
+}
+
+/// [`apply_leaf_levels`] at the leaf `t`.
+pub(super) fn leaf_grid(eng: &Engine, products: &mut Products, t: usize) -> Result<(), OperationError> {
+    let base = products.arena.alloc(eng, t, LEAF_GRID.len())?;
+    products.arena.set_dense(t, base);
+    let at = base.idx();
+    products.arena.slab_mut()[at..at + LEAF_GRID.len()].copy_from_slice(&LEAF_GRID);
+    if products.arena.is_bump() { products.record_live(t, LEAF_LIVE); }
     Ok(())
 }
 
