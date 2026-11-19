@@ -178,31 +178,40 @@ impl View {
             let (left, _) = into.children(t);
             let free_side = if plan.is_free(left) { ChildSide::Left } else { ChildSide::Right };
             let through = PassThrough::new(into, t, free_side, |c| view.level(tdd, c.idx()).slot_count());
-            let mut level = view.take_empty(t);
-            if !into.node(through.carries).is_leaf() {
-                if through.width > 0 {
-                    through.build(lim, &mut level)?;
+            let carries = into.node(through.carries);
+            if carries.is_region() {
+                view.pass_over_region(lim, tdd, plan, t, &through)?;
+                continue;
+            }
+            let chain = match carries.is_leaf() {
+                false => None,
+                true if view.level(tdd, through.carries.idx()).is_marginal() => {
+                    return Err(marginal_leaf(plan, through.carries));
                 }
-            } else if into.node(through.carries).is_region() {
-                view.pass_over_region(lim, tdd, plan, t, &through, &mut level)?;
-            } else if view.level(tdd, through.carries.idx()).is_marginal() {
-                return Err(marginal_leaf(plan, through.carries));
-            } else {
-                let read = |p: VtreeIdx, side: ChildSide| first_ref(view.level(tdd, p.idx()), view.oriented(plan, p, side));
-                let chain = literal_chain(into, plan, read, tdd.output.local, t);
-                match chain {
-                    Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
-                    Chain::Output(_) => view.output.local = NodeIdx(0),
-                    Chain::One => {}
+                true => {
+                    let read = |p: VtreeIdx, side: ChildSide| first_ref(view.level(tdd, p.idx()), view.oriented(plan, p, side));
+                    let chain = literal_chain(into, plan, read, tdd.output.local, t);
+                    match chain {
+                        Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
+                        Chain::Output(_) => view.output.local = NodeIdx(0),
+                        Chain::One => {}
+                    }
+                    Some(chain)
                 }
-                for &label in chain.labels() {
-                    let (l, r) = free_side.pick((through.one, label), (label, through.one));
-                    level.push_node(lim, &[ChildPair::new(l, r)])?;
+            };
+            let level = view.slot_mut(lim, t)?;
+            match chain {
+                None if through.width > 0 => through.build(lim, level)?,
+                None => {}
+                Some(chain) => {
+                    for &label in chain.labels() {
+                        let (l, r) = free_side.pick((through.one, label), (label, through.one));
+                        level.push_node(lim, &[ChildPair::new(l, r)])?;
+                    }
                 }
             }
             level.close();
             level.close_held_pairs();
-            view.put_built(lim, t, level)?;
         }
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
@@ -227,99 +236,85 @@ impl View {
         }
     }
 
-    /// The level to build at `t`, empty: the result's, taken out of its
-    /// array, in a placement.
+    /// The view's level at `t`, where it builds it: the one it built there
+    /// before, if any, else an empty level, the result's in a placement.
     #[inline]
-    fn take_empty(&mut self, t: VtreeIdx) -> TddLevel {
-        match self.by_node {
-            true => std::mem::take(&mut self.built[t.idx()]),
-            false => TddLevel::new(),
-        }
-    }
-
-    /// Make `level` the view's level at `t`, in place of the one it built
-    /// there before, if any.
-    #[inline]
-    fn put_built(&mut self, lim: &Limits, t: VtreeIdx, level: TddLevel) -> Result<(), OperationError> {
+    fn slot_mut(&mut self, lim: &Limits, t: VtreeIdx) -> Result<&mut TddLevel, OperationError> {
         let b = match self.at[t.idx()] {
             Slot::Built(b) => b as usize,
             _ if self.by_node => t.idx(),
             _ => {
-                lim.try_push(&mut self.built, level)?;
-                self.at[t.idx()] = Slot::Built(self.built.len() as u32 - 1);
-                return Ok(());
+                lim.try_push(&mut self.built, TddLevel::new())?;
+                self.built.len() - 1
             }
         };
-        self.built[b] = level;
         self.at[t.idx()] = Slot::Built(b as u32);
-        Ok(())
+        Ok(&mut self.built[b])
     }
 
-    /// The level at `t`, with `t`'s sides, for the view to change and put
-    /// back ([`View::put_built`]): taken out where the view built it, else a
-    /// copy of the operand's.
-    fn reader(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx) -> Result<TddLevel, OperationError> {
-        if let Slot::Built(b) = self.at[t.idx()] {
-            return Ok(std::mem::take(&mut self.built[b as usize]));
+    /// The view's level at the image `t`, with `t`'s sides, for the view to
+    /// change: the one it built there, else a copy of the operand's.
+    fn reader_mut(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx) -> Result<&mut TddLevel, OperationError> {
+        let own = match self.at[t.idx()] {
+            Slot::Own(s) => Some(s as usize),
+            _ => None,
+        };
+        let level = self.slot_mut(lim, t)?;
+        if let Some(s) = own {
+            tdd.levels[s].try_clone_over(lim, 0, 0, level)?;
+            if plan.is_mirrored(t) {
+                level.swap_sides();
+            }
         }
-        let mut copy = self.take_empty(t);
-        self.level(tdd, t.idx()).try_clone_over(lim, 0, 0, &mut copy)?;
-        if plan.is_mirrored(t) {
-            copy.swap_sides();
-        }
-        Ok(copy)
+        Ok(level)
     }
 
-    /// Make `level` the pass-through at `t` over the region `through`
-    /// carries: a node per slot of the region at the same index. Where the
-    /// region holds counts and an image reads it through the chain, one
-    /// more node per inline value that image holds on that side, which the
-    /// image's copy in the view names instead.
+    /// Build the pass-through at `t` over the region `through` carries: a
+    /// node per slot of the region at the same index. Where the region holds
+    /// counts and an image reads it through the chain, one more node per
+    /// inline value that image holds on that side, which the image's copy in
+    /// the view names instead.
     #[cold]
     #[inline(never)]
-    fn pass_over_region(
-        &mut self,
-        lim: &Limits,
-        tdd: &Tdd,
-        plan: &Plan,
-        t: VtreeIdx,
-        through: &PassThrough,
-        level: &mut TddLevel,
-    ) -> Result<(), OperationError> {
-        for (left, right) in through.pairs() {
-            level.push_node(lim, &[ChildPair::new(left, right)])?;
-        }
+    fn pass_over_region(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx, through: &PassThrough) -> Result<(), OperationError> {
         let region = self.level(tdd, through.carries.idx());
-        let Some((parent, side)) = image_above(&self.vtree, plan, t) else { return Ok(()) };
-        if !region.is_marginal() || region.is_weight_marginal() {
-            return Ok(());
-        }
+        let counts = region.is_marginal() && !region.is_weight_marginal();
+        let reader = image_above(&self.vtree, plan, t).filter(|_| counts);
         let decoder = crate::diagram::ChildDecoder::marginal();
         let inline_value = |r: EncodedChildRef| !r.is_reserved() && matches!(decoder.value(r), ValueRef::Inline(_));
-        let read = self.level(tdd, parent.idx());
-        let read_side = self.oriented(plan, parent, side);
-        let value_refs = read.has_value_refs(read_side);
         let mut inline = Vec::new();
-        for (_, pairs) in read.internal_inputs_iter() {
-            for pair in pairs {
-                let r = read_side.pick(pair.left, pair.right);
-                if inline_value(r) {
-                    lim.try_push(&mut inline, r)?;
+        let mut value_refs = None;
+        if let Some((parent, side)) = reader {
+            let read = self.level(tdd, parent.idx());
+            let read_side = self.oriented(plan, parent, side);
+            value_refs = Some(read.has_value_refs(read_side));
+            for (_, pairs) in read.internal_inputs_iter() {
+                for pair in pairs {
+                    let r = read_side.pick(pair.left, pair.right);
+                    if inline_value(r) {
+                        lim.try_push(&mut inline, r)?;
+                    }
                 }
             }
         }
         let free_side = through.free_side;
+        let level = self.slot_mut(lim, t)?;
+        for (left, right) in through.pairs() {
+            level.push_node(lim, &[ChildPair::new(left, right)])?;
+        }
         for &value in &inline {
             let (left, right) = free_side.pick((through.one, NodeIdx(value.0)), (NodeIdx(value.0), through.one));
             level.push_node(lim, &[ChildPair::new(left, right)])?;
         }
-        level.set_has_value_refs(free_side.pick(ChildSide::Right, ChildSide::Left), value_refs);
-        if inline.is_empty() {
-            return Ok(());
+        if let Some(value_refs) = value_refs {
+            level.set_has_value_refs(free_side.pick(ChildSide::Right, ChildSide::Left), value_refs);
         }
-        let mut copy = self.reader(lim, tdd, plan, parent)?;
+        level.close();
+        level.close_held_pairs();
+        let (Some((parent, side)), false) = (reader, inline.is_empty()) else { return Ok(()) };
+        let copy = self.reader_mut(lim, tdd, plan, parent)?;
         let mut next = through.width as u32;
-        crate::diagram::for_each_side_ref_mut(lim, &mut copy, side, |r| {
+        crate::diagram::for_each_side_ref_mut(lim, copy, side, |r| {
             if inline_value(EncodedChildRef(*r)) {
                 *r = next;
                 next += 1;
@@ -328,7 +323,7 @@ impl View {
         copy.set_has_value_refs(side, false);
         copy.close();
         copy.close_held_pairs();
-        self.put_built(lim, parent, copy)
+        Ok(())
     }
 
     /// Point the readers of the chain tops `tops` at the chains' nodes 0
@@ -359,13 +354,12 @@ impl View {
                 left: self.level(tdd, left.idx()).child_decoder(),
                 right: self.level(tdd, right.idx()).child_decoder(),
             };
-            let mut copy = self.reader(lim, tdd, plan, parent)?;
-            let planned = plan_sides_remap(lim, &copy, moving, decoders, &REMAP)?;
-            finish_sides_remap(&mut copy, planned, moving, decoders, &REMAP);
+            let copy = self.reader_mut(lim, tdd, plan, parent)?;
+            let planned = plan_sides_remap(lim, copy, moving, decoders, &REMAP)?;
+            finish_sides_remap(copy, planned, moving, decoders, &REMAP);
             copy.forget_held_pairs();
             copy.close();
             copy.settle_held_pairs();
-            self.put_built(lim, parent, copy)?;
         }
         Ok(())
     }
