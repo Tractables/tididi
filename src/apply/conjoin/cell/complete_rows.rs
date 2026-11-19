@@ -347,11 +347,11 @@ unsafe fn lone_cells<const K: usize, L: ChildLookup, R: ChildLookup>(
         // An f pair's product with the column's pair: `None` where a side
         // has none.
         let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
-            let lc = left.get_in_row(node_idx, l, c);
+            let lc = left.get_in_view(node_idx, l, c);
             if left.kills() && lc == NO_PRODUCT {
                 return None;
             }
-            let rc = right.get_in_row(node_idx, r, d);
+            let rc = right.get_in_view(node_idx, r, d);
             (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
         };
         let first = product(node_idx, l0, r0);
