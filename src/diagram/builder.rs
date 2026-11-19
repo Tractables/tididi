@@ -668,22 +668,23 @@ fn check_structural_level<const PAIRS: bool>(
             if every_pair(lvl, fits) {
                 return Ok(());
             }
-        } else if lb * rb <= u64::BITS as usize {
-            // Every pair a bit of one word, `left * rb + right`: no buffer
-            // for the narrow levels most finishes consist of. The loop only
-            // learns whether some pair repeats; keeping the pair in it costs
-            // a level's check three times as much.
+        } else if lb <= 8 && rb <= 8 {
+            // Every pair a bit of one word, `8 * left + right`: no buffer for
+            // the narrow levels most finishes consist of. The stride is a
+            // constant so that the index is one address computation. The
+            // loop only learns whether some pair repeats; carrying the pair
+            // through it costs a level's check three times as much.
             let (mut grid, mut repeated) = (0u64, 0u64);
             let all_fit = every_pair(lvl, |pair| {
                 fits(pair) && {
-                    let bit = 1u64 << (pair.left.raw() as usize * rb + pair.right.raw() as usize);
-                    repeated |= grid & bit;
-                    grid |= bit;
+                    let at = 8 * pair.left.raw() + pair.right.raw();
+                    repeated |= grid >> at;
+                    grid |= 1 << at;
                     true
                 }
             });
             if all_fit {
-                return if repeated == 0 { Ok(()) } else { scan.name_repeat(lvl, t, lb, rb) };
+                return if repeated & 1 == 0 { Ok(()) } else { scan.name_repeat(lvl, t, lb, rb) };
             }
         } else if lb * rb <= GRID_BITS {
             let grid = &mut scan.grid;
