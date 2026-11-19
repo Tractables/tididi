@@ -237,8 +237,8 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 |---|---|---|---|---|
 | 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | — | `test_helpers::check::check_determinism` |
 | 2 | Every live node in a structural diagram is satisfiable; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
-| 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
-| 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | none |
+| 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_distinct_functions` |
+| 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check::check_canonicity` |
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and its descendants are marginal or leaves whose contribution is absorbed. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
@@ -251,7 +251,9 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 Rows 3, 4, 8, 9, 10 and 12 hold after a pass rather than throughout. Canonical
 structural form also requires that no twins remain, which no row above
 covers: rows 3 and 9 forbid duplicate pair lists, while twins are nodes their
-parents use identically.
+parents use identically. `test_helpers::check::check_canonicity` decides
+canonical structural form: rows 3 and 4, no twins, and no leaf child read
+alike through both literals at every node.
 
 A diagram an operation returns without a full reduction may hold unreachable
 nodes, duplicates and twins, but row 1 holds over every stored node, reachable
@@ -266,6 +268,7 @@ grows the output in place or builds its complement beside it drops them first.
 | Oracle | Path | When |
 |---|---|---|
 | Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
+| Canonical form | `test_helpers::check::check_canonicity` | After `minimize`, on a structural diagram. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
 | Marginal invariants | `test_helpers::check::marginal` | After marginalization or a reduction pass. |
 | Brute-force count | `test_helpers::brute_force_count` | Small formulas, to confirm a count. |

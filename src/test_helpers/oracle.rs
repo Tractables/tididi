@@ -282,8 +282,12 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// subject is mid-flight (an accumulator, a shrunk operand) has cause to skip
 /// it.
 ///
-/// A structural diagram gets the fast family: vtree structure, no false
-/// nodes, and canonicity by random-assignment signature. A diagram with a
+/// A structural diagram gets the fast family
+/// ([`check_all_fast`](crate::test_helpers::check::check_all_fast)): vtree
+/// structure, no false nodes, distinct functions within a level by
+/// random-assignment signature, and implicit levels. That holds of an
+/// unminimized result too, so it does not decide canonical form;
+/// [`check_canonicity`](crate::test_helpers::check::check_canonicity) does. A diagram with a
 /// marginal level gets the structure and false-node checks and then the
 /// marginal family instead of the signature check: a marginal child
 /// contributes its stored count to a signature rather than anything
