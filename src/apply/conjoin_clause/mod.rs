@@ -55,9 +55,10 @@ pub(crate) struct ClauseWork {
     /// Per level, whether the accumulator listed it loose under a spine
     /// parent; covered only while the loose levels are known.
     listed: MarkBuffer,
-    /// Per spine level, its [`NO_CT`] and [`NO_PRODUCTS`] bits; sized only
-    /// while the loose levels are known.
-    gaps: Vec<u8>,
+    /// Per spine level with `d_t`, whether a node at it or at a spine level
+    /// under it may have neither product; sized only while the loose levels
+    /// are known.
+    bare: Vec<bool>,
     /// The counts a read of a rebuilt level's pairs for unnamed children takes.
     counts: Vec<u32>,
 }
@@ -72,7 +73,7 @@ impl Buffers for ClauseWork {
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
         self.listed.buffers(visit);
-        visit(&mut self.gaps);
+        visit(&mut self.bare);
         visit(&mut self.counts);
     }
 }
@@ -348,7 +349,7 @@ fn rebuild_along_spine(
     let mut loose = f.dirty.take_loose();
     if let Some(list) = &mut loose {
         work.listed.cover(lim, num_nodes)?;
-        lim.try_resize(&mut work.gaps, num_nodes, 0)?;
+        lim.try_resize(&mut work.bare, num_nodes, false)?;
         let (on_spine, listed) = (&work.on_spine, &mut work.listed);
         list.retain(|&c| {
             let c = VtreeIdx(c);
@@ -369,7 +370,7 @@ fn rebuild_along_spine(
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
         listed: &work.listed,
-        gaps: &mut work.gaps,
+        bare: &mut work.bare,
         counts: &mut work.counts,
     };
     for &t in work.spine_internal.iter() {

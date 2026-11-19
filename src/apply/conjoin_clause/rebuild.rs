@@ -23,14 +23,9 @@ pub(super) struct ClauseTables<'a> {
     pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
     pub(super) spare_pairs: &'a mut Vec<ChildPair>,
     pub(super) listed: &'a [bool],
-    pub(super) gaps: &'a mut [u8],
+    pub(super) bare: &'a mut [bool],
     pub(super) counts: &'a mut Vec<u32>,
 }
-
-/// A bit of [`ClauseTables::gaps`]: some node of the level has no `c_t` product.
-pub(super) const NO_CT: u8 = 1;
-/// A bit of [`ClauseTables::gaps`]: some node of the level has neither product.
-pub(super) const NO_PRODUCTS: u8 = 2;
 
 /// The child-map offsets and worst-case output pairs per input pair for a
 /// spine level.
@@ -163,7 +158,7 @@ pub(super) fn rebuild_spine_level(
         right_grid_base,
         pair_mult,
     };
-    let dropped = match (left_rel, right_rel, compute_dt) {
+    let (dropped, dead) = match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
             rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
         }
@@ -200,7 +195,7 @@ pub(super) fn rebuild_spine_level(
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
     if let Some(loose) = loose {
-        list_unnamed_children(eng, t, vtree, levels, tables, k, dropped, loose)?;
+        list_unnamed_children(eng, t, vtree, levels, tables, dropped, dead, loose)?;
     }
     Ok(())
 }
@@ -208,9 +203,9 @@ pub(super) fn rebuild_spine_level(
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
 /// Each node charges the work clock a unit for each pair it reads and each
-/// pair it writes. Return whether some node wrote fewer pairs than it read:
-/// with one relevant child and no `d_t`, whether some input pair lost its
-/// only product.
+/// pair it writes. Return whether some node wrote fewer pairs than it read
+/// (with one relevant child and no `d_t`, whether some input pair lost its
+/// only product), and whether some node has no pairs.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
@@ -219,7 +214,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     level: &mut TddLevel,
     base: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<bool, OperationError> {
+) -> Result<(bool, bool), OperationError> {
     // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
@@ -228,7 +223,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     let stored = old.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
     let mut gate = eng.limits().gate();
-    let mut dropped = false;
+    let (mut dropped, mut dead) = (false, false);
     for i in 0..old.slot_count() {
         let inputs: &[ChildPair] = match (nodes.get(i), stored) {
             (Some(node), Some(s)) => s.of(node),
@@ -243,6 +238,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
             tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            dead = true;
             continue;
         }
         let written =
@@ -251,12 +247,13 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
         gate.poll((inputs.len() + written) as u64)?;
     }
     gate.flush()?;
-    Ok(dropped)
+    Ok((dropped, dead))
 }
 
 /// Push to `loose` each structural internal child of the rebuilt spine level
-/// `t` with a node no pair of `t` names, and record `t`'s [`gaps`] for its
-/// parent. `k` is the number of nodes `t` had before the rebuild.
+/// `t` with a node no pair of `t` names, and record in [`bare`] whether `t`
+/// may have a node with neither product. `dead` says whether some node of
+/// `t` had no pairs.
 ///
 /// A child is read only where it can have such a node. The rebuild names
 /// every product of a node its input pairs named, unless the sibling's
@@ -270,9 +267,11 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 ///   need a sibling node with a `c_t` product (or, with `d_t`, any), and
 ///   its `c_t` products a sibling node with any.
 ///
-/// A clause leaf always has a label without `c_t`, never one without both.
+/// With `d_t`, every pair of a node meets a product on each side unless a
+/// node it names has none, so a node with neither product sits above a
+/// node with no pairs; a clause leaf has a product for every label.
 ///
-/// [`gaps`]: ClauseTables::gaps
+/// [`bare`]: ClauseTables::bare
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn list_unnamed_children(
@@ -281,22 +280,15 @@ fn list_unnamed_children(
     vtree: &Vtree,
     levels: &[TddLevel],
     tables: &mut ClauseTables<'_>,
-    k: usize,
     dropped: bool,
+    dead: bool,
     loose: &mut Vec<u32>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let dt = tables.need_dt[t.idx()];
-    let base = tables.level_base[t.idx()];
-    tables.gaps[t.idx()] = tables.cd_map[base..base + k].iter().fold(0, |gaps, &[c, d]| match (c, d) {
-        (NO_PRODUCT, NO_PRODUCT) => gaps | NO_CT | NO_PRODUCTS,
-        (NO_PRODUCT, _) => gaps | NO_CT,
-        _ => gaps,
-    });
-    let gap = |s: VtreeIdx| match vtree.node(s).is_leaf() {
-        true => !dt,
-        false => tables.gaps[s.idx()] & if dt { NO_PRODUCTS } else { NO_CT } != 0,
-    };
+    let (left, right) = vtree.children(t);
+    let bare = |s: VtreeIdx| tables.on_spine[s.idx()] && !vtree.node(s).is_leaf() && tables.bare[s.idx()];
+    let bare_t = dead || bare(left) || bare(right);
     let children = <[VtreeIdx; 2]>::from(vtree.children(t));
     let on_spine = children.map(|c| tables.on_spine[c.idx()]);
     let mut read = [false; 2];
@@ -307,10 +299,11 @@ fn list_unnamed_children(
         }
         let listed = tables.listed[c.idx()];
         read[side] = match (on_spine[side], on_spine[1 - side]) {
-            (true, both) => listed || both && gap(s),
-            (false, _) => !listed && if dt { gap(s) } else { dropped },
+            (true, both) => listed || both && (!dt || bare(s)),
+            (false, _) => !listed && if dt { bare(s) } else { dropped },
         };
     }
+    tables.bare[t.idx()] = bare_t;
     if read == [false; 2] {
         return Ok(());
     }
