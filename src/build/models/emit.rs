@@ -8,6 +8,7 @@ use super::plan::{Decomposition, Plan};
 use crate::Engine;
 use crate::diagram::{Assembly, ChildPair, NodeIdx, ONE_LEAF_IDX, Tdd, TddNodeId};
 use crate::limits::{Limits, OperationError};
+use crate::sort::Radix;
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The per-level emission pass over a planned [`Layout`].
@@ -19,6 +20,7 @@ struct Emit<'a> {
     /// each atom was stored at, in atom order.
     state: Vec<Option<Vec<NodeIdx>>>,
     pair_list: Vec<ChildPair>,
+    sort: OrderScratch,
 }
 
 /// Store every level bottom-up from the plans and seat the resulting canonical
@@ -40,6 +42,7 @@ pub(super) fn fill(
         vtree,
         state,
         pair_list: Vec::new(),
+        sort: OrderScratch::default(),
     };
     let mut emitted = 0u64;
 
@@ -67,6 +70,9 @@ pub(super) fn fill(
         }
         emit.state[t.idx()] = Some(finished);
     }
+    let OrderScratch { keyed, radix } = std::mem::take(&mut emit.sort);
+    lim.discard(keyed);
+    radix.discard(lim);
 
     let root = vtree.root();
     let done = emit.state[root.idx()]
@@ -143,7 +149,7 @@ impl Emit<'_> {
         let from = below(&self.state, constrained);
         let mut locals = filled(lim, from.len(), NodeIdx(0))?;
         self.assembly.reserve(self.eng, t, from.len(), 0)?;
-        let order = stored_order(lim, from.iter().map(|&child| u64::from(child.0)))?;
+        let order = stored_order(lim, &mut self.sort, from.iter().map(|&child| u64::from(child.0)))?;
         for atom in in_order(&order, from.len()) {
             let child = from[atom];
             let pair = if constrained == left {
@@ -168,34 +174,50 @@ fn pair_key(pair: ChildPair) -> u64 {
     u64::from(pair.right.0) << 32 | u64::from(pair.left.0)
 }
 
+/// The buffers [`stored_order`] sorts through, kept from level to level.
+#[derive(Default)]
+struct OrderScratch {
+    keyed: Vec<u128>,
+    radix: Radix<u128>,
+}
+
 /// The atoms in the order their nodes are stored: ascending by `keys`,
 /// one distinct key an atom. Empty where the keys ascend already, so that
 /// the atoms are stored in their own order.
 fn stored_order(
     lim: &Limits,
-    keys: impl ExactSizeIterator<Item = u64> + Clone,
+    s: &mut OrderScratch,
+    keys: impl ExactSizeIterator<Item = u64>,
 ) -> Result<Vec<u32>, OperationError> {
-    let mut previous = None;
-    if keys
-        .clone()
-        .all(|key| previous.replace(key).is_none_or(|last| last < key))
-    {
+    let keyed = &mut s.keyed;
+    keyed.clear();
+    lim.reserve_exact(keyed, keys.len())?;
+    let (mut high, mut low, mut ascending, mut last) = (0u64, 0u64, true, None);
+    for (atom, key) in keys.enumerate() {
+        ascending &= last.replace(key).is_none_or(|last| last < key);
+        high |= key >> 32;
+        low |= key & u64::from(u32::MAX);
+        keyed.push(u128::from(key) << 32 | atom as u128);
+    }
+    if ascending {
         return Ok(Vec::new());
     }
-    let mut keyed: Vec<u128> = Vec::new();
-    lim.reserve_exact(&mut keyed, keys.len())?;
-    keyed.extend(
-        keys.enumerate()
-            .map(|(atom, key)| u128::from(key) << 32 | atom as u128),
-    );
-    keyed.sort_unstable();
+    // The halves of a pair key are node indices, mostly far narrower than
+    // 32 bits: the radix sort places only the bits they use.
+    let low_bits = u64::BITS - low.leading_zeros();
+    let bits = (low_bits + u64::BITS - high.leading_zeros()) as usize;
+    let squeezed = |record: &u128| {
+        let key = (record >> 32) as u64;
+        (key >> 32) << low_bits | key & u64::from(u32::MAX)
+    };
+    let mut gate = lim.gate();
+    s.radix
+        .sort_by_key_polling(lim, keyed, squeezed, 0, bits, &mut |work| gate.poll(work))?;
+    gate.flush()?;
     let mut order = Vec::new();
-    let reserved = lim.reserve_exact(&mut order, keyed.len());
-    if reserved.is_ok() {
-        order.extend(keyed.iter().map(|&k| k as u32));
-    }
-    lim.discard(keyed);
-    reserved.map(|()| order)
+    lim.reserve_exact(&mut order, keyed.len())?;
+    order.extend(keyed.iter().map(|&record| record as u32));
+    Ok(order)
 }
 
 /// The atoms below `atoms` in the order `order` from [`stored_order`]
@@ -220,6 +242,7 @@ impl Emit<'_> {
             vtree,
             state,
             pair_list,
+            sort,
         } = self;
         let lim = eng.limits();
         let (left, right) = vtree.children(t);
@@ -256,7 +279,7 @@ impl Emit<'_> {
                         .min()
                         .unwrap_or(0)
                 });
-                let order = stored_order(lim, least)?;
+                let order = stored_order(lim, sort, least)?;
                 pair_list.clear();
                 lim.reserve_exact(pair_list, widest as usize)?;
                 let mut gate = lim.gate();
@@ -290,7 +313,7 @@ impl Emit<'_> {
                         ends[high - 1] as usize
                     }..ends[high] as usize]
                 };
-                let order = stored_order(lim, l.iter().map(|&node| u64::from(node.0)))?;
+                let order = stored_order(lim, sort, l.iter().map(|&node| u64::from(node.0)))?;
                 pair_list.clear();
                 lim.reserve_exact(pair_list, lows.len())?;
                 let low_ordered = ascending(r);
@@ -320,6 +343,7 @@ impl Emit<'_> {
             let node_pair = |&[_, a, b]: &[u32; 3]| ChildPair::new(l[a as usize], r[b as usize]);
             let order = stored_order(
                 lim,
+                sort,
                 triples.iter().map(|triple| pair_key(node_pair(triple))),
             )?;
             for atom in in_order(&order, atoms) {
@@ -356,7 +380,7 @@ impl Emit<'_> {
                     .min()
                     .unwrap_or(0)
             });
-            let order = stored_order(lim, least)?;
+            let order = stored_order(lim, sort, least)?;
             for atom in in_order(&order, atoms) {
                 let range = range(atom);
                 gate.poll(range.len() as u64)?;
