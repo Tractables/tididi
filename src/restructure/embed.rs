@@ -17,7 +17,7 @@ use super::{
 };
 
 use crate::Engine;
-use crate::apply::conjoin::view::{Slot, View};
+use crate::apply::conjoin::view::{moved_dirty, reserve_moved, Slot, View};
 use crate::diagram::{
     ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, WeightStore,
     WeightValue, return_levels, try_take_levels,
@@ -911,22 +911,40 @@ fn seat_view<'a>(
     copy_weights: bool,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
-    let view = match View::build(eng, &tdd, into, plan) {
+    let mut slots = eng.scratch.apply.cone_slots.checkout_preserving(eng);
+    let view = match View::placing(eng, &tdd, into, plan, std::mem::take(&mut *slots)) {
         Ok(view) => view,
-        Err(e) => return Err((e, tdd)),
+        Err((e, back)) => {
+            *slots = back;
+            return Err((e, tdd));
+        }
     };
-    let (at, mut built, output, dirty) = view.into_parts();
+    let (mut at, mut built, output, tops) = view.into_parts();
     let closed = tdd.levels.is_closed();
+    // A moved diagram's worklists are taken, with room made in place.
+    let carried = match &mut tdd {
+        Cow::Owned(moved) => reserve_moved(eng, &mut moved.dirty, &moved.vtree, !tops.is_empty()).map(|listed| (None, listed)),
+        Cow::Borrowed(source) => source.dirty.clone_on(eng).and_then(|mut copied| {
+            reserve_moved(eng, &mut copied, source.vtree(), !tops.is_empty()).map(|listed| (Some(copied), listed))
+        }),
+    };
     let borrowed = match &tdd {
         Cow::Borrowed(source) => Some(*source),
         Cow::Owned(_) => None,
     };
-    let (mut levels, weights) = match take_placement(eng, borrowed, into, plan, &at, free, copy_weights) {
+    let ready = carried.and_then(|carried| {
+        take_placement(eng, borrowed, into, plan, &at, free, copy_weights).map(|taken| (carried, taken))
+    });
+    let ((copied, listed), (mut levels, weights)) = match ready {
         Ok(ready) => ready,
-        Err(e) => return Err((e, tdd)),
+        Err(e) => {
+            at.clear();
+            *slots = at;
+            return Err((e, tdd));
+        }
     };
     let own = |d: VtreeIdx| matches!(at[d.idx()], Slot::Own(_));
-    let weights = match &mut tdd {
+    let (weights, carried) = match &mut tdd {
         Cow::Owned(moved) => {
             let source = &mut moved.levels[..];
             for (s, &d) in plan.embedding.levels.iter().enumerate() {
@@ -934,10 +952,11 @@ fn seat_view<'a>(
                     std::mem::swap(&mut levels[d.idx()], &mut source[s]);
                 }
             }
-            moved.weights.take()
+            (moved.weights.take(), moved.take_worklists())
         }
-        Cow::Borrowed(_) => weights,
+        Cow::Borrowed(_) => (weights, copied.expect("a borrowed diagram's worklists are copied")),
     };
+    let dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &tops);
     for (t, slot) in at.iter().enumerate() {
         if let Slot::Built(b) = *slot {
             std::mem::swap(&mut levels[t], &mut built[b as usize]);
@@ -973,6 +992,8 @@ fn seat_view<'a>(
     if let Cow::Owned(moved) = &mut tdd {
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
     }
+    at.clear();
+    *slots = at;
     Ok(result)
 }
 

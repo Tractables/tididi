@@ -49,6 +49,8 @@ pub(crate) struct View {
     empty: TddLevel,
     output: TddNodeId,
     dirty: Dirty,
+    /// The tops of the chains over a leaf read as `Pos` and `Neg`, sorted.
+    tops: Vec<VtreeIdx>,
 }
 
 impl View {
@@ -77,7 +79,30 @@ impl View {
         tdd: &Tdd,
         into: &Arc<Vtree>,
         plan: &Plan,
+        at: Vec<Slot>,
+    ) -> Result<View, (OperationError, Vec<Slot>)> {
+        Self::build_as(eng, tdd, into, plan, at, true)
+    }
+
+    /// [`View::build_in`] for a placement, which moves the worklists itself
+    /// ([`reserve_moved`], [`moved_dirty`]): the view's are left empty.
+    pub(crate) fn placing(
+        eng: &Engine,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        plan: &Plan,
+        at: Vec<Slot>,
+    ) -> Result<View, (OperationError, Vec<Slot>)> {
+        Self::build_as(eng, tdd, into, plan, at, false)
+    }
+
+    fn build_as(
+        eng: &Engine,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        plan: &Plan,
         mut at: Vec<Slot>,
+        worklists: bool,
     ) -> Result<View, (OperationError, Vec<Slot>)> {
         if at.len() < into.num_nodes()
             && let Err(error) = eng.limits().try_resize(&mut at, into.num_nodes(), Slot::Free)
@@ -91,17 +116,18 @@ impl View {
             empty: TddLevel::new(),
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
+            tops: Vec::new(),
         };
-        match view.fill(eng, tdd, into, plan) {
+        match view.fill(eng, tdd, into, plan, worklists) {
             Ok(()) => Ok(view),
             Err(error) => Err((error, view.release(plan))),
         }
     }
 
     /// Where the view finds each level, the levels it built, the output and
-    /// the worklists.
-    pub(crate) fn into_parts(self) -> (Vec<Slot>, Vec<TddLevel>, TddNodeId, Dirty) {
-        (self.at, self.built, self.output, self.dirty)
+    /// the sorted tops of the chains over a leaf read as `Pos` and `Neg`.
+    pub(crate) fn into_parts(self) -> (Vec<Slot>, Vec<TddLevel>, TddNodeId, Vec<VtreeIdx>) {
+        (self.at, self.built, self.output, self.tops)
     }
 
     /// The table of [`View::build_in`], every entry free again.
@@ -118,7 +144,7 @@ impl View {
         self.at
     }
 
-    fn fill(&mut self, eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<(), OperationError> {
+    fn fill(&mut self, eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, worklists: bool) -> Result<(), OperationError> {
         let lim = eng.limits();
         let view = self;
         for (s, &d) in plan.embedding.levels.iter().enumerate() {
@@ -161,7 +187,13 @@ impl View {
         }
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
-        view.dirty = moved_dirty(eng, tdd, into, plan, &mut literal_tops)?;
+        literal_tops.sort_unstable();
+        if worklists {
+            let mut carried = tdd.dirty.clone_on(eng)?;
+            let listed = reserve_moved(eng, &mut carried, tdd.vtree(), !literal_tops.is_empty())?;
+            view.dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &literal_tops);
+        }
+        view.tops = literal_tops;
         Ok(())
     }
 
@@ -348,37 +380,46 @@ fn marginal_leaf(plan: &Plan, carried: VtreeIdx) -> OperationError {
     OperationError::MarginalLevel(plan.covered_by(carried).unwrap_or(carried))
 }
 
-/// `tdd`'s worklists on `into`, as [`crate::restructure::embed::place`]
-/// moves them; sorts `literal_tops`.
-fn moved_dirty(
-    eng: &Engine,
-    tdd: &Tdd,
+/// Ready `carried`, the worklists of a diagram on `source`, for
+/// [`moved_dirty`]: room for the inner pass's share of the leaf pass's, and
+/// the room for the listed loose levels, returned, where some are listed or
+/// `chains` (a chain over a leaf read as `Pos` and `Neg`) may list them.
+pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
+    carried.reserve_leaf_owes_inner(eng)?;
+    let mut listed = Vec::new();
+    if carried.loose().is_some_and(|loose| !loose.is_empty() || chains) {
+        // `moved_loose` lists at most the two children of each image of an
+        // internal level.
+        eng.limits().reserve_exact(&mut listed, 2 * source.internal_bottomup_slice().len())?;
+    }
+    Ok(listed)
+}
+
+/// `carried`, readied by [`reserve_moved`] with the room `listed`, moved
+/// from `source` onto `into` as [`crate::restructure::embed::place`] moves
+/// worklists; `tops` are the sorted tops of the chains over a leaf read as
+/// `Pos` and `Neg`.
+pub(crate) fn moved_dirty(
+    mut carried: Dirty,
+    mut listed: Vec<u32>,
+    source: &Vtree,
     into: &Vtree,
     plan: &Plan,
-    literal_tops: &mut [VtreeIdx],
-) -> Result<Dirty, OperationError> {
-    let mut carried = tdd.dirty.clone_on(eng)?;
-    carried.reserve_leaf_owes_inner(eng)?;
+    tops: &[VtreeIdx],
+) -> Dirty {
     let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
-    literal_tops.sort_unstable();
-    if !literal_tops.is_empty() {
+    if !tops.is_empty() {
         carried.leaf_owes_inner(|t| {
             let (left, right) = into.children(VtreeIdx(t));
-            literal_tops.binary_search(&left).is_ok() || literal_tops.binary_search(&right).is_ok()
+            tops.binary_search(&left).is_ok() || tops.binary_search(&right).is_ok()
         });
     }
     carried.dedup_above(into.num_nodes());
     if let Some(mut loose) = loose {
-        let mut listed = Vec::new();
-        if !loose.is_empty() || !literal_tops.is_empty() {
-            // `moved_loose` lists at most the two children of each image of
-            // an internal level.
-            eng.limits().reserve_exact(&mut listed, 2 * tdd.vtree().internal_bottomup_slice().len())?;
-        }
         loose.sort_unstable();
-        moved_loose(tdd.vtree(), into, plan, &loose, literal_tops, &mut listed);
+        moved_loose(source, into, plan, &loose, tops, &mut listed);
         carried.set_loose(Some(listed));
     }
-    Ok(carried)
+    carried
 }
