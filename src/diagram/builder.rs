@@ -673,7 +673,7 @@ fn check_structural_level<const PAIRS: bool>(
             // the narrow levels most finishes consist of. The stride is a
             // constant so that the index is one address computation. The
             // loop only learns whether some pair repeats; carrying the pair
-            // through it costs a level's check three times as much.
+            // through it spills registers and more than doubles its cost.
             let (mut grid, mut repeated) = (0u64, 0u64);
             let all_fit = every_pair(lvl, |pair| {
                 fits(pair) && {
