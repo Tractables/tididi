@@ -216,7 +216,7 @@ impl View {
                 }
                 true => {
                     let read = |p: VtreeIdx, side: ChildSide| first_ref(view.level(tdd, p.idx()), view.oriented(plan, p, side));
-                    let chain = literal_chain(into, plan, read, tdd.output.local, t);
+                    let chain = literal_chain(into, (|p| plan.covered_by(p).is_some(), |p| plan.is_free(p)), read, tdd.output.local, t);
                     match chain {
                         Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
                         Chain::Output(_) => view.output.local = NodeIdx(0),
@@ -225,19 +225,7 @@ impl View {
                     Some(chain)
                 }
             };
-            let level = view.slot_mut(lim, t)?;
-            match chain {
-                None if through.width > 0 => through.build(lim, level)?,
-                None => {}
-                Some(chain) => {
-                    for &label in chain.labels() {
-                        let (l, r) = free_side.pick((through.one, label), (label, through.one));
-                        level.push_node(lim, &[ChildPair::new(l, r)])?;
-                    }
-                }
-            }
-            level.close();
-            level.close_held_pairs();
+            through.fill(lim, view.slot_mut(lim, t)?, chain.as_ref().map(Chain::labels))?;
         }
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
@@ -391,36 +379,14 @@ impl View {
     /// and 1 for `Pos` and `Neg`: each reader a renumbered copy of its own
     /// level.
     fn renumber(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, tops: &[VtreeIdx]) -> Result<(), OperationError> {
-        const REMAP: [u32; 3] = [u32::MAX, 0, 1];
         let vtree = Arc::clone(&self.vtree);
-        // Each reader once, with the sides on which it reads a chain.
-        let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
-        lim.reserve_exact(&mut parents, tops.len())?;
-        for &top in tops {
-            let parent = vtree.node(top).parent().expect("a chain that reaches the root reads no level");
-            let left = vtree.children(parent).0 == top;
-            parents.push((parent, Sides { left, right: !left }));
-        }
-        parents.sort_unstable_by_key(|&(parent, _)| parent.0);
-        parents.dedup_by(|later, kept| {
-            let same = later.0 == kept.0;
-            if same {
-                kept.1 = Sides { left: kept.1.left || later.1.left, right: kept.1.right || later.1.right };
-            }
-            same
-        });
-        for (parent, moving) in parents {
+        for (parent, moving) in chain_readers(lim, &vtree, tops)? {
             let (left, right) = vtree.children(parent);
             let decoders = Sides {
                 left: self.level(tdd, left.idx()).child_decoder(),
                 right: self.level(tdd, right.idx()).child_decoder(),
             };
-            let copy = self.reader_mut(lim, tdd, plan, parent)?;
-            let planned = plan_sides_remap(lim, copy, moving, decoders, &REMAP)?;
-            finish_sides_remap(copy, planned, moving, decoders, &REMAP);
-            copy.forget_held_pairs();
-            copy.close();
-            copy.settle_held_pairs();
+            read_chain_nodes(lim, self.reader_mut(lim, tdd, plan, parent)?, moving, decoders)?;
         }
         Ok(())
     }
@@ -477,6 +443,45 @@ impl View {
     }
 }
 
+/// The levels of `vtree` that read the chain tops `tops`, each once, with
+/// the sides on which it reads one.
+pub(crate) fn chain_readers(lim: &Limits, vtree: &Vtree, tops: &[VtreeIdx]) -> Result<Vec<(VtreeIdx, Sides<bool>)>, OperationError> {
+    let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
+    lim.reserve_exact(&mut parents, tops.len())?;
+    for &top in tops {
+        let parent = vtree.node(top).parent().expect("a chain that reaches the root reads no level");
+        let left = vtree.children(parent).0 == top;
+        parents.push((parent, Sides { left, right: !left }));
+    }
+    parents.sort_unstable_by_key(|&(parent, _)| parent.0);
+    parents.dedup_by(|later, kept| {
+        let same = later.0 == kept.0;
+        if same {
+            kept.1 = Sides { left: kept.1.left || later.1.left, right: kept.1.right || later.1.right };
+        }
+        same
+    });
+    Ok(parents)
+}
+
+/// Point the references of `level` on its `moving` sides, each of which
+/// reads a chain over a leaf, at the chain's nodes 0 and 1 for `Pos` and
+/// `Neg`; `decoders` are its children's levels'.
+pub(crate) fn read_chain_nodes(
+    lim: &Limits,
+    level: &mut TddLevel,
+    moving: Sides<bool>,
+    decoders: Sides<crate::diagram::ChildDecoder>,
+) -> Result<(), OperationError> {
+    const REMAP: [u32; 3] = [u32::MAX, 0, 1];
+    let planned = plan_sides_remap(lim, level, moving, decoders, &REMAP)?;
+    finish_sides_remap(level, planned, moving, decoders, &REMAP);
+    level.forget_held_pairs();
+    level.close();
+    level.settle_held_pairs();
+    Ok(())
+}
+
 /// The refusal of a pass-through over the leaf `carried` that holds a summed
 /// variable, whose values live in its parent's references, which a new
 /// parent between them does not take.
@@ -506,22 +511,22 @@ fn listed_room(eng: &Engine, loose: Option<&[u32]>, source: &Vtree, chains: bool
 
 /// `carried`, readied by [`reserve_moved`] with the room `listed`, moved
 /// from `source` onto `into` as [`crate::restructure::embed::place`] moves
-/// worklists; `tops` are the sorted tops of the chains over a leaf read as
-/// `Pos` and `Neg`.
+/// worklists; `placed` is the image of each source node and the images
+/// that are mirrored, `tops` the sorted tops of the chains over a leaf read
+/// as `Pos` and `Neg`.
 pub(crate) fn moved_dirty(
     mut carried: Dirty,
     listed: Vec<u32>,
-    source: &Vtree,
-    into: &Vtree,
-    plan: &Plan,
+    (source, into): (&Vtree, &Vtree),
+    placed: (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
     tops: &[VtreeIdx],
 ) -> Dirty {
     let loose = carried.take_loose().map(|mut loose| {
         loose.sort_unstable();
         loose
     });
-    carried.remap(&plan.embedding.levels);
-    finish_moved(&mut carried, loose.as_deref(), listed, source, into, plan, tops);
+    carried.remap(placed.0);
+    finish_moved(&mut carried, loose.as_deref(), listed, (source, into), placed, tops);
     carried
 }
 
@@ -546,7 +551,7 @@ pub(crate) fn copied_dirty(
         }
         loose => loose,
     };
-    finish_moved(&mut carried, loose, listed, source, into, plan, tops);
+    finish_moved(&mut carried, loose, listed, (source, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), tops);
     Ok(carried)
 }
 
@@ -555,9 +560,8 @@ fn finish_moved(
     carried: &mut Dirty,
     loose: Option<&[u32]>,
     mut listed: Vec<u32>,
-    source: &Vtree,
-    into: &Vtree,
-    plan: &Plan,
+    (source, into): (&Vtree, &Vtree),
+    placed: (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
     tops: &[VtreeIdx],
 ) {
     if !tops.is_empty() {
@@ -568,7 +572,7 @@ fn finish_moved(
     }
     carried.dedup_above(into.num_nodes());
     if let Some(loose) = loose {
-        moved_loose(source, into, plan, loose, tops, &mut listed);
+        moved_loose(source, into, placed, loose, tops, &mut listed);
         carried.set_loose(Some(listed));
     }
 }

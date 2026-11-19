@@ -1196,7 +1196,7 @@ fn seat_view<'a>(
                 }
             }
             let carried = moved.take_worklists();
-            moved_dirty(carried, listed, &moved.vtree, into, plan, &tops)
+            moved_dirty(carried, listed, (&moved.vtree, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), &tops)
         }
         Cow::Borrowed(_) => copied.expect("a borrowed diagram's worklists are copied"),
     };
@@ -1281,9 +1281,11 @@ pub(crate) fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<
 /// of their parent level names, pushed to `out` bottom-up, given `loose`,
 /// the source's such levels, and `literal_tops`, the tops of the
 /// pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
-/// `source` is the vtree the levels were moved from; the walk visits the
-/// images of its internal nodes and the chains under them, not the levels
-/// built with no source variable under them.
+/// `source` is the vtree the levels were moved from, `images` the image of
+/// each of its nodes and `mirrored` the images whose children are their
+/// source's swapped; the walk visits the images of its internal nodes and
+/// the chains under them, not the levels built with no source variable
+/// under them.
 ///
 /// Only a level whose parent is the image of a source level can hold one. A
 /// level built under a built level is named whole: a pass-through has a
@@ -1298,7 +1300,7 @@ pub(crate) fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<
 pub(crate) fn moved_loose(
     source: &Vtree,
     into: &Vtree,
-    plan: &Plan,
+    (images, mirrored): (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
     loose: &[u32],
     literal_tops: &[VtreeIdx],
     out: &mut Vec<u32>,
@@ -1308,23 +1310,19 @@ pub(crate) fn moved_loose(
         return;
     }
     for &s in source.internal_bottomup_slice() {
-        let p = plan.embedding.levels[s.idx()];
+        let p = images[s.idx()];
         let (left, right) = into.children(p);
-        for top in [left, right] {
+        let (sl, sr) = source.children(s);
+        let feet = if mirrored(p) { [sr, sl] } else { [sl, sr] };
+        // The chain under a child of `p` ends at the image of the source
+        // child on that side.
+        for (top, from) in [left, right].into_iter().zip(feet) {
             if into.node(top).is_leaf() {
                 continue;
             }
-            let mut foot = top;
-            while plan.covered_by(foot).is_none() && !into.node(foot).is_leaf() {
-                let (l, r) = into.children(foot);
-                foot = if plan.is_free(l) { r } else { l };
-            }
-            let named_whole = match into.node(foot).is_leaf() {
+            let named_whole = match source.node(from).is_leaf() {
                 true => literal_tops.binary_search(&top).is_err(),
-                false => {
-                    let from = plan.covered_by(foot).expect("a chain's foot off a leaf is an image");
-                    loose.binary_search(&from.0).is_err()
-                }
+                false => loose.binary_search(&from.0).is_err(),
             };
             if !named_whole {
                 out.push(top.0);
@@ -1358,12 +1356,13 @@ impl Chain {
 }
 
 /// How the chain of pass-throughs a pass-through over a leaf at `t` starts
-/// reads the leaf: as the level above the chain names it, or as the output
-/// does when the chain reaches the root. Determinism makes the first
-/// reference the level's form.
+/// reads the leaf: as the level above the chain names it, the first node
+/// above `t` that `is_image`, or as the output does when the chain reaches
+/// the root or a node that `is_free`. Determinism makes the first reference
+/// the level's form.
 pub(crate) fn literal_chain(
     into: &Vtree,
-    plan: &Plan,
+    (is_image, is_free): (impl Fn(VtreeIdx) -> bool, impl Fn(VtreeIdx) -> bool),
     first_ref: impl Fn(VtreeIdx, ChildSide) -> Option<NodeIdx>,
     output: NodeIdx,
     t: VtreeIdx,
@@ -1372,8 +1371,8 @@ pub(crate) fn literal_chain(
     loop {
         // A free parent is above the chain a cone plan leaves free, over
         // which no source level is.
-        match into.node(top).parent().filter(|&p| !plan.is_free(p)) {
-            Some(p) if plan.covered_by(p).is_none() => top = p,
+        match into.node(top).parent().filter(|&p| !is_free(p)) {
+            Some(p) if !is_image(p) => top = p,
             Some(p) => {
                 return match first_ref(p, ChildSide::of(into, p, top)) {
                     Some(named) if named != ONE_LEAF_IDX => Chain::Literals(top),
@@ -1428,7 +1427,7 @@ fn assemble_marginal(
             (ChildSide::Right, left)
         };
         if into.node(carried).is_var_leaf() && !placement.is_marginal(carried) {
-            let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), tdd.output().local, t);
+            let chain = literal_chain(into, (|p| plan.covered_by(p).is_some(), |p| plan.is_free(p)), |p, side| placement.first_ref(p, side), tdd.output().local, t);
             match chain {
                 Chain::Literals(top) => literal_tops.push(top),
                 Chain::Output(_) => output = NodeIdx(0),

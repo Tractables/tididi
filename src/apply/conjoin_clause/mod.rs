@@ -30,6 +30,7 @@ mod pairs;
 use pairs::*;
 mod rebuild;
 use rebuild::*;
+mod widen;
 
 /// The working set of one clause walk, pooled by the engine between calls.
 #[derive(Default)]
@@ -52,6 +53,13 @@ pub(crate) struct ClauseWork {
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
     t3_buf: Vec<ChildPair>,
+    /// A widening's added variables with their home ranks, for a clause
+    /// longer than the stack holds.
+    widen_added: Vec<(u32, crate::vtree::VarId)>,
+    /// A widening's image of each node of the accumulator's vtree.
+    widen_map: Vec<VtreeIdx>,
+    /// A widening's nodes that are no image, children first.
+    widen_fresh: Vec<(VtreeIdx, crate::vtree::Reading)>,
 }
 
 impl Buffers for ClauseWork {
@@ -63,6 +71,9 @@ impl Buffers for ClauseWork {
         visit(&mut self.spine_internal);
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
+        visit(&mut self.widen_added);
+        visit(&mut self.widen_map);
+        visit(&mut self.widen_fresh);
     }
 }
 
@@ -75,6 +86,8 @@ impl PooledScratch for ClauseWork {
         self.spine_internal.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
+        self.widen_added.clear();
+        self.widen_fresh.clear();
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -196,45 +209,55 @@ pub(crate) fn extend_to<L: crate::LiteralInput>(
     lits: &[L],
 ) -> Result<(Tdd, Normalized), OperationError> {
     let lim = eng.limits();
-    let f = match widened(&f.vtree, lits)? {
-        None => f,
-        Some(_) if names_both_ways(lim, &f.vtree, lits)? => return Ok((f, Normalized::Tautology)),
-        Some(into) => place_on(eng, f, &into)?,
+    let f = match widening(&f.vtree, lits)? {
+        Widening::None => f,
+        _ if names_both_ways(lim, &f.vtree, lits)? => return Ok((f, Normalized::Tautology)),
+        Widening::Onto(into) => place_on(eng, f, &into)?,
+        Widening::Added => widen::widen(eng, f, lits)?,
     };
     let clause = normalize(lim, &f.vtree, lits)?;
     Ok((f, clause))
 }
 
-/// The projection [`extend_to`] places a diagram on `vtree` on, if any. A
-/// literal that does not convert is left to [`normalize`] to refuse.
-fn widened<L: crate::LiteralInput>(vtree: &Arc<Vtree>, lits: &[L]) -> Result<Option<Arc<Vtree>>, OperationError> {
-    let Some(home) = vtree.link_home() else { return Ok(None) };
+/// How [`extend_to`] widens a diagram's vtree.
+enum Widening {
+    None,
+    /// Onto this union, from a vtree with regions.
+    Onto(Arc<Vtree>),
+    /// By the literals' variables with a leaf in the home and none here.
+    Added,
+}
+
+/// How [`extend_to`] widens `vtree`. A literal that does not convert is
+/// left to [`normalize`] to refuse.
+fn widening<L: crate::LiteralInput>(vtree: &Arc<Vtree>, lits: &[L]) -> Result<Widening, OperationError> {
+    if vtree.link_home().is_none() {
+        return Ok(Widening::None);
+    }
     let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
     if vtree.has_regions() {
         return widened_with_regions(vtree, vars());
     }
-    if !vars().any(|var| vtree.home_has(var)) {
-        return Ok(None);
-    }
-    let own = vtree.leaf_bottomup().map(|(_, var)| var);
-    let added = vars().filter(|&var| home.rank(var).is_some());
-    Ok(Some(Vtree::projection(home, own.chain(added)).expect("every variable has a leaf in the home")))
+    Ok(match vars().any(|var| vtree.home_has(var)) {
+        true => Widening::Added,
+        false => Widening::None,
+    })
 }
 
-/// [`widened`] for a vtree with regions, `vars` the literals' variables:
+/// [`widening`] for a vtree with regions, `vars` the literals' variables:
 /// refused with [`OperationError::MarginalLevel`] where one is inside an
 /// extent.
 #[cold]
 fn widened_with_regions(
     vtree: &Arc<Vtree>,
     vars: impl Iterator<Item = crate::vtree::VarId>,
-) -> Result<Option<Arc<Vtree>>, OperationError> {
+) -> Result<Widening, OperationError> {
     let home = vtree.link_home().expect("a vtree with a region is a projection");
     let added = vars.filter(|&var| home.rank(var).is_some());
     let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
     Ok(match Vtree::leaf_sets(vtree, &lits)? {
-        crate::vtree::LeafSets::Union(into) => Some(into),
-        _ => None,
+        crate::vtree::LeafSets::Union(into) => Widening::Onto(into),
+        _ => Widening::None,
     })
 }
 

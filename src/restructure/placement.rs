@@ -77,6 +77,25 @@ impl PassThrough {
         (0..self.width).map(move |i| self.pair(i))
     }
 
+    /// Make `level`, empty, the joins' level, closed: over an internal
+    /// carried child as [`build`](Self::build) makes it, over a leaf one
+    /// join per label of `labels`, in order.
+    pub(crate) fn fill(&self, lim: &Limits, level: &mut TddLevel, labels: Option<&[NodeIdx]>) -> Result<(), OperationError> {
+        match labels {
+            None if self.width > 0 => self.build(lim, level)?,
+            None => {}
+            Some(labels) => {
+                for &label in labels {
+                    let (l, r) = self.free_side.pick((self.one, label), (label, self.one));
+                    level.push_node(lim, &[ChildPair::new(l, r)])?;
+                }
+            }
+        }
+        level.close();
+        level.close_held_pairs();
+        Ok(())
+    }
+
     /// Make `level`, empty, the joins' level over an internal carried
     /// child, as one join a slot leaves it: a node a slot, each holding its
     /// pair inline, grown and charged as the joins grow and charge it.

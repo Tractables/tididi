@@ -1113,6 +1113,55 @@ impl Vtree {
         Self::linked(&la.home, built, Vec::new())
     }
 
+    /// The projection on this vtree's leaves and the leaves `added`, home
+    /// ranks ascending with their variables, none of them a rank here; ids
+    /// in closing order, so not the home on every leaf. Fills `map`, of
+    /// this vtree's size, with each node's image, and gives `fresh` each
+    /// internal node that is no image, children before parents: a
+    /// [`Reading::Pass`] over the child with this vtree's leaves under it,
+    /// or [`Reading::Free`]. Only gaps next to an added rank are looked up.
+    /// This vtree is a projection with no region.
+    pub(crate) fn extended(&self, added: &[(u32, VarId)], map: &mut [VtreeIdx], mut fresh: impl FnMut(VtreeIdx, Reading)) -> Vtree {
+        let link = self.home.as_ref().expect("an extension is of a projection");
+        debug_assert!(link.regions.is_empty(), "a projection with a region is extended by a union");
+        debug_assert!(added.windows(2).all(|w| w[0].0 < w[1].0) && !added.is_empty());
+        let index = link.home.index();
+        let (ranks, node_at, gap_of) = link.parts();
+        let (k, n) = (ranks.len(), ranks.len() + added.len());
+        let mut build = InOrderBuilder::<true>::new(n);
+        // By position, how many of this vtree's leaves come before it.
+        let mut before: Vec<u32> = Vec::with_capacity(n + 1);
+        let (mut i, mut j, mut last_own) = (0, 0, false);
+        for u in 0..n {
+            let own = j == added.len() || (i < k && ranks[i] < added[j].0);
+            if u > 0 {
+                build.stage(u - 1, if own && last_own { gap_of[node_at[i - 1] as usize - k] } else { u32::MAX });
+            }
+            before.push(i as u32);
+            if own {
+                build.leaf(ranks[i], self.leaf_var(VtreeIdx(i as u32)));
+                map[i] = VtreeIdx(u as u32);
+                i += 1;
+            } else {
+                build.leaf(added[j].0, added[j].1);
+                j += 1;
+            }
+            last_own = own;
+        }
+        before.push(k as u32);
+        let gap = |slot: &[u32], i: usize| staged_word(index, slot, n, i);
+        let built = build.finish_closing(gap, |c| {
+            let (lo, mid, hi) = (c.lo as usize, c.at as usize + 1, c.hi as usize + 1);
+            match (before[mid] > before[lo], before[hi] > before[mid]) {
+                (true, true) => map[node_at[before[mid] as usize - 1] as usize] = c.t,
+                (true, false) => fresh(c.t, Reading::Pass(c.left)),
+                (false, true) => fresh(c.t, Reading::Pass(c.right)),
+                (false, false) => fresh(c.t, Reading::Free),
+            }
+        });
+        Self::linked(&link.home, built, Vec::new())
+    }
+
     /// The projection of `home` on the variable leaves of this vtree for which
     /// `keep` holds and on its regions; this vtree itself when that is all of
     /// them. Linear in this vtree's size, with no lookup in the home but its

@@ -87,6 +87,108 @@ fn a_union_is_the_projection_on_both() {
     assert!(unions > 300, "{unions} unions");
 }
 
+/// Extend `own` by `added`, check the result against the projection on
+/// both, and its map and fresh nodes against the home nodes they stand for.
+fn check_extension(home: &Home, own: &Arc<Vtree>, added: &[VarId], what: &str) {
+    let mut ranked: Vec<(u32, VarId)> = added.iter().map(|&v| (home.rank(v).unwrap(), v)).collect();
+    ranked.sort_unstable();
+    let mut map = vec![VtreeIdx(u32::MAX); own.num_nodes()];
+    let mut fresh = Vec::new();
+    let got = own.extended(&ranked, &mut map, |t, reading| fresh.push((t, reading)));
+    let all: Vec<VarId> = own.leaf_bottomup().map(|(_, v)| v).chain(added.iter().copied()).collect();
+    let want = Vtree::projection(home, all).unwrap();
+    match want.home.is_some() {
+        true => assert_same(&got, &want, what),
+        false => assert!(got.same_tree(&want), "{what}: the full extension is the home's tree"),
+    }
+    let mut seen = vec![false; got.num_nodes()];
+    for (s, &t) in map.iter().enumerate() {
+        assert_eq!(got.home_node(t), own.home_node(VtreeIdx(s as u32)), "{what}: image of {s}");
+        assert!(!std::mem::replace(&mut seen[t.idx()], true), "{what}: two nodes on {t:?}");
+    }
+    let own_under = |t: VtreeIdx| {
+        let mut stack = vec![t];
+        while let Some(u) = stack.pop() {
+            match got.node(u) {
+                VtreeNode::Leaf { var, .. } if own.leaf_of(*var).is_some() => return true,
+                VtreeNode::Leaf { .. } => {}
+                VtreeNode::Internal { left, right, .. } => stack.extend([*left, *right]),
+            }
+        }
+        false
+    };
+    assert!(fresh.windows(2).all(|w| w[0].0 < w[1].0), "{what}: fresh in closing order");
+    for &(t, reading) in &fresh {
+        let (left, right) = got.children(t);
+        match reading {
+            Reading::Pass(c) => {
+                let other = if c == left { right } else { left };
+                assert!(c == left || c == right, "{what}");
+                assert!(own_under(c) && !own_under(other), "{what}: pass at {t:?}");
+            }
+            Reading::Free => assert!(!own_under(t), "{what}: free at {t:?}"),
+            Reading::Own(_) => panic!("{what}: an image among the fresh"),
+        }
+        assert!(!std::mem::replace(&mut seen[t.idx()], true), "{what}: {t:?} fresh and an image");
+    }
+    for t in got.bottomup() {
+        assert!(seen[t.idx()] || got.node(t).is_leaf(), "{what}: {t:?} neither an image nor fresh");
+    }
+}
+
+#[test]
+fn an_extension_is_the_projection_on_both() {
+    let mut rng = Lcg::new(0x6578_7465);
+    let mut full = 0;
+    for seed in 0..400u64 {
+        let n = 1 + rng.below(12) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let mut by_rank: Vec<VarId> = (1..=n).map(VarId).collect();
+        by_rank.sort_unstable_by_key(|&v| home.rank(v).unwrap());
+        let k = match seed % 5 {
+            0 => 0,
+            1 => 1.min(n - 1),
+            _ => rng.below(u64::from(n)) as u32,
+        };
+        let mut own_vars = pick(n, k.max(1), &mut rng);
+        if k == 0 {
+            own_vars.clear();
+        }
+        let own = match own_vars.is_empty() {
+            true => Vtree::empty_projection(&home),
+            false => Vtree::projection(&home, own_vars.iter().copied()).unwrap(),
+        };
+        let rest: Vec<VarId> = by_rank.iter().copied().filter(|v| !own_vars.contains(v)).collect();
+        if rest.is_empty() {
+            continue;
+        }
+        for m in [1, 2, 5] {
+            let mut added: Vec<VarId> = rest.clone();
+            while added.len() > m {
+                added.remove(rng.below(added.len() as u64) as usize);
+            }
+            full += usize::from(added.len() == rest.len());
+            check_extension(&home, &own, &added, &format!("seed {seed}, k {k}, m {m}"));
+        }
+        // Before the first own rank and after the last.
+        check_extension(&home, &own, &rest[..1], &format!("seed {seed}, first"));
+        check_extension(&home, &own, &rest[rest.len() - 1..], &format!("seed {seed}, last"));
+    }
+    assert!(full > 50, "{full} full extensions");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "region")]
+fn an_extension_with_a_region_is_refused() {
+    let home = Home::new(Vtree::balanced(4));
+    let mut g = crate::Tdd::clause(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap(), [1, 2, 3]).unwrap();
+    g.marginalize(|v| v.0 <= 2).unwrap();
+    assert!(g.vtree().has_regions());
+    let rank = home.rank(VarId(4)).unwrap();
+    let _ = g.vtree().extended(&[(rank, VarId(4))], &mut vec![VtreeIdx(0); g.vtree().num_nodes()], |_, _| {});
+}
+
 #[test]
 fn a_sub_projection_is_the_projection_on_the_kept_leaves() {
     cases(|home, a, _, rng| {

@@ -8,20 +8,52 @@
 //! - `inorder`: [`Vtree::from_in_order`] on `k` local variables and the
 //!   depths of a projection on `k` random variables, which is what a
 //!   consumer's own projector would call.
+//! - `extend`: [`Engine::and_clause`](tididi::Engine::and_clause) of a
+//!   copy of the clause on `k` random variables, on their projection, and
+//!   a clause on `m` others, which moves the copy onto the projection on
+//!   all `k + m` before the clause walk.
+//! - `copy`: the copy alone, to take from `extend`.
 //! - `none`: the setup only, which every mode shares.
 //!
-//! Prints the number of nodes built; a mode's count of instructions minus
-//! `none`'s, over that number, is its price per node.
+//! Prints the number of nodes built and the allocations made; a mode's
+//! count of instructions minus `none`'s, over that number, is its price per
+//! node.
 //!
 //! ```text
-//! cargo bench --bench projection -- <h> <k> <none|project|union|sub|inorder> [reps]
+//! cargo bench --bench projection -- <h> <k> <none|project|union|sub|inorder|extend|copy> [reps] [m]
 //! ```
 //!
 //! Without arguments, as `cargo test` runs it: `1000 8 union 100`.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use tididi::vtree::{Home, VarId, Vtree, VtreeIdx};
+use tididi::{Engine, Tdd};
+
+struct Counting;
+
+static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: Counting = Counting;
 
 const POOL: usize = 64;
 
@@ -62,16 +94,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.is_empty() {
         args = ["1000", "8", "union", "100"].map(String::from).to_vec();
     }
-    let usage = "usage: projection <h> <k> <none|project|union|sub|inorder> [reps]";
+    let usage = "usage: projection <h> <k> <none|project|union|sub|inorder|extend|copy> [reps] [m]";
     let h: u32 = args.first().ok_or(usage)?.parse()?;
     let k: usize = args.get(1).ok_or(usage)?.parse()?;
     let mode = args.get(2).map(String::as_str).ok_or(usage)?;
-    if !matches!(mode, "none" | "project" | "union" | "sub" | "inorder") {
+    if !matches!(mode, "none" | "project" | "union" | "sub" | "inorder" | "extend" | "copy") {
         return Err(usage.into());
     }
     let reps: usize = args.get(3).map_or(Ok(1), |r| r.parse())?;
-    if k == 0 || 2 * k as u64 > u64::from(h) {
-        return Err("k must be positive and 2k at most h".into());
+    let m: usize = args.get(4).map_or(Ok(1), |m| m.parse())?;
+    if k == 0 || 2 * k as u64 > u64::from(h) || k + m > h as usize {
+        return Err("k must be positive, 2k at most h and k + m at most h".into());
     }
 
     let home = Home::new(Vtree::random(h, 7));
@@ -102,7 +135,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
+    let eng = Engine::new();
+    let clauses: Vec<(Tdd, Vec<i32>)> = (0..POOL)
+        .map(|_| {
+            let both = rng.vars(h, k + m);
+            let own = Vtree::projection(&home, both[..k].iter().copied())?;
+            let f = Tdd::clause(&own, both[..k].iter().map(|v| v.0 as i32))?;
+            Ok((f, both[k..].iter().map(|v| v.0 as i32).collect()))
+        })
+        .collect::<Result<_, Box<dyn std::error::Error>>>()?;
+
     let mut nodes = 0usize;
+    let allocations = ALLOCATIONS.load(Ordering::Relaxed);
     for r in 0..reps {
         let i = r % POOL;
         nodes += match mode {
@@ -116,9 +160,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (locals, depths) = &in_orders[i];
                 Vtree::from_in_order(locals, depths, k as u32)?.num_nodes()
             }
+            "extend" => {
+                let (f, clause) = &clauses[i];
+                eng.and_clause(f.clone(), clause)?.vtree().num_nodes()
+            }
+            "copy" => {
+                let copy = clauses[i].0.clone();
+                std::hint::black_box(&copy);
+                2 * (k + m) - 1
+            }
             _ => 0,
         };
     }
-    println!("h {h} k {k} mode {mode} reps {reps} nodes {nodes}");
+    let allocations = ALLOCATIONS.load(Ordering::Relaxed) - allocations;
+    println!("h {h} k {k} m {m} mode {mode} reps {reps} allocations {allocations} nodes {nodes}");
     Ok(())
 }
