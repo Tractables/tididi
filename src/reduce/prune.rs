@@ -375,14 +375,7 @@ pub(crate) fn prune_unreachable(
 
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
-        // Past an eighth of the levels, settling the list and walking from
-        // its seeds reads about what the plain walk does.
-        Some(loose)
-            if !below_root
-                && loose.len() <= (tdd.vtree.num_nodes() / 8).max(16)
-                && below_root_walk_applies(tdd)
-                && !tdd.has_marginal_level() =>
-        {
+        Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
             let loose = settle_loose(eng, tdd, loose)?;
             Some(Seeds::of(eng, tdd, &loose)?)
         }
