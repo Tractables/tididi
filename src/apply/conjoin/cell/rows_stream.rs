@@ -1040,7 +1040,7 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
             for &g2_end in g_runs {
                 let g2 = &g_pairs[g2_start..g2_end as usize];
                 g2_start = g2_end as usize;
-                let lc = left.get_in_row(node_idx, lrow, g2[0].left.0);
+                let lc = left.get_in_view(node_idx, lrow, g2[0].left.0);
                 if left.kills() && lc == NO_PRODUCT {
                     continue;
                 }
@@ -1056,7 +1056,7 @@ fn nxm_grouped<L: ChildLookup, R: ChildLookup>(
         for &g2_end in g_runs {
             let g2 = &g_pairs[g2_start..g2_end as usize];
             g2_start = g2_end as usize;
-            let lc = left.get_in_row(node_idx, lrow, g2[0].left.0);
+            let lc = left.get_in_view(node_idx, lrow, g2[0].left.0);
             if left.kills() && lc == NO_PRODUCT {
                 continue;
             }
@@ -1085,7 +1085,7 @@ fn sum_run<R: ChildLookup>(
     (run, live): (&mut f64, &mut bool),
 ) {
     for p2 in g2 {
-        let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+        let rc = right.get_in_view(node_idx, rrow, p2.right.0);
         if right.kills() && rc == NO_PRODUCT {
             continue;
         }
@@ -1126,11 +1126,11 @@ fn general_walk<L: ChildLookup, R: ChildLookup>(
         }
         let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
         for p2 in g_pairs {
-            let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+            let lc = left.get_in_view(node_idx, lrow, p2.left.0);
             if left.kills() && lc == NO_PRODUCT {
                 continue;
             }
-            let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+            let rc = right.get_in_view(node_idx, rrow, p2.right.0);
             if right.kills() && rc == NO_PRODUCT {
                 continue;
             }
@@ -1434,7 +1434,7 @@ impl<'b> ValueSide<'b> {
         let row = side.row(at);
         let (mut any, mut lo, mut hi) = (0u8, f64::INFINITY, 0.0f64);
         for (q, (v, d)) in vals[..n].iter_mut().zip(&mut dead[..n]).enumerate() {
-            let c = side.get_in_row(node_idx, row, q as u32);
+            let c = side.get_in_view(node_idx, row, q as u32);
             let x = if side.kills() && c == NO_PRODUCT {
                 None
             } else {
@@ -2981,11 +2981,11 @@ fn grid_sum<L: ChildLookup, R: ChildLookup, S: RowSum>(
 ) -> (f64, bool, bool) {
     let (mut acc, mut live, mut exact) = (0.0f64, false, true);
     for q in g {
-        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+        let lc = left.get_in_view(node_idx, lrow, q.left.0);
         if left.kills() && lc == NO_PRODUCT {
             continue;
         }
-        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+        let rc = right.get_in_view(node_idx, rrow, q.right.0);
         if right.kills() && rc == NO_PRODUCT {
             continue;
         }
@@ -3513,11 +3513,11 @@ fn add_grid<L: ChildLookup, R: ChildLookup, S: RowSum>(
         if q.left.0 == DEAD_COLUMN {
             continue;
         }
-        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+        let lc = left.get_in_view(node_idx, lrow, q.left.0);
         if left.kills() && lc == NO_PRODUCT {
             continue;
         }
-        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+        let rc = right.get_in_view(node_idx, rrow, q.right.0);
         if right.kills() && rc == NO_PRODUCT {
             continue;
         }
@@ -3617,11 +3617,11 @@ fn refold<L: ChildLookup, R: ChildLookup, S: RowSum>(
     let start = cells.begin();
     for p1 in f_pairs {
         for q in g {
-            let lc = left.get(node_idx, p1.left.0, q.left.0);
+            let lc = left.get_viewed(node_idx, p1.left.0, q.left.0);
             if left.kills() && lc == NO_PRODUCT {
                 continue;
             }
-            let rc = right.get(node_idx, p1.right.0, q.right.0);
+            let rc = right.get_viewed(node_idx, p1.right.0, q.right.0);
             if !right.kills() || rc != NO_PRODUCT {
                 cells.pair(eng, lc, rc)?;
             }

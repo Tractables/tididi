@@ -206,7 +206,7 @@ impl SideVectors {
         let v = &mut self.vectors[base..];
         let row = lookup.row(r);
         for (k, &c) in self.named.iter().enumerate() {
-            if lookup.get_in_row(node_idx, row, c) != NO_PRODUCT {
+            if lookup.get_in_view(node_idx, row, c) != NO_PRODUCT {
                 let pairs = self.named_start[k] as usize..self.named_start[k + 1] as usize;
                 for &q in &self.by_child[pairs] {
                     v[q as usize / 64] |= 1 << (q % 64);
@@ -560,9 +560,9 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
                 for b in spread(g_picked.len(), s2) {
                     let q = g_picked[b];
                     let live = (!kills(left)
-                        || left.get_in_row(node_idx, lrow, q.left.0) != NO_PRODUCT)
+                        || left.get_in_view(node_idx, lrow, q.left.0) != NO_PRODUCT)
                         && (!kills(right)
-                            || right.get_in_row(node_idx, rrow, q.right.0) != NO_PRODUCT);
+                            || right.get_in_view(node_idx, rrow, q.right.0) != NO_PRODUCT);
                     found += u64::from(live);
                 }
             }
@@ -1493,8 +1493,8 @@ impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
         };
         let product = |e: u64, node_idx: &[u32]| {
             let (p, q) = (&f_pairs[f_of(e)], &w.g_flat[g_of(e)]);
-            let lc = left.get(node_idx, p.left.0, q.left.0);
-            let rc = right.get(node_idx, p.right.0, q.right.0);
+            let lc = left.get_viewed(node_idx, p.left.0, q.left.0);
+            let rc = right.get_viewed(node_idx, p.right.0, q.right.0);
             debug_assert!(
                 lc != NO_PRODUCT && rc != NO_PRODUCT,
                 "a candidate read live is live"
