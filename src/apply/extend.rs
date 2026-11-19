@@ -126,7 +126,7 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
 /// `result` of an operation on projections, trimmed to the leaves it names.
 #[inline]
 pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationError> {
-    if result.vtree.home().is_some() {
+    if result.vtree.home().is_some() || result.vtree.is_home() {
         trim_result(eng, &mut result)?;
     }
     Ok(result)
@@ -134,8 +134,8 @@ pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationErr
 
 #[cold]
 fn trim_result(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    let home = result.vtree.home().expect("a projection").clone();
-    crate::reduce::trim(eng, result, &home, &[])?;
+    let home = Vtree::home_of(&result.vtree).expect("a vtree on a home");
+    crate::reduce::trim(eng, result, &home, None, &[])?;
     Ok(())
 }
 
@@ -181,10 +181,9 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
 }
 
 /// Whether `f` is on a projection with fewer leaves than `into`, which
-/// holds its leaf set, or `into` is the home: a projection on all of the
-/// home's leaves has the home's shape but not its node numbering.
+/// holds its leaf set.
 fn moves(f: &Tdd, into: &Vtree) -> bool {
-    f.vtree.num_nodes() != into.num_nodes() || f.vtree.home().is_some() != into.home().is_some()
+    f.vtree.num_nodes() != into.num_nodes()
 }
 
 /// `f` on `into`, which holds its leaf set: reseated when the leaf sets are
@@ -202,7 +201,7 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         return Ok(Cow::Owned(f));
     }
     if f.vtree.num_nodes() == 0 {
-        let mut constant = crate::build::constant_on(eng, into, f.is_one())?;
+        let mut constant = crate::build::constant_padded_on(eng, into, f.is_one())?;
         constant.weights = f.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
         return Ok(Cow::Owned(constant));
     }

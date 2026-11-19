@@ -32,7 +32,7 @@ mod leaf_form_tests;
 pub use crate::vtree::graft::Embedding;
 pub use embed::EmbeddingPlan;
 pub use expand::VariableExpansion;
-pub use target::RestructureStats;
+pub use target::TransportStats;
 
 use crate::diagram::TddBuildError;
 use crate::limits::OperationError;
@@ -142,21 +142,63 @@ pub struct EmbedRefused {
 #[derive(Debug)]
 pub struct TransportRefused<'a> {
     /// Why the transport was refused.
-    pub error: EmbedError,
+    pub error: TransportError,
     /// The diagram, unchanged.
     pub tdd: std::borrow::Cow<'a, crate::Tdd>,
 }
 
-/// A rehome [`Engine::rehome`](crate::Engine::rehome) refused, with the
-/// diagram: as it was given, or, when the restructure onto the projection
-/// failed, an owned copy that denotes the same function on a vtree between
-/// its own and the projection.
-#[derive(Debug)]
-pub struct RehomeRefused<'a> {
-    /// Why the rehome was refused.
-    pub error: RestructureError,
-    /// The diagram.
-    pub tdd: std::borrow::Cow<'a, crate::Tdd>,
+/// Why [`Engine::transport`](crate::Engine::transport) refused a move.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransportError {
+    /// An image that is not a leaf of the destination home.
+    Variable {
+        /// The image.
+        variable: VarId,
+    },
+    /// Two variables of the diagram have this image.
+    Overlap {
+        /// The shared image.
+        variable: VarId,
+    },
+    /// A rotation is needed at this node of the diagram's vtree and the bound
+    /// does not allow it.
+    Bound {
+        /// The node of the diagram's vtree.
+        pivot: VtreeIdx,
+    },
+    /// The diagram's weight table does not cover the images, or does not
+    /// weigh each image as the variable it renames.
+    Weights(TddBuildError),
+    /// An operation the move runs was refused: a summed-out level, a refused
+    /// allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Variable { variable } => write!(f, "variable {} is not a leaf of the destination home", variable.0),
+            Self::Overlap { variable } => write!(f, "two variables are renamed to variable {}", variable.0),
+            Self::Bound { pivot } => write!(f, "a rotation at vtree node {} is needed and not allowed by the bound", pivot.idx()),
+            Self::Weights(error) => write!(f, "transported weights: {error}"),
+            Self::Operation(error) => write!(f, "transporting the diagram: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Weights(error) => Some(error),
+            Self::Operation(error) => Some(error),
+            Self::Variable { .. } | Self::Overlap { .. } | Self::Bound { .. } => None,
+        }
+    }
+}
+
+impl From<OperationError> for TransportError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
 }
 
 impl std::fmt::Display for EmbedError {
@@ -366,6 +408,30 @@ impl From<OperationError> for TagError {
     fn from(error: OperationError) -> Self { Self::Operation(error) }
 }
 
+/// The node [`Engine::at_least_distinct`](crate::Engine::at_least_distinct)
+/// and [`Engine::project_to_subtree`](crate::Engine::project_to_subtree)
+/// key on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DistinctKey<'a> {
+    /// A node of the diagram's [home](crate::Vtree::home), or of its vtree
+    /// on a root. Any index below the home's node count is a home node, so
+    /// an index of the diagram's own vtree is read as the home node with
+    /// that number, without an error.
+    Node(VtreeIdx),
+    /// The node whose leaves are exactly these variables, in any order: a
+    /// node of the home, or of the diagram's vtree on a root. The same
+    /// variables name the same node whichever vtree the diagram is on.
+    Vars(&'a [VarId]),
+}
+
+impl From<VtreeIdx> for DistinctKey<'_> {
+    fn from(node: VtreeIdx) -> Self { Self::Node(node) }
+}
+
+impl<'a> From<&'a [VarId]> for DistinctKey<'a> {
+    fn from(vars: &'a [VarId]) -> Self { Self::Vars(vars) }
+}
+
 /// Why the distinct values under a subtree could not be counted
 /// ([`Engine::at_least_distinct`](crate::Engine::at_least_distinct)).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +439,10 @@ impl From<OperationError> for TagError {
 pub enum DistinctError {
     /// The key is the vtree's root, which has no sibling to count.
     Root,
+    /// A [`DistinctKey::Vars`] whose variables, listed, are not exactly the
+    /// leaves of one node: empty, repeated, a variable with no leaf, or not
+    /// all of a subtree.
+    Key(Vec<VarId>),
     /// The result's vtree cannot keep the diagram's variable ids: with
     /// [`VtreeError::VariableSpaceTooLarge`], the id space is wider than a
     /// vtree of the key's subtree may declare.
@@ -387,6 +457,10 @@ impl std::fmt::Display for DistinctError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Root => write!(f, "the key is the vtree's root, which has no sibling to count"),
+            Self::Key(vars) => {
+                let vars: Vec<u32> = vars.iter().map(|v| v.0).collect();
+                write!(f, "variables {vars:?} are not the leaves of one vtree node")
+            }
             Self::Vtree(error) => write!(f, "the result's vtree: {error}"),
             Self::Operation(error) => write!(f, "counting distinct values: {error}"),
         }
@@ -398,7 +472,7 @@ impl std::error::Error for DistinctError {
         match self {
             Self::Operation(error) => Some(error),
             Self::Vtree(error) => Some(error),
-            Self::Root => None,
+            Self::Root | Self::Key(_) => None,
         }
     }
 }

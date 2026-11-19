@@ -103,19 +103,8 @@ impl Case<'_> {
     /// `got`, a result on projections, is `expected`, the result on the
     /// home, and in trimmed form.
     fn check(&self, op: &str, got: Tdd, expected: &Tdd) {
-        self.check_as(op, got, expected, true);
-    }
-
-    /// [`Case::check`] of a conjunction, whose false result stays on the
-    /// union of its operands' leaf sets.
-    fn check_and(&self, op: &str, got: Tdd, expected: &Tdd) {
-        let trimmed = !got.is_zero();
-        self.check_as(op, got, expected, trimmed);
-    }
-
-    fn check_as(&self, op: &str, got: Tdd, expected: &Tdd, trimmed: bool) {
         let (eng, what) = (self.eng, &self.what);
-        if trimmed && got.vtree().home().is_some() {
+        if Vtree::home_of(got.vtree()).is_some() {
             check_trimmed(&got, false).unwrap_or_else(|e| panic!("{op} {what}: {e}"));
         }
         assert!(eng.equivalent(&on_home(eng, &got, self.home), expected).unwrap(), "{op} {what}");
@@ -138,11 +127,11 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
     let (hf, hg, hh) = (on_home(eng, f, home), on_home(eng, g, home), on_home(eng, h, home));
     let (f0, g0) = (f.clone(), g.clone());
 
-    case.check_and("and", eng.and(f, g).unwrap(), &eng.and(&hf, &hg).unwrap());
+    case.check("and", eng.and(f, g).unwrap(), &eng.and(&hf, &hg).unwrap());
     case.intact("and", f, &f0);
     case.intact("and", g, &g0);
-    case.check_and("and owned", eng.and(f.clone(), g.clone()).unwrap(), &eng.and(&hf, &hg).unwrap());
-    case.check_and("and_restoring", eng.and_restoring(f, g).map_err(|r| r.error).unwrap(), &eng.and(&hf, &hg).unwrap());
+    case.check("and owned", eng.and(f.clone(), g.clone()).unwrap(), &eng.and(&hf, &hg).unwrap());
+    case.check("and_restoring", eng.and_restoring(f, g).map_err(|r| r.error).unwrap(), &eng.and(&hf, &hg).unwrap());
     case.intact("and_restoring", f, &f0);
     case.check("or", eng.or(f.clone(), g.clone()).unwrap(), &eng.or(hf.clone(), hg.clone()).unwrap());
     case.check("and_not", eng.and_not(f.clone(), g.clone()).unwrap(), &eng.and_not(hf.clone(), hg.clone()).unwrap());
@@ -181,13 +170,13 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
             false => eng.and_in_place(f.clone(), g).unwrap(),
             true => eng.and_in_place_loose(f.clone(), g).unwrap(),
         };
-        case.check_and("and_in_place", got, &product);
+        case.check("and_in_place", got, &product);
         case.intact("and_in_place", g, &g0);
     }
     if f.vtree().num_nodes() <= g.vtree().num_nodes() && g.vtree().num_nodes() != 0 {
         let index = eng.pair_index(g).unwrap();
         if let Ok(got) = eng.and_indexed(f, g, &index) {
-            case.check_and("and_indexed", got, &product);
+            case.check("and_indexed", got, &product);
             case.intact("and_indexed", f, &f0);
             case.intact("and_indexed", g, &g0);
         } else {
@@ -198,7 +187,10 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
     let count = eng.model_count(&product).unwrap();
     assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "and_model_count {}", case.what);
     assert_eq!(eng.marginal_product_count(f, g).unwrap(), count, "marginal_product_count {}", case.what);
-    case.check_and("and_marginalizing", eng.and_marginalizing(f, g, &[]).unwrap(), &product);
+    case.check("and_marginalizing_where", eng.and_marginalizing_where(f, g, |_| false).unwrap(), &product);
+    if f.vtree().home().is_some() {
+        assert!(matches!(eng.and_marginalizing(f, g, &[]), Err(OperationError::InertOption { .. })), "{}", case.what);
+    }
     if f.vtree().num_nodes() != 0 {
         let t = VtreeIdx(rng.below(f.vtree().num_nodes() as u64) as u32);
         let at_home = f.vtree().home_node(t);
@@ -208,8 +200,10 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
             "and_model_count with a target {}",
             case.what
         );
-        let summed = eng.and_marginalizing(f, g, &[t]).unwrap();
-        assert_eq!(eng.model_count(&summed).unwrap(), count, "and_marginalizing with a target {}", case.what);
+        let home_vars: Vec<VarId> = home.leaf_bottomup().map(|(_, v)| v).collect();
+        let pick = home_vars[rng.below(home_vars.len() as u64) as usize];
+        let summed = eng.and_marginalizing_where(f, g, |v| v != pick).unwrap();
+        assert_eq!(eng.model_count(&summed).unwrap(), count, "and_marginalizing_where {}", case.what);
     }
 
     for (care, care_home) in [(g, &hg), (h, &hh)] {
@@ -238,8 +232,8 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
 fn operations_on_projections_are_operations_on_the_home() {
     let eng = Engine::new();
     for seed in 0..150u64 {
-        let home = rotated_home(2 + (seed % 9) as u32, seed);
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(rotated_home(2 + (seed % 9) as u32, seed));
+        let home = Arc::clone(hm.vtree());
         let mut rng = Lcg::new(seed ^ 0x5851_f42d);
         let all = vars_under(&home, home.root());
         for (k, (fv, gv)) in leaf_set_pairs(&home, &mut rng).into_iter().enumerate() {
@@ -283,7 +277,26 @@ fn constants_on_the_empty_projection() {
     assert!(excluded.is_one() && excluded.vtree().num_nodes() == 0, "x or not x is the constant");
     let contradiction = eng.and_not(lit.clone(), lit.clone()).unwrap();
     assert!(contradiction.is_zero() && contradiction.vtree().num_nodes() == 0, "x and not x is the constant");
-    assert!(Arc::ptr_eq(eng.and(&one, &lit).unwrap().vtree(), &x));
+    assert!(Arc::ptr_eq(eng.and(&one, &lit).unwrap().vtree(), lit.vtree()));
+}
+
+#[test]
+fn false_of_nested_or_overlapping_leaf_sets_is_on_no_node() {
+    let eng = Engine::new();
+    let home = Home::new(rotated_home(5, 3));
+    let on = |vars: &[u32]| Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
+    let x = Tdd::cube(&on(&[2]), [2]).unwrap();
+    let wide = eng.and_clause(Tdd::cube(&on(&[2, 4, 5]), [-2]).unwrap(), &[4, 5]).unwrap();
+    let across = eng.and_clause(Tdd::cube(&on(&[2, 3]), [2]).unwrap(), &[3]).unwrap();
+    let all = on(&[1, 2, 3, 4, 5]);
+    let (every, but_x) = (Tdd::cube(&all, [1, 2, 3, 4, 5]).unwrap(), Tdd::cube(&all, [1, -2, 3, 4, 5]).unwrap());
+    assert!(Arc::ptr_eq(every.vtree(), home.vtree()));
+    for (f, g) in [(&x, &wide), (&wide, &x), (&wide, &across), (&every, &but_x)] {
+        let both = eng.and(f, g).unwrap();
+        assert!(both.is_zero(), "{:?}", both.vtree().num_nodes());
+        check_trimmed(&both, false).unwrap();
+        check_trimmed(&eng.and_restoring(f, g).map_err(|r| r.error).unwrap(), false).unwrap();
+    }
 }
 
 #[test]
@@ -294,7 +307,7 @@ fn summed_out_internal_levels_do_not_move() {
     let g = Tdd::clause(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap(), [4, -5]).unwrap();
     let mut summed = f.clone();
     let root = summed.vtree().root();
-    eng.marginalize_levels(&mut summed, &[root]).unwrap();
+    crate::marginal::marginalize_levels(&eng, &mut summed, &[root]).unwrap();
     assert!(summed.has_marginal_level());
     for result in [eng.or(summed.clone(), g.clone()), eng.and_not(g.clone(), summed.clone()), eng.add(summed.clone(), g.clone())] {
         assert!(matches!(result.unwrap_err(), OperationError::MarginalLevel(_)));
@@ -303,3 +316,5 @@ fn summed_out_internal_levels_do_not_move() {
     let elsewhere = Tdd::clause(&other, [1, 2]).unwrap();
     assert_eq!(eng.or(f, elsewhere).unwrap_err(), OperationError::VtreeMismatch);
 }
+
+

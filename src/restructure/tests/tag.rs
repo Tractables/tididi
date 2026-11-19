@@ -322,3 +322,42 @@ fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
     }
     assert!(refused > 0, "no tagging refused");
 }
+
+/// The doc example into a vtree on a home, with the code subtree on either
+/// side of the home: the result is on the projection on the tagged and code
+/// variables and is the conjunction the example builds there.
+#[test]
+fn tagging_into_a_vtree_on_a_home_lands_on_its_projection() {
+    use crate::vtree::Home;
+    let eng = Engine::new();
+    let pair = Arc::new(Vtree::balanced(2));
+    let f = eng.clause(&pair, [1, 2]).unwrap();
+    let (tagged, code) = (Vtree::balanced(2), Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap());
+    for code_left in [false, true] {
+        let (l, r) = if code_left { (&code, &tagged) } else { (&tagged, &code) };
+        let home = Home::new(Vtree::join(&Vtree::join(l, r).unwrap(), &Vtree::leaf(VarId(5))).unwrap());
+        // `into` lacks x2 and x4: the result's projection holds them.
+        let into = Vtree::projection(&home, [VarId(1), VarId(3), VarId(5)]).unwrap();
+        let g = eng.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(3), VarId(4)], &[0b10]).unwrap();
+        let on = Vtree::projection(&home, (1..=4).map(VarId)).unwrap();
+        assert!(g.vtree().is_on(&home) && g.vtree().same_tree(&on), "code on the left: {code_left}");
+        assert_canonical(&g);
+        let expected = eng.and(eng.clause(&on, [1, 2]).unwrap(), eng.cube(&on, [-3, 4]).unwrap()).unwrap();
+        for bits in 0..1u64 << 5 {
+            let asn: Vec<bool> = (0..5).map(|i| bits >> i & 1 == 1).collect();
+            assert_eq!(crate::test_helpers::eval(&g, &asn), crate::test_helpers::eval(&expected, &asn), "{bits:05b}");
+        }
+        // A code variable inside the tagged side's subtree is refused.
+        let mixed = eng.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(2), VarId(4)], &[0b10]);
+        assert!(mixed.is_err(), "code on the left: {code_left}");
+        let mirrored = Vtree::balanced_over(&[VarId(2), VarId(1)]).unwrap();
+        let (l, r) = if code_left { (&code, &mirrored) } else { (&mirrored, &code) };
+        let home = Home::new(Vtree::join(&Vtree::join(l, r).unwrap(), &Vtree::leaf(VarId(5))).unwrap());
+        let into = Vtree::projection(&home, (1..=4).map(VarId)).unwrap();
+        let refused = eng.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(3), VarId(4)], &[0b10]);
+        assert!(
+            matches!(refused, Err(TagError::Placement(EmbedError::NotIsomorphic { .. }))),
+            "a mirrored tagged side, code on the left: {code_left}"
+        );
+    }
+}

@@ -6,10 +6,12 @@ use std::sync::Arc;
 use num_rational::BigRational;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-use crate::restructure::EmbedError;
+use crate::diagram::TddBuildError;
+use crate::restructure::{EmbedError, TransportError};
+use crate::test_helpers::assert_canonical;
 use crate::test_helpers::check::check_trimmed;
 use crate::vtree::rng::Lcg;
-use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
 
 /// `vtree` with every variable renamed through `rename` and the children of
@@ -73,11 +75,30 @@ fn leaf_vars(vtree: &Vtree) -> Vec<VarId> {
     vars
 }
 
-fn store(n: u32, rng: &mut Lcg) -> WeightStore {
-    let weight = |rng: &mut Lcg| BigRational::new((1 + rng.below(5) as i64).into(), 6.into());
-    let table: Vec<_> =
-        (0..n).map(|_| LiteralWeights { negative: weight(rng), positive: weight(rng) }).collect();
+/// A table of `n` variables, `weights[i % weights.len()]` for variable
+/// `i + 1`.
+fn table(n: u32, weights: &[(i64, i64)]) -> WeightStore {
+    let sixths = |k: i64| BigRational::new(k.into(), 6.into());
+    let table: Vec<_> = (0..n as usize)
+        .map(|i| weights[i % weights.len()])
+        .map(|(negative, positive)| LiteralWeights { negative: sixths(negative), positive: sixths(positive) })
+        .collect();
     WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
+}
+
+/// One random pair of weights for every variable, so that any renaming
+/// keeps them.
+fn store(n: u32, rng: &mut Lcg) -> WeightStore {
+    table(n, &[(1 + rng.below(5) as i64, 1 + rng.below(5) as i64)])
+}
+
+/// `f` is `g` as it was: the same vtree, levels, function and knowledge.
+fn same_as(eng: &Engine, f: &Tdd, g: &Tdd) {
+    assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+    assert_eq!((f.node_count(), f.pair_count()), (g.node_count(), g.pair_count()));
+    assert_eq!(f.levels.is_canonical(f.output), g.levels.is_canonical(g.output));
+    assert_eq!(f.weights().is_some(), g.weights().is_some());
+    assert!(eng.equivalent(f, g).unwrap());
 }
 
 /// One diagram `f` on a projection of a home that is `dest`'s home renamed
@@ -100,7 +121,7 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
     let vtree = match rng.below(3) {
         0 => {
             let own = Vtree::projection(&dest, vars.iter().map(|v| back[v.idx()])).unwrap();
-            Arc::new(renamed_mirrored(&own, &perm, n, rng))
+            Arc::clone(Home::new(renamed_mirrored(&own, &perm, n, rng)).vtree())
         }
         _ => Vtree::projection(&source_home, vars).unwrap(),
     };
@@ -114,16 +135,17 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
     let map = |v: VarId| c.back[v.idx()];
     let (f, dest) = (&c.f, &c.dest);
     let pairs = f.pair_count();
-    let got = match owned {
-        true => eng.transport(f.clone(), dest, map),
-        false => eng.transport(f, dest, map),
+    let (got, stats) = match owned {
+        true => eng.transport(f.clone(), dest, map, 0),
+        false => eng.transport(f, dest, map, 0),
     }
     .map_err(|r| r.error)
     .unwrap();
     assert_eq!(f.pair_count(), pairs);
+    assert_eq!((stats.rotations, stats.peak_pairs), (0, pairs));
     if f.vtree().num_nodes() == 0 {
         assert_eq!(got.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
+        assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
         assert_eq!((got.is_one(), got.is_zero()), (f.is_one(), f.is_zero()));
         assert_eq!(got.weights().is_some(), weighted.is_some());
         return;
@@ -147,7 +169,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         v
     };
     assert_eq!(leaf_vars(got.vtree()), images);
-    assert!(Arc::ptr_eq(got.vtree().home().unwrap().vtree(), dest.vtree()));
+    assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
     let trimmed = check_trimmed(f, false).is_ok();
     if trimmed {
         check_trimmed(&got, false).unwrap_or_else(|e| panic!("{e}"));
@@ -183,8 +205,11 @@ fn transport_is_embed_then_trim() {
     }
 }
 
+/// Where the embed finds no level-for-level copy, `bound` 0 refuses with `f`
+/// as given, and without a bound the move equals `restructure_to` onto the
+/// projection's shape in `f`'s names followed by the renaming.
 #[test]
-fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
+fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x5ba9e);
     let (mut accepted, mut refused) = (0, 0);
@@ -197,8 +222,8 @@ fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
         let map = |v: VarId| perm[v.idx()];
         let embedded = eng.embed(&f, dest.vtree(), map);
         let (pairs, vtree) = (f.pair_count(), Arc::clone(f.vtree()));
-        let owned = eng.transport(f.clone(), &dest, map);
-        let borrowed = eng.transport(&f, &dest, map);
+        let owned = eng.transport(f.clone(), &dest, map, 0);
+        let borrowed = eng.transport(&f, &dest, map, 0);
         match embedded {
             Ok(_) => {
                 accepted += 1;
@@ -207,16 +232,110 @@ fn a_map_that_breaks_the_shape_is_refused_as_embed_refuses_it() {
             Err(EmbedError::NotIsomorphic { .. }) => {
                 refused += 1;
                 for r in [owned.unwrap_err(), borrowed.unwrap_err()] {
-                    assert!(matches!(r.error, EmbedError::NotIsomorphic { .. }), "{:?}", r.error);
+                    assert!(matches!(r.error, TransportError::Bound { .. }), "{:?}", r.error);
                     assert!(Arc::ptr_eq(r.tdd.vtree(), &vtree));
                     assert_eq!(r.tdd.pair_count(), pairs);
                     assert!(eng.equivalent(&r.tdd, &f).unwrap());
                 }
+                let (got, stats) = eng.transport(&f, &dest, map, usize::MAX).map_err(|r| r.error).unwrap();
+                assert!(stats.rotations > 0 || f.is_zero(), "{stats:?}");
+                assert_canonical(&got);
+                let into = Vtree::projection(&dest, f.vtree().leaf_bottomup().map(|(_, v)| map(v))).unwrap();
+                let shape = Arc::new(renamed_mirrored(&into, &inverse(&perm), n, &mut rng));
+                let mut expected = f.clone();
+                expected.restructure_to(&shape, usize::MAX).unwrap();
+                let (mut expected, _) = eng.transport(expected, &dest, map, 0).map_err(|r| r.error).unwrap();
+                expected.trim(&dest).unwrap();
+                assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
+                assert_eq!(leaf_vars(got.vtree()), leaf_vars(expected.vtree()));
+                assert_eq!((got.node_count(), got.pair_count()), (expected.node_count(), expected.pair_count()));
+                assert!(eng.equivalent(&got, &expected).unwrap());
             }
             Err(e) => panic!("{e:?}"),
         }
     }
     assert!(accepted > 10 && refused > 10, "{accepted} accepted, {refused} refused");
+}
+
+/// Every refusal on the rotation path, at a bound or at any allocation (so
+/// also after kept rotations of the copy), hands back an owned `f` as it was.
+#[test]
+fn a_refused_rotation_hands_back_f_as_it_was() {
+    let mut rng = Lcg::new(11);
+    let home = Home::new(Vtree::linear(10));
+    let kept = [1u32, 2, 3, 5, 6, 8, 9];
+    let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
+    let eng = Engine::new();
+    let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
+    let f = eng.embed(&f, &own, |v| v).unwrap().0;
+    let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
+    let other = Home::new(Vtree::balanced_over(&order).unwrap());
+    let (_, stats) = eng.transport(&f, &other, |v| v, usize::MAX).map_err(|r| r.error).unwrap();
+    assert!(stats.rotations > 1, "{stats:?}");
+    let mut bound = 1;
+    loop {
+        let before = f.clone();
+        match eng.transport(f.clone(), &other, |v| v, bound) {
+            Ok(_) => break,
+            Err(r) => {
+                assert!(matches!(r.error, TransportError::Bound { .. }), "{:?}", r.error);
+                assert!(matches!(r.tdd, Cow::Owned(_)));
+                same_as(&eng, &r.tdd, &before);
+            }
+        }
+        bound += 1;
+    }
+    assert!(bound > 1);
+    let mut refused = 0;
+    for cut in 0.. {
+        let eng = Engine::new();
+        eng.refuse_nth_reserve(cut);
+        let before = f.clone();
+        let result = eng.transport(f.clone(), &other, |v| v, usize::MAX);
+        let pending = eng.limits().refusal_pending();
+        match result {
+            Ok(_) if pending => break,
+            Ok(_) => {}
+            Err(r) => {
+                refused += 1;
+                assert!(matches!(r.error, TransportError::Operation(OperationError::OverBudget)), "{:?}", r.error);
+                same_as(&eng, &r.tdd, &before);
+            }
+        }
+    }
+    assert!(refused > 3, "{refused} refusals");
+}
+
+/// Under a renaming, a weighted `f` moves only where the table weighs each
+/// image as the variable it renames, and then weighs the same.
+#[test]
+fn a_renaming_keeps_the_weights_or_is_refused() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(8));
+    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3), VarId(4)]).unwrap();
+    let f = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, 4]).unwrap();
+    let shift = |v: VarId| VarId(v.0 + 4);
+    for (weights, kept) in [(&[(1, 5), (2, 4), (3, 3), (5, 1)][..], true), (&[(1, 5), (2, 4), (3, 3)][..], false)] {
+        let mut weighted = f.clone();
+        weighted.set_weights(table(8, weights)).unwrap();
+        for bound in [0, usize::MAX] {
+            match eng.transport(&weighted, &home, shift, bound) {
+                Ok((g, _)) => {
+                    assert!(kept);
+                    assert_eq!(leaf_vars(g.vtree()), [5, 6, 7, 8].map(VarId));
+                    let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
+                    assert_eq!(value(&g), value(&weighted));
+                }
+                Err(r) => {
+                    assert!(!kept);
+                    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
+                }
+            }
+        }
+    }
+    let mut weighted = f.clone();
+    weighted.set_weights(table(8, &[(1, 5), (2, 4), (3, 3)])).unwrap();
+    assert!(eng.transport(&weighted, &home, |v| v, 0).is_ok());
 }
 
 #[test]
@@ -226,29 +345,29 @@ fn bad_images_marginal_levels_and_constants() {
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
     let f = eng.clause(&own, [1, -2, 3]).unwrap();
 
-    let r = eng.transport(&f, &home, |v| VarId(v.0 + 6)).unwrap_err();
-    assert!(matches!(r.error, EmbedError::VariableOutOfRange { variable: VarId(7..=9), .. }), "{:?}", r.error);
-    let r = eng.transport(f.clone(), &home, |v| VarId(v.0.min(2))).unwrap_err();
-    assert_eq!(r.error, EmbedError::Vtree(VtreeError::OverlappingVariable(VarId(2))));
+    let r = eng.transport(&f, &home, |v| VarId(v.0 + 6), 0).unwrap_err();
+    assert!(matches!(r.error, TransportError::Variable { variable: VarId(7..=9) }), "{:?}", r.error);
+    let r = eng.transport(f.clone(), &home, |v| VarId(v.0.min(2)), 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Overlap { variable: VarId(2) });
     assert!(matches!(r.tdd, Cow::Owned(_)));
 
     let mut weighted = f.clone();
     weighted.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
-    let r = eng.transport(&weighted, &home, |v| VarId(v.0 + 3)).unwrap_err();
-    assert!(matches!(r.error, EmbedError::DestinationWeights(_)), "{:?}", r.error);
+    let r = eng.transport(&weighted, &home, |v| VarId(v.0 + 3), 0).unwrap_err();
+    assert!(matches!(r.error, TransportError::Weights(TddBuildError::MissingVariableWeight(_))), "{:?}", r.error);
 
     let mut summed = f.clone();
-    eng.marginalize_levels(&mut summed, &[own.root()]).unwrap();
-    let r = eng.transport(summed, &home, |v| v).unwrap_err();
-    assert!(matches!(r.error, EmbedError::Operation(OperationError::MarginalLevel(_))), "{:?}", r.error);
+    crate::marginal::marginalize_levels(&eng, &mut summed, &[own.root()]).unwrap();
+    let r = eng.transport(summed, &home, |v| v, usize::MAX).unwrap_err();
+    assert!(matches!(r.error, TransportError::Operation(OperationError::MarginalLevel(_))), "{:?}", r.error);
 
     let other = Home::new(Vtree::linear(4));
     for value in [false, true] {
         let empty = Vtree::empty_projection(&home);
         let c = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
-        let moved = eng.transport(c, &other, |v| v).map_err(|r| r.error).unwrap();
+        let (moved, _) = eng.transport(c, &other, |v| v, 0).map_err(|r| r.error).unwrap();
         assert_eq!(moved.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(moved.vtree().home().unwrap().vtree(), other.vtree()));
+        assert!(Arc::ptr_eq(moved.home().unwrap().vtree(), other.vtree()));
         assert_eq!(moved.is_one(), value);
         assert_eq!(moved.is_zero(), !value);
     }

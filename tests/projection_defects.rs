@@ -26,14 +26,14 @@ fn pair_index_of_true_on_no_leaf_answers() {
 }
 
 #[test]
-fn a_rehome_refused_under_a_bound_keeps_the_count_over_the_home() {
+fn a_transport_refused_under_a_bound_keeps_the_count_over_the_home() {
     let eng = Engine::new();
     let home = Home::new(Vtree::linear(8));
     let other = Home::new(Vtree::balanced(8));
     let f = two_clauses(&home);
     assert_eq!(f.model_count().unwrap(), BigUint::from(192u32));
     for bound in 1..=64 {
-        if let Err(refused) = eng.rehome(&f, &other, bound) {
+        if let Err(refused) = eng.transport(f.clone(), &other, |v| v, bound) {
             assert_eq!(
                 refused.tdd.model_count().unwrap(),
                 BigUint::from(192u32),
@@ -62,8 +62,7 @@ fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
     let not_x1 = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [-1]).unwrap();
-    let root = home.vtree().root();
-    let summed = eng.and_marginalizing(Tdd::one(home.vtree()), &not_x1, &[root]).unwrap();
+    let summed = eng.and_marginalizing_where(Tdd::one(home.vtree()), &not_x1, |_| true).unwrap();
     let count = catch_unwind(AssertUnwindSafe(|| summed.model_count().unwrap()));
     assert_eq!(count.ok(), Some(BigUint::from(2u32)), "the count of not x1 over two variables, its root summed out");
 }
@@ -149,4 +148,26 @@ fn negate_on_no_leaf_keeps_the_weights() {
     let owned = eng.negate(f).unwrap();
     assert!(owned.weights().is_some(), "negate of an owned constant with no leaf drops its weights");
     assert!(owned.is_zero());
+}
+
+#[test]
+fn or_cube_on_a_diagram_an_earlier_call_placed_is_canonical() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)]).unwrap(), [1, -2]).unwrap();
+    let mut want = eng.or_cube(f.clone(), &[3, 4]).unwrap();
+    want.minimize().unwrap();
+    let wide = Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap();
+    let placed = [
+        ("a false cube", eng.or_cube(f.clone(), &[3, -3, 4]).unwrap()),
+        ("a true clause", eng.and_clause(f.clone(), &[3, -3, 4]).unwrap()),
+        ("embed_moving", eng.embed_moving(f, &wide, |v| v).unwrap().0),
+    ];
+    for (how, placed) in placed {
+        let got = catch_unwind(AssertUnwindSafe(|| eng.or_cube(placed, &[3, 4]).unwrap()));
+        let mut got = got.unwrap_or_else(|_| panic!("the overlay after {how}"));
+        assert_eq!(got.model_count().unwrap(), want.model_count().unwrap(), "after {how}");
+        got.minimize().unwrap();
+        assert_eq!((got.node_count(), got.pair_count()), (want.node_count(), want.pair_count()), "after {how}");
+    }
 }

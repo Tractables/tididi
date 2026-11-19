@@ -69,7 +69,7 @@ impl Engine {
                 if f.vtree().home_has(var) {
                     continue;
                 }
-                return Err(OperationError::VariableNotInVtree(var));
+                return Err(f.vtree().no_leaf_for(var));
             };
             if by_leaf[leaf.idx()].replace(replacement).is_some() {
                 return Err(OperationError::DuplicateVariable(var));
@@ -80,7 +80,7 @@ impl Engine {
                     diagram.require_structure()?;
                 }
                 Replacement::Literal(literal) => {
-                    if f.vtree().leaf_of(literal.var).is_none() {
+                    if f.vtree().leaf_of(literal.var).is_none() && !f.vtree().home_has(literal.var) {
                         return Err(OperationError::VariableNotInVtree(literal.var));
                     }
                 }
@@ -121,7 +121,7 @@ impl Engine {
         mut gate: PollGate,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
-        self.minimize(&mut f)?;
+        self.minimize_plain(&mut f)?;
         let vtree = f.vtree().clone();
         let mut uses = Vec::<Vec<usize>>::new();
         lim.try_resize(&mut uses, vtree.num_nodes(), Vec::new())?;

@@ -27,15 +27,18 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// whether every parent pair list on that side admits the rewrite. If yes, do
 /// it. Otherwise leave `v`'s level unchanged on that side.
 ///
-/// Returns true if any rewrite happened (caller may want to re-run twin
-/// contraction to catch newly-equivalent parents).
+/// Returns true if any rewrite happened.
+///
+/// With `record`, a level that admits the rewrite is left as it is and its
+/// leaf is pushed there instead: each of its nodes holds `(Pos, S)` exactly
+/// when it holds `(Neg, S)`, for the caller to drop the leaf.
 ///
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when the partner lists a level is classified
-/// with cannot be reserved; the levels already rewritten stay rewritten and
-/// the rest stay queued for the next call.
-pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, OperationError> {
+/// with cannot be reserved, or `record` cannot grow; the levels already
+/// rewritten or recorded stay so and the rest stay queued for the next call.
+pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, mut record: Option<&mut Vec<VtreeIdx>>) -> Result<bool, OperationError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
     // Every site that mutates a pair list pushes its level here, so the
@@ -57,7 +60,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
     let mut changed = false;
     for (k, &vi_raw) in dirty.iter().enumerate() {
         if vi_raw as usize >= n { continue; }
-        match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw), &mut refused) {
+        match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw), &mut refused, record.as_deref_mut()) {
             Ok(fired) => changed |= fired,
             Err(e) => {
                 tdd.dirty.requeue(Pass::LeafContract, dirty[k..].iter().copied());
@@ -75,23 +78,39 @@ const NO_HINT: u32 = u32::MAX;
 /// entry is reprocessed; re-classifying an already-contracted level finds no
 /// literal pair and does nothing. `refused` holds the hints
 /// [`try_contract_leaf_twins`] reads and writes.
-fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx, refused: &mut [u32]) -> Result<bool, OperationError> {
+fn contract_leaf_sides(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    vtree: &Vtree,
+    vi: VtreeIdx,
+    refused: &mut [u32],
+    mut record: Option<&mut Vec<VtreeIdx>>,
+) -> Result<bool, OperationError> {
     let (left, right) = match *vtree.node(vi) {
         VtreeNode::Internal { left, right, .. } => (left, right),
         VtreeNode::Leaf { .. } => return Ok(false),
     };
     let mut changed = false;
-    if vtree.node(left).is_leaf() {
-        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Left, refused)?;
-    }
-    if vtree.node(right).is_leaf() {
-        changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Right, refused)?;
+    for (leaf, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
+        if vtree.node(leaf).is_leaf() && try_contract_leaf_twins(eng, tdd, vi, side, refused)? {
+            match record.as_deref_mut() {
+                Some(record) => {
+                    debug_assert!(!tdd.levels[leaf.idx()].is_marginal() && !tdd.levels[vi.idx()].is_marginal());
+                    eng.limits().try_push(record, leaf)?;
+                }
+                None => {
+                    rewrite_level(eng.limits(), tdd, vi, side)?;
+                    changed = true;
+                }
+            }
+        }
     }
     Ok(changed)
 }
 
-/// Attempt to contract literal pairs on one side of `parent_vi`'s level.
-/// `side = ChildSide::Left` means the leaf is the left child (we contract `pair.left`).
+/// Whether every node of `parent_vi`'s level admits the rewrite on `side`
+/// and one holds a literal there. `side = ChildSide::Left` means the leaf is
+/// the left child.
 ///
 /// One node that refuses the rewrite refuses it for the level, so a stored
 /// level is first tested at the node that refused the last classification
@@ -101,7 +120,7 @@ fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx,
 /// noted there with its first refusing node.
 fn try_contract_leaf_twins(
     eng: &Engine,
-    tdd: &mut Tdd,
+    tdd: &Tdd,
     parent_vi: VtreeIdx,
     side: ChildSide,
     refused: &mut [u32],
@@ -146,10 +165,7 @@ fn try_contract_leaf_twins(
             }
         }
     }
-    if !any_literal { return Ok(false); }
-
-    rewrite_level(lim, tdd, parent_vi, side)?;
-    Ok(true)
+    Ok(any_literal)
 }
 
 /// [`try_contract_leaf_twins`] on a level held as the description of its
@@ -159,7 +175,7 @@ fn try_contract_leaf_twins(
 /// each label is classified, off the description, about the side's distinct
 /// labels times a node's pairs, not the level's pairs. A level that admits
 /// the rewrite is built stored for it ([`rewrite_level`]).
-fn try_contract_described(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
+fn try_contract_described(eng: &Engine, tdd: &Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
     let d = tdd.levels[parent_vi.idx()].implicit().expect("an implicit level");
     let mut labels: rustc_hash::FxHashMap<i64, usize> = rustc_hash::FxHashMap::default();
     d.each_side_first(side, |label, node| {
@@ -175,9 +191,7 @@ fn try_contract_described(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side
             Class::NotContractible => return Ok(false),
         }
     }
-    if !any_literal { return Ok(false); }
-    rewrite_level(lim, tdd, parent_vi, side)?;
-    Ok(true)
+    Ok(any_literal)
 }
 
 enum Class {
@@ -294,6 +308,49 @@ fn classify(
         else { return Ok(Class::NotContractible); }
     }
     Ok(finish_classify(pos, neg, has_one))
+}
+
+/// Whether every node of `parent`'s level names its leaf on `side` by a
+/// literal only, holding `(Pos, S)` exactly as often as `(Neg, S)`: a side
+/// the rewrite below would name true.
+#[cfg(debug_assertions)]
+pub(crate) fn is_full_twin_side(tdd: &Tdd, parent: VtreeIdx, side: ChildSide) -> bool {
+    let level = &tdd.levels[parent.idx()];
+    let (pos_label, neg_label): (EncodedChildRef, EncodedChildRef) = (POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
+    (0..level.slot_count()).all(|i| {
+        let (mut pos, mut neg) = (Vec::new(), Vec::new());
+        for p in level.pairs_iter_of_idx(i) {
+            match split_leaf_side(p, side) {
+                (label, partner) if label == pos_label => pos.push(partner),
+                (label, partner) if label == neg_label => neg.push(partner),
+                _ => return false,
+            }
+        }
+        pos.sort_unstable();
+        neg.sort_unstable();
+        !pos.is_empty() && pos == neg
+    })
+}
+
+/// Panic if a diagram on a home has a full twin side at a leaf
+/// ([`is_full_twin_side`]), as no certified one may.
+#[cfg(debug_assertions)]
+pub(crate) fn assert_no_full_twin_side(tdd: &Tdd) {
+    let vtree = &tdd.vtree;
+    if vtree.home().is_none() && !vtree.is_home() || tdd.is_zero() || tdd.is_one() {
+        return;
+    }
+    for t in vtree.bottomup() {
+        let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
+        if tdd.levels[t.idx()].is_marginal() {
+            continue;
+        }
+        for (leaf, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
+            if vtree.node(leaf).is_leaf() && !tdd.levels[leaf.idx()].is_marginal() {
+                assert!(!is_full_twin_side(tdd, t, side), "a certified diagram has a full twin side at leaf {} of level {}", leaf.0, t.0);
+            }
+        }
+    }
 }
 
 /// Apply the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite to every pair list

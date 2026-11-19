@@ -8,6 +8,10 @@ use crate::vtree::home::LeafSets;
 use crate::vtree::rng::Lcg;
 
 pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
+    if got.home.is_none() || want.home.is_none() {
+        assert!(std::ptr::eq(got, want), "{what}: the projection on every leaf is the home");
+        return;
+    }
     assert_eq!(got.nodes, want.nodes, "{what}");
     assert_eq!(got.root, want.root, "{what}");
     assert_eq!(got.leaf_count, want.leaf_count, "{what}");
@@ -119,4 +123,51 @@ fn node_over_is_the_lowest_common_ancestor_on_large_homes() {
             assert_eq!(home.node_over(a, b), lca, "seed {seed}, ranks {a} {b}");
         }
     }
+}
+
+#[test]
+fn a_join_of_two_projections_joins_their_shapes() {
+    for seed in 0..40u64 {
+        let mut rng = Lcg::new(seed);
+        let n = 4 + rng.below(9) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for v in 1..=n {
+            match rng.below(3) {
+                0 => left.push(VarId(v)),
+                1 => right.push(VarId(v)),
+                _ => {}
+            }
+        }
+        if left.is_empty() || right.is_empty() {
+            continue;
+        }
+        let (a, b) = (Vtree::projection(&home, left).unwrap(), Vtree::projection(&home, right).unwrap());
+        let joined = Vtree::join(&a, &b).unwrap();
+        assert!(joined.home().is_none(), "seed {seed}");
+        assert_eq!(joined.validate(), Ok(()), "seed {seed}");
+        let (ra, rb) = (a.renamed(|v| v, n).unwrap(), b.renamed(|v| v, n).unwrap());
+        assert!(ra.home().is_none() && ra.same_tree(&a) && rb.same_tree(&b), "seed {seed}");
+        assert!(joined.same_tree(&Vtree::join(&ra, &rb).unwrap()), "seed {seed}");
+        let (jl, jr) = joined.children(joined.root());
+        for (side, own) in [(jl, &a), (jr, &b)] {
+            let under: Vec<VarId> = joined.leaf_bottomup().filter(|&(t, _)| joined.in_subtree(t, side)).map(|(_, v)| v).collect();
+            let mut want: Vec<VarId> = own.leaf_bottomup().map(|(_, v)| v).collect();
+            let mut got = under;
+            got.sort();
+            want.sort();
+            assert_eq!(got, want, "seed {seed}");
+        }
+    }
+}
+
+#[test]
+fn renaming_keeps_the_shape() {
+    let home = Home::new(Vtree::balanced(8));
+    let own = Vtree::projection(&home, [VarId(2), VarId(3), VarId(7)]).unwrap();
+    let copy = own.renamed(|v| VarId(9 - v.0), 8).unwrap();
+    assert!(copy.home().is_none());
+    assert!(copy.same_tree(&Vtree::join(&Vtree::balanced_over(&[VarId(7), VarId(6)]).unwrap(), &Vtree::leaf(VarId(2))).unwrap()));
+    assert!(matches!(own.renamed(|_| VarId(1), 8), Err(VtreeError::OverlappingVariable(VarId(1)))));
+    assert!(own.renamed(|v| v, 6).is_err());
 }

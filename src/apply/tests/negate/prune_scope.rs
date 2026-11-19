@@ -18,7 +18,7 @@ fn negate_scoped(eng: &Engine, f: Tdd, plan: ReductionPlan<'_>, scope: PruneScop
         below_root_walk_applies(&result) || result.is_zero(),
         "the seeded walk has to be the one under test"
     );
-    eng.reduce_scoped(&mut result, plan, scope).unwrap();
+    eng.reduce_scoped(&mut result, plan, scope, crate::reduce::Close::Plain).unwrap();
     result
 }
 

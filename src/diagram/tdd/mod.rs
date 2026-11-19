@@ -25,7 +25,7 @@ use crate::diagram::WeightStore;
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
-use super::primitives::{LEAF_WIDTH, TddNodeId, TRUE, ZERO};
+use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 
 /// A Boolean function represented by a Tree Decision Diagram.
 ///
@@ -182,6 +182,26 @@ impl Tdd {
     #[inline]
     pub fn vtree(&self) -> &Arc<Vtree> {
         &self.vtree
+    }
+
+    /// The home this diagram is on: its projection's home, or its vtree when
+    /// that is a home's root; `None` on a vtree that is neither.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::Tdd;
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, -3])?;
+    /// assert!(Arc::ptr_eq(f.home().unwrap().vtree(), home.vtree()));
+    /// let all = Tdd::clause(home.vtree(), [2, 4])?;
+    /// assert!(Arc::ptr_eq(all.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Tdd::clause(&Arc::new(Vtree::balanced(4)), [1])?.home().is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn home(&self) -> Option<crate::vtree::Home> {
+        Vtree::home_of(&self.vtree)
     }
 
     /// The node denoting the function: a node of the root level, or
@@ -404,7 +424,10 @@ impl Tdd {
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
     ///
     /// This decides unsatisfiability without minimization, reading summed-out
-    /// variables as [`Tdd::is_sat`] does.
+    /// variables as [`Tdd::is_sat`] does. On a diagram with summed-out
+    /// regions the answer is exact for model counts and for positive weights;
+    /// with zero or negative weights a sum can cancel to zero without the
+    /// output being [`ZERO`].
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }
@@ -415,6 +438,11 @@ impl Tdd {
     /// too; [`trim`](Self::trim) turns one into this constant.
     pub fn is_one(&self) -> bool {
         self.output.local == TRUE
+    }
+
+    /// True on a vtree that is one leaf, the output naming that leaf `One`.
+    pub(crate) fn is_one_leaf_one(&self) -> bool {
+        self.output.local == ONE_LEAF_IDX && self.vtree.num_nodes() == 1
     }
 
     /// True if any level of the diagram is marginal, in which case a pair list

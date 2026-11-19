@@ -125,41 +125,47 @@ fn a_move_past_its_bound_keeps_the_function() {
     assert_canonical(&f);
 }
 
-/// A rehome refused after kept rotations used to leave the diagram on a root
-/// vtree of its own leaves, its counts short by the home's other variables.
+/// A restructure of a diagram on a projection runs on a copy over private
+/// trees: refused at any allocation, the diagram is as it was; else it is on
+/// the target with its count over the home's variables.
 #[test]
-fn a_refused_rehome_stays_on_a_home_with_its_count() {
+fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
     use crate::vtree::Home;
     let mut rng = Lcg::new(11);
     let home = Home::new(Vtree::linear(10));
     let kept = [1u32, 2, 3, 5, 6, 8, 9];
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
-    let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
+    let f = crate::test_helpers::padded(crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng), &own);
     let count = f.model_count().unwrap();
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());
-    let (mut refused, mut moved) = (0, 0);
+    let target = Vtree::projection(&other, kept.map(VarId)).unwrap();
+    let mut refused = 0;
     for cut in 0.. {
         let eng = crate::Engine::new();
         eng.refuse_nth_reserve(cut);
-        let result = eng.rehome(&f, &other, usize::MAX);
+        let mut g = f.clone();
+        let result = eng.restructure_to(&mut g, &target, usize::MAX);
         let pending = eng.limits().refusal_pending();
         match result {
-            Ok(g) => {
+            Ok(stats) => {
+                assert!(stats.rotations > 0);
+                assert!(Arc::ptr_eq(g.vtree(), &target));
                 assert_eq!(g.model_count().unwrap(), count);
+                assert_canonical(&g);
                 if pending {
                     break;
                 }
             }
-            Err(r) => {
+            Err(_) => {
                 refused += 1;
-                let home_of = r.tdd.vtree().home().expect("a refused diagram stays on a home");
-                moved += usize::from(!Arc::ptr_eq(home_of.vtree(), home.vtree()));
-                assert_eq!(r.tdd.model_count().unwrap(), count, "refused at reserve {cut}");
+                assert!(Arc::ptr_eq(g.vtree(), f.vtree()), "refused at reserve {cut}");
+                assert_eq!((g.node_count(), g.pair_count()), (f.node_count(), f.pair_count()));
+                assert_eq!(g.model_count().unwrap(), count, "refused at reserve {cut}");
             }
         }
     }
-    assert!(moved > 0 && refused > moved, "{refused} refusals, {moved} after a kept move");
+    assert!(refused > 3, "{refused} refusals");
 }
 
 #[test]

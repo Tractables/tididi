@@ -129,7 +129,7 @@ impl Engine {
             return Ok(std::borrow::Cow::Borrowed(f));
         }
         let mut copy = f.try_clone_on(self)?;
-        self.minimize(&mut copy)?;
+        self.minimize_plain(&mut copy)?;
         Ok(std::borrow::Cow::Owned(copy))
     }
 

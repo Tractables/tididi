@@ -28,10 +28,12 @@ use crate::vtree::{RotationKind, VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::RestructureError;
 
-/// What a [`Tdd::restructure_to`] call did.
+/// How [`Engine::transport`] or [`Tdd::restructure_to`] moved a diagram's
+/// vtree: the rotations and mirrors of the tree, not which levels were
+/// rewritten.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct RestructureStats {
+pub struct TransportStats {
     /// Rotations applied, each rebuilding two levels.
     pub rotations: usize,
     /// Levels whose pairs were read the other way round.
@@ -48,7 +50,10 @@ impl Tdd {
     /// shape, and its levels are then reseated on `target` itself, so the
     /// result shares `target`'s allocation and can be combined with diagrams
     /// built on it. The function is unchanged, and a canonical diagram stays
-    /// canonical.
+    /// canonical. When `target` is on a [home](Vtree::home), the diagram is
+    /// minimized first and the variables it does not depend on leave: it ends
+    /// on the projection of that home on the variables left, which is
+    /// `target` when none left, and a constant ends on no leaf.
     ///
     /// A rotation rebuilds the two levels it turns from the pairs of the
     /// outer level expanded through the inner one; a mirror reads one level's
@@ -69,11 +74,11 @@ impl Tdd {
     /// weight table; [`RestructureError::Bound`] when a rotation would expand
     /// more than `bound` pairs, and [`RestructureError::Operation`] with
     /// [`OperationError::MarginalLevel`] when it would turn a summed-out
-    /// level, or with a refused allocation or an armed stop. After an error
-    /// the diagram denotes the same function on its own copy of a vtree
-    /// between the two. A diagram on a projection is then on a projection of
-    /// a home with the same variables: its own when no rotation or mirror was
-    /// kept, else the home the kept ones imply; its counts do not change.
+    /// level or either vtree has a region, or with a refused allocation or an
+    /// armed stop. After an error a diagram on a root vtree denotes the same
+    /// function on its own copy of a vtree between the two. A diagram on a projection is moved as a copy on
+    /// private trees over its own leaves ([`Engine::transport`]'s rotation
+    /// path), so an error leaves it as it was.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -94,7 +99,7 @@ impl Tdd {
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn restructure_to(&mut self, target: &Arc<Vtree>, bound: usize) -> Result<RestructureStats, RestructureError> {
+    pub fn restructure_to(&mut self, target: &Arc<Vtree>, bound: usize) -> Result<TransportStats, RestructureError> {
         let context = Arc::clone(target.context());
         context.run(|eng| eng.restructure_to(self, target, bound))
     }
@@ -111,51 +116,104 @@ impl Engine {
         tdd: &mut Tdd,
         target: &Arc<Vtree>,
         bound: usize,
-    ) -> Result<RestructureStats, RestructureError> {
+    ) -> Result<TransportStats, RestructureError> {
         let _op = self.limits().enter()?;
         same_variables(tdd.vtree(), target)?;
+        if let Some(region) = tdd.vtree().regions().chain(target.regions()).next() {
+            return Err(OperationError::MarginalLevel(region).into());
+        }
         if tdd.weights.is_some() {
             return Err(RestructureError::Weighted);
         }
+        let narrowed;
+        let mut target = target;
+        if let Some(home) = Vtree::home_of(target)
+            && !Arc::ptr_eq(tdd.vtree(), target)
+            && !tdd.has_marginal_level()
+        {
+            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+            if tdd.vtree().num_nodes() == 0 {
+                return Ok(TransportStats::default());
+            }
+            if tdd.vtree().num_leaves() != target.num_leaves() {
+                narrowed = Vtree::projection(&home, tdd.vtree().leaf_bottomup().map(|(_, var)| var))
+                    .expect("the target's home has every variable of the diagram");
+                target = &narrowed;
+            }
+        }
         if Arc::ptr_eq(tdd.vtree(), target) {
-            return Ok(RestructureStats { peak_pairs: tdd.pair_count(), ..RestructureStats::default() });
+            return Ok(TransportStats { peak_pairs: tdd.pair_count(), ..TransportStats::default() });
         }
         if tdd.is_zero() {
             *tdd = crate::build::constant_zero(self, target);
-            return Ok(RestructureStats::default());
+            return Ok(TransportStats::default());
         }
+        if tdd.vtree.home().is_some() {
+            return self.restructure_projection(tdd, target, bound);
+        }
+        self.move_to(tdd, target, bound)
+    }
+
+    /// [`restructure_to`](Self::restructure_to) of a diagram on a
+    /// projection: a copy on its own tree with each leaf named by its
+    /// target's place in `target`'s leaf order, moved onto `target`'s tree
+    /// named the same way.
+    #[cold]
+    #[inline(never)]
+    fn restructure_projection(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<TransportStats, RestructureError> {
+        let k = target.num_leaves();
+        let mut name = Transient::new(self.limits(), Vec::new());
+        self.limits().try_resize(&mut name, target.num_nodes(), VarId(0))?;
+        for (i, (leaf, _)) in target.leaf_bottomup().enumerate() {
+            name[leaf.idx()] = VarId(i as u32 + 1);
+        }
+        let own = tdd.vtree();
+        let at_target = |leaf: VtreeIdx| name[target.leaf_of(own.leaf_var(leaf)).expect("same variables").idx()];
+        let mut copy = tdd.try_clone_on(self)?;
+        copy.vtree = Arc::new(own.local_twin(at_target, k));
+        let twin = Arc::new(target.local_twin(|leaf| name[leaf.idx()], k));
+        let stats = self.move_to(&mut copy, &twin, bound)?;
+        // The twin is `target` with its leaves renamed: the node indices agree.
+        copy.vtree = Arc::clone(target);
+        *tdd = copy;
+        Ok(stats)
+    }
+
+    fn move_to(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<TransportStats, RestructureError> {
         // A rotation's rebuilt levels are interchangeable with the ones they
         // replace only on a canonical diagram. With summed-out levels the
         // rotation keeps every contribution instead, and a minimize would
         // merge them, so those are moved as they are.
-        let original = tdd.vtree.home().is_some().then(|| Arc::clone(&tdd.vtree));
-        let moved = self.move_to(tdd, target, bound);
-        if moved.is_err()
-            && !Arc::ptr_eq(&tdd.vtree, target)
-            && let Some(original) = original
-        {
-            back_home(self, tdd, original);
-        }
-        moved
-    }
-
-    fn move_to(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<RestructureStats, RestructureError> {
         let structural = !tdd.has_marginal_level();
         if structural {
-            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+            self.reduce_plain(tdd, crate::reduce::ReductionPlan::default())?;
         }
+        self.rearrange(tdd, target, bound, structural)
+    }
+
+    /// `tdd`, on a root vtree over `target`'s variables and minimized when
+    /// `structural`, rotated and mirrored to `target`'s shape and seated on
+    /// it.
+    pub(super) fn rearrange(
+        &self,
+        tdd: &mut Tdd,
+        target: &Arc<Vtree>,
+        bound: usize,
+        structural: bool,
+    ) -> Result<TransportStats, RestructureError> {
+        debug_assert!(tdd.vtree.home().is_none(), "a projection moves on its private twin");
         let mut mover = Mover {
             eng: self,
             tdd,
             target: target.as_ref(),
             bound,
             scratch: self.scratch.restructure.checkout(self),
-            stats: RestructureStats::default(),
+            stats: TransportStats::default(),
             pairs: 0,
         };
         mover.pairs = mover.tdd.pair_count();
         mover.stats.peak_pairs = mover.pairs;
-        Arc::make_mut(&mut mover.tdd.vtree);
+        Vtree::make_mut(&mut mover.tdd.vtree);
         let mut work = Transient::new(self.limits(), Vec::new());
         self.limits().try_push(&mut work, (mover.tdd.vtree.root(), target.root()))?;
         while let Some((a, b)) = work.pop() {
@@ -192,7 +250,7 @@ struct Mover<'a, 'e> {
     target: &'a Vtree,
     bound: usize,
     scratch: crate::execution::pool::PoolGuard<'e, RestructureScratch>,
-    stats: RestructureStats,
+    stats: TransportStats,
     /// The diagram's live pairs now.
     pairs: usize,
 }
@@ -343,7 +401,6 @@ impl Mover<'_, '_> {
         if !probe_moves(self.eng, self.tdd, &moves, &mut rule, &mut self.scratch, self.bound)? {
             return Err(RestructureError::Bound { pivot: v });
         }
-        Arc::make_mut(&mut self.tdd.vtree).reshaped();
         self.stats.rotations += 1;
         self.pairs = (self.pairs as i64 + rule.delta) as usize;
         self.stats.peak_pairs = self.stats.peak_pairs.max(self.pairs);
@@ -359,7 +416,7 @@ impl Mover<'_, '_> {
 
 /// Exchange node `t`'s children and read its level's pairs the other way.
 fn mirror_at(tdd: &mut Tdd, t: VtreeIdx) {
-    Arc::make_mut(&mut tdd.vtree).swap_children(t);
+    Vtree::make_mut(&mut tdd.vtree).swap_children(t);
     tdd.levels[t.idx()].swap_sides();
 }
 
@@ -420,21 +477,6 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
         tdd.levels.certify(tdd.output);
     }
     Ok(mirrors)
-}
-
-/// `tdd`, refused while moving off `original`, a projection, put back on a
-/// home: `original` itself when no mirror or rotation was kept (each kept one
-/// drops the link), else the home the kept moves imply, so that its counts
-/// stay over the home's variables.
-#[cold]
-#[inline(never)]
-fn back_home(eng: &Engine, tdd: &mut Tdd, original: Arc<Vtree>) {
-    if tdd.vtree.home().is_some() {
-        tdd.vtree = original;
-        return;
-    }
-    Arc::make_mut(&mut tdd.vtree).rejoin_home(&original);
-    crate::restructure::transport::seat_on_lifted_home(eng, tdd);
 }
 
 /// The variable of the leftmost leaf under `t`.

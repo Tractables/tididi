@@ -16,10 +16,10 @@ use super::{EmbedError, TagError};
 use crate::Engine;
 use crate::diagram::{
     Assembly, ChildPair, LEAF_WIDTH, LevelView, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX,
-    Tdd, TddNodeId,
+    Tdd, TddNodeId, sort_pairs,
 };
 use crate::limits::{Limits, OperationError, PollGate};
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 
 impl Engine {
     /// The diagram on `into` that pairs each node of `tdd`'s level `at` with
@@ -45,6 +45,14 @@ impl Engine {
     /// cost is the size of the subtree's levels, plus a step per node of the
     /// cubes and per node they share, and the minimization.
     ///
+    /// `at` is a node of `tdd`'s own vtree, not of its [home](Vtree::home),
+    /// since `tags` names the slots of its stored level; a home index is
+    /// read as an own one without an error. When `into` has a home, the
+    /// result is on the projection of that home on the renamed variables
+    /// under `at` and `code_vars` instead: that projection's root takes the
+    /// place of `into`'s, with the code subtree on either side, and the
+    /// other side must have `at`'s subtree's shape, children in order.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
@@ -67,7 +75,8 @@ impl Engine {
     ///
     /// [`TagError::Placement`] when `into`'s left subtree is not `at`'s
     /// subtree under `map` (as [`Tdd::embed`] reports a shape that does not
-    /// match) or `into`'s root is a leaf; [`TagError::CodeVariables`] when
+    /// match), on a home also when the projection's tagged side is a mirror
+    /// of it, or `into`'s root is a leaf; [`TagError::CodeVariables`] when
     /// `code_vars` are not exactly the right subtree's leaves;
     /// [`TagError::Tags`] when `tags` does not have one entry per slot or
     /// names a code past the end of `codes`, whose length is not a multiple
@@ -99,12 +108,31 @@ impl Engine {
         for s in source.bottomup().filter(|&s| source.in_subtree(s, at)) {
             tdd.require_structure_at(s)?;
         }
+        let projected;
+        let into = match into.home() {
+            Some(home) => {
+                projected = tagged_projection(source, at, home, &map, code_vars).unwrap_or_else(|| Arc::clone(into));
+                &projected
+            }
+            None => into,
+        };
         if into.node(into.root()).is_leaf() {
             return Err(TagError::Placement(EmbedError::NotIsomorphic {
                 source: at,
             }));
         }
-        let (left, right) = into.children(into.root());
+        let (mut left, mut right) = into.children(into.root());
+        // On a home the projection's order decides the side of the code.
+        let swapped = into.home().is_some() && {
+            let mut first = at;
+            while !source.node(first).is_leaf() {
+                first = source.children(first).0;
+            }
+            into.leaf_of(map(source.leaf_var(first))).is_some_and(|leaf| into.in_subtree(leaf, right))
+        };
+        if swapped {
+            (left, right) = (right, left);
+        }
         let mut gate = lim.gate();
 
         let image = match_tagged_subtree(lim, &mut gate, source, at, into, left, map)?;
@@ -161,7 +189,7 @@ impl Engine {
         let cube = build_tag_cubes(
             self,
             &mut gate,
-            into,
+            (into, right),
             &leaf_bit,
             tags,
             (codes, words),
@@ -171,11 +199,13 @@ impl Engine {
         let mut pairs = Vec::new();
         for (n, tag) in tags.iter().enumerate() {
             if let Some(k) = tag {
-                lim.try_push(
-                    &mut pairs,
-                    ChildPair::new(NodeIdx(n as u32), cube[*k as usize].expect("built above")),
-                )?;
+                let (node, code) = (NodeIdx(n as u32), cube[*k as usize].expect("built above"));
+                let pair = if swapped { ChildPair::new(code, node) } else { ChildPair::new(node, code) };
+                lim.try_push(&mut pairs, pair)?;
             }
+        }
+        if swapped {
+            sort_pairs(&mut pairs);
         }
         let root = assembly.push(self, into.root(), &pairs)?;
         gate.flush()?;
@@ -186,6 +216,22 @@ impl Engine {
         self.minimize(&mut result)?;
         Ok(result)
     }
+}
+
+/// The projection of `home` on the variables under `at` renamed through `map`
+/// and on `code_vars`; `None` when none of them is a home variable, which the
+/// checks on the caller's vtree then refuse.
+#[cold]
+fn tagged_projection(
+    source: &Vtree,
+    at: VtreeIdx,
+    home: &Home,
+    map: impl Fn(VarId) -> VarId,
+    code_vars: &[VarId],
+) -> Option<Arc<Vtree>> {
+    let tagged = source.subtree(at).filter(|&t| source.node(t).is_leaf()).map(|t| map(source.leaf_var(t)));
+    let vars: Vec<VarId> = tagged.chain(code_vars.iter().copied()).filter(|&v| home.rank(v).is_some()).collect();
+    Vtree::projection(home, vars).ok()
 }
 
 /// The image of each node of `at`'s subtree in `source` under `left` in `into`,
@@ -273,14 +319,13 @@ fn code_leaves_in_order(
 fn build_tag_cubes(
     eng: &Engine,
     gate: &mut PollGate<'_>,
-    into: &Vtree,
+    (into, right): (&Vtree, VtreeIdx),
     leaf_bit: &[usize],
     tags: &[Option<u32>],
     (codes, words): (&[u64], usize),
     assembly: &mut Assembly,
 ) -> Result<Vec<Option<NodeIdx>>, OperationError> {
     let lim = eng.limits();
-    let (_, right) = into.children(into.root());
     let num_codes = codes.len() / words;
     let mut cube = Vec::new();
     lim.try_resize(&mut cube, num_codes, None)?;

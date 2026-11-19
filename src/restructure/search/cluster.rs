@@ -178,6 +178,10 @@ impl Engine {
     /// Retained entries may skip opportunities after a rotation, without
     /// changing the count.
     ///
+    /// On a vtree with a region the home does not rotate: no rotation is
+    /// tried, and each node in `root`'s subtree with only regions under it
+    /// is summed out into one region, whose extent is theirs together.
+    ///
     /// The diagram may acquire a new vtree allocation. Subsequent operands must
     /// use [`Tdd::vtree`]. A diagram over the old allocation is not transformed
     /// by this call. With no candidate, the original allocation is retained.
@@ -201,17 +205,20 @@ impl Engine {
         let lim = eng.limits();
         let _op = lim.enter()?;
         tdd.check_level_indices(&[root])?;
+        if tdd.vtree.has_regions() {
+            return close_regions(eng, tdd, root).map(|()| 0);
+        }
         lim.try_resize(tried, tdd.vtree.num_nodes(), 0)?;
         // Read-only bail: no candidate ⇒ no vtree clone, no work.
         let mut cands = collect_cluster_candidates(tdd, root);
         if cands.is_empty() {
             return Ok(0);
         }
-        // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
+        // Detach to a uniquely-owned vtree so the per-rotation `Vtree::make_mut`s are
         // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
         // shared Arc until the caller reseats them — sound
         // because rotations only change indices inside subtree(root).
-        let mut search = super::SearchTree::new(eng, tdd);
+        let mut search = super::SearchTree::new(eng, tdd)?;
 
         let mut scratch = eng.scratch.restructure.checkout(eng);
         let mut rule = ClusterRule { bound_mult };
@@ -268,6 +275,21 @@ impl Engine {
         }
         Ok(accepted)
     }
+}
+
+/// Sum out each node of `root`'s subtree under which every childless node is
+/// a region, and none above it in the subtree is such a node.
+#[cold]
+fn close_regions(eng: &Engine, tdd: &mut Tdd, root: VtreeIdx) -> Result<(), OperationError> {
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    let (fin, _) = crate::marginal::finished(eng, &vtree, |t| tdd.levels[t.idx()].is_marginal(), &|_| false)?;
+    let top = |t: VtreeIdx| t == root || vtree.node(t).parent().is_some_and(|p| !fin[p.idx()]);
+    let mut maximal: Vec<VtreeIdx> = vtree.subtree(root).filter(|&t| fin[t.idx()] && top(t)).collect();
+    maximal.sort_unstable();
+    if maximal.is_empty() {
+        return Ok(());
+    }
+    crate::marginal::sum_out(eng, tdd, &maximal)
 }
 
 #[cfg(test)]

@@ -153,7 +153,17 @@ impl Engine {
         let mut copy = tdd.try_clone_on(self)?;
         copy.weights = None;
         let projected = self.exists_vars(copy, &eliminated)?;
-        Ok(self.own_model_count(&projected)? >> eliminated.len())
+        // On a home `projected` can lack a selected variable as well as the
+        // eliminated ones.
+        let (mut held_selected, mut held_eliminated) = (0, 0);
+        for (_, var) in projected.vtree().leaf_bottomup() {
+            match vtree.leaf_of(var).is_some_and(|leaf| selected[leaf.idx()]) {
+                true => held_selected += 1,
+                false => held_eliminated += 1,
+            }
+        }
+        let wanted = selected.iter().filter(|&&s| s).count();
+        Ok(self.own_model_count(&projected)? << (wanted - held_selected) >> held_eliminated)
     }
 
     /// Run [`Tdd::node_counts_u128`] under this engine's allocation and stop limits.

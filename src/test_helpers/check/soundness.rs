@@ -37,6 +37,9 @@ use super::signature::tdd_with_output;
 /// or misbehaves on a marginal one.
 pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
+    if vtree.num_nodes() == 0 {
+        return Ok(());
+    }
     let shared_vtree = Arc::clone(&tdd.vtree);
 
     // Leaf-level mode consistency: at each leaf vtree node, collect the set

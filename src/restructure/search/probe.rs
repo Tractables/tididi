@@ -17,7 +17,7 @@ use crate::limits::{Limits, OperationError, Transient};
 use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
-use crate::vtree::{RotationKind, VtreeIdx};
+use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 
 /// One rotation: which internal vtree node it turns, and which way.
 ///
@@ -220,7 +220,7 @@ pub(super) fn rotate_if_on(
     let _op = eng.limits().enter()?;
     let mut scratch = eng.scratch.restructure.checkout(eng);
     let mut rule = Closure { accept: Some(accept) };
-    super::SearchTree::new(eng, tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)
+    super::SearchTree::new(eng, tdd)?.probe_moves(eng, moves, &mut rule, &mut scratch, bound)
 }
 
 /// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,
@@ -476,7 +476,7 @@ impl<'a> RotationTrial<'a> {
     /// Rotate the pointers for one move, retaining what a rollback needs.
     fn rotate(&mut self, mv: RotationMove) -> Option<RotationInfo> {
         self.tdd.levels.forget();
-        let pending = rotate_pointers(Arc::make_mut(&mut self.tdd.vtree), mv.pivot, mv.kind)?;
+        let pending = rotate_pointers(Vtree::make_mut(&mut self.tdd.vtree), mv.pivot, mv.kind)?;
         let info = pending.info();
         self.pending.push(pending);
         Some(info)
@@ -513,7 +513,7 @@ impl<'a> RotationTrial<'a> {
         // or pushed a level.
         drop(pre.keep(std::slice::from_mut(&mut self.tdd), &self.changed));
         for pending in self.pending.drain(..) {
-            pending.commit_in_probe(Arc::make_mut(&mut self.tdd.vtree));
+            pending.commit_in_probe(Vtree::make_mut(&mut self.tdd.vtree));
         }
     }
 }
@@ -522,7 +522,7 @@ impl Drop for RotationTrial<'_> {
     fn drop(&mut self) {
         let Some(pre) = self.pre.take() else { return };
         while let Some(pending) = self.pending.pop() {
-            pending.revert(Arc::make_mut(&mut self.tdd.vtree));
+            pending.revert(Vtree::make_mut(&mut self.tdd.vtree));
         }
         pre.put_back(std::slice::from_mut(&mut self.tdd));
     }

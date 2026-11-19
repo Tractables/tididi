@@ -8,7 +8,8 @@ impl Vtree {
     ///
     /// `local_of(v)` returns `Some(local_var)` for a variable to keep (with its
     /// id in the projected vtree's `1..=num_local` space) and `None` for one to
-    /// drop. Kept leaves survive verbatim; an internal node whose subtree keeps
+    /// drop; a region ([`VtreeNode::is_region`]) is dropped too. Kept leaves
+    /// survive verbatim; an internal node whose subtree keeps
     /// variables on only one side is spliced out (replaced by that side), and
     /// one that keeps nothing disappears, so the result keeps the original
     /// vtree's variable grouping and execution context. O(nodes of `self`).
@@ -44,7 +45,7 @@ impl Vtree {
         // visited before their parent even after rotations.
         for t in self.bottomup() {
             match &self.nodes[t.idx()] {
-                VtreeNode::Leaf { var: super::REGION_VAR, .. } => super::region_unsupported("Vtree::project_to_vars"),
+                VtreeNode::Leaf { var: super::REGION_VAR, .. } => {}
                 VtreeNode::Leaf { var, .. } => {
                     if let Some(local) = local_of(*var) {
                         new_of[t.idx()] = Some(push_leaf(&mut nodes, local));

@@ -170,7 +170,7 @@ fn graft_impl(
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
     // sentinel as a child.
     if parts.iter().any(Tdd::is_zero) {
-        let mut result = crate::build::constant_zero(eng, &grafted_arc);
+        let mut result = crate::build::constant_zero_padded(eng, &grafted_arc);
         result.weights = into;
         return Ok((result, layout));
     }
@@ -207,7 +207,7 @@ fn graft_impl(
         NodeIdx(0)
     };
     placement.check_weights().map_err(GraftError::DestinationWeights)?;
-    Ok((placement.finish(output_local)?, layout))
+    Ok((placement.finish(output_local, &[])?, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.

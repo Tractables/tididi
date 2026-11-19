@@ -26,7 +26,7 @@
 use std::sync::Arc;
 
 use crate::Engine;
-use crate::apply::conjoin_clause::{Normalized, extend_to, normalize};
+use crate::apply::conjoin_clause::{Normalized, extend_to};
 use crate::diagram::{
     Assembly, ChildPair, EncodedChildRef, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, PairsIter,
     Tdd, TddLevel, TddNodeId, WeightStore,
@@ -313,11 +313,15 @@ fn overlay_cube(eng: &Engine, f: &mut Tdd, label: &[u32]) -> Result<Tdd, Operati
         let r = ro.as_ref().unwrap_or(&leaf_r);
         if t == root {
             let pairs = root_pairs(lim, level, out_local.idx(), l, r, &mut w)?;
-            level.replace_node_pairs(lim, out_local.idx(), pairs)?;
+            // The root may hold nodes beside the output (a placement's literal
+            // chain), each still naming a cube leaf as `One`: nothing reads
+            // them, so the output is rebuilt as the root's only node.
+            level.clear();
+            let out = level.push_node(lim, pairs)?;
             lim.level_done(out_nodes + 1)?;
             let weights = f.weights.take();
             return Assembly::from_levels(eng, Arc::clone(&vtree), levels, weights)
-                .finish(TddNodeId { vtree: root, local: out_local });
+                .finish(TddNodeId { vtree: root, local: out });
         }
         let mut s = spare.pop().unwrap_or_default();
         split_level(lim, level, l, r, &mut w, &mut s)?;
@@ -343,11 +347,16 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
-    let unextended = Arc::as_ptr(&f.vtree);
-    let mut f = extend_to(eng, f, lits)?;
-    let extended = !std::ptr::eq(unextended, Arc::as_ptr(&f.vtree));
+    let mut out = disjoin_cube(eng, f, lits)?;
+    crate::reduce::close_constant(eng, &mut out);
+    Ok(out)
+}
+
+fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
+    let (mut f, cube) = extend_to(eng, f, lits)?;
     let vtree = Arc::clone(&f.vtree);
-    let cube = match normalize(lim, &vtree, lits)? {
+    let cube = match cube {
         // A variable in both polarities: the cube is false.
         Normalized::Tautology => return Ok(f),
         Normalized::Clause(cube) => cube,
@@ -367,14 +376,19 @@ pub(crate) fn disjoin_cube_on<L: crate::LiteralInput>(
         return Ok(out);
     }
     let root = vtree.root();
-    // The overlay panics or leaves twins on a diagram `extend_to` has just
-    // placed on a wider projection (the projection tests find both), so such
-    // a diagram takes the disjunction.
-    if extended || f.output.vtree != root || vtree.node(root).is_leaf() {
+    if f.output.vtree != root || vtree.node(root).is_leaf() {
         let g = eng.cube(&vtree, literals())?;
         return eng.or(f, g);
     }
     f.require_structure()?;
+    // The fill reads every node of a level, so an unreachable one would
+    // overlap the reachable cells it duplicates. The loose levels leave out
+    // the root, whose other nodes are unreachable.
+    if f.levels[root.idx()].slot_count() > 1 || f.dirty.loose().is_none_or(|loose| !loose.is_empty()) {
+        let closed = f.levels.is_closed();
+        crate::reduce::prune::prune_unreachable(eng, &mut f, crate::reduce::prune::PruneScope::Whole)?;
+        f.close_marked_levels(closed);
+    }
     let mut label: Vec<u32> = Vec::new();
     lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX.0)?;
     for &(lit, leaf) in &cube {

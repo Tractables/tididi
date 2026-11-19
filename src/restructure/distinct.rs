@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use super::DistinctError;
+use super::{DistinctError, DistinctKey};
 
 use crate::Engine;
 use crate::diagram::{
@@ -36,7 +36,7 @@ use crate::diagram::{
     POS_LEAF_IDX, Tdd, TddNodeId, sort_pairs,
 };
 use crate::limits::{Limits, OperationError, PollGate};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Home, Vtree, VtreeIdx};
 
 impl Engine {
     /// The assignments `k` to the variables under `key` with at least `m`
@@ -55,6 +55,16 @@ impl Engine {
     /// from the root down to `key`'s parent, the size of the sibling's
     /// subtree, a copy of the levels under `key`, and the minimization of
     /// the result; no level off that path is read.
+    ///
+    /// `key` is a [`DistinctKey`]: a `VtreeIdx`, or the `&[VarId]` under the
+    /// node. On a diagram with a [home](Vtree::home), the node is one of the
+    /// home, not of the diagram's own vtree: an own index is read as a home
+    /// node without an error, while variables name the same node whichever
+    /// vtree the diagram is on. `s` ranges over every home variable under
+    /// the sibling, those the diagram has no leaf for included, and the
+    /// result is on the projection of the same home on the diagram's leaves
+    /// under `key` ([`Vtree::sub_projection`]): a constant when it has none
+    /// there. On a root vtree, `key` is a node of that vtree.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -80,125 +90,49 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`DistinctError::Root`] when `key` is the root, which has no sibling;
+    /// [`DistinctError::Root`] when `key` is the root (of the home, on a
+    /// home), which has no sibling;
+    /// [`DistinctError::Key`] for variables that are not exactly the leaves
+    /// of one node;
     /// [`DistinctError::Vtree`] with
     /// [`VtreeError::VariableSpaceTooLarge`](crate::vtree::VtreeError::VariableSpaceTooLarge)
-    /// when the diagram's variable ids are too wide for a vtree of `key`'s
-    /// subtree to declare;
+    /// when the diagram, on a root, has variable ids too wide for a vtree of
+    /// `key`'s subtree to declare;
     /// [`DistinctError::Operation`] with [`OperationError::LevelNotInVtree`]
-    /// for a `key` that is not a node of the diagram's vtree,
+    /// for a `key` that is not a node of the home, or of the diagram's vtree
+    /// on a root,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
     /// structure at a level, and for a refused allocation or an armed stop.
-    pub fn at_least_distinct(
+    pub fn at_least_distinct<'k>(
         &self,
         tdd: &Tdd,
-        key: VtreeIdx,
+        key: impl Into<DistinctKey<'k>>,
         m: u64,
     ) -> Result<Tdd, DistinctError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = tdd.vtree();
+        let key = key_node(lim, vtree, key.into())?;
+        if let Some(home) = Vtree::home_of(vtree) {
+            return distinct_on_home(self, tdd, &home, key, m);
+        }
         if key.idx() >= vtree.num_nodes() {
             return Err(OperationError::LevelNotInVtree(key).into());
         }
-        let Some(parent) = vtree.node(key).parent() else {
+        if vtree.node(key).parent().is_none() {
             return Err(DistinctError::Root);
-        };
-        let counted = vtree.sibling(key);
+        }
         let mut gate = lim.gate();
-
-        let (into, below, image) = project_onto_key_subtree(lim, &mut gate, vtree, key)?;
-
+        let into = project_onto_key_subtree(lim, vtree, key)?;
         if m == 0 {
             return Ok(crate::build::constant_on(self, &into, true)?);
         }
         if tdd.is_zero() {
             return Ok(crate::build::constant_zero(self, &into));
         }
-
-        // `|σ|` for every node of the sibling's level, capped at `m`.
-        let size = capped_counts(self, tdd, counted, m)?;
-        let reached = reached_at_parent(lim, &mut gate, tdd, parent)?;
-
-        // Each node of `key`'s level, its sum over the reached pairs.
-        let structural = ChildDecoder::structural();
-        let key_left = vtree.children(parent).0 == key;
-        let key_leaf = vtree.node(key).is_leaf();
-        let width = if key_leaf {
-            LEAF_WIDTH
-        } else {
-            tdd.level(key).nodes().len()
-        };
-        let mut sum = Vec::new();
-        lim.try_resize(&mut sum, width, 0u64)?;
-        for &n in &reached {
-            let pairs = tdd.level(parent).pairs_iter_of_idx(n.idx());
-            gate.poll(pairs.len() as u64)?;
-            for pair in pairs {
-                let (k, s) = match key_left {
-                    true => (structural.node(pair.left), structural.node(pair.right)),
-                    false => (structural.node(pair.right), structural.node(pair.left)),
-                };
-                let at = &mut sum[k.idx()];
-                *at = at.saturating_add(size[s.idx()]).min(m);
-            }
-        }
-
-        if key_leaf {
-            // A leaf's nodes are its literals and true; the union of those
-            // chosen is one of them, or nothing.
-            let chosen = |n: NodeIdx| sum[n.idx()] >= m;
-            let local = match (
-                chosen(ONE_LEAF_IDX),
-                chosen(POS_LEAF_IDX),
-                chosen(NEG_LEAF_IDX),
-            ) {
-                (true, _, _) | (_, true, true) => ONE_LEAF_IDX,
-                (false, true, false) => POS_LEAF_IDX,
-                (false, false, true) => NEG_LEAF_IDX,
-                (false, false, false) => return Ok(crate::build::constant_zero(self, &into)),
-            };
-            let assembly = Assembly::new(self, &into)?;
-            gate.flush()?;
-            return Ok(assembly.finish(TddNodeId {
-                vtree: into.root(),
-                local,
-            })?);
-        }
-
-        // One node holding the pairs of every chosen node, over the levels
-        // below `key`.
-        let level = tdd.level(key);
-        let mut pairs: Vec<ChildPair> = Vec::new();
-        for (k, &total) in sum.iter().enumerate() {
-            if total >= m {
-                let of = level.pairs_iter_of_idx(k);
-                gate.poll(of.len() as u64)?;
-                lim.reserve_exact(&mut pairs, of.len())?;
-                pairs.extend(of);
-            }
-        }
-        if pairs.is_empty() {
-            return Ok(crate::build::constant_zero(self, &into));
-        }
-        sort_pairs(&mut pairs);
-        let mut assembly = Assembly::new(self, &into)?;
-        for &t in &below {
-            if t != key && !vtree.node(t).is_leaf() {
-                gate.poll(1)?;
-                let view = LevelView::unweighted(tdd.level(t)).expect("a structural diagram");
-                assembly.replace_level(self, image[t.idx()], view)?;
-            }
-        }
-        let top = assembly.push(self, into.root(), &pairs)?;
-        gate.flush()?;
-        let mut result = assembly.finish(TddNodeId {
-            vtree: into.root(),
-            local: top,
-        })?;
-        self.minimize(&mut result)?;
-        Ok(result)
+        let size = capped_counts(self, tdd, vtree.sibling(key), m)?;
+        threshold(self, &mut gate, tdd, key, &size, m, &into)
     }
 
     /// `∃` of every variable outside `key`'s subtree, as a diagram on a
@@ -208,6 +142,11 @@ impl Engine {
     /// The union of the nodes of `key`'s level that the output reaches is
     /// the projection, so no level is regrouped: the cost is the reached
     /// pairs on the levels above `key` and a copy of the levels below it.
+    ///
+    /// `key` is read as [`at_least_distinct`](Self::at_least_distinct) reads
+    /// it: on a diagram with a [home](Vtree::home), an index is a home node
+    /// and an own index is read as one without an error; the result is on
+    /// the projection of the home on the diagram's leaves under `key`.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -226,22 +165,222 @@ impl Engine {
     /// # Errors
     ///
     /// As [`at_least_distinct`](Self::at_least_distinct).
-    pub fn project_to_subtree(&self, tdd: &Tdd, key: VtreeIdx) -> Result<Tdd, DistinctError> {
+    pub fn project_to_subtree<'k>(&self, tdd: &Tdd, key: impl Into<DistinctKey<'k>>) -> Result<Tdd, DistinctError> {
         self.at_least_distinct(tdd, key, 1)
     }
 }
 
-type ProjectedKeySubtree = (Arc<Vtree>, Vec<VtreeIdx>, Vec<VtreeIdx>);
+/// The node `key` names: on `vtree`'s home if it has one, else on `vtree`.
+fn key_node(lim: &Limits, vtree: &Vtree, key: DistinctKey<'_>) -> Result<VtreeIdx, DistinctError> {
+    let vars = match key {
+        DistinctKey::Node(node) => return Ok(node),
+        DistinctKey::Vars(vars) => vars,
+    };
+    let refused = || match lim.try_to_vec(vars) {
+        Ok(vars) => DistinctError::Key(vars),
+        Err(error) => error.into(),
+    };
+    let mut sorted = lim.try_to_vec(vars)?;
+    sorted.sort_unstable();
+    if sorted.is_empty() || sorted.windows(2).any(|w| w[0] == w[1]) {
+        return Err(refused());
+    }
+    let (node, leaves) = match vtree.home() {
+        Some(home) => {
+            let (mut lo, mut hi) = (u32::MAX, 0);
+            for &v in &sorted {
+                let rank = home.rank(v).ok_or_else(refused)?;
+                (lo, hi) = (lo.min(rank), hi.max(rank));
+            }
+            let node = home.node_over(lo, hi);
+            (node, home.rank_range(node).len())
+        }
+        None => {
+            let mut node = vtree.leaf_of(sorted[0]).ok_or_else(refused)?;
+            for &v in &sorted[1..] {
+                node = vtree.lca(node, vtree.leaf_of(v).ok_or_else(refused)?);
+            }
+            (node, vtree.subtree(node).filter(|&t| vtree.node(t).is_leaf()).count())
+        }
+    };
+    match leaves == sorted.len() {
+        true => Ok(node),
+        false => Err(refused()),
+    }
+}
 
-/// The result's vtree (`key`'s subtree, its variable ids kept), the nodes of
-/// `key`'s subtree, and the image in the result vtree of each node of that
-/// subtree.
-fn project_onto_key_subtree(
-    lim: &Limits,
+/// [`Engine::at_least_distinct`] of a diagram on a projection of `home`,
+/// `key` a node of `home`.
+///
+/// With `K` and `S` the diagram's leaves under `key` and under its sibling,
+/// each value of `S` stands for `2^(n - |S|)` values of the sibling's `n`
+/// home variables. With `S` empty every satisfying value of `K` has all
+/// `2^n` of them; with `K` empty the result is a constant.
+fn distinct_on_home(eng: &Engine, tdd: &Tdd, home: &Home, key: VtreeIdx, m: u64) -> Result<Tdd, DistinctError> {
+    let (lim, vtree, at_home) = (eng.limits(), tdd.vtree(), home.vtree());
+    if key.idx() >= at_home.num_nodes() {
+        return Err(OperationError::LevelNotInVtree(key).into());
+    }
+    if at_home.node(key).parent().is_none() {
+        return Err(DistinctError::Root);
+    }
+    let sibling = at_home.sibling(key);
+    let (own_key, own_sibling) = (vtree.own_at(key), vtree.own_at(sibling));
+    let into = match own_key {
+        None => Vtree::empty_projection(home),
+        Some(_) => {
+            let under = home.rank_range(key);
+            vtree.sub_projection(home, |leaf| home.rank(vtree.leaf_var(leaf)).is_some_and(|r| under.contains(&r))).map_err(DistinctError::Vtree)?
+        }
+    };
+    if m == 0 {
+        return Ok(crate::build::constant_on(eng, &into, true)?);
+    }
+    if tdd.is_zero() {
+        return Ok(crate::build::constant_zero(eng, &into));
+    }
+    let used = own_sibling.map_or(0, |s| vtree.subtree(s).filter(|&t| vtree.node(t).is_leaf()).count());
+    let unused = home.rank_range(sibling).len() - used;
+    // `n` may be past any shift: a nonzero count times `2^unused`, capped.
+    let scale = |count: u64| match (count, unused) {
+        (0, _) => 0,
+        (_, 64..) => m,
+        (_, e) => count.saturating_mul(1 << e).min(m),
+    };
+    let mut gate = lim.gate();
+    match (own_key, own_sibling) {
+        (Some(k), Some(s)) => {
+            debug_assert_eq!(vtree.sibling(k), s, "a projection keeps the parent of its leaf sets");
+            let mut size = capped_counts(eng, tdd, s, m)?;
+            size.iter_mut().for_each(|count| *count = scale(*count));
+            threshold(eng, &mut gate, tdd, k, &size, m, &into)
+        }
+        (Some(_), None) if scale(1) < m => Ok(crate::build::constant_zero(eng, &into)),
+        (Some(k), None) if k == vtree.root() => Ok(tdd.clone()),
+        (Some(k), None) => {
+            let size = capped_counts(eng, tdd, vtree.sibling(k), 1)?;
+            threshold(eng, &mut gate, tdd, k, &size, 1, &into)
+        }
+        (None, None) => Ok(crate::build::constant_on(eng, &into, scale(1) >= m)?),
+        (None, Some(s)) => {
+            let size = capped_counts(eng, tdd, s, m)?;
+            let mut total = 0u64;
+            for n in reached_at_parent(lim, &mut gate, tdd, s)? {
+                total = total.saturating_add(size[n.idx()]).min(m);
+            }
+            gate.flush()?;
+            Ok(crate::build::constant_on(eng, &into, scale(total) >= m)?)
+        }
+    }
+}
+
+/// The keys at `key`, a node of `tdd`'s vtree other than its root, whose
+/// sums of `size` over the reached pairs of `key`'s parent reach `m`, on
+/// `into`, a vtree of `key`'s subtree.
+fn threshold(
+    eng: &Engine,
     gate: &mut PollGate<'_>,
-    vtree: &Vtree,
+    tdd: &Tdd,
     key: VtreeIdx,
-) -> Result<ProjectedKeySubtree, DistinctError> {
+    size: &[u64],
+    m: u64,
+    into: &Arc<Vtree>,
+) -> Result<Tdd, DistinctError> {
+    let lim = eng.limits();
+    let vtree = tdd.vtree();
+    let parent = vtree.node(key).parent().expect("the key is not the root");
+    let reached = reached_at_parent(lim, gate, tdd, parent)?;
+
+    // Each node of `key`'s level, its sum over the reached pairs.
+    let structural = ChildDecoder::structural();
+    let key_left = vtree.children(parent).0 == key;
+    let key_leaf = vtree.node(key).is_leaf();
+    let width = if key_leaf {
+        LEAF_WIDTH
+    } else {
+        tdd.level(key).nodes().len()
+    };
+    let mut sum = Vec::new();
+    lim.try_resize(&mut sum, width, 0u64)?;
+    for &n in &reached {
+        let pairs = tdd.level(parent).pairs_iter_of_idx(n.idx());
+        gate.poll(pairs.len() as u64)?;
+        for pair in pairs {
+            let (k, s) = match key_left {
+                true => (structural.node(pair.left), structural.node(pair.right)),
+                false => (structural.node(pair.right), structural.node(pair.left)),
+            };
+            let at = &mut sum[k.idx()];
+            *at = at.saturating_add(size[s.idx()]).min(m);
+        }
+    }
+
+    if key_leaf {
+        // A leaf's nodes are its literals and true; the union of those
+        // chosen is one of them, or nothing.
+        let chosen = |n: NodeIdx| sum[n.idx()] >= m;
+        let local = match (
+            chosen(ONE_LEAF_IDX),
+            chosen(POS_LEAF_IDX),
+            chosen(NEG_LEAF_IDX),
+        ) {
+            (true, _, _) | (_, true, true) => return Ok(crate::build::constant_on(eng, into, true)?),
+            (false, true, false) => POS_LEAF_IDX,
+            (false, false, true) => NEG_LEAF_IDX,
+            (false, false, false) => return Ok(crate::build::constant_zero(eng, into)),
+        };
+        let assembly = Assembly::new(eng, into)?;
+        gate.flush()?;
+        return Ok(assembly.finish(TddNodeId {
+            vtree: into.root(),
+            local,
+        })?);
+    }
+
+    // One node holding the pairs of every chosen node, over the levels
+    // below `key`.
+    let level = tdd.level(key);
+    let mut pairs: Vec<ChildPair> = Vec::new();
+    for (k, &total) in sum.iter().enumerate() {
+        if total >= m {
+            let of = level.pairs_iter_of_idx(k);
+            gate.poll(of.len() as u64)?;
+            lim.reserve_exact(&mut pairs, of.len())?;
+            pairs.extend(of);
+        }
+    }
+    if pairs.is_empty() {
+        return Ok(crate::build::constant_zero(eng, into));
+    }
+    sort_pairs(&mut pairs);
+    let mut assembly = Assembly::new(eng, into)?;
+    // `into` has `key`'s subtree's shape: walk both in step.
+    let mut stack = vec![(key, into.root())];
+    while let Some((s, d)) = stack.pop() {
+        if vtree.node(s).is_leaf() {
+            continue;
+        }
+        if s != key {
+            gate.poll(1)?;
+            let view = LevelView::unweighted(tdd.level(s)).expect("a structural diagram");
+            assembly.replace_level(eng, d, view)?;
+        }
+        let ((sl, sr), (dl, dr)) = (vtree.children(s), into.children(d));
+        lim.try_push(&mut stack, (sl, dl))?;
+        lim.try_push(&mut stack, (sr, dr))?;
+    }
+    let top = assembly.push(eng, into.root(), &pairs)?;
+    gate.flush()?;
+    let mut result = assembly.finish(TddNodeId {
+        vtree: into.root(),
+        local: top,
+    })?;
+    eng.minimize(&mut result)?;
+    Ok(result)
+}
+
+/// The result's vtree on a root: `key`'s subtree, its variable ids kept.
+fn project_onto_key_subtree(lim: &Limits, vtree: &Vtree, key: VtreeIdx) -> Result<Arc<Vtree>, DistinctError> {
     let below: Vec<VtreeIdx> = vtree.subtree(key).collect();
     // The result keeps the diagram's ids on a vtree of the subtree's
     // nodes, which may be too few to declare them.
@@ -256,20 +395,7 @@ fn project_onto_key_subtree(
     let into = vtree
         .project_to_vars(|v| keep[v.0 as usize].then_some(v), vtree.num_vars())
         .expect("a subtree keeps a variable");
-    let into = Arc::new(into);
-    let mut image = Vec::new();
-    lim.try_resize(&mut image, vtree.num_nodes(), VtreeIdx(0))?;
-    let mut stack = vec![(key, into.root())];
-    while let Some((s, d)) = stack.pop() {
-        image[s.idx()] = d;
-        if !vtree.node(s).is_leaf() {
-            let ((sl, sr), (dl, dr)) = (vtree.children(s), into.children(d));
-            stack.push((sl, dl));
-            stack.push((sr, dr));
-        }
-    }
-    gate.poll(below.len() as u64)?;
-    Ok((into, below, image))
+    Ok(Arc::new(into))
 }
 
 /// The nodes of `parent`'s level the output reaches, level by level down the
@@ -291,7 +417,11 @@ fn reached_at_parent(
         let (below, above) = (step[0], step[1]);
         let left = vtree.children(above).0 == below;
         let mut seen = Vec::new();
-        lim.try_resize(&mut seen, tdd.level(below).nodes().len(), false)?;
+        let width = match vtree.node(below).is_leaf() {
+            true => LEAF_WIDTH,
+            false => tdd.level(below).nodes().len(),
+        };
+        lim.try_resize(&mut seen, width, false)?;
         let mut next = Vec::new();
         for &n in &reached {
             let pairs = tdd.level(above).pairs_iter_of_idx(n.idx());

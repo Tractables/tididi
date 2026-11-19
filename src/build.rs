@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Home, Vtree, VtreeIdx};
 use crate::Engine;
 use crate::limits::OperationError;
 
@@ -10,28 +10,54 @@ use crate::diagram::{self, *};
 
 pub(crate) mod models;
 
+/// The vtree a constant over `vtree` sits on: the empty projection of its
+/// home, or `vtree` itself off a home.
+fn constant_vtree(vtree: &Arc<Vtree>) -> std::borrow::Cow<'_, Arc<Vtree>> {
+    match vtree.num_nodes() > 0 {
+        true => match Vtree::home_of(vtree) {
+            Some(home) => std::borrow::Cow::Owned(Vtree::empty_projection(&home)),
+            None => std::borrow::Cow::Borrowed(vtree),
+        },
+        false => std::borrow::Cow::Borrowed(vtree),
+    }
+}
+
 /// The constant-false diagram over `vtree`, built outside the limits.
 ///
 /// The output points at the `ZERO` sentinel, so no node is stored.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    constant_zero_padded(eng, &constant_vtree(vtree))
+}
+
+/// [`constant_zero`] on `vtree` itself, for an operand that what follows
+/// reads on `vtree`.
+pub(crate) fn constant_zero_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     if vtree.num_nodes() == 0 {
         return constant_without_leaf(vtree, false);
     }
     seat_canonical(eng, vtree, diagram::take_levels(eng, vtree.num_nodes()), TddNodeId { vtree: vtree.root(), local: ZERO })
 }
 
-/// The constant-true diagram over `vtree`, built outside the limits: the empty
-/// cube, one node per internal level.
+/// The constant-true diagram over `vtree`, built outside the limits: off a
+/// home, the empty cube, one node per internal level.
 pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let vtree = constant_vtree(vtree);
     if vtree.num_nodes() == 0 {
-        return constant_without_leaf(vtree, true);
+        return constant_without_leaf(&vtree, true);
     }
-    let levels = cube_levels(eng, vtree, |_| ONE_LEAF_IDX, false).expect("an untracked build cannot be refused");
-    seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local: ONE_LEAF_IDX })
+    let levels = cube_levels(eng, &vtree, |_| ONE_LEAF_IDX, false).expect("an untracked build cannot be refused");
+    seat_canonical(eng, &vtree, levels, TddNodeId { vtree: vtree.root(), local: ONE_LEAF_IDX })
 }
 
-/// A constant over `vtree`, built under the engine's limits.
+/// A constant over `vtree`, built under the engine's limits: on a home, on
+/// its empty projection.
 pub(crate) fn constant_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) -> Result<Tdd, OperationError> {
+    constant_padded_on(eng, &constant_vtree(vtree), value)
+}
+
+/// A constant on `vtree` itself, every leaf named true where it is true, for
+/// an operand that what follows reads on `vtree`.
+pub(crate) fn constant_padded_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) -> Result<Tdd, OperationError> {
     eng.limits().check_stop()?;
     if vtree.num_nodes() == 0 {
         return Ok(constant_without_leaf(vtree, value));
@@ -58,8 +84,9 @@ pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
     }
 }
 
-/// A constant with the operand's vtree and weight configuration, without its
-/// computed columns, built under the engine's limits.
+/// A constant over the operand's vtree ([`constant_on`]) with its weight
+/// configuration, without its computed columns, built under the engine's
+/// limits.
 pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Result<Tdd, OperationError> {
     let mut result = constant_on(eng, &source.vtree, value)?;
     result.weights = source.weights.as_ref().map(WeightStore::empty_like);
@@ -123,7 +150,9 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
 
 /// Build a canonical diagram for one literal, leaving other variables free.
 ///
-/// Integers are signed and one-based; typed [`Literal`] values also work.
+/// Integers are signed and one-based; typed [`Literal`] values also work. On a
+/// home or a projection of one, the result is on the projection of the
+/// literal's variable ([`Tdd::cube`]).
 /// Uses the execution context attached to the vtree.
 /// Use [`Engine::literal`] inside a batch with resource limits.
 ///
@@ -151,7 +180,9 @@ impl Tdd {
     ///
     /// Integers are signed and one-based; typed [`Literal`] values also work.
     /// Each variable must appear at most once, even with the same polarity.
-    /// An empty cube is true. Uses the execution context attached to the vtree.
+    /// An empty cube is true. On a home or a projection of one, the result is
+    /// on the projection of the cube's variables, each of which need only be
+    /// in the home. Uses the execution context attached to the vtree.
     ///
     /// # Errors
     ///
@@ -175,8 +206,10 @@ impl Tdd {
 
     /// The constant-true function over `vtree`: every assignment satisfies it.
     ///
-    /// One node at every internal vtree level and no marginal level; the
-    /// result is canonical. [`Engine::one`] is the same diagram built in a
+    /// On a home or a projection of one, the result is on the home's empty
+    /// projection ([`Vtree::empty_projection`]) and has no node; on any other
+    /// vtree it has one node at every internal level and no marginal level.
+    /// Either is canonical. [`Engine::one`] is the same diagram built in a
     /// caller's engine.
     ///
     /// ```
@@ -199,8 +232,9 @@ impl Tdd {
     /// The constant-false function over `vtree`: no assignment satisfies it.
     ///
     /// The output points at the `ZERO` sentinel, so no nodes are created and
-    /// [`Tdd::is_zero`] is true. [`Engine::zero`] is the same diagram built in
-    /// a caller's engine.
+    /// [`Tdd::is_zero`] is true. On a home or a projection of one, the result
+    /// is on the home's empty projection. [`Engine::zero`] is the same diagram
+    /// built in a caller's engine.
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
         vtree.context().run(|eng| eng.zero(vtree))
     }
@@ -251,6 +285,9 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
+        if let Some(home) = Vtree::home_of(vtree) {
+            return cube_on_home(self, &home, literals);
+        }
         let mut gate = lim.gate();
         let mut label = Vec::new();
         for lit in literals {
@@ -270,6 +307,42 @@ impl crate::Engine {
         let levels = cube_levels(self, vtree, label_at, true)?;
         Ok(seat_canonical(self, vtree, levels, TddNodeId { vtree: vtree.root(), local: label_at(vtree.root()) }))
     }
+}
+
+/// [`Engine::cube`] on a vtree on `home`: the cube on the projection of
+/// `home` on its variables.
+fn cube_on_home(
+    eng: &Engine,
+    home: &Home,
+    literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
+) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
+    let mut gate = lim.gate();
+    let mut lits: Vec<Literal> = Vec::new();
+    for lit in literals {
+        gate.poll(1)?;
+        let lit: Literal = lit.try_into().map_err(Into::into)?;
+        if home.rank(lit.var).is_none() {
+            return Err(OperationError::VariableNotInVtree(lit.var));
+        }
+        lim.try_push(&mut lits, lit)?;
+    }
+    gate.flush()?;
+    if lits.is_empty() {
+        return Ok(constant_without_leaf(&Vtree::empty_projection(home), true));
+    }
+    let vtree = Vtree::projection(home, lits.iter().map(|lit| lit.var)).expect("every variable has a leaf in the home");
+    let mut label = Vec::new();
+    lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?;
+    for lit in &lits {
+        let leaf = vtree.leaf_of(lit.var).expect("a projection on the variable has its leaf");
+        if label[leaf.idx()] != ONE_LEAF_IDX {
+            return Err(OperationError::DuplicateVariable(lit.var));
+        }
+        label[leaf.idx()] = if lit.sign { POS_LEAF_IDX } else { NEG_LEAF_IDX };
+    }
+    let levels = cube_levels(eng, &vtree, |t| label[t.idx()], true)?;
+    Ok(seat_canonical(eng, &vtree, levels, TddNodeId { vtree: vtree.root(), local: label[vtree.root().idx()] }))
 }
 
 #[cfg(test)]

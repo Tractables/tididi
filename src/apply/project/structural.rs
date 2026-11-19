@@ -184,12 +184,15 @@ enum Role {
 
 /// Existentially quantify the variables at `targets` out of `tdd` by one
 /// in-place bottom-up sweep, then reduce on `eng` by `reduction`, checking its
-/// limits throughout. The full default plan leaves the result canonical; a
+/// limits throughout. With `close`, the reduction ends by leaving the
+/// targets ([`Engine::reduce_seeded`]); without it the result stays on
+/// `tdd`'s vtree. The full default plan leaves the result canonical; a
 /// prune leaves it the same function, with every node reachable but twins the
 /// sweep made still apart. `targets` are distinct leaves of the diagram's
 /// vtree, looked up by the caller. An operand that still owes the reduction
 /// passes is pruned first. The sweep then leaves levels with no quantified
-/// leaf below them byte-identical.
+/// leaf below them byte-identical. An operand with a marginal level is
+/// refused.
 ///
 /// Freeing a whole subtree at once denotes the same function as freeing its
 /// leaves one at a time, in the same representation. Every node of the subtree
@@ -208,6 +211,7 @@ pub(super) fn exists_leaves_structural(
     mut tdd: Tdd,
     targets: &[VtreeIdx],
     reduction: ReductionPlan<'_>,
+    close: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.check_stop()?;
@@ -217,7 +221,10 @@ pub(super) fn exists_leaves_structural(
         emitted: 0,
     };
     if tdd.is_zero() {
-        return Ok(tdd);
+        return match close {
+            true => crate::build::constant_like(eng, &tdd, false),
+            false => Ok(tdd),
+        };
     }
     // After a sum-out, the pair fusion at a marginal level's parents and the
     // slot prune let one reference stand for a union of events, and the
@@ -234,7 +241,7 @@ pub(super) fn exists_leaves_structural(
         // atoms it owns refine the owner-set partition the level above then
         // has to fan out over. A diagram already at the fixpoint owes nothing
         // and skips the pass.
-        eng.reduce(&mut tdd, ReductionPlan::Prune)?;
+        eng.reduce_plain(&mut tdd, ReductionPlan::Prune)?;
     }
     // The levels that may hold a node their parent level does not name
     // (`Dirty::loose`), where that is known: none after the prune. The sweep
@@ -247,7 +254,12 @@ pub(super) fn exists_leaves_structural(
     let root_vi = vtree.root();
     if role[root_vi.idx()] == Role::Whole {
         // Every variable is quantified and the operand is satisfiable: ∃.F = ⊤.
-        return crate::build::constant_like(eng, &tdd, true);
+        if close {
+            return crate::build::constant_like(eng, &tdd, true);
+        }
+        let mut one = crate::build::constant_padded_on(eng, &vtree, true)?;
+        one.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
+        return Ok(one);
     }
 
     let mut remap: Vec<Option<Remap>> = Vec::new();
@@ -282,11 +294,11 @@ pub(super) fn exists_leaves_structural(
                 root_cells.get(tdd.output.local.idx()),
             )?,
         );
-        // Reached only where the root level held more than the output, which an
-        // operand with every node reachable never does. Append the union node
-        // and point the output at it; the other cells stay until a prune, which
-        // the invalidation leaves owed.
-        tdd.output.local = tdd.levels[root_vi.idx()].push_node(lim, &out_pairs)?;
+        // The root's cells name the same child nodes as their union, and a
+        // closing reduction under `Contract` runs no prune to drop them.
+        let root = &mut tdd.levels[root_vi.idx()];
+        root.clear();
+        tdd.output.local = root.push_node(lim, &out_pairs)?;
         work.emitted += 1;
         work.level_written(&mut tdd, root_vi)?;
     }
@@ -299,10 +311,12 @@ pub(super) fn exists_leaves_structural(
     // level above expands every reference to that node over them. A
     // quantified level's one node is in the map of every old node, or is the
     // one node the level held, or, under another quantified level, is the
-    // node that level's `⊤` pair names (index 0 of an internal child). The
-    // root's other nodes are dropped by a plan that prunes.
+    // node that level's `⊤` pair names (index 0 of an internal child).
     tdd.dirty.set_loose(loose);
-    eng.reduce(&mut tdd, reduction)?;
+    match close {
+        true => eng.reduce_seeded(&mut tdd, reduction, targets)?,
+        false => eng.reduce_plain(&mut tdd, reduction)?,
+    }
     Ok(tdd)
 }
 

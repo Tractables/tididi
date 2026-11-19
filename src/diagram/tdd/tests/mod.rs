@@ -8,4 +8,6 @@ mod pairs;
 
 mod projections;
 
+mod audit_i1;
+
 mod summaries;

@@ -115,7 +115,7 @@ impl Engine {
         lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
         fold_held::<_, false>(&fold, self, tdd, (at, at), &mut cols, (&held, Retention::Frontier), &mut gate)?;
         let mut result = std::mem::take(&mut cols[at.idx()]);
-        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under_own(at)) {
+        if let Some(free) = algebra.free(&tdd.vtree.free_vars_under(at)) {
             result.iter_mut().for_each(|v| *v = algebra.mul(v, &free));
         }
         gate.finish()?;
@@ -131,7 +131,7 @@ impl Engine {
     /// vtree.
     pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
         let mut result = self.own_columns_at(tdd, at, algebra)?;
-        free_factor(algebra, at, &tdd.vtree.free_vars_under_own(at), &mut result)?;
+        free_factor(algebra, at, &tdd.vtree.free_vars_under(at), &mut result)?;
         Ok(result)
     }
 

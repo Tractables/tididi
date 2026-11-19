@@ -467,6 +467,17 @@ fn projection_matches_brute_force_on_random_conjunctions() {
     }
 }
 
+/// A marginal leaf far from the quantified variable's path still refuses.
+#[test]
+fn projection_across_a_marginalized_level_is_refused() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
+    f.minimize().unwrap();
+    let leaf = vtree.leaf_of(VarId(8)).unwrap();
+    f.marginalize_levels(&[leaf]).unwrap();
+    assert!(matches!(f.exists_var(VarId(1)), Err(crate::OperationError::MarginalLevel(_))));
+}
+
 /// Universal quantification against the truth table on every vtree shape: an
 /// assignment satisfies the result when every value of the quantified
 /// variables, with the others kept, satisfies the operand.

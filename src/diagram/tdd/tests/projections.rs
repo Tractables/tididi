@@ -13,6 +13,7 @@ use crate::cnf::{ClauseSink, CnfScheme};
 use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, WeightStore};
 use crate::query::PinSemantics;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
+use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{and2, exact_weight, rand_conj};
 use crate::value::Retention;
 use crate::vtree::rng::Lcg;
@@ -75,6 +76,7 @@ struct Tally {
     refused: BTreeMap<String, usize>,
     differs: Vec<String>,
     panics: Vec<String>,
+    unreached: usize,
 }
 
 #[derive(Default)]
@@ -85,6 +87,24 @@ struct Audit {
 
 static PANIC_AT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
+/// Whether `t` holds a node its output does not reach, where its known
+/// loose levels allow one ([`check_loose_levels`](crate::test_helpers::check::check_loose_levels)).
+fn unreached(t: &Tdd) -> Result<bool, String> {
+    crate::test_helpers::check::check_loose_levels(t)?;
+    if t.is_zero() || t.is_one() {
+        return Ok(false);
+    }
+    let reach = t.reachable_nodes();
+    let vtree = t.vtree();
+    let any = (0..vtree.num_nodes())
+        .filter(|&v| !vtree.node(VtreeIdx(v as u32)).is_leaf() && !t.levels[v].is_marginal())
+        .any(|v| reach[v].iter().any(|&r| !r));
+    match t.dirty.loose() {
+        Some([]) if any => Err("a node the output does not reach, and no level listed loose".into()),
+        _ => Ok(any),
+    }
+}
+
 fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
     let text = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string())).unwrap_or_default();
     format!("{text} at {}", PANIC_AT.lock().unwrap())
@@ -93,7 +113,7 @@ fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
 impl Audit {
     /// Run `on_projection` and `on_home`; equal results under `same`, or
     /// both refused, count as agreement.
-    fn check<T, E: Debug>(
+    fn check<T: 'static, E: Debug>(
         &mut self,
         name: &'static str,
         on_projection: impl FnOnce() -> Result<T, E>,
@@ -110,6 +130,14 @@ impl Audit {
             Ok(expected) => expected,
             Err(e) => return tally.panics.push(format!("{case}: on the home: {}", panic_text(&*e))),
         };
+        if let Ok(g) = &got
+            && let Some(t) = (g as &dyn std::any::Any).downcast_ref::<Tdd>()
+        {
+            match unreached(t) {
+                Ok(any) => tally.unreached += usize::from(any),
+                Err(e) => return tally.differs.push(format!("{case}: {e}")),
+            }
+        }
         match (got, expected) {
             (Ok(g), Ok(f)) => {
                 let agree = match catch_unwind(AssertUnwindSafe(|| same(&g, &f))) {
@@ -129,7 +157,7 @@ impl Audit {
     }
 
     /// A call with nothing to compare: it answers or refuses, and does not panic.
-    fn runs<T, E: Debug>(&mut self, name: &'static str, call: impl FnOnce() -> Result<T, E>) {
+    fn runs<T: 'static, E: Debug>(&mut self, name: &'static str, call: impl FnOnce() -> Result<T, E>) {
         self.check(name, || call().map(drop), || Ok::<(), E>(()), |_, _| true);
     }
 
@@ -139,6 +167,9 @@ impl Audit {
             out += &format!("{name}: {} same", t.same);
             for (e, n) in &t.refused {
                 out += &format!(", {n} refused {e}");
+            }
+            if t.unreached > 0 {
+                out += &format!(", {} hold a node they do not reach", t.unreached);
             }
             if !t.differs.is_empty() {
                 out += &format!(", {} DIFFER (first {})", t.differs.len(), t.differs[0]);
@@ -167,8 +198,8 @@ fn weights(n: u32, rng: &mut Lcg) -> WeightStore {
 /// and minimization; one in six is a constant.
 fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
     match rng.below(12) {
-        0 => return Tdd::one(home),
-        1 => return Tdd::zero(home),
+        0 => return crate::test_helpers::padded(Tdd::one(home), home),
+        1 => return crate::test_helpers::padded(Tdd::zero(home), home),
         _ => {}
     }
     let mut f = rand_conj(home, n, 4, 3, false, rng);
@@ -179,12 +210,12 @@ fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
             1 => f.exists_vars(&[var]).unwrap(),
             2 => and2(&f, &rand_conj(home, n, 2, 3, false, rng)),
             _ => {
-                f.minimize().unwrap();
+                Engine::new().minimize_plain(&mut f).unwrap();
                 f
             }
         };
     }
-    f
+    crate::test_helpers::padded(f, home)
 }
 
 /// `g`, on a projection of `home`, placed on `home`.
@@ -239,6 +270,15 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         _ => same_models(x, y, n),
     };
     let same_tdd = |x: &Tdd, y: &Tdd| equiv(x, y);
+    // Every result on a home with no summed-out level is closed; `embed*`,
+    // `project_over`, `project_to_vars` and the readers place on the
+    // caller's vtree and may pad it.
+    let closed = |x: &Tdd, y: &Tdd| {
+        if Vtree::home_of(x.vtree()).is_some() && !x.has_marginal_level() {
+            check_trimmed(x, false).unwrap_or_else(|e| panic!("not closed: {e}"));
+        }
+        equiv(x, y)
+    };
 
     // Queries.
     a.check("model_count", || g.model_count(), || f.model_count(), PartialEq::eq);
@@ -357,25 +397,25 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     let b = rng.coin();
     let some = vars(rng);
     let lit = |v: VarId, b: bool| Literal { var: v, sign: b };
-    a.check("negate", || g.clone().negate(), || f.clone().negate(), same_tdd);
-    a.check("condition_var", || g.clone().condition_var(x, b), || f.clone().condition_var(x, b), same_tdd);
-    a.check("condition", || g.clone().condition([lit(x, b)]), || f.clone().condition([lit(x, b)]), same_tdd);
-    a.check("condition_vars", || g.clone().condition_vars(&some, b), || f.clone().condition_vars(&some, b), same_tdd);
-    a.check("exists_var", || g.clone().exists_var(x), || f.clone().exists_var(x), same_tdd);
-    a.check("exists_vars", || g.clone().exists_vars(&some), || f.clone().exists_vars(&some), same_tdd);
-    a.check("forall_vars", || g.clone().forall_vars(&some), || f.clone().forall_vars(&some), same_tdd);
+    a.check("negate", || g.clone().negate(), || f.clone().negate(), closed);
+    a.check("condition_var", || g.clone().condition_var(x, b), || f.clone().condition_var(x, b), closed);
+    a.check("condition", || g.clone().condition([lit(x, b)]), || f.clone().condition([lit(x, b)]), closed);
+    a.check("condition_vars", || g.clone().condition_vars(&some, b), || f.clone().condition_vars(&some, b), closed);
+    a.check("exists_var", || g.clone().exists_var(x), || f.clone().exists_var(x), closed);
+    a.check("exists_vars", || g.clone().exists_vars(&some), || f.clone().exists_vars(&some), closed);
+    a.check("forall_vars", || g.clone().forall_vars(&some), || f.clone().forall_vars(&some), closed);
     let clause = [lit(x, b), lit(var(rng), rng.coin())];
-    a.check("and_clause", || g.clone().and_clause(clause), || f.clone().and_clause(clause), same_tdd);
-    a.check("or_cube", || g.clone().or_cube(clause), || f.clone().or_cube(clause), same_tdd);
-    a.check("and_cube", || eng.and_cube(g.clone(), clause), || eng.and_cube(f.clone(), clause), same_tdd);
-    a.check("renumber_top_down", || g.renumber_top_down(), || f.renumber_top_down(), same_tdd);
+    a.check("and_clause", || g.clone().and_clause(clause), || f.clone().and_clause(clause), closed);
+    a.check("or_cube", || g.clone().or_cube(clause), || f.clone().or_cube(clause), closed);
+    a.check("and_cube", || eng.and_cube(g.clone(), clause), || eng.and_cube(f.clone(), clause), closed);
+    a.check("renumber_top_down", || g.renumber_top_down(), || f.renumber_top_down(), closed);
     let mutate = |t: &Tdd, op: &dyn Fn(&mut Tdd) -> Result<(), OperationError>| {
         let mut t = t.clone();
         op(&mut t).map(|()| t)
     };
-    a.check("minimize", || mutate(g, &|t| t.minimize()), || mutate(f, &|t| t.minimize()), same_tdd);
-    a.check("trim", || mutate(g, &|t| t.trim(&hm).map(drop)), || mutate(f, &|t| t.trim(&hm).map(drop)), same_tdd);
-    a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), same_tdd);
+    a.check("minimize", || mutate(g, &|t| t.minimize()), || mutate(f, &|t| t.minimize()), closed);
+    a.check("trim", || mutate(g, &|t| t.trim(&hm).map(drop)), || mutate(f, &|t| t.trim(&hm).map(drop)), closed);
+    a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), closed);
     a.check("attach_level_counts", || mutate(g, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), || mutate(f, &|t| t.attach_level_counts()).and_then(|t| t.model_count()), PartialEq::eq);
     let root = g.vtree().root();
     if g.vtree().num_nodes() > 0 {
@@ -387,20 +427,20 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         );
     }
     let model: Vec<Literal> = (1..=n).map(|v| lit(VarId(v), rng.coin())).collect();
-    a.check("insert_model", || mutate(g, &|t| t.insert_model(&model)), || mutate(f, &|t| t.insert_model(&model)), same_tdd);
-    a.check("remove_model", || mutate(g, &|t| t.remove_model(&model)), || mutate(f, &|t| t.remove_model(&model)), same_tdd);
+    a.check("insert_model", || mutate(g, &|t| t.insert_model(&model)), || mutate(f, &|t| t.insert_model(&model)), closed);
+    a.check("remove_model", || mutate(g, &|t| t.remove_model(&model)), || mutate(f, &|t| t.remove_model(&model)), closed);
     a.check(
         "maintain",
         || mutate(g, &|t| t.maintain().and_then(|mut m| m.insert_model(&model))),
         || mutate(f, &|t| t.maintain().and_then(|mut m| m.insert_model(&model))),
-        same_tdd,
+        closed,
     );
     a.runs("filter_nodes", || g.filter_nodes(|_| true).map(drop));
     a.check(
         "rotation_search",
         || mutate(g, &|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)),
         || mutate(f, &|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)),
-        same_tdd,
+        closed,
     );
     a.runs("rotate_if", || mutate(g, &|t| t.rotate_if(&[], usize::MAX, |_| true).map(drop)).map(drop));
     let other = vars(rng);
@@ -408,10 +448,10 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         (Some(&p), Some(&q)) if p != q => vec![(p, q), (q, p)],
         _ => Vec::new(),
     };
-    a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), same_tdd);
+    a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), closed);
     let literal_x = crate::literal(home, i32::try_from(x.0).unwrap()).unwrap();
     let y = var(rng);
-    a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), same_tdd);
+    a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), closed);
 
     // Moves between vtrees.
     a.check("embed", || g.embed(home, |v| v).map(|r| r.0), || Ok::<_, crate::restructure::EmbedError>(f.clone()), same_tdd);
@@ -423,10 +463,10 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || Ok(f.clone()),
         same_tdd,
     );
-    a.check("transport", || eng.transport(g, &hm, |v| v).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
+    a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), closed);
     a.check(
         "transport_projection",
-        || eng.transport_projection(g.vtree(), &hm, |v| v).map(|v| v.num_leaves()),
+        || eng.transport_projection(g, &hm, |v| v).map(|v| v.num_leaves()),
         || Ok(g.vtree().num_leaves()),
         PartialEq::eq,
     );
@@ -479,7 +519,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
     for seed in 0..200u64 {
         let mut rng = Lcg::new(seed ^ 0xa0d1);
         let n = 2 + rng.below(8) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
+        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         let f = diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -494,9 +534,9 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
 /// `x1 ∧ ¬x3` over `Vtree::balanced(4)`, on the home and trimmed to the
 /// projection on x1 and x3.
 fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
-    let home = Arc::new(Vtree::balanced(4));
+    let home = Arc::clone(Home::new(Vtree::balanced(4)).vtree());
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let f = eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap();
+    let f = crate::test_helpers::padded(eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap(), &home);
     let mut g = f.clone();
     assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
     assert_eq!(g.vtree().free_vars(), [VarId(2), VarId(4)]);
@@ -589,7 +629,7 @@ fn the_vtree_check_agrees_with_transport() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(5) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
+        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
         let source = if rng.coin() {
             let mut g = diagram(&home, n, &mut rng);
             g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -598,16 +638,18 @@ fn the_vtree_check_agrees_with_transport() {
             rand_conj(&Arc::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
         };
         let shift = rng.below(2) as u32;
-        let wide = Arc::new(Vtree::random(n + shift, seed + 2000));
+        let wide = Arc::clone(Home::new(Vtree::random(n + shift, seed + 2000)).vtree());
         let target = if rng.coin() { &home } else { &wide };
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
         let target_home = Home::new(Arc::clone(target));
-        let checked = eng.transport_projection(source.vtree(), &target_home, map);
-        match eng.transport(&source, &target_home, map) {
-            Ok(moved) => {
+        let checked = eng.transport_projection(&source, &target_home, map);
+        match eng.transport(&source, &target_home, map, 0) {
+            Ok((moved, _)) => {
                 accepted += 1;
                 let leaves = |v: &Vtree| v.leaf_bottomup().map(|(_, var)| var).collect::<Vec<_>>();
-                assert_eq!(leaves(moved.vtree()), leaves(&checked.unwrap()), "seed {seed}");
+                let checked = checked.unwrap();
+                assert_eq!(moved.vtree().num_nodes(), checked.num_nodes(), "seed {seed}");
+                assert_eq!(leaves(moved.vtree()), leaves(&checked), "seed {seed}");
             }
             Err(refused) => assert_eq!(checked.unwrap_err(), refused.error, "seed {seed}"),
         }

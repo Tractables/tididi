@@ -39,7 +39,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
             lim.try_push(&mut absent, (literal.var, literal.sign))?;
             continue;
         }
-        let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
+        let leaf = f.vtree.leaf_of(literal.var).ok_or_else(|| f.vtree.no_leaf_for(literal.var))?;
         lim.try_push(&mut targets, (leaf, literal.sign))?;
     }
     gate.flush()?;
@@ -84,7 +84,10 @@ fn condition_targets(
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     if !eng.is_sat(&tdd)? { tdd.output.local = ZERO; }
-    eng.reduce(&mut tdd, ReductionPlan::default())?;
+    let mut seed = Vec::new();
+    eng.limits().reserve_exact(&mut seed, targets.len())?;
+    seed.extend(targets.iter().map(|&(leaf, _)| leaf));
+    eng.reduce_seeded(&mut tdd, ReductionPlan::default(), &seed)?;
     Ok(tdd)
 }
 

@@ -94,6 +94,9 @@ impl Engine {
         }
         let canonical = f.levels.is_canonical(f.output);
         let (mut result, old) = complement_on(self, f)?;
+        if result.vtree.num_nodes() == 0 {
+            return Ok(result);
+        }
         // `expand_full` left every level below the root covering its
         // children's whole basis, and the old output and its complement cover
         // the root's, so every node is named from the level above and the only
@@ -108,6 +111,7 @@ impl Engine {
                 &mut result,
                 plan,
                 crate::reduce::prune::PruneScope::BelowRoot,
+                crate::reduce::Close::Settle(&[]),
             )?;
         }
         Ok(result)

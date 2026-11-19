@@ -551,6 +551,9 @@ fn apply_and_held(
     // The levels under a free level are read by no level the sweep builds.
     init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
     init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
+    if run.entry_marginality.any() {
+        refuse_summed_leaf_reads(Operands { f: &*f, g: &*g }, Operands { f: run.f_identity, g: run.g_identity }, cone.leaves)?;
+    }
 
     apply_leaf_levels(eng, &mut run)?;
 
@@ -781,4 +784,19 @@ fn apply_and_held(
         scratch.side = side;
     }
     Ok(Conjoined::Built(out))
+}
+
+/// Refuse a leaf summed out in one operand that the other reads, as
+/// [`Route::validate`](super::route::Route::validate) refuses an internal
+/// level: the product there would read a summed value as a grid coordinate.
+#[cold]
+#[inline(never)]
+fn refuse_summed_leaf_reads(ops: Operands<&Held<'_>>, identity: Operands<&[bool]>, leaves: &[VtreeIdx]) -> Result<(), OperationError> {
+    for &x in leaves {
+        let (f, g) = (ops.f.level(x.idx()).is_marginal(), ops.g.level(x.idx()).is_marginal());
+        if (f && !g && !identity.g[x.idx()]) || (g && !f && !identity.f[x.idx()]) {
+            return Err(OperationError::MarginalLevel(x));
+        }
+    }
+    Ok(())
 }

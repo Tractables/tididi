@@ -19,10 +19,9 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{
     finish_sides_remap, plan_sides_remap, ChildPair, ChildSide, Dirty, NodeIdx, Sides, Tdd, TddLevel, TddNodeId,
-    NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX,
 };
 use crate::limits::{Limits, OperationError};
-use crate::restructure::embed::{literal_chain, moved_loose, Plan};
+use crate::restructure::embed::{literal_chain, moved_loose, Chain, Plan};
 use crate::restructure::placement::{first_ref, push_free_level, PassThrough};
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -87,14 +86,13 @@ impl View {
                 }
             } else {
                 let read = |p: VtreeIdx, side: ChildSide| first_ref(own(p), side);
-                let labels: &[NodeIdx] = match literal_chain(into, plan, read, tdd.output.local, t) {
-                    Some(top) => {
-                        lim.try_push(&mut literal_tops, top)?;
-                        &[POS_LEAF_IDX, NEG_LEAF_IDX]
-                    }
-                    None => &[ONE_LEAF_IDX],
-                };
-                for &label in labels {
+                let chain = literal_chain(into, plan, read, tdd.output.local, t);
+                match chain {
+                    Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
+                    Chain::Output(_) => view.output.local = NodeIdx(0),
+                    Chain::One => {}
+                }
+                for &label in chain.labels() {
                     let (l, r) = free_side.pick((through.one, label), (label, through.one));
                     level.push_node(lim, &[ChildPair::new(l, r)])?;
                 }
@@ -112,7 +110,7 @@ impl View {
 
     /// Point the readers of the chain tops `tops` at the chains' nodes 0
     /// and 1 for `Pos` and `Neg`: each reader a renumbered copy of its own
-    /// level, and the output where a chain reaches the root.
+    /// level.
     fn renumber(&mut self, lim: &Limits, tdd: &Tdd, tops: &[VtreeIdx]) -> Result<(), OperationError> {
         const REMAP: [u32; 3] = [u32::MAX, 0, 1];
         let vtree = Arc::clone(&self.vtree);
@@ -120,12 +118,7 @@ impl View {
         let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
         lim.reserve_exact(&mut parents, tops.len())?;
         for &top in tops {
-            let Some(parent) = vtree.node(top).parent() else {
-                if (self.output.local.0 as usize) < REMAP.len() {
-                    self.output.local = NodeIdx(REMAP[self.output.local.idx()]);
-                }
-                continue;
-            };
+            let parent = vtree.node(top).parent().expect("a chain that reaches the root reads no level");
             let left = vtree.children(parent).0 == top;
             parents.push((parent, Sides { left, right: !left }));
         }

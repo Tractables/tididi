@@ -19,7 +19,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 /// Drop the nodes the joins made in `result` that nothing refers to.
 fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    eng.reduce(result, crate::reduce::ReductionPlan::Prune)
+    eng.reduce_plain(result, crate::reduce::ReductionPlan::Prune)
 }
 
 /// The true reference for an unconstrained child already placed bottom-up.
@@ -186,7 +186,8 @@ impl<'a> MovePlacement<'a> {
     }
 
     /// Copy every level of `source`, its weight columns left to the caller,
-    /// through a checked placement map, each over the level the placement took from
+    /// through a checked placement map, each over the level the placement
+    /// took from
     /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
     /// Hands back a refusal, for the caller to drop the placement.
     ///
@@ -402,10 +403,15 @@ impl<'a> MovePlacement<'a> {
     }
 
     /// Seat the chosen root reference and repair the boundaries introduced
-    /// here. Call [`check_weights`](Self::check_weights) first.
-    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
+    /// here, `literal_tops` the tops of the chains [`pass_over_leaf`](Self::pass_over_leaf)
+    /// built as `Pos` and `Neg`, whose readers name them as leaf labels
+    /// until then. Call [`check_weights`](Self::check_weights) first.
+    pub(super) fn finish(self, local: NodeIdx, literal_tops: &[VtreeIdx]) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let mut result = self.assembly.finish_changed(output, self.changed.to_close())?;
+        if !literal_tops.is_empty() {
+            crate::diagram::remap_refs_into_all(self.eng.limits(), &mut result, literal_tops, &[u32::MAX, 0, 1])?;
+        }
         if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
@@ -416,8 +422,9 @@ impl<'a> MovePlacement<'a> {
             crate::diagram::inline_small_marginal_refs(self.eng.limits(), &mut result, None)?;
         }
         if self.contract {
-            self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
-        } else if self.prune {
+            self.eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
+        } else if self.prune || !literal_tops.is_empty() {
+            // A literal chain whose reader names one literal holds the other unread.
             prune(self.eng, &mut result)?;
         }
         Ok(result)

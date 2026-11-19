@@ -32,6 +32,38 @@ Breaking changes:
   clone of it conjoined with a diagram on the same leaves gave a wrong
   function. `RotationProbe::before`, `after` and `live_pairs_delta` read
   the rebuilt levels.
+- `exists_var`, `exists_vars` and the operations built on them refuse a
+  diagram with any marginal level with `OperationError::MarginalLevel`.
+  Before, a marginal level off the quantified variables' paths was
+  accepted, and the count could be wrong: after a sum-out, merged nodes no
+  longer tell which events their values came from.
+- On a diagram on a projection, `Engine::at_least_distinct` and
+  `Engine::project_to_subtree` take `key` as a node of the home, count over
+  every home variable under its sibling, and return a diagram on the
+  projection of the same home on the diagram's leaves under `key`. Both
+  take `key` as `impl Into<DistinctKey>`: a `VtreeIdx` as before, or the
+  variables under the node, which name the same node on a home and on a
+  projection of it; variables that are not exactly one node's leaves give
+  `DistinctError::Key`. `Engine::tag_level` into a vtree on a home returns a diagram on the
+  projection of that home on the tagged and code variables, the code
+  subtree on either side of its root. Diagrams on root vtrees are
+  unchanged.
+- On a home or a projection of one, a constant is on the home's empty
+  projection: `Tdd::one`, `Tdd::zero`, `Engine::one`, `Engine::zero` and
+  every operation that returns true or false. `literal`, `Tdd::cube` and
+  `Tdd::clause` return a diagram on the projection of their variables,
+  which need only be in the home. `exists_var`, `exists_vars`,
+  `forall_vars`, `condition` and `and_exists` return a diagram on the
+  projection of the variables the result still depends on, and
+  `from_models`, `from_columns` and `from_cubes` leave out a variable every
+  model leaves free. `rename_vars` accepts a target variable of the home
+  that the diagram's vtree does not hold.
+
+Added:
+
+- `Vtree::renamed`: a root vtree of the same shape with each leaf's
+  variable renamed.
+- `Vtree::is_on` is public.
 
 Fixed:
 

@@ -35,7 +35,7 @@ fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
 }
 
 fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], weights: Option<&WeightStore>) -> Tdd {
-    let mut f = Tdd::one(vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
@@ -79,7 +79,7 @@ fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (
     let all: Vec<VarId> = (1..=n).map(VarId).collect();
     let full_vtree = Vtree::projection(home, all.iter().copied()).unwrap();
     for i in 0..2 + rng.below(5) as usize {
-        let twin = full || (i > 0 && rng.below(3) == 0);
+        let twin = full || (i > 0 && rng.below(3) == 0 && own[i - 1].vtree().num_leaves() > 0);
         let leaves = match (full, twin) {
             (true, _) => all.clone(),
             (false, true) => vars(own[i - 1].vtree()),
@@ -118,7 +118,7 @@ fn with_members<R>(members: &mut [Tdd], f: impl FnOnce(&mut [&mut Tdd]) -> R) ->
 /// `after` is the pool `before` after a search that kept a move iff `kept`,
 /// `embedded` the same functions after the search on the home's root.
 fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kept: bool) {
-    let home = after.iter().find_map(|m| m.vtree().home()).cloned().unwrap_or_else(|| Home::new(Arc::clone(after[0].vtree())));
+    let home = after[0].home().expect("a member after a search is on a home");
     for ((b, a), e) in before.iter().zip(after).zip(embedded) {
         check_all_fast(a, "a member after the search");
         assert_eq!(a.vtree().validate(), Ok(()));
@@ -130,6 +130,9 @@ fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kep
         assert_eq!(vars(a.vtree()), vars(b.vtree()));
         if !kept {
             assert!(Arc::ptr_eq(a.vtree(), b.vtree()));
+            continue;
+        }
+        if a.vtree().num_nodes() == 0 {
             continue;
         }
         match a.vtree().home() {
@@ -201,6 +204,9 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let share = rng.coin();
         let (own, embedded) = pools(&eng, &home, true, share, &mut rng);
         let config = config(&mut rng);
+        if own.iter().any(|f| f.vtree().num_leaves() != n) {
+            continue;
+        }
         let full = Arc::clone(own[0].vtree());
         accepted();
         let mut searched = own.clone();
@@ -216,8 +222,8 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let kept = stats.accepts > 0;
         check_pool(&eng, &own, &searched, &on_root, kept);
         if kept {
-            let lifted = searched[0].vtree().home().unwrap().vtree();
-            assert_eq!(shape(lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
+            let lifted = Arc::clone(searched[0].home().unwrap().vtree());
+            assert_eq!(shape(&lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
         }
     }
     assert!(moves > 40, "{moves}");

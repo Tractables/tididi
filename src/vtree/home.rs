@@ -143,8 +143,27 @@ impl HomeIndex {
     }
 }
 
-/// A root vtree and an index over its leaves: the home of its projections
-/// ([`Vtree::projection`]).
+/// The index a root vtree carries once it is a home. A clone of the vtree is
+/// not a home, so `clone` gives none: a copy that a search rotates never
+/// carries an index of the shape it had.
+#[derive(Default)]
+pub(crate) struct RootIndex(Option<Box<HomeIndex>>);
+
+impl Clone for RootIndex {
+    fn clone(&self) -> Self {
+        RootIndex(None)
+    }
+}
+
+impl std::fmt::Debug for RootIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "RootIndex(indexed)" } else { "RootIndex(None)" })
+    }
+}
+
+/// A root vtree that carries an index over its leaves: the home of its
+/// projections ([`Vtree::projection`]), and itself the projection on all
+/// of its leaves.
 ///
 /// The leaves have ranks `0..n` left to right, and the leaves under a node
 /// are a range of ranks. A `Home` does not change; a clone shares the vtree
@@ -163,33 +182,47 @@ impl HomeIndex {
 /// # Ok::<(), tididi::vtree::VtreeError>(())
 /// ```
 #[derive(Clone, Debug)]
-pub struct Home(Arc<HomeParts>);
-
-#[derive(Debug)]
-struct HomeParts {
-    vtree: Arc<Vtree>,
-    index: HomeIndex,
-}
+pub struct Home(Arc<Vtree>);
 
 impl Home {
     /// The home with root `vtree`, its index built in time and memory linear
-    /// in the vtree's size. On a projection, the projection's home.
+    /// in the vtree's size and kept in the vtree. On a home's root or on a
+    /// projection, that home, in constant time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vtree` is a root that is not a home and whose `Arc` is
+    /// shared: the index cannot be set on it, and a home on a copy would not
+    /// be the home of the diagrams already on it. Make the home first and
+    /// share [`Home::vtree`].
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::vtree::{Home, Vtree};
+    ///
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let again = Home::new(Arc::clone(home.vtree()));
+    /// assert!(Arc::ptr_eq(again.vtree(), home.vtree()));
+    /// ```
     pub fn new(vtree: impl Into<Arc<Vtree>>) -> Self {
-        let vtree = vtree.into();
+        let mut vtree = vtree.into();
         if let Some(home) = vtree.home() {
             return home.clone();
         }
-        let index = HomeIndex::new(&vtree);
-        Home(Arc::new(HomeParts { vtree, index }))
+        if vtree.index.0.is_none() {
+            let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share Home::vtree");
+            root.index = RootIndex(Some(Box::new(HomeIndex::new(root))));
+        }
+        Home(vtree)
     }
 
     /// The root vtree.
     pub fn vtree(&self) -> &Arc<Vtree> {
-        &self.0.vtree
+        &self.0
     }
 
     pub(super) fn index(&self) -> &HomeIndex {
-        &self.0.index
+        self.0.index.0.as_deref().expect("a home's root carries its index")
     }
 
     /// The rank of `var`'s leaf; `None` when it has none.
@@ -318,16 +351,27 @@ impl HomeLink {
     }
 }
 
+/// The extent covering `intervals`, which do not overlap.
+pub(crate) fn coalesce(mut intervals: Vec<(u32, u32)>) -> Extent {
+    intervals.sort_unstable();
+    let mut extent: Vec<(u32, u32)> = Vec::with_capacity(intervals.len());
+    for (lo, hi) in intervals {
+        match extent.last_mut() {
+            Some(last) if last.1 == lo => last.1 = hi,
+            _ => extent.push((lo, hi)),
+        }
+    }
+    extent.into_boxed_slice()
+}
+
 /// How the leaf sets of two vtrees with one home compare.
 #[derive(Debug)]
 pub(crate) enum LeafSets {
     /// The same leaf set and the same layout.
     Equal(SameLayout),
-    /// The first vtree's leaves are a proper subset of the second's, or the
-    /// second is the home.
+    /// The first vtree's leaves are a proper subset of the second's.
     AInB,
-    /// The second vtree's leaves are a proper subset of the first's, or the
-    /// first is the home.
+    /// The second vtree's leaves are a proper subset of the first's.
     BInA,
     /// The projection on the union of both leaf sets.
     Union(Arc<Vtree>),
@@ -379,7 +423,13 @@ impl Vtree {
         }
         ranks.sort_unstable();
         ranks.dedup();
-        Ok(Arc::new(Self::project_ranks(home, ranks, Vec::new())))
+        Ok(Self::projection_on_ranks(home, ranks))
+    }
+
+    /// [`Vtree::projection`] on the variables of `ranks`, home ranks
+    /// ascending without repeats, at least one.
+    pub(crate) fn projection_on_ranks(home: &Home, ranks: Vec<u32>) -> Arc<Vtree> {
+        Self::seated(home, ranks.len(), false, || Self::project_ranks(home, ranks, Vec::new()))
     }
 
     /// The projection of `home` on no leaf, the vtree of a constant: no node,
@@ -414,26 +464,20 @@ impl Vtree {
             leaf_count: 0,
             topo: TopoOrder::default(),
             home: Some(Arc::new(link)),
+            index: RootIndex::default(),
         })
     }
 
     /// The topmost own node at or under home node `h`, `None` when no own leaf
-    /// is under `h`; the region whose extent holds every home leaf under
-    /// `h`, if one does; on a root vtree, `h` itself when it is a node.
-    /// Logarithmic in [`num_leaves`](Self::num_leaves) times the logarithm
-    /// of the home's size, and linear in the number of regions.
+    /// or region anchor is under `h`; on a root vtree, `h` itself when it is
+    /// a node. Logarithmic in [`num_leaves`](Self::num_leaves) times the
+    /// logarithm of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
         let Some(link) = self.home.as_deref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (link.home.index(), &link.ranks);
         let gap = *index.slot.get(h.idx())?;
-        if !link.regions.is_empty() {
-            let under = link.home.rank_range(h);
-            if let Some(region) = link.region_over(under.start, under.end) {
-                return Some(link.region_node(region));
-            }
-        }
         if link.home.vtree().node(h).is_leaf() {
             return self.node_at_home(h);
         }
@@ -478,18 +522,19 @@ impl Vtree {
         free
     }
 
-    /// [`free_vars_under`](Self::free_vars_under) own node `t`'s home node,
-    /// right to left.
-    pub(crate) fn free_vars_under_own(&self, t: VtreeIdx) -> Vec<VarId> {
-        if self.free_leaves() == 0 {
-            return Vec::new();
-        }
-        let mut free = self.free_vars_under(self.home_node(t));
-        free.reverse();
-        free
+    /// The variables of the home leaves under own node `t`'s home node that
+    /// this vtree does not have; none on a root.
+    pub(crate) fn free_vars_under(&self, t: VtreeIdx) -> Vec<VarId> {
+        let Some(home) = self.home().map(Home::vtree).filter(|_| self.free_leaves() > 0) else { return Vec::new() };
+        home.subtree(self.home_node(t))
+            .filter(|&h| home.node(h).is_leaf())
+            .map(|h| home.leaf_var(h))
+            .filter(|&var| self.leaf_of(var).is_none())
+            .collect()
     }
 
-    /// The home this vtree is a projection of; `None` on a root vtree.
+    /// The home this vtree is a projection of; `None` on a root vtree, a
+    /// home's root included ([`Tdd::home`](crate::Tdd::home) gives that one).
     pub fn home(&self) -> Option<&Home> {
         self.home.as_deref().map(|link| &link.home)
     }
@@ -531,8 +576,10 @@ impl Vtree {
         (link.node_of[own.idx()] == h).then_some(own)
     }
 
-    /// Whether `home` is this vtree's home, or this vtree when it is a root.
-    pub(crate) fn is_on(&self, home: &Home) -> bool {
+    /// Whether this vtree is a projection of `home`, or is `home`'s vtree
+    /// itself: whether its diagrams combine with those on `home`'s other
+    /// projections.
+    pub fn is_on(&self, home: &Home) -> bool {
         match self.home() {
             Some(own) => Arc::ptr_eq(own.vtree(), home.vtree()),
             None => std::ptr::eq(self, &**home.vtree()),
@@ -552,7 +599,13 @@ impl Vtree {
         if root_of(a) != root_of(b) {
             return Err(OperationError::VtreeMismatch);
         }
-        let first_region = |link: &HomeLink| link.regions.first().map(|region| link.region_node(region));
+        let first_region = |link: &HomeLink| {
+            debug_assert!(
+                link.ranks.len() < link.home.index().leaf_at.len() || !link.regions.is_empty(),
+                "a projection on every leaf is the home"
+            );
+            link.regions.first().map(|region| link.region_node(region))
+        };
         let (la, lb) = match (a.home.as_deref(), b.home.as_deref()) {
             (None, None) => return Ok(LeafSets::Equal(SameLayout::new(a, b))),
             (Some(la), None) => return first_region(la).map_or(Ok(LeafSets::AInB), |t| Err(OperationError::MarginalLevel(t))),
@@ -577,7 +630,7 @@ impl Vtree {
             (false, false) => LeafSets::Equal(SameLayout::new(a, b)),
             (false, true) => LeafSets::AInB,
             (true, false) => LeafSets::BInA,
-            (true, true) => LeafSets::Union(Arc::new(Self::union_of(la, lb, union))),
+            (true, true) => LeafSets::Union(Self::seated(&la.home, union.len(), false, || Self::union_of(la, lb, union))),
         })
     }
 
@@ -664,9 +717,11 @@ impl Vtree {
         if ranks.is_empty() {
             return Err(VtreeError::Invalid("a projection needs at least one variable".to_string()));
         }
-        let own = Self::link_projection(home, ranks, gaps, regions);
-        debug_assert_eq!(own.validate(), Ok(()));
-        Ok(Arc::new(own))
+        Ok(Self::seated(home, ranks.len(), !regions.is_empty(), || {
+            let own = Self::link_projection(home, ranks, gaps, regions);
+            debug_assert_eq!(own.validate(), Ok(()));
+            own
+        }))
     }
 
     /// The projection of the common home of `a` and `b` on both leaf sets:
@@ -757,16 +812,50 @@ impl Vtree {
         self.leaf_of(var).is_none() && link.region_over(rank, rank + 1).is_none()
     }
 
-    /// For a projection `u` whose root has, as its two children, the
-    /// projections of `a`'s and `b`'s leaf sets: by own node of `a` and of
-    /// `b`, the node of `u` standing for it, and whether `a` is on the left.
+    /// The region whose extent holds `var`.
+    pub(crate) fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
+        let link = self.home.as_deref()?;
+        let rank = link.home.rank(var)?;
+        link.region_over(rank, rank + 1).map(|region| link.region_node(region))
+    }
+
+    /// `var` has no leaf here: [`OperationError::MarginalLevel`] naming its
+    /// region when an extent holds it, else
+    /// [`OperationError::VariableNotInVtree`].
+    #[cold]
+    pub(crate) fn no_leaf_for(&self, var: VarId) -> OperationError {
+        match self.region_of(var) {
+            Some(region) => OperationError::MarginalLevel(region),
+            None => OperationError::VariableNotInVtree(var),
+        }
+    }
+
+    /// For `u`, the union of the leaf sets of projections `a` and `b`, whose
+    /// root has, as its two children, the projections of `a`'s and `b`'s
+    /// leaf sets: by own node of `a` and of `b`, the node of `u` standing for
+    /// it, and whether `a` is on the left.
+    ///
+    /// A projection `u` is in the builder's numbering, so the nodes of `a`
+    /// and `b` are at offsets in its in-order list. That holds only when the
+    /// gap between the two sets is shallower than every gap inside them,
+    /// which the test of the root's children gives. A home `u` keeps the
+    /// numbering its builder and rotations left: there each node is the
+    /// home node it stands for.
     pub(crate) fn split_at_root(u: &Vtree, a: &Vtree, b: &Vtree) -> Option<(Vec<VtreeIdx>, Vec<VtreeIdx>, bool)> {
-        let (lu, la, lb) = (u.home.as_ref()?, a.home.as_ref()?, b.home.as_ref()?);
-        if u.node(u.root()).is_leaf() {
+        let (la, lb) = (a.home.as_ref()?, b.home.as_ref()?);
+        if u.num_nodes() == 0 || u.node(u.root()).is_leaf() {
             return None;
         }
         let (l, r) = u.children(u.root());
         let (ha, hb) = (a.home_node(a.root()), b.home_node(b.root()));
+        let Some(lu) = u.home.as_ref() else {
+            let a_left = match (l, r) {
+                (hl, hr) if hl == ha && hr == hb => true,
+                (hl, hr) if hl == hb && hr == ha => false,
+                _ => return None,
+            };
+            return Some((la.node_of.clone(), lb.node_of.clone(), a_left));
+        };
         let a_left = match (lu.node_of[l.idx()], lu.node_of[r.idx()]) {
             (hl, hr) if hl == ha && hr == hb => true,
             (hl, hr) if hl == hb && hr == ha => false,
@@ -783,19 +872,101 @@ impl Vtree {
         Some((map(la, a_offset), map(lb, b_offset), a_left))
     }
 
-    /// The home variables under home node `h` that this projection has
-    /// neither as a leaf nor in an extent, left to right; none on a root.
-    pub(crate) fn free_vars_under(&self, h: VtreeIdx) -> Vec<VarId> {
-        let Some(link) = self.home.as_deref() else { return Vec::new() };
-        let under = link.home.rank_range(h);
-        let mut own = link.ranks[link.ranks.partition_point(|&r| r < under.start)..].iter().copied().peekable();
-        let mut free = Vec::new();
-        for rank in under {
-            if own.next_if_eq(&rank).is_none() && !link.regions.iter().any(|region| region.covers(rank, rank + 1)) {
-                free.push(link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]));
+    /// The projection of `home` on `k` childless nodes, `build` making it:
+    /// the home's own vtree when they are all its leaves and none is a
+    /// region. Every projection the library hands out comes from here, so
+    /// one leaf set has one allocation when it is the whole home.
+    fn seated(home: &Home, k: usize, regions: bool, build: impl FnOnce() -> Vtree) -> Arc<Vtree> {
+        match !regions && k == home.index().leaf_at.len() {
+            true => Arc::clone(home.vtree()),
+            false => Arc::new(build()),
+        }
+    }
+
+    /// Whether this vtree is a home's root.
+    pub(crate) fn is_home(&self) -> bool {
+        self.index.0.is_some()
+    }
+
+    /// The home `vtree` is on: a projection's home, or `vtree` itself when
+    /// it is a home's root; `None` on a root that is not a home.
+    pub(crate) fn home_of(vtree: &Arc<Vtree>) -> Option<Home> {
+        match vtree.home() {
+            Some(home) => Some(home.clone()),
+            None => vtree.is_home().then(|| Home(Arc::clone(vtree))),
+        }
+    }
+
+    /// `vtree` to change in place, copied first when shared. A home's root
+    /// changed in place stops being a home here, before any change, so no
+    /// diagram that can be cloned out of a search sees a stale index.
+    #[inline]
+    pub(crate) fn make_mut(vtree: &mut Arc<Vtree>) -> &mut Vtree {
+        let own = Arc::make_mut(vtree);
+        own.stop_being_home();
+        own
+    }
+
+    /// Make the root `vtree`, which changed shape, a home again: the end of
+    /// a search that kept moves on a home's root.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn become_home(vtree: &mut Arc<Vtree>) {
+        let own = Arc::make_mut(vtree);
+        own.index = RootIndex(Some(Box::new(HomeIndex::new(own))));
+    }
+
+    /// The index of a home's root, which stops being a home.
+    pub(crate) fn take_index(&mut self) -> RootIndex {
+        std::mem::take(&mut self.index)
+    }
+
+    /// Put back the index [`take_index`](Self::take_index) took, the tree
+    /// having its shape again.
+    pub(crate) fn put_index(&mut self, index: RootIndex) {
+        self.index = index;
+    }
+
+    /// Drop the index of a home's root about to change shape.
+    #[inline]
+    pub(crate) fn stop_being_home(&mut self) {
+        if self.index.0.is_some() {
+            self.index = RootIndex::default();
+        }
+    }
+
+    /// The anchor rank and extent of the region that folding own node `t`
+    /// of this projection makes: the ranks of the variable leaves under `t`
+    /// and the extents of the regions under it, the anchor at the leftmost
+    /// childless node under `t`. On a home's root, `t`'s leaves.
+    pub(crate) fn folded_region(&self, t: VtreeIdx) -> (u32, Extent) {
+        let mut leftmost = t;
+        while let VtreeNode::Internal { left, .. } = *self.node(leftmost) {
+            leftmost = left;
+        }
+        let leaves = self.subtree(t).filter(|&u| self.node(u).is_leaf());
+        let Some(link) = self.home.as_deref() else {
+            let slot = &self.index.0.as_deref().expect("a projection or a home's root").slot;
+            return (slot[leftmost.idx()], coalesce(leaves.map(|u| (slot[u.idx()], slot[u.idx()] + 1)).collect()));
+        };
+        let position = |u: VtreeIdx| link.ranks.binary_search(&link.home.index().slot[link.node_of[u.idx()].idx()]).expect("a position");
+        let mut intervals = Vec::new();
+        for u in leaves {
+            match link.regions.binary_search_by_key(&(position(u) as u32), |region| region.at) {
+                Ok(j) => intervals.extend_from_slice(&link.regions[j].extent),
+                Err(_) => intervals.push((link.ranks[position(u)], link.ranks[position(u)] + 1)),
             }
         }
-        free
+        (link.ranks[position(leftmost)], coalesce(intervals))
+    }
+
+    /// The anchor variable and the variables of region `t` of this
+    /// projection.
+    pub(crate) fn region_vars(&self, t: VtreeIdx) -> (VarId, Vec<VarId>) {
+        let link = self.home.as_deref().expect("a projection");
+        let (anchor, extent) = self.region_at(t);
+        let var = |rank: u32| link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]);
+        (var(anchor), extent.iter().flat_map(|&(lo, hi)| lo..hi).map(var).collect())
     }
 
     /// Whether this vtree has a region.
@@ -824,8 +995,8 @@ impl Vtree {
     }
 
     /// The projection of `home` on the leaves of `ranks` and on `regions`,
-    /// each an anchor rank and its extent, the anchor the leftmost rank of
-    /// a new extent; together not empty, the extents holding no other rank.
+    /// each an anchor rank and an extent holding it; together not empty, the
+    /// extents holding no other rank.
     pub(crate) fn project_regions(home: &Home, mut ranks: Vec<u32>, regions: Vec<(u32, Extent)>) -> Arc<Vtree> {
         ranks.extend(regions.iter().map(|&(anchor, _)| anchor));
         ranks.sort_unstable();
@@ -885,6 +1056,7 @@ impl Vtree {
             leaf_count,
             topo,
             home: Some(Arc::new(HomeLink { home: home.clone(), ranks, node_of, in_order, regions })),
+            index: RootIndex::default(),
         }
     }
 
@@ -904,36 +1076,38 @@ impl Vtree {
         self.home.as_deref().map_or(0, |link| link.home.vtree().num_vars())
     }
 
-    /// Called by every kept change of shape that does not end on a lifted
-    /// home, as a rotation search's does: a projection becomes a root with a
-    /// dense leaf table. Inline, because a restructure commits rotations by
-    /// the hundred thousand on vtrees that are not projections.
-    #[inline]
-    pub(crate) fn reshaped(&mut self) {
-        if self.home.is_some() {
-            self.leave_home();
-        }
+    /// A projection's childless nodes in its home's order, a home's root's
+    /// leaves in its own; nothing on another root.
+    pub(crate) fn projected_leaves(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
+        let projected = self.home.as_deref().into_iter().flat_map(|link| link.in_order.iter().step_by(2).copied());
+        projected.chain(self.index.0.as_deref().into_iter().flat_map(|index| index.leaf_at.iter().copied()))
     }
 
-    /// Undo [`reshaped`](Self::reshaped) after moves that kept node indices:
-    /// take back the link of `before`, this tree before the moves, so that
-    /// [`lifted_home`](Self::lifted_home) can read where each node stood.
-    pub(crate) fn rejoin_home(&mut self, before: &Vtree) {
-        self.home = before.home.clone();
-        self.var_to_leaf = Vec::new();
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn leave_home(&mut self) {
-        let Some(link) = self.home.take() else { return };
-        assert!(link.regions.is_empty(), "a vtree with a region changed shape");
-        self.var_to_leaf = vec![VtreeIdx(0); link.home.vtree().num_vars() as usize];
-        for (i, node) in self.nodes.iter().enumerate() {
+    /// This tree as a root over the variables `1..=k`, with the same node
+    /// indices and leaf `t` named `name(t)`: a private tree whose leaf table
+    /// is sized by `k`, not by a home's variables.
+    pub(crate) fn local_twin(&self, name: impl Fn(VtreeIdx) -> VarId, k: u32) -> Vtree {
+        let mut nodes = self.nodes.clone();
+        let mut var_to_leaf = vec![VtreeIdx(0); k as usize];
+        for (i, node) in nodes.iter_mut().enumerate() {
             if let VtreeNode::Leaf { var, .. } = node {
-                self.var_to_leaf[var.idx()] = VtreeIdx(i as u32);
+                debug_assert!(*var != super::REGION_VAR, "a private tree has no region");
+                *var = name(VtreeIdx(i as u32));
+                var_to_leaf[var.idx()] = VtreeIdx(i as u32);
             }
         }
+        let twin = Vtree {
+            context: Arc::clone(&self.context),
+            nodes,
+            root: self.root,
+            var_to_leaf,
+            leaf_count: self.leaf_count,
+            topo: self.topo.clone(),
+            home: None,
+            index: RootIndex::default(),
+        };
+        debug_assert_eq!(twin.validate(), Ok(()));
+        twin
     }
 
     /// The regions of `link` are this tree's regions, by position, each
@@ -981,8 +1155,9 @@ impl Vtree {
     /// with the same variable, each region for the home leaf of its anchor,
     /// each internal node for the lowest common ancestor in the home of the
     /// childless nodes on either side of it, and a parent for a shallower
-    /// home node than its child. Each extent holds its anchor and meets
-    /// neither another extent nor a leaf's rank.
+    /// home node than its child; the node indices are the ones the builder
+    /// gives the rank list. Each extent holds its anchor and meets neither
+    /// another extent nor a leaf's rank.
     pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
         let Some(link) = self.home.as_deref() else {
             return Ok(());
@@ -1011,6 +1186,13 @@ impl Vtree {
         }
         if walk != link.in_order {
             return fail("the in-order list is not the in-order walk".to_string());
+        }
+        let at: Vec<u32> = link.regions.iter().map(|region| region.at).collect();
+        let gaps: Vec<u32> = link.ranks.windows(2).map(|w| index.ancestor_gap(w[0], w[1])).collect();
+        let (_, root, in_order) =
+            in_order_tree(k, |i| index.gap_depth(gaps[i]), &at, |i| home.leaf_var(index.leaf_at[link.ranks[i] as usize]));
+        if root != self.root || in_order != link.in_order {
+            return fail("the nodes are not in the order the builder gives their rank list".to_string());
         }
         for (i, &t) in link.in_order.iter().enumerate() {
             let expected = if i % 2 == 0 {

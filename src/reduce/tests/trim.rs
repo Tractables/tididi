@@ -34,7 +34,7 @@ fn random_diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
             }
         };
     }
-    f
+    crate::test_helpers::padded(f, home)
 }
 
 fn var_subset(n: u32, rng: &mut Lcg) -> Vec<VarId> {
@@ -67,8 +67,8 @@ fn trimmed_copies_answer_as_the_original() {
     for seed in 0..300u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(8) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let f = random_diagram(&home, n, &mut rng);
         let label = format!("seed {seed}, {n} variables");
 
@@ -95,14 +95,14 @@ fn trimmed_copies_answer_as_the_original() {
 
 #[test]
 fn constants_have_no_leaf() {
-    let home = Arc::new(Vtree::balanced(5));
-    let hm = Home::new(Arc::clone(&home));
-    let mut zero = Tdd::clause(&home, [1]).unwrap().condition_var(VarId(1), false).unwrap();
+    let hm = Home::new(Vtree::balanced(5));
+    let home = Arc::clone(hm.vtree());
+    let mut zero = crate::test_helpers::padded(Tdd::zero(&home), &home);
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
     assert_eq!(zero.model_count().unwrap(), 0u32.into());
 
-    let mut one = Tdd::one(&home);
+    let mut one = crate::test_helpers::padded(Tdd::one(&home), &home);
     assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
@@ -113,7 +113,7 @@ fn constants_have_no_leaf() {
     assert!(!one.trim(&hm).unwrap());
     check_trimmed(&one, true).unwrap();
 
-    let mut x = literal(&home, 3).unwrap();
+    let mut x = crate::test_helpers::padded(literal(&home, 3).unwrap(), &home);
     assert!(x.trim(&hm).unwrap());
     assert_eq!(x.vtree().num_nodes(), 1);
     assert_eq!(x.model_count().unwrap(), 16u32.into());
@@ -142,8 +142,8 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
     for seed in 0..40u64 {
         let mut rng = Lcg::new(seed);
         let n = 1 + rng.below(12) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let mut vars = var_subset(n, &mut rng);
         if vars.is_empty() {
             vars.push(VarId(1));
@@ -160,8 +160,8 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
 
 #[test]
 fn counts_on_a_projection_are_over_the_home() {
-    let home = Arc::new(Vtree::balanced(6));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::balanced(6));
+    let home = Arc::clone(hm.vtree());
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
     let f = Tdd::clause(&own, [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
@@ -180,8 +180,8 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
     let eng = Engine::new();
     // x1 ↔ x2, its two nodes under one root node beside true over x3, x4.
-    let home = Arc::new(Vtree::balanced(4));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::balanced(4));
+    let home = Arc::clone(hm.vtree());
     let (l, r) = home.children(home.root());
     let mut b = Tdd::builder(&eng, &home).unwrap();
     let same = b.push(&eng, l, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -199,8 +199,8 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
 
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
-    let two = Arc::new(Vtree::balanced(2));
-    let hm = Home::new(Arc::clone(&two));
+    let hm = Home::new(Vtree::balanced(2));
+    let two = Arc::clone(hm.vtree());
     let mut b = Tdd::builder(&eng, &two).unwrap();
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
@@ -216,8 +216,8 @@ fn counters_count_over_the_home() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(7) as u32;
-        let home = Arc::new(Vtree::random(n, seed));
-        let hm = Home::new(Arc::clone(&home));
+        let hm = Home::new(Vtree::random(n, seed));
+        let home = Arc::clone(hm.vtree());
         let f = random_diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&hm).unwrap();
@@ -315,8 +315,8 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     use crate::test_helpers::{assert_canonical, assert_same_shape, trim_by_rebuild};
     let mut rng = Lcg::new(seed.wrapping_mul(0x9e37_79b9) ^ 0x7121);
     let n = 2 + rng.below(9) as u32;
-    let home = Arc::new(Vtree::random(n, seed));
-    let hm = Home::new(Arc::clone(&home));
+    let hm = Home::new(Vtree::random(n, seed));
+    let home = Arc::clone(hm.vtree());
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
     } else {
@@ -417,7 +417,7 @@ fn the_in_place_trim_is_the_rebuild() {
 /// The trim the conjunction runs on its results; `Tdd::trim` refuses a
 /// diagram with a marginal level.
 fn trim_summed(f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
-    crate::reduce::trim(&crate::Engine::new(), f, home, &[])
+    crate::reduce::trim(&crate::Engine::new(), f, home, None, &[])
 }
 
 /// `f` on the projection of a home of four variables on 1, 2 and 3, its leaf
@@ -427,12 +427,12 @@ fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: O
     use crate::marginal::tests::region::weights;
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
-    let mut f = Tdd::clause(&own, clause.iter().copied()).unwrap();
+    let mut f = crate::test_helpers::padded(Tdd::clause(&own, clause.iter().copied()).unwrap(), &own);
     if let Some(arithmetic) = arithmetic {
         f.set_weights(WeightStore::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap();
     }
     let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
-    f.marginalize_levels(&[leaf]).unwrap();
+    crate::marginal::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
     (f.clone(), f, home)
 }
 
@@ -464,6 +464,7 @@ fn trim_drops_a_root_over_a_summed_out_leaf_when_the_output_names_a_slot() {
     }
     let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2], &[1, 2], None);
     let leaf = g.vtree().leaf_of(crate::vtree::VarId(2)).unwrap();
-    assert_eq!(trim_summed(&mut f, &home), Err(OperationError::MarginalLevel(leaf)), "an inline count at the root names no slot");
+    let _ = leaf;
+    assert_eq!(trim_summed(&mut f, &home), Ok(false), "an inline count at the root names no slot: the diagram stays");
     assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
 }

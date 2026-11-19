@@ -202,3 +202,16 @@ mod scatter_direction_pool;
 mod prefetch_gate;
 mod walk_filter;
 mod walks;
+
+/// The sparse route on every level it can take, as [`check_route`] checks
+/// the other routes.
+///
+/// [`check_route`]: crate::apply::conjoin::tests::i1_routes::check_route
+#[test]
+fn audit_i1_sparse_route_names_no_one() {
+    let thresholds = SparseThresholds { min_grid: 0, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
+    crate::apply::conjoin::tests::i1_routes::check_route("sparse thresholds forced", |f| {
+        let _forced = ForcedThresholds::install(thresholds);
+        f()
+    });
+}

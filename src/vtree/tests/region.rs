@@ -70,8 +70,9 @@ fn a_projection_with_extents_holds() {
     assert_eq!((1..=8).filter(|&v| own.home_has(VarId(v))).collect::<Vec<_>>(), [6]);
     let first = region_at(&own, 2);
     let h = home.node_over(home.rank(VarId(3)).unwrap(), home.rank(VarId(4)).unwrap());
-    assert_eq!(own.own_at(h), Some(first));
-    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(4)).unwrap()), Some(first));
+    assert_eq!(own.own_at(h), None, "ranks of the extent without its anchor");
+    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(2)).unwrap()), Some(first));
+    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(4)).unwrap()), None);
     assert_eq!(own.own_at(home.vtree().leaf_of(VarId(6)).unwrap()), None);
 }
 
@@ -226,7 +227,9 @@ fn random_regions_hold_and_count() {
         };
         for h in home.vtree().bottomup() {
             let under: Vec<u32> = home.rank_range(h).map(|r| home.vtree().leaf_var(home.index().leaf_at[r as usize]).0).collect();
-            let one = region_of(under[0]).filter(|_| under.iter().all(|&v| roles[v as usize - 1] == roles[under[0] as usize - 1]));
+            let anchored = |a: u32| under.contains(&a);
+            let one = region_of(under[0]).filter(|_| under.iter().all(|&v| roles[v as usize - 1] == roles[under[0] as usize - 1]))
+                .filter(|_| anchors.iter().any(|&a| roles[a as usize - 1] == roles[under[0] as usize - 1] && anchored(a)));
             if one.is_some() {
                 assert_eq!(own.own_at(h), one, "seed {seed}");
             }
@@ -291,4 +294,12 @@ fn a_sub_projection_keeps_the_regions() {
         let regions: Vec<(&[u32], u32)> = extents.iter().zip(&anchors).map(|(e, &a)| (e.as_slice(), a)).collect();
         super::projection::assert_same(&sub, &with_regions(&home, &kept, &regions), &format!("seed {seed}"));
     }
+}
+
+#[test]
+fn renaming_refuses_a_region_leaf() {
+    let home = Home::new(Vtree::balanced(6));
+    let own = with_regions(&home, &[1, 4], &[(&[2, 3], 2)]);
+    assert!(matches!(own.renamed(|v| v, 6), Err(VtreeError::Invalid(_))));
+    assert!(matches!(Vtree::empty_projection(&home).renamed(|v| v, 6), Err(VtreeError::Invalid(_))));
 }

@@ -5,3 +5,6 @@ mod deadline;
 mod deep;
 mod primitives;
 pub(crate) mod region;
+mod region_entries;
+mod region_ops;
+mod region_reduce;

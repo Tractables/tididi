@@ -153,8 +153,8 @@ pub enum OperationError {
     },
     /// The operands are on different projections of one home vtree, and one
     /// that would move to the projection holding all their variables carries
-    /// weights, and their weight interpretations differ, or one without
-    /// weights has a summed-out level beside one with weights.
+    /// weights or a summed-out level, which move with it only between
+    /// diagrams of one vtree.
     WeightsAcrossProjections,
 }
 
@@ -201,7 +201,7 @@ impl std::fmt::Display for OperationError {
                 write!(f, "a count table over {vars} variables is past the {} it may list", crate::query::MAX_COUNT_TABLE_VARS)
             }
             OperationError::WeightsAcrossProjections => {
-                f.write_str("operands on projections of one home carry incompatible weights")
+                f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
             }
         }
     }

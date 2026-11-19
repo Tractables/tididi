@@ -28,7 +28,9 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
         LeafSets::Equal(same) => {
             reseat_either(eng, &mut f, &mut g, &same)?;
             prepare_owned_weights(&mut f, &mut g)?;
-            return conjoin_cow(eng, f, g, VtreeMask::default());
+            let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
+            crate::reduce::close_constant(eng, &mut out);
+            return Ok(out);
         }
         LeafSets::AInB => Arc::clone(g.vtree()),
         LeafSets::BInA => Arc::clone(f.vtree()),
@@ -43,7 +45,9 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             into
         }
     };
-    conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))
+    let mut out = conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))?;
+    crate::reduce::close_constant(eng, &mut out);
+    Ok(out)
 }
 
 /// Refuse operands of which one has summed out a variable the other has a

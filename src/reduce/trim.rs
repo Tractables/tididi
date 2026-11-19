@@ -49,12 +49,62 @@ impl Engine {
     /// As [`Tdd::trim`](crate::Tdd::trim).
     pub fn trim(&self, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        f.require_structure()?;
         if !f.vtree.is_on(home) {
             return Err(OperationError::VtreeMismatch);
         }
-        trim(self, f, home, &[])
+        trim(self, f, home, None, &[])
     }
+}
+
+/// The closing step of a reduction on a diagram on a home with no summed-out
+/// level: false, or a leaf with output `One`, becomes the constant on the
+/// empty projection, and the leaves of `dropped` leave as [`Tdd::trim`]
+/// drops leaves named true. A leaf of `dropped` is named true in every pair
+/// of its parent, or by a literal in every pair, each node holding
+/// `(Pos, S)` exactly when it holds `(Neg, S)`. Another leaf goes only with a
+/// sibling whose chain ends at it holding both labels.
+///
+/// # Errors
+///
+/// As [`Tdd::trim`]; `f` is then as it was.
+#[inline]
+pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
+    if dropped.is_empty() {
+        close_constant(eng, f);
+        return Ok(());
+    }
+    settle_cold(eng, f, dropped)
+}
+
+/// [`settle`] with no leaf dropped, which is never refused.
+#[inline]
+pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
+    if f.vtree.num_nodes() != 0 && (f.is_zero() || f.is_one_leaf_one()) {
+        close_constant_cold(eng, f);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
+    let Some(home) = Vtree::home_of(&f.vtree) else { return };
+    let one = !f.is_zero();
+    if f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region()) {
+        return;
+    }
+    replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
+}
+
+#[cold]
+#[inline(never)]
+fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
+    let Some(home) = Vtree::home_of(&f.vtree) else { return Ok(()) };
+    if f.has_marginal_level() {
+        return Ok(());
+    }
+    dropped.sort_unstable();
+    dropped.dedup();
+    trim(eng, f, &home, Some(dropped), &[]).map(|_| ())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,6 +148,10 @@ fn child(vtree: &Vtree, t: VtreeIdx, side: ChildSide) -> VtreeIdx {
     side.pick(left, right)
 }
 
+fn other(side: ChildSide) -> ChildSide {
+    side.pick(ChildSide::Right, ChildSide::Left)
+}
+
 fn label(bits: u8) -> NodeIdx {
     match bits {
         POS => POS_LEAF_IDX,
@@ -119,9 +173,11 @@ impl Shape {
         }
     }
 
+    /// `dropped`, sorted, names the leaves to drop; without it a leaf is
+    /// dropped when the first pair of its parent names it `One`.
     /// `summed`: `f` has marginal levels, and its internal ones become
     /// regions.
-    fn read(eng: &Engine, f: &Tdd, summed: bool) -> Result<Self, OperationError> {
+    fn read(eng: &Engine, f: &Tdd, dropped: Option<&[VtreeIdx]>, summed: bool) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let vtree = &*f.vtree;
         let n = vtree.num_nodes();
@@ -159,11 +215,24 @@ impl Shape {
             let first = level.pairs_iter_of_idx(0).next().expect("a node holds a pair");
             let marginal = |c: VtreeIdx| summed && f.levels[c.idx()].is_marginal();
             let over_values = |c: VtreeIdx| marginal(c) || shape.values.get(c.idx()).is_some_and(|v| !v.is_empty());
+            // A region whose sibling stands for values is kept: dropping it
+            // would leave nodes that stand for sums of values.
+            let mut full = [false; 2];
+            if summed {
+                for (slot, (c, other)) in full.iter_mut().zip([(left, right), (right, left)]) {
+                    *slot = vtree.node(c).is_region() && !over_values(other) && names_only_full_counts(f, c, &mut gate)?;
+                }
+            }
             let keeps = |c: VtreeIdx, side| match shape.kind[c.idx()] {
                 Kind::True => false,
                 Kind::Leaf | Kind::LeafChain(_) if over_values(c) => true,
-                Kind::Leaf | Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
-                Kind::LevelChain(_) | Kind::Both | Kind::Region => true,
+                Kind::Leaf => match dropped {
+                    Some(dropped) => dropped.binary_search(&c).is_err(),
+                    None => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
+                },
+                Kind::LeafChain(_) => shape.bits(vtree, c, side_ref(first, side)) != BOTH,
+                Kind::LevelChain(_) | Kind::Both => true,
+                Kind::Region => !full[usize::from(side == ChildSide::Right)],
             };
             let (kl, kr) = (keeps(left, ChildSide::Left), keeps(right, ChildSide::Right));
             let kept_under = |c: VtreeIdx, k: bool| if k { shape.kept[c.idx()] } else { 0 };
@@ -175,6 +244,11 @@ impl Shape {
                 (false, false) => Kind::True,
                 (true, true) => Kind::Both,
                 _ => {
+                    // A node of `t` becomes one node or value of the kept
+                    // side, so a pair it holds twice would count once.
+                    if summed && level.repeats_a_pair()? {
+                        return Err(OperationError::MarginalLevel(t));
+                    }
                     let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
@@ -183,15 +257,18 @@ impl Shape {
                         shape.values[t.idx()] = held;
                         Kind::LeafChain(side)
                     } else {
+                        let twin = negative_half(vtree, t, side);
                         let mut held = Vec::new();
                         lim.try_resize(&mut held, level.slot_count(), 0u8)?;
                         for (i, h) in held.iter_mut().enumerate() {
                             let pairs = level.pairs_iter_of_idx(i);
                             gate.poll(pairs.len() as u64)?;
-                            shape.merged |= pairs.len() > 1;
-                            for p in pairs {
+                            let mut read = 0;
+                            for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
+                                read += 1;
                                 *h |= shape.bits(vtree, c, side_ref(p, side));
                             }
+                            shape.merged |= read > 1;
                         }
                         shape.labels[t.idx()] = held;
                         Kind::LeafChain(side)
@@ -241,6 +318,36 @@ impl Shape {
     }
 }
 
+/// Whether every reference into integer region `t` from its parent's pairs
+/// names 2^|extent|: the region is then true over its extent and is dropped,
+/// its variables free again. A weighted region is never dropped: with signed
+/// weights its value says nothing of the function.
+fn names_only_full_counts(f: &Tdd, t: VtreeIdx, gate: &mut PollGate<'_>) -> Result<bool, OperationError> {
+    let (level, vtree) = (&f.levels[t.idx()], &*f.vtree);
+    let (Some(counts), Some(parent)) = (level.count_column(), vtree.node(t).parent()) else { return Ok(false) };
+    let width: u32 = vtree.region_at(t).1.iter().map(|&(lo, hi)| hi - lo).sum();
+    let full_slot = |slot: u32| match counts.get(slot as usize) {
+        CountRead::Fast(c) => width < 128 && c == 1u128 << width,
+        CountRead::Big(b) => *b == num_bigint::BigUint::from(1u32) << width as usize,
+    };
+    let side = if vtree.children(parent).0 == t { ChildSide::Left } else { ChildSide::Right };
+    let (decoder, above) = (level.child_decoder(), &f.levels[parent.idx()]);
+    for i in 0..above.slot_count() {
+        let pairs = above.pairs_iter_of_idx(i);
+        gate.poll(pairs.len() as u64)?;
+        for p in pairs {
+            let full = match decoder.value(EncodedChildRef::from_raw(side_ref(p, side))) {
+                ValueRef::Inline(v) => width < 32 && v == 1 << width,
+                ValueRef::Slot(slot) => full_slot(slot),
+            };
+            if !full {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// How the level of an own internal node is had from the levels of `f`.
 enum Form {
     /// `e`'s level as it is.
@@ -267,14 +374,22 @@ struct Plan {
 
 const SIDES: [ChildSide; 2] = [ChildSide::Left, ChildSide::Right];
 
+/// The reference on the dropped side of `t`, kept on `side`, that a pair of
+/// a level recorded by leaf contraction holds besides its positive twin:
+/// `Neg` when that side is a leaf. Such a level is read on its positive half.
+fn negative_half(vtree: &Vtree, t: VtreeIdx, side: ChildSide) -> Option<u32> {
+    vtree.node(child(vtree, t, other(side))).is_leaf().then_some(NEG_LEAF_IDX.0)
+}
+
 /// The trim, all of its allocations made before `f` changes, so that a
 /// refusal leaves `f` as it was.
 ///
-/// `collapse` pairs, by own node ascending, each internal marginal level of
-/// `f` that is not under another with the home node whose leaves its region
-/// stands for; such a level moves to a region anchored at the leftmost of
-/// them, and its subtree goes. A region stays, a marginal leaf stays.
-pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx, VtreeIdx)]) -> Result<bool, OperationError> {
+/// `collapse` lists, ascending, internal marginal levels of `f` not under
+/// another; each becomes the region [`Vtree::folded_region`] gives, and its
+/// subtree goes. Another internal marginal level is refused. A region stays,
+/// a marginal leaf stays.
+/// `dropped` as [`Shape::read`].
+pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[VtreeIdx]>, collapse: &[VtreeIdx]) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let vtree = Arc::clone(&f.vtree);
     if vtree.num_nodes() == 0 {
@@ -294,7 +409,13 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
         return Ok(true);
     }
     let summed = f.has_marginal_level();
-    let shape = Shape::read(eng, f, summed)?;
+    // With nothing to collapse, a diagram whose drop would leave a sum of
+    // values, an output on an inline value or a repeated pair merged as a
+    // set stays as it is.
+    let shape = match Shape::read(eng, f, dropped, summed) {
+        Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
+        shape => shape?,
+    };
     if !shape.dropped {
         return Ok(false);
     }
@@ -305,7 +426,8 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
             let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
             match ChildDecoder::marginal().value(side) {
                 ValueRef::Slot(slot) => Some(NodeIdx(slot)),
-                ValueRef::Inline(_) => return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
+                ValueRef::Inline(_) if collapse.is_empty() => return Ok(false),
+                ValueRef::Inline(_) =>return Err(OperationError::MarginalLevel(shape.end(&vtree, root))),
             }
         }
         Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {
@@ -329,9 +451,8 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
             Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
             Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
             Kind::Region => {
-                let i = collapse.binary_search_by_key(&t, |&(t, _)| t).map_err(|_| OperationError::MarginalLevel(t))?;
-                let under = home.rank_range(collapse[i].1);
-                lim.try_push(&mut regions, (under.start, Box::from([(under.start, under.end)])))?;
+                collapse.binary_search(&t).map_err(|_| OperationError::MarginalLevel(t))?;
+                lim.try_push(&mut regions, vtree.folded_region(t))?;
             }
             Kind::LeafChain(side) | Kind::LevelChain(side) => lim.try_push(&mut stack, child(&vtree, t, side))?,
             Kind::Both => {
@@ -503,6 +624,8 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
     f.close_marked_levels(closed);
     if canonical && !built && !shape.merged {
         f.levels.certify(f.output);
+        #[cfg(debug_assertions)]
+        super::contract::contract_leaf::assert_no_full_twin_side(f);
     }
     if let Some(counts) = counts {
         f.levels.keep_counts(counts);
@@ -562,6 +685,7 @@ fn merge(
     while t != end {
         let Kind::LevelChain(side) = shape.kind[t.idx()] else { unreachable!("a level chain") };
         let c = child(vtree, t, side);
+        let twin = negative_half(vtree, t, side);
         let mut below = Vec::new();
         lim.try_resize(&mut below, f.levels[c.idx()].slot_count(), UNNAMED)?;
         let level = &f.levels[t.idx()];
@@ -569,7 +693,7 @@ fn merge(
             if o != UNNAMED {
                 let pairs = level.pairs_iter_of_idx(i);
                 gate.poll(pairs.len() as u64)?;
-                for p in pairs {
+                for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
                     below[side_ref(p, side) as usize] = o;
                 }
             }

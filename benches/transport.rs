@@ -11,11 +11,18 @@
 //! size and its model count over its own variables, which every mode
 //! agrees on.
 //!
+//! `rotate` ignores `p`, `blocks` and `mirror`: it moves
+//! `(x1 ∨ x3) ∧ (x2 ∨ x4)` back and forth between a balanced home, where its
+//! projection is `((x1 x2) (x3 x4))`, and one where it is
+//! `(x1 (x2 (x3 x4)))`, one rotation each move. Its cost per move should not
+//! depend on `h`: the difference of two `reps` counts measures it.
+//!
 //! ```text
-//! cargo bench --bench transport -- <h> <p> <blocks> <none|transport|embed> [reps] [mirror]
+//! cargo bench --bench transport -- <h> <p> <blocks> <none|transport|embed|rotate> [reps] [mirror]
 //! ```
 //!
-//! Without arguments, as `cargo test` runs it: `1024 4 4 transport 4 mirror`.
+//! Without arguments, as `cargo test` runs it: `1024 4 4 transport 4 mirror`,
+//! then `1024 0 0 rotate 4`.
 
 
 use tididi::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
@@ -36,20 +43,54 @@ fn mirror_image(home: &Vtree) -> Vtree {
     Vtree::from_nodes(nodes, copy_of[home.root().idx()], home.num_vars()).expect("a mirror image of a tree")
 }
 
+/// `rotate`: `reps` moves of a 4-leaf diagram, each one rotation, between
+/// two homes of `h` variables.
+fn rotate(h: u32, reps: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let balanced = Home::new(Vtree::balanced(h));
+    let mut order: Vec<VarId> = (5..=h).map(VarId).collect();
+    for (var, at) in [(1, 0), (2, h / 2), (3, 3 * h / 4), (4, 3 * h / 4 + 1)] {
+        order.insert(at as usize, VarId(var));
+    }
+    let homes = [balanced.clone(), Home::new(Vtree::balanced_over(&order)?)];
+    let eng = Engine::new();
+    let own = Vtree::projection(&balanced, (1..=4).map(VarId))?;
+    let mut f = eng.and_clause(eng.clause(&own, [1, 3])?, &[2, 4])?;
+    let mut rotations = 0;
+    for r in 0..reps {
+        let (g, stats) = eng.transport(f, &homes[(r + 1) % 2], |v| v, usize::MAX).map_err(|r| r.error)?;
+        rotations += stats.rotations;
+        f = g;
+    }
+    println!(
+        "h {h} mode rotate reps {reps} rotations {rotations} nodes {} pairs {} count {}",
+        f.node_count(),
+        f.pair_count(),
+        eng.model_count(&f)? >> (h - 4),
+    );
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with("--")).collect();
     if args.is_empty() {
+        rotate(1024, 4)?;
         args = ["1024", "4", "4", "transport", "4", "mirror"].map(String::from).to_vec();
     }
-    let usage = "usage: transport <h> <p> <blocks> <none|transport|embed> [reps] [mirror]";
+    let usage = "usage: transport <h> <p> <blocks> <none|transport|embed|rotate> [reps] [mirror]";
     let h: u32 = args.first().ok_or(usage)?.parse::<u32>()?.next_power_of_two();
     let p: u32 = args.get(1).ok_or(usage)?.parse()?;
     let blocks: u32 = args.get(2).ok_or(usage)?.parse()?;
     let mode = args.get(3).map(String::as_str).ok_or(usage)?;
-    if !matches!(mode, "none" | "transport" | "embed") {
+    if !matches!(mode, "none" | "transport" | "embed" | "rotate") {
         return Err(usage.into());
     }
     let reps: usize = args.get(4).map_or(Ok(1), |r| r.parse())?;
+    if mode == "rotate" {
+        if h < 8 || args.get(5).is_some() {
+            return Err("rotate needs h of at least 8 and takes no mirror".into());
+        }
+        return rotate(h, reps);
+    }
     let mirror = match args.get(5).map(String::as_str) {
         None => false,
         Some("mirror") => true,
@@ -86,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for r in 0..reps {
         let to = &homes[usize::from(mirror) * ((r + 1) % 2)];
         f = match mode {
-            "transport" => eng.transport(f, to, |v| v).map_err(|r| r.error)?,
+            "transport" => eng.transport(f, to, |v| v, 0).map_err(|r| r.error)?.0,
             "embed" => {
                 let (mut g, _) = eng.embed_moving(f, to.vtree(), |v| v).map_err(|r| r.error)?;
                 eng.trim(&mut g, to)?;
