@@ -155,6 +155,13 @@ impl<'a> StoredPairs<'a> {
         }
     }
 
+    /// How many pairs the arena holds: every pair of a node of two or more,
+    /// and any a node gave up since the level was last compacted.
+    #[inline]
+    pub(crate) fn arena_len(self) -> usize {
+        self.arena.len()
+    }
+
     /// The pairs of node `idx`.
     ///
     /// # Panics
