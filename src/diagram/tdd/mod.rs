@@ -201,7 +201,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn home(&self) -> Option<crate::vtree::Home> {
-        Vtree::home_of(&self.vtree)
+        self.vtree.home()
     }
 
     /// The node denoting the function: a node of the root level, or

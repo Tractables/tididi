@@ -79,7 +79,7 @@ pub(crate) fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo
 
 /// Rotate at `v` in direction `kind` and repair the bottom-up order.
 pub(crate) fn rotate(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind) -> Option<RotationInfo> {
-    assert!(vtree.home().is_none(), "the tests rotate root vtrees");
+    assert!(vtree.link_home().is_none(), "the tests rotate root vtrees");
     vtree.stop_being_home();
     let pending = rotate_pointers(vtree, v, kind)?;
     Some(pending.commit_in_probe(vtree))

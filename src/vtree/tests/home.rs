@@ -51,7 +51,7 @@ fn projection_is_project_to_vars_keeping_ids() {
         let expected = tree.project_to_vars(|v| keep[v.0 as usize].then_some(v), tree.num_vars()).unwrap();
         assert!(own.same_tree(&expected));
         assert_eq!(own.validate(), Ok(()));
-        assert!(Arc::ptr_eq(Vtree::home_of(&own).unwrap().vtree(), tree));
+        assert!(Arc::ptr_eq(own.home().unwrap().vtree(), tree));
         assert!(Arc::ptr_eq(own.context(), tree.context()));
         assert_eq!(own.num_vars(), tree.num_vars());
         assert_eq!(own.var_to_leaf.is_empty(), !Arc::ptr_eq(&own, tree));
@@ -162,7 +162,7 @@ fn equal_leaf_sets_give_equal_layouts() {
             let other = Vtree::projection(&twin, fewer.iter().copied()).unwrap();
             let direct = Vtree::projection(&Home::new(Arc::clone(&own)), fewer).unwrap();
             assert_eq!(other.nodes, direct.nodes);
-            assert!(Arc::ptr_eq(Vtree::home_of(&direct).unwrap().vtree(), tree));
+            assert!(Arc::ptr_eq(direct.home().unwrap().vtree(), tree));
             assert_eq!(other.validate(), Ok(()));
             assert!(matches!(Vtree::leaf_sets(&other, &own), Ok(LeafSets::AInB | LeafSets::Equal(_))));
         }
@@ -190,8 +190,8 @@ fn leaf_sets_compare_and_unite() {
         if matches!(got, LeafSets::Equal(_)) {
             assert_eq!(vars.len(), other.len());
         }
-        assert_eq!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)), a.home().is_some());
-        assert_eq!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)), b.home().is_some());
+        assert_eq!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)), a.link_home().is_some());
+        assert_eq!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)), b.link_home().is_some());
         assert_eq!(Arc::ptr_eq(&a, tree), vars.len() == tree.num_leaves() as usize);
         assert!(matches!(Vtree::leaf_sets(tree, tree), Ok(LeafSets::Equal(_))));
         let stranger = Arc::new((**tree).clone());
@@ -296,7 +296,7 @@ fn a_home_is_made_once_and_not_cloned() {
     assert!(Arc::ptr_eq(Home::new(own).vtree(), home.vtree()));
     let copy = Arc::new(Vtree::clone(home.vtree()));
     assert!(home.vtree().is_home() && !copy.is_home());
-    assert!(Vtree::home_of(&copy).is_none());
+    assert!(copy.home().is_none());
     assert_eq!(std::mem::size_of::<Vtree>(), 128);
 }
 

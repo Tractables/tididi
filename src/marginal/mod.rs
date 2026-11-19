@@ -79,7 +79,7 @@ impl Engine {
     /// stop refusals may leave a completed prefix; retrying finishes the remaining
     /// levels and cleanup while preserving the diagram's value.
     pub fn marginalize_levels(&self, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
-        if f.vtree.home().is_some() {
+        if f.vtree.on_home() {
             return Err(on_projection());
         }
         marginalize_levels(self, f, levels)
@@ -106,7 +106,7 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
 
 #[cold]
 fn on_projection() -> OperationError {
-    OperationError::InertOption { option: "levels", needs: "a diagram on a root vtree; on a projection, `marginalize`" }
+    OperationError::InertOption { option: "levels", needs: "a diagram on a root vtree that is not a home; on a home, `marginalize`" }
 }
 
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
@@ -167,7 +167,7 @@ pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result
         false => evaluate_levels(eng, f, &levels, &vtree),
     };
     let restored = restore_marginal_invariants(eng, f, maximal, &vtree);
-    if let Some(home) = Vtree::home_of(&vtree) {
+    if let Some(home) = vtree.home() {
         levels.clear();
         levels.extend(maximal.iter().copied().filter(|&t| f.levels[t.idx()].is_marginal()));
         if !levels.is_empty() {
@@ -183,11 +183,11 @@ pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result
 }
 
 /// [`Engine::marginalize`]: the nodes [`finished`] names, summed out by
-/// [`sum_out`]; on a projection the diagram is trimmed first, and an internal
+/// [`sum_out`]; on a home the diagram is trimmed first, and an internal
 /// summed-out level that is not a region is refused.
 pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, summable: &dyn Fn(VarId) -> bool) -> Result<(), OperationError> {
     let _op = eng.limits().enter()?;
-    if let Some(home) = f.vtree.home().cloned() {
+    if let Some(home) = f.vtree.home() {
         if !f.has_marginal_level() {
             trim(eng, f, &home, None, &[])?;
         } else if let Some(t) = f.vtree.bottomup().find(|&t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {

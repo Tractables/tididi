@@ -114,7 +114,7 @@ impl Engine {
         tdd.require_structure()?;
         let vtree = tdd.vtree();
         let key = key_node(lim, vtree, key.into())?;
-        if let Some(home) = Vtree::home_of(vtree) {
+        if let Some(home) = vtree.home() {
             return distinct_on_home(self, tdd, &home, key, m);
         }
         if key.idx() >= vtree.num_nodes() {
@@ -185,7 +185,7 @@ fn key_node(lim: &Limits, vtree: &Vtree, key: DistinctKey<'_>) -> Result<VtreeId
     if sorted.is_empty() || sorted.windows(2).any(|w| w[0] == w[1]) {
         return Err(refused());
     }
-    let (node, leaves) = match vtree.home() {
+    let (node, leaves) = match vtree.link_home() {
         Some(home) => {
             let (mut lo, mut hi) = (u32::MAX, 0);
             for &v in &sorted {

@@ -42,7 +42,7 @@ impl Engine {
             lim.try_resize(&mut cols, tdd.vtree.num_nodes(), Vec::new())?;
             fold_bottom_up_from(&fold, self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
             let own = cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx());
-            match tdd.vtree.home().and_then(|_| free_value(algebra, &tdd.vtree)) {
+            match tdd.vtree.link_home().and_then(|_| free_value(algebra, &tdd.vtree)) {
                 Some(free) => algebra.mul(&own, &free),
                 None => own,
             }

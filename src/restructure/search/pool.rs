@@ -346,7 +346,7 @@ impl Engine {
         }
         let (mut tree, mut groups) = pool_tree(members)?;
         let pivot = mv.rotation.pivot;
-        if pivot.idx() >= tree.home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
+        if pivot.idx() >= tree.link_home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
             return Err(OperationError::LevelNotInVtree(pivot));
         }
         if members.iter().any(|m| m.has_marginal_level()) {
@@ -1043,7 +1043,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
     refuse_regions(members)?;
     let first = &members[0].vtree;
     let shared = members.iter().all(|m| Arc::ptr_eq(&m.vtree, first));
-    let home_of = |v: &Arc<Vtree>| v.home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
+    let home_of = |v: &Arc<Vtree>| v.link_home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
     if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
         return Err(OperationError::VtreeMismatch);
     }
@@ -1058,7 +1058,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
     } else {
         let mut index = HashMap::new();
         for (i, m) in members.iter().enumerate() {
-            let union = m.vtree.home().is_none();
+            let union = m.vtree.link_home().is_none();
             let g = *index.entry(Arc::as_ptr(&m.vtree)).or_insert_with(|| {
                 groups.push(group(Vec::new(), (!union).then(|| children_table(&m.vtree))));
                 groups.len() - 1
@@ -1074,7 +1074,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
     let union = match root {
         Some(i) => Vtree::clone(&members[i].vtree),
         None => {
-            let home = first.home().expect("a projection has a home");
+            let home = first.link_home().expect("a projection has a home");
             let vars: Vec<VarId> =
                 groups.iter().flat_map(|g| tree_of(g).leaf_bottomup().map(|(_, var)| var)).collect();
             match vars.is_empty() {

@@ -356,8 +356,7 @@ fn size(t: &Tdd) -> (usize, usize, u32) {
 fn canonical(t: &Tdd) -> Result<(), String> {
     use tididi::test_helpers::check::check_canonicity;
     let Some(home) = HOME.with_borrow(Clone::clone) else { return Ok(()) };
-    let on = t.vtree().home().map_or(t.vtree(), Home::vtree);
-    if !Arc::ptr_eq(on, home.vtree()) {
+    if !t.vtree().is_on(&home) {
         return Ok(());
     }
     let n = home.vtree().num_vars();

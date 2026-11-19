@@ -104,7 +104,7 @@ impl Case<'_> {
     /// home, and in trimmed form.
     fn check(&self, op: &str, got: Tdd, expected: &Tdd) {
         let (eng, what) = (self.eng, &self.what);
-        if Vtree::home_of(got.vtree()).is_some() {
+        if got.vtree().on_home() {
             check_trimmed(&got, false).unwrap_or_else(|e| panic!("{op} {what}: {e}"));
         }
         assert!(eng.equivalent(&on_home(eng, &got, self.home), expected).unwrap(), "{op} {what}");

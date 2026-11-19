@@ -682,12 +682,12 @@ pub(crate) fn place<'a>(
 }
 
 /// Refuse a summed-out level [`place`] does not move: any on a root vtree,
-/// an internal one on a projection.
+/// an internal one on a home.
 fn require_placeable(tdd: &Tdd) -> Result<(), OperationError> {
-    match tdd.vtree().home() {
-        None => tdd.require_structure(),
-        Some(_) if !tdd.has_marginal_level() => Ok(()),
-        Some(_) => match tdd.vtree().bottomup().find(|&t| !tdd.vtree().node(t).is_leaf() && tdd.level(t).is_marginal()) {
+    match tdd.vtree().on_home() {
+        false => tdd.require_structure(),
+        true if !tdd.has_marginal_level() => Ok(()),
+        true => match tdd.vtree().bottomup().find(|&t| !tdd.vtree().node(t).is_leaf() && tdd.level(t).is_marginal()) {
             Some(t) => Err(OperationError::MarginalLevel(t)),
             None => Ok(()),
         },

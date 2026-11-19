@@ -35,7 +35,7 @@ fn free_vars(own: &Vtree) -> Vec<VarId> {
 /// `own` does not have as a leaf, right to left; none when every variable
 /// outside the extents is a leaf: the reference for [`Vtree::free_set_under`].
 fn free_vars_under(own: &Vtree, t: VtreeIdx) -> Vec<VarId> {
-    let Some(home) = own.home().map(Home::vtree).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
+    let Some(home) = own.link_home().map(Home::vtree).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
     home.subtree(own.home_node(t))
         .filter(|&h| home.node(h).is_leaf())
         .map(|h| home.leaf_var(h))
@@ -80,7 +80,7 @@ fn with_regions(home: &Home, leaves: &[u32], regions: &[(&[u32], u32)]) -> Vtree
 
 /// The region at `anchor`'s home leaf.
 fn region_at(own: &Vtree, anchor: u32) -> VtreeIdx {
-    let home = own.home().unwrap();
+    let home = own.link_home().unwrap();
     let t = own.node_at_home(home.vtree().leaf_of(VarId(anchor)).unwrap()).unwrap();
     assert!(own.node(t).is_region());
     t

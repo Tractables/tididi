@@ -208,7 +208,7 @@ pub(crate) fn extend_to<L: crate::LiteralInput>(
 /// The projection [`extend_to`] places a diagram on `vtree` on, if any. A
 /// literal that does not convert is left to [`normalize`] to refuse.
 fn widened<L: crate::LiteralInput>(vtree: &Arc<Vtree>, lits: &[L]) -> Result<Option<Arc<Vtree>>, OperationError> {
-    let Some(home) = vtree.home() else { return Ok(None) };
+    let Some(home) = vtree.link_home() else { return Ok(None) };
     let vars = || lits.iter().filter_map(|lit| lit.literal().ok()).map(|lit| lit.var);
     if vtree.has_regions() {
         return widened_with_regions(vtree, vars());
@@ -229,7 +229,7 @@ fn widened_with_regions(
     vtree: &Arc<Vtree>,
     vars: impl Iterator<Item = crate::vtree::VarId>,
 ) -> Result<Option<Arc<Vtree>>, OperationError> {
-    let home = vtree.home().expect("a vtree with a region is a projection");
+    let home = vtree.link_home().expect("a vtree with a region is a projection");
     let added = vars.filter(|&var| home.rank(var).is_some());
     let lits = Vtree::projection(home, added).expect("every variable has a leaf in the home");
     Ok(match Vtree::leaf_sets(vtree, &lits)? {
@@ -242,7 +242,7 @@ fn widened_with_regions(
 /// its order, a variable resolved against `vtree` or its home.
 #[cold]
 fn names_both_ways<L: crate::LiteralInput>(lim: &Limits, vtree: &Vtree, lits: &[L]) -> Result<bool, OperationError> {
-    let home = vtree.home().expect("only a projection is widened");
+    let home = vtree.link_home().expect("only a projection is widened");
     let mut seen: Vec<Literal> = Vec::new();
     lim.reserve_exact(&mut seen, lits.len())?;
     let mut gate = lim.gate();

@@ -210,7 +210,7 @@ impl<'a> Reduction<'a> {
     fn contract(&mut self) -> Result<(), OperationError> {
         contract_all_twins(self.eng, self.tdd)?;
         let marginal = self.tdd.has_marginal_level();
-        let record = self.seed.is_some() && !marginal && on_home(&self.tdd.vtree);
+        let record = self.seed.is_some() && !marginal && self.tdd.vtree.on_home();
         // Leaf contraction leaves no inner twins unless a level is summed out.
         if contract_leaf_twins(self.eng, self.tdd, record.then_some(&mut self.recorded))? && marginal {
             contract_all_twins(self.eng, self.tdd)?;
@@ -266,10 +266,6 @@ impl<'a> Reduction<'a> {
     }
 }
 
-fn on_home(vtree: &Vtree) -> bool {
-    vtree.home().is_some() || vtree.is_home()
-}
-
 /// The debug checks of a closing reduction, over every pair of every node.
 #[cfg(debug_assertions)]
 mod oracle {
@@ -313,7 +309,7 @@ mod oracle {
     /// it will drop them.
     pub(super) fn at_entry(tdd: &Tdd, dropped: &[VtreeIdx], seed: &[VtreeIdx], at_reduce: &[VarId]) -> Option<Vec<VarId>> {
         let vtree = &tdd.vtree;
-        if !super::on_home(vtree) || tdd.has_marginal_level() || vtree.num_nodes() == 0 {
+        if !vtree.on_home() || tdd.has_marginal_level() || vtree.num_nodes() == 0 {
             return None;
         }
         let parent = |leaf: VtreeIdx| {

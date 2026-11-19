@@ -184,7 +184,7 @@ impl Vtree {
     ///
     /// let home = Home::new(Vtree::balanced(8));
     /// let own = Vtree::projection(&home, [VarId(2), VarId(3), VarId(7)])?;
-    /// let copy = own.renamed(|v| VarId(v.0 + 10), 17)?;
+    /// let copy = std::sync::Arc::new(own.renamed(|v| VarId(v.0 + 10), 17)?);
     /// assert!(copy.home().is_none());
     /// assert_eq!(copy.leaf_var(copy.children(copy.root()).1), VarId(17));
     /// # Ok::<(), tididi::vtree::VtreeError>(())

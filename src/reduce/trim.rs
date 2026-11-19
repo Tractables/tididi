@@ -87,7 +87,7 @@ pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
 #[cold]
 #[inline(never)]
 fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
-    let Some(home) = Vtree::home_of(&f.vtree) else { return };
+    let Some(home) = f.vtree.home() else { return };
     let one = !f.is_zero();
     if f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region()) {
         return;
@@ -98,7 +98,7 @@ fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
 #[cold]
 #[inline(never)]
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    let Some(home) = Vtree::home_of(&f.vtree) else { return Ok(()) };
+    let Some(home) = f.vtree.home() else { return Ok(()) };
     if f.has_marginal_level() {
         return Ok(());
     }

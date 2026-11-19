@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use super::region::{on_home, operand, under, weights};
+use super::region::{on_root_copy, operand, under, weights};
 use crate::cnf::{ClauseSink, CnfScheme};
 use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, SlotPairs, WeightStore};
 use crate::query::PinSemantics;
@@ -199,7 +199,7 @@ pub(crate) fn region_case_and_source(eng: &Engine, seed: u64, max_leaves: u32) -
     if g.vtree().num_nodes() == 0 {
         return None;
     }
-    let mut f = on_home(eng, &g, home.vtree());
+    let mut f = on_root_copy(eng, &g, home.vtree());
     if rng.below(3) == 0 {
         let w = weights(n, &mut rng);
         g.set_weights(WeightStore::new(w.clone(), Arithmetic::ExactRational)).unwrap();

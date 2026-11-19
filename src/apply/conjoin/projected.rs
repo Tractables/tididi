@@ -100,7 +100,7 @@ pub(super) fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -
     };
     let weights = crate::apply::shared_weights([&*constant, &*other].into_iter())?;
     if constant.is_zero() || other.is_zero() {
-        let mut zero = constant_without_leaf(&Vtree::empty_projection(constant.vtree().home().expect("a vtree with no node is a projection")), false);
+        let mut zero = constant_without_leaf(&Vtree::empty_projection(constant.vtree().link_home().expect("a vtree with no node is a projection")), false);
         zero.weights = weights;
         return Ok(zero);
     }
