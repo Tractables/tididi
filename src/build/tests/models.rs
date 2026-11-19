@@ -591,14 +591,14 @@ fn a_level_numbers_its_nodes_as_a_build_level_by_level_meets_them() {
 }
 
 #[test]
-fn rows_of_several_words_re_encode_alike_through_the_byte_table_and_bit_by_bit() {
-    // Repeats take the rows past the byte table's threshold; the distinct
-    // rows alone stay under it and are re-encoded bit by bit.
+fn many_rows_of_several_words_build_as_their_distinct_rows_do() {
+    // Repeats take the rows past the byte table's threshold and the radix
+    // sort's; the distinct rows alone stay under both.
     let mut rng = Lcg::new(0x5ab1e);
     for width in [70u32, 150, 230] {
         let vtree = Arc::new(Vtree::balanced(width));
         let ids = shuffled_vars(&mut rng, width);
-        let table: Vec<Vec<bool>> = (0..600).map(|_| (0..width).map(|_| rng.coin()).collect()).collect();
+        let table: Vec<Vec<bool>> = (0..700).map(|_| (0..width).map(|_| rng.coin()).collect()).collect();
         let mut repeated: Vec<Vec<bool>> = table.iter().chain(&table).chain(&table).cloned().collect();
         for i in (1..repeated.len()).rev() {
             repeated.swap(i, rng.below(i as u64 + 1) as usize);

@@ -192,16 +192,32 @@ pub(super) fn sorted_distinct(
         gate.flush()?;
         return Ok(packed);
     }
-    let mut order: Vec<u32> = Vec::new();
+    // A radix sort places the rows by their highest bits that fit above
+    // their index, and a comparison sort orders each run of rows those
+    // bits leave tied.
+    let shift = index_bits(n) as usize;
+    let top = num_vars.min(64 - shift);
+    let index = (1u64 << shift) - 1;
+    let mut order: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut order, n)?;
-    order.extend(0..n as u32);
-    order.sort_unstable_by(|&a, &b| compare_row(&packed, w, a, b));
+    order.extend(packed.chunks_exact(w).enumerate().map(|(k, row)| {
+        let mut high = [0u64];
+        extract(row, num_vars - top, top, &mut high);
+        high[0] << shift | k as u64
+    }));
+    radix.sort(lim, &mut order, shift, top)?;
+    let row_of = |key: u64| (key & index) as u32;
+    for run in order.chunk_by_mut(|a, b| a >> shift == b >> shift) {
+        if run.len() > 1 {
+            run.sort_unstable_by(|&a, &b| compare_row(&packed, w, row_of(a), row_of(b)));
+        }
+    }
 
     let mut out: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut out, packed.len())?;
-    for &k in &order {
+    for &key in &order {
         gate.poll(w as u64)?;
-        let row = row_at(&packed, w, k);
+        let row = row_at(&packed, w, row_of(key));
         if out.len() < w || !same_row(&out[out.len() - w..], row) {
             out.extend_from_slice(row);
         }
