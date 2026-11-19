@@ -1,6 +1,7 @@
 //! The public API exercised as a consumer would: complete workflows checked
 //! against small explicit models, and each operation family at its edges.
 
+mod canonical_results;
 mod checked_queries;
 mod clause_inputs;
 mod conformance;
