@@ -22,7 +22,7 @@
 
 use crate::apply::conjoin::held::Held;
 use super::identity::publish_identity_level;
-use super::products::Grid;
+use super::products::{FNodeIdx, GNodeIdx, Grid, ProductEntry, ProductNodeIdx};
 use super::*;
 
 /// How one child side of a relabelled level maps the carrier's child
@@ -386,7 +386,10 @@ pub(super) fn take_pass_level(
     }
     let mut map = pools.relabel_map.checkout(eng);
     map.clear();
-    lim.reserve(&mut map, wf * wg)?;
+    let mut list = Vec::new();
+    if !sparse {
+        lim.reserve(&mut map, wf * wg)?;
+    }
     let carrier = if carrier_f { f.level(ti) } else { g.level(ti) };
     let level = &mut run.levels[ti];
     let pre_pairs_cap = level.pairs.capacity();
@@ -402,20 +405,23 @@ pub(super) fn take_pass_level(
         width_cap: lim.level_width_cap(),
         inline: 0,
     };
-    let cell = |i: usize, k: u32| fixed(i) as usize * si + k as usize * sk;
+    // Each read is built once per passing node and moves its offsets in: one
+    // that borrowed them reloaded them after every pair the cell wrote.
+    let base = move |i: usize| fixed(i) as usize * si;
+    let cols: &[u32] = &columns;
     // Safety, for the reads below: a structural reference indexes its child
     // level, whose width the grid and the columns were built over.
     match (passed_left, grid) {
-        (true, Some(Grid::Lists)) if sparse => rows.emit_sparse::<true>(lim, level, &mut map, &columns, &inverse)?,
-        (false, Some(Grid::Lists)) if sparse => rows.emit_sparse::<false>(lim, level, &mut map, &columns, &inverse)?,
-        (true, None) => rows.emit::<true>(level, &mut map, |i, k| CONJOIN_GRID[k as usize][fixed(i) as usize])?,
-        (false, None) => rows.emit::<false>(level, &mut map, |i, k| CONJOIN_GRID[k as usize][fixed(i) as usize])?,
-        (true, Some(Grid::Cells)) => rows.emit::<true>(level, &mut map, |i, k| cell(i, k) as u32)?,
-        (false, Some(Grid::Cells)) => rows.emit::<false>(level, &mut map, |i, k| cell(i, k) as u32)?,
-        (true, Some(Grid::Slab(slab))) => rows.emit::<true>(level, &mut map, |i, k| unsafe { *slab.get_unchecked(cell(i, k)) })?,
-        (false, Some(Grid::Slab(slab))) => rows.emit::<false>(level, &mut map, |i, k| unsafe { *slab.get_unchecked(cell(i, k)) })?,
-        (true, Some(Grid::Lists)) => rows.emit::<true>(level, &mut map, |i, k| unsafe { *columns.get_unchecked(i * stride + k as usize) })?,
-        (false, Some(Grid::Lists)) => rows.emit::<false>(level, &mut map, |i, k| unsafe { *columns.get_unchecked(i * stride + k as usize) })?,
+        (true, Some(Grid::Lists)) if sparse => rows.emit_sparse::<true>(lim, level, &mut list, &columns, &inverse)?,
+        (false, Some(Grid::Lists)) if sparse => rows.emit_sparse::<false>(lim, level, &mut list, &columns, &inverse)?,
+        (true, None) => rows.emit::<true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
+        (false, None) => rows.emit::<false, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
+        (true, Some(Grid::Cells)) => rows.emit::<true, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
+        (false, Some(Grid::Cells)) => rows.emit::<false, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
+        (true, Some(Grid::Slab(slab))) => rows.emit::<true, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
+        (false, Some(Grid::Slab(slab))) => rows.emit::<false, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
+        (true, Some(Grid::Lists)) => rows.emit::<true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
+        (false, Some(Grid::Lists)) => rows.emit::<false, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
     }
     let (mut gate, inline) = (rows.gate, rows.inline);
     gate.flush()?;
@@ -426,7 +432,10 @@ pub(super) fn take_pass_level(
         let pairs = level.pairs.len() + inline;
         level.leave_live_pairs(pairs);
     }
-    run.products.publish_cells(eng, ti, wg, &map, nodes)
+    match sparse {
+        true => run.products.publish_listed(ti, (wf, wg), list, nodes),
+        false => run.products.publish_cells(eng, ti, wg, &map, nodes),
+    }
 }
 
 /// The cells of [`take_pass_level`] on a level where one operand passes and
@@ -450,27 +459,28 @@ struct PassRows<'a> {
 
 impl PassRows<'_> {
     /// Emit every cell into `level` in cell order, `f`'s node major, and
-    /// the output node of each cell, or `NO_PRODUCT`, into `map`; `passed`
-    /// is the product of passing node `i` with the passed child's node `c`.
+    /// the output node of each cell, or `NO_PRODUCT`, into `map`; `passed(i)`
+    /// maps the passed child's node `c` to its product with passing node `i`.
     #[inline(always)]
-    fn emit<const LEFT: bool>(
+    fn emit<const LEFT: bool, P: Fn(u32) -> u32>(
         &mut self,
         level: &mut TddLevel,
         map: &mut Vec<u32>,
-        passed: impl Fn(usize, u32) -> u32,
+        passed: impl Fn(usize) -> P,
     ) -> Result<(), OperationError> {
         let carrier = self.carrier;
         match self.f_major {
             true => {
                 for i in 0..self.passing {
+                    let row = passed(i);
                     carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
-                        self.cell::<LEFT>(level, map, pairs, i, |c| passed(i, c))
+                        self.cell::<LEFT>(level, map, pairs, i, &row)
                     })?;
                 }
                 Ok(())
             }
             false => carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
-                (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, |c| passed(i, c)))
+                (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, passed(i)))
             }),
         }
     }
@@ -481,12 +491,13 @@ impl PassRows<'_> {
     /// product, for `k` from `offsets[x]` to `offsets[x + 1]`. A carrier
     /// node's pairs are carried to their products with every passing node at
     /// once and grouped by passing node, so a cell where all die costs no
-    /// pass over the node's pairs.
+    /// pass over the node's pairs. The live cells go to `list` in cell order,
+    /// and a dead one is written nowhere.
     fn emit_sparse<const LEFT: bool>(
         &mut self,
         lim: &crate::limits::Limits,
         level: &mut TddLevel,
-        map: &mut Vec<u32>,
+        list: &mut Vec<ProductEntry>,
         offsets: &[u32],
         inverse: &[u32],
     ) -> Result<(), OperationError> {
@@ -497,10 +508,8 @@ impl PassRows<'_> {
         // carrier's pair order in each.
         let mut cell: crate::limits::growth::Transient<'_, Vec<(u64, ChildPair)>> =
             crate::limits::growth::Transient::new(lim, Vec::new());
-        carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
+        carrier.try_for_each_node::<OperationError>(0..self.width, |x, pairs| {
             self.gate.poll(pairs.len() as u64)?;
-            let base = map.len();
-            map.resize(base + self.passing, NO_PRODUCT);
             let side = |pair: &ChildPair| if LEFT { (pair.left.raw(), pair.right) } else { (pair.right.raw(), pair.left) };
             let products = |x: u32| &inverse[2 * offsets[x as usize] as usize..2 * offsets[x as usize + 1] as usize];
             let total: usize = pairs.iter().map(|pair| products(side(pair).0).len() / 2).sum();
@@ -522,11 +531,16 @@ impl PassRows<'_> {
                 }
             }
             cell.sort_unstable_by_key(|&(key, _)| key);
+            lim.reserve(list, cell.len())?;
             let mut k = 0;
             while k < cell.len() {
                 let i = (cell[k].0 >> 32) as usize;
                 let end = k + cell[k..].iter().take_while(|&&(key, _)| (key >> 32) as usize == i).count();
-                map[base + i] = level.nodes.stored().len() as u32;
+                list.push(ProductEntry {
+                    f_idx: FNodeIdx(x as u32),
+                    g_idx: GNodeIdx(i as u32),
+                    prod_idx: ProductNodeIdx(level.nodes.stored().len() as u32),
+                });
                 if end - k == 1 {
                     level.nodes.stored_mut().push(EncodedNode::inline(cell[k].1));
                     self.inline += 1;

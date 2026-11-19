@@ -552,20 +552,59 @@ impl Products {
         &mut self, eng: &Engine, t: usize, g_width: usize, map: &[u32], nodes: usize,
     ) -> Result<(), OperationError> {
         let complete = nodes == map.len();
-        if let Some(base) = self.arena.materialized(t) {
+        let materialized = match self.arena.materialized(t) {
+            // A grid where over a quarter of the cells are live, as the dense
+            // routes leave one: a list there costs more to build and to read.
+            None if !complete && 4 * nodes > map.len() => {
+                let base = self.arena.alloc(eng, t, map.len())?;
+                self.arena.set_dense(t, base);
+                Some(base)
+            }
+            base => base,
+        };
+        if let Some(base) = materialized {
             self.arena.slab_mut()[base.idx()..base.idx() + map.len()].copy_from_slice(map);
         } else if !complete {
             self.touch(t);
             let list = &mut self.product_lists[t];
             list.clear();
             eng.limits().reserve(list, nodes)?;
-            for (k, &prod) in map.iter().enumerate() {
-                if prod == super::NO_PRODUCT { continue; }
-                let (i, j) = ((k / g_width) as u32, (k % g_width) as u32);
-                list.push(ProductEntry { f_idx: FNodeIdx(i), g_idx: GNodeIdx(j), prod_idx: ProductNodeIdx(prod) });
+            for (i, row) in map.chunks_exact(g_width.max(1)).enumerate() {
+                for (j, &prod) in row.iter().enumerate() {
+                    if prod != super::NO_PRODUCT {
+                        list.push(ProductEntry { f_idx: FNodeIdx(i as u32), g_idx: GNodeIdx(j as u32), prod_idx: ProductNodeIdx(prod) });
+                    }
+                }
             }
             self.has_pl[t] = true;
         }
+        self.live_counts[t] = nodes;
+        self.complete[t] = complete;
+        Ok(())
+    }
+
+    /// Publish a level whose live cells `list` holds in cell order, `nodes`
+    /// of them, on operands of `f_width` and `g_width` nodes there; `list`
+    /// becomes the level's product list.
+    pub(super) fn publish_listed(
+        &mut self, t: usize, (f_width, g_width): (usize, usize), mut list: Vec<ProductEntry>, nodes: usize,
+    ) -> Result<(), OperationError> {
+        debug_assert_eq!(list.len(), nodes);
+        self.touch(t);
+        let complete = nodes == f_width * g_width;
+        if let Some(base) = self.arena.materialized(t) {
+            let grid = &mut self.arena.slab_mut()[base.idx()..base.idx() + f_width * g_width];
+            grid.fill(super::NO_PRODUCT);
+            for e in &list {
+                grid[e.f_idx.idx() * g_width + e.g_idx.idx()] = e.prod_idx.0;
+            }
+            list.clear();
+        } else if complete {
+            list.clear();
+        } else {
+            self.has_pl[t] = true;
+        }
+        self.product_lists[t] = list;
         self.live_counts[t] = nodes;
         self.complete[t] = complete;
         Ok(())
