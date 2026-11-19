@@ -70,9 +70,11 @@ pub(super) fn fill(
         }
         emit.state[t.idx()] = Some(finished);
     }
-    let OrderScratch { keyed, radix } = std::mem::take(&mut emit.sort);
-    lim.discard(keyed);
+    let OrderScratch { keys, radix, wide, wide_radix } = std::mem::take(&mut emit.sort);
+    lim.discard(keys);
     radix.discard(lim);
+    lim.discard(wide);
+    wide_radix.discard(lim);
 
     let root = vtree.root();
     let done = emit.state[root.idx()]
@@ -177,8 +179,10 @@ fn pair_key(pair: ChildPair) -> u64 {
 /// The buffers [`stored_order`] sorts through, kept from level to level.
 #[derive(Default)]
 struct OrderScratch {
-    keyed: Vec<u128>,
-    radix: Radix<u128>,
+    keys: Vec<u64>,
+    radix: Radix<u64>,
+    wide: Vec<u128>,
+    wide_radix: Radix<u128>,
 }
 
 /// The atoms in the order their nodes are stored: ascending by `keys`,
@@ -189,34 +193,48 @@ fn stored_order(
     s: &mut OrderScratch,
     keys: impl ExactSizeIterator<Item = u64>,
 ) -> Result<Vec<u32>, OperationError> {
-    let keyed = &mut s.keyed;
-    keyed.clear();
-    lim.reserve_exact(keyed, keys.len())?;
+    let n = keys.len();
+    s.keys.clear();
+    lim.reserve_exact(&mut s.keys, n)?;
     let (mut high, mut low, mut ascending, mut last) = (0u64, 0u64, true, None);
-    for (atom, key) in keys.enumerate() {
+    for key in keys {
         ascending &= last.replace(key).is_none_or(|last| last < key);
         high |= key >> 32;
         low |= key & u64::from(u32::MAX);
-        keyed.push(u128::from(key) << 32 | atom as u128);
+        s.keys.push(key);
     }
     if ascending {
         return Ok(Vec::new());
     }
     // The halves of a pair key are node indices, mostly far narrower than
-    // 32 bits: the radix sort places only the bits they use.
+    // 32 bits: the radix sort places only the bits they use, and where
+    // those and the atom's fit in a word, sorts words.
     let low_bits = u64::BITS - low.leading_zeros();
     let bits = (low_bits + u64::BITS - high.leading_zeros()) as usize;
-    let squeezed = |record: &u128| {
-        let key = (record >> 32) as u64;
-        (key >> 32) << low_bits | key & u64::from(u32::MAX)
-    };
+    let squeezed = |key: u64| (key >> 32) << low_bits | key & u64::from(u32::MAX);
+    let atom_bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
     let mut gate = lim.gate();
-    s.radix
-        .sort_by_key_polling(lim, keyed, squeezed, 0, bits, &mut |work| gate.poll(work))?;
-    gate.flush()?;
     let mut order = Vec::new();
-    lim.reserve_exact(&mut order, keyed.len())?;
-    order.extend(keyed.iter().map(|&record| record as u32));
+    if bits + atom_bits <= 64 {
+        for (atom, key) in s.keys.iter_mut().enumerate() {
+            *key = squeezed(*key) << atom_bits | atom as u64;
+        }
+        s.radix.sort_polling(lim, &mut s.keys, atom_bits, bits, &mut |work| gate.poll(work))?;
+        gate.flush()?;
+        lim.reserve_exact(&mut order, n)?;
+        let atom = (1u64 << atom_bits) - 1;
+        order.extend(s.keys.iter().map(|&record| (record & atom) as u32));
+    } else {
+        s.wide.clear();
+        lim.reserve_exact(&mut s.wide, n)?;
+        s.wide.extend(s.keys.iter().enumerate().map(|(atom, &key)| u128::from(squeezed(key)) << 32 | atom as u128));
+        s.wide_radix.sort_by_key_polling(lim, &mut s.wide, |&record| (record >> 32) as u64, 0, bits, &mut |work| {
+            gate.poll(work)
+        })?;
+        gate.flush()?;
+        lim.reserve_exact(&mut order, n)?;
+        order.extend(s.wide.iter().map(|&record| record as u32));
+    }
     Ok(order)
 }
 
@@ -396,5 +414,29 @@ impl Emit<'_> {
         gate.flush()?;
         lim.discard(triples);
         Ok(locals)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Word records and wide records give the order a comparison sort of
+    /// the keys gives, small and past the radix threshold.
+    #[test]
+    fn stored_order_sorts_keys() {
+        let lim = Limits::new();
+        let mut s = OrderScratch::default();
+        for (n, right, left) in [(5u64, 7u64, 11u64), (5000, 997, 4099), (5000, 1 << 31, 1 << 31), (40, 1 << 31, 1 << 31)] {
+            let keys: Vec<u64> = (0..n).map(|i| (i * 2654435761 % right) << 32 | (i * 104729 + n - i) % left).collect();
+            let mut want: Vec<u32> = (0..n as u32).collect();
+            want.sort_by_key(|&atom| keys[atom as usize]);
+            assert!(keys.windows(2).any(|w| w[0] >= w[1]));
+            let mut distinct = keys.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            assert_eq!(distinct.len(), keys.len());
+            assert_eq!(stored_order(&lim, &mut s, keys.iter().copied()).unwrap(), want, "{n} {right} {left}");
+        }
     }
 }
