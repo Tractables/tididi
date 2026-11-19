@@ -22,6 +22,9 @@ impl MarkBuffer {
         lim: &crate::limits::Limits,
         num_nodes: usize,
     ) -> Result<(), crate::limits::OperationError> {
+        if self.flags.len() >= num_nodes && self.set.capacity() >= num_nodes {
+            return Ok(());
+        }
         lim.try_resize(&mut self.flags, num_nodes, false)?;
         lim.reserve_exact(&mut self.set, num_nodes)
     }
