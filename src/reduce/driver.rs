@@ -184,7 +184,7 @@ impl<'a> Reduction<'a> {
         loop {
             self.eng.limits().check_stop()?;
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
-            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
+            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take(), self.counted)?;
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole, self.counted)?;
             self.contract()?;

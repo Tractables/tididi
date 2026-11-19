@@ -607,7 +607,9 @@ fn file_sibling(local: &mut [u64], stamp: u64, s: u32) -> bool {
 }
 
 /// Content twins: a node's entries are its own pairs, packed left-high.
-pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
+/// The second field is the level's live pairs where they are known before
+/// the grouping, which then takes no census for them.
+pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel, pub(super) Option<usize>);
 
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
@@ -616,7 +618,7 @@ impl TwinEntries for ContentEntries<'_> {
     }
 
     fn len(&self) -> usize {
-        self.0.live_pairs()
+        self.1.unwrap_or_else(|| self.0.live_pairs())
     }
 
     fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {

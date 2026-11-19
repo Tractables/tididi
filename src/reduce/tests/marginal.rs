@@ -214,7 +214,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
     );
     assert!(!tdd.has_marginal_level(), "setup: no level may be marginal");
 
-    let merged = super::contract::content_twin::merge_content_equal_nodes(eng, &mut tdd, None)
+    let merged = super::contract::content_twin::merge_content_equal_nodes(eng, &mut tdd, None, false)
         .expect("merge must not OOM");
     assert_eq!(merged, 0, "content merge must stand down on a marginal-free diagram");
     assert_eq!(
