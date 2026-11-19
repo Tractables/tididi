@@ -96,7 +96,7 @@ pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operat
     // it orphans is the old output's, which the prune reads alone; keeping the
     // certificate here costs a fraction of the complement.
     if canonical {
-        eng.certify_complement(&mut result, false, old)?;
+        eng.certify_complement(&mut result, old)?;
         if result.is_zero() {
             crate::reduce::prune::clear_false(&mut result);
         }

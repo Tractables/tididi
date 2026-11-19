@@ -182,7 +182,7 @@ impl<'a> Reduction<'a> {
     /// slot beside its complement, the prune reads and drops only those
     /// nodes ([`prune_complement`]). `shrink` trims the level arrays as a
     /// full reduction does.
-    pub(super) fn certify_complement(&mut self, shrink: bool, old: Option<NodeIdx>) -> Result<(), OperationError> {
+    pub(super) fn certify_complement(&mut self, old: Option<NodeIdx>) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let closed = self.tdd.levels.is_closed();
         match old {
@@ -191,10 +191,8 @@ impl<'a> Reduction<'a> {
             }
             _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
         }
-        if shrink {
-            for level in &mut self.tdd.levels {
-                level.shrink_arrays();
-            }
+        for level in &mut self.tdd.levels {
+            level.shrink_arrays();
         }
         self.finish(closed, true)
     }
