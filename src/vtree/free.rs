@@ -121,7 +121,7 @@ impl Vtree {
     /// The home variables this vtree has neither as a leaf nor in an extent;
     /// `None` when there is none.
     pub(crate) fn free_set(&self) -> Option<FreeVars<'_>> {
-        let link = self.home.as_deref()?;
+        let link = self.home.as_ref()?;
         let len = self.free_leaves();
         let window = (0, link.home.vtree().num_leaves());
         (len > 0).then_some(FreeVars { link, window, extents_free: false, pins: &[], len })
@@ -132,7 +132,7 @@ impl Vtree {
     /// when there is none or when every home variable outside the extents is
     /// a leaf.
     pub(crate) fn free_set_under(&self, t: VtreeIdx) -> Option<FreeVars<'_>> {
-        let link = self.home.as_deref().filter(|_| self.free_leaves() > 0)?;
+        let link = self.home.as_ref().filter(|_| self.free_leaves() > 0)?;
         let Range { start: lo, end: hi } = link.home.rank_range(self.home_node(t));
         let (a, b) = (link.ranks().partition_point(|&r| r < lo), link.ranks().partition_point(|&r| r < hi));
         let anchors = link.regions.partition_point(|region| (region.at as usize) < b)
@@ -144,7 +144,7 @@ impl Vtree {
     /// The ranks of those of `vars` in [`free_set`](Self::free_set),
     /// ascending.
     pub(crate) fn free_ranks(&self, vars: impl Iterator<Item = VarId>) -> Vec<u32> {
-        let Some(link) = self.home.as_deref() else { return Vec::new() };
+        let Some(link) = self.home.as_ref() else { return Vec::new() };
         let mut ranks: Vec<u32> = vars
             .filter_map(|var| link.home.rank(var))
             .filter(|&r| link.ranks().binary_search(&r).is_err() && link.region_over(r, r + 1).is_none())

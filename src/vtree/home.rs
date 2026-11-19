@@ -28,6 +28,8 @@ pub(crate) struct HomeIndex {
     pub(super) slot: Vec<u32>,
     pub(super) leaf_at: Vec<VtreeIdx>,
     pub(super) var_at: Vec<VarId>,
+    /// By variable id: its leaf's rank, `u32::MAX` for an id with no leaf.
+    rank_of: Vec<u32>,
     pub(super) gap_node: Vec<VtreeIdx>,
     /// By gap: `depth << 32 | gap`, so that the least word of a range of gaps
     /// is its shallowest gap's.
@@ -37,6 +39,10 @@ pub(crate) struct HomeIndex {
     /// it up to `g`. The least word of gaps `lo..=g` within a block is so at
     /// the lowest bit of `in_block[g]` that is not before `lo`.
     in_block: Vec<u32>,
+    /// By gap: the least word from the start of its block to it, and from it
+    /// to the end of its block, so that a range over several blocks reads its
+    /// two partial blocks in one load each.
+    block_ends: Vec<[u64; 2]>,
     /// Row `j`, from `j * blocks`: the least word of blocks `i..i + 2^j` of
     /// [`GAP_BLOCK`] gaps, for each block `i` where they fit.
     block_least: Vec<u64>,
@@ -91,7 +97,17 @@ impl HomeIndex {
             width *= 2;
         }
         let mut in_block = vec![0u32; gaps];
+        let mut block_ends = vec![[0u64; 2]; gaps];
         for (b, words) in gap_word.chunks(GAP_BLOCK).enumerate() {
+            let ends = &mut block_ends[b * GAP_BLOCK..b * GAP_BLOCK + words.len()];
+            let (mut from_start, mut to_end) = (u64::MAX, u64::MAX);
+            for t in 0..words.len() {
+                from_start = from_start.min(words[t]);
+                ends[t][0] = from_start;
+                let r = words.len() - 1 - t;
+                to_end = to_end.min(words[r]);
+                ends[r][1] = to_end;
+            }
             let mut mask = 0u32;
             for (t, &word) in words.iter().enumerate() {
                 while mask != 0 && words[mask.ilog2() as usize] > word {
@@ -101,10 +117,15 @@ impl HomeIndex {
                 in_block[b * GAP_BLOCK + t] = mask;
             }
         }
-        HomeIndex { slot, leaf_at, var_at, gap_node, gap_word, in_block, block_least, blocks }
+        let mut rank_of = vec![u32::MAX; home.num_vars() as usize + 1];
+        for (rank, var) in var_at.iter().enumerate() {
+            rank_of[var.0 as usize] = rank as u32;
+        }
+        HomeIndex { slot, leaf_at, var_at, rank_of, gap_node, gap_word, in_block, block_ends, block_least, blocks }
     }
 
     /// The least word of gaps `lo..=last`, which lie in one block.
+    #[inline]
     fn least_in_block(&self, lo: usize, last: usize) -> u64 {
         let start = last - last % GAP_BLOCK;
         let mask = self.in_block[last] & (u32::MAX << (lo - start));
@@ -123,6 +144,7 @@ impl HomeIndex {
     }
 
     /// [`ancestor_gap`](Self::ancestor_gap) as `depth << 32 | gap`.
+    #[inline]
     pub(super) fn ancestor_word(&self, a: u32, b: u32) -> u64 {
         debug_assert!(a < b);
         let (lo, end) = (a as usize, b as usize - 1);
@@ -130,7 +152,7 @@ impl HomeIndex {
         if first == last {
             self.least_in_block(lo, end)
         } else {
-            let ends = self.least_in_block(lo, (first + 1) * GAP_BLOCK - 1).min(self.least_in_block(last * GAP_BLOCK, end));
+            let ends = self.block_ends[lo][1].min(self.block_ends[end][0]);
             match last - first {
                 1 => ends,
                 span => {
@@ -225,8 +247,9 @@ impl Home {
     }
 
     /// The rank of `var`'s leaf; `None` when it has none.
+    #[inline]
     pub fn rank(&self, var: VarId) -> Option<u32> {
-        self.vtree().leaf_of(var).map(|leaf| self.index().slot[leaf.idx()])
+        self.index().rank_of.get(var.0 as usize).copied().filter(|&rank| rank != u32::MAX)
     }
 
     /// The lowest node with the leaves of ranks `a` and `b` under it: their
@@ -339,9 +362,9 @@ pub(crate) struct HomeLink {
     /// ascending (a variable leaf's rank, a region's anchor); the own
     /// internal node at each gap between positions; the home gap of each own
     /// internal node, by index minus `k`.
-    pub(super) slot: Vec<u32>,
+    pub(super) slot: Box<[u32]>,
     /// The regions, by position ascending.
-    pub(super) regions: Vec<Region>,
+    pub(super) regions: Box<[Region]>,
 }
 
 /// Home ranks as half-open intervals, ascending, neither touching nor
@@ -664,7 +687,7 @@ impl Vtree {
     /// assert_eq!(Tdd::one(&empty).model_count().unwrap(), 32u32.into());
     /// ```
     pub fn empty_projection(home: &Home) -> Arc<Vtree> {
-        let link = HomeLink { home: home.clone(), slot: Vec::new(), regions: Vec::new() };
+        let link = HomeLink { home: home.clone(), slot: Box::default(), regions: Box::default() };
         Arc::new(Vtree {
             context: Arc::clone(&home.vtree().context),
             nodes: Vec::new(),
@@ -672,7 +695,7 @@ impl Vtree {
             var_to_leaf: Vec::new(),
             leaf_count: 0,
             topo: TopoOrder::default(),
-            home: Some(Arc::new(link)),
+            home: Some(link),
             index: RootIndex::default(),
         })
     }
@@ -682,7 +705,7 @@ impl Vtree {
     /// a node. Logarithmic in [`num_leaves`](Self::num_leaves) times the
     /// logarithm of the home's size.
     pub fn own_at(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = self.home.as_deref() else {
+        let Some(link) = self.home.as_ref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         let (index, ranks) = (link.home.index(), link.ranks());
@@ -708,7 +731,7 @@ impl Vtree {
     /// The number of home leaves this vtree has neither as a leaf nor in an
     /// extent; 0 on a root.
     pub(crate) fn free_leaves(&self) -> u32 {
-        self.home.as_deref().map_or(0, |link| link.home.vtree().num_leaves() - self.leaf_count - link.in_extents())
+        self.home.as_ref().map_or(0, |link| link.home.vtree().num_leaves() - self.leaf_count - link.in_extents())
     }
 
     /// The home this vtree is on: a projection's home, or this vtree when it
@@ -744,7 +767,7 @@ impl Vtree {
     /// root, whose leaves and nodes are the home's own.
     #[inline]
     pub(crate) fn link_home(&self) -> Option<&Home> {
-        self.home.as_deref().map(|link| &link.home)
+        self.home.as_ref().map(|link| &link.home)
     }
 
     /// The node of [`Vtree::home`] that own node `t` stands for; `t` itself on
@@ -754,7 +777,7 @@ impl Vtree {
     ///
     /// Panics if `t` is not below [`num_nodes`](Self::num_nodes).
     pub fn home_node(&self, t: VtreeIdx) -> VtreeIdx {
-        match self.home.as_deref() {
+        match self.home.as_ref() {
             None => {
                 assert!(t.idx() < self.nodes.len(), "home_node: {} is not a node", t.0);
                 t
@@ -763,11 +786,19 @@ impl Vtree {
         }
     }
 
+    /// A projection without regions: its home and the home rank of each
+    /// leaf, by node index, ascending. `None` on a root vtree or a projection
+    /// with regions.
+    #[inline]
+    pub(crate) fn leaf_ranks(&self) -> Option<(&Home, &[u32])> {
+        self.home.as_ref().filter(|link| link.regions.is_empty()).map(|link| (&link.home, link.ranks()))
+    }
+
     /// The own node standing for home node `h`, if this vtree has one; on a
     /// root vtree, `h` itself when it is a node. Logarithmic in
     /// [`num_leaves`](Self::num_leaves).
     pub fn node_at_home(&self, h: VtreeIdx) -> Option<VtreeIdx> {
-        let Some(link) = self.home.as_deref() else {
+        let Some(link) = self.home.as_ref() else {
             return (h.idx() < self.nodes.len()).then_some(h);
         };
         debug_assert_eq!(self.validate_home(), Ok(()));
@@ -802,9 +833,9 @@ impl Vtree {
     /// with its variable are pushed to `leaves`, in rank order. The ranks are
     /// found as [`Vtree::leaf_sets`] finds them.
     pub(crate) fn nested_leaves(&self, inner: &Vtree, leaves: &mut Vec<(VtreeIdx, VtreeIdx)>) -> bool {
-        let Some(li) = inner.home.as_deref().filter(|li| li.regions.is_empty()) else { return false };
+        let Some(li) = inner.home.as_ref().filter(|li| li.regions.is_empty()) else { return false };
         let own = |j: usize| VtreeIdx(j as u32);
-        match self.home.as_deref() {
+        match self.home.as_ref() {
             None if std::ptr::eq(self, &**li.home.vtree()) => {
                 let index = li.home.index();
                 leaves.extend(li.ranks().iter().enumerate().map(|(j, &r)| (own(j), index.leaf_at[r as usize])));
@@ -858,7 +889,7 @@ impl Vtree {
             );
             link.regions.first().map(|region| link.region_node(region))
         };
-        let (la, lb) = match (a.home.as_deref(), b.home.as_deref()) {
+        let (la, lb) = match (a.home.as_ref(), b.home.as_ref()) {
             (None, None) => return Ok(LeafSets::Equal(SameLayout::new(a, b))),
             (Some(la), None) => return first_region(la).map_or(Ok(LeafSets::AInB), |t| Err(OperationError::MarginalLevel(t))),
             (None, Some(lb)) => return first_region(lb).map_or(Ok(LeafSets::BInA), |t| Err(OperationError::MarginalLevel(t))),
@@ -1018,7 +1049,7 @@ impl Vtree {
         }
         debug_assert_eq!(self.validate_home(), Ok(()));
         let index = home.index();
-        match self.home.as_deref() {
+        match self.home.as_ref() {
             Some(link) => {
                 let (ranks, node_at, gap_of) = link.parts();
                 let k = ranks.len();
@@ -1104,7 +1135,7 @@ impl Vtree {
         if let Some(map) = map {
             map.clear();
             map.resize(self.num_nodes(), None);
-            let to = own.home.as_deref().expect("a sub-projection has fewer leaves than its home");
+            let to = own.home.as_ref().expect("a sub-projection has fewer leaves than its home");
             for (j, &(i, _, p)) in kept.iter().enumerate() {
                 map[(at.childless)(i as usize).idx()] = Some(to.childless(j));
                 if j > 0 {
@@ -1198,14 +1229,14 @@ impl Vtree {
     /// place in an extent: a variable a diagram on this vtree does not depend
     /// on.
     pub(crate) fn home_has(&self, var: VarId) -> bool {
-        let Some(link) = self.home.as_deref() else { return false };
+        let Some(link) = self.home.as_ref() else { return false };
         let Some(rank) = link.home.rank(var) else { return false };
         self.leaf_of(var).is_none() && link.region_over(rank, rank + 1).is_none()
     }
 
     /// The region whose extent holds `var`.
     pub(crate) fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
-        let link = self.home.as_deref()?;
+        let link = self.home.as_ref()?;
         let rank = link.home.rank(var)?;
         link.region_over(rank, rank + 1).map(|region| link.region_node(region))
     }
@@ -1332,7 +1363,7 @@ impl Vtree {
             leftmost = left;
         }
         let leaves = self.subtree(t).filter(|&u| self.node(u).is_leaf());
-        let Some(link) = self.home.as_deref() else {
+        let Some(link) = self.home.as_ref() else {
             let slot = &self.index.0.as_deref().expect("a projection or a home's root").slot;
             return (slot[leftmost.idx()], coalesce(leaves.map(|u| (slot[u.idx()], slot[u.idx()] + 1)).collect()));
         };
@@ -1351,7 +1382,7 @@ impl Vtree {
     /// The anchor variable and the variables of region `t` of this
     /// projection.
     pub(crate) fn region_vars(&self, t: VtreeIdx) -> (VarId, Vec<VarId>) {
-        let link = self.home.as_deref().expect("a projection");
+        let link = self.home.as_ref().expect("a projection");
         let (anchor, extent) = self.region_at(t);
         let var = |rank: u32| link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]);
         (var(anchor), extent.iter().flat_map(|&(lo, hi)| lo..hi).map(var).collect())
@@ -1372,12 +1403,12 @@ impl Vtree {
 
     /// The regions of this vtree, by position.
     pub(crate) fn regions(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
-        self.home.as_deref().into_iter().flat_map(|link| link.regions.iter().map(|region| link.region_node(region)))
+        self.home.as_ref().into_iter().flat_map(|link| link.regions.iter().map(|region| link.region_node(region)))
     }
 
     /// The anchor rank and extent of region `t` of this projection.
     pub(crate) fn region_at(&self, t: VtreeIdx) -> (u32, Extent) {
-        let link = self.home.as_deref().expect("a projection");
+        let link = self.home.as_ref().expect("a projection");
         let region = link.regions.iter().find(|region| link.region_node(region) == t).expect("a region");
         (link.ranks()[region.at as usize], region.extent.clone())
     }
@@ -1433,7 +1464,7 @@ impl Vtree {
             var_to_leaf: Vec::new(),
             leaf_count,
             topo,
-            home: Some(Arc::new(HomeLink { home: home.clone(), slot, regions })),
+            home: Some(HomeLink { home: home.clone(), slot: slot.into_boxed_slice(), regions: regions.into_boxed_slice() }),
             index: RootIndex::default(),
         }
     }
@@ -1443,7 +1474,7 @@ impl Vtree {
     #[cold]
     #[inline(never)]
     pub(super) fn projected_leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
-        self.home.as_deref()?.leaf_of(var)
+        self.home.as_ref()?.leaf_of(var)
     }
 
     /// [`Vtree::num_vars`] of a vtree with an empty leaf table, which only a
@@ -1451,13 +1482,13 @@ impl Vtree {
     #[cold]
     #[inline(never)]
     pub(super) fn projected_num_vars(&self) -> u32 {
-        self.home.as_deref().map_or(0, |link| link.home.vtree().num_vars())
+        self.home.as_ref().map_or(0, |link| link.home.vtree().num_vars())
     }
 
     /// A projection's childless nodes in its home's order, a home's root's
     /// leaves in its own; nothing on another root.
     pub(crate) fn projected_leaves(&self) -> impl Iterator<Item = VtreeIdx> + '_ {
-        let projected = self.home.as_deref().into_iter().flat_map(|link| (0..link.k()).map(|i| link.childless(i)));
+        let projected = self.home.as_ref().into_iter().flat_map(|link| (0..link.k()).map(|i| link.childless(i)));
         projected.chain(self.index.0.as_deref().into_iter().flat_map(|index| index.leaf_at.iter().copied()))
     }
 
@@ -1535,7 +1566,7 @@ impl Vtree {
     /// common ancestor in the home of the childless nodes on either side of
     /// it.
     pub(super) fn validate_home(&self) -> Result<(), VtreeError> {
-        let Some(link) = self.home.as_deref() else {
+        let Some(link) = self.home.as_ref() else {
             return Ok(());
         };
         let fail = |msg: &str| Err(VtreeError::Invalid(format!("projection: {msg}")));
@@ -1555,7 +1586,7 @@ impl Vtree {
         if root != self.root || nodes != self.nodes {
             return fail("the nodes are not the ones the builder gives their rank list");
         }
-        if slot != link.slot {
+        if *slot != *link.slot {
             return fail("the slot table is not the one the builder gives the rank list");
         }
         Ok(())

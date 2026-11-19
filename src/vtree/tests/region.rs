@@ -14,7 +14,7 @@ fn vars(ids: &[u32]) -> Vec<VarId> {
 /// extent, by a walk over the home's leaves: the reference for
 /// [`Vtree::free_set`].
 fn free_vars(own: &Vtree) -> Vec<VarId> {
-    let Some(link) = own.home.as_deref() else { return Vec::new() };
+    let Some(link) = own.home.as_ref() else { return Vec::new() };
     let mut ranks = link.ranks().iter().copied().peekable();
     let mut extents: Vec<(u32, u32)> = link.regions.iter().flat_map(|region| region.extent.iter().copied()).collect();
     extents.sort_unstable();
@@ -189,7 +189,7 @@ fn leaf_sets_refuse_overlaps_and_unite_the_rest() {
     let mut free = free_vars(&union);
     free.sort();
     assert_eq!((union.num_leaves(), free), (2, vars(&[4, 6])));
-    let regions = &union.home.as_deref().unwrap().regions;
+    let regions = &union.home.as_ref().unwrap().regions;
     assert_eq!(regions.len(), 2);
     region_at(&union, 2);
     region_at(&union, 8);

@@ -49,7 +49,7 @@ impl Vtree {
     pub fn validate(&self) -> Result<(), VtreeError> {
         let n = self.nodes.len();
         if n == 0 {
-            return match self.home.as_deref() {
+            return match self.home.as_ref() {
                 Some(link) if link.slot.is_empty() => Ok(()),
                 _ => invalid("no nodes".to_string()),
             };

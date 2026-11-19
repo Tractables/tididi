@@ -18,7 +18,7 @@ pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
     assert_eq!(got.topo.all(), want.topo.all(), "{what}");
     assert!(got.var_to_leaf.is_empty() && want.var_to_leaf.is_empty(), "{what}");
     assert!(Arc::ptr_eq(got.context(), want.context()), "{what}");
-    let (a, b) = (got.home.as_deref().unwrap(), want.home.as_deref().unwrap());
+    let (a, b) = (got.home.as_ref().unwrap(), want.home.as_ref().unwrap());
     assert!(Arc::ptr_eq(a.home.vtree(), b.home.vtree()), "{what}");
     assert_eq!((&a.slot, &a.regions), (&b.slot, &b.regions), "{what}");
     assert_eq!(got.validate(), Ok(()), "{what}");
