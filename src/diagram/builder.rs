@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
@@ -591,16 +591,19 @@ fn check_storage<const PAIRS: bool>(
     }
     if let Some(ws) = weights {
         ws.check_levels(vtree, levels)?;
-    } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
-        return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
-    check_leaf_levels(vtree, levels)?;
     let mut scan = PairScan::default();
-    for (t, left, right) in vtree.internal_bottomup() {
-        if levels[t.idx()].is_marginal() {
-            check_marginal_level(vtree, levels, t)?;
-        } else {
-            check_structural_level::<PAIRS>(vtree, levels, t, left, right, &mut scan)?;
+    for t in vtree.bottomup() {
+        let lvl = &levels[t.idx()];
+        if weights.is_none() && lvl.is_weight_marginal() {
+            return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
+        }
+        match *vtree.node(t) {
+            VtreeNode::Leaf { .. } => check_leaf_level(lvl, t)?,
+            VtreeNode::Internal { .. } if lvl.is_marginal() => check_marginal_level(vtree, levels, t)?,
+            VtreeNode::Internal { left, right, .. } => {
+                check_structural_level::<PAIRS>(vtree, levels, t, left, right, &mut scan)?;
+            }
         }
     }
     check_output(vtree, levels, output)
@@ -609,19 +612,16 @@ fn check_storage<const PAIRS: bool>(
 /// A structural leaf level stores nothing. A count-marginal one carries the
 /// pinned label column `[2, 1, 1]` or nothing at all (its parents then hold
 /// the counts inline); a weight-marginal column is checked by the store.
-fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
-    for (leaf, _var) in vtree.leaf_bottomup() {
-        let lvl = &levels[leaf.idx()];
-        let stores_structure = !lvl.nodes().is_empty() || !lvl.pairs.is_empty();
-        if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
-            return Err(TddBuildError::NonEmptyLeafLevel(leaf));
-        }
-        if let Some(counts) = lvl.marginal_counts()
-            && !counts.is_empty()
-            && counts != super::leaf_column::LEAF_COUNTS
-        {
-            return Err(TddBuildError::NonEmptyLeafLevel(leaf));
-        }
+fn check_leaf_level(lvl: &TddLevel, leaf: VtreeIdx) -> Result<(), TddBuildError> {
+    let stores_structure = !lvl.nodes().is_empty() || !lvl.pairs.is_empty();
+    if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
+        return Err(TddBuildError::NonEmptyLeafLevel(leaf));
+    }
+    if let Some(counts) = lvl.marginal_counts()
+        && !counts.is_empty()
+        && counts != super::leaf_column::LEAF_COUNTS
+    {
+        return Err(TddBuildError::NonEmptyLeafLevel(leaf));
     }
     Ok(())
 }
@@ -654,7 +654,7 @@ fn check_structural_level<const PAIRS: bool>(
     let lvl = &levels[t.idx()];
     let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
-    let scanned = PAIRS && scan.enter(levels, t, left, right);
+    let scanned = PAIRS && scan.enter(levels.len(), t, [left, right], lm.is_marginal() || rm.is_marginal());
     // Over structural children a side is a node index, and one below
     // `MAX_LIVE` has bit 31 clear, so one comparison a side checks both
     // rules. The loop below names the first violation where this pass finds
@@ -764,15 +764,14 @@ struct PairScan {
 const GRID_BITS: usize = 1 << 16;
 
 impl PairScan {
-    /// Record whether a marginal level lies under `t`, and say whether `t`
-    /// is checked: it is when none does.
-    fn enter(&mut self, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> bool {
-        let below = [left, right]
-            .iter()
-            .any(|c| levels[c.idx()].is_marginal() || self.marginal_below.get(c.idx()) == Some(&true));
+    /// Record whether a marginal level lies under `t`, given whether one of
+    /// its `children` is marginal, and say whether `t` is checked: it is when
+    /// none does.
+    fn enter(&mut self, level_count: usize, t: VtreeIdx, children: [VtreeIdx; 2], child_marginal: bool) -> bool {
+        let below = child_marginal || children.iter().any(|c| self.marginal_below.get(c.idx()) == Some(&true));
         if below {
             if self.marginal_below.is_empty() {
-                self.marginal_below.resize(levels.len(), false);
+                self.marginal_below.resize(level_count, false);
             }
             self.marginal_below[t.idx()] = true;
         }
